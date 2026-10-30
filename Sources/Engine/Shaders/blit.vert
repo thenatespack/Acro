@@ -4,7 +4,10 @@
 // `scale` (≤ 1 per axis) letterboxes it while keeping its aspect ratio.
 
 layout(push_constant) uniform PushConstants {
-    vec2 scale;
+    vec2 scale;       // clip-space letterbox scale (≤ 1 per axis)
+    ivec2 origin;     // top-left of the output rectangle in the window
+    ivec2 outputSize; // output rectangle size in pixels
+    ivec2 imageSize;  // scene image size in texels
 } pc;
 
 layout(location = 0) out vec2 vUV;

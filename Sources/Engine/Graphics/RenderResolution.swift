@@ -130,3 +130,21 @@ func letterboxScale(image: (width: Int, height: Int), window: (width: Int, heigh
     let windowAspect = Float(window.width) / Float(window.height)
     return windowAspect > imageAspect ? Vec2(imageAspect / windowAspect, 1) : Vec2(1, windowAspect / imageAspect)
 }
+
+/// Push constants of `blit` (32 bytes): the letterbox scale for the vertex stage, and the
+/// geometry the fragment stage needs to box-filter when downscaling.
+struct BlitConstants {
+    var scale: Vec2
+    /// Top-left of the output rectangle in the window, in pixels.
+    var origin: SIMD2<Int32>
+    var outputSize: SIMD2<Int32>
+    var imageSize: SIMD2<Int32>
+
+    init(image: (width: Int, height: Int), window: (width: Int, height: Int)) {
+        let rect = letterboxRect(image: image, window: window)
+        scale = letterboxScale(image: image, window: window)
+        origin = SIMD2(Int32(rect.x), Int32(rect.y))
+        outputSize = SIMD2(Int32(rect.width), Int32(rect.height))
+        imageSize = SIMD2(Int32(image.width), Int32(image.height))
+    }
+}

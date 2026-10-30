@@ -835,7 +835,7 @@ final class VulkanRenderDevice: RenderDevice {
             pass.setPipeline(blitPipeline)
             var set: VkDescriptorSet? = offscreen.descriptorSet
             vkCmdBindDescriptorSets(pass.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, 1, &set, 0, nil)
-            pass.setPushConstants(letterboxScale(image: image, window: window))
+            pass.setPushConstants(BlitConstants(image: image, window: window))
             pass.draw(vertexCount: 3)
         }
         return pass

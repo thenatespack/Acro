@@ -545,7 +545,7 @@ final class MetalRenderDevice: RenderDevice {
             metalPass.setPipeline(blitPipeline)
             metalPass.encoder.setFragmentTexture(scene.resolved, index: 0)
             metalPass.encoder.setFragmentSamplerState(linearSampler, index: 0)
-            metalPass.setPushConstants(letterboxScale(image: image, window: frame.windowSize))
+            metalPass.setPushConstants(BlitConstants(image: image, window: frame.windowSize))
             metalPass.draw(vertexCount: 3)
         }
         return pass
