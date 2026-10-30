@@ -45,19 +45,19 @@ public final class HierarchyPanel {
         createButton = Button("Create", name: "create") { [unowned self] in showCreateMenu() }
         let buttons = HStack(spacing: 6, [
             createButton,
-            Button("Duplicate", name: "duplicate") { [unowned self] in session.duplicateSelection() },
-            Button("Delete", name: "delete") { [unowned self] in session.deleteSelection() },
+            Button("Duplicate", name: "duplicate") { [unowned session] in session.duplicateSelection() },
+            Button("Delete", name: "delete") { [unowned session] in session.deleteSelection() },
         ])
         view.addChildren([buttons, tree])
 
         tree.onSelectionChange = { [unowned self] _ in pushSelectionFromTree() }
         tree.onSelect = { [unowned self] _ in pushSelectionFromTree() }
-        tree.onRename = { [unowned self] node, title in
+        tree.onRename = { [unowned session] node, title in
             guard let id = node.userData as? EntityID else { return false }
             session.rename(id, to: title)
             return true
         }
-        tree.onMove = { [unowned self] nodes, parent, index in
+        tree.onMove = { [unowned session] nodes, parent, index in
             let ids = nodes.compactMap { $0.userData as? EntityID }
             guard ids.count == nodes.count else { return false }
             return session.move(ids, to: parent?.userData as? EntityID, at: index)

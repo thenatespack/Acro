@@ -34,7 +34,7 @@ public final class ConsolePanel {
         filter.style.width = 120
         filter.onChange = { [unowned self] index in minimumLevel = Self.levels[index].level }
         let bar = HStack(spacing: 8, padding: EdgeInsets(horizontal: 4, vertical: 0), [
-            filter, Button("Clear", name: "consoleClear") { [unowned self] in log.clear() }, Spacer(), countLabel,
+            filter, Button("Clear", name: "consoleClear") { [unowned log] in log.clear() }, Spacer(), countLabel,
         ])
         view.addChildren([bar, scroll])
         refresh()
