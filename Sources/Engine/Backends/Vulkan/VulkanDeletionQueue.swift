@@ -7,7 +7,7 @@ import Foundation
 enum VulkanResource: @unchecked Sendable {
     case buffer(VkBuffer, VkDeviceMemory)
     case pipeline(VkPipeline)
-    case texture(VkImage, VkDeviceMemory, VkImageView, VkFramebuffer, VkDescriptorSet)
+    case texture(VkImage, VkDeviceMemory, VkImageView, VkFramebuffer?, VkDescriptorSet?)
 
     var key: Int {
         switch self {
