@@ -68,13 +68,13 @@ public final class World {
     // Entity slots. A slot's generation is bumped when its entity is despawned.
     @usableFromInline var generations: [UInt32] = []
     @usableFromInline var alive: [Bool] = []
-    private var freeSlots: [UInt32] = []
+    var freeSlots: [UInt32] = []
     /// Number of live entities.
-    public private(set) var entityCount = 0
+    public internal(set) var entityCount = 0
 
     // Component stores, keyed by component type, and in registration order.
     @usableFromInline var stores: [ObjectIdentifier: any AnyComponentStore] = [:]
-    private var storeOrder: [any AnyComponentStore] = []
+    var storeOrder: [any AnyComponentStore] = []
 
     // Queries running (nesting depth) and the structural changes deferred until they end.
     @usableFromInline var iterationDepth = 0
@@ -250,6 +250,7 @@ public final class World {
         let store = ComponentStore<C>()
         stores[ObjectIdentifier(C.self)] = store
         storeOrder.append(store)
+        ComponentRegistry.registerImplicitly(C.self)
         return store
     }
 

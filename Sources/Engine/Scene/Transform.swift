@@ -5,6 +5,8 @@ public struct Transform: Component, Equatable, Sendable {
     public var rotation: Quat
     public var scale: Vec3
 
+    public static let componentName = "Transform"
+
     public init(position: Vec3 = .zero, rotation: Quat = .identity, scale: Vec3 = .one) {
         self.position = position
         self.rotation = rotation
@@ -34,8 +36,14 @@ public struct Transform: Component, Equatable, Sendable {
 
 /// An entity's local-to-world matrix, computed from its `Transform` and its ancestors' by
 /// `World.propagateTransforms()` (run every frame after `.lateUpdate`). Added automatically
-/// to entities with a `Transform`; read-only for game code.
+/// to entities with a `Transform`; read-only for game code. Derived data: scene files don't
+/// store it (it is recomputed after loading), and decoding one yields a matrix that the next
+/// propagation recomputes.
 public struct GlobalTransform: Component, Sendable {
+    public static let componentName = "GlobalTransform"
+    public static var isSerialized: Bool { false }
+    public static var fieldHints: [String: FieldHints] { ["matrix": FieldHints(readOnly: true)] }
+
     public internal(set) var matrix: Mat4 = .identity
 
     // What `matrix` was computed from, for dirty tracking: it is recomputed only when the
@@ -48,6 +56,17 @@ public struct GlobalTransform: Component, Sendable {
 
     /// World-space position.
     public var position: Vec3 { Vec3(matrix.c3.x, matrix.c3.y, matrix.c3.z) }
+
+    private enum CodingKeys: String, CodingKey { case matrix }
+
+    public init(from decoder: any Decoder) throws {
+        matrix = try decoder.container(keyedBy: CodingKeys.self).decode(Mat4.self, forKey: .matrix)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(matrix, forKey: .matrix)
+    }
 }
 
 extension World {
