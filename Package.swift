@@ -91,6 +91,7 @@ let package = Package(
     products: [
         .library(name: "Engine", targets: ["Engine"]),
         .executable(name: "Demo", targets: ["Demo"]),
+        .executable(name: "Editor", targets: ["Editor"]),
     ],
     targets: vulkanTargets + [
         zlibTarget,
@@ -109,6 +110,11 @@ let package = Package(
             resources: [.copy("Shaders")],
             linkerSettings: windowsLinkerSettings
         ),
+        // The in-engine editor: all logic in EditorCore (unit-tested by EditorTests), and a
+        // thin executable that runs it (`swift run Editor [scene.json]`).
+        .target(name: "EditorCore", dependencies: ["Engine"], linkerSettings: windowsLinkerSettings),
+        .executableTarget(name: "Editor", dependencies: ["EditorCore", "Engine"], linkerSettings: windowsLinkerSettings),
         .testTarget(name: "EngineTests", dependencies: ["Engine", "CZlib"]),
+        .testTarget(name: "EditorTests", dependencies: ["EditorCore", "Engine"]),
     ]
 )
