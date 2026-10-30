@@ -841,3 +841,101 @@ private func temporaryDirectory() -> URL {
         #expect(mesh.selectedOption == "sphere")
     }
 }
+
+// MARK: Transform tool (gizmo + picker adapter)
+
+@MainActor @Suite struct TransformToolTests {
+    private func setup() -> (EditorSession, TransformTool, ViewportToolContext) {
+        let session = makeSession()
+        session.world.propagateTransforms()
+        var camera = EditorCamera()
+        camera.frame(Bounds(center: Vec3(0, 0.75, 2), halfExtent: Vec3(repeating: 1.5)))  // around the blue sphere
+        let ctx = ViewportToolContext(
+            world: session.world, selection: session.selection, undo: session.undo,
+            view: camera.sceneView(aspect: 4 / 3, clearColor: .zero), viewportRect: UIRect(x: 0, y: 0, width: 400, height: 300),
+            pixelScale: 1, toolMode: .move, isPlaying: false, meshBounds: builtinMeshBounds)
+        return (session, TransformTool(meshes: PickMeshLibrary()), ctx)
+    }
+
+    private func event(_ p: Vec2, _ phase: ViewportPointerPhase, _ ctx: ViewportToolContext,
+                       modifiers: KeyModifiers = []) -> ViewportPointerEvent {
+        ViewportPointerEvent(position: p, viewportSize: ctx.viewportSize, phase: phase, button: phase == .moved ? nil : .left,
+                             modifiers: modifiers)
+    }
+
+    /// Screen points on the X axis handle of the gizmo for the current selection.
+    private func xHandle(_ tool: TransformTool, _ ctx: ViewportToolContext) throws -> (grab: Vec2, along: Vec2) {
+        let view = ViewportProjection(ctx.view, size: ctx.viewportSize, pixelScale: 1)
+        let frame = try #require(tool.gizmo.frame(view: view, world: ctx.world, selection: ctx.selection.entities(in: ctx.world),
+                                                  primary: ctx.selection.primaryEntity(in: ctx.world)))
+        let grab = try #require(ctx.project(frame.origin + frame.axes[0] * frame.length * 0.8))
+        let tip = try #require(ctx.project(frame.origin + frame.axes[0] * frame.length))
+        return (grab, (tip - grab) / length(Vec3(tip - grab, 0)))
+    }
+
+    @Test func clickPicksExactlyAndClearsOnEmptySpace() {
+        let (session, tool, ctx) = setup()
+        let center = Vec2(200, 150)
+        _ = tool.handlePointer(event(center, .pressed, ctx), context: ctx)
+        _ = tool.handlePointer(event(center, .released, ctx), context: ctx)
+        #expect(session.selection.ids == [id("Blue Sphere", session)])
+
+        // The sphere's bounding-box corner is empty space for the exact picker.
+        session.selection.clear()
+        let corner = Vec3(0.75, 0.75 + 0.75, 2 + 0.75) * 0.999 + Vec3(0, 0, 0)
+        if let p = ctx.project(Vec3(corner.x, corner.y, corner.z)) {
+            _ = tool.handlePointer(event(p, .pressed, ctx), context: ctx)
+            _ = tool.handlePointer(event(p, .released, ctx), context: ctx)
+            #expect(!session.selection.ids.contains(id("Blue Sphere", session)))
+        }
+    }
+
+    @Test func gizmoDragIsOneUndoStepThatRestoresExactly() throws {
+        let (session, tool, ctx) = setup()
+        let sphere = entity(named: "Blue Sphere", in: session)
+        session.selection.select(id("Blue Sphere", session))
+        let before = try #require(session.world.get(Transform.self, for: sphere))
+        let depth = session.undo.undoDepth
+        let (grab, along) = try xHandle(tool, ctx)
+
+        #expect(tool.handlePointer(event(grab, .pressed, ctx), context: ctx))
+        #expect(tool.isDragging)
+        for step in 1...5 { _ = tool.handlePointer(event(grab + along * Float(step * 8), .dragged, ctx), context: ctx) }
+        #expect(!session.undo.canUndo)  // the drag's group is open
+        _ = tool.handlePointer(event(grab + along * 40, .released, ctx), context: ctx)
+
+        let after = try #require(session.world.get(Transform.self, for: sphere))
+        #expect(after.position.x > before.position.x + 0.05)
+        #expect(abs(after.position.y - before.position.y) < 1e-4 && abs(after.position.z - before.position.z) < 1e-4)
+        #expect(session.undo.undoDepth == depth + 1)
+        #expect(session.selection.ids == [id("Blue Sphere", session)])  // a gizmo drag doesn't change the selection
+
+        _ = try session.undo.undo()
+        #expect(session.world.get(Transform.self, for: sphere) == before)
+    }
+
+    @Test func escapeCancelsTheDragAndRecordsNothing() throws {
+        let (session, tool, ctx) = setup()
+        let sphere = entity(named: "Blue Sphere", in: session)
+        session.selection.select(id("Blue Sphere", session))
+        let before = try #require(session.world.get(Transform.self, for: sphere))
+        let depth = session.undo.undoDepth
+        let (grab, along) = try xHandle(tool, ctx)
+
+        _ = tool.handlePointer(event(grab, .pressed, ctx), context: ctx)
+        _ = tool.handlePointer(event(grab + along * 30, .dragged, ctx), context: ctx)
+        #expect(session.world.get(Transform.self, for: sphere) != before)
+        #expect(tool.cancelDrag(world: session.world))
+        #expect(session.world.get(Transform.self, for: sphere) == before)
+        #expect(session.undo.undoDepth == depth)
+        #expect(!tool.cancelDrag(world: session.world))  // nothing left to cancel
+        _ = tool.handlePointer(event(grab + along * 30, .released, ctx), context: ctx)
+        #expect(session.undo.undoDepth == depth)
+    }
+
+    @Test func toolbarModeDrivesTheGizmo() {
+        #expect(TransformTool.mode(for: .move) == .translate)
+        #expect(TransformTool.mode(for: .rotate) == .rotate)
+        #expect(TransformTool.mode(for: .scale) == .scale)
+    }
+}

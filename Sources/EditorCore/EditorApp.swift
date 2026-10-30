@@ -42,6 +42,12 @@ public final class EditorApp: Game {
     private var target: RenderTarget!
     private var sizer = ViewportTargetSizer()
     private let gizmos = DebugDraw()
+    /// The viewport tools' overlays (the transform gizmo), drawn above the selection outline.
+    private let toolDraw = DebugDraw()
+    private var toolDrawRenderer: DebugDrawRenderer!
+    private var outline: SelectionOutlineRenderer!
+    /// Selection and gizmos in the viewport (set up with the renderer, which it picks against).
+    public private(set) var transformTool: TransformTool!
     private var currentView: SceneView?
     private var meshBoundsCache: [String: Bounds] = [:]
 
@@ -65,7 +71,6 @@ public final class EditorApp: Game {
             document.world.entityIDGenerator = { generator.next() }
         }
         session = EditorSession(document: document)
-        viewport.tools = [BoundsClickSelectTool()]
     }
 
     // MARK: Setup
@@ -75,6 +80,10 @@ public final class EditorApp: Game {
         try sceneRenderer.registerMaterial(Material(baseColor: Vec4(0.6, 0.6, 0.58, 1), checker: true, specular: 0.1),
                                            key: StarterScene.checkerMaterial.key)
         target = try RenderTarget(device: engine.device, width: 640, height: 360, label: "viewport")
+        outline = try SelectionOutlineRenderer(device: engine.device)
+        toolDrawRenderer = try DebugDrawRenderer(device: engine.device)
+        transformTool = TransformTool(meshes: sceneRenderer)
+        viewport.tools = [transformTool]
         engine.clearColor = Vec4(0.02, 0.022, 0.03, 1)
 
         var theme = UITheme.dark()
@@ -222,7 +231,9 @@ public final class EditorApp: Game {
         case .duplicate: session.duplicateSelection()
         case .delete: session.deleteSelection()
         case .focusSelection: frameSelection()
-        case .clearSelection: session.selection.clear()
+        case .clearSelection:
+            // Esc first cancels a gizmo drag, then clears the selection.
+            if transformTool?.cancelDrag(world: session.world) != true { session.selection.clear() }
         case .togglePlay: session.togglePlay()
         }
     }
@@ -326,7 +337,8 @@ public final class EditorApp: Game {
         return bounds
     }
 
-    /// The viewport's debug shapes: grid, selection boxes, cameras, lights, then the tools' overlays.
+    /// The viewport's debug shapes: grid, cameras, lights and axes for selected entities without a
+    /// mesh (meshes get the selection outline), plus the tools' overlays in `toolDraw`.
     private func buildGizmos() {
         guard let view = currentView else { return }
         let world = session.world
@@ -352,23 +364,25 @@ public final class EditorApp: Game {
             gizmos.text(session.displayName(of: entity), at: start + Vec3(0, 0.45, 0), color: yellow, size: labelSize)
         }
 
-        let primary = session.selection.primaryEntity(in: world)
-        for entity in session.selection.entities(in: world) {
-            let color = entity == primary ? Vec4(1, 0.78, 0.15, 1) : Vec4(1, 0.5, 0.15, 1)
-            if let box = context.worldBounds(of: entity) {
-                gizmos.box(box, color: color, style: DebugDraw.Style(width: 1.5, depth: .onTop))
-            } else {
-                let matrix = world.get(GlobalTransform.self, for: entity)?.matrix ?? world.worldMatrix(of: entity)
-                gizmos.axes(matrix, length: 0.6, style: DebugDraw.Style(width: 2, depth: .onTop))
-            }
+        for entity in session.selection.entities(in: world) where context.worldBounds(of: entity) == nil {
+            let matrix = world.get(GlobalTransform.self, for: entity)?.matrix ?? world.worldMatrix(of: entity)
+            gizmos.axes(matrix, length: 0.6, style: DebugDraw.Style(width: 2, depth: .onTop))
         }
-        for tool in viewport.tools { tool.draw(into: gizmos, context: context) }
+        toolDraw.removeAll()
+        for tool in viewport.tools { tool.draw(into: toolDraw, context: context) }
     }
 
     public func renderOffscreen(engine: Engine, frame: Frame) {
         guard let view = currentView, sizer.width > 0 else { return }
         sceneRenderer.beginViews(world: session.world, frame: frame, shadowFocus: view)
-        sceneRenderer.renderView(view, into: target, frame: frame, debugDraw: gizmos)
+        let world = session.world
+        let debugView = DebugView(view: view.view, projection: view.projection,
+                                  viewportSize: (target.width, target.height), reversedZ: view.reversedZ)
+        outline.renderView(view, sceneRenderer: sceneRenderer, world: world, selection: session.selection.entities(in: world),
+                           primary: session.selection.primaryEntity(in: world), into: target, pixelScale: ui.scale,
+                           frame: frame, debugDraw: gizmos) { [unowned self] pass in
+            toolDrawRenderer.draw(toolDraw, in: pass, view: debugView)
+        }
     }
 
     public func render(engine: Engine, pass: RenderPass) {}
