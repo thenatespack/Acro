@@ -53,10 +53,12 @@ final class DebugOverlay {
 
     func render(
         pass: RenderPass, stats: FrameStats, time: Double, framebufferSize: (width: Int, height: Int),
-        renderSize: (width: Int, height: Int)?, contentScale: Float, backend: GraphicsBackend, deviceName: String
+        renderSize: (width: Int, height: Int)?, upscaler: Upscaler, vsync: Bool, contentScale: Float,
+        backend: GraphicsBackend, deviceName: String
     ) {
         if time - lastRefresh >= Self.textRefreshInterval || lines.isEmpty {
-            refreshText(stats: stats, framebufferSize: framebufferSize, renderSize: renderSize, backend: backend, deviceName: deviceName)
+            refreshText(stats: stats, framebufferSize: framebufferSize, renderSize: renderSize, upscaler: upscaler,
+                        vsync: vsync, backend: backend, deviceName: deviceName)
             lastRefresh = time
         }
 
@@ -106,7 +108,8 @@ final class DebugOverlay {
     }
 
     private func refreshText(stats: FrameStats, framebufferSize: (width: Int, height: Int),
-                             renderSize: (width: Int, height: Int)?, backend: GraphicsBackend, deviceName: String) {
+                             renderSize: (width: Int, height: Int)?, upscaler: Upscaler, vsync: Bool,
+                             backend: GraphicsBackend, deviceName: String) {
         let frames = max(accumulated.frames, 1)
         let frameMs = accumulated.frameTime / Double(frames) * 1000
         let cpuMs = accumulated.cpuTime / Double(frames) * 1000
@@ -121,11 +124,29 @@ final class DebugOverlay {
             String(format: "%.0f FPS  %.2f MS", frameMs > 0 ? 1000 / frameMs : 0, frameMs),
             String(format: "MIN %.1f  MAX %.1f MS", minMs, maxMs),
             String(format: "CPU %.2f MS  GPU ", cpuMs) + gpu,
+        ] + (stats.gpuPassTimes.isEmpty ? [] : [
+            stats.gpuPassTimes.map { String(format: "\($0.name.uppercased()) %.2f", $0.seconds * 1000) }.joined(separator: "  "),
+        ]) + [
             "DRAWS \(stats.drawCalls)  TRIS \(stats.triangles)",
-            "\(backend.rawValue) \(deviceName)",
-            renderSize.map { "RENDER \($0.width)X\($0.height)  WINDOW \(framebufferSize.width)X\(framebufferSize.height)" }
-                ?? "\(framebufferSize.width)X\(framebufferSize.height)",
+            "\(backend.rawValue) \(deviceName)  VSYNC \(vsync ? "ON" : "OFF")",
+        ] + Self.resolutionLines(window: framebufferSize, render: renderSize, upscaler: upscaler)
+    }
+
+    /// Render size → upscaled output size (the letterboxed rectangle it fills) and the upscaler,
+    /// plus the window size when the output doesn't fill it.
+    static func resolutionLines(window: (width: Int, height: Int), render: (width: Int, height: Int)?,
+                                upscaler: Upscaler) -> [String] {
+        guard let render else { return ["NATIVE \(window.width)X\(window.height)"] }
+        let output = letterboxRect(image: render, window: window)
+        let factor = Double(output.height) / Double(render.height)
+        var lines = [
+            "RENDER \(render.width)X\(render.height) TO \(output.width)X\(output.height)" + String(format: " (%.2fX)", factor),
+            "UPSCALER \(upscaler)" + (factor < 1 ? " (DOWNSCALING)" : ""),
         ]
+        if (output.width, output.height) != (window.width, window.height) {
+            lines.append("WINDOW \(window.width)X\(window.height) (LETTERBOXED)")
+        }
+        return lines
     }
 
     private func fpsColor(_ frameTime: Double) -> (Float, Float, Float, Float) {

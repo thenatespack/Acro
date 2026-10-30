@@ -8,12 +8,17 @@
 # output-dir (default .build/scene-shots/<quality>[-<resolution>]) as <scene>-<backend>.png.
 # Set ENGINE_RESOLUTION (e.g. 144p, 4k, 16k) to render at a fixed resolution; screenshots
 # are taken at that size.
+# Set ENGINE_UPSCALER (e.g. fsr1, with ENGINE_RESOLUTION=performance) to test an upscaler;
+# screenshots then capture the upscaled window image instead.
 # Set VALIDATE=1 to run Vulkan with validation layers (Homebrew paths on macOS).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 quality=${1:-high}
-out=${2:-.build/scene-shots/$quality${ENGINE_RESOLUTION:+-$ENGINE_RESOLUTION}}
+out=${2:-.build/scene-shots/$quality${ENGINE_RESOLUTION:+-$ENGINE_RESOLUTION}${ENGINE_UPSCALER:+-$ENGINE_UPSCALER}}
+if [[ -n "${ENGINE_UPSCALER:-}" ]]; then
+    export ENGINE_SCREENSHOT_SOURCE=${ENGINE_SCREENSHOT_SOURCE:-window}
+fi
 mkdir -p "$out"
 
 swift build -c release --product Demo >/dev/null
@@ -21,7 +26,7 @@ demo="$(swift build -c release --show-bin-path)/Demo"
 
 backends=(vulkan)
 [[ "$(uname)" == Darwin ]] && backends=(metal)
-if [[ "$(uname)" == Darwin && -n "$(find .build -name 'CVulkan*' -print -quit 2>/dev/null)" ]]; then
+if [[ "$(uname)" == Darwin && "${ENGINE_UPSCALER:-}" != metalfx && -n "$(find .build -name 'CVulkan*' -print -quit 2>/dev/null)" ]]; then
     backends+=(vulkan)
 fi
 

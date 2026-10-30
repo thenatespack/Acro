@@ -243,6 +243,10 @@ extension RenderPass {
     var maxTextureSize: Int { get }
     /// GPU execution time of a recently completed frame, in seconds (nil if unsupported).
     var gpuFrameTime: Double? { get }
+    /// GPU time of each pass of a recently completed frame, in recording order (empty if
+    /// unsupported). Unlike `gpuFrameTime`, this excludes time the GPU spends waiting, e.g.
+    /// for the window server to release a drawable.
+    var gpuPassTimes: [GPUPassTime] { get }
 
     func makeBuffer(bytes: UnsafeRawBufferPointer, usage: BufferUsage) throws -> GPUBuffer
     func makeTexture(_ descriptor: TextureDescriptor) throws -> GPUTexture
@@ -271,6 +275,15 @@ extension RenderPass {
     func endFrame() throws -> Image?
     /// When true, the next frame is read back and returned by `endFrame`. Resets after.
     var captureNextFrame: Bool { get set }
+    /// Capture the window image (after upscaling and window-pass UI) instead of the scene at
+    /// render resolution.
+    var captureWindow: Bool { get set }
+    /// Wait for the display's refresh before presenting (no tearing, frame rate capped at the
+    /// refresh rate). false presents as fast as the GPU can render.
+    var vsync: Bool { get set }
+    /// Scales an offscreen scene into the window in `beginWindowPass`.
+    var upscaler: Upscaler { get set }
+    func supports(_ upscaler: Upscaler) -> Bool
 
     func waitIdle()
     func shutdown()
@@ -289,4 +302,11 @@ extension RenderDevice {
 public struct GraphicsError: Error, CustomStringConvertible {
     public var description: String
     public init(_ description: String) { self.description = description }
+}
+
+/// GPU time of one pass: `depth` (`beginDepthPass`), `scene` (`beginScreenPass`), `upscale`
+/// (an upscaler's first stage) or `window` (`beginWindowPass` when rendering offscreen).
+public struct GPUPassTime: Sendable {
+    public var name: String
+    public var seconds: Double
 }

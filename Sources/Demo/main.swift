@@ -3,7 +3,8 @@ import Foundation
 
 /// Hosts the test scenes: owns the orbit camera, the shadow pass and scene switching.
 ///
-/// Controls: 1–7 switch scenes, Tab / Shift-Tab cycle the render resolution, Space pauses
+/// Controls: 1–7 switch scenes, Tab / Shift-Tab cycle the render resolution, U cycles the
+/// upscaler (bilinear, FSR 1, MetalFX on Metal), V toggles vsync, Space pauses
 /// animation, arrows/WASD or left-drag orbit, Q/E zoom, Esc quits. Scenes add their own
 /// keys (see each scene's doc comment).
 final class DemoGame: Game {
@@ -19,7 +20,7 @@ final class DemoGame: Game {
     /// Position in `resolutionCycle` (nil when started at a size that isn't in it).
     private var resolutionIndex: Int?
     private static let resolutionCycle: [RenderResolution] =
-        [.native] + ["144p", "360p", "720p", "1080p", "4k", "8k", "16k"].compactMap { RenderResolution($0) }
+        [.native] + ["quality", "performance", "144p", "360p", "720p", "1080p", "4k", "8k", "16k"].compactMap { RenderResolution($0) }
 
     init(initialScene: Int) {
         self.initialScene = initialScene
@@ -44,6 +45,12 @@ final class DemoGame: Game {
         let input = engine.input
         if input.wasPressed(.escape) { engine.quit() }
         if input.wasPressed(.space) { paused.toggle() }
+        if input.wasPressed(.v) { engine.vsync.toggle() }
+        if input.wasPressed(.u) {
+            let upscalers = [Upscaler.bilinear, .fsr1(), .metalFXSpatial].filter { engine.device.supports($0) }
+            let index = upscalers.firstIndex(of: engine.upscaler) ?? 0
+            engine.upscaler = upscalers[(index + 1) % upscalers.count]
+        }
         if input.wasPressed(.tab) {
             let step = input.isDown(.leftShift) || input.isDown(.rightShift) ? -1 : 1
             let count = Self.resolutionCycle.count
@@ -84,8 +91,9 @@ final class DemoGame: Game {
         if !scene.status.isEmpty { title += " (\(scene.status))" }
         if paused { title += " [paused]" }
         let size = engine.renderSize
-        title += " · \(size.width)x\(size.height)" + (engine.renderResolution == .native ? " native" : "")
-        title += ", \(engineInfo)"
+        title += " · \(size.width)x\(size.height)"
+            + (engine.renderResolution == .native ? " native" : " \(engine.upscaler) to window")
+        title += ", \(engineInfo)" + (engine.vsync ? "" : " · vsync off")
         if engine.title != title { engine.title = title }
     }
 

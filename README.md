@@ -26,6 +26,7 @@ Scripts/render-scenes.sh     Render every demo scene on every backend and compar
 - Metal pairs with a native AppKit window; Vulkan pairs with GLFW.
 - Resources (`GPUBuffer`, `RenderPipeline`) are freed when you drop the last reference. Metal relies on ARC plus command buffers retaining what they use. On Vulkan, `deinit` hands the handles to a deletion queue, and they are destroyed once the fence of the last frame that could use them has signaled. Anything still alive at shutdown is destroyed with the device.
 - Per-frame data (UI, debug geometry, particles) goes through `pass.setVertexData(_:)`, which copies into a per-frame ring buffer. No buffer management needed. Data that several passes draw (e.g. instances for both the shadow and the screen pass) can be copied once with `frame.upload(_:)` in `renderOffscreen`, then bound in each pass with `pass.setVertexBuffer(_:index:)`.
+- Metal acquires the window's drawable only when the first pass that draws into the window begins. It commits everything recorded before that point first, so the GPU renders shadow maps (and an offscreen scene) while the CPU waits for the window server to hand over a drawable.
 - Both backends use the same conventions so one set of math works everywhere: right-handed, column-major matrices, clip depth in [0, 1], y-up clip space (Vulkan flips the viewport), counter-clockwise front faces, sRGB BGRA8 swapchains.
 
 ### Shaders
@@ -81,15 +82,25 @@ Results are read back when the frame slot is reused: 3 frames later on Metal (vi
 |---|---|
 | `ENGINE_BACKEND=metal\|vulkan` | Force a backend |
 | `ENGINE_QUALITY=low\|medium\|high\|ultra` | Override `EngineConfig.quality` |
-| `ENGINE_RESOLUTION=720p\|4k\|16k\|1920x1080\|native…` | Override `EngineConfig.renderResolution` |
-| `ENGINE_SCREENSHOT=out.png` | Run with a fixed timestep, ignore keyboard/mouse input, save frame `ENGINE_SCREENSHOT_FRAME` (default 60) and quit, printing average update / render / GPU times over the run (a quick benchmark). Useful for golden-image tests. With `ENGINE_OVERLAY=0`, Metal and Vulkan currently produce byte-identical output for every demo scene at every quality level, except `occlusion`, where about 100 pixels differ by one level of shading rounding. Its culling is exact on both backends: the image with culling on matches the one with culling off byte for byte. (The overlay shows live timings, so it differs run to run.) |
+| `ENGINE_RESOLUTION=720p\|4k\|16k\|1920x1080\|performance\|native…` | Override `EngineConfig.renderResolution` |
+| `ENGINE_UPSCALER=bilinear\|fsr1\|fsr1:<sharpness>\|metalfx` | Override `EngineConfig.upscaler` |
+| `ENGINE_VSYNC=0\|1` | Override `EngineConfig.vsync`. `0` removes the frame-rate cap (Metal: `displaySyncEnabled = false`; Vulkan: mailbox, else immediate presentation) |
+| `ENGINE_SCREENSHOT_SOURCE=window` | Screenshots capture the window image (after upscaling and the overlay) instead of the scene at render resolution |
+| `ENGINE_SCREENSHOT=out.png` | Run with a fixed timestep, ignore keyboard/mouse input, save frame `ENGINE_SCREENSHOT_FRAME` (default 60) and quit, printing average update / render / GPU times and GPU time per pass over the run (a quick benchmark; add `ENGINE_VSYNC=0`). Useful for golden-image tests. With `ENGINE_OVERLAY=0`, Metal and Vulkan currently produce byte-identical output for every demo scene at every quality level, except `occlusion`, where about 100 pixels differ by one level of shading rounding. Its culling is exact on both backends: the image with culling on matches the one with culling off byte for byte. (The overlay shows live timings, so it differs run to run.) |
 | `ENGINE_VULKAN_VALIDATION=1` | Enable `VK_LAYER_KHRONOS_validation`. On macOS with Homebrew, also set `VK_LAYER_PATH=$(brew --prefix vulkan-validationlayers)/share/vulkan/explicit_layer.d` and `DYLD_LIBRARY_PATH=$(brew --prefix vulkan-validationlayers)/lib`. Launch the binary directly, because SIP-protected wrappers such as `timeout` strip `DYLD_*`. |
 
 `engine.saveScreenshot(to:)` captures the next frame from game code.
 
 ### Performance overlay
 
-On by default and toggled with the backtick key (`` ` ``). Configure it with `EngineConfig.showDebugOverlay` / `debugOverlayKey` or `ENGINE_OVERLAY=0|1`. It shows FPS and average frame time, min/max over the last 120 frames, CPU time (update + render recording), GPU time (Metal command-buffer timing / Vulkan timestamp queries), draw calls and triangles, backend/GPU and resolution, plus a frame-time graph with a 60 FPS line. Bars are green under ~18 ms, yellow under ~36 ms, red above. The same numbers are available to game code as `engine.stats`.
+On by default and toggled with the backtick key (`` ` ``). Configure it with `EngineConfig.showDebugOverlay` / `debugOverlayKey` or `ENGINE_OVERLAY=0|1`. It shows FPS and average frame time, min/max over the last 120 frames, CPU time (update + render recording), GPU time and GPU time per pass (see below), draw calls and triangles, backend/GPU and vsync state, and resolution (native size, or render size → upscaled output size with the scale factor and upscaler, plus the window size when letterboxed), plus a frame-time graph with a 60 FPS line. Bars are green under ~18 ms, yellow under ~36 ms, red above. The same numbers are available to game code as `engine.stats`.
+
+GPU time is measured per pass: `depth` (each `beginDepthPass`), `scene`, `upscale` and `window` (the last two only when rendering offscreen). Metal samples timestamps at the start and end of each pass's vertex and fragment stages, and adds the two stage durations. Vulkan writes timestamps around each render pass. The frame's GPU time is the sum of its passes on Metal and the span of its command buffer on Vulkan. On Metal, a command buffer's own span (the fallback on GPUs that can't sample at stage boundaries) also counts time spent waiting for the window server to release a drawable, which can be more than the rendering itself.
+
+Reading the numbers:
+- With vsync on, the GPU clocks down when it has headroom, so pass times read higher than with `ENGINE_VSYNC=0`.
+- On macOS, even with vsync off, the window server limits how fast a window can present (120 or 240 FPS depending on the display, and it varies between runs). Most demo scenes hit that limit long before the GPU is busy. Compare GPU time with frame time to see how much headroom is left.
+- The window pass's cost is mostly reading the scene image: about 0.4 ms on an M5 when downscaling from 8K, whatever the MSAA level. (On Metal, the scene image deliberately has no `.pixelFormatView` usage: the flag turns off Apple GPUs' lossless compression, which made this pass 3–4x slower. Views that only drop sRGB don't need it.)
 
 ## Render quality
 
@@ -108,6 +119,8 @@ On by default and toggled with the backtick key (`` ` ``). Configure it with `En
 - `.native` (default) renders straight to the window, as before.
 - `.fixed(width:height:)` renders offscreen at that size. `beginWindowPass()` then scales the image into the window (bilinear, letterboxed to keep the aspect ratio), and the overlay is drawn at window resolution on top. Screenshots are taken at the render resolution, without the overlay.
 
+`.scaled(factor)` renders at the window size divided by `factor` and lets the upscaler (below) bring it back up. These are the FSR-style modes `quality` (1.5), `balanced` (1.7), `performance` (2) and `ultraperformance` (3), or any `<factor>x`.
+
 `RenderResolution("…")` accepts `native`, the presets `144p 240p 360p 480p 540p 720p 1080p 1440p 4k 5k 8k 12k 16k`, any `<height>p` or `<n>k` (16:9), or `<width>x<height>`. Use `engine.renderSize` / `engine.aspectRatio` for projections.
 
 Limits:
@@ -115,6 +128,23 @@ Limits:
 - MSAA is reduced at startup so the multisampled targets fit in 4 GiB (16K drops to 4x, 32K to 1x). A runtime change that wouldn't fit at the current sample count is rejected with a message.
 - Downscaling a huge image to the window is a single bilinear tap, so the preview shimmers. The screenshot is the real output.
 - The PNG writer doesn't compress, so a 16K screenshot is about 530 MB and a 32K one about 2.1 GB.
+
+## Upscaling
+
+`EngineConfig.upscaler` (or `ENGINE_UPSCALER`, or `engine.upscaler` at runtime) picks how an offscreen scene is scaled into the window:
+
+| | Backends | How |
+|---|---|---|
+| `.bilinear` (default) | all | One bilinear tap per pixel |
+| `.fsr1(sharpness:)` | all | AMD FSR 1: edge-adaptive upsampling (EASU) into a texture at the window size, then contrast-adaptive sharpening (RCAS) into the window. `sharpness` is in stops: 0 is the sharpest, default 0.2 |
+| `.metalFXSpatial` | Metal | Apple's MetalFX spatial scaler, then a plain copy into the window |
+
+Notes:
+- **Gamma:** the upscalers work on gamma-encoded values. They read the sRGB scene image through a UNORM view, and the last pass converts back to linear for the sRGB window.
+- **Pixel alignment:** the output goes into a pixel-aligned letterbox rectangle, so upscaled pixels map 1:1 onto the window.
+- **Cross-backend checks:** FSR 1 loads texels directly instead of using gathers, so Metal and Vulkan produce byte-identical results. Run `ENGINE_RESOLUTION=performance ENGINE_UPSCALER=fsr1 Scripts/render-scenes.sh` to check.
+- **Cost:** measured in isolation on an M5 at 1280x720 → 2560x1440, FSR 1 takes about 0.9 ms (upscale) + 0.23 ms (sharpen), and MetalFX spatial about 0.77 ms + 0.23 ms (copy). That only pays off when per-pixel work costs more than that, i.e. with expensive shading or high-resolution displays. Shadow maps and vertex work don't shrink with the render size.
+- **Temporal upscaling** (FSR 2/3, MetalFX temporal) isn't supported yet. It needs camera jitter, motion vectors, a stored depth buffer and MSAA off.
 
 ## Demo scenes
 
@@ -132,9 +162,9 @@ swift run -c release Demo --scene shadows --quality ultra --resolution 4k   # --
 | 6 | `churn` | Buffers, textures and pipelines created and dropped while in flight | |
 | 7 | `occlusion` | Frustum, occlusion and shadow-caster culling: 169 clusters of 125 cubes in a city grid, hardware queries on bounding-box proxies, cubes animated in the vertex shader from a static buffer | **O** toggle culling, **B** show culled clusters through walls |
 
-Everywhere: **1–7** switch scenes, **Tab / Shift-Tab** cycle the render resolution (native, 144p … 16k), **Space** pauses animation, arrows/WASD or left-drag orbit, **Q/E** zoom, **Esc** quits. The window title shows the scene, its state, the render size, the quality and the backend.
+Everywhere: **1–7** switch scenes, **Tab / Shift-Tab** cycle the render resolution (native, quality, performance, 144p … 16k), **U** cycles the upscaler, **V** toggles vsync, **Space** pauses animation, arrows/WASD or left-drag orbit, **Q/E** zoom, **Esc** quits. The window title shows the scene, its state, the render size, the quality and the backend.
 
-`Scripts/render-scenes.sh [quality]` renders every scene on each available backend, writes PNGs to `.build/scene-shots/<quality>[-<resolution>]/`, and fails if the backends differ. Set `ENGINE_RESOLUTION` to render at a fixed size. Set `VALIDATE=1` to run Vulkan under the validation layers, which also fails on validation errors.
+`Scripts/render-scenes.sh [quality]` renders every scene on each available backend, writes PNGs to `.build/scene-shots/<quality>[-<resolution>]/`, and fails if the backends differ. Set `ENGINE_RESOLUTION` to render at a fixed size. Set `ENGINE_UPSCALER` as well to compare upscaled window images. Set `VALIDATE=1` to run Vulkan under the validation layers, which also fails on validation errors.
 
 ## Current limitations / next steps
 

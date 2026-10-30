@@ -4,10 +4,18 @@ import Foundation
 /// `.fixed` renders offscreen at that size and scales the result into the window
 /// (letterboxed). Screenshots are taken at the render resolution, so a fixed size can
 /// be far larger than any window (up to `RenderDevice.maxTextureSize`: 16384 on most GPUs,
-/// 32768 on Apple10-family GPUs such as M5).
+/// 32768 on Apple10-family GPUs such as M5). `.scaled` renders at the window size divided
+/// by a factor and lets the `Upscaler` bring it back up.
 public enum RenderResolution: Equatable, Sendable, CustomStringConvertible {
     case native
     case fixed(width: Int, height: Int)
+    /// The window's framebuffer size divided by `factor` (> 1 renders fewer pixels).
+    case scaled(Float)
+
+    /// Upscaling modes by name, as FSR and similar upscalers define them.
+    public static let scaleModes: [(name: String, factor: Float)] = [
+        ("quality", 1.5), ("balanced", 1.7), ("performance", 2), ("ultraperformance", 3),
+    ]
 
     /// Named sizes, smallest first (all 16:9 except where the name implies otherwise).
     public static let presets: [(name: String, resolution: RenderResolution)] = [
@@ -27,7 +35,8 @@ public enum RenderResolution: Equatable, Sendable, CustomStringConvertible {
     ]
 
     /// Parses `native`, a preset name, `<height>p` (16:9), `<n>k` (n × 960 wide, 16:9),
-    /// or `<width>x<height>`.
+    /// `<width>x<height>`, a scale mode name (`quality`, `balanced`, `performance`,
+    /// `ultraperformance`), or `<factor>x` (e.g. `1.5x`: window size / 1.5).
     public init?(_ string: String) {
         let text = string.lowercased().trimmingCharacters(in: .whitespaces)
         if text == "native" {
@@ -36,6 +45,14 @@ public enum RenderResolution: Equatable, Sendable, CustomStringConvertible {
         }
         if let preset = Self.presets.first(where: { $0.name == text }) {
             self = preset.resolution
+            return
+        }
+        if let mode = Self.scaleModes.first(where: { $0.name == text.replacingOccurrences(of: "-", with: "") }) {
+            self = .scaled(mode.factor)
+            return
+        }
+        if text.hasSuffix("x"), let factor = Float(text.dropLast()), factor >= 1 {
+            self = .scaled(factor)
             return
         }
         let parts = text.split(separator: "x")
@@ -60,13 +77,25 @@ public enum RenderResolution: Equatable, Sendable, CustomStringConvertible {
         case .native: "native"
         case .fixed(let width, let height):
             Self.presets.first { $0.resolution == self }.map { "\($0.name) (\(width)x\(height))" } ?? "\(width)x\(height)"
+        case .scaled(let factor):
+            Self.scaleModes.first { $0.factor == factor }.map { "\($0.name) (1/\(factor))" } ?? "1/\(factor)"
         }
     }
 
-    /// The fixed size, or nil for `.native`.
+    /// The fixed size, or nil for `.native` and `.scaled` (which depend on the window).
     public var size: (width: Int, height: Int)? {
         if case .fixed(let width, let height) = self { return (width, height) }
         return nil
+    }
+
+    /// The offscreen render size for a window of `window` pixels, or nil for `.native`.
+    public func size(window: (width: Int, height: Int)) -> (width: Int, height: Int)? {
+        switch self {
+        case .native: nil
+        case .fixed(let width, let height): (width, height)
+        case .scaled(let factor):
+            (max(1, Int((Float(window.width) / factor).rounded())), max(1, Int((Float(window.height) / factor).rounded())))
+        }
     }
 
     /// Bytes of multisampled color + depth per pixel per sample (BGRA8 + Depth32F).
@@ -80,6 +109,19 @@ public enum RenderResolution: Equatable, Sendable, CustomStringConvertible {
         let perSample = width * height * Self.bytesPerSample
         return [8, 4, 2, 1].first { $0 <= requested && perSample * $0 <= Self.msaaBudget } ?? 1
     }
+}
+
+/// The largest pixel-aligned rectangle inside `window` with the image's aspect ratio, centered.
+/// Upscalers render into exactly this rectangle so output pixels map 1:1 onto it.
+func letterboxRect(image: (width: Int, height: Int), window: (width: Int, height: Int))
+    -> (x: Int, y: Int, width: Int, height: Int) {
+    var width = window.width, height = window.height
+    if width * image.height > height * image.width {
+        width = max(1, (height * image.width + image.height / 2) / image.height)
+    } else {
+        height = max(1, (width * image.height + image.width / 2) / image.width)
+    }
+    return ((window.width - width) / 2, (window.height - height) / 2, width, height)
 }
 
 /// Clip-space scale that fits an image of `image` size inside `window`, keeping its aspect ratio.

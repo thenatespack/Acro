@@ -91,6 +91,36 @@ private func approx(_ a: Vec4, _ b: Vec4, _ eps: Float = 1e-5) -> Bool {
     #expect(RenderResolution("huge") == nil)
 }
 
+@Test func scaledResolutionsFollowTheWindow() {
+    #expect(RenderResolution("performance") == .scaled(2))
+    #expect(RenderResolution("ultra-performance") == .scaled(3))
+    #expect(RenderResolution("1.5x") == .scaled(1.5))
+    #expect(RenderResolution("0.5x") == nil)
+    let window = (width: 2560, height: 1440)
+    #expect(RenderResolution.scaled(1.5).size(window: window)! == (1707, 960))
+    #expect(RenderResolution.fixed(width: 640, height: 360).size(window: window)! == (640, 360))
+    #expect(RenderResolution.native.size(window: window) == nil)
+    #expect(RenderResolution.scaled(2).size == nil)  // depends on the window
+}
+
+@Test func upscalerParsesNamesAndSharpness() {
+    #expect(Upscaler("FSR1") == .fsr1())
+    #expect(Upscaler("fsr1:0.5") == .fsr1(sharpness: 0.5))
+    #expect(Upscaler("metalfx") == .metalFXSpatial)
+    #expect(Upscaler("fsr1:-1") == nil)
+    #expect(Upscaler.fsr1(sharpness: 1).rcasSharpness == 0.5)
+    #expect(Upscaler.metalFXSpatial.rcasSharpness == 0)
+}
+
+@Test func letterboxRectIsPixelAlignedAndCentered() {
+    // Wider window: pillarbox.
+    #expect(letterboxRect(image: (1280, 720), window: (3000, 1440)) == (220, 0, 2560, 1440))
+    // Taller window: letterbox.
+    #expect(letterboxRect(image: (1920, 1080), window: (1280, 1024)) == (0, 152, 1280, 720))
+    // Same aspect: fills the window.
+    #expect(letterboxRect(image: (1707, 960), window: (2560, 1440)) == (0, 0, 2560, 1440))
+}
+
 @Test func msaaIsReducedToFitTheBudget() {
     #expect(RenderResolution.native.affordableSampleCount(8) == 8)
     #expect(RenderResolution("4k")!.affordableSampleCount(8) == 8)
@@ -101,4 +131,14 @@ private func approx(_ a: Vec4, _ b: Vec4, _ eps: Float = 1e-5) -> Bool {
     #expect(letterboxScale(image: (1920, 1080), window: (1920, 1080)) == Vec2(1, 1))
     #expect(letterboxScale(image: (1000, 1000), window: (2000, 1000)) == Vec2(0.5, 1))
     #expect(letterboxScale(image: (2000, 1000), window: (1000, 1000)) == Vec2(1, 0.5))
+}
+
+@MainActor @Test func overlayShowsRenderAndOutputResolution() {
+    #expect(DebugOverlay.resolutionLines(window: (2560, 1440), render: nil, upscaler: .fsr1()) == ["NATIVE 2560X1440"])
+    #expect(DebugOverlay.resolutionLines(window: (2560, 1440), render: (1280, 720), upscaler: .metalFXSpatial) == [
+        "RENDER 1280X720 TO 2560X1440 (2.00X)", "UPSCALER MetalFX spatial",
+    ])
+    #expect(DebugOverlay.resolutionLines(window: (2560, 1600), render: (15360, 8640), upscaler: .bilinear) == [
+        "RENDER 15360X8640 TO 2560X1440 (0.17X)", "UPSCALER bilinear (DOWNSCALING)", "WINDOW 2560X1600 (LETTERBOXED)",
+    ])
 }

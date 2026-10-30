@@ -19,20 +19,42 @@ layout(location = 4) in vec4 vParams;
 
 layout(location = 0) out vec4 outColor;
 
+// Tent-filtered PCF over (2r+1)² texels from 4 (r = 1) or 9 (r = 2) hardware comparison
+// taps, each placed and weighted by where the sample falls inside its texel (Castaño,
+// "Shadow Mapping Summary", 2013). Taps are 2x2 bilinear compares, so each covers four texels.
 float shadowFactor() {
     vec3 ndc = vLightClip.xyz / vLightClip.w;
     vec2 uv = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     float ref = min(ndc.z, 1.0) - scene.shadowParams.y;
     float texel = scene.shadowParams.x;
     int radius = int(scene.shadowParams.z);
+    if (radius <= 0) return texture(shadowMap, vec3(uv, ref));
+
+    vec2 p = uv / texel;  // in texels
+    vec2 base = floor(p + 0.5);
+    vec2 st = p + 0.5 - base;
+    base = (base - 0.5) * texel;
+    vec2 w[3], o[3];
+    int n;
+    float norm;
+    if (radius == 1) {
+        w[0] = 3.0 - 2.0 * st; w[1] = 1.0 + 2.0 * st;
+        o[0] = (2.0 - st) / w[0] - 1.0; o[1] = st / w[1] + 1.0;
+        n = 2;
+        norm = 1.0 / 16.0;
+    } else {
+        w[0] = 4.0 - 3.0 * st; w[1] = vec2(7.0); w[2] = 1.0 + 3.0 * st;
+        o[0] = (3.0 - 2.0 * st) / w[0] - 2.0; o[1] = (3.0 + st) / w[1]; o[2] = st / w[2] + 2.0;
+        n = 3;
+        norm = 1.0 / 144.0;
+    }
     float sum = 0.0;
-    for (int y = -radius; y <= radius; y++) {
-        for (int x = -radius; x <= radius; x++) {
-            sum += texture(shadowMap, vec3(uv + vec2(x, y) * texel, ref));
+    for (int j = 0; j < n; j++) {
+        for (int i = 0; i < n; i++) {
+            sum += w[i].x * w[j].y * texture(shadowMap, vec3(base + vec2(o[i].x, o[j].y) * texel, ref));
         }
     }
-    float taps = float(2 * radius + 1);
-    return sum / (taps * taps);
+    return sum * norm;
 }
 
 void main() {

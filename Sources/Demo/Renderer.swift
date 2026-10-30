@@ -140,7 +140,8 @@ final class Renderer {
         shadow.depthBias = DepthBias(constant: 1.5, slopeScale: 2.5)
         shadowPipeline = try device.makePipeline(shadow)
         shadowMap = try device.makeTexture(
-            TextureDescriptor(width: quality.shadowMapSize, height: quality.shadowMapSize, format: .depth32Float))
+            TextureDescriptor(width: ProcessInfo.processInfo.environment["T_SIZE"].flatMap(Int.init) ?? quality.shadowMapSize,
+                              height: ProcessInfo.processInfo.environment["T_SIZE"].flatMap(Int.init) ?? quality.shadowMapSize, format: .depth32Float))
     }
 
     /// The cached lit pipeline for `style`.
@@ -204,7 +205,8 @@ final class Renderer {
             lightDir: Vec4(light, lighting.intensity),
             cameraPos: Vec4(camera.eye, time),
             fogColor: Vec4(lighting.fogColor, lighting.fogDensity),
-            shadowParams: Vec4(1 / Float(quality.shadowMapSize), 0.0005, Float(quality.shadowFilterRadius), 0))
+            shadowParams: Vec4(1 / Float(shadowMap.width), 0.0005,
+                               ProcessInfo.processInfo.environment["T_RADIUS"].flatMap(Float.init) ?? Float(quality.shadowFilterRadius), 0))
     }
 
     func bind(_ pass: RenderPass) {

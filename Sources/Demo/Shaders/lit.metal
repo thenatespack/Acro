@@ -69,20 +69,42 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]], constant Scene& scene [[b
     return out;
 }
 
+// Tent-filtered PCF over (2r+1)² texels from 4 (r = 1) or 9 (r = 2) hardware comparison
+// taps, each placed and weighted by where the sample falls inside its texel (Castaño,
+// "Shadow Mapping Summary", 2013). Taps are 2x2 bilinear compares, so each covers four texels.
 static float shadowFactor(constant Scene& scene, float4 lightClip, depth2d<float> shadowMap, sampler s) {
     float3 ndc = lightClip.xyz / lightClip.w;
     float2 uv = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     float ref = min(ndc.z, 1.0) - scene.shadowParams.y;
     float texel = scene.shadowParams.x;
     int radius = int(scene.shadowParams.z);
+    if (radius <= 0) return shadowMap.sample_compare(s, uv, ref);
+
+    float2 p = uv / texel;  // in texels
+    float2 base = floor(p + 0.5);
+    float2 st = p + 0.5 - base;
+    base = (base - 0.5) * texel;
+    float2 w[3], o[3];
+    int n;
+    float norm;
+    if (radius == 1) {
+        w[0] = 3.0 - 2.0 * st; w[1] = 1.0 + 2.0 * st;
+        o[0] = (2.0 - st) / w[0] - 1.0; o[1] = st / w[1] + 1.0;
+        n = 2;
+        norm = 1.0 / 16.0;
+    } else {
+        w[0] = 4.0 - 3.0 * st; w[1] = float2(7.0); w[2] = 1.0 + 3.0 * st;
+        o[0] = (3.0 - 2.0 * st) / w[0] - 2.0; o[1] = (3.0 + st) / w[1]; o[2] = st / w[2] + 2.0;
+        n = 3;
+        norm = 1.0 / 144.0;
+    }
     float sum = 0.0;
-    for (int y = -radius; y <= radius; y++) {
-        for (int x = -radius; x <= radius; x++) {
-            sum += shadowMap.sample_compare(s, uv + float2(x, y) * texel, ref);
+    for (int j = 0; j < n; j++) {
+        for (int i = 0; i < n; i++) {
+            sum += w[i].x * w[j].y * shadowMap.sample_compare(s, base + float2(o[i].x, o[j].y) * texel, ref);
         }
     }
-    float taps = float(2 * radius + 1);
-    return sum / (taps * taps);
+    return sum * norm;
 }
 
 fragment float4 fragment_main(VertexOut in [[stage_in]], constant Scene& scene [[buffer(15)]],

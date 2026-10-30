@@ -16,8 +16,13 @@ public struct EngineConfig: Sendable {
     /// MSAA samples for the screen pass (clamped to what the GPU supports). nil uses
     /// `quality.sampleCount`.
     public var sampleCount: Int?
-    /// Size the scene renders at (overridable with `ENGINE_RESOLUTION=720p|4k|16k|1920x1080|native…`).
+    /// Size the scene renders at (overridable with `ENGINE_RESOLUTION=720p|4k|16k|1920x1080|performance|native…`).
     public var renderResolution: RenderResolution
+    /// Scales an offscreen scene into the window (overridable with `ENGINE_UPSCALER=bilinear|fsr1|fsr1:<sharpness>|metalfx`).
+    public var upscaler: Upscaler
+    /// Cap the frame rate at the display refresh rate (overridable with `ENGINE_VSYNC=0|1`).
+    /// Turn it off to see how fast a scene really runs.
+    public var vsync: Bool
 
     public init(
         title: String = "Game",
@@ -29,7 +34,9 @@ public struct EngineConfig: Sendable {
         debugOverlayKey: Key? = .grave,
         quality: RenderQuality = .high,
         sampleCount: Int? = nil,
-        renderResolution: RenderResolution = .native
+        renderResolution: RenderResolution = .native,
+        upscaler: Upscaler = .bilinear,
+        vsync: Bool = true
     ) {
         self.title = title
         self.width = width
@@ -41,6 +48,8 @@ public struct EngineConfig: Sendable {
         self.quality = quality
         self.sampleCount = sampleCount
         self.renderResolution = renderResolution
+        self.upscaler = upscaler
+        self.vsync = vsync
     }
 }
 
@@ -107,6 +116,24 @@ public final class Engine {
             }
         }
     }
+    /// How an offscreen scene is scaled into the window. One the backend doesn't support
+    /// is rejected (printed) and the previous value kept.
+    public var upscaler: Upscaler {
+        didSet {
+            if device.supports(upscaler) {
+                device.upscaler = upscaler
+            } else {
+                print("Upscaler \(upscaler) is not supported on \(device.backend.rawValue); keeping \(oldValue)")
+                upscaler = oldValue
+            }
+        }
+    }
+    /// Wait for the display refresh before presenting. false renders as fast as possible
+    /// (may tear on Vulkan when the surface only offers immediate presentation).
+    public var vsync: Bool {
+        get { device.vsync }
+        set { device.vsync = newValue }
+    }
     /// Seconds since `run` started.
     public private(set) var time: Double = 0
     public private(set) var frameCount = 0
@@ -126,25 +153,49 @@ public final class Engine {
     /// Set via ENGINE_SCREENSHOT=<path.png>: capture after ENGINE_SCREENSHOT_FRAME frames (default 60), then quit.
     private var automatedScreenshot: (url: URL, frame: Int)?
     /// Per-frame sums during an automated screenshot, printed as averages when it's saved.
-    private var screenshotTotals = (frames: 0, update: 0.0, render: 0.0, gpu: 0.0, gpuFrames: 0)
+    private var screenshotTotals = (frames: 0, frame: 0.0, update: 0.0, render: 0.0, gpu: 0.0, gpuFrames: 0, skipped: 0)
+    /// Per-pass GPU time sums during an automated screenshot, in first-seen order.
+    private var screenshotPassTotals: [(name: String, total: Double, count: Int)] = []
 
     private func printScreenshotAverages() {
         let t = screenshotTotals
         guard t.frames > 0 else { return }
         func ms(_ total: Double, _ count: Int) -> String { String(format: "%.2f ms", total / Double(count) * 1000) }
         let gpu = t.gpuFrames > 0 ? ms(t.gpu, t.gpuFrames) : "n/a"
-        print("Averages over \(t.frames) frames: update \(ms(t.update, t.frames)), render \(ms(t.render, t.frames)), "
-            + "GPU \(gpu); last frame \(stats.drawCalls) draws, \(stats.triangles) triangles")
+        let fps = t.frame > 0 ? Double(t.frames) / t.frame : 0
+        print("Averages over \(t.frames) frames: frame \(ms(t.frame, t.frames)) (\(Int(fps.rounded())) FPS), "
+            + "update \(ms(t.update, t.frames)), render \(ms(t.render, t.frames)), "
+            + "GPU \(gpu); last frame \(stats.drawCalls) draws, \(stats.triangles) triangles"
+            + (t.skipped > 0 ? "; \(t.skipped) frames skipped (no drawable)" : ""))
+        if !screenshotPassTotals.isEmpty {
+            let passes = screenshotPassTotals.map { "\($0.name) \(ms($0.total, $0.count))" }
+            let busy = screenshotPassTotals.reduce(0) { $0 + $1.total / Double($1.count) }
+            print("GPU passes: " + passes.joined(separator: ", ") + String(format: " (sum %.2f ms)", busy * 1000))
+        }
     }
 
+    /// The window title. Changes are applied at most every `titleUpdateInterval`: setting a
+    /// window title redraws the title bar, which waits for the display, so updating it every
+    /// frame would cap the frame rate at the refresh rate even with vsync off.
     public var title: String {
-        get { window.title }
-        set { window.title = newValue }
+        get { pendingTitle ?? window.title }
+        set { pendingTitle = newValue }
+    }
+    private var pendingTitle: String?
+    private var lastTitleUpdate = -Double.infinity
+    static let titleUpdateInterval = 0.25
+
+    private func applyPendingTitle() {
+        guard let pendingTitle, time - lastTitleUpdate >= Self.titleUpdateInterval else { return }
+        if pendingTitle != window.title { window.title = pendingTitle }
+        self.pendingTitle = nil
+        lastTitleUpdate = time
     }
 
-    /// The size the scene renders at: the fixed render resolution, or the window's framebuffer.
+    /// The size the scene renders at: the fixed or scaled render resolution, or the window's framebuffer.
     public var renderSize: (width: Int, height: Int) {
-        renderResolution.size ?? window.framebufferSize
+        let window = window.framebufferSize
+        return renderResolution.size(window: window) ?? window
     }
 
     /// Render width / height. Use this for projection matrices.
@@ -178,6 +229,12 @@ public final class Engine {
             let frame = ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT_FRAME"].flatMap(Int.init) ?? 60
             automatedScreenshot = (URL(fileURLWithPath: path), frame)
         }
+        let envUpscaler = ProcessInfo.processInfo.environment["ENGINE_UPSCALER"]
+        let upscaler = try envUpscaler.map {
+            guard let upscaler = Upscaler($0) else { throw GraphicsError("Invalid ENGINE_UPSCALER '\($0)'") }
+            return upscaler
+        } ?? config.upscaler
+        self.upscaler = upscaler
 
         switch backend {
         case .metal:
@@ -198,6 +255,14 @@ public final class Engine {
             #endif
         }
         if let error = validate(resolution) { throw GraphicsError("Render resolution \(resolution): \(error)") }
+        guard device.supports(upscaler) else {
+            throw GraphicsError("Upscaler \(upscaler) is not supported on \(device.backend.rawValue)")
+        }
+        device.upscaler = upscaler
+        device.vsync = ProcessInfo.processInfo.environment["ENGINE_VSYNC"].map { $0 != "0" } ?? config.vsync
+        // Screenshots normally capture the scene at render resolution; `window` captures the
+        // upscaled image the window shows instead.
+        device.captureWindow = ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT_SOURCE"]?.lowercased() == "window"
     }
 
     /// Why `resolution` can't be used on this device, or nil if it can.
@@ -252,6 +317,7 @@ public final class Engine {
 
             let updateStart = clock.now
             game.update(engine: self, dt: Float(dt))
+            applyPendingTitle()
             stats.updateTime = Self.seconds(clock.now - updateStart)
             fpsWindow.frames += 1
             fpsWindow.elapsed += stats.frameTime
@@ -260,6 +326,7 @@ public final class Engine {
                 fpsWindow = (0, 0)
             }
             stats.gpuTime = device.gpuFrameTime
+            stats.gpuPassTimes = device.gpuPassTimes
 
             if let shot = automatedScreenshot, frameCount == shot.frame {
                 pendingScreenshots.append(shot.url)
@@ -267,23 +334,42 @@ public final class Engine {
             device.captureNextFrame = !pendingScreenshots.isEmpty
 
             let framebufferSize = window.framebufferSize
-            if try device.beginFrame(framebufferSize: framebufferSize, renderSize: renderResolution.size) {
+            let renderSize = renderResolution.size(window: framebufferSize)
+            if try device.beginFrame(framebufferSize: framebufferSize, renderSize: renderSize) {
                 countingPass.resetCounts()
                 let renderStart = clock.now
                 game.renderOffscreen(engine: self, frame: Frame(device: device, counter: countingPass))
+                // Starting the screen pass can block until the window has an image to draw into
+                // (when it renders straight to the window); that wait isn't recording time.
+                let screenPassStart = clock.now
                 let pass = device.beginScreenPass(clearColor: clearColor, clearDepth: clearDepth)
+                let windowWait = clock.now - screenPassStart
                 countingPass.inner = pass
                 game.render(engine: self, pass: countingPass)
-                stats.renderTime = Self.seconds(clock.now - renderStart)
+                stats.renderTime = Self.seconds(clock.now - renderStart - windowWait)
                 stats.drawCalls = countingPass.drawCalls
                 stats.triangles = countingPass.triangles
                 if automatedScreenshot != nil {
                     screenshotTotals.frames += 1
+                    screenshotTotals.frame += stats.frameTime
                     screenshotTotals.update += stats.updateTime
                     screenshotTotals.render += stats.renderTime
                     if let gpu = stats.gpuTime {
                         screenshotTotals.gpu += gpu
                         screenshotTotals.gpuFrames += 1
+                    }
+                    var seen: [String: Int] = [:]
+                    for pass in stats.gpuPassTimes {
+                        // Repeated names (e.g. several depth passes) are numbered by occurrence.
+                        let occurrence = seen[pass.name, default: 0]
+                        seen[pass.name] = occurrence + 1
+                        let name = occurrence == 0 ? pass.name : "\(pass.name)#\(occurrence + 1)"
+                        if let i = screenshotPassTotals.firstIndex(where: { $0.name == name }) {
+                            screenshotPassTotals[i].total += pass.seconds
+                            screenshotPassTotals[i].count += 1
+                        } else {
+                            screenshotPassTotals.append((name, pass.seconds, 1))
+                        }
                     }
                 }
 
@@ -293,7 +379,7 @@ public final class Engine {
                 if showDebugOverlay, let overlay {
                     overlay.render(
                         pass: windowPass, stats: stats, time: time, framebufferSize: framebufferSize,
-                        renderSize: renderResolution.size, contentScale: window.contentScale,
+                        renderSize: renderSize, upscaler: upscaler, vsync: device.vsync, contentScale: window.contentScale,
                         backend: device.backend, deviceName: device.deviceName)
                 }
                 if let image = try device.endFrame() {
@@ -308,6 +394,7 @@ public final class Engine {
                 frameCount += 1
             } else {
                 // Minimized or no drawable: don't spin the CPU.
+                if automatedScreenshot != nil { screenshotTotals.skipped += 1 }
                 Thread.sleep(forTimeInterval: 1.0 / 60.0)
             }
         }

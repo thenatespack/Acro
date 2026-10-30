@@ -10,6 +10,8 @@ public struct FrameStats: Sendable {
     public var renderTime: Double = 0
     /// GPU execution time of a recently completed frame, when the backend supports it.
     public var gpuTime: Double?
+    /// That frame's GPU time per pass, in recording order (empty when unsupported).
+    public var gpuPassTimes: [GPUPassTime] = []
     /// Draw calls and triangles submitted by the game in all passes (excludes the debug overlay).
     public var drawCalls = 0
     public var triangles = 0
