@@ -35,6 +35,8 @@ final class CountingRenderPass: RenderPass {
     func setVertexBuffer(_ buffer: GPUBuffer, offset: Int, index: Int) { inner.setVertexBuffer(buffer, offset: offset, index: index) }
     func setVertexData(_ bytes: UnsafeRawBufferPointer, index: Int) { inner.setVertexData(bytes, index: index) }
     func setIndexBuffer(_ buffer: GPUBuffer, type: IndexType) { inner.setIndexBuffer(buffer, type: type) }
+    func setIndexData(_ bytes: UnsafeRawBufferPointer, type: IndexType) { inner.setIndexData(bytes, type: type) }
+    func setScissorRect(_ rect: ScissorRect?) { inner.setScissorRect(rect) }
     func setUniformData(_ bytes: UnsafeRawBufferPointer) { inner.setUniformData(bytes) }
     func setTexture(_ texture: GPUTexture) { inner.setTexture(texture) }
     func setUniformBuffer(_ buffer: GPUBuffer, offset: Int, index: Int, stage: ShaderStage) {

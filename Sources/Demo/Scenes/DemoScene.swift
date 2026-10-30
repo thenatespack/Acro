@@ -35,6 +35,8 @@ protocol DemoScene: AnyObject {
     func drawShadowCasters(_ pass: RenderPass)
     /// The screen pass. Uniforms and the shadow map are already bound; set a pipeline.
     func draw(_ pass: RenderPass) throws
+    /// Fills the engine's 2D UI draw list (drawn in the window pass, over the scene).
+    func drawUI(_ ui: UIDrawList)
 }
 
 extension DemoScene {
@@ -44,6 +46,7 @@ extension DemoScene {
     func camera(orbitEye: Vec3, target: Vec3) -> Camera { Camera(eye: orbitEye, target: target) }
     func update(input: Input, dt: Float, time: Float) {}
     func renderOffscreen(frame: Frame) {}
+    func drawUI(_ ui: UIDrawList) {}
 }
 
 /// Every scene, in number-key order.
@@ -56,4 +59,5 @@ extension DemoScene {
     ResourceChurnScene.self,
     OcclusionScene.self,
     TexturesScene.self,
+    UIScene.self,
 ]
