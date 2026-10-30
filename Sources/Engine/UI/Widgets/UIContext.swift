@@ -89,6 +89,8 @@ public final class UIContext {
     /// Framebuffer pixels per point; layout snaps to this grid.
     public private(set) var scale: Float = 1
     public private(set) var stats = UIContextStats()
+    /// Modifier keys held during the last `update` (shift turns the wheel horizontal in scroll views).
+    public private(set) var modifiers: KeyModifiers = []
 
     /// A layout pass is pending.
     public internal(set) var layoutDirty = true
@@ -106,7 +108,6 @@ public final class UIContext {
     private var pointerConsumed = false
     private var keyboardConsumed = false
     private var ownsTextInput = false
-    private var modifiers: KeyModifiers = []
 
     public init(theme: UITheme = .dark()) {
         self.theme = theme
@@ -276,12 +277,17 @@ public final class UIContext {
             }
             lastClick = (time, pointerPosition, button, count)
 
+            let event = PointerEvent(position: pointerPosition, button: button, modifiers: modifiers, clickCount: count)
+            var pressed: Widget? = hit
+            while let current = pressed {
+                current.pointerWillPress(event)
+                pressed = current.parent
+            }
             if button == .left {
                 var node: Widget? = hit
                 while let current = node, !isFocusable(current) { node = current.parent }
                 focus(node)
             }
-            let event = PointerEvent(position: pointerPosition, button: button, modifiers: modifiers, clickCount: count)
             if let handler = dispatch(.pointerDown(event), from: hit) {
                 capturedWidget = handler
                 captureButton = button
@@ -443,6 +449,19 @@ public final class UIContext {
             if let hit = overlay.hitTest(point) { return hit }
         }
         return root.hitTest(point)
+    }
+
+    /// The pointer shape the UI wants: asked of the captured widget, else of the hovered one,
+    /// then up their ancestors (`Widget.cursor(at:)`); `.arrow` when none asks or the game owns
+    /// the pointer. The host applies it to the window each frame.
+    public var desiredCursor: UICursor {
+        guard !gameOwnsPointer else { return .arrow }
+        var node = capturedWidget ?? hoveredWidget
+        while let current = node {
+            if let cursor = current.cursor(at: pointerPosition) { return cursor }
+            node = current.parent
+        }
+        return .arrow
     }
 
     func isHovered(_ widget: Widget) -> Bool {

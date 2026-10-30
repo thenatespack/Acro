@@ -53,6 +53,23 @@ public enum Axis: Sendable {
     case horizontal, vertical
 }
 
+/// Pointer shapes a widget can ask for (`Widget.cursor(at:)`, `UIContext.desiredCursor`).
+public enum UICursor: Sendable, Equatable {
+    case arrow
+    /// Over something clickable (links, tabs).
+    case pointingHand
+    /// Left-right arrows (a vertical divider, a window's left/right edge).
+    case resizeLeftRight
+    /// Up-down arrows (a horizontal divider, a window's top/bottom edge).
+    case resizeUpDown
+    /// Diagonal arrows for a top-left / bottom-right corner.
+    case resizeDiagonal
+    /// Diagonal arrows for a top-right / bottom-left corner.
+    case resizeAntiDiagonal
+    /// Moving something (dragging a floating panel).
+    case move
+}
+
 /// Where children sit across a stack (and `alignSelf`).
 public enum CrossAlignment: Sendable {
     case start, center, end
@@ -298,6 +315,15 @@ open class Widget {
     /// Called after the context removed this overlay (outside click, Esc, or `dismissOverlay`).
     open func overlayDismissed() {}
 
+    /// The pointer shape this widget wants at `point` while hovered or capturing the pointer
+    /// (dividers ask for resize arrows), or nil to defer to its ancestors. See `UIContext.desiredCursor`.
+    open func cursor(at point: Vec2) -> UICursor? { nil }
+
+    /// Called on the widget under the pointer and then each ancestor before a pointer down is
+    /// dispatched, whether or not anyone handles it. Containers use it to react to any click
+    /// inside them (a floating panel comes to the front).
+    open func pointerWillPress(_ event: PointerEvent) {}
+
     // MARK: Derived state
 
     /// The padded frame: where children and content go.
@@ -364,6 +390,13 @@ open class Widget {
 
     public func removeAllChildren() {
         for child in children { child.removeFromParent() }
+    }
+
+    /// Moves `child` to the end of `children`: painted last and hit first.
+    public func bringChildToFront(_ child: Widget) {
+        guard let index = children.firstIndex(where: { $0 === child }), index != children.count - 1 else { return }
+        children.append(children.remove(at: index))
+        setNeedsDisplay()
     }
 
     func attach(to context: UIContext?) {
