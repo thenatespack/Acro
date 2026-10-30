@@ -1,14 +1,17 @@
 import Foundation
 
-/// Draws a `UIDrawList` into the window pass: one vertex and one index upload, then one
-/// indexed draw per batch with the batch's texture, sampler and scissor.
+/// Draws a `UIDrawList` into the window pass: uploads glyph-atlas pages that changed, then one
+/// vertex and one index upload, then one indexed draw per batch with the batch's texture,
+/// sampler and scissor.
 @MainActor
 final class UIRenderer {
     private let pipeline: RenderPipeline
     private let whiteTexture: GPUTexture
     private let defaultSampler: GPUSampler
+    private let device: RenderDevice
 
     init(device: RenderDevice) throws {
+        self.device = device
         var descriptor = PipelineDescriptor(
             shader: try ShaderSource.load(named: "ui", bundle: .module), vertexLayout: UIVertex.layout)
         descriptor.cullMode = .none
@@ -23,6 +26,13 @@ final class UIRenderer {
 
     func render(_ list: UIDrawList, into pass: RenderPass) {
         guard !list.batches.isEmpty else { return }
+        if let atlas = list.glyphAtlasIfCreated {
+            do {
+                try atlas.uploadDirtyPages(device: device)
+            } catch {
+                print("UI glyph atlas upload failed: \(error)")
+            }
+        }
         pass.setPipeline(pipeline)
         pass.setPushConstants(Vec2(Float(list.framebufferSize.width), Float(list.framebufferSize.height)))
         pass.setVertexData(list.vertices)
@@ -36,7 +46,12 @@ final class UIRenderer {
                 pass.setScissorRect(batch.clip.scissor)
                 clip = batch.clip
             }
-            let batchTexture = batch.texture ?? whiteTexture
+            let batchTexture: GPUTexture
+            switch batch.source {
+            case .texture(let t)?: batchTexture = t
+            case .glyphPage(let page)?: batchTexture = list.glyphAtlasIfCreated?.texture(page: page) ?? whiteTexture
+            case nil: batchTexture = whiteTexture
+            }
             if texture !== batchTexture {
                 pass.setTexture(batchTexture, index: 1)
                 texture = batchTexture

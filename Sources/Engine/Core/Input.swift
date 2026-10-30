@@ -1,7 +1,7 @@
 public enum Key: Hashable, Sendable, CaseIterable {
     case a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z
     case num0, num1, num2, num3, num4, num5, num6, num7, num8, num9
-    case space, enter, escape, tab, backspace, grave
+    case space, enter, escape, tab, backspace, grave, leftBracket, rightBracket
     case f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12
     case delete, home, end, pageUp, pageDown
     case left, right, up, down
@@ -28,6 +28,14 @@ public final class Input {
     /// Cursor movement since the previous frame, in window points.
     public private(set) var mouseDelta: Vec2 = .zero
     private var lastMousePosition: Vec2?
+    /// Scroll wheel / trackpad movement this frame, in points. Positive y scrolls up (towards
+    /// the top of a document, i.e. content moves down), positive x scrolls left. Trackpads report
+    /// precise deltas; a mouse wheel notch is about 10–40 points depending on the platform.
+    public private(set) var scrollDelta: Vec2 = .zero
+    /// This frame's key presses and OS auto-repeats, in order, with the modifiers held. Every
+    /// non-modifier key is reported, whether or not text input is active (unlike `wasPressed`),
+    /// so UI keyboard navigation (arrows on a focused slider, Tab between widgets) gets repeats.
+    public private(set) var keyPresses: [KeyEvent] = []
 
     // MARK: Text input
 
@@ -126,6 +134,8 @@ public final class Input {
         keysPressed.removeAll(keepingCapacity: true)
         keysReleased.removeAll(keepingCapacity: true)
         textEvents.removeAll(keepingCapacity: true)
+        keyPresses.removeAll(keepingCapacity: true)
+        scrollDelta = .zero
         buttonsPressed.removeAll(keepingCapacity: true)
         buttonsReleased.removeAll(keepingCapacity: true)
     }
@@ -142,6 +152,16 @@ public final class Input {
         } else if keysDown.remove(key) != nil {
             keysReleased.insert(key)
         }
+    }
+
+    func addScroll(_ delta: Vec2) {
+        scrollDelta += delta
+    }
+
+    /// Platforms call this for every key down and auto-repeat (see `keyPresses`).
+    func recordKeyPress(_ key: Key, modifiers: KeyModifiers, isRepeat: Bool) {
+        guard !key.isModifier else { return }
+        keyPresses.append(KeyEvent(key: key, modifiers: modifiers, isRepeat: isRepeat))
     }
 
     func setButton(_ button: MouseButton, down: Bool) {
