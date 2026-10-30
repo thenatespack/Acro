@@ -14,7 +14,7 @@ Sources/
     Backends/Vulkan/ VulkanRenderDevice (+ helpers)
   CVulkan, CGLFW/    System-library module maps
   Demo/              Test scenes (Renderer + Scenes/) and their shaders
-Scripts/compile-shaders.sh   GLSL -> SPIR-V
+Scripts/compile-shaders.sh   GLSL -> SPIR-V -> MSL (+ spirv-to-msl.c, the SPIRV-Cross driver)
 Scripts/render-scenes.sh     Render every demo scene on every backend and compare
 ```
 
@@ -33,20 +33,31 @@ Scripts/render-scenes.sh     Render every demo scene on every backend and compar
 
 ### Shaders
 
-Each shader ships in two forms that follow shared binding conventions (see `ShaderSource`):
+Shaders are written once, in GLSL (`name.vert` / `name.frag`). `Scripts/compile-shaders.sh` (needs `glslc` and SPIRV-Cross: `brew install shaderc spirv-cross`) regenerates everything from them:
 
-| | Metal (`name.metal`) | Vulkan (`name.vert` / `name.frag` → `.spv`) |
+1. `glslc` compiles each stage to SPIR-V (`name.vert.spv`), which the Vulkan backend loads.
+2. `Scripts/spirv-to-msl.c`, a small driver for the SPIRV-Cross C API that the script builds into `.build/`, cross-compiles each SPIR-V stage to MSL (`name.vert.metal`, `name.frag.metal`), which the Metal backend compiles at runtime. Generated files start with a "do not edit" header and a hash of their SPIR-V. A test (`generatedMetalMatchesSPIRV`) fails if the `.metal` is stale.
+
+All outputs are committed, so building the package needs neither tool. Rerun the script after editing any GLSL. MoltenVK runs our SPIR-V on Metal by converting it with the same SPIRV-Cross, so native Metal runs essentially the MSL that Vulkan-on-MoltenVK runs. This keeps the backends byte-identical. The driver differs from a plain `spirv-cross --msl` in three ways:
+- It renames the entry points to `vertex_main` / `fragment_main`. The stages stay in separate files (SPIRV-Cross names its per-stage types and helpers independently, so they can't simply be concatenated). `ShaderSource.metalFragmentSource` carries the fragment file.
+- It remaps resources to the Metal column of the table below. The `spirv-cross` CLI can't remap descriptor sets or push constants, hence the driver. A resource outside the table is an error.
+- It undoes the Vulkan y flip with SPIRV-Cross's `flip_vert_y`, which negates `gl_Position.y` again at the end of the vertex shader (MoltenVK does the same).
+
+Binding conventions (see `ShaderSource`). The GLSL column is what you write. Hand-written MSL (one `name.metal` with both entry points, loaded in preference to generated files) must follow the Metal column:
+
+| | Metal | Vulkan GLSL |
 |---|---|---|
 | Entry points | `vertex_main`, `fragment_main` | `main` |
 | Vertex attribute *n* | `[[attribute(n)]]` | `layout(location = n) in` |
 | Push constants (≤128 B) | `constant T& [[buffer(16)]]` | `layout(push_constant) uniform` |
+| Per-frame uniform block | `constant T& [[buffer(15)]]` | `layout(set = 0, binding = 0, std140) uniform` |
+| Shadow map / image 0 | `[[texture(0)]]`, `[[sampler(0)]]` | `layout(set = 1, binding = 0) uniform sampler2DShadow` (or `sampler2D`) |
 | Uniform buffer *n* (2–7) | `constant T& [[buffer(n)]]` | `layout(set = 2, binding = n, std140) uniform` |
 | Texture *n* (1–7) | `texture2d<float> [[texture(n)]]` | `layout(set = 2, binding = 8 + n) uniform texture2D` |
 | Sampler *n* (1–7) | `sampler [[sampler(n)]]` | `layout(set = 2, binding = 16 + n) uniform sampler` |
+| Motion vectors | `[[color(1)]]` | `layout(location = 1) out` |
 
-Buffer indices 0 and 1 are vertex buffers, buffer 15 is the per-frame uniform block, and texture/sampler 0 is the shadow map. On Vulkan, textures and samplers are separate descriptors: sample with `texture(sampler2D(tex, samp), uv)`.
-
-MSL is compiled at runtime. GLSL must be compiled to SPIR-V with `Scripts/compile-shaders.sh` (needs `glslc`), and the `.spv` files are committed.
+Buffer indices 0 and 1 are vertex buffers. On Vulkan, textures and samplers are separate descriptors: sample with `texture(sampler2D(tex, samp), uv)`. GLSL vertex shaders must end with `gl_Position.y = -gl_Position.y;` (see above).
 
 ### Textures, samplers and uniform buffers
 
@@ -90,7 +101,7 @@ swift build -c release
 swift run -c release Demo
 ```
 
-`Package.swift` uses the module maps in `Windows/` (linking `vulkan-1`, `glfw3`, `zlib`) and adds `-I`/`-L` flags from `VULKAN_SDK`, `GLFW_DIR` and `ZLIB_DIR` (`include\` and `lib\` under each; the SDK uses `Include` and `Lib`). These use unsafeFlags, so on Windows the package can't be used as a dependency of another package. Recompile shaders with `Scripts\compile-shaders.ps1` (glslc from the SDK). `Scripts/render-scenes.sh` is bash-only (use Git Bash or WSL).
+`Package.swift` uses the module maps in `Windows/` (linking `vulkan-1`, `glfw3`, `zlib`) and adds `-I`/`-L` flags from `VULKAN_SDK`, `GLFW_DIR` and `ZLIB_DIR` (`include\` and `lib\` under each; the SDK uses `Include` and `Lib`). These use unsafeFlags, so on Windows the package can't be used as a dependency of another package. Recompile shaders with `Scripts\compile-shaders.ps1` (glslc and SPIRV-Cross from the SDK, clang from the Swift toolchain; untested). `Scripts/render-scenes.sh` is bash-only (use Git Bash or WSL).
 
 ### Occlusion queries
 
@@ -209,4 +220,3 @@ The full roadmap (ECS, assets, physics, audio, UI, in-engine editor) lives on th
 
 - Static buffers and textures are immutable after creation (use `setVertexData` / `setUniformData` for dynamic data), and creating them on Vulkan blocks on the upload.
 - Textures are RGBA8 2D only: no compressed formats, cube maps, arrays, render-to-texture for game code, or image loading from files yet.
-- Two shader sources per shader. A single-source pipeline (e.g. Slang → SPIR-V + MSL) would remove the duplication.
