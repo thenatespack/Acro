@@ -5,14 +5,19 @@ A small cross-platform game engine in Swift: **Metal on macOS, Vulkan everywhere
 ```
 Sources/
   Engine/
-    Core/            Engine loop, Game protocol, math (Mat4/Vec*), Input, FrameStats, Image/PNGEncoder (compressed PNG writer)
+    Core/            Engine loop, Game protocol, math (Mat4/Vec*), Input, TextInput, FrameStats, Image/PNGEncoder (compressed PNG writer)
     Debug/           Performance overlay + built-in 5x7 bitmap font
-    Shaders/         Engine-owned shaders (overlay)
+    Scene/           World (entities, sparse-set components, queries), Transform hierarchy, staged systems
+    UI/              2D UI draw list (UIDrawList) and its renderer
+    Text/            Font (stb_truetype + GPOS kerning), GlyphAtlas (SDF pages), TextLayout, TextRenderer
+    Fonts/           Bundled Inter Regular (SIL OFL, license alongside)
+    Shaders/         Engine-owned shaders (blit, upscalers, overlay, ui, text)
     Graphics/        Backend-agnostic API: RenderDevice, RenderPass, GPUBuffer, PipelineDescriptor, ShaderSource
     Platform/        Windows: AppKitWindow (CAMetalLayer) and GLFWWindow (Vulkan surface)
     Backends/Metal/  MetalRenderDevice
     Backends/Vulkan/ VulkanRenderDevice (+ helpers)
-  CVulkan, CGLFW/    System-library module maps
+  CVulkan, CGLFW, CZlib/  System-library module maps (Windows variants under Windows/)
+  CStbTrueType/      Vendored stb_truetype (public domain)
   Demo/              Test scenes (Renderer + Scenes/) and their shaders
 Scripts/compile-shaders.sh   GLSL -> SPIR-V -> MSL (+ spirv-to-msl.c, the SPIRV-Cross driver)
 Scripts/render-scenes.sh     Render every demo scene on every backend and compare
@@ -65,6 +70,47 @@ Buffer indices 0 and 1 are vertex buffers. On Vulkan, textures and samplers are 
 - `device.makeSampler(SamplerDescriptor(filter:mipFilter:addressMode:))` returns a cached sampler (nearest/linear, mip none/nearest/linear, repeat/clamp/mirror).
 - In a pass: `setTexture(_:index:)`, `setSampler(_:index:)`, `setUniformBuffer(_:index:)` for a static buffer created with `.uniform` usage, or `setUniformData(_:index:)` to copy per-draw data (≤16 KiB) into the frame's ring buffer. Pass `stage:` to bind to the vertex and/or fragment stage.
 - On Vulkan, bindings are collected per pass and written into a descriptor set (set 2) allocated from the frame slot's pool on the first draw after a change. The pool is reset when that slot's fence signals.
+
+### Scene / ECS
+
+`World` (in `Sources/Engine/Scene/`) holds entities and their components. It's opt-in: set `engine.world = world` and the engine calls `world.update(dt:)` right after `Game.update` every frame. Games that don't use it are unaffected.
+
+- **Entities** are `Entity` handles (slot index + generation). `despawn` bumps the generation, so stale handles read as nil and mutations through them are ignored, even after the slot is reused.
+- **Components** are structs conforming to `Component`. Use `add(_:to:)` (inserts or replaces), `remove(_:from:)`, `get(_:for:)`, `modify(_:for:)`. Each type is stored in its own sparse set, so add/remove are O(1) and iteration walks dense arrays.
+- **Queries**: `world.query(A.self, B.self) { entity, a, b in }` (read-only) and `world.queryMutating(A.self, B.self) { entity, a, b in }` (`inout`, written back after the body). They take 1–4 component types and walk the smallest store. Despawning, removing a component and adding a new component type during a query are deferred until the outermost query returns. In release builds a two-component query over 100k entities takes about 0.2 ms.
+- **Tools**: `components(of:)` / `componentTypes(of:)` enumerate an entity's components as `any Component`, and `add`/`remove` accept existentials. This is the hook for the editor inspector and serialization.
+- **Hierarchy**: `setParent(child, to: parent, keepWorldTransform:)`. By default the child keeps its local `Transform` and moves with the new parent. `keepWorldTransform: true` rewrites it so the child stays put. Despawning an entity despawns its children; reparent them first to keep them. `GlobalTransform.matrix` (added automatically) is computed parent-first each frame, and only dirty subtrees are recomputed.
+- **Systems**: `world.addSystem("name", stage: .fixedUpdate) { world in … }`. Stages run in order: `.fixedUpdate` (zero or more times per frame at `fixedTimestep`, capped by `maxFixedStepsPerFrame`, excess dropped), `.update`, `.lateUpdate`, transform propagation, `.renderPrep` (interpolate with `world.time.alpha`). Within a stage, systems run in registration order (or `before:` / `after:`). `world.time.delta` is the fixed step in `.fixedUpdate` and the frame's dt elsewhere. In screenshot mode dt is a fixed 1/60 s, so fixed steps are deterministic.
+- `Quat` (Math.swift) is the rotation type: axis-angle, composition, vector rotation, `matrix`, `init(rotationMatrix:)`, `slerp`.
+
+### 2D UI draw list
+
+`engine.ui` is an immediate-mode 2D draw list (`UIDrawList`) that game code and the future retained widget tree fill each frame, in points (top-left origin, y down; one point is `ui.scale` framebuffer pixels, the window's backing scale factor). It is cleared before `Game.update`, so fill it in `update` or `render`. The engine draws it in the window pass, at window resolution, over the scene and under the debug overlay.
+
+Primitives: `fillRect` (solid color or linear gradient, per-corner radii), `strokeRect` (a border inside the edge, rounded too), `drawImage` (any `GPUTexture` with a sampler, UV rect, tint, rounded corners), `drawLine` (butt or round caps), and generic textured quads `drawTexturedRect` / `drawTexturedQuad` (modes `.image`, `.mask` for glyph atlases with coverage in alpha, `.sdf(smoothing:)` as a hook for SDF text). Every shape is one quad whose fragment shader evaluates the signed distance to a rounded box, so edges are antialiased analytically at any scale, without MSAA.
+
+Colors are sRGB with straight alpha. They are interpolated in sRGB (gradients look like CSS), converted to linear in the shader and blended in linear light on the sRGB target. `.rgba8Srgb` textures sample as linear, `.rgba8Unorm` as stored.
+
+`pushClip` / `popClip` / `withClip` keep a stack of scissor rectangles (nested clips intersect). They are whole-pixel rectangles with no antialiasing, and there is no rounded clipping. Items entirely outside the clip are dropped on the CPU.
+
+Consecutive items with the same clip, texture and sampler merge into one draw call; items without a texture join any batch. Each frame uploads all vertices and indices once through the per-frame ring (`setVertexData` / `setIndexData`). `engine.ui.stats` reports items, culled, vertices, indices and batches (draw calls). `RenderPass.setScissorRect(_:)` is available to any pass. Cost: the full demo UI is ~1.5–1.7 ms of window-pass GPU time at 2560x1440 on M-series (lots of blended overdraw).
+
+### Text
+
+Text is drawn as signed-distance-field glyphs. `Font` loads a TrueType/OpenType file with the vendored stb_truetype (`Sources/CStbTrueType`, public domain); `Font.bundledUI()` is Inter Regular (SIL OFL, license next to it in `Sources/Engine/Fonts`). Kerning comes from GPOS (`kern` feature) or the legacy `kern` table. One Unicode scalar maps to one glyph; complex shaping (ligatures, RTL, combining marks) is not supported.
+
+- `TextLayout(text, font:, size:, maxWidth:, alignment:)` breaks lines (explicit newlines, word wrap, long-word splitting), applies advances and kerning, and reports `width`/`height`. It needs no GPU, so it is also the `measure` API.
+- `GlyphAtlas` rasterizes each glyph once on demand (48 px/em, 6 px SDF padding, 128 on the outline) into 512x512 RGBA8 pages packed with a shelf packer. A full page is kept and a new one added. The device has no sub-region texture update, so a page that gained glyphs is re-created from its CPU copy; call `prewarm` for large character sets.
+- `TextRenderer.draw(_:at:size:color:...)` queues text in pixel coordinates, and `render(into:screenSize:)` issues one draw per atlas page. The shader (`text.frag`) turns the distance into alpha with `smoothstep` over the screen-space derivative, so edges stay about one pixel wide at any scale. Output is straight alpha with standard alpha blending; colors are linear RGB; depth is not tested.
+- To batch text through another renderer, call `GlyphAtlas.appendQuads(layout, font:, origin:, color:, to:)`. It fills `TextQuads.vertices[page]` with `TextVertex` (position, uv, color) triangles, and `atlas.texture(page:)` is the texture to bind (call `atlas.uploadDirtyPages(device:)` first).
+
+### Text input
+
+Typing for text fields is separate from key state. A focused field calls `input.startTextInput(rect:)` with its caret rectangle (window points, top-left origin) and `input.stopTextInput()` when it loses focus. Each frame, `input.textEvents` is the ordered stream of `.text(String)` (committed Unicode text: typed characters, dead-key results, finished IME compositions) and `.key(KeyEvent)` (backspace, delete, arrows, home/end, page up/down, enter, tab, escape, function keys, and shortcuts: a character key with control or command held; each with `modifiers` and `isRepeat` for OS key repeats). `input.committedText` and `input.keyEvents` are convenience views of it, and `KeyModifiers.shortcut` is the platform's editing modifier (command on macOS, control elsewhere). `input.composition` is the IME's in-progress (marked) text and its selection in Characters; draw it underlined at the caret. `Clipboard.string` gets/sets the system clipboard as plain text.
+
+While text input is active, character, editing and navigation keys are not reported by `isDown` / `wasPressed` (typing "w" doesn't move the camera); modifier keys and the mouse still are. With ENGINE_SCREENSHOT, text input is ignored like all other input.
+
+On macOS the window view is an NSTextInputClient, so dead keys (option+e, e), the press-and-hold accent popup and input methods such as Japanese/Chinese/Korean work, and the candidate window appears at the caret rectangle. On the GLFW (Vulkan) window, committed text comes from GLFW's char callback, but GLFW 3.4 has no preedit API: `composition` stays nil, an input method's text only appears once committed, and the candidate window can't be positioned. In the Demo, F2 toggles a debug mode that echoes typed text, the composition and key events in the window title (Esc exits).
 
 ## Building
 
@@ -209,8 +255,10 @@ swift run -c release Demo --scene shadows --quality ultra --resolution 4k   # --
 | 6 | `churn` | Buffers, textures and pipelines created and dropped while in flight | |
 | 7 | `occlusion` | Frustum, occlusion and shadow-caster culling: 169 clusters of 125 cubes in a city grid, hardware queries on bounding-box proxies, cubes animated in the vertex shader from a static buffer | **O** toggle culling, **B** show culled clusters through walls |
 | 8 | `textures` | Procedural mipmapped sRGB texture with a repeat/trilinear sampler, a nearest-sampled linear texture, static and per-frame uniform buffers | **M** toggle mipmapping |
+| 9 | `text` | SDF text: sizes from 12 to 128 px, kerning pairs, word wrap, alignment, non-ASCII Latin | |
+| 10 | `ui` | 2D draw list: rounded rects with per-corner radii, strokes, gradients, images, lines, nested clipping, batching | |
 
-Everywhere: **1–8** switch scenes, **Tab / Shift-Tab** cycle the render resolution (native, quality, performance, 144p … 16k), **U** cycles the upscaler (temporal ones only without MSAA), **V** toggles vsync, **Space** pauses animation, arrows/WASD or left-drag orbit, **Q/E** zoom, **Esc** quits. The window title shows the scene, its state, the render size, the quality and the backend.
+Everywhere: **1–9** and **0** (scene 10) switch scenes, **F2** toggles a text-input test mode (echoes typing in the window title), **Tab / Shift-Tab** cycle the render resolution (native, quality, performance, 144p … 16k), **U** cycles the upscaler (temporal ones only without MSAA), **V** toggles vsync, **Space** pauses animation, arrows/WASD or left-drag orbit, **Q/E** zoom, **Esc** quits. The window title shows the scene, its state, the render size, the quality and the backend.
 
 `Scripts/render-scenes.sh [quality]` renders every scene on each available backend, writes PNGs to `.build/scene-shots/<quality>[-<resolution>]/`, and fails if the backends differ. Set `ENGINE_RESOLUTION` to render at a fixed size. Set `ENGINE_UPSCALER` as well to compare upscaled window images. Set `VALIDATE=1` to run Vulkan under the validation layers, which also fails on validation errors.
 
