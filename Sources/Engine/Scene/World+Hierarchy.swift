@@ -9,7 +9,7 @@ extension World {
         isAlive(entity) ? parents[Int(entity.index)] : nil
     }
 
-    /// `entity`'s children, in the order they were attached.
+    /// `entity`'s children, in order (attachment order unless `setParent(_:to:at:)` placed one).
     public func children(of entity: Entity) -> [Entity] {
         isAlive(entity) ? childLists[Int(entity.index)] : []
     }
@@ -22,10 +22,14 @@ extension World {
     /// the `Transform` is rewritten so the child stays where it is in the world (shear can't be
     /// represented, see `Transform.init(matrix:)`).
     ///
+    /// The child is appended to the new parent's children (or to the roots). With `index`
+    /// it is inserted so that it ends up at that position among its new siblings (clamped),
+    /// which also reorders an entity within its current parent.
+    ///
     /// Returns false, changing nothing, if either entity is stale or the change would make a
     /// cycle (parenting an entity to itself or one of its descendants).
     @discardableResult
-    public func setParent(_ child: Entity, to parent: Entity?, keepWorldTransform: Bool = false) -> Bool {
+    public func setParent(_ child: Entity, to parent: Entity?, at index: Int? = nil, keepWorldTransform: Bool = false) -> Bool {
         guard isAlive(child) else { return false }
         if let parent {
             guard isAlive(parent) else { return false }
@@ -37,12 +41,19 @@ extension World {
         }
         let slot = Int(child.index)
         let oldParent = parents[slot]
-        if oldParent == parent { return true }
+        if oldParent == parent && index == nil { return true }
         let world = keepWorldTransform ? worldMatrix(of: child) : nil
 
-        if let oldParent { childLists[Int(oldParent.index)].removeAll { $0 == child } }
+        if let oldParent { childLists[Int(oldParent.index)].removeAll { $0 == child } } else { removeRoot(child) }
         parents[slot] = parent
-        if let parent { childLists[Int(parent.index)].append(child) }
+        if let parent {
+            let count = childLists[Int(parent.index)].count
+            childLists[Int(parent.index)].insert(child, at: index.map { min(max($0, 0), count) } ?? count)
+        } else if let index {
+            insertRoot(child, at: max(index, 0))
+        } else {
+            appendRoot(child)
+        }
 
         if let world, has(Transform.self, for: child) {
             let parentWorld = parent.map(worldMatrix(of:)) ?? .identity

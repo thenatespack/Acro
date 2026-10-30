@@ -9,6 +9,11 @@ public struct WorldSnapshot {
     let stores: [any AnyComponentStore]
     let parents: [Entity?]
     let childLists: [[Entity]]
+    let rootList: [Entity?]
+    let rootPos: [Int]
+    let rootHoles: Int
+    let entityIDs: [EntityID?]
+    let idLookup: [EntityID: Entity]
     let time: WorldTime
     let fixedAccumulator: Double
 
@@ -25,6 +30,7 @@ extension World {
         return WorldSnapshot(
             generations: generations, alive: alive, freeSlots: freeSlots, entityCount: entityCount,
             stores: storeOrder.map { $0.clone() }, parents: parents, childLists: childLists,
+            rootList: rootList, rootPos: rootPos, rootHoles: rootHoles, entityIDs: entityIDs, idLookup: idLookup,
             time: time, fixedAccumulator: fixedAccumulator)
     }
 
@@ -41,7 +47,8 @@ extension World {
     /// The one gap: a slot that was alive in the snapshot gets its old generation back, so a
     /// handle from play mode to a later occupant of that slot can become valid again once
     /// the restored entity is despawned and the slot reused. Drop play-mode handles on
-    /// restore. Spawning after a restore hands out slots in the same order as after the
+    /// restore. Entity ids (`EntityID`) and the order of the roots are restored with the
+    /// entities. Spawning after a restore hands out slots in the same order as after the
     /// snapshot was taken, so replays are deterministic.
     public func restore(_ snapshot: WorldSnapshot) {
         precondition(!isIterating, "restore(_:) can't run inside a query")
@@ -78,6 +85,11 @@ extension World {
         stores = Dictionary(uniqueKeysWithValues: storeOrder.map { (ObjectIdentifier($0.componentType), $0) })
         parents = snapshot.parents + Array(repeating: nil, count: count - snapshot.parents.count)
         childLists = snapshot.childLists + Array(repeating: [], count: count - snapshot.childLists.count)
+        rootList = snapshot.rootList
+        rootPos = snapshot.rootPos + Array(repeating: -1, count: count - snapshot.rootPos.count)
+        rootHoles = snapshot.rootHoles
+        entityIDs = snapshot.entityIDs + Array(repeating: nil, count: count - snapshot.entityIDs.count)
+        idLookup = snapshot.idLookup
         time = snapshot.time
         fixedAccumulator = snapshot.fixedAccumulator
     }

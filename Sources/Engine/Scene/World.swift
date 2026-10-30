@@ -80,9 +80,29 @@ public final class World {
     @usableFromInline var iterationDepth = 0
     private var deferred: [() -> Void] = []
 
-    // Hierarchy, indexed by slot (see World+Hierarchy.swift).
+    // Hierarchy, indexed by slot (see World+Hierarchy.swift). `rootList` holds the entities
+    // without a parent in order, with holes where roots were removed (`rootPos` is each
+    // root's position in it, -1 for non-roots), so removing a root is O(1).
     var parents: [Entity?] = []
     var childLists: [[Entity]] = []
+    var rootList: [Entity?] = []
+    var rootPos: [Int] = []
+    var rootHoles = 0
+
+    // Persistent ids, indexed by slot, and the reverse map (see EntityID.swift).
+    var entityIDs: [EntityID?] = []
+    var idLookup: [EntityID: Entity] = [:]
+    /// Whether `spawn` gives every new entity an `EntityID`. Off by default (games don't
+    /// need ids); editor worlds turn it on. Turning it on gives ids to the live entities
+    /// that have none. Entities loaded from a file keep the ids in it either way.
+    public var assignsEntityIDs = false {
+        didSet {
+            guard assignsEntityIDs, !oldValue else { return }
+            for entity in entities where entityIDs[Int(entity.index)] == nil { _ = ensureID(of: entity) }
+        }
+    }
+    /// Makes new ids. Replace it for deterministic ids in tests or replays.
+    public var entityIDGenerator: () -> EntityID = { EntityID.random() }
 
     // Systems and timing (see World+Systems.swift).
     var systems: [[SystemEntry]] = Array(repeating: [], count: SystemStage.allCases.count)
@@ -102,8 +122,15 @@ public final class World {
 
     // MARK: Entities
 
-    /// Creates an entity with no components.
+    /// Creates an entity with no components (and an `EntityID` if `assignsEntityIDs`).
     public func spawn() -> Entity {
+        let entity = spawnEntity()
+        if assignsEntityIDs { _ = ensureID(of: entity) }
+        return entity
+    }
+
+    /// Takes a slot and makes the entity a root, without giving it an id.
+    func spawnEntity() -> Entity {
         let entity: Entity
         if let slot = freeSlots.popLast() {
             alive[Int(slot)] = true
@@ -115,8 +142,11 @@ public final class World {
             alive.append(true)
             parents.append(nil)
             childLists.append([])
+            rootPos.append(-1)
+            entityIDs.append(nil)
         }
         entityCount += 1
+        appendRoot(entity)
         return entity
     }
 
@@ -145,6 +175,8 @@ public final class World {
         // Detach the subtree's root, then free every entity in it.
         if let parent = parents[Int(entity.index)] {
             childLists[Int(parent.index)].removeAll { $0 == entity }
+        } else {
+            removeRoot(entity)
         }
         var pending = [entity]
         while let next = pending.popLast() {
@@ -153,6 +185,10 @@ public final class World {
             for store in storeOrder { store.remove(next) }
             parents[slot] = nil
             childLists[slot] = []
+            if let id = entityIDs[slot] {
+                idLookup[id] = nil
+                entityIDs[slot] = nil
+            }
             alive[slot] = false
             generations[slot] &+= 1
             freeSlots.append(next.index)

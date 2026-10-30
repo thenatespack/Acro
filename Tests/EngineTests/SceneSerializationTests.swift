@@ -215,8 +215,8 @@ private func text(_ data: Data) -> String { String(decoding: data, as: UTF8.self
     world.add(Follow(target: x), to: x)
     let json = text(try world.save())
     #expect(json.contains("\"format\" : \"SwiftGameEngine.Scene\""))
-    #expect(json.contains("\"version\" : 1"))
-    let newer = Data(json.replacingOccurrences(of: "\"version\" : 1", with: "\"version\" : 99").utf8)
+    #expect(json.contains("\"version\" : 2"))
+    let newer = Data(json.replacingOccurrences(of: "\"version\" : 2", with: "\"version\" : 99").utf8)
     #expect(throws: SceneError.unsupportedVersion(99)) { try World().load(newer) }
     #expect(throws: SceneError.notASceneFile) { try World().load(Data("{\"entities\": []}".utf8)) }
     let badID = Data(json.replacingOccurrences(of: "\"id\" : 0", with: "\"id\" : 3").utf8)

@@ -18,6 +18,7 @@ public enum ComponentRegistry {
     private static var byName: [String: any Component.Type] = [
         Transform.componentName: Transform.self,
         GlobalTransform.componentName: GlobalTransform.self,
+        Name.componentName: Name.self,
     ]
 
     /// Registers `types` under their `componentName`. Registering a type again is a no-op;

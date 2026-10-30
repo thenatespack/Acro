@@ -13,7 +13,8 @@ import Foundation
 //           "scale" : [1, 1, 1]
 //         }
 //       },
-//       "id" : 0
+//       "id" : 0,
+//       "uid" : "3f2a9c1e5b7d4086a1c2d3e4f5a6b7c8"
 //     },
 //     {
 //       "components" : {
@@ -26,7 +27,7 @@ import Foundation
 //     }
 //   ],
 //   "format" : "SwiftGameEngine.Scene",
-//   "version" : 1
+//   "version" : 2
 // }
 // ```
 //
@@ -44,10 +45,28 @@ import Foundation
 //   `null` for an entity that wasn't saved (a stale handle, or one outside the saved
 //   subtree). Loading maps ids to the new entities; `null` loads as nil for an optional
 //   `Entity?` and as `Entity.invalid` otherwise.
+// - `uid` is the entity's persistent `EntityID` (see EntityID.swift), written when it has
+//   one. Loading keeps the uid unless another entity in the world already has it (loading
+//   the same file twice), in which case the new entity gets a fresh one, or when asked to
+//   regenerate them all (`EntityIDPolicy`). Entities without a uid get one if the world
+//   has `assignsEntityIDs`.
 // - Unknown component names don't fail the load: see `UnresolvedComponents`.
 // - Systems are code and aren't saved; only data is. Neither are world timing and settings.
-// - `version` is bumped on incompatible format changes. Older versions will be migrated in
-//   `SceneFile.init(from:)`; newer ones are rejected.
+// - `version` is bumped on incompatible format changes. Older versions are migrated in
+//   `SceneFile.init(from:)`; newer ones are rejected. Version 2 added `uid`; version 1
+//   files have none (ids are assigned on load if the world wants them) and otherwise
+//   load unchanged.
+
+/// What `World.load` does with the `uid`s in a file.
+public enum EntityIDPolicy: Sendable {
+    /// Keep each uid unless the world already has an entity with it (the default). Loading a
+    /// file into an empty world, or restoring entities that were despawned, gives the same
+    /// ids back; loading it again gives the second copy new ones.
+    case keepUnique
+    /// Give every loaded entity a new id: for duplicating and instancing, where the copy
+    /// must not be mistaken for the original.
+    case regenerate
+}
 
 /// Errors from saving, loading and editing scenes.
 public enum SceneError: Error, Equatable, CustomStringConvertible {
@@ -106,7 +125,7 @@ extension World {
                 }
             }
             let parent = parents[Int(entity.index)].flatMap { ids[$0] }
-            records.append(SceneFile.EntityRecord(id: id, parent: parent, components: components))
+            records.append(SceneFile.EntityRecord(id: id, parent: parent, uid: entityIDs[Int(entity.index)], components: components))
         }
 
         let encoder = SceneCoder.encoder()
@@ -118,10 +137,10 @@ extension World {
 
     /// Loads a scene file into this world, adding to what is there, and returns the file's
     /// root entities (in file order). With `parent`, the roots become its children (e.g. to
-    /// instance a prefab). Nothing is spawned if the file fails to decode. Can't be called
-    /// from inside a query.
+    /// instance a prefab). Entity ids follow `ids`. Nothing is spawned if the file fails to
+    /// decode. Can't be called from inside a query.
     @discardableResult
-    public func load(_ data: Data, under parent: Entity? = nil) throws -> [Entity] {
+    public func load(_ data: Data, under parent: Entity? = nil, ids policy: EntityIDPolicy = .keepUnique) throws -> [Entity] {
         precondition(!isIterating, "load(_:) can't run inside a query")
         if let parent, !isAlive(parent) { throw SceneError.staleParent }
 
@@ -139,9 +158,14 @@ extension World {
 
         var entities: [Entity] = []
         entities.reserveCapacity(file.entities.count)
-        for _ in file.entities { entities.append(spawn()) }
+        for _ in file.entities { entities.append(spawnEntity()) }
         for (id, entity) in entities.enumerated() {
             precondition(entity == context.entity(id: id), "Scene load: spawn order changed")
+        }
+        for (record, entity) in zip(file.entities, entities) {
+            if policy == .keepUnique, let uid = record.uid, setEntityID(uid, for: entity) { continue }
+            // New entity, or its id is taken: it counts as having had one, so it gets one.
+            if assignsEntityIDs || record.uid != nil { ensureID(of: entity) }
         }
 
         var roots: [Entity] = []
@@ -181,7 +205,7 @@ extension World {
             // A requested entity under another requested one is saved as part of that subtree.
             roots = alive.filter { entity in !alive.contains { isDescendant(entity, of: $0) } }
         } else {
-            roots = entities.filter { parents[Int($0.index)] == nil }
+            roots = self.roots
         }
         var order: [Entity] = []
         var stack: [Entity] = []
@@ -200,20 +224,22 @@ extension World {
 
 struct SceneFile: Codable {
     static let format = "SwiftGameEngine.Scene"
-    static let currentVersion = 1
+    static let currentVersion = 2
 
     var entities: [EntityRecord]
 
     struct EntityRecord: Codable {
         var id: Int
         var parent: Int?
+        var uid: EntityID?
         var components: [String: ComponentValue]
 
-        private enum CodingKeys: String, CodingKey { case id, parent, components }
+        private enum CodingKeys: String, CodingKey { case id, parent, uid, components }
 
-        init(id: Int, parent: Int?, components: [String: ComponentValue]) {
+        init(id: Int, parent: Int?, uid: EntityID?, components: [String: ComponentValue]) {
             self.id = id
             self.parent = parent
+            self.uid = uid
             self.components = components
         }
 
@@ -221,6 +247,7 @@ struct SceneFile: Codable {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             id = try container.decode(Int.self, forKey: .id)
             parent = try container.decodeIfPresent(Int.self, forKey: .parent)
+            uid = try container.decodeIfPresent(EntityID.self, forKey: .uid)
             components = [:]
             let context = decoder.userInfo[.sceneDecoding] as? SceneDecodingContext
             let map = try container.nestedContainer(keyedBy: JSONKey.self, forKey: .components)
@@ -238,6 +265,7 @@ struct SceneFile: Codable {
             var container = encoder.container(keyedBy: CodingKeys.self)
             try container.encode(id, forKey: .id)
             try container.encodeIfPresent(parent, forKey: .parent)
+            try container.encodeIfPresent(uid, forKey: .uid)
             var map = container.nestedContainer(keyedBy: JSONKey.self, forKey: .components)
             for (name, value) in components {
                 switch value {
@@ -270,7 +298,7 @@ struct SceneFile: Codable {
         guard (try? container.decode(String.self, forKey: .format)) == Self.format else { throw SceneError.notASceneFile }
         let version = try container.decode(Int.self, forKey: .version)
         guard version <= Self.currentVersion else { throw SceneError.unsupportedVersion(version) }
-        // Migrations from older versions go here.
+        // Version 1 has no `uid`s; they decode as nil. Nothing else changed.
         entities = try container.decode([EntityRecord].self, forKey: .entities)
         for (index, record) in entities.enumerated() {
             guard record.id == index, (record.parent.map { $0 >= 0 && $0 < index }) ?? true else {
