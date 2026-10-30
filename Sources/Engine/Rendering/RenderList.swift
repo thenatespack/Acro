@@ -252,7 +252,11 @@ public struct RenderList {
 
     public init() {}
 
-    public mutating func build(items: [RenderItem], view: Frustum, cameraPosition: Vec3, shadows: ShadowCasterCulling?) {
+    /// Culls and batches `items` for a camera seeing `view` from `cameraPosition`, plus, with
+    /// `shadows`, the casters whose shadow it can see. `cameraBatches: false` builds only the
+    /// shadow batches (opaque and transparent stay empty, and nothing counts as culled).
+    public mutating func build(items: [RenderItem], view: Frustum, cameraPosition: Vec3, shadows: ShadowCasterCulling?,
+                               cameraBatches: Bool = true) {
         stats = RenderListStats(items: items.count)
         opaque.removeAll(keepingCapacity: true)
         transparent.removeAll(keepingCapacity: true)
@@ -285,6 +289,7 @@ public struct RenderList {
                     stats.culledShadowCasters += 1
                 }
             }
+            guard cameraBatches else { continue }
             guard view.intersects(center: item.bounds.center, halfExtent: item.bounds.halfExtent) else {
                 stats.culled += 1
                 continue

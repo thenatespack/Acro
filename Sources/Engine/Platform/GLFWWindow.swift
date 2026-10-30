@@ -9,6 +9,12 @@ final class GLFWWindow: PlatformWindow {
     private var currentTitle: String
     /// The input that char/key/scroll callbacks feed. Callbacks only run inside `glfwPollEvents`, where it is set.
     private var textTarget: Input?
+    /// The capture state and cursor last applied, standard cursors created so far, and the
+    /// last (virtual, unbounded) cursor position while captured.
+    private var captured = false
+    private var appliedCursor: CursorShape = .arrow
+    private var cursors: [CursorShape: OpaquePointer] = [:]
+    private var lastCapturedPosition: Vec2?
 
     init(title: String, width: Int, height: Int) throws {
         #if os(macOS)
@@ -83,7 +89,54 @@ final class GLFWWindow: PlatformWindow {
         // Cursor position is reported in screen coordinates (points), top-left origin.
         var x = 0.0, y = 0.0
         glfwGetCursorPos(handle, &x, &y)
-        input.mousePosition = Vec2(Float(x), Float(y))
+        let position = Vec2(Float(x), Float(y))
+        if captured {
+            // GLFW_CURSOR_DISABLED: the position is virtual and unbounded; its change is the motion.
+            if let last = lastCapturedPosition { input.addMouseMotion(position - last) }
+            lastCapturedPosition = position
+        } else {
+            lastCapturedPosition = nil
+            input.mousePosition = position
+        }
+        input.setWindowFocused(glfwGetWindowAttrib(handle, GLFW_FOCUSED) == GLFW_TRUE)
+    }
+
+    func applyCursor(_ cursor: CursorShape, captured: Bool) {
+        if captured != self.captured {
+            self.captured = captured
+            // Disabled hides the cursor and locks it to the window; raw motion skips OS acceleration where available.
+            glfwSetInputMode(handle, GLFW_CURSOR, captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL)
+            if glfwRawMouseMotionSupported() == GLFW_TRUE {
+                glfwSetInputMode(handle, GLFW_RAW_MOUSE_MOTION, captured ? GLFW_TRUE : GLFW_FALSE)
+            }
+            if !captured { appliedCursor = .arrow }  // normal mode shows the default cursor again
+        }
+        guard !captured, cursor != appliedCursor else { return }
+        if cursor == .hidden || appliedCursor == .hidden {
+            glfwSetInputMode(handle, GLFW_CURSOR, cursor == .hidden ? GLFW_CURSOR_HIDDEN : GLFW_CURSOR_NORMAL)
+        }
+        appliedCursor = cursor
+        guard cursor != .hidden else { return }
+        glfwSetCursor(handle, standardCursor(cursor))  // nil is the default arrow
+    }
+
+    /// GLFW's standard cursor for `shape`, created on first use. nil (the arrow) when this GLFW
+    /// doesn't have it: `notAllowed` needs GLFW 3.4.
+    private func standardCursor(_ shape: CursorShape) -> OpaquePointer? {
+        if let cursor = cursors[shape] { return cursor }
+        // GLFW 3.3 names (3.4 keeps them as aliases); GLFW_NOT_ALLOWED_CURSOR is 0x0003600A in 3.4.
+        let id: Int32 = switch shape {
+        case .arrow, .hidden: GLFW_ARROW_CURSOR
+        case .iBeam: GLFW_IBEAM_CURSOR
+        case .pointingHand: GLFW_HAND_CURSOR
+        case .resizeHorizontal: GLFW_HRESIZE_CURSOR
+        case .resizeVertical: GLFW_VRESIZE_CURSOR
+        case .crosshair: GLFW_CROSSHAIR_CURSOR
+        case .notAllowed: 0x0003_600A
+        }
+        guard let cursor = glfwCreateStandardCursor(id) else { return nil }
+        cursors[shape] = cursor
+        return cursor
     }
 
     func requestClose() {
@@ -91,6 +144,8 @@ final class GLFWWindow: PlatformWindow {
     }
 
     func destroy() {
+        for cursor in cursors.values { glfwDestroyCursor(cursor) }
+        cursors.removeAll()
         glfwDestroyWindow(handle)
         glfwTerminate()
     }

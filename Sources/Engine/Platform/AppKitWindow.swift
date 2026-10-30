@@ -11,6 +11,9 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
     private let view: GameView
     private(set) var shouldClose = false
     private var lastTextInputRect = TextInputRect.zero
+    /// The capture state last applied, and whether we hid the cursor (`NSCursor.hide` calls nest).
+    private var captured = false
+    private var cursorHidden = false
 
     init(title: String, width: Int, height: Int) {
         let app = NSApplication.shared
@@ -86,6 +89,12 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
                 input.addScroll(Vec2(Float(event.scrollingDeltaX * lines), Float(event.scrollingDeltaY * lines)))
             default: break
             }
+            switch event.type {
+            case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
+                // Points, y down, and still reported while the cursor is disassociated from the mouse.
+                input.addMouseMotion(Vec2(Float(event.deltaX), Float(event.deltaY)))
+            default: break
+            }
             NSApp.sendEvent(event)
         }
 
@@ -93,6 +102,7 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
         input.mousePosition = Vec2(Float(p.x), Float(view.bounds.height - p.y))
 
         if !window.isKeyWindow { input.releaseAll() }
+        input.setWindowFocused(window.isKeyWindow && NSApp.isActive)
         metalLayer.contentsScale = window.backingScaleFactor
     }
 
@@ -130,11 +140,50 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
         }
     }
 
+    func applyCursor(_ cursor: CursorShape, captured: Bool) {
+        if captured != self.captured {
+            self.captured = captured
+            if captured {
+                // Park the cursor in the middle of the view, so it reappears there, then lock it.
+                // A warp normally suppresses mouse events for a moment; turn that off.
+                CGEventSource(stateID: .combinedSessionState)?.localEventsSuppressionInterval = 0
+                let center = window.convertPoint(toScreen: view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil))
+                let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+                CGWarpMouseCursorPosition(CGPoint(x: center.x, y: screenHeight - center.y))  // top-left origin
+            }
+            CGAssociateMouseAndMouseCursorPosition(captured ? 0 : 1)
+        }
+        // NSCursor.hide is global, so `.hidden` only hides while the pointer is over the view.
+        let location = view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        let over = window.isKeyWindow && view.bounds.contains(location)
+        let hide = captured || (cursor == .hidden && over)
+        if hide != cursorHidden {
+            cursorHidden = hide
+            if hide { NSCursor.hide() } else { NSCursor.unhide() }
+        }
+        // Set every frame while the pointer is over the view: AppKit resets the cursor on its own
+        // (window edges, other apps), and the view has no cursor rects to restore ours.
+        if !hide && over { Self.nsCursor(cursor).set() }
+    }
+
+    private static func nsCursor(_ shape: CursorShape) -> NSCursor {
+        switch shape {
+        case .arrow, .hidden: .arrow
+        case .iBeam: .iBeam
+        case .pointingHand: .pointingHand
+        case .resizeHorizontal: .resizeLeftRight
+        case .resizeVertical: .resizeUpDown
+        case .crosshair: .crosshair
+        case .notAllowed: .operationNotAllowed
+        }
+    }
+
     func requestClose() {
         shouldClose = true
     }
 
     func destroy() {
+        applyCursor(.arrow, captured: false)
         window.delegate = nil
         window.close()
     }

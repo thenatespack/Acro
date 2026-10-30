@@ -52,30 +52,59 @@ final class MetalPipeline: RenderPipeline {
     /// one (temporal upscaling). Built on first use there.
     private let motionDescriptor: MTLRenderPipelineDescriptor?
     private var motionState: MTLRenderPipelineState?
+    /// `.screen` pipelines on a multisampled device: `state` at 1x, for single-sample render
+    /// targets. Built on first use there.
+    private let singleSampleDescriptor: MTLRenderPipelineDescriptor?
+    private var singleSampleState: MTLRenderPipelineState?
 
     init(state: MTLRenderPipelineState, depthState: MTLDepthStencilState, cullMode: MTLCullMode, depthBias: DepthBias?,
-         motionDescriptor: MTLRenderPipelineDescriptor? = nil) {
+         motionDescriptor: MTLRenderPipelineDescriptor? = nil, singleSampleDescriptor: MTLRenderPipelineDescriptor? = nil) {
         self.state = state
         self.depthState = depthState
         self.cullMode = cullMode
         self.depthBias = depthBias
         self.motionDescriptor = motionDescriptor
+        self.singleSampleDescriptor = singleSampleDescriptor
     }
 
-    /// The variant for a pass with (`motionVectors`) or without a motion-vector attachment.
-    func state(motionVectors: Bool) -> MTLRenderPipelineState {
-        guard motionVectors else { return state }
-        if let motionState { return motionState }
-        guard let motionDescriptor, let device = motionDescriptor.vertexFunction?.device else {
-            preconditionFailure("Depth-only pipelines can't draw in the scene pass")
+    /// The variant for a pass with (`motionVectors`) or without a motion-vector attachment, and
+    /// for a single-sample render target on a multisampled device (`singleSample`).
+    func state(motionVectors: Bool, singleSample: Bool = false) -> MTLRenderPipelineState {
+        if motionVectors { return variant(&motionState, motionDescriptor, "motion-vector") }
+        if singleSample { return variant(&singleSampleState, singleSampleDescriptor, "single-sample") }
+        return state
+    }
+
+    private func variant(_ cached: inout MTLRenderPipelineState?, _ descriptor: MTLRenderPipelineDescriptor?,
+                         _ name: String) -> MTLRenderPipelineState {
+        if let cached { return cached }
+        guard let descriptor, let device = descriptor.vertexFunction?.device else {
+            preconditionFailure("This pipeline has no \(name) variant (depth-only pipelines can't draw in color passes)")
         }
         do {
-            let made = try device.makeRenderPipelineState(descriptor: motionDescriptor)
-            motionState = made
+            let made = try device.makeRenderPipelineState(descriptor: descriptor)
+            cached = made
             return made
         } catch {
-            preconditionFailure("Failed to create the motion-vector variant of a pipeline: \(error)")
+            preconditionFailure("Failed to create the \(name) variant of a pipeline: \(error)")
         }
+    }
+}
+
+/// See `GPURenderTarget`. The depth (and MSAA color) attachments are memoryless where supported.
+final class MetalRenderTarget: GPURenderTarget {
+    let resolved: MetalTexture
+    let msaa: MTLTexture?
+    let depth: MTLTexture
+    var width: Int { resolved.width }
+    var height: Int { resolved.height }
+    var sampleCount: Int { msaa?.sampleCount ?? 1 }
+    var texture: GPUTexture { resolved }
+
+    init(resolved: MetalTexture, msaa: MTLTexture?, depth: MTLTexture) {
+        self.resolved = resolved
+        self.msaa = msaa
+        self.depth = depth
     }
 }
 
@@ -345,6 +374,23 @@ final class MetalRenderDevice: RenderDevice {
         return MetalTexture(texture, format: descriptor.format)
     }
 
+    func makeRenderTarget(_ descriptor: RenderTargetDescriptor) throws -> GPURenderTarget {
+        try descriptor.validate(maxSize: maxTextureSize)
+        let (width, height) = (descriptor.width, descriptor.height)
+        let samples = descriptor.multisampled ? sampleCount : 1
+        let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: layer.pixelFormat, width: width, height: height, mipmapped: false)
+        textureDescriptor.usage = [.renderTarget, .shaderRead]
+        textureDescriptor.storageMode = .private
+        guard let resolved = device.makeTexture(descriptor: textureDescriptor) else {
+            throw GraphicsError("Failed to create \(width)x\(height) render target")
+        }
+        return MetalRenderTarget(
+            resolved: MetalTexture(resolved, format: .rgba8Srgb),
+            msaa: samples > 1 ? try makeAttachment(layer.pixelFormat, width, height, samples: samples) : nil,
+            depth: try makeAttachment(screenDepthFormat, width, height, samples: samples))
+    }
+
     func makeTexture(pixels: UnsafeRawBufferPointer, width: Int, height: Int, format: TextureFormat,
                      generateMipmaps: Bool) throws -> GPUTexture {
         try format.validateUpload(byteCount: pixels.count, width: width, height: height, maxSize: maxTextureSize)
@@ -454,6 +500,11 @@ final class MetalRenderDevice: RenderDevice {
             motion.writeMask = descriptor.writesMotionVectors && descriptor.colorWrites ? [.red, .green] : []
             motionDescriptor = copy
         }
+        var singleSampleDescriptor: MTLRenderPipelineDescriptor?
+        if descriptor.target == .screen, sampleCount > 1, let copy = pipelineDescriptor.copy() as? MTLRenderPipelineDescriptor {
+            copy.rasterSampleCount = 1
+            singleSampleDescriptor = copy
+        }
         let state = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
 
         let depthDescriptor = MTLDepthStencilDescriptor()
@@ -470,7 +521,7 @@ final class MetalRenderDevice: RenderDevice {
         }
         return MetalPipeline(
             state: state, depthState: depthState, cullMode: cull, depthBias: descriptor.depthBias,
-            motionDescriptor: motionDescriptor)
+            motionDescriptor: motionDescriptor, singleSampleDescriptor: singleSampleDescriptor)
     }
 
     func uploadTransient(_ bytes: UnsafeRawBufferPointer) -> TransientBuffer {
@@ -596,6 +647,15 @@ final class MetalRenderDevice: RenderDevice {
         passDescriptor.depthAttachment.storeAction = .store
         passDescriptor.depthAttachment.clearDepth = Double(clearDepth)
         return beginPass(passDescriptor, timedAs: "depth")
+    }
+
+    func beginPass(target: GPURenderTarget, clearColor: Vec4, clearDepth: Float, label: String) -> RenderPass {
+        let target = target as! MetalRenderTarget
+        let descriptor = Self.colorDepthPass(
+            msaa: target.msaa, target: target.resolved.texture, depth: target.depth, clearColor: clearColor, clearDepth: clearDepth)
+        // Textures are hazard-tracked, so later reads of the result (in this or a later command
+        // buffer of the queue) wait for this pass, and this pass waits for earlier frames' reads.
+        return beginPass(descriptor, timedAs: label, singleSample: target.sampleCount == 1 && sampleCount > 1)
     }
 
     func beginScreenPass(clearColor: Vec4, clearDepth: Float) -> RenderPass {
@@ -823,7 +883,8 @@ final class MetalRenderDevice: RenderDevice {
     }
 
     private func beginPass(_ descriptor: MTLRenderPassDescriptor, timedAs name: String,
-                           occlusion: OcclusionQueryBatch? = nil, motionVectors: Bool = false) -> RenderPass {
+                           occlusion: OcclusionQueryBatch? = nil, motionVectors: Bool = false,
+                           singleSample: Bool = false) -> RenderPass {
         guard let frame else { preconditionFailure("Render pass started outside a frame") }
         precondition(currentPass == nil, "Previous pass was not ended")
         time(descriptor, as: name)
@@ -833,7 +894,7 @@ final class MetalRenderDevice: RenderDevice {
         let pass = MetalRenderPass(
             encoder: encoder, transient: frame.ring, comparisonSampler: comparisonSampler,
             targetSize: (descriptor.colorAttachments[0].texture?.width ?? 1, descriptor.colorAttachments[0].texture?.height ?? 1),
-            occlusion: occlusion, motionVectors: motionVectors)
+            occlusion: occlusion, motionVectors: motionVectors, singleSample: singleSample)
         currentPass = pass
         return pass
     }
@@ -1014,16 +1075,17 @@ final class MetalRenderDevice: RenderDevice {
         return texture
     }
 
-    /// A screen-pass attachment that is never stored (multisampled when MSAA is on).
-    private func makeAttachment(_ format: MTLPixelFormat, _ width: Int, _ height: Int) throws -> MTLTexture {
+    /// A pass attachment that is never stored, with `samples` (default: the device's MSAA) samples.
+    private func makeAttachment(_ format: MTLPixelFormat, _ width: Int, _ height: Int, samples: Int? = nil) throws -> MTLTexture {
+        let samples = samples ?? sampleCount
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: format, width: width, height: height, mipmapped: false)
         descriptor.usage = .renderTarget
         // Tile memory is enough for attachments that are never stored (Apple GPUs only).
         descriptor.storageMode = device.supportsFamily(.apple1) ? .memoryless : .private
-        if sampleCount > 1 {
+        if samples > 1 {
             descriptor.textureType = .type2DMultisample
-            descriptor.sampleCount = sampleCount
+            descriptor.sampleCount = samples
         }
         guard let texture = device.makeTexture(descriptor: descriptor) else {
             throw GraphicsError("Failed to create \(width)x\(height) render target")
@@ -1042,21 +1104,25 @@ final class MetalRenderPass: RenderPass {
     let occlusion: OcclusionQueryBatch?
     /// The pass has a motion-vector attachment (scene pass with temporal upscaling).
     let motionVectors: Bool
+    /// A single-sample render target on a multisampled device: pipelines use their 1x variant.
+    let singleSample: Bool
 
     init(encoder: MTLRenderCommandEncoder, transient: TransientRing<MetalBuffer>, comparisonSampler: MTLSamplerState,
-         targetSize: (width: Int, height: Int), occlusion: OcclusionQueryBatch?, motionVectors: Bool = false) {
+         targetSize: (width: Int, height: Int), occlusion: OcclusionQueryBatch?, motionVectors: Bool = false,
+         singleSample: Bool = false) {
         self.encoder = encoder
         self.targetSize = targetSize
         self.transient = transient
         self.comparisonSampler = comparisonSampler
         self.occlusion = occlusion
         self.motionVectors = motionVectors
+        self.singleSample = singleSample
         encoder.setFrontFacing(.counterClockwise)
     }
 
     func setPipeline(_ pipeline: RenderPipeline) {
         let pipeline = pipeline as! MetalPipeline
-        encoder.setRenderPipelineState(pipeline.state(motionVectors: motionVectors))
+        encoder.setRenderPipelineState(pipeline.state(motionVectors: motionVectors, singleSample: singleSample))
         encoder.setDepthStencilState(pipeline.depthState)
         encoder.setCullMode(pipeline.cullMode)
         let bias = pipeline.depthBias ?? DepthBias(constant: 0, slopeScale: 0)

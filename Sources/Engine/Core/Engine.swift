@@ -103,6 +103,21 @@ public final class Frame {
         body(counter)
         device.endPass()
     }
+
+    /// Renders into an offscreen color target (color and depth cleared first), timed under
+    /// `target.label`. Pipelines used here must have `target: .screen`. Later passes of this
+    /// frame, the window pass included, can sample `target.texture`.
+    public func renderPass(into target: RenderTarget, clearColor: Vec4, clearDepth: Float = 1, _ body: (RenderPass) -> Void) {
+        renderPass(into: target.gpu, clearColor: clearColor, clearDepth: clearDepth, label: target.label, body)
+    }
+
+    /// `renderPass(into:)` for a target made with `RenderDevice.makeRenderTarget`.
+    public func renderPass(into target: GPURenderTarget, clearColor: Vec4, clearDepth: Float = 1, label: String = "target",
+                           _ body: (RenderPass) -> Void) {
+        counter.inner = device.beginPass(target: target, clearColor: clearColor, clearDepth: clearDepth, label: label)
+        body(counter)
+        device.endPass()
+    }
 }
 
 @MainActor
@@ -206,6 +221,11 @@ public final class Engine {
     /// `Game.update` or `Game.render`, in points. The engine draws it in the window pass, at
     /// window resolution, over the scene and under the debug overlay.
     public let ui = UIDrawList()
+    /// Immediate-mode 3D debug shapes (see `DebugDraw`). Aged every frame before `Game.update`
+    /// (shapes without a duration last one frame). A `SceneRenderer` made with `init(engine:)`
+    /// draws it in the screen pass; pass it to `SceneRenderer.renderView` or a
+    /// `DebugDrawRenderer` to draw it elsewhere.
+    public let debugDraw = DebugDraw()
     /// Opt-in entity world. When set, `run` calls `world.update(dt:)` (fixed steps, update
     /// stages, transform propagation, render prep) right after `Game.update` each frame, with
     /// the same dt (a fixed 1/60 s in screenshot mode, so fixed steps stay deterministic).
@@ -395,9 +415,14 @@ public final class Engine {
             if let key = debugOverlayKey, input.wasPressed(key) { showDebugOverlay.toggle() }
 
             ui.beginFrame(framebufferSize: window.framebufferSize, scale: window.contentScale)
+            debugDraw.beginFrame(dt: Float(dt))
             let updateStart = clock.now
             game.update(engine: self, dt: Float(dt))
             world?.update(dt: dt)
+            if automatedScreenshot == nil {
+                // Screenshot runs leave the user's cursor alone (their input is ignored anyway).
+                window.applyCursor(input.cursor, captured: input.isMouseCaptured)
+            }
             applyPendingTitle()
             stats.updateTime = Self.seconds(clock.now - updateStart)
             fpsWindow.frames += 1
