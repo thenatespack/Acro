@@ -1,5 +1,5 @@
 /// Type-erased view of a component store, for operations that span every component type
-/// (despawning, enumerating an entity's components).
+/// (despawning, enumerating an entity's components, snapshots).
 @usableFromInline
 protocol AnyComponentStore: AnyObject {
     var componentType: any Component.Type { get }
@@ -7,6 +7,8 @@ protocol AnyComponentStore: AnyObject {
     func contains(_ entity: Entity) -> Bool
     func component(of entity: Entity) -> (any Component)?
     @discardableResult func remove(_ entity: Entity) -> Bool
+    /// An independent copy (components are values, so this is a deep copy).
+    func clone() -> any AnyComponentStore
 }
 
 /// One component type's sparse set. `values` and `entities` are dense and parallel
@@ -35,6 +37,17 @@ final class ComponentStore<C: Component>: AnyComponentStore {
     deinit {
         values.deinitialize(count: entities.count)
         values.deallocate()
+    }
+
+    @usableFromInline func clone() -> any AnyComponentStore {
+        let copy = ComponentStore<C>()
+        copy.values.deallocate()
+        copy.capacity = capacity
+        copy.values = .allocate(capacity: capacity)
+        copy.values.initialize(from: values, count: entities.count)
+        copy.entities = entities
+        copy.sparse = sparse
+        return copy
     }
 
     @usableFromInline var componentType: any Component.Type { C.self }
