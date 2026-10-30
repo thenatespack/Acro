@@ -38,4 +38,5 @@ void main() {
         world = model * vec4(inPosition, 1.0);
     }
     gl_Position = scene.lightViewProj * world;
+    gl_Position.y = -gl_Position.y;  // clip space is y-up; see beginPass in VulkanRenderDevice
 }

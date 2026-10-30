@@ -41,6 +41,7 @@ void main() {
     mat4 model = mat4(model0, model1, model2, model3);
     vec4 world = model * vec4(inPosition, 1.0);
     gl_Position = scene.viewProj * world;
+    gl_Position.y = -gl_Position.y;  // clip space is y-up; see beginPass in VulkanRenderDevice
     vWorldPos = world.xyz;
     vNormal = inNormal;
     vUV = projectUV(world.xyz, inNormal) * params.uvScale.xy + frame.scroll.xy;
