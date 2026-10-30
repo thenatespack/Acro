@@ -23,6 +23,18 @@ import Testing
         let expected = "// spirv-fnv1a64: " + String(hash, radix: 16).leftPadding(to: 16)
         #expect(header.contains(expected), "\(metal.lastPathComponent) is stale: rerun Scripts/compile-shaders.sh")
         #expect(header.hasPrefix("// Generated from \(spv.deletingPathExtension().lastPathComponent) by Scripts/compile-shaders.sh"))
+
+        // Fragment shaders with outputs beyond color 0 need the color-0-only variant
+        // (see ShaderSource.metalFragmentColor0Source), generated from the same SPIR-V.
+        let color0 = spv.deletingPathExtension().appendingPathExtension("color0.metal")
+        let hasExtraOutputs = (1...7).contains { header.contains("[[color(\($0))]]") }
+        #expect(FileManager.default.fileExists(atPath: color0.path) == hasExtraOutputs,
+                "\(color0.lastPathComponent) missing or unneeded: rerun Scripts/compile-shaders.sh")
+        if hasExtraOutputs {
+            let variant = try String(contentsOf: color0, encoding: .utf8)
+            #expect(variant.contains(expected), "\(color0.lastPathComponent) is stale: rerun Scripts/compile-shaders.sh")
+            #expect(!(1...7).contains { variant.contains("[[color(\($0))]]") })
+        }
     }
 }
 

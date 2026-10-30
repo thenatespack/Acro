@@ -393,8 +393,10 @@ final class MetalRenderDevice: RenderDevice {
     }
 
     /// Compiles `vertex_main` and (if `fragment`) `fragment_main`, from one MSL source or from
-    /// one per stage (see `ShaderSource.metalFragmentSource`).
-    private func makeFunctions(_ shader: ShaderSource, fragment: Bool) throws -> (vertex: MTLFunction, fragment: MTLFunction?) {
+    /// one per stage (see `ShaderSource.metalFragmentSource`). `color0Fragment` is the variant
+    /// that writes only `[[color(0)]]` (`ShaderSource.metalFragmentColor0Source`), if any.
+    private func makeFunctions(_ shader: ShaderSource, fragment: Bool)
+        throws -> (vertex: MTLFunction, fragment: MTLFunction?, color0Fragment: MTLFunction?) {
         guard let source = shader.metalSource else {
             throw GraphicsError("Shader has no Metal source")
         }
@@ -402,12 +404,18 @@ final class MetalRenderDevice: RenderDevice {
         guard let vertexFunction = library.makeFunction(name: "vertex_main") else {
             throw GraphicsError("Metal shader must define vertex_main")
         }
-        guard fragment else { return (vertexFunction, nil) }
+        guard fragment else { return (vertexFunction, nil, nil) }
         let fragmentLibrary = try shader.metalFragmentSource.map { try device.makeLibrary(source: $0, options: nil) } ?? library
         guard let fragmentFunction = fragmentLibrary.makeFunction(name: "fragment_main") else {
             throw GraphicsError("Metal shader must define fragment_main")
         }
-        return (vertexFunction, fragmentFunction)
+        let color0Function = try shader.metalFragmentColor0Source.map {
+            guard let function = try device.makeLibrary(source: $0, options: nil).makeFunction(name: "fragment_main") else {
+                throw GraphicsError("Metal shader must define fragment_main")
+            }
+            return function
+        }
+        return (vertexFunction, fragmentFunction, color0Function)
     }
 
     func makePipeline(_ descriptor: PipelineDescriptor) throws -> RenderPipeline {
@@ -419,7 +427,9 @@ final class MetalRenderDevice: RenderDevice {
 
         switch descriptor.target {
         case .screen:
-            pipelineDescriptor.fragmentFunction = functions.fragment
+            // Passes without a motion attachment get the color-0-only variant (see
+            // ShaderSource.metalFragmentColor0Source); the motion variant below gets the full one.
+            pipelineDescriptor.fragmentFunction = functions.color0Fragment ?? functions.fragment
             pipelineDescriptor.depthAttachmentPixelFormat = screenDepthFormat
             pipelineDescriptor.rasterSampleCount = sampleCount
             let color = pipelineDescriptor.colorAttachments[0]!
@@ -438,6 +448,7 @@ final class MetalRenderDevice: RenderDevice {
         }
         var motionDescriptor: MTLRenderPipelineDescriptor?
         if descriptor.target == .screen, let copy = pipelineDescriptor.copy() as? MTLRenderPipelineDescriptor {
+            copy.fragmentFunction = functions.fragment
             let motion = copy.colorAttachments[1]!
             motion.pixelFormat = motionVectorFormat
             motion.writeMask = descriptor.writesMotionVectors && descriptor.colorWrites ? [.red, .green] : []

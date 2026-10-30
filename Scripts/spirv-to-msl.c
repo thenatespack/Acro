@@ -1,7 +1,7 @@
 // Cross-compiles one SPIR-V stage (vertex or fragment) to MSL for the Metal backend.
 // Built and run by Scripts/compile-shaders.sh; links the SPIRV-Cross C API.
 //
-//   spirv-to-msl <in.spv> <out.metal> <source name for the header>
+//   spirv-to-msl <in.spv> <out.metal> <source name for the header> [fragment output mask]
 //
 // Uses the same SPIRV-Cross that MoltenVK uses to run our SPIR-V on Metal, so native Metal
 // executes the same MSL as Vulkan-on-MoltenVK, apart from three things set here:
@@ -11,6 +11,11 @@
 //   the table is an error.
 // - The vertex stage negates gl_Position.y at the end (`flip_vert_y`, as MoltenVK does): the
 //   GLSL negates it for Vulkan's y-down clip space, Metal's clip space is y-up.
+// - With an output mask (bit n = keep [[color(n)]]), other fragment outputs become locals.
+//   MoltenVK does this for outputs the render pass has no attachment for. It matters: Apple's
+//   compiler emits a different color(0) epilogue when unconsumed outputs exist, and blending
+//   then rounds differently, so a pipeline without that attachment must use the masked MSL to
+//   match Vulkan bit for bit.
 #include <spirv_cross_c.h>
 
 #include <stdint.h>
@@ -54,8 +59,8 @@ static int metalIndex(unsigned set, unsigned binding, unsigned *buffer, unsigned
 }
 
 int main(int argc, char **argv) {
-    if (argc != 4) {
-        fprintf(stderr, "usage: spirv-to-msl <in.spv> <out.metal> <source name>\n");
+    if (argc != 4 && argc != 5) {
+        fprintf(stderr, "usage: spirv-to-msl <in.spv> <out.metal> <source name> [fragment output mask]\n");
         return 2;
     }
     FILE *in = fopen(argv[1], "rb");
@@ -92,6 +97,11 @@ int main(int argc, char **argv) {
     // MSL 3.1 is what macOS 14 (the package's minimum) supports.
     spvc_compiler_options_set_uint(options, SPVC_COMPILER_OPTION_MSL_VERSION, 30100);
     spvc_compiler_options_set_bool(options, SPVC_COMPILER_OPTION_FLIP_VERTEX_Y, model == SpvExecutionModelVertex);
+    if (argc == 5) {
+        if (model != SpvExecutionModelFragment) fail("an output mask only applies to fragment shaders", argv[1]);
+        spvc_compiler_options_set_uint(options, SPVC_COMPILER_OPTION_MSL_ENABLE_FRAG_OUTPUT_MASK,
+                                       (unsigned)strtoul(argv[4], NULL, 0));
+    }
     check(spvc_compiler_install_compiler_options(compiler, options), context, "install options");
 
     // Push constants → buffer(16).

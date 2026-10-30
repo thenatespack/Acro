@@ -36,21 +36,27 @@ public struct ShaderSource: Sendable {
     /// MSL defining `fragment_main`, when the fragment stage is a separate file (as generated
     /// shaders are: SPIRV-Cross emits one per stage).
     public var metalFragmentSource: String?
+    /// `metalFragmentSource` with every output but `[[color(0)]]` dropped, for pipelines whose
+    /// pass has no attachment for the others (generated as `<name>.frag.color0.metal`). Apple's
+    /// compiler treats color 0 differently when unconsumed outputs exist, which changes how
+    /// blending rounds; MoltenVK drops them too, so this keeps Metal and Vulkan bit-identical.
+    public var metalFragmentColor0Source: String?
     /// SPIR-V for the Vulkan backend.
     public var spirvVertex: [UInt8]?
     public var spirvFragment: [UInt8]?
 
-    public init(metalSource: String? = nil, metalFragmentSource: String? = nil,
+    public init(metalSource: String? = nil, metalFragmentSource: String? = nil, metalFragmentColor0Source: String? = nil,
                 spirvVertex: [UInt8]? = nil, spirvFragment: [UInt8]? = nil) {
         self.metalSource = metalSource
         self.metalFragmentSource = metalFragmentSource
+        self.metalFragmentColor0Source = metalFragmentColor0Source
         self.spirvVertex = spirvVertex
         self.spirvFragment = spirvFragment
     }
 
     /// Loads `<name>.vert.spv` and `<name>.frag.spv` from a bundle, plus MSL: `<name>.metal`
     /// if it exists (hand-written, both stages), else the generated `<name>.vert.metal` and
-    /// `<name>.frag.metal`. Missing variants are left nil; the backend that needs them reports
+    /// `<name>.frag.metal` (and `<name>.frag.color0.metal` when generated). Missing variants are left nil; the backend that needs them reports
     /// the error.
     public static func load(named name: String, bundle: Bundle, subdirectory: String? = "Shaders") throws -> ShaderSource {
         func url(_ ext: String) -> URL? {
@@ -63,6 +69,9 @@ public struct ShaderSource: Sendable {
             source.metalSource = try String(contentsOf: vertex, encoding: .utf8)
             if let fragment = url("frag.metal") {
                 source.metalFragmentSource = try String(contentsOf: fragment, encoding: .utf8)
+            }
+            if let color0 = url("frag.color0.metal") {
+                source.metalFragmentColor0Source = try String(contentsOf: color0, encoding: .utf8)
             }
         }
         if let vert = url("vert.spv") {

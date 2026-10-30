@@ -2,7 +2,10 @@
 # Regenerates every shader under Sources/ from its GLSL (*.vert, *.frag), the single source:
 #   name.vert  -> name.vert.spv   (glslc; used by the Vulkan backend)
 #   name.vert.spv -> name.vert.metal (SPIRV-Cross via Scripts/spirv-to-msl.c; used by the Metal backend)
-# and the same for .frag. All outputs are committed, so building the package needs neither tool.
+# and the same for .frag. A fragment shader with more outputs than [[color(0)]] also gets
+#   name.frag.spv -> name.frag.color0.metal (outputs other than color 0 dropped; the Metal
+#   backend uses it for pipelines without those attachments, as MoltenVK does)
+# All outputs are committed, so building the package needs neither tool.
 # Requires glslc (shaderc) and SPIRV-Cross with its C API:
 #   macOS: brew install shaderc spirv-cross
 #   Linux: apt install glslc libspirv-cross-c-shared-dev (or the Vulkan SDK)
@@ -44,4 +47,10 @@ fi
 for src in "${shaders[@]}"; do
     echo "spirv-to-msl $src.spv -> $src.metal"
     "$tool" "$src.spv" "$src.metal" "$(basename "$src")"
+    if [[ "$src" == *.frag ]] && grep -q '\[\[color([1-9])\]\]' "$src.metal"; then
+        echo "spirv-to-msl $src.spv -> $src.color0.metal"
+        "$tool" "$src.spv" "$src.color0.metal" "$(basename "$src")" 1
+    else
+        rm -f "$src.color0.metal"
+    fi
 done
