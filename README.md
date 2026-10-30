@@ -87,6 +87,22 @@ Buffer indices 0 and 1 are vertex buffers. On Vulkan, textures and samplers are 
 - **Systems**: `world.addSystem("name", stage: .fixedUpdate) { world in … }`. Stages run in order: `.fixedUpdate` (zero or more times per frame at `fixedTimestep`, capped by `maxFixedStepsPerFrame`, excess dropped), `.update`, `.lateUpdate`, transform propagation, `.renderPrep` (interpolate with `world.time.alpha`). Within a stage, systems run in registration order (or `before:` / `after:`). `world.time.delta` is the fixed step in `.fixedUpdate` and the frame's dt elsewhere. In screenshot mode dt is a fixed 1/60 s, so fixed steps are deterministic.
 - `Quat` (Math.swift) is the rotation type: axis-angle, composition, vector rotation, `matrix`, `init(rotationMatrix:)`, `slerp`.
 
+### Entity IDs and names
+An `Entity` handle is only valid in the running world. `world.id(of:)` returns an `EntityID`, a stable 128-bit random id that survives save/load, snapshot/restore and despawn-then-undo. `world.entity(for:)` finds the entity in O(1).
+- **Enabling:** ids are opt-in. Set `world.assignsEntityIDs = true` (the editor does) so every spawn gets one, or call `ensureID(of:)` for single entities.
+- **Where they live:** a side table in the world, not a component, so they can't be edited or removed. Scene files store them as `"uid"` (format version 2; version 1 files load fine and get ids if the flag is on).
+- **Loading:** it keeps uids that are free, and gives a copy new ids when they are taken (loading the same file twice, prefab instances). `load(_:ids: .regenerate)` forces new ids, for duplicating.
+- **Order and names:** roots have an explicit order (`world.roots`, `setParent(_:to:at:)`, `siblingIndex(of:)`) that scene files and undo preserve. `Name` is an optional display-name component.
+
+### Undo / redo
+`UndoStack(world:)` runs `UndoCommand`s and keeps undo and redo history. Built-in commands: `SetFieldCommand`, `SetComponentCommand`, `AddComponentCommand`, `RemoveComponentCommand`, `RenameCommand`, `SpawnCommand`, `DespawnCommand`, `ReparentCommand`, `ClosureCommand`.
+- **Entities by id:** commands store `EntityID`s, so they still work after play mode restores a snapshot or undo recreates an entity.
+- **Edits through the stack:** `try undo.perform(cmd)`. A command that throws isn't recorded.
+- **Groups:** `undo.group("Move") { … }` makes a drag one step, and consecutive edits of the same field inside it merge into one.
+- **Menus and save state:** `undoTitle` and `redoTitle` give menu text, `isDirty` and `markSaved()` track unsaved changes, and `onChange` fires when the stack changes.
+- **Play mode and load:** set `isRecording = false` while playing, and call `clear()` after loading.
+- **Limit:** undoing a despawn restores references among the entities inside the subtree; references from outside to it stay stale. Despawn/undo of a 1000-entity subtree costs ~25 ms each way.
+
 ### Rendering entities
 `SceneRenderer` (`Sources/Engine/Rendering/`) draws a `World`: a forward renderer with one shadow-casting directional light, hemisphere ambient, exponential fog, instancing, frustum and shadow-caster culling, a back-to-front sorted transparent pass, and motion vectors plus jitter for the temporal upscalers. It is opt-in, and games that don't use it are unaffected:
 
@@ -109,6 +125,20 @@ sceneRenderer.draw(pass)                                                        
 - **Limits:** one directional light, no point/spot lights or cascades.
 - **Cost:** gathering, culling and batching 10k entities takes about 0.8 ms of CPU time in release on an M5. `sceneRenderer.stats` reports counts and prepare time.
 
+### Render targets and multiple views
+`RenderTarget(device:width:height:multisampled:label:)` is an offscreen color + depth target that game code renders into and then samples. Its color uses the window's sRGB format, with the device's MSAA resolved into the texture, or 1x when `multisampled` is false. Depth only exists during the pass. Every `.screen` pipeline can draw into it. In `renderOffscreen`, call `frame.renderPass(into: target, clearColor:) { pass in … }`. Any later pass of the frame can then sample `target.texture`, e.g. `engine.ui.drawImage(target.texture, in: panel)` in the window pass. `target.resize(toPoints: panel.size, scale: engine.ui.scale)` recreates the target only when its size changes. On Vulkan the old one is freed through the deletion queue, and a texture already queued in a draw list stays valid. Target passes have no motion vectors and no occlusion queries, and they are timed under the target's `label`. On Vulkan they use the offscreen scene pass, whose subpass dependencies order them after the previous frame's reads and before later fragment-shader reads; on Metal, hazard tracking does the same.
+
+`SceneRenderer` can draw one world from several cameras per frame:
+```swift
+sceneRenderer.beginViews(world: world, frame: frame)                 // gather + one shared shadow map
+sceneRenderer.renderView(editorView, into: editorTarget, frame: frame, debugDraw: gizmos)
+sceneRenderer.renderView(SceneView(camera: gameCamera, in: world, aspect: gameTarget.aspectRatio)!, into: gameTarget, frame: frame)
+```
+A `SceneView` is either a view matrix plus projection, or a camera entity's. The views share the gathered entities and one shadow map, which holds every caster in the light's frustum and is centred for `shadowFocus` (the game camera by default). When views look at different places, give the light a fixed `shadowCenter` and a larger `shadowExtent`. Views have no jitter or motion vectors. Use either this or `renderOffscreen` + `draw` in a given frame.
+
+### Debug draw
+`engine.debugDraw` (a `DebugDraw`) is an immediate-mode list of 3D debug shapes: `line`, `polyline`, `box` (an AABB, or an OBB from a matrix or center/extent/rotation), `circle`, `sphere`, `arrow`, `axes`, `frustum(viewProjection:)` (e.g. another camera's) and `text(_:at:)` labels. A ground `grid` (`DebugGrid`) is drawn by a shader: lines stay a fixed number of pixels wide with antialiasing, the X and Z axes are coloured, and it fades out with distance and where cells become smaller than a few pixels. Each shape takes a `DebugDraw.Style`: width in pixels (constant on screen) or in world units, and depth-tested or always on top. Shapes without a `duration` last one frame; the engine ages `engine.debugDraw` before `Game.update`. Lines are expanded in screen space and batched into one instanced draw per depth mode, plus one draw for the grid and one per glyph page for labels. Debug geometry writes no depth and no motion vectors, so TAAU treats it as part of the surface behind it. A `SceneRenderer` made with `init(engine:)` draws `engine.debugDraw` in the screen pass; `renderView(…, debugDraw:)` takes any list; `DebugDrawRenderer` draws a list into any pass.
+
 ### 2D UI draw list
 
 `engine.ui` is an immediate-mode 2D draw list (`UIDrawList`) that game code and the future retained widget tree fill each frame, in points (top-left origin, y down; one point is `ui.scale` framebuffer pixels, the window's backing scale factor). It is cleared before `Game.update`, so fill it in `update` or `render`. The engine draws it in the window pass, at window resolution, over the scene and under the debug overlay.
@@ -124,10 +154,22 @@ Consecutive items with the same clip, texture and sampler merge into one draw ca
 ### UI widgets
 `UIContext` runs a retained widget tree (opt-in; games that don't create one are unaffected). Add widgets to `ui.root`, call `ui.update(engine:dt:)` early in `Game.update` and `ui.draw(into: engine.ui)` later. Then check `ui.wantsPointer` / `ui.wantsKeyboard` before driving cameras or shortcuts.
 
-- **Layout:** frames are absolute window points, snapped to the pixel grid. `VStack` / `HStack` offer spacing, padding, cross alignment, justify, and flex `grow` / `shrink` with min/max (`LayoutStyle`). `.absolute(Anchors)` pins overlays and badges. `ScrollView` clips and scrolls vertically (wheel, thumb, track, content drag). Layout only runs when something called `setNeedsLayout`; measurements are cached. No grid container yet.
+- **Layout:** frames are absolute window points, snapped to the pixel grid. `VStack` / `HStack` offer spacing, padding, cross alignment, justify, and flex `grow` / `shrink` with min/max (`LayoutStyle`). `.absolute(Anchors)` pins overlays and badges. `ScrollView` clips and scrolls (wheel, thumb, track, content drag) vertically, and horizontally with `scrollsHorizontally`. Layout only runs when something called `setNeedsLayout`; measurements are cached. No grid container yet.
 - **Events:** pointer down and scroll go to the widget under the pointer and bubble; the handler captures the pointer until release. Keys and text go to the focused widget and bubble. Tab / Shift-Tab cycle focus; Esc closes the top popup, then clears focus. A press that starts outside every widget belongs to the game until release.
-- **Widgets:** `Label`, `Button`, `Checkbox` (checkbox or switch), `Slider`, `TextField`, `Dropdown` (with a `PopupMenu` overlay), `ScrollView`, `ListView` and `TreeView` (virtualized rows), `ColorPicker`, `Separator`, `Spacer`. A focused `TextField` owns text input: caret rect for the IME, composition underlined, copy/cut/paste through `ui.clipboard`. `UITheme` holds colors (sRGB), font sizes and metrics.
+- **Widgets:** `Label`, `Button`, `Checkbox` (checkbox or switch), `Slider`, `TextField`, `Dropdown` (with a `PopupMenu` overlay), `ScrollView`, `ListView` and `TreeView` (virtualized rows), `ColorPicker`, `NumberField`, `VectorField`, `ColorSwatch`, `PropertyGrid`, `Separator`, `Spacer`. A focused `TextField` owns text input: caret rect for the IME, composition underlined, copy/cut/paste through `ui.clipboard`. `UITheme` holds colors (sRGB), font sizes and metrics.
+- **Inspector widgets:** `NumberField` is a number box: drag horizontally to scrub (Shift fine, Alt/Option coarse; the rate scales with `step` and `range`), click or Enter to type an exact value (Enter commits, Esc cancels, bad input reverts), Up/Down to nudge. `VectorField` is 2-4 of them with X/Y/Z/W axis labels, `ColorSwatch` opens a `ColorPicker` popup. Each reports one gesture as `onEditBegan(start)`, `onChange(value)` ..., `onEditEnded(start, end)`, so an undo system can record a whole drag as one step. `PropertyGrid(world:)` shows an entity's components from reflection: a collapsible section per component and an editor per `FieldKind` (checkbox, number, text, vector, colour swatch for `color` hints, Euler degrees for `Quat`, dropdown for enums, read-only entity names and arrays, collapsible nested structs), honouring the `range` / `step` / `readOnly` / `hidden` / `displayName` / `tooltip` hints. Call `grid.refresh()` every frame: it updates the widgets in place and rebuilds a section only when its shape changes (about 0.06 ms for 40 fields). Every edit calls `onFieldEdit(PropertyEdit)` with phases began / changed / ended and old and new values; by default the grid also writes it with `world.setField` (turn off with `appliesEditsToWorld`).
+- **TreeView editing** (opt in): `allowsMultipleSelection` (cmd/ctrl-click toggles, shift-click selects a range, shift+arrows extend, cmd/ctrl+A selects all; `selectedNodes`), `allowsRename` (F2, Enter or double click edit the title in place; `onRename` can veto), `allowsDragAndDrop` (drag rows to reparent or reorder with before / after / into indicators, auto-expand on hover, auto-scroll at the edges, no drops into a node's own subtree; `canMove` and `onMove` can veto).
 - **Cost:** about 0.2 ms CPU per frame to paint the demo panel and about 0.15 ms per full layout; about 3 ms window-pass GPU at 2560x1440 (blended overdraw).
+
+### Docking and panels
+Editor-style layout on top of the widget tree (all drawn with `UIDrawList` and the theme, pixel-snapped):
+
+- **`SplitView(.horizontal | .vertical, panes:, fractions:, minSizes:)`**: N panes with draggable dividers. Panes keep their fractions when the window resizes and never go below their minimum (when the minimums don't fit, they are scaled down together). Dragging a divider changes only its two neighbors; double-click (or `resetFractions()`) restores `defaultFractions`. The math is in `SplitLayout`.
+- **`TabView(tabs: [DockPanel])`**: a tab bar over one visible `DockPanel` (an id, a title and a content widget). Click to select, drag along the bar to reorder, close button on the selected and hovered closable tabs (or middle click). Tabs that don't fit shrink to `minTabWidth`, then the bar scrolls with the wheel and keeps the selected tab in view. With focus inside: Ctrl-Tab / Ctrl-Shift-Tab and Ctrl-Page Down / Up cycle tabs; Left/Right when the bar itself is focused.
+- **`DockSpace`**: register panels with `addPanel`, arrange them with `dock(id, at: .tab(with:) | .split(beside:edge:) | .edge(_:) | .floating(rect))` or `restoreLayout`. Dragging a tab off its bar shows a drop highlight: another bar inserts at the marker, a group's middle adds a tab, its outer quarter splits it, the dock's outer 24 pt docks along the whole edge, anywhere else makes a floating window (Esc cancels). Closing the last tab of a group removes the group and collapses the split. Floating windows stay inside the main window: move them by the empty part of the tab bar, resize them by their edges, and click to bring one to the front. Separate OS windows are future work. `DockPanel.passesPointerThrough` gives a viewport panel's empty area to the game, and `drawsBackground = false` lets a scene drawn behind the UI show through.
+- **Layout persistence:** `dock.layout` is a Codable `DockLayout` (tree of splits with fractions, tab groups with panel ids and the active one, floating frames). `jsonData()` writes sorted, pretty JSON. `restoreLayout` drops unknown and repeated ids and collapses what became empty. `onLayoutChange` fires after every user change.
+- **Scrolling both ways:** `ScrollView.scrollsHorizontally = true` lays the content out at its measured width, adds a bottom scrollbar, scrolls with horizontal wheel deltas and with Shift plus the wheel, and drags in both axes.
+- **Cursors:** widgets return a `UICursor` from `cursor(at:)` (dividers, window edges, drags), and `UIContext.desiredCursor` resolves it from the captured or hovered widget up. The host applies it to the window.
 
 ### Text
 
@@ -147,6 +189,9 @@ Typing for text fields is separate from key state. A focused field calls `input.
 While text input is active, character, editing and navigation keys are not reported by `isDown` / `wasPressed` (typing "w" doesn't move the camera); modifier keys and the mouse still are. With ENGINE_SCREENSHOT, text input is ignored like all other input.
 
 On macOS the window view is an NSTextInputClient, so dead keys (option+e, e), the press-and-hold accent popup and input methods such as Japanese/Chinese/Korean work, and the candidate window appears at the caret rectangle. On the GLFW (Vulkan) window, committed text comes from GLFW's char callback, but GLFW 3.4 has no preedit API: `composition` stays nil, an input method's text only appears once committed, and the candidate window can't be positioned. In the Demo, F2 toggles a debug mode that echoes typed text, the composition and key events in the window title (Esc exits).
+
+### Mouse capture and cursors
+`input.cursor` sets the cursor shape over the window (`.arrow`, `.iBeam`, `.pointingHand`, `.resizeHorizontal`, `.resizeVertical`, `.crosshair`, `.notAllowed`, `.hidden`). It resets to `.arrow` every frame, so set it every frame while it should differ. `input.isMouseCaptured = true` asks for relative mouse mode: the cursor is hidden and locked, and `mouseDelta` reports raw motion in points that isn't stopped by the screen edges. The request is ignored while the window lacks focus. Capture ends when the window loses focus or Esc is pressed (that press isn't reported; see `escapeReleasesCapture`), and the game has to ask again. On macOS this uses `CGAssociateMouseAndMouseCursorPosition` and `NSCursor`; on GLFW it uses `GLFW_CURSOR_DISABLED` with raw mouse motion where supported, and `notAllowed` needs GLFW 3.4. Screenshot runs leave the cursor alone. `UIContext.desiredCursor` (from the docking widgets) isn't wired to `input.cursor` yet.
 
 ## Building
 
@@ -295,6 +340,9 @@ swift run -c release Demo --scene shadows --quality ultra --resolution 4k   # --
 | 10 | `ui` | 2D draw list: rounded rects with per-corner radii, strokes, gradients, images, lines, nested clipping, batching | |
 | 11 | `ecs` | Entities drawn by the engine's `SceneRenderer`: hierarchy, instancing, shadows, transparency, motion vectors | |
 | 12 | `widgets` | Retained widgets: layout, focus, text field, dropdown, scroll view, list, tree, color picker | mouse/keyboard; Esc unfocuses |
+| 13 | `docking` | Docking panels: splits, tab groups, drag-and-drop docking, floating panel, 2-axis scrolling | mouse; Ctrl-Tab cycles tabs; Esc cancels a drag |
+| 14 | `inspector` | Editor panels: hierarchy TreeView (multi-select, rename, drag to reparent) and a reflection-driven PropertyGrid | mouse/keyboard; F2 renames |
+| 15 | `viewports` | One world rendered into two render targets (editor camera with grid and debug gizmos, game camera) shown side by side in the UI | right-drag flies the editor camera (mouse captured); drag the divider |
 
 Everywhere: **1–9** and **0** (scene 10) switch scenes, **]** / **[** next / previous scene, **F2** toggles a text-input test mode (echoes typing in the window title), **Tab / Shift-Tab** cycle the render resolution (native, quality, performance, 144p … 16k), **U** cycles the upscaler (temporal ones only without MSAA), **V** toggles vsync, **Space** pauses animation, arrows/WASD or left-drag orbit, **Q/E** zoom, **Esc** quits. The window title shows the scene, its state, the render size, the quality and the backend.
 
@@ -305,4 +353,4 @@ Everywhere: **1–9** and **0** (scene 10) switch scenes, **]** / **[** next / p
 The full roadmap (ECS, assets, physics, audio, UI, in-engine editor) lives on the project task board.
 
 - Static buffers and textures are immutable after creation (use `setVertexData` / `setUniformData` for dynamic data), and creating them on Vulkan blocks on the upload.
-- Textures are RGBA8 2D only: no compressed formats, cube maps, arrays, render-to-texture for game code, or image loading from files yet.
+- Textures are RGBA8 2D only: no compressed formats, cube maps, arrays, or image loading from files yet.
