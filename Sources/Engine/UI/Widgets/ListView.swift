@@ -34,6 +34,10 @@ open class RowListView: Widget {
     /// A press on a row; return true to stop the default (select, and activate on double click).
     open func rowPressed(_ row: Int, at position: Vec2, event: PointerEvent) -> Bool { false }
 
+    /// The tooltip for `row` (laid out in `rect`) when the pointer rests on it; by default none.
+    /// Lists and trees return a row's full text while it is cut off.
+    open func rowTooltip(_ row: Int, in rect: UIRect) -> String? { nil }
+
     /// Keys beyond the shared navigation (tree expand/collapse).
     open func handleRowKey(_ key: KeyEvent) -> Bool { false }
 
@@ -73,6 +77,19 @@ open class RowListView: Widget {
         guard viewport.contains(point) else { return nil }
         let row = Int(((point.y - viewport.y + scroll.offset) / effectiveRowHeight).rounded(.down))
         return row >= 0 && row < rowCount ? row : nil
+    }
+
+    /// Where `row` is drawn (window points), whether or not it is visible.
+    public func rowRect(_ row: Int) -> UIRect {
+        let viewport = contentRect
+        return UIRect(x: viewport.x, y: snap(viewport.y + Float(row) * effectiveRowHeight - scroll.offset), width: viewport.width,
+                      height: effectiveRowHeight)
+    }
+
+    public override func tooltip(at point: Vec2) -> String? {
+        if let tooltip { return tooltip }
+        guard let row = row(at: point) else { return nil }
+        return rowTooltip(row, in: rowRect(row))
     }
 
     /// Rows intersecting the viewport.
@@ -148,8 +165,7 @@ open class RowListView: Widget {
         let hoveredRow = isHovered ? context.flatMap { row(at: $0.pointerPosition) } : nil
         list.withClip(viewport) {
             for row in visibleRows {
-                let rect = UIRect(x: viewport.x, y: snap(viewport.y + Float(row) * h - scroll.offset), width: viewport.width,
-                                  height: h)
+                let rect = rowRect(row)
                 let selected = isRowSelected(row)
                 if selected {
                     list.fillRect(rect, color: isFocused ? theme.rowSelectedFocused : theme.rowSelected, radii: UICornerRadii(3))
@@ -189,8 +205,15 @@ public final class ListView: RowListView {
 
     public override func drawRow(_ row: Int, in rect: UIRect, list: UIDrawList, theme: UITheme, selected: Bool) {
         let layout = cachedLayout(items[row], size: theme.fontSize)
-        let textRect = UIRect(x: rect.x + 8, y: rect.y, width: rect.width - 16, height: rect.height)
-        drawLine(layout, font: theme.font, in: textRect, color: isEffectivelyEnabled ? theme.textColor : theme.disabledTextColor,
-                 list: list)
+        drawEllipsized(items[row], layout: layout, size: theme.fontSize, in: textRect(in: rect),
+                       color: isEffectivelyEnabled ? theme.textColor : theme.disabledTextColor, list: list)
+    }
+
+    private func textRect(in rect: UIRect) -> UIRect {
+        UIRect(x: rect.x + 8, y: rect.y, width: rect.width - 16, height: rect.height)
+    }
+
+    public override func rowTooltip(_ row: Int, in rect: UIRect) -> String? {
+        truncatedText(items[row], size: theme.fontSize, width: textRect(in: rect).width)
     }
 }

@@ -33,8 +33,11 @@ public final class ConsolePanel {
         view = VStack(spacing: 4, padding: EdgeInsets(top: 4, left: 4, bottom: 0, right: 4), name: "consolePanel")
         filter.style.width = 120
         filter.onChange = { [unowned self] index in minimumLevel = Self.levels[index].level }
+        let clearButton = Button("Clear", name: "consoleClear") { [unowned log] in log.clear() }
+        filter.tooltip = "Show only messages at this level or above"
+        clearButton.tooltip = "Clear the console"
         let bar = HStack(spacing: 8, padding: EdgeInsets(horizontal: 4, vertical: 0), [
-            filter, Button("Clear", name: "consoleClear") { [unowned log] in log.clear() }, Spacer(), countLabel,
+            filter, clearButton, Spacer(), countLabel,
         ])
         view.addChildren([bar, scroll])
         refresh()
@@ -127,6 +130,7 @@ public final class StatsPanel {
 
     public init() {
         view = VStack(spacing: 3, padding: EdgeInsets(10), name: "statsPanel")
+        view.tooltip = "Frame, CPU and GPU timings, draw calls and editor state"
     }
 
     public func refresh(_ stats: EditorStatsSnapshot, time: Double) {

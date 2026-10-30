@@ -22,6 +22,33 @@ extension Widget {
     }
 }
 
+extension Widget {
+    /// Whether a line `layout` is wider than `width` (beyond a pixel of rounding slack).
+    func overflows(_ layout: TextLayout, width: Float) -> Bool {
+        layout.width > width + 1 / scale
+    }
+
+    /// Like `drawLine`, but text wider than `rect` ends in "…" instead of running past it.
+    /// Returns whether it was truncated.
+    @discardableResult
+    func drawEllipsized(_ text: String, layout: TextLayout, size: Float, in rect: UIRect, alignment: TextAlignment = .left,
+                        color: UIColor, list: UIDrawList) -> Bool {
+        guard overflows(layout, width: rect.width) else {
+            drawLine(layout, font: theme.font, in: rect, alignment: alignment, color: color, list: list)
+            return false
+        }
+        let short = context?.ellipsizedText(text, size: size, width: rect.width)
+            ?? TextEllipsis.fit(text, font: theme.font, size: size, width: rect.width) ?? text
+        drawLine(cachedLayout(short, size: size), font: theme.font, in: rect, alignment: .left, color: color, list: list)
+        return true
+    }
+
+    /// `text` when a single line of it at `size` overflows `width` (so it can be its own tooltip), else nil.
+    func truncatedText(_ text: String, size: Float, width: Float) -> String? {
+        overflows(cachedLayout(text, size: size), width: width) ? text : nil
+    }
+}
+
 /// Caches a `TextLayout` until its inputs change, so static text isn't re-laid out every frame.
 struct CachedTextLayout {
     private var key: (text: String, size: Float, maxWidth: Float?, alignment: TextAlignment, font: ObjectIdentifier)?
@@ -149,8 +176,25 @@ public final class Label: Widget {
                           color: textColor(theme))
         } else {
             let layout = cache.get(text, font: theme.font, size: size)
-            drawLine(layout, font: theme.font, in: content, alignment: alignment, color: textColor(theme), list: list)
+            drawEllipsized(text, layout: layout, size: size, in: content, alignment: alignment, color: textColor(theme),
+                           list: list)
         }
+    }
+
+    /// Whether a single-line label is cut off at its current width.
+    public var isTruncated: Bool {
+        !wraps && truncatedText(text, size: size, width: contentRect.width) != nil
+    }
+
+    /// An explicit `tooltip`, else the full text while it is truncated.
+    public override func tooltip(at point: Vec2) -> String? {
+        tooltip ?? (isTruncated ? text : nil)
+    }
+
+    /// Labels let the pointer through unless they have something to show on hover.
+    public override func hitTest(_ point: Vec2) -> Widget? {
+        guard !isHidden, frame.contains(point), tooltip != nil || isTruncated else { return nil }
+        return self
     }
 }
 

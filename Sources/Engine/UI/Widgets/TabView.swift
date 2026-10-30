@@ -18,6 +18,8 @@ public final class DockPanel {
     /// Whether the tab view fills the content area with the panel background before the content
     /// draws. Turn it off for a viewport whose pixels come from behind the UI.
     public var drawsBackground = true
+    /// Shown when hovering the tab's title; the full title appears instead when the tab cuts it off.
+    public var tooltip: String?
     /// Called after the user closes the panel (close button, middle click, `DockSpace.closePanel`).
     public var onClose: (() -> Void)?
     /// The tab view currently showing it.
@@ -254,6 +256,15 @@ public final class TabView: Widget {
         return selectedTab?.passesPointerThrough == true ? nil : self
     }
 
+    /// "Close <title>" over a close button, else the panel's `tooltip` or its full title while the tab cuts it off.
+    public override func tooltip(at point: Vec2) -> String? {
+        if let tooltip { return tooltip }
+        guard drag == nil, let i = tab(at: point) else { return nil }
+        let panel = tabs[i]
+        if let close = closeButtonRect(i), close.contains(point) { return "Close \(panel.title)" }
+        return panel.tooltip ?? truncatedText(panel.title, size: theme.fontSize, width: titleRect(i, in: tabRects[i], showClose: closeButtonRect(i) != nil).width)
+    }
+
     public override func cursor(at point: Vec2) -> UICursor? {
         drag?.phase == .docking || drag?.phase == .reordering ? .move : nil
     }
@@ -406,6 +417,14 @@ public final class TabView: Widget {
         }
     }
 
+    /// Where tab `i`'s title goes inside `rect`, leaving room for the close button when it shows.
+    private func titleRect(_ i: Int, in rect: UIRect, showClose: Bool) -> UIRect {
+        let theme = theme
+        let textRight = showClose ? (closeButtonRect(i)?.x ?? rect.maxX) - 2 : rect.maxX - theme.controlPaddingX
+        return UIRect(x: rect.x + theme.controlPaddingX, y: rect.y, width: max(0, textRight - rect.x - theme.controlPaddingX),
+                      height: rect.height)
+    }
+
     private func drawTab(_ i: Int, in rect: UIRect, list: UIDrawList, theme: UITheme, hovered: Bool) {
         let panel = tabs[i]
         let selected = i == selectedIndex
@@ -427,14 +446,11 @@ public final class TabView: Widget {
         }
         let close = closeButtonRect(i)
         let showClose = close != nil && (selected || hovered || pressedClose === panel)
-        let textRight = showClose ? close!.x - 2 : rect.maxX - theme.controlPaddingX
-        let textRect = UIRect(x: rect.x + theme.controlPaddingX, y: rect.y, width: max(0, textRight - rect.x - theme.controlPaddingX),
-                              height: rect.height)
+        let textRect = titleRect(i, in: rect, showClose: showClose)
         let layout = cachedLayout(panel.title, size: theme.fontSize)
         let color = selected ? theme.textColor : theme.secondaryTextColor
-        list.withClip(textRect) {
-            drawLine(layout, font: theme.font, in: textRect, color: isEffectivelyEnabled ? color : theme.disabledTextColor, list: list)
-        }
+        drawEllipsized(panel.title, layout: layout, size: theme.fontSize, in: textRect,
+                       color: isEffectivelyEnabled ? color : theme.disabledTextColor, list: list)
         if showClose, let close {
             let pointer = context?.pointerPosition ?? Vec2(-1e6, -1e6)
             if close.contains(pointer) && (pressedClose === panel || pressedClose == nil) {

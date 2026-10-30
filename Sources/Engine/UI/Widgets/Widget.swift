@@ -224,6 +224,10 @@ open class Widget {
     /// Clip children (and content) to the padded frame.
     public var clipsContent = false
 
+    /// Text shown in a small box after the pointer rests on this widget (or a descendant without
+    /// a tip of its own). See `tooltip(at:)` and `UIContext`.
+    public var tooltip: String?
+
     /// Optional decoration painted by the default `draw`: a background, a border and a corner radius.
     public var background: UIColor? { didSet { setNeedsDisplay() } }
     public var borderColor: UIColor? { didSet { setNeedsDisplay() } }
@@ -318,6 +322,11 @@ open class Widget {
     /// The pointer shape this widget wants at `point` while hovered or capturing the pointer
     /// (dividers ask for resize arrows), or nil to defer to its ancestors. See `UIContext.desiredCursor`.
     open func cursor(at point: Vec2) -> UICursor? { nil }
+
+    /// The tooltip for the pointer at `point` (window points), or nil for none. The context asks
+    /// the hovered widget and then each ancestor, and shows the first answer. Widgets with
+    /// per-part tips (rows, a tab's close button) override it; the default is `tooltip`.
+    open func tooltip(at point: Vec2) -> String? { tooltip }
 
     /// Called on the widget under the pointer and then each ancestor before a pointer down is
     /// dispatched, whether or not anyone handles it. Containers use it to react to any click

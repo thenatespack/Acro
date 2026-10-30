@@ -156,7 +156,6 @@ public final class PropertyGrid: Stack {
 
     private var sections: [Section] = []
     private var collapsed = Set<String>()
-    private var tooltip: (widget: Widget, since: Double)?
 
     public init(world: World, name: String = "propertyGrid") {
         self.world = world
@@ -201,7 +200,6 @@ public final class PropertyGrid: Stack {
     private func rebuild() {
         removeAllChildren()
         sections = []
-        tooltip = nil
         guard let entity else { return }
         for component in visibleComponents() {
             let name = Swift.type(of: component).componentName
@@ -289,7 +287,7 @@ public final class PropertyGrid: Stack {
                 header.depth = depth
                 header.indent = Float(depth) * indentWidth
                 header.isCollapsed = collapsed.contains(key)
-                header.tooltipText = field.hints.tooltip
+                header.tooltip = field.hints.tooltip
                 header.onToggle = { [weak self] in
                     guard let self else { return }
                     self.setCollapsed(!self.collapsed.contains(key), component: section.name, path: field.path)
@@ -577,28 +575,6 @@ public final class PropertyGrid: Stack {
         changeEdit(b, new)
         endEdit(b, new)
     }
-
-    // MARK: Tooltip
-
-    public override func drawForeground(_ list: UIDrawList, theme: UITheme) {
-        guard let context else { return }
-        let hovered = context.hoveredWidget
-        guard let hovered, hovered.isDescendant(of: self),
-              let text = (hovered as? FieldLabel)?.tooltip ?? (hovered as? GridHeader)?.tooltipText, !text.isEmpty else {
-            tooltip = nil
-            return
-        }
-        if tooltip?.widget !== hovered { tooltip = (hovered, context.time) }
-        guard let since = tooltip?.since, context.time - since >= 0.5 else { return }
-        let layout = cachedLayout(text, size: theme.smallFontSize)
-        let size = Vec2((layout.width * scale).rounded(.up) / scale + 16, theme.smallFontSize + 12)
-        let x = min(max(hovered.frame.x, frame.x + 4), max(frame.x + 4, frame.maxX - size.x - 4))
-        let rect = UIRect(x: x, y: hovered.frame.maxY + 2, width: size.x, height: size.y)
-        list.fillRect(rect, color: theme.popupBackground, radii: UICornerRadii(4))
-        list.strokeRect(rect, color: theme.popupBorder, width: 1, radii: UICornerRadii(4))
-        drawLine(layout, font: theme.font, in: UIRect(x: rect.x + 8, y: rect.y, width: rect.width - 16, height: rect.height),
-                 color: theme.textColor, list: list)
-    }
 }
 
 // MARK: Parts
@@ -610,7 +586,6 @@ final class GridHeader: Widget {
     var showsRemove = false { didSet { setNeedsDisplay() } }
     var depth = 0
     var indent: Float = 0 { didSet { setNeedsDisplay() } }
-    var tooltipText: String?
     var onToggle: (() -> Void)?
     var onRemove: (() -> Void)?
     let isComponent: Bool
@@ -627,6 +602,19 @@ final class GridHeader: Widget {
     }
 
     private var removeRect: UIRect { UIRect(x: frame.maxX - 26, y: frame.y, width: 26, height: frame.height) }
+
+    /// Where the title goes: after the disclosure triangle, before the remove button.
+    private var titleRect: UIRect {
+        let x = frame.x + indent + 24
+        let right = (isComponent && showsRemove) ? removeRect.x : frame.maxX
+        return UIRect(x: x, y: frame.y, width: max(0, right - x - 4), height: frame.height)
+    }
+
+    /// The remove button names what it removes; a group's `tooltip` hint, else its full title when cut off.
+    override func tooltip(at point: Vec2) -> String? {
+        if isComponent, showsRemove, removeRect.contains(point) { return "Remove \(title)" }
+        return tooltip ?? truncatedText(title, size: theme.fontSize, width: titleRect.width)
+    }
 
     override func handleEvent(_ event: UIEvent) -> Bool {
         switch event {
@@ -660,12 +648,8 @@ final class GridHeader: Widget {
             list.drawLine(from: c + Vec2(0, s / 2), to: c + Vec2(s, -s / 2), width: 1.5, color: arrow, cap: .round)
         }
         let layout = cache.get(title, font: theme.font, size: theme.fontSize)
-        let x = frame.x + indent + 24
-        let right = (isComponent && showsRemove) ? removeRect.x : frame.maxX
-        list.withClip(UIRect(x: x, y: frame.y, width: max(0, right - x - 4), height: frame.height)) {
-            drawLine(layout, font: theme.font, in: UIRect(x: x, y: frame.y, width: layout.width, height: frame.height),
-                     color: isComponent ? theme.textColor : theme.secondaryTextColor, list: list)
-        }
+        drawEllipsized(title, layout: layout, size: theme.fontSize, in: titleRect, color: isComponent ? theme.textColor : theme.secondaryTextColor,
+                       list: list)
         if isComponent, showsRemove {
             let r = removeRect
             let center = r.center
@@ -677,17 +661,26 @@ final class GridHeader: Widget {
     }
 }
 
-/// A field's label, clipped to its width, hoverable for the tooltip.
+/// A field's label, ellipsized to its width. Hoverable for the field's `tooltip` hint, or for
+/// its full text while it is cut off.
 final class FieldLabel: Widget {
     var text: String { didSet { if text != oldValue { setNeedsDisplay() } } }
-    let tooltip: String?
     private var cache = CachedTextLayout()
 
     init(_ text: String, tooltip: String?) {
         self.text = text
-        self.tooltip = tooltip
         super.init(name: "label")
-        isHitTestable = tooltip != nil
+        self.tooltip = tooltip
+        isHitTestable = false
+    }
+
+    private var isTruncated: Bool { truncatedText(text, size: theme.fontSize, width: frame.width) != nil }
+
+    override func tooltip(at point: Vec2) -> String? { tooltip ?? (isTruncated ? text : nil) }
+
+    override func hitTest(_ point: Vec2) -> Widget? {
+        guard !isHidden, frame.contains(point), tooltip != nil || isTruncated else { return nil }
+        return self
     }
 
     override func measureContent(width: Float?) -> Vec2 {
@@ -697,9 +690,7 @@ final class FieldLabel: Widget {
     override func draw(_ list: UIDrawList, theme: UITheme) {
         let layout = cache.get(text, font: theme.font, size: theme.fontSize)
         let color = isEffectivelyEnabled ? theme.secondaryTextColor : theme.disabledTextColor
-        list.withClip(frame) {
-            drawLine(layout, font: theme.font, in: frame, color: color, list: list)
-        }
+        drawEllipsized(text, layout: layout, size: theme.fontSize, in: frame, color: color, list: list)
     }
 }
 
