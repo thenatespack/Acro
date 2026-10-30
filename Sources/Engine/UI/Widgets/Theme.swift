@@ -41,6 +41,9 @@ public struct UITheme {
     public var rowSelectedFocused = UIColor(hex: 0x3478f6, alpha: 0.6)
     public var scrollbarThumb = UIColor(hex: 0xffffff, alpha: 0.22)
     public var scrollbarThumbActive = UIColor(hex: 0xffffff, alpha: 0.4)
+    public var tooltipBackground = UIColor(hex: 0x252c3a)
+    public var tooltipBorder = UIColor(hex: 0x3d475c)
+    public var tooltipText = UIColor(hex: 0xe6e9ef)
 
     // Metrics (points)
     public var spacing: Float = 6
@@ -58,6 +61,15 @@ public struct UITheme {
     public var focusRingWidth: Float = 2
     /// Caret blink period in seconds (visible for the first half); 0 keeps it solid.
     public var caretBlinkPeriod: Double = 1.06
+    /// Seconds the pointer rests on a widget before its tooltip shows.
+    public var tooltipDelay: Double = 0.5
+    /// Seconds after a tooltip went away during which the next one shows without the delay.
+    public var tooltipSwitchWindow: Double = 0.4
+    public var tooltipFontSize: Float = 12
+    /// Widest a tooltip box gets (padding included); longer text wraps.
+    public var tooltipMaxWidth: Float = 300
+    /// Space between the box edge and its text.
+    public var tooltipPadding = Vec2(8, 5)
 
     public init(font: Font = UIDrawList.defaultFont) {
         self.font = font

@@ -28,6 +28,7 @@ public final class InspectorPanel {
         recorder = InspectorEditRecorder(session: session)
         view = VStack(spacing: 6, padding: EdgeInsets(8), name: "inspectorPanel")
         addButton = Button("Add Component", name: "addComponent")
+        addButton.tooltip = "Add a component to the selected entity"
         scroll = ScrollView(grid, name: "inspectorScroll")
 
         grid.appliesEditsToWorld = false
@@ -76,7 +77,10 @@ public final class InspectorPanel {
             if nameField.text != name { nameField.text = name }
         }
         let id = shownID.map { "ID \($0.description)" } ?? ""
-        if idLabel.text != id { idLabel.text = id }
+        if idLabel.text != id {
+            idLabel.text = id
+            idLabel.tooltip = shownID.map { "Entity ID \($0.description)" }
+        }
         let count = session.selection.entities(in: world).count
         let caption = count > 1 ? "\(count) entities selected; showing the primary one" : ""
         if subtitle.text != caption { subtitle.text = caption }

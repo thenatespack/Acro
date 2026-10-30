@@ -101,6 +101,23 @@ public final class UIContext {
     public var doubleClickInterval: Double = 0.4
     public var doubleClickDistance: Float = 4
 
+    /// Whether hover tooltips are shown at all.
+    public var tooltipsEnabled = true
+    /// The tooltip text on screen, or nil. It is drawn above everything, including popups.
+    public private(set) var tooltipText: String?
+    /// Where the tooltip box is, in window points (nil while none shows).
+    public private(set) var tooltipFrame: UIRect?
+    /// The tooltip's timing state (delay and switch window come from the theme every frame).
+    public private(set) var tooltipTiming = TooltipController()
+    private var tooltipLayout: TextLayout?
+    private var tooltipPlacedFor: TooltipController.Target?
+    /// The widget whose tooltip a press, scroll or key hid: it shows no tooltip until the pointer leaves it.
+    private weak var tooltipDismissedOwner: Widget?
+    /// The first pointer position seen, and whether the pointer has moved since: a pointer that
+    /// never moves (headless and screenshot runs) hovers nothing for tooltips.
+    private var firstPointerPosition: Vec2?
+    private var pointerHasMoved = false
+
     private var gameOwnsPointer = false
     private var captureButton: MouseButton?
     private var buttonsDown = Set<MouseButton>()
@@ -157,6 +174,7 @@ public final class UIContext {
         }
         syncTextInput(input)
         layoutIfNeeded()
+        updateTooltip()
     }
 
     /// Lets go of `input` before the context is dropped or hidden: clears focus and capture,
@@ -173,6 +191,8 @@ public final class UIContext {
         composition = nil
         wantsPointer = false
         wantsKeyboard = false
+        tooltipTiming.reset()
+        hideTooltip()
     }
 
     /// Lays out if needed, then paints the tree, the focus ring and the overlays into `list`.
@@ -188,6 +208,7 @@ public final class UIContext {
             list.strokeRect(ring, color: theme.focusRing, width: w, radii: UICornerRadii(theme.cornerRadius + w + 1))
         }
         for overlay in overlays { overlay.paint(list, theme: theme) }
+        drawTooltip(into: list)
         paintDirty = false
         stats.paintedItems = list.stats.items - itemsBefore
         stats.paintTime = Self.seconds(ContinuousClock.now - start)
@@ -226,6 +247,11 @@ public final class UIContext {
     public func pointerMoved(to position: Vec2) {
         let moved = position != pointerPosition
         pointerPosition = position
+        if let first = firstPointerPosition {
+            if position != first { pointerHasMoved = true }
+        } else {
+            firstPointerPosition = position
+        }
         if let captured = capturedWidget {
             if moved {
                 _ = captured.isEffectivelyEnabled && captured.handleEvent(.pointerDrag(pointerEvent(button: captureButton ?? .left)))
@@ -248,6 +274,7 @@ public final class UIContext {
     /// A mouse button went down or up at the current pointer position.
     public func pointerButton(_ button: MouseButton, down: Bool) {
         if down {
+            dismissTooltip()
             buttonsDown.insert(button)
             if gameOwnsPointer || capturedWidget != nil { return }
             let hit = hitTest(pointerPosition)
@@ -314,6 +341,7 @@ public final class UIContext {
 
     /// Wheel / trackpad scrolling at the pointer (see `Input.scrollDelta`).
     public func scrolled(by delta: Vec2) {
+        dismissTooltip()
         guard !gameOwnsPointer, let hit = capturedWidget ?? hitTest(pointerPosition) else { return }
         pointerConsumed = true
         wantsPointer = true
@@ -322,6 +350,7 @@ public final class UIContext {
 
     /// A key press or repeat. Ignored (left to the game) when nothing is focused and no overlay is open.
     public func keyPressed(_ key: KeyEvent) {
+        dismissTooltip()
         guard focusedWidget != nil || !overlays.isEmpty else { return }
         keyboardConsumed = true
         if let focused = focusedWidget, dispatch(.key(key), from: focused) != nil { return }
@@ -337,6 +366,7 @@ public final class UIContext {
 
     /// Committed text for the focused widget.
     public func textEntered(_ text: String) {
+        dismissTooltip()
         guard let focused = focusedWidget else { return }
         keyboardConsumed = true
         dispatch(.text(text), from: focused)
@@ -479,6 +509,82 @@ public final class UIContext {
         if let hovered = hoveredWidget, hovered.isDescendant(of: widget) { hoveredWidget = nil }
     }
 
+    // MARK: Tooltips
+
+    /// The widget that owns the tooltip under the pointer and its text: the deepest widget from
+    /// the hovered one up that answers `tooltip(at:)`, skipping disabled and hidden ones. Nil while
+    /// the pointer is captured, pressed, outside the window or hasn't moved.
+    func tooltipTarget() -> (widget: Widget, text: String)? {
+        guard tooltipsEnabled, pointerHasMoved, !gameOwnsPointer, capturedWidget == nil, buttonsDown.isEmpty,
+              viewport.contains(pointerPosition) else { return nil }
+        var node = hoveredWidget
+        while let current = node {
+            if current.isEffectivelyEnabled, current.isEffectivelyVisible,
+               let text = current.tooltip(at: pointerPosition), !text.isEmpty {
+                return (current, text)
+            }
+            node = current.parent
+        }
+        return nil
+    }
+
+    /// Advances the tooltip timer to `time` and positions the box when one appears or changes.
+    /// `update(input:...)` calls it every frame; synthetic drivers can call it after `pointerMoved`.
+    public func updateTooltip() {
+        tooltipTiming.delay = theme.tooltipDelay
+        tooltipTiming.switchWindow = theme.tooltipSwitchWindow
+        var found = tooltipTarget()
+        if let owner = tooltipDismissedOwner {
+            if capturedWidget != nil || hoveredWidget?.isDescendant(of: owner) == true {
+                found = nil
+            } else {
+                tooltipDismissedOwner = nil
+            }
+        }
+        let target = found.map { TooltipController.Target(widget: ObjectIdentifier($0.widget), text: $0.text) }
+        guard tooltipTiming.update(time: time, target: target), let target = tooltipTiming.target else {
+            hideTooltip()
+            return
+        }
+        // The box stays where it appeared, until the target changes.
+        if tooltipPlacedFor != target || tooltipFrame == nil {
+            let layout = TooltipLayout.textLayout(target.text, theme: theme)
+            let size = TooltipLayout.boxSize(for: layout, theme: theme, scale: scale)
+            let box = TooltipLayout.frame(size: size, pointer: pointerPosition, viewport: viewport)
+            tooltipLayout = layout
+            tooltipFrame = UIRect(x: UILayout.snap(box.x, scale: scale), y: UILayout.snap(box.y, scale: scale),
+                                  width: box.width, height: box.height)
+            tooltipPlacedFor = target
+        }
+        if tooltipText != target.text { paintDirty = true }
+        tooltipText = target.text
+    }
+
+    private func hideTooltip() {
+        guard tooltipText != nil else { return }
+        tooltipText = nil
+        tooltipFrame = nil
+        tooltipLayout = nil
+        tooltipPlacedFor = nil
+        paintDirty = true
+    }
+
+    /// A press, scroll or key hides the tooltip until the pointer leaves its widget.
+    private func dismissTooltip() {
+        if let owner = tooltipTarget()?.widget { tooltipDismissedOwner = owner }
+        tooltipTiming.dismiss(time: time)
+        hideTooltip()
+    }
+
+    private func drawTooltip(into list: UIDrawList) {
+        guard let box = tooltipFrame, let layout = tooltipLayout else { return }
+        let radii = UICornerRadii(4)
+        list.fillRect(box, color: theme.tooltipBackground, radii: radii)
+        list.strokeRect(box, color: theme.tooltipBorder, width: 1, radii: radii)
+        list.drawText(layout, font: theme.font,
+                      at: Vec2(box.x + theme.tooltipPadding.x, box.y + theme.tooltipPadding.y), color: theme.tooltipText)
+    }
+
     // MARK: Text
 
     private struct TextKey: Hashable {
@@ -499,6 +605,25 @@ public final class UIContext {
         let layout = TextLayout(text, font: font, size: size)
         textLayouts[key] = layout
         return layout
+    }
+
+    private struct EllipsisKey: Hashable {
+        var text: String
+        var size: Float
+        var width: Int
+        var font: ObjectIdentifier
+    }
+    private var ellipsized: [EllipsisKey: String] = [:]
+
+    /// `text` shortened with a trailing "…" to fit `width` points, cached (only text that
+    /// overflows gets here, every frame it is drawn).
+    func ellipsizedText(_ text: String, size: Float, width: Float) -> String {
+        let key = EllipsisKey(text: text, size: size, width: Int((width * scale).rounded(.down)), font: ObjectIdentifier(theme.font))
+        if let cached = ellipsized[key] { return cached }
+        if ellipsized.count >= 1024 { ellipsized.removeAll(keepingCapacity: true) }
+        let result = TextEllipsis.fit(text, font: theme.font, size: size, width: width) ?? text
+        ellipsized[key] = result
+        return result
     }
 
     // MARK: Helpers

@@ -683,8 +683,20 @@ public final class TreeView: RowListView {
         if node === renamingNode { return }
         let dragged = drag?.ids.contains(ObjectIdentifier(node)) ?? false
         let layout = cachedLayout(node.title, size: theme.fontSize)
-        let textRect = UIRect(x: disclosure.maxX + 2, y: rect.y, width: rect.maxX - disclosure.maxX - 2, height: rect.height)
-        drawLine(layout, font: theme.font, in: textRect, color: dragged ? color.withAlpha(0.45) : color, list: list)
+        drawEllipsized(node.title, layout: layout, size: theme.fontSize, in: textRect(row: row, in: rect),
+                       color: dragged ? color.withAlpha(0.45) : color, list: list)
+    }
+
+    private func textRect(row: Int, in rect: UIRect) -> UIRect {
+        let disclosure = disclosureRect(row: row, in: rect)
+        return UIRect(x: disclosure.maxX + 2, y: rect.y, width: rect.maxX - disclosure.maxX - 2, height: rect.height)
+    }
+
+    /// The node's full title while its row cuts it off (not while it is being renamed).
+    public override func rowTooltip(_ row: Int, in rect: UIRect) -> String? {
+        let node = rows[row].node
+        guard node !== renamingNode else { return nil }
+        return truncatedText(node.title, size: theme.fontSize, width: textRect(row: row, in: rect).width)
     }
 
     public override func drawForeground(_ list: UIDrawList, theme: UITheme) {

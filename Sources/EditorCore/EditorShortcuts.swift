@@ -53,6 +53,48 @@ public struct EditorShortcuts: Sendable {
         return action
     }
 
+    /// The key press that performs `action` (its first binding), for showing in tooltips. Every
+    /// result maps back to `action` through `action(for:)`.
+    public func binding(for action: EditorAction) -> KeyEvent {
+        switch action {
+        case .undo: KeyEvent(key: .z, modifiers: shortcutModifier)
+        case .redo: KeyEvent(key: .z, modifiers: [shortcutModifier, .shift])
+        case .save: KeyEvent(key: .s, modifiers: shortcutModifier)
+        case .duplicate: KeyEvent(key: .d, modifiers: shortcutModifier)
+        case .togglePlay: KeyEvent(key: .p, modifiers: shortcutModifier)
+        case .delete: KeyEvent(key: .delete)
+        case .focusSelection: KeyEvent(key: .f)
+        case .clearSelection: KeyEvent(key: .escape)
+        }
+    }
+
+    /// How `action`'s key combination reads: "⌘Z", "⇧⌘Z" on macOS, "Ctrl+Z", "Ctrl+Shift+Z" elsewhere.
+    public func shortcutText(for action: EditorAction) -> String {
+        let event = binding(for: action)
+        let key: String
+        switch event.key {
+        case .delete: key = "Delete"
+        case .escape: key = "Esc"
+        default: key = String(describing: event.key).uppercased()
+        }
+        let mods = event.modifiers
+        if isMac {
+            return (mods.contains(.control) ? "⌃" : "") + (mods.contains(.alt) ? "⌥" : "") + (mods.contains(.shift) ? "⇧" : "")
+                + (mods.contains(.command) ? "⌘" : "") + key
+        }
+        var parts: [String] = []
+        if mods.contains(.control) { parts.append("Ctrl") }
+        if mods.contains(.alt) { parts.append("Alt") }
+        if mods.contains(.shift) { parts.append("Shift") }
+        if mods.contains(.command) { parts.append("Win") }
+        return (parts + [key]).joined(separator: "+")
+    }
+
+    /// `title` followed by the action's shortcut in parentheses: "Undo Rename (⌘Z)".
+    public func tooltip(_ title: String, for action: EditorAction) -> String {
+        "\(title) (\(shortcutText(for: action)))"
+    }
+
     /// What the UI is doing with the keyboard, sampled around `UIContext.update`.
     public struct Focus: Sendable, Equatable {
         /// A text editor has focus (a `TextField`, a number being typed, a tree row being

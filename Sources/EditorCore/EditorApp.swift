@@ -436,6 +436,7 @@ final class Toolbar {
     private let redoButton: Button
     private let playButton: Button
     private let toolButtons: [(EditorTool, Button)]
+    private let resetButton: Button
     private let titleLabel = Label("", role: .secondary, name: "documentTitle")
 
     init(app: EditorApp) {
@@ -446,13 +447,23 @@ final class Toolbar {
         playButton = Button("Play", name: "play") { session.togglePlay() }
         toolButtons = EditorTool.allCases.map { tool in (tool, Button(tool.title, name: tool.rawValue) { session.tool = tool }) }
         path.style.width = 220
+        let shortcuts = app.shortcuts
+        let newButton = Button("New", name: "new") { session.newDocument() }
+        let openButton = Button("Open", name: "open") { [unowned app] in app.open() }
+        let saveButton = Button("Save", name: "save") { [unowned app] in app.save() }
+        let saveAsButton = Button("Save As", name: "saveAs") { [unowned app] in app.saveAs() }
+        resetButton = Button("Reset Layout", name: "resetLayout") { [unowned app] in app.resetLayout() }
+        newButton.tooltip = "Start a new scene"
+        openButton.tooltip = "Open the scene file at the path"
+        saveButton.tooltip = shortcuts.tooltip("Save the scene", for: .save)
+        saveAsButton.tooltip = "Save the scene to the path"
+        path.tooltip = "Scene file path, used by Open, Save and Save As"
+        resetButton.tooltip = "Restore the default panel layout"
+        for (tool, button) in toolButtons { button.tooltip = "\(tool.title) tool" }
         view = HStack(spacing: 6, padding: EdgeInsets(horizontal: 8, vertical: 5), name: "toolbar")
-        view.background = app.ui.theme.panelBackground
+        view.background = (app.ui?.theme ?? UITheme()).panelBackground
         view.addChildren([
-            Button("New", name: "new") { session.newDocument() },
-            Button("Open", name: "open") { [unowned app] in app.open() },
-            Button("Save", name: "save") { [unowned app] in app.save() },
-            Button("Save As", name: "saveAs") { [unowned app] in app.saveAs() },
+            newButton, openButton, saveButton, saveAsButton,
             path,
             Separator(.vertical),
             undoButton, redoButton,
@@ -462,7 +473,7 @@ final class Toolbar {
         ] + toolButtons.map(\.1) + [
             Spacer(),
             titleLabel,
-            Button("Reset Layout", name: "resetLayout") { [unowned app] in app.resetLayout() },
+            resetButton,
         ])
         refresh()
     }
@@ -470,9 +481,13 @@ final class Toolbar {
     func refresh() {
         let session = app.session
         let undo = session.undo
+        let shortcuts = app.shortcuts
         set(undoButton, title: undo.undoTitle, enabled: undo.canUndo)
         set(redoButton, title: undo.redoTitle, enabled: undo.canRedo)
         set(playButton, title: session.isPlaying ? "Stop" : "Play", enabled: true)
+        undoButton.tooltip = shortcuts.tooltip(undo.undoTitle, for: .undo)
+        redoButton.tooltip = shortcuts.tooltip(undo.redoTitle, for: .redo)
+        playButton.tooltip = shortcuts.tooltip(session.isPlaying ? "Stop and restore the scene" : "Play the scene", for: .togglePlay)
         playButton.role = session.isPlaying ? .primary : .normal
         for (tool, button) in toolButtons {
             let role: Button.Role = tool == session.tool ? .primary : .normal
