@@ -70,4 +70,5 @@ extension DemoScene {
     UIScene.self,
     ECSScene.self,
     WidgetsScene.self,
+    DockingScene.self,
 ]
