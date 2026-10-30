@@ -3,7 +3,7 @@ import Foundation
 
 /// Hosts the test scenes: owns the orbit camera, the shadow pass and scene switching.
 ///
-/// Controls: 1–7 switch scenes, Tab / Shift-Tab cycle the render resolution, U cycles the
+/// Controls: 1–8 switch scenes, Tab / Shift-Tab cycle the render resolution, U cycles the
 /// upscaler (bilinear, FSR 1, MetalFX on Metal), V toggles vsync, Space pauses
 /// animation, arrows/WASD or left-drag orbit, Q/E zoom, Esc quits. Scenes add their own
 /// keys (see each scene's doc comment).

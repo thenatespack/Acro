@@ -397,13 +397,15 @@ final class VulkanRenderDevice: RenderDevice {
         try vkCheck(vkBeginCommandBuffer(cmd, &beginInfo), "vkBeginCommandBuffer")
         var region = VkBufferCopy(srcOffset: 0, dstOffset: 0, size: VkDeviceSize(length))
         vkCmdCopyBuffer(cmd, source, destination, 1, &region)
-        // Make the copy visible to vertex input in later submissions.
+        // Make the copy visible to vertex input and to uniform reads in later submissions.
         var barrier = VkMemoryBarrier()
         barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER
         barrier.srcAccessMask = vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT)
-        barrier.dstAccessMask = vkFlags(VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT, VK_ACCESS_INDEX_READ_BIT)
+        barrier.dstAccessMask = vkFlags(VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT, VK_ACCESS_INDEX_READ_BIT, VK_ACCESS_UNIFORM_READ_BIT)
         vkCmdPipelineBarrier(
-            cmd, vkFlags(VK_PIPELINE_STAGE_TRANSFER_BIT), vkFlags(VK_PIPELINE_STAGE_VERTEX_INPUT_BIT), 0, 1, &barrier, 0, nil, 0, nil)
+            cmd, vkFlags(VK_PIPELINE_STAGE_TRANSFER_BIT),
+            vkFlags(VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT),
+            0, 1, &barrier, 0, nil, 0, nil)
         try vkCheck(vkEndCommandBuffer(cmd), "vkEndCommandBuffer")
 
         var fenceInfo = VkFenceCreateInfo()
@@ -475,7 +477,7 @@ final class VulkanRenderDevice: RenderDevice {
         var regions: [VkBufferImageCopy] = []
         var offset = 0
         for (level, mip) in levels.enumerated() {
-            mip.pixels.withUnsafeBytes { (staging.mapped + offset).copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+            mip.pixels.withUnsafeBytes { (staging.mapped! + offset).copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
             var region = VkBufferImageCopy()
             region.bufferOffset = VkDeviceSize(offset)
             region.imageSubresource = VkImageSubresourceLayers(

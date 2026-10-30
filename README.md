@@ -24,7 +24,8 @@ Scripts/render-scenes.sh     Render every demo scene on every backend and compar
 - Rendering goes through `RenderDevice` / `RenderPass`. Each backend implements them; game code never touches Metal or Vulkan directly.
 - The backend is picked by `EngineConfig.backend`, then the `ENGINE_BACKEND` env var, then the platform default (Metal on macOS, Vulkan otherwise).
 - Metal pairs with a native AppKit window; Vulkan pairs with GLFW.
-- Resources (`GPUBuffer`, `RenderPipeline`) are freed when you drop the last reference. Metal relies on ARC plus command buffers retaining what they use. On Vulkan, `deinit` hands the handles to a deletion queue, and they are destroyed once the fence of the last frame that could use them has signaled. Anything still alive at shutdown is destroyed with the device.
+- Resources (`GPUBuffer`, `GPUTexture`, `RenderPipeline`) are freed when you drop the last reference. Metal relies on ARC plus command buffers retaining what they use. On Vulkan, `deinit` hands the handles to a deletion queue, and they are destroyed once the fence of the last frame that could use them has signaled. Anything still alive at shutdown is destroyed with the device.
+- Static buffers and textures are uploaded once at creation. On Vulkan they live in device-local memory and are filled through a staging buffer; creation blocks until the copy has finished, so create them up front rather than every frame.
 - Per-frame data (UI, debug geometry, particles) goes through `pass.setVertexData(_:)`, which copies into a per-frame ring buffer. No buffer management needed. Data that several passes draw (e.g. instances for both the shadow and the screen pass) can be copied once with `frame.upload(_:)` in `renderOffscreen`, then bound in each pass with `pass.setVertexBuffer(_:index:)`.
 - Metal acquires the window's drawable only when the first pass that draws into the window begins. It commits everything recorded before that point first, so the GPU renders shadow maps (and an offscreen scene) while the CPU waits for the window server to hand over a drawable.
 - Both backends use the same conventions so one set of math works everywhere: right-handed, column-major matrices, clip depth in [0, 1], y-up clip space (Vulkan flips the viewport), counter-clockwise front faces, sRGB BGRA8 swapchains.
@@ -38,8 +39,20 @@ Each shader ships in two forms that follow shared binding conventions (see `Shad
 | Entry points | `vertex_main`, `fragment_main` | `main` |
 | Vertex attribute *n* | `[[attribute(n)]]` | `layout(location = n) in` |
 | Push constants (≤128 B) | `constant T& [[buffer(16)]]` | `layout(push_constant) uniform` |
+| Uniform buffer *n* (2–7) | `constant T& [[buffer(n)]]` | `layout(set = 2, binding = n, std140) uniform` |
+| Texture *n* (1–7) | `texture2d<float> [[texture(n)]]` | `layout(set = 2, binding = 8 + n) uniform texture2D` |
+| Sampler *n* (1–7) | `sampler [[sampler(n)]]` | `layout(set = 2, binding = 16 + n) uniform sampler` |
+
+Buffer indices 0 and 1 are vertex buffers, buffer 15 is the per-frame uniform block, and texture/sampler 0 is the shadow map. On Vulkan, textures and samplers are separate descriptors: sample with `texture(sampler2D(tex, samp), uv)`.
 
 MSL is compiled at runtime. GLSL must be compiled to SPIR-V with `Scripts/compile-shaders.sh` (needs `glslc`), and the `.spv` files are committed.
+
+### Textures, samplers and uniform buffers
+
+- `device.makeTexture(pixels:width:height:format:generateMipmaps:)` creates a 2D `.rgba8Unorm` or `.rgba8Srgb` texture. Mipmaps are generated on the CPU (box filter, in linear light for sRGB), so both backends sample identical data.
+- `device.makeSampler(SamplerDescriptor(filter:mipFilter:addressMode:))` returns a cached sampler (nearest/linear, mip none/nearest/linear, repeat/clamp/mirror).
+- In a pass: `setTexture(_:index:)`, `setSampler(_:index:)`, `setUniformBuffer(_:index:)` for a static buffer created with `.uniform` usage, or `setUniformData(_:index:)` to copy per-draw data (≤16 KiB) into the frame's ring buffer. Pass `stage:` to bind to the vertex and/or fragment stage.
+- On Vulkan, bindings are collected per pass and written into a descriptor set (set 2) allocated from the frame slot's pool on the first draw after a change. The pool is reset when that slot's fence signals.
 
 ## Building
 
@@ -161,14 +174,16 @@ swift run -c release Demo --scene shadows --quality ultra --resolution 4k   # --
 | 5 | `culling` | Back / front / no culling, counter-clockwise winding | |
 | 6 | `churn` | Buffers, textures and pipelines created and dropped while in flight | |
 | 7 | `occlusion` | Frustum, occlusion and shadow-caster culling: 169 clusters of 125 cubes in a city grid, hardware queries on bounding-box proxies, cubes animated in the vertex shader from a static buffer | **O** toggle culling, **B** show culled clusters through walls |
+| 8 | `textures` | Procedural mipmapped sRGB texture with a repeat/trilinear sampler, a nearest-sampled linear texture, static and per-frame uniform buffers | **M** toggle mipmapping |
 
-Everywhere: **1–7** switch scenes, **Tab / Shift-Tab** cycle the render resolution (native, quality, performance, 144p … 16k), **U** cycles the upscaler, **V** toggles vsync, **Space** pauses animation, arrows/WASD or left-drag orbit, **Q/E** zoom, **Esc** quits. The window title shows the scene, its state, the render size, the quality and the backend.
+Everywhere: **1–8** switch scenes, **Tab / Shift-Tab** cycle the render resolution (native, quality, performance, 144p … 16k), **U** cycles the upscaler, **V** toggles vsync, **Space** pauses animation, arrows/WASD or left-drag orbit, **Q/E** zoom, **Esc** quits. The window title shows the scene, its state, the render size, the quality and the backend.
 
 `Scripts/render-scenes.sh [quality]` renders every scene on each available backend, writes PNGs to `.build/scene-shots/<quality>[-<resolution>]/`, and fails if the backends differ. Set `ENGINE_RESOLUTION` to render at a fixed size. Set `ENGINE_UPSCALER` as well to compare upscaled window images. Set `VALIDATE=1` to run Vulkan under the validation layers, which also fails on validation errors.
 
 ## Current limitations / next steps
 
-- Static buffers are immutable after creation (use `setVertexData` for dynamic data), and Vulkan buffers live in host-visible memory (no staging upload yet).
-- Per-draw data goes through push constants only: no uniform buffers, textures or samplers yet.
-- One render pass per frame into the swapchain, with no offscreen targets.
+The full roadmap (ECS, assets, physics, audio, UI, in-engine editor) lives on the project task board.
+
+- Static buffers and textures are immutable after creation (use `setVertexData` / `setUniformData` for dynamic data), and creating them on Vulkan blocks on the upload.
+- Textures are RGBA8 2D only: no compressed formats, cube maps, arrays, render-to-texture for game code, or image loading from files yet.
 - Two shader sources per shader. A single-source pipeline (e.g. Slang → SPIR-V + MSL) would remove the duplication.
