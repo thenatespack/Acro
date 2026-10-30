@@ -113,6 +113,8 @@ final class Renderer {
     private(set) var shadowMap: GPUTexture!
     private(set) var uniforms: SceneUniforms!
     private(set) var eye = Vec3.zero
+    /// Size in pixels of the screen pass, for scenes that draw in pixel coordinates (set by the host each frame).
+    var targetSize = (width: 1280, height: 720)
     /// The unjittered view-projection and animation time of the last `prepare`, for motion vectors.
     private var previousFrame: (viewProj: Mat4, time: Float)?
 

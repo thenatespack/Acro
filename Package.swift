@@ -17,7 +17,7 @@ let vulkanEnabled: Bool = {
 let vulkanEnabled = true
 #endif
 
-var engineDependencies: [Target.Dependency] = ["CZlib"]
+var engineDependencies: [Target.Dependency] = ["CZlib", "CStbTrueType"]
 var engineSwiftSettings: [SwiftSetting] = []
 var vulkanTargets: [Target] = []
 
@@ -94,10 +94,12 @@ let package = Package(
     ],
     targets: vulkanTargets + [
         zlibTarget,
+        // Vendored stb_truetype (public domain): font parsing, kerning and SDF glyph rasterization.
+        .target(name: "CStbTrueType"),
         .target(
             name: "Engine",
             dependencies: engineDependencies,
-            resources: [.copy("Shaders")],
+            resources: [.copy("Shaders"), .copy("Fonts")],
             swiftSettings: engineSwiftSettings,
             linkerSettings: windowsLinkerSettings
         ),

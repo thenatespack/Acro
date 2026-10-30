@@ -114,6 +114,7 @@ final class DemoGame: Game {
     }
 
     func render(engine: Engine, pass: RenderPass) {
+        renderer.targetSize = engine.renderSize
         renderer.bind(pass)
         pass.setTexture(renderer.shadowMap)
         do {
