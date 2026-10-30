@@ -71,4 +71,5 @@ extension DemoScene {
     ECSScene.self,
     WidgetsScene.self,
     DockingScene.self,
+    InspectorScene.self,
 ]

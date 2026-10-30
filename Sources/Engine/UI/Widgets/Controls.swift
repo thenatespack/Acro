@@ -352,6 +352,9 @@ public final class Slider: Widget {
     public var step: Float { didSet { setValue(value) } }
     /// Called when the user changes the value (not when it is set in code).
     public var onChange: ((Float) -> Void)?
+    /// A pointer drag starts (before its first `onChange`) / ends. Keyboard changes call only `onChange`.
+    public var onEditBegan: (() -> Void)?
+    public var onEditEnded: (() -> Void)?
     private var dragging = false
 
     public init(value: Float, in range: ClosedRange<Float> = 0...1, step: Float = 0, name: String = "",
@@ -418,6 +421,7 @@ public final class Slider: Widget {
         switch event {
         case .pointerDown(let e) where e.button == .left:
             dragging = true
+            onEditBegan?()
             userSet(value(atX: e.position.x))
             return true
         case .pointerDrag(let e):
@@ -426,6 +430,7 @@ public final class Slider: Widget {
         case .pointerUp:
             dragging = false
             setNeedsDisplay()
+            onEditEnded?()
             return true
         case .key(let e):
             let big = e.modifiers.contains(.shift) ? 10 : 1 as Float
