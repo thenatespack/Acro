@@ -27,8 +27,9 @@ public struct DebugView: Sendable {
     }
 }
 
-/// Draws `DebugDraw` lists into a pass: the grid, then the depth-tested lines, then the lines
-/// on top (one instanced draw each), then the labels (one draw per glyph-atlas page).
+/// Draws `DebugDraw` lists into a pass: the grid, then the depth-tested triangles and lines, then
+/// the triangles and lines on top (one instanced draw each), then the labels (one draw per
+/// glyph-atlas page).
 /// `SceneRenderer` owns one and calls it for its `debugDraw` in every view it renders; use one
 /// directly to draw debug geometry in your own passes. Pipelines are `.screen` ones, so it works in
 /// the scene pass and in render targets alike.
@@ -37,14 +38,17 @@ public final class DebugDrawRenderer {
     public let device: RenderDevice
     private let lineShader: ShaderSource
     private let gridShader: ShaderSource
+    private let fillShader: ShaderSource
     private var pipelines: [PipelineKey: RenderPipeline] = [:]
     private var text: TextRenderer?
 
     private struct PipelineKey: Hashable {
-        var grid: Bool
+        var kind: Kind
         var depth: DebugDepth
         var reversedZ: Bool
     }
+
+    private enum Kind: Hashable { case grid, lines, fills }
 
     /// Must match `PushConstants` in debug_line.vert.
     struct LineConstants: BitwiseCopyable {
@@ -67,6 +71,7 @@ public final class DebugDrawRenderer {
         self.device = device
         lineShader = try ShaderSource.load(named: "debug_line", bundle: .module)
         gridShader = try ShaderSource.load(named: "debug_grid", bundle: .module)
+        fillShader = try ShaderSource.load(named: "debug_fill", bundle: .module)
     }
 
     /// Records `debug` into `pass` for `view`. Draws nothing when it's empty.
@@ -74,7 +79,7 @@ public final class DebugDrawRenderer {
         guard !debug.isEmpty else { return }
         let viewport = Vec4(Float(view.viewportSize.width), Float(view.viewportSize.height), view.reversedZ ? 1 : 0,
                             view.projectionScale)
-        if let grid = debug.grid, let pipeline = pipeline(PipelineKey(grid: true, depth: .tested, reversedZ: view.reversedZ)) {
+        if let grid = debug.grid, let pipeline = pipeline(PipelineKey(kind: .grid, depth: .tested, reversedZ: view.reversedZ)) {
             pass.setPipeline(pipeline)
             pass.setUniformData(GridUniforms(
                 viewProj: view.viewProjection,
@@ -85,8 +90,15 @@ public final class DebugDrawRenderer {
             pass.draw(vertexCount: 6)
         }
         for depth in DebugDepth.allCases {
+            if let triangles = debug.triangles[depth], !triangles.isEmpty,
+               let pipeline = pipeline(PipelineKey(kind: .fills, depth: depth, reversedZ: view.reversedZ)) {
+                pass.setPipeline(pipeline)
+                pass.setPushConstants(LineConstants(viewProj: view.viewProjection, viewport: viewport))
+                pass.setVertexData(triangles, index: 1)
+                pass.draw(vertexCount: 3, instanceCount: triangles.count)
+            }
             guard let segments = debug.segments[depth], !segments.isEmpty,
-                  let pipeline = pipeline(PipelineKey(grid: false, depth: depth, reversedZ: view.reversedZ)) else { continue }
+                  let pipeline = pipeline(PipelineKey(kind: .lines, depth: depth, reversedZ: view.reversedZ)) else { continue }
             pass.setPipeline(pipeline)
             pass.setPushConstants(LineConstants(viewProj: view.viewProjection, viewport: viewport))
             pass.setVertexData(segments, index: 1)
@@ -125,9 +137,11 @@ public final class DebugDrawRenderer {
 
     private func pipeline(_ key: PipelineKey) -> RenderPipeline? {
         if let pipeline = pipelines[key] { return pipeline }
-        var descriptor = key.grid
-            ? PipelineDescriptor(shader: gridShader, vertexLayout: .none)
-            : PipelineDescriptor(shader: lineShader, vertexLayout: .none, instanceLayout: DebugSegment.layout)
+        var descriptor = switch key.kind {
+        case .grid: PipelineDescriptor(shader: gridShader, vertexLayout: .none)
+        case .lines: PipelineDescriptor(shader: lineShader, vertexLayout: .none, instanceLayout: DebugSegment.layout)
+        case .fills: PipelineDescriptor(shader: fillShader, vertexLayout: .none, instanceLayout: DebugTriangle.layout)
+        }
         descriptor.cullMode = .none
         descriptor.depthTest = key.depth == .tested
         descriptor.depthCompare = key.reversedZ ? .greaterEqual : .lessEqual

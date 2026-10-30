@@ -100,6 +100,8 @@ public final class SceneRenderer {
     public private(set) var list = RenderList()
 
     private var meshes: [GPUMesh] = []
+    /// The CPU copy of each registered mesh, for picking (`geometry(_:)`).
+    private var geometries: [MeshGeometry] = []
     private var materials: [(material: Material, sampler: GPUSampler)] = []
     private let whiteTexture: GPUTexture
     private let shader: ShaderSource
@@ -204,7 +206,13 @@ public final class SceneRenderer {
             indexCount: geometry.indices.count,
             bounds: geometry.bounds)
         let id = prep.meshes.register(mesh.bounds, key: key)
-        if id == meshes.count { meshes.append(mesh) } else { meshes[id] = mesh }
+        if id == meshes.count {
+            meshes.append(mesh)
+            geometries.append(geometry)
+        } else {
+            meshes[id] = mesh
+            geometries[id] = geometry
+        }
         return MeshHandle(key)
     }
 
@@ -218,6 +226,10 @@ public final class SceneRenderer {
     }
 
     public func mesh(_ handle: MeshHandle) -> GPUMesh? { prep.meshes.contains(handle.key) ? meshes[prep.meshes.id(of: handle.key)!] : nil }
+    /// The vertices and indices registered under `handle`'s key (kept on the CPU for picking).
+    public func geometry(_ handle: MeshHandle) -> MeshGeometry? {
+        prep.meshes.contains(handle.key) ? geometries[prep.meshes.id(of: handle.key)!] : nil
+    }
     public func material(_ handle: MaterialHandle) -> Material? {
         prep.materials.contains(handle.key) ? materials[prep.materials.id(of: handle.key)!].material : nil
     }

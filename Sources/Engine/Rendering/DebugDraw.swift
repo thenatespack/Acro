@@ -5,7 +5,9 @@ import Foundation
 /// pass via `SceneRenderer.draw`, or any `SceneRenderer.renderView` target).
 ///
 /// Every shape becomes line segments, kept in two batches (depth-tested, and always on top) that
-/// are drawn with one instanced draw each. Lines are quads expanded in screen space, so their
+/// are drawn with one instanced draw each. Filled shapes (`triangle`, `quad`, `disc`, `cone`,
+/// `solidBox`) become flat-colored triangles, batched the same way and drawn before the lines of
+/// their depth mode (not antialiased beyond the target's MSAA). Lines are quads expanded in screen space, so their
 /// width is in pixels of the target by default (`DebugStyle.width`), or in world units
 /// (`DebugStyle.worldWidth`), with antialiased edges. Colors are linear RGBA, like `Material`.
 ///
@@ -46,6 +48,8 @@ public final class DebugDraw {
 
     /// Segments per depth mode, in the order added (the GPU instance data).
     public private(set) var segments: [DebugDepth: [DebugSegment]] = [.tested: [], .onTop: []]
+    /// Filled triangles per depth mode, in the order added (the GPU instance data).
+    public private(set) var triangles: [DebugDepth: [DebugTriangle]] = [.tested: [], .onTop: []]
     public private(set) var labels: [Label] = []
     /// The ground grid drawn under the debug lines, if any.
     public var grid: DebugGrid?
@@ -54,19 +58,24 @@ public final class DebugDraw {
 
     /// Seconds left per segment / label, parallel to `segments` and `labels`.
     private var segmentLife: [DebugDepth: [Float]] = [.tested: [], .onTop: []]
+    private var triangleLife: [DebugDepth: [Float]] = [.tested: [], .onTop: []]
     private var labelLife: [Float] = []
 
     public init() {}
 
     /// Whether there is nothing to draw.
-    public var isEmpty: Bool { grid == nil && labels.isEmpty && segments.values.allSatisfy(\.isEmpty) }
+    public var isEmpty: Bool {
+        grid == nil && labels.isEmpty && segments.values.allSatisfy(\.isEmpty) && triangles.values.allSatisfy(\.isEmpty)
+    }
     public var segmentCount: Int { segments.values.reduce(0) { $0 + $1.count } }
+    public var triangleCount: Int { triangles.values.reduce(0) { $0 + $1.count } }
 
     /// Ages everything by `dt` seconds and drops what has expired (everything added with
     /// duration 0). Call once per frame before adding that frame's shapes.
     public func beginFrame(dt: Float) {
         for depth in DebugDepth.allCases {
             Self.age(&segments[depth, default: []], &segmentLife[depth, default: []], dt: dt)
+            Self.age(&triangles[depth, default: []], &triangleLife[depth, default: []], dt: dt)
         }
         Self.age(&labels, &labelLife, dt: dt)
     }
@@ -76,6 +85,8 @@ public final class DebugDraw {
         for depth in DebugDepth.allCases {
             segments[depth]?.removeAll(keepingCapacity: true)
             segmentLife[depth]?.removeAll(keepingCapacity: true)
+            triangles[depth]?.removeAll(keepingCapacity: true)
+            triangleLife[depth]?.removeAll(keepingCapacity: true)
         }
         labels.removeAll(keepingCapacity: true)
         labelLife.removeAll(keepingCapacity: true)
@@ -204,6 +215,63 @@ public final class DebugDraw {
         labelLife.append(max(duration, 0))
     }
 
+    // MARK: - Filled shapes
+
+    /// A filled triangle (both sides).
+    public func triangle(_ a: Vec3, _ b: Vec3, _ c: Vec3, color: Vec4, depth: DebugDepth = .tested, duration: Float = 0) {
+        triangles[depth, default: []].append(DebugTriangle(a: Vec4(a, 0), b: Vec4(b, 0), c: Vec4(c, 0), color: color))
+        triangleLife[depth, default: []].append(max(duration, 0))
+    }
+
+    /// A filled quadrilateral `a b c d` (two triangles; planar and convex for a sensible result).
+    public func quad(_ a: Vec3, _ b: Vec3, _ c: Vec3, _ d: Vec3, color: Vec4, depth: DebugDepth = .tested, duration: Float = 0) {
+        triangle(a, b, c, color: color, depth: depth, duration: duration)
+        triangle(a, c, d, color: color, depth: depth, duration: duration)
+    }
+
+    /// A filled circle around `normal`.
+    public func disc(center: Vec3, normal: Vec3, radius: Float, color: Vec4, segments count: Int? = nil,
+                     depth: DebugDepth = .tested, duration: Float = 0) {
+        let (u, v) = Self.basis(normal)
+        let n = max(count ?? circleSegments, 3)
+        for i in 0..<n {
+            let a0 = Float(i) / Float(n) * 2 * .pi, a1 = Float(i + 1) / Float(n) * 2 * .pi
+            triangle(center, center + (u * cosf(a0) + v * sinf(a0)) * radius, center + (u * cosf(a1) + v * sinf(a1)) * radius,
+                     color: color, depth: depth, duration: duration)
+        }
+    }
+
+    /// A solid cone from a disc of `radius` around `base` to `tip` (e.g. an arrow head). The
+    /// base cap is drawn in `color` darkened by `capShade`, so the shape reads without lighting.
+    public func cone(base: Vec3, tip: Vec3, radius: Float, color: Vec4, segments count: Int = 16, capShade: Float = 0.6,
+                     depth: DebugDepth = .tested, duration: Float = 0) {
+        let (u, v) = Self.basis(tip - base)
+        let n = max(count, 3)
+        let cap = Vec4(color.x * capShade, color.y * capShade, color.z * capShade, color.w)
+        for i in 0..<n {
+            let a0 = Float(i) / Float(n) * 2 * .pi, a1 = Float(i + 1) / Float(n) * 2 * .pi
+            let p0 = base + (u * cosf(a0) + v * sinf(a0)) * radius, p1 = base + (u * cosf(a1) + v * sinf(a1)) * radius
+            triangle(base, p1, p0, color: cap, depth: depth, duration: duration)
+            triangle(p0, p1, tip, color: color, depth: depth, duration: duration)
+        }
+    }
+
+    /// A solid box: the cube from -1 to 1 transformed by `transform`. Faces facing ±x, ±y and
+    /// ±z get slightly different shades of `color`, so the shape reads without lighting.
+    public func solidBox(_ transform: Mat4, color: Vec4, depth: DebugDepth = .tested, duration: Float = 0) {
+        let corner = { (i: Int) in Self.transform(transform, Vec3(i & 1 == 0 ? -1 : 1, i & 2 == 0 ? -1 : 1, i & 4 == 0 ? -1 : 1)) }
+        // Per axis bit: the four corners of the face at -1 and at +1, in order around the face.
+        for (axis, shade) in [(1, Float(0.8)), (2, 1), (4, 0.65)] {
+            let others = [1, 2, 4].filter { $0 != axis }
+            let ring = [0, others[0], others[0] | others[1], others[1]]
+            let c = Vec4(color.x * shade, color.y * shade, color.z * shade, color.w)
+            for side in [0, axis] {
+                quad(corner(ring[0] | side), corner(ring[1] | side), corner(ring[2] | side), corner(ring[3] | side),
+                     color: c, depth: depth, duration: duration)
+            }
+        }
+    }
+
     // MARK: - Math
 
     /// Two unit vectors perpendicular to `n` and to each other.
@@ -251,6 +319,27 @@ public struct DebugSegment: Equatable, Sendable, BitwiseCopyable {
     static let layout = VertexLayout(
         stride: MemoryLayout<DebugSegment>.stride,
         attributes: (0..<3).map { VertexAttribute(location: $0, format: .float4, offset: $0 * MemoryLayout<Vec4>.stride) })
+}
+
+/// One filled debug triangle, the per-instance data of the debug fill shader (64 bytes).
+public struct DebugTriangle: Equatable, Sendable, BitwiseCopyable {
+    /// xyz: the corners; w: unused.
+    public var a: Vec4
+    public var b: Vec4
+    public var c: Vec4
+    /// Linear RGBA.
+    public var color: Vec4
+
+    public init(a: Vec4, b: Vec4, c: Vec4, color: Vec4) {
+        self.a = a
+        self.b = b
+        self.c = c
+        self.color = color
+    }
+
+    static let layout = VertexLayout(
+        stride: MemoryLayout<DebugTriangle>.stride,
+        attributes: (0..<4).map { VertexAttribute(location: $0, format: .float4, offset: $0 * MemoryLayout<Vec4>.stride) })
 }
 
 /// A shader-drawn ground grid on the plane y = `height`: minor lines every `spacing`, major

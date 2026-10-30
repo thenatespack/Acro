@@ -42,6 +42,9 @@ protocol DemoScene: AnyObject {
     /// A retained widget tree. The host updates it before its own input handling and skips
     /// camera controls and shortcuts while it wants the pointer or keyboard.
     var uiContext: UIContext? { get }
+    /// The scene uses the keyboard itself right now (e.g. Esc cancels a drag), so the host
+    /// leaves its shortcuts and camera keys alone, like when widgets want the keyboard.
+    var wantsKeyboard: Bool { get }
 }
 
 extension DemoScene {
@@ -54,6 +57,7 @@ extension DemoScene {
     func renderOffscreen(engine: Engine, frame: Frame) { renderOffscreen(frame: frame) }
     func drawUI(_ ui: UIDrawList) {}
     var uiContext: UIContext? { nil }
+    var wantsKeyboard: Bool { false }
 }
 
 /// Every scene, in number-key order (scenes past 10 are reached with `[` / `]`).
@@ -73,4 +77,5 @@ extension DemoScene {
     DockingScene.self,
     InspectorScene.self,
     ViewportsScene.self,
+    GizmosScene.self,
 ]
