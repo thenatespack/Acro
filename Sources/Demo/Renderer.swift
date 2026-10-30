@@ -65,7 +65,7 @@ struct Lighting {
     var shadowExtent: Float = 34
 }
 
-struct Camera {
+struct ViewCamera {
     var eye: Vec3
     var target: Vec3
     var fovY: Float = .pi / 3.5
@@ -206,7 +206,7 @@ final class Renderer {
 
     /// Computes this frame's uniforms. Call once per frame before any pass. `jitter` applies
     /// the temporal upscaler's projection jitter (`Engine.jittered`).
-    func prepare(camera: Camera, lighting: Lighting, aspect: Float, time: Float, jitter: (Mat4) -> Mat4 = { $0 }) {
+    func prepare(camera: ViewCamera, lighting: Lighting, aspect: Float, time: Float, jitter: (Mat4) -> Mat4 = { $0 }) {
         let light = normalize(lighting.direction)
         let lightView = Mat4.lookAt(eye: light * 60, target: .zero, up: abs(light.y) > 0.99 ? Vec3(0, 0, 1) : Vec3(0, 1, 0))
         let e = lighting.shadowExtent

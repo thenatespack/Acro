@@ -21,8 +21,8 @@ final class DepthPrecisionScene: DemoScene {
     var status: String { reversedZ ? "reversed-Z" : "standard Z" }
 
     /// Fixed camera at the origin looking down -Z (ignores the orbit controls).
-    func camera(orbitEye: Vec3, target: Vec3) -> Camera {
-        Camera(eye: .zero, target: Vec3(0, 0, -1), fovY: .pi / 3, near: 0.05, far: 50_000, reversedZ: reversedZ)
+    func camera(orbitEye: Vec3, target: Vec3) -> ViewCamera {
+        ViewCamera(eye: .zero, target: Vec3(0, 0, -1), fovY: .pi / 3, near: 0.05, far: 50_000, reversedZ: reversedZ)
     }
 
     func update(input: Input, dt: Float, time t: Float) {

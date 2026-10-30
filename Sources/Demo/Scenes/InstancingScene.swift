@@ -21,8 +21,8 @@ final class InstancingScene: DemoScene {
     var lighting: Lighting { Lighting(direction: Vec3(0.4, 0.8, 0.3), fogDensity: 0.004, shadowExtent: 60) }
     var status: String { "\(instances.count) instances" }
 
-    func camera(orbitEye: Vec3, target: Vec3) -> Camera {
-        Camera(eye: orbitEye, target: target, far: 400)
+    func camera(orbitEye: Vec3, target: Vec3) -> ViewCamera {
+        ViewCamera(eye: orbitEye, target: target, far: 400)
     }
 
     func update(input: Input, dt: Float, time t: Float) {

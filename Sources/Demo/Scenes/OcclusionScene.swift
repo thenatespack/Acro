@@ -92,8 +92,8 @@ final class OcclusionScene: DemoScene {
             + "\(clusters.count - drawn - outside) occluded, \(casters) shadow casters" + (xray ? ", x-ray" : "")
     }
 
-    func camera(orbitEye: Vec3, target: Vec3) -> Camera {
-        Camera(eye: orbitEye, target: target, far: 250)
+    func camera(orbitEye: Vec3, target: Vec3) -> ViewCamera {
+        ViewCamera(eye: orbitEye, target: target, far: 250)
     }
 
     func update(input: Input, dt: Float, time: Float) {

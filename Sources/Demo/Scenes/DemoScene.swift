@@ -23,7 +23,7 @@ protocol DemoScene: AnyObject {
     var initialView: OrbitView { get }
     var lighting: Lighting { get }
     /// Builds the camera from the orbit controls. Scenes may override it entirely.
-    func camera(orbitEye: Vec3, target: Vec3) -> Camera
+    func camera(orbitEye: Vec3, target: Vec3) -> ViewCamera
     /// Extra text for the window title (current mode, counters, …).
     var status: String { get }
 
@@ -31,6 +31,8 @@ protocol DemoScene: AnyObject {
     func update(input: Input, dt: Float, time: Float)
     /// Extra offscreen passes, recorded before the shadow pass.
     func renderOffscreen(frame: Frame)
+    /// The same with engine access (jitter, aspect, clear color). Defaults to `renderOffscreen(frame:)`.
+    func renderOffscreen(engine: Engine, frame: Frame)
     /// Geometry for the shadow map. The shadow pipeline and uniforms are already bound.
     func drawShadowCasters(_ pass: RenderPass)
     /// The screen pass. Uniforms and the shadow map are already bound; set a pipeline.
@@ -43,9 +45,10 @@ extension DemoScene {
     var initialView: OrbitView { OrbitView() }
     var lighting: Lighting { Lighting() }
     var status: String { "" }
-    func camera(orbitEye: Vec3, target: Vec3) -> Camera { Camera(eye: orbitEye, target: target) }
+    func camera(orbitEye: Vec3, target: Vec3) -> ViewCamera { ViewCamera(eye: orbitEye, target: target) }
     func update(input: Input, dt: Float, time: Float) {}
     func renderOffscreen(frame: Frame) {}
+    func renderOffscreen(engine: Engine, frame: Frame) { renderOffscreen(frame: frame) }
     func drawUI(_ ui: UIDrawList) {}
 }
 
@@ -61,4 +64,5 @@ extension DemoScene {
     TexturesScene.self,
     TextScene.self,
     UIScene.self,
+    ECSScene.self,
 ]

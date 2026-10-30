@@ -14,7 +14,7 @@ final class DemoGame: Game {
     private var scene: (any DemoScene)!
     private var sceneIndex = 0
     private var view = OrbitView()
-    private var camera = Camera(eye: .zero, target: .zero)
+    private var camera = ViewCamera(eye: .zero, target: .zero)
     private var paused = false
     private var animationTime: Float = 0
     private var engineInfo = ""
@@ -105,7 +105,7 @@ final class DemoGame: Game {
     }
 
     func renderOffscreen(engine: Engine, frame: Frame) {
-        scene.renderOffscreen(frame: frame)
+        scene.renderOffscreen(engine: engine, frame: frame)
         frame.depthPass(into: renderer.shadowMap) { pass in
             pass.setPipeline(renderer.shadowPipeline)
             renderer.bind(pass)
