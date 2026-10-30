@@ -657,7 +657,7 @@ final class VulkanRenderDevice: RenderDevice {
         case .front: vkFlags(VK_CULL_MODE_FRONT_BIT)
         case .back: vkFlags(VK_CULL_MODE_BACK_BIT)
         }
-        // With the flipped (negative-height) viewport this matches Metal's winding.
+        // With the vertex shaders' y flip this matches Metal's winding.
         rasterization.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE
         rasterization.lineWidth = 1
         if let bias = descriptor.depthBias {
@@ -873,10 +873,10 @@ final class VulkanRenderDevice: RenderDevice {
         return pass
     }
 
-    /// Flipped like every pass's viewport (y-up clip space), covering the given window pixels.
+    /// Covers the given window pixels (see `beginPass` for the y-up clip space convention).
     private func setViewport(_ cmd: VkCommandBuffer, x: Int, y: Int, width: Int, height: Int) {
         var viewport = VkViewport(
-            x: Float(x), y: Float(y + height), width: Float(width), height: -Float(height), minDepth: 0, maxDepth: 1)
+            x: Float(x), y: Float(y), width: Float(width), height: Float(height), minDepth: 0, maxDepth: 1)
         vkCmdSetViewport(cmd, 0, 1, &viewport)
     }
 
@@ -967,9 +967,12 @@ final class VulkanRenderDevice: RenderDevice {
             vkCmdBeginRenderPass(cmd, &passInfo, VK_SUBPASS_CONTENTS_INLINE)
         }
 
-        // Flip Y in every pass so clip space is y-up and textures are laid out like Metal's.
+        // Clip space is y-up like Metal's: every vertex shader negates gl_Position.y, so the viewport is
+        // not flipped. (A negative-height viewport gives the same image, but MoltenVK then hands Metal
+        // y-mirrored geometry, and Metal's clipping and attribute interpolation of large triangles round
+        // differently when mirrored, so the lit scenes stopped matching native Metal to the last bit.)
         let width = Float(extent.width), height = Float(extent.height)
-        var viewport = VkViewport(x: 0, y: height, width: width, height: -height, minDepth: 0, maxDepth: 1)
+        var viewport = VkViewport(x: 0, y: 0, width: width, height: height, minDepth: 0, maxDepth: 1)
         vkCmdSetViewport(cmd, 0, 1, &viewport)
         var scissor = VkRect2D(offset: VkOffset2D(x: 0, y: 0), extent: extent)
         vkCmdSetScissor(cmd, 0, 1, &scissor)
