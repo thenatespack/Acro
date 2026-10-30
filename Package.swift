@@ -17,7 +17,7 @@ let vulkanEnabled: Bool = {
 let vulkanEnabled = true
 #endif
 
-var engineDependencies: [Target.Dependency] = []
+var engineDependencies: [Target.Dependency] = ["CZlib"]
 var engineSwiftSettings: [SwiftSetting] = []
 var vulkanTargets: [Target] = []
 
@@ -78,6 +78,12 @@ let package = Package(
         .executable(name: "Demo", targets: ["Demo"]),
     ],
     targets: vulkanTargets + [
+        // zlib for the PNG writer (Image.swift). Ships with macOS and virtually every Linux distro.
+        .systemLibrary(
+            name: "CZlib",
+            pkgConfig: "zlib",
+            providers: [.apt(["zlib1g-dev"]), .brew(["zlib"])]
+        ),
         .target(
             name: "Engine",
             dependencies: engineDependencies,
@@ -91,6 +97,6 @@ let package = Package(
             resources: [.copy("Shaders")],
             linkerSettings: windowsLinkerSettings
         ),
-        .testTarget(name: "EngineTests", dependencies: ["Engine"]),
+        .testTarget(name: "EngineTests", dependencies: ["Engine", "CZlib"]),
     ]
 )
