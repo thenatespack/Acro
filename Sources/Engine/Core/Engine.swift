@@ -206,6 +206,10 @@ public final class Engine {
     /// `Game.update` or `Game.render`, in points. The engine draws it in the window pass, at
     /// window resolution, over the scene and under the debug overlay.
     public let ui = UIDrawList()
+    /// Opt-in entity world. When set, `run` calls `world.update(dt:)` (fixed steps, update
+    /// stages, transform propagation, render prep) right after `Game.update` each frame, with
+    /// the same dt (a fixed 1/60 s in screenshot mode, so fixed steps stay deterministic).
+    public var world: World?
 
     let window: PlatformWindow
     private var overlay: DebugOverlay?
@@ -393,6 +397,7 @@ public final class Engine {
             ui.beginFrame(framebufferSize: window.framebufferSize, scale: window.contentScale)
             let updateStart = clock.now
             game.update(engine: self, dt: Float(dt))
+            world?.update(dt: dt)
             applyPendingTitle()
             stats.updateTime = Self.seconds(clock.now - updateStart)
             fpsWindow.frames += 1
