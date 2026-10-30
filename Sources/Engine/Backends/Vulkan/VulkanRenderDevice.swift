@@ -18,10 +18,10 @@ final class VulkanBuffer: GPUBuffer {
     let buffer: VkBuffer
     let memory: VkDeviceMemory
     let length: Int
-    /// Persistently mapped (all buffers live in host-visible, coherent memory).
-    let mapped: UnsafeMutableRawPointer
+    /// Persistently mapped; nil for device-local buffers (static geometry), which are filled through staging.
+    let mapped: UnsafeMutableRawPointer?
 
-    init(buffer: VkBuffer, memory: VkDeviceMemory, length: Int, mapped: UnsafeMutableRawPointer, deletionQueue: VulkanDeletionQueue) {
+    init(buffer: VkBuffer, memory: VkDeviceMemory, length: Int, mapped: UnsafeMutableRawPointer?, deletionQueue: VulkanDeletionQueue) {
         self.buffer = buffer
         self.memory = memory
         self.length = length
@@ -338,10 +338,75 @@ final class VulkanRenderDevice: RenderDevice {
         case .vertex: vkFlags(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT)
         case .index: vkFlags(VK_BUFFER_USAGE_INDEX_BUFFER_BIT)
         }
-        // Host-visible memory keeps uploads trivial; a staging path into device-local memory is a future optimization.
-        let buffer = try createHostBuffer(length: bytes.count, usage: usageFlags)
-        buffer.mapped.copyMemory(from: bytes.baseAddress!, byteCount: bytes.count)
-        return buffer
+        // Static buffers live in device-local memory, filled through a staging buffer. Falls back to
+        // host-visible memory when the device has no device-local type usable for buffers.
+        let length = bytes.count
+        let raw: RawBuffer
+        do {
+            raw = try createRawBuffer(
+                length: length, usage: usageFlags | vkFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT),
+                properties: vkFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT), mapped: false)
+        } catch {
+            let buffer = try createHostBuffer(length: length, usage: usageFlags)
+            buffer.mapped!.copyMemory(from: bytes.baseAddress!, byteCount: length)
+            return buffer
+        }
+        do {
+            let staging = try createRawBuffer(
+                length: length, usage: vkFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT),
+                properties: vkFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT), mapped: true)
+            defer { destroy(staging) }
+            staging.mapped!.copyMemory(from: bytes.baseAddress!, byteCount: length)
+            try submitCopy(from: staging.buffer, to: raw.buffer, length: length)
+        } catch {
+            destroy(raw)
+            throw error
+        }
+        return VulkanBuffer(buffer: raw.buffer, memory: raw.memory, length: length, mapped: nil, deletionQueue: deletionQueue)
+    }
+
+    /// Records and submits a one-shot copy and waits for it. Uploads happen at load time and are
+    /// rare mid-frame, so a synchronous submit (rather than batching into the frame's command
+    /// buffer) is the simplest correct option: it also makes the buffer usable by the frame being
+    /// recorded, and lets the caller free the staging buffer right after.
+    private func submitCopy(from source: VkBuffer, to destination: VkBuffer, length: Int) throws {
+        var allocInfo = VkCommandBufferAllocateInfo()
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO
+        allocInfo.commandPool = commandPool
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY
+        allocInfo.commandBufferCount = 1
+        var cmd: VkCommandBuffer?
+        try vkCheck(vkAllocateCommandBuffers(device, &allocInfo, &cmd), "vkAllocateCommandBuffers")
+        defer { vkFreeCommandBuffers(device, commandPool, 1, &cmd) }
+
+        var beginInfo = VkCommandBufferBeginInfo()
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO
+        beginInfo.flags = vkFlags(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT)
+        try vkCheck(vkBeginCommandBuffer(cmd, &beginInfo), "vkBeginCommandBuffer")
+        var region = VkBufferCopy(srcOffset: 0, dstOffset: 0, size: VkDeviceSize(length))
+        vkCmdCopyBuffer(cmd, source, destination, 1, &region)
+        // Make the copy visible to vertex input in later submissions.
+        var barrier = VkMemoryBarrier()
+        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER
+        barrier.srcAccessMask = vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT)
+        barrier.dstAccessMask = vkFlags(VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT, VK_ACCESS_INDEX_READ_BIT)
+        vkCmdPipelineBarrier(
+            cmd, vkFlags(VK_PIPELINE_STAGE_TRANSFER_BIT), vkFlags(VK_PIPELINE_STAGE_VERTEX_INPUT_BIT), 0, 1, &barrier, 0, nil, 0, nil)
+        try vkCheck(vkEndCommandBuffer(cmd), "vkEndCommandBuffer")
+
+        var fenceInfo = VkFenceCreateInfo()
+        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO
+        var fence: VkFence?
+        try vkCheck(vkCreateFence(device, &fenceInfo, nil, &fence), "vkCreateFence")
+        defer { vkDestroyFence(device, fence, nil) }
+        var submit = VkSubmitInfo()
+        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO
+        submit.commandBufferCount = 1
+        try withUnsafePointer(to: &cmd) { buffers in
+            submit.pCommandBuffers = buffers
+            try vkCheck(vkQueueSubmit(queue, 1, &submit, fence), "vkQueueSubmit")
+        }
+        try vkCheck(vkWaitForFences(device, 1, &fence, VkBool32(VK_TRUE), UInt64.max), "vkWaitForFences")
     }
 
     func makeTexture(_ descriptor: TextureDescriptor) throws -> GPUTexture {
@@ -1324,7 +1389,7 @@ final class VulkanRenderDevice: RenderDevice {
             try vkCheck(vkCreateFence(device, &fenceInfo, nil, &fence), "vkCreateFence")
             let transient = TransientRing<VulkanTransientChunk> { [unowned self] size in
                 let chunk = try createTransientChunk(size: size)
-                return (chunk, chunk.buffer.mapped)
+                return (chunk, chunk.buffer.mapped!)
             }
             frames.append(FrameSync(
                 commandBuffer: commandBuffer!, imageAvailable: try createSemaphore(), inFlight: fence!, transient: transient))
@@ -1620,7 +1685,19 @@ final class VulkanRenderDevice: RenderDevice {
         return memory!
     }
 
-    private func createHostBuffer(length: Int, usage: VkBufferUsageFlags) throws -> VulkanBuffer {
+    /// A buffer and its memory, not yet owned by a wrapper or the deletion queue.
+    private struct RawBuffer {
+        var buffer: VkBuffer
+        var memory: VkDeviceMemory
+        var mapped: UnsafeMutableRawPointer?
+    }
+
+    private func destroy(_ raw: RawBuffer) {
+        vkDestroyBuffer(device, raw.buffer, nil)
+        vkFreeMemory(device, raw.memory, nil)
+    }
+
+    private func createRawBuffer(length: Int, usage: VkBufferUsageFlags, properties: VkMemoryPropertyFlags, mapped map: Bool) throws -> RawBuffer {
         var info = VkBufferCreateInfo()
         info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO
         info.size = VkDeviceSize(length)
@@ -1631,13 +1708,31 @@ final class VulkanRenderDevice: RenderDevice {
 
         var requirements = VkMemoryRequirements()
         vkGetBufferMemoryRequirements(device, buffer, &requirements)
-        let memory = try allocateMemory(
-            requirements,
-            properties: vkFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
-        try vkCheck(vkBindBufferMemory(device, buffer, memory, 0), "vkBindBufferMemory")
+        let memory: VkDeviceMemory
+        do {
+            memory = try allocateMemory(requirements, properties: properties)
+        } catch {
+            vkDestroyBuffer(device, buffer, nil)
+            throw error
+        }
         var mapped: UnsafeMutableRawPointer?
-        try vkCheck(vkMapMemory(device, memory, 0, VkDeviceSize(length), 0, &mapped), "vkMapMemory")
-        return VulkanBuffer(buffer: buffer!, memory: memory, length: length, mapped: mapped!, deletionQueue: deletionQueue)
+        do {
+            try vkCheck(vkBindBufferMemory(device, buffer, memory, 0), "vkBindBufferMemory")
+            if map { try vkCheck(vkMapMemory(device, memory, 0, VkDeviceSize(length), 0, &mapped), "vkMapMemory") }
+        } catch {
+            vkDestroyBuffer(device, buffer, nil)
+            vkFreeMemory(device, memory, nil)
+            throw error
+        }
+        return RawBuffer(buffer: buffer!, memory: memory, mapped: mapped)
+    }
+
+    /// Persistently mapped, host-visible buffer (per-frame ring chunks, readback).
+    private func createHostBuffer(length: Int, usage: VkBufferUsageFlags) throws -> VulkanBuffer {
+        let raw = try createRawBuffer(
+            length: length, usage: usage,
+            properties: vkFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT), mapped: true)
+        return VulkanBuffer(buffer: raw.buffer, memory: raw.memory, length: length, mapped: raw.mapped, deletionQueue: deletionQueue)
     }
 
     private func destroy(_ resources: [VulkanResource]) {
@@ -1736,7 +1831,7 @@ final class VulkanRenderDevice: RenderDevice {
 
     private func readImage(from buffer: VulkanBuffer, extent: VkExtent2D) throws -> Image {
         let width = Int(extent.width), height = Int(extent.height)
-        let bytes = UnsafeRawBufferPointer(start: buffer.mapped, count: width * height * 4)
+        let bytes = UnsafeRawBufferPointer(start: buffer.mapped!, count: width * height * 4)
         let isBGRA = surfaceFormat.format == VK_FORMAT_B8G8R8A8_SRGB || surfaceFormat.format == VK_FORMAT_B8G8R8A8_UNORM
         if isBGRA {
             return Image(width: width, height: height, bgra: bytes, bytesPerRow: width * 4)
