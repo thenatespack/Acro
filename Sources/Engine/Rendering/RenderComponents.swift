@@ -51,6 +51,7 @@ public struct MaterialHandle: Hashable, Codable, Sendable, CustomStringConvertib
 /// `SceneRenderer` renders from the active camera (`isActive`) with the lowest entity index,
 /// unless `SceneRenderer.camera` names one explicitly.
 public struct Camera: Component, Codable, Equatable, Sendable {
+    public static let componentName = "Camera"
     /// Vertical field of view in radians.
     public var fovY: Float
     public var near: Float
@@ -101,6 +102,7 @@ public struct Camera: Component, Codable, Equatable, Sendable {
 /// -Z of the `GlobalTransform`), so rotating the entity aims it. `SceneRenderer` uses the
 /// first directional light by entity index; others are ignored.
 public struct DirectionalLight: Component, Codable, Equatable, Sendable {
+    public static let componentName = "DirectionalLight"
     /// Linear RGB.
     public var color: Vec3
     public var intensity: Float
@@ -140,6 +142,7 @@ public struct DirectionalLight: Component, Codable, Equatable, Sendable {
 /// Ambient light and fog for the whole scene. The first entity (by index) that has one
 /// is used; without one, `SceneRenderer` uses these defaults.
 public struct SceneEnvironment: Component, Codable, Equatable, Sendable {
+    public static let componentName = "SceneEnvironment"
     /// Hemisphere ambient: surfaces facing up get `skyColor`, facing down `groundColor`,
     /// both scaled by `ambientIntensity`. Linear RGB.
     public var skyColor: Vec3
@@ -162,6 +165,7 @@ public struct SceneEnvironment: Component, Codable, Equatable, Sendable {
 /// Draws a mesh with a material at its entity's `GlobalTransform`. Entities with the same
 /// mesh and material are drawn together, in one instanced draw per pass.
 public struct MeshRenderer: Component, Codable, Equatable, Sendable {
+    public static let componentName = "MeshRenderer"
     public var mesh: MeshHandle
     public var material: MaterialHandle
     /// Linear RGB multiplied with the material's base color, so entities can vary in color

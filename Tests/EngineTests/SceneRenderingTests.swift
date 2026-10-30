@@ -305,3 +305,33 @@ private func item(_ index: UInt32, mesh: Int = 0, material: Int = 0, at position
     #expect(prep.items.count == 10_000)
     print("render prep of 10k entities: \(best) (gather + cull + batch + sort), \(list.stats)")
 }
+
+// MARK: Serialization
+
+/// Rendering components save under their stable names and load back unchanged.
+@MainActor @Test func renderComponentsRoundTripThroughSceneFiles() throws {
+    let world = World()
+    let camera = world.spawn(Transform(position: Vec3(0, 2, 8)), Camera(fovY: 1, near: 0.2, far: 300, reversedZ: true))
+    let light = world.spawn(Transform(), DirectionalLight(intensity: 2, direction: Vec3(0, -1, 0), castsShadows: false))
+    let environment = world.spawn(SceneEnvironment())
+    let mesh = world.spawn(Transform(), MeshRenderer(mesh: .sphere, material: MaterialHandle("glass"), tint: Vec3(1, 0, 0), opacity: 0.5))
+    world.setParent(mesh, to: camera)
+    let data = try world.save()
+    let text = String(decoding: data, as: UTF8.self)
+    for name in ["Camera", "DirectionalLight", "SceneEnvironment", "MeshRenderer"] {
+        #expect(text.contains("\"\(name)\""))
+    }
+
+    let loaded = World()
+    try loaded.load(data)
+    #expect(try loaded.save() == data)
+    func only<C: Component & Equatable>(_ type: C.Type, in w: World) -> C? {
+        var found: [C] = []
+        w.query(type) { _, c in found.append(c) }
+        return found.count == 1 ? found[0] : nil
+    }
+    #expect(only(Camera.self, in: loaded) == world.get(Camera.self, for: camera))
+    #expect(only(DirectionalLight.self, in: loaded) == world.get(DirectionalLight.self, for: light))
+    #expect(only(SceneEnvironment.self, in: loaded) == world.get(SceneEnvironment.self, for: environment))
+    #expect(only(MeshRenderer.self, in: loaded) == world.get(MeshRenderer.self, for: mesh))
+}
