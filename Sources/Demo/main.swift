@@ -23,6 +23,8 @@ final class DemoGame: Game {
     private static let resolutionCycle: [RenderResolution] =
         [.native] + ["quality", "performance", "144p", "360p", "720p", "1080p", "4k", "8k", "16k"].compactMap { RenderResolution($0) }
 
+    private var textTest = TextInputTest()
+
     init(initialScene: Int) {
         self.initialScene = initialScene
     }
@@ -45,6 +47,7 @@ final class DemoGame: Game {
 
     func update(engine: Engine, dt: Float) {
         let input = engine.input
+        if let title = textTest.update(input) { engine.title = title; return }  // F2: text input debug mode
         if input.wasPressed(.escape) { engine.quit() }
         if input.wasPressed(.space) { paused.toggle() }
         if input.wasPressed(.v) { engine.vsync.toggle() }

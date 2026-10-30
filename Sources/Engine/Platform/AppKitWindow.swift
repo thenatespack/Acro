@@ -8,8 +8,9 @@ import QuartzCore
 final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
     let metalLayer = CAMetalLayer()
     private let window: NSWindow
-    private let view: NSView
+    private let view: GameView
     private(set) var shouldClose = false
+    private var lastTextInputRect = TextInputRect.zero
 
     init(title: String, width: Int, height: Int) {
         let app = NSApplication.shared
@@ -21,7 +22,7 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        view = NSView(frame: window.contentLayoutRect)
+        view = GameView(frame: window.contentLayoutRect)
         super.init()
 
         // Layer-hosting view: assign the layer before enabling wantsLayer.
@@ -31,6 +32,7 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
 
         window.title = title
         window.contentView = view
+        window.makeFirstResponder(view)
         window.delegate = self
         window.acceptsMouseMovedEvents = true
         window.center()
@@ -54,12 +56,14 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
     var contentScale: Float { Float(window.backingScaleFactor) }
 
     func pollEvents(into input: Input) {
+        view.input = input
+        syncTextInput(input)
         while let event = NSApp.nextEvent(matching: .any, until: .distantPast, inMode: .default, dequeue: true) {
             switch event.type {
             case .keyDown, .keyUp:
-                if let key = Self.keyMap[event.keyCode] {
-                    input.setKey(key, down: event.type == .keyDown)
-                }
+                let key = Self.keyMap[event.keyCode]
+                if let key { input.setKey(key, down: event.type == .keyDown) }
+                if event.type == .keyDown { routeText(event, key: key, to: input) }
                 // Let menu shortcuts (Cmd-Q, Cmd-W…) through; swallow the rest to avoid the system beep.
                 if event.modifierFlags.contains(.command) { NSApp.sendEvent(event) }
                 continue
@@ -83,6 +87,34 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
 
         if !window.isKeyWindow { input.releaseAll() }
         metalLayer.contentsScale = window.backingScaleFactor
+    }
+
+    /// Sends a key press to an active text input: edit keys and shortcuts directly, everything
+    /// else (and all keys while composing) through the system so dead keys, press-and-hold and
+    /// input methods get to see it. They call back into `GameView` with text or marked text.
+    private func routeText(_ event: NSEvent, key: Key?, to input: Input) {
+        guard input.isTextInputActive else { return }
+        let flags = event.modifierFlags
+        var modifiers: KeyModifiers = []
+        if flags.contains(.shift) { modifiers.insert(.shift) }
+        if flags.contains(.control) { modifiers.insert(.control) }
+        if flags.contains(.option) { modifiers.insert(.alt) }
+        if flags.contains(.command) { modifiers.insert(.command) }
+        if input.composition == nil, let key, KeyEvent.isRoutedAsKey(key, modifiers: modifiers) {
+            input.textKeyEvent(key, modifiers: modifiers, isRepeat: event.isARepeat)
+        } else if !flags.contains(.command), !flags.contains(.control) || input.composition != nil {
+            view.interpretKeyEvents([event])
+        }
+    }
+
+    /// Keeps the system's text input state in step with `input`: drops marked text the engine
+    /// no longer wants and tells the input context when the caret moved.
+    private func syncTextInput(_ input: Input) {
+        if !input.isTextInputActive { view.inputContext?.discardMarkedText() }
+        if input.textInputRect != lastTextInputRect {
+            lastTextInputRect = input.textInputRect
+            view.inputContext?.invalidateCharacterCoordinates()
+        }
     }
 
     func requestClose() {
@@ -123,6 +155,7 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
         49: .space, 36: .enter, 53: .escape, 48: .tab, 51: .backspace, 50: .grave,
         122: .f1, 120: .f2, 99: .f3, 118: .f4, 96: .f5, 97: .f6, 98: .f7, 100: .f8, 101: .f9, 109: .f10,
         103: .f11, 111: .f12,
+        117: .delete, 115: .home, 119: .end, 116: .pageUp, 121: .pageDown,
         123: .left, 124: .right, 125: .down, 126: .up,
     ]
 

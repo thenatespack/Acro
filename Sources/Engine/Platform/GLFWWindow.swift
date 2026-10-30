@@ -7,6 +7,8 @@ import CVulkan
 final class GLFWWindow: PlatformWindow {
     let handle: OpaquePointer
     private var currentTitle: String
+    /// The input that char/key callbacks feed. Callbacks only run inside `glfwPollEvents`, where it is set.
+    private var textTarget: Input?
 
     init(title: String, width: Int, height: Int) throws {
         #if os(macOS)
@@ -26,6 +28,7 @@ final class GLFWWindow: PlatformWindow {
         }
         self.handle = handle
         currentTitle = title
+        installTextCallbacks()
     }
 
     var shouldClose: Bool { glfwWindowShouldClose(handle) == GLFW_TRUE }
@@ -67,7 +70,9 @@ final class GLFWWindow: PlatformWindow {
     }
 
     func pollEvents(into input: Input) {
+        textTarget = input
         glfwPollEvents()
+        textTarget = nil
         // Polling state (rather than callbacks) keeps this free of C-callback plumbing.
         for (key, code) in Self.keyMap {
             input.setKey(key, down: glfwGetKey(handle, code) == GLFW_PRESS)
@@ -90,6 +95,36 @@ final class GLFWWindow: PlatformWindow {
         glfwTerminate()
     }
 
+    // Text input. GLFW's char callback delivers committed text (it handles dead keys itself) and
+    // the key callback delivers presses with modifiers and repeats. GLFW 3.4 has no preedit (IME
+    // composition) API, so input methods that compose (CJK) only report their final text.
+    private func installTextCallbacks() {
+        glfwSetWindowUserPointer(handle, Unmanaged.passUnretained(self).toOpaque())
+        glfwSetCharCallback(handle) { window, codepoint in
+            guard let window, let scalar = Unicode.Scalar(codepoint) else { return }
+            MainActor.assumeIsolated {
+                GLFWWindow.from(window)?.textTarget?.commitText(String(Character(scalar)))
+            }
+        }
+        glfwSetKeyCallback(handle) { window, code, _, action, mods in
+            guard let window, action != GLFW_RELEASE, let key = GLFWWindow.reverseKeyMap[code] else { return }
+            MainActor.assumeIsolated {
+                var modifiers: KeyModifiers = []
+                if mods & GLFW_MOD_SHIFT != 0 { modifiers.insert(.shift) }
+                if mods & GLFW_MOD_CONTROL != 0 { modifiers.insert(.control) }
+                if mods & GLFW_MOD_ALT != 0 { modifiers.insert(.alt) }
+                if mods & GLFW_MOD_SUPER != 0 { modifiers.insert(.command) }
+                GLFWWindow.from(window)?.textTarget?.textKeyEvent(key, modifiers: modifiers, isRepeat: action == GLFW_REPEAT)
+            }
+        }
+    }
+
+    private static func from(_ window: OpaquePointer) -> GLFWWindow? {
+        glfwGetWindowUserPointer(window).map { Unmanaged<GLFWWindow>.fromOpaque($0).takeUnretainedValue() }
+    }
+
+    private static let reverseKeyMap: [Int32: Key] = Dictionary(uniqueKeysWithValues: keyMap.map { ($0.1, $0.0) })
+
     private static let buttonMap: [(MouseButton, Int32)] = [
         (.left, GLFW_MOUSE_BUTTON_LEFT), (.right, GLFW_MOUSE_BUTTON_RIGHT), (.middle, GLFW_MOUSE_BUTTON_MIDDLE),
     ]
@@ -108,6 +143,8 @@ final class GLFWWindow: PlatformWindow {
         (.f1, GLFW_KEY_F1), (.f2, GLFW_KEY_F2), (.f3, GLFW_KEY_F3), (.f4, GLFW_KEY_F4), (.f5, GLFW_KEY_F5),
         (.f6, GLFW_KEY_F6), (.f7, GLFW_KEY_F7), (.f8, GLFW_KEY_F8), (.f9, GLFW_KEY_F9), (.f10, GLFW_KEY_F10),
         (.f11, GLFW_KEY_F11), (.f12, GLFW_KEY_F12),
+        (.delete, GLFW_KEY_DELETE), (.home, GLFW_KEY_HOME), (.end, GLFW_KEY_END),
+        (.pageUp, GLFW_KEY_PAGE_UP), (.pageDown, GLFW_KEY_PAGE_DOWN),
         (.left, GLFW_KEY_LEFT), (.right, GLFW_KEY_RIGHT), (.up, GLFW_KEY_UP), (.down, GLFW_KEY_DOWN),
         (.leftShift, GLFW_KEY_LEFT_SHIFT), (.rightShift, GLFW_KEY_RIGHT_SHIFT),
         (.leftControl, GLFW_KEY_LEFT_CONTROL), (.rightControl, GLFW_KEY_RIGHT_CONTROL),
