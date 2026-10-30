@@ -47,27 +47,42 @@ if vulkanEnabled {
     engineSwiftSettings.append(.define("ENGINE_VULKAN"))
 }
 
-// Windows: point the compiler and linker at the Vulkan SDK ($VULKAN_SDK\Include, \Lib) and GLFW
-// ($GLFW_DIR\include, \lib). These use unsafeFlags, so on Windows this package can only be
-// built as a root package, not consumed as a dependency. Without the env vars, set
-// CPATH / LIB yourself or pass -Xcc -I... -Xlinker /LIBPATH:... on the command line.
+// Windows: point the compiler and linker at the Vulkan SDK ($VULKAN_SDK\Include, \Lib), GLFW
+// ($GLFW_DIR\include, \lib) and zlib ($ZLIB_DIR\include, \lib). These use unsafeFlags, so on
+// Windows this package can only be built as a root package, not consumed as a dependency.
+// Without the env vars, set CPATH / LIB yourself or pass -Xcc -I... -Xlinker /LIBPATH:... on
+// the command line.
 var windowsLinkerSettings: [LinkerSetting] = []
 #if os(Windows)
-if vulkanEnabled {
+do {
     let env = ProcessInfo.processInfo.environment
     var cFlags: [String] = []
     var libFlags: [String] = []
-    if let sdk = env["VULKAN_SDK"] {
+    var dirs: [String] = env["ZLIB_DIR"].map { [$0] } ?? []
+    if vulkanEnabled, let sdk = env["VULKAN_SDK"] {
         cFlags += ["-Xcc", "-I\(sdk)\\Include"]
         libFlags += ["-L\(sdk)\\Lib"]
     }
-    if let glfw = env["GLFW_DIR"] {
-        cFlags += ["-Xcc", "-I\(glfw)\\include"]
-        libFlags += ["-L\(glfw)\\lib"]
+    if vulkanEnabled, let glfw = env["GLFW_DIR"] { dirs.append(glfw) }
+    for dir in dirs {
+        cFlags += ["-Xcc", "-I\(dir)\\include"]
+        libFlags += ["-L\(dir)\\lib"]
     }
     if !cFlags.isEmpty { engineSwiftSettings.append(.unsafeFlags(cFlags)) }
     if !libFlags.isEmpty { windowsLinkerSettings = [.unsafeFlags(libFlags)] }
 }
+#endif
+
+// zlib for the PNG writer (Image.swift). Ships with macOS and virtually every Linux distro;
+// on Windows it comes from vcpkg or similar (see ZLIB_DIR above).
+#if os(Windows)
+let zlibTarget: Target = .systemLibrary(name: "CZlib", path: "Windows/CZlib")
+#else
+let zlibTarget: Target = .systemLibrary(
+    name: "CZlib",
+    pkgConfig: "zlib",
+    providers: [.apt(["zlib1g-dev"]), .brew(["zlib"])]
+)
 #endif
 
 let package = Package(
@@ -78,12 +93,7 @@ let package = Package(
         .executable(name: "Demo", targets: ["Demo"]),
     ],
     targets: vulkanTargets + [
-        // zlib for the PNG writer (Image.swift). Ships with macOS and virtually every Linux distro.
-        .systemLibrary(
-            name: "CZlib",
-            pkgConfig: "zlib",
-            providers: [.apt(["zlib1g-dev"]), .brew(["zlib"])]
-        ),
+        zlibTarget,
         .target(
             name: "Engine",
             dependencies: engineDependencies,

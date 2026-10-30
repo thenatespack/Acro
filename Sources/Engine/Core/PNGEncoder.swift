@@ -88,11 +88,14 @@ enum PNGEncoder {
         while y < height {
             let rows = min(rowBatch, height - y)
             let firstRow = y
+            // Each worker reads shared source rows and writes only its own batch/scratch slices.
+            // Linux's Dispatch requires a @Sendable closure, so the pointers go in through a box.
+            let p = RowPointers(base: base, zeroRow: zeroRow, batch: batch, scratchPool: scratchPool)
             DispatchQueue.concurrentPerform(iterations: rows) { i in
                 let row = firstRow + i
-                let cur = base + row * rowBytes
-                let prev = row == 0 ? UnsafePointer(zeroRow) : UnsafePointer(base + (row - 1) * rowBytes)
-                filterRow(cur, prev, rowBytes, batch + i * stride, scratchPool + i * scratchSize)
+                let cur = p.base + row * rowBytes
+                let prev = row == 0 ? UnsafePointer(p.zeroRow) : UnsafePointer(p.base + (row - 1) * rowBytes)
+                filterRow(cur, prev, rowBytes, p.batch + i * stride, p.scratchPool + i * scratchSize)
             }
 
             stream.next_in = batch
@@ -167,4 +170,13 @@ enum PNGEncoder {
         p[0] = UInt8(value >> 24); p[1] = UInt8((value >> 16) & 0xFF)
         p[2] = UInt8((value >> 8) & 0xFF); p[3] = UInt8(value & 0xFF)
     }
+}
+
+/// Pointers shared by the row-filter workers. Unchecked: workers only read `base`/`zeroRow`
+/// and write disjoint slices of `batch`/`scratchPool`.
+private struct RowPointers: @unchecked Sendable {
+    let base: UnsafePointer<UInt8>
+    let zeroRow: UnsafeMutablePointer<UInt8>
+    let batch: UnsafeMutablePointer<UInt8>
+    let scratchPool: UnsafeMutablePointer<UInt8>
 }

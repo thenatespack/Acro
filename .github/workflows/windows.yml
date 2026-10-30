@@ -35,6 +35,15 @@ jobs:
           Copy-Item "$dir\lib-vc2022" "$dir\lib" -Recurse
           "GLFW_DIR=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
 
+      - name: Install zlib (vcpkg)
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install zlib:x64-windows
+          $dir = Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed\x64-windows'
+          # The engine expects $ZLIB_DIR\include and $ZLIB_DIR\lib (zlib.lib); zlib1.dll must be on PATH to run.
+          "ZLIB_DIR=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "$dir\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
       - name: Build
         shell: cmd
         run: swift build -c release
