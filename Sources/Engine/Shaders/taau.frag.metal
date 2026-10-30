@@ -1,6 +1,7 @@
 // Generated from taau.frag by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
 // spirv-fnv1a64: 7c6a34f0121a6bb5
+// glsl-fnv1a64: 46f83127659db351
 
 #pragma clang diagnostic ignored "-Wmissing-prototypes"
 #pragma clang diagnostic ignored "-Wmissing-braces"

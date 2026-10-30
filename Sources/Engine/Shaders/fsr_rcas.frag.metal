@@ -1,6 +1,7 @@
 // Generated from fsr_rcas.frag by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
 // spirv-fnv1a64: 1a5ab98c9d5c3255
+// glsl-fnv1a64: b70bd71f99229e17
 
 #include <metal_stdlib>
 #include <simd/simd.h>

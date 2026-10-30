@@ -46,10 +46,10 @@ fi
 
 for src in "${shaders[@]}"; do
     echo "spirv-to-msl $src.spv -> $src.metal"
-    "$tool" "$src.spv" "$src.metal" "$(basename "$src")"
+    "$tool" "$src.spv" "$src.metal" "$src"
     if [[ "$src" == *.frag ]] && grep -q '\[\[color([1-9])\]\]' "$src.metal"; then
         echo "spirv-to-msl $src.spv -> $src.color0.metal"
-        "$tool" "$src.spv" "$src.color0.metal" "$(basename "$src")" 1
+        "$tool" "$src.spv" "$src.color0.metal" "$src" 1
     else
         rm -f "$src.color0.metal"
     fi

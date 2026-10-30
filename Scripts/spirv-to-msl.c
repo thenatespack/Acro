@@ -1,7 +1,7 @@
 // Cross-compiles one SPIR-V stage (vertex or fragment) to MSL for the Metal backend.
 // Built and run by Scripts/compile-shaders.sh; links the SPIRV-Cross C API.
 //
-//   spirv-to-msl <in.spv> <out.metal> <source name for the header> [fragment output mask]
+//   spirv-to-msl <in.spv> <out.metal> <GLSL source path> [fragment output mask]
 //
 // Uses the same SPIRV-Cross that MoltenVK uses to run our SPIR-V on Metal, so native Metal
 // executes the same MSL as Vulkan-on-MoltenVK, apart from three things set here:
@@ -37,13 +37,29 @@ static void check(spvc_result result, spvc_context context, const char *what) {
     if (result != SPVC_SUCCESS) fail(what, spvc_context_get_last_error_string(context));
 }
 
-// FNV-1a 64 of the SPIR-V bytes, recorded in the header so tests can tell a stale .metal.
+// FNV-1a 64, recorded in the header so tests can tell stale output: of the SPIR-V (a stale
+// .metal) and, in hashFile, of the GLSL source (a stale .spv; '\r' is skipped so a CRLF
+// checkout of the GLSL hashes the same).
 static uint64_t fnv1a64(const unsigned char *bytes, size_t count) {
     uint64_t hash = 0xcbf29ce484222325ull;
     for (size_t i = 0; i < count; i++) {
         hash ^= bytes[i];
         hash *= 0x100000001b3ull;
     }
+    return hash;
+}
+
+static uint64_t hashFile(const char *path) {
+    FILE *file = fopen(path, "rb");
+    if (!file) fail("cannot open", path);
+    uint64_t hash = 0xcbf29ce484222325ull;
+    int c;
+    while ((c = fgetc(file)) != EOF) {
+        if (c == '\r') continue;
+        hash ^= (unsigned char)c;
+        hash *= 0x100000001b3ull;
+    }
+    fclose(file);
     return hash;
 }
 
@@ -60,7 +76,7 @@ static int metalIndex(unsigned set, unsigned binding, unsigned *buffer, unsigned
 
 int main(int argc, char **argv) {
     if (argc != 4 && argc != 5) {
-        fprintf(stderr, "usage: spirv-to-msl <in.spv> <out.metal> <source name> [fragment output mask]\n");
+        fprintf(stderr, "usage: spirv-to-msl <in.spv> <out.metal> <GLSL source path> [fragment output mask]\n");
         return 2;
     }
     FILE *in = fopen(argv[1], "rb");
@@ -160,13 +176,20 @@ int main(int argc, char **argv) {
     const char *msl;
     check(spvc_compiler_compile(compiler, &msl), context, "compile");
 
+    const char *sourceName = strrchr(argv[3], '/');
+    const char *backslash = strrchr(argv[3], '\\');
+    if (backslash && (!sourceName || backslash > sourceName)) sourceName = backslash;
+    sourceName = sourceName ? sourceName + 1 : argv[3];
+    uint64_t sourceHash = hashFile(argv[3]);
+
     FILE *out = fopen(argv[2], "wb");
     if (!out) fail("cannot write", argv[2]);
     fprintf(out,
             "// Generated from %s by Scripts/compile-shaders.sh — do not edit.\n"
             "// Edit the GLSL and rerun the script (needs glslc and spirv-cross).\n"
-            "// spirv-fnv1a64: %016llx\n\n",
-            argv[3], (unsigned long long)fnv1a64(bytes, (size_t)size));
+            "// spirv-fnv1a64: %016llx\n"
+            "// glsl-fnv1a64: %016llx\n\n",
+            sourceName, (unsigned long long)fnv1a64(bytes, (size_t)size), (unsigned long long)sourceHash);
     fputs(msl, out);
     if (fclose(out) != 0) fail("cannot write", argv[2]);
     spvc_context_destroy(context);

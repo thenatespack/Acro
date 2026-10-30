@@ -1,6 +1,7 @@
 // Generated from mesh_shadow.vert by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
 // spirv-fnv1a64: 76de42530e8f0610
+// glsl-fnv1a64: f7a59b18a4dece10
 
 #include <metal_stdlib>
 #include <simd/simd.h>

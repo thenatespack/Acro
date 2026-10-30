@@ -25,12 +25,12 @@ if ($LASTEXITCODE -ne 0) { throw 'building spirv-to-msl failed' }
 $env:PATH = "$(Join-Path $sdk 'Bin');$env:PATH"  # spirv-cross-c-shared.dll
 foreach ($src in $shaders) {
     Write-Host "spirv-to-msl $($src.FullName).spv -> $($src.FullName).metal"
-    & $tool "$($src.FullName).spv" "$($src.FullName).metal" $src.Name
+    & $tool "$($src.FullName).spv" "$($src.FullName).metal" $src.FullName
     if ($LASTEXITCODE -ne 0) { throw "spirv-to-msl failed for $($src.Name)" }
     $color0 = "$($src.FullName).color0.metal"
     if ($src.Extension -eq '.frag' -and (Select-String -Path "$($src.FullName).metal" -Pattern '\[\[color\([1-9]\)\]\]' -Quiet)) {
         Write-Host "spirv-to-msl $($src.FullName).spv -> $color0"
-        & $tool "$($src.FullName).spv" $color0 $src.Name 1
+        & $tool "$($src.FullName).spv" $color0 $src.FullName 1
         if ($LASTEXITCODE -ne 0) { throw "spirv-to-msl failed for $($src.Name) (color 0 only)" }
     } elseif (Test-Path $color0) {
         Remove-Item $color0

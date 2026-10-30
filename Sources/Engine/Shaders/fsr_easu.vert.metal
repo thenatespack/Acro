@@ -1,6 +1,7 @@
 // Generated from fsr_easu.vert by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
 // spirv-fnv1a64: 5e5203b53f286cc8
+// glsl-fnv1a64: c761df3091f2a3e2
 
 #include <metal_stdlib>
 #include <simd/simd.h>

@@ -1,6 +1,7 @@
 // Generated from text.frag by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
 // spirv-fnv1a64: 6daf82505a92d45b
+// glsl-fnv1a64: 41a6411f7fa80bdb
 
 #include <metal_stdlib>
 #include <simd/simd.h>

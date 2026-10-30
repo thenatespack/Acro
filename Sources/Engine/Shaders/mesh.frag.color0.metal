@@ -1,6 +1,7 @@
 // Generated from mesh.frag by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
 // spirv-fnv1a64: 93a14d21093cc782
+// glsl-fnv1a64: 270691a0754e2c83
 
 #pragma clang diagnostic ignored "-Wmissing-prototypes"
 #pragma clang diagnostic ignored "-Wmissing-braces"

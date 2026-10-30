@@ -1,6 +1,7 @@
 // Generated from overlay.vert by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
 // spirv-fnv1a64: e4d11cc417eff009
+// glsl-fnv1a64: d54f12e6c32e8234
 
 #include <metal_stdlib>
 #include <simd/simd.h>

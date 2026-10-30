@@ -1,6 +1,7 @@
 // Generated from lit.frag by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
 // spirv-fnv1a64: 2ebfa28bda9a2685
+// glsl-fnv1a64: 87ae7a3e10624e75
 
 #pragma clang diagnostic ignored "-Wmissing-prototypes"
 #pragma clang diagnostic ignored "-Wmissing-braces"

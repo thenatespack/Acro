@@ -1,6 +1,7 @@
 // Generated from textures.frag by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
 // spirv-fnv1a64: f7b89778d88aa8a0
+// glsl-fnv1a64: 2ea6da69276412ef
 
 #include <metal_stdlib>
 #include <simd/simd.h>
