@@ -7,7 +7,7 @@ import CVulkan
 final class GLFWWindow: PlatformWindow {
     let handle: OpaquePointer
     private var currentTitle: String
-    /// The input that char/key callbacks feed. Callbacks only run inside `glfwPollEvents`, where it is set.
+    /// The input that char/key/scroll callbacks feed. Callbacks only run inside `glfwPollEvents`, where it is set.
     private var textTarget: Input?
 
     init(title: String, width: Int, height: Int) throws {
@@ -114,7 +114,21 @@ final class GLFWWindow: PlatformWindow {
                 if mods & GLFW_MOD_CONTROL != 0 { modifiers.insert(.control) }
                 if mods & GLFW_MOD_ALT != 0 { modifiers.insert(.alt) }
                 if mods & GLFW_MOD_SUPER != 0 { modifiers.insert(.command) }
-                GLFWWindow.from(window)?.textTarget?.textKeyEvent(key, modifiers: modifiers, isRepeat: action == GLFW_REPEAT)
+                let target = GLFWWindow.from(window)?.textTarget
+                target?.recordKeyPress(key, modifiers: modifiers, isRepeat: action == GLFW_REPEAT)
+                target?.textKeyEvent(key, modifiers: modifiers, isRepeat: action == GLFW_REPEAT)
+            }
+        }
+        glfwSetScrollCallback(handle) { window, x, y in
+            guard let window else { return }
+            MainActor.assumeIsolated {
+                // GLFW reports lines (on macOS it divides precise trackpad deltas by 10).
+                #if os(macOS)
+                let points: Float = 10
+                #else
+                let points: Float = 40
+                #endif
+                GLFWWindow.from(window)?.textTarget?.addScroll(Vec2(Float(x), Float(y)) * points)
             }
         }
     }
@@ -140,6 +154,7 @@ final class GLFWWindow: PlatformWindow {
         (.num5, GLFW_KEY_5), (.num6, GLFW_KEY_6), (.num7, GLFW_KEY_7), (.num8, GLFW_KEY_8), (.num9, GLFW_KEY_9),
         (.space, GLFW_KEY_SPACE), (.enter, GLFW_KEY_ENTER), (.escape, GLFW_KEY_ESCAPE),
         (.tab, GLFW_KEY_TAB), (.backspace, GLFW_KEY_BACKSPACE), (.grave, GLFW_KEY_GRAVE_ACCENT),
+        (.leftBracket, GLFW_KEY_LEFT_BRACKET), (.rightBracket, GLFW_KEY_RIGHT_BRACKET),
         (.f1, GLFW_KEY_F1), (.f2, GLFW_KEY_F2), (.f3, GLFW_KEY_F3), (.f4, GLFW_KEY_F4), (.f5, GLFW_KEY_F5),
         (.f6, GLFW_KEY_F6), (.f7, GLFW_KEY_F7), (.f8, GLFW_KEY_F8), (.f9, GLFW_KEY_F9), (.f10, GLFW_KEY_F10),
         (.f11, GLFW_KEY_F11), (.f12, GLFW_KEY_F12),

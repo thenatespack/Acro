@@ -130,10 +130,9 @@ public enum UIQuadMode: Sendable, Equatable {
     case image
     /// The vertex color, with coverage taken from the texture's alpha channel (glyph atlases).
     case mask
-    /// Hook for signed-distance-field text: the texture's alpha is a distance field (0.5 on
-    /// the outline, larger inside) and `smoothing` the antialiasing width in distance units
-    /// (about 0.7 / (spread in texels * on-screen scale)). The shader path exists (`MODE_SDF`
-    /// in ui.frag) but is untested until a text renderer uses it.
+    /// Signed-distance-field glyphs (what `drawText` emits): the texture's alpha is a distance
+    /// field (0.5 on the outline, larger inside) and `smoothing` the width in distance units
+    /// that the edge ramps over (see `UIDrawList.sdfSmoothing(pixelSize:)`).
     case sdf(smoothing: Float)
 
     var shaderMode: Float {
@@ -218,10 +217,29 @@ struct UIVertex {
         ])
 }
 
+/// What a batch samples: a texture, or a page of the list's glyph atlas (resolved when the
+/// renderer draws, after uploading pages that gained glyphs this frame).
+enum UITextureSource {
+    case texture(GPUTexture)
+    case glyphPage(Int)
+
+    func isSame(as other: UITextureSource) -> Bool {
+        switch (self, other) {
+        case (.texture(let a), .texture(let b)): a === b
+        case (.glyphPage(let a), .glyphPage(let b)): a == b
+        default: false
+        }
+    }
+}
+
 /// A run of consecutive items drawn with one call.
 struct UIBatch {
     /// nil for items that don't sample a texture; the renderer binds a white one.
-    var texture: GPUTexture?
+    var source: UITextureSource?
+    /// The texture, when the batch samples one directly (not a glyph page).
+    var texture: GPUTexture? {
+        if case .texture(let texture)? = source { texture } else { nil }
+    }
     /// nil is the renderer's default (linear, clamp to edge).
     var sampler: GPUSampler?
     var clip: UIPixelRect
@@ -256,8 +274,26 @@ public final class UIDrawList {
     private(set) var indices: [UInt32] = []
     private(set) var batches: [UIBatch] = []
     private var clipStack: [UIPixelRect] = []
+    private var atlas: GlyphAtlas?
 
     public init() {}
+
+    /// The atlas `drawText` rasterizes glyphs into (created on first use). The renderer uploads
+    /// pages that gained glyphs before drawing; `prewarm` it for large character sets.
+    public var glyphAtlas: GlyphAtlas {
+        if let atlas { return atlas }
+        let created = GlyphAtlas()
+        atlas = created
+        return created
+    }
+
+    /// The atlas, if any text was ever drawn (for the renderer).
+    var glyphAtlasIfCreated: GlyphAtlas? { atlas }
+
+    /// The bundled UI font (Inter Regular), used by `drawText` when no font is given.
+    public static let defaultFont: Font = {
+        do { return try Font.bundledUI() } catch { fatalError("UIDrawList: \(error)") }
+    }()
 
     /// Clears the list for a new frame. The engine calls this before `Game.update`.
     func beginFrame(framebufferSize: (width: Int, height: Int), scale: Float) {
@@ -384,6 +420,56 @@ public final class UIDrawList {
         }, texture: texture, sampler: sampler)
     }
 
+    // MARK: Text
+
+    /// Draws `text` with its layout box's top-left at `origin` (points). `size` is the em size
+    /// in points and `color` sRGB like every other UI color. Wraps and aligns within
+    /// `maxWidth` when given (see `TextLayout`). Glyphs are SDF quads in the list's own
+    /// `glyphAtlas`, so text sorts, clips and batches with the shapes around it.
+    public func drawText(_ text: String, at origin: Vec2, size: Float, color: UIColor, font: Font? = nil,
+                         maxWidth: Float? = nil, alignment: TextAlignment = .left, lineSpacing: Float = 1) {
+        let font = font ?? Self.defaultFont
+        let layout = TextLayout(text, font: font, size: size, maxWidth: maxWidth, alignment: alignment,
+                                lineSpacing: lineSpacing)
+        drawText(layout, font: font, at: origin, color: color)
+    }
+
+    /// Draws a laid-out text (sizes in points; lay out once and reuse it for static text).
+    /// The origin is snapped to whole pixels and each line's baseline to a pixel row, so text
+    /// looks the same wherever it is drawn. `glyphs` limits drawing to a range of `layout.glyphs`.
+    public func drawText(_ layout: TextLayout, font: Font, at origin: Vec2, color: UIColor, glyphs: Range<Int>? = nil) {
+        guard color.a > 0, !layout.glyphs.isEmpty else { return }
+        let atlas = glyphAtlas
+        let pixelSize = layout.size * scale
+        let smoothing = Self.sdfSmoothing(pixelSize: pixelSize)
+        let originX = (origin.x * scale).rounded()
+        let rgba = Vec4(color.r, color.g, color.b, color.a)
+        let params = Vec4(0, UIQuadMode.sdf(smoothing: smoothing).shaderMode, smoothing, 0)
+        let big = Vec2(repeating: 1e5)
+        for placed in layout.glyphs[glyphs ?? layout.glyphs.indices] {
+            guard let info = atlas.info(for: placed.glyph, in: font) else { continue }
+            let baseline = ((origin.y + placed.y) * scale).rounded()
+            let x0 = originX + placed.x * scale + info.offset.x * pixelSize
+            let y0 = baseline + info.offset.y * pixelSize
+            let x1 = x0 + info.extent.x * pixelSize, y1 = y0 + info.extent.y * pixelSize
+            func vertex(_ x: Float, _ y: Float, _ u: Float, _ v: Float) -> UIVertex {
+                UIVertex(position: Vec2(x, y), uv: Vec2(u, v), color: rgba, local: .zero, halfSize: big, radii: .zero,
+                         params: params)
+            }
+            appendQuad(vertex(x0, y0, info.uvMin.x, info.uvMin.y), vertex(x1, y0, info.uvMax.x, info.uvMin.y),
+                       vertex(x1, y1, info.uvMax.x, info.uvMax.y), vertex(x0, y1, info.uvMin.x, info.uvMax.y),
+                       source: .glyphPage(info.page), sampler: nil)
+        }
+    }
+
+    /// The `.sdf` smoothing (the distance range the edge ramps over) that antialiases glyphs of
+    /// the bundled atlas over one framebuffer pixel at an em size of `pixelSize` pixels: the
+    /// atlas changes by `onEdgeValue / padding` per texel (of 255), at `sdfSize` texels per em.
+    public static func sdfSmoothing(pixelSize: Float) -> Float {
+        let perTexel = Float(GlyphAtlas.onEdgeValue) / Float(GlyphAtlas.padding) / 255
+        return perTexel * GlyphAtlas.sdfSize / max(pixelSize, 1e-3)
+    }
+
     // MARK: Building
 
     /// Distance the quad extends past the shape, in pixels, so the antialiased edge isn't cut off.
@@ -417,14 +503,16 @@ public final class UIDrawList {
 
     /// Appends a quad (four vertices, two triangles) and merges it into the last batch if possible.
     private func add(_ quad: [UIVertex], texture: GPUTexture?, sampler: GPUSampler?) {
+        appendQuad(quad[0], quad[1], quad[2], quad[3], source: texture.map { .texture($0) }, sampler: sampler)
+    }
+
+    private func appendQuad(_ v0: UIVertex, _ v1: UIVertex, _ v2: UIVertex, _ v3: UIVertex,
+                            source: UITextureSource?, sampler: GPUSampler?) {
         let clip = clip
-        var minX = Float.infinity, minY = Float.infinity, maxX = -Float.infinity, maxY = -Float.infinity
-        for vertex in quad {
-            minX = min(minX, vertex.position.x)
-            maxX = max(maxX, vertex.position.x)
-            minY = min(minY, vertex.position.y)
-            maxY = max(maxY, vertex.position.y)
-        }
+        let minX = min(min(v0.position.x, v1.position.x), min(v2.position.x, v3.position.x))
+        let maxX = max(max(v0.position.x, v1.position.x), max(v2.position.x, v3.position.x))
+        let minY = min(min(v0.position.y, v1.position.y), min(v2.position.y, v3.position.y))
+        let maxY = max(max(v0.position.y, v1.position.y), max(v2.position.y, v3.position.y))
         if clip.isEmpty || maxX <= Float(clip.x0) || minX >= Float(clip.x1) || maxY <= Float(clip.y0) || minY >= Float(clip.y1) {
             stats.culled += 1
             return
@@ -432,19 +520,22 @@ public final class UIDrawList {
 
         let base = UInt32(vertices.count)
         let firstIndex = indices.count
-        vertices.append(contentsOf: quad)
+        vertices.append(v0)
+        vertices.append(v1)
+        vertices.append(v2)
+        vertices.append(v3)
         indices.append(contentsOf: [base, base + 1, base + 2, base, base + 2, base + 3])
 
-        if var last = batches.last, last.clip == clip, Self.canMerge(last, texture: texture, sampler: sampler) {
-            if last.texture == nil, let texture {
+        if var last = batches.last, last.clip == clip, Self.canMerge(last, source: source, sampler: sampler) {
+            if last.source == nil, let source {
                 // Everything so far ignores the texture, so the batch can take this item's.
-                last.texture = texture
+                last.source = source
                 last.sampler = sampler
             }
             last.indexCount += 6
             batches[batches.count - 1] = last
         } else {
-            batches.append(UIBatch(texture: texture, sampler: sampler, clip: clip, firstIndex: firstIndex, indexCount: 6))
+            batches.append(UIBatch(source: source, sampler: sampler, clip: clip, firstIndex: firstIndex, indexCount: 6))
         }
         stats.items += 1
         stats.vertices = vertices.count
@@ -454,9 +545,9 @@ public final class UIDrawList {
 
     /// An item without a texture fits any batch; otherwise texture and sampler must match
     /// (or the batch must not have one yet).
-    private static func canMerge(_ batch: UIBatch, texture: GPUTexture?, sampler: GPUSampler?) -> Bool {
-        guard let texture else { return true }
-        guard let current = batch.texture else { return true }
-        return current === texture && batch.sampler === sampler
+    private static func canMerge(_ batch: UIBatch, source: UITextureSource?, sampler: GPUSampler?) -> Bool {
+        guard let source else { return true }
+        guard let current = batch.source else { return true }
+        return current.isSame(as: source) && batch.sampler === sampler
     }
 }

@@ -63,7 +63,10 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
             case .keyDown, .keyUp:
                 let key = Self.keyMap[event.keyCode]
                 if let key { input.setKey(key, down: event.type == .keyDown) }
-                if event.type == .keyDown { routeText(event, key: key, to: input) }
+                if event.type == .keyDown {
+                    if let key { input.recordKeyPress(key, modifiers: Self.modifiers(event), isRepeat: event.isARepeat) }
+                    routeText(event, key: key, to: input)
+                }
                 // Let menu shortcuts (Cmd-Q, Cmd-W…) through; swallow the rest to avoid the system beep.
                 if event.modifierFlags.contains(.command) { NSApp.sendEvent(event) }
                 continue
@@ -77,6 +80,10 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
             case .rightMouseUp: input.setButton(.right, down: false)
             case .otherMouseDown where event.buttonNumber == 2: input.setButton(.middle, down: true)
             case .otherMouseUp where event.buttonNumber == 2: input.setButton(.middle, down: false)
+            case .scrollWheel:
+                // Trackpads and Magic Mouse report points; classic wheels report lines.
+                let lines: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 16
+                input.addScroll(Vec2(Float(event.scrollingDeltaX * lines), Float(event.scrollingDeltaY * lines)))
             default: break
             }
             NSApp.sendEvent(event)
@@ -95,16 +102,22 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
     private func routeText(_ event: NSEvent, key: Key?, to input: Input) {
         guard input.isTextInputActive else { return }
         let flags = event.modifierFlags
-        var modifiers: KeyModifiers = []
-        if flags.contains(.shift) { modifiers.insert(.shift) }
-        if flags.contains(.control) { modifiers.insert(.control) }
-        if flags.contains(.option) { modifiers.insert(.alt) }
-        if flags.contains(.command) { modifiers.insert(.command) }
+        let modifiers = Self.modifiers(event)
         if input.composition == nil, let key, KeyEvent.isRoutedAsKey(key, modifiers: modifiers) {
             input.textKeyEvent(key, modifiers: modifiers, isRepeat: event.isARepeat)
         } else if !flags.contains(.command), !flags.contains(.control) || input.composition != nil {
             view.interpretKeyEvents([event])
         }
+    }
+
+    private static func modifiers(_ event: NSEvent) -> KeyModifiers {
+        let flags = event.modifierFlags
+        var modifiers: KeyModifiers = []
+        if flags.contains(.shift) { modifiers.insert(.shift) }
+        if flags.contains(.control) { modifiers.insert(.control) }
+        if flags.contains(.option) { modifiers.insert(.alt) }
+        if flags.contains(.command) { modifiers.insert(.command) }
+        return modifiers
     }
 
     /// Keeps the system's text input state in step with `input`: drops marked text the engine
@@ -152,7 +165,7 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
         0: .a, 11: .b, 8: .c, 2: .d, 14: .e, 3: .f, 5: .g, 4: .h, 34: .i, 38: .j, 40: .k, 37: .l, 46: .m,
         45: .n, 31: .o, 35: .p, 12: .q, 15: .r, 1: .s, 17: .t, 32: .u, 9: .v, 13: .w, 7: .x, 16: .y, 6: .z,
         29: .num0, 18: .num1, 19: .num2, 20: .num3, 21: .num4, 23: .num5, 22: .num6, 26: .num7, 28: .num8, 25: .num9,
-        49: .space, 36: .enter, 53: .escape, 48: .tab, 51: .backspace, 50: .grave,
+        49: .space, 36: .enter, 53: .escape, 48: .tab, 51: .backspace, 50: .grave, 33: .leftBracket, 30: .rightBracket,
         122: .f1, 120: .f2, 99: .f3, 118: .f4, 96: .f5, 97: .f6, 98: .f7, 100: .f8, 101: .f9, 109: .f10,
         103: .f11, 111: .f12,
         117: .delete, 115: .home, 119: .end, 116: .pageUp, 121: .pageDown,

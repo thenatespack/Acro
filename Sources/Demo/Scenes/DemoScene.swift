@@ -39,6 +39,9 @@ protocol DemoScene: AnyObject {
     func draw(_ pass: RenderPass) throws
     /// Fills the engine's 2D UI draw list (drawn in the window pass, over the scene).
     func drawUI(_ ui: UIDrawList)
+    /// A retained widget tree. The host updates it before its own input handling and skips
+    /// camera controls and shortcuts while it wants the pointer or keyboard.
+    var uiContext: UIContext? { get }
 }
 
 extension DemoScene {
@@ -50,9 +53,10 @@ extension DemoScene {
     func renderOffscreen(frame: Frame) {}
     func renderOffscreen(engine: Engine, frame: Frame) { renderOffscreen(frame: frame) }
     func drawUI(_ ui: UIDrawList) {}
+    var uiContext: UIContext? { nil }
 }
 
-/// Every scene, in number-key order.
+/// Every scene, in number-key order (scenes past 10 are reached with `[` / `]`).
 @MainActor let allScenes: [any DemoScene.Type] = [
     ShadowsScene.self,
     InstancingScene.self,
@@ -65,4 +69,5 @@ extension DemoScene {
     TextScene.self,
     UIScene.self,
     ECSScene.self,
+    WidgetsScene.self,
 ]
