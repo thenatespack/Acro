@@ -1,0 +1,8 @@
+module CGLFW [system] {
+    header "shim.h"
+    link "glfw3"
+    link "user32"
+    link "gdi32"
+    link "shell32"
+    export *
+}

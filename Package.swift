@@ -22,6 +22,14 @@ var engineSwiftSettings: [SwiftSetting] = []
 var vulkanTargets: [Target] = []
 
 if vulkanEnabled {
+    #if os(Windows)
+    // No pkg-config on Windows. Separate module maps (under Windows/) link vulkan-1 and
+    // glfw3; header and library locations come from VULKAN_SDK / GLFW_DIR (see below).
+    vulkanTargets = [
+        .systemLibrary(name: "CVulkan", path: "Windows/CVulkan"),
+        .systemLibrary(name: "CGLFW", path: "Windows/CGLFW"),
+    ]
+    #else
     vulkanTargets = [
         .systemLibrary(
             name: "CVulkan",
@@ -34,9 +42,33 @@ if vulkanEnabled {
             providers: [.brew(["glfw"]), .apt(["libglfw3-dev"])]
         ),
     ]
+    #endif
     engineDependencies += ["CVulkan", "CGLFW"]
     engineSwiftSettings.append(.define("ENGINE_VULKAN"))
 }
+
+// Windows: point the compiler and linker at the Vulkan SDK ($VULKAN_SDK\Include, \Lib) and GLFW
+// ($GLFW_DIR\include, \lib). These use unsafeFlags, so on Windows this package can only be
+// built as a root package, not consumed as a dependency. Without the env vars, set
+// CPATH / LIB yourself or pass -Xcc -I... -Xlinker /LIBPATH:... on the command line.
+var windowsLinkerSettings: [LinkerSetting] = []
+#if os(Windows)
+if vulkanEnabled {
+    let env = ProcessInfo.processInfo.environment
+    var cFlags: [String] = []
+    var libFlags: [String] = []
+    if let sdk = env["VULKAN_SDK"] {
+        cFlags += ["-Xcc", "-I\(sdk)\\Include"]
+        libFlags += ["-L\(sdk)\\Lib"]
+    }
+    if let glfw = env["GLFW_DIR"] {
+        cFlags += ["-Xcc", "-I\(glfw)\\include"]
+        libFlags += ["-L\(glfw)\\lib"]
+    }
+    if !cFlags.isEmpty { engineSwiftSettings.append(.unsafeFlags(cFlags)) }
+    if !libFlags.isEmpty { windowsLinkerSettings = [.unsafeFlags(libFlags)] }
+}
+#endif
 
 let package = Package(
     name: "SwiftGameEngine",
@@ -50,12 +82,14 @@ let package = Package(
             name: "Engine",
             dependencies: engineDependencies,
             resources: [.copy("Shaders")],
-            swiftSettings: engineSwiftSettings
+            swiftSettings: engineSwiftSettings,
+            linkerSettings: windowsLinkerSettings
         ),
         .executableTarget(
             name: "Demo",
             dependencies: ["Engine"],
-            resources: [.copy("Shaders")]
+            resources: [.copy("Shaders")],
+            linkerSettings: windowsLinkerSettings
         ),
         .testTarget(name: "EngineTests", dependencies: ["Engine"]),
     ]
