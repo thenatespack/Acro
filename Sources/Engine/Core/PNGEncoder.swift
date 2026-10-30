@@ -30,7 +30,7 @@ enum PNGEncoder {
         write: (UnsafeRawBufferPointer) throws -> Void
     ) throws {
         precondition(pixels.count == width * height * bytesPerPixel)
-        try write(UnsafeRawBufferPointer(start: signature, count: signature.count))
+        try signature.withUnsafeBytes { try write($0) }
 
         var header = [UInt8]()
         header += bigEndian(UInt32(width))
