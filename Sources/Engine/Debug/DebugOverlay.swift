@@ -53,10 +53,10 @@ final class DebugOverlay {
 
     func render(
         pass: RenderPass, stats: FrameStats, time: Double, framebufferSize: (width: Int, height: Int),
-        contentScale: Float, backend: GraphicsBackend, deviceName: String
+        renderSize: (width: Int, height: Int)?, contentScale: Float, backend: GraphicsBackend, deviceName: String
     ) {
         if time - lastRefresh >= Self.textRefreshInterval || lines.isEmpty {
-            refreshText(stats: stats, framebufferSize: framebufferSize, backend: backend, deviceName: deviceName)
+            refreshText(stats: stats, framebufferSize: framebufferSize, renderSize: renderSize, backend: backend, deviceName: deviceName)
             lastRefresh = time
         }
 
@@ -106,7 +106,7 @@ final class DebugOverlay {
     }
 
     private func refreshText(stats: FrameStats, framebufferSize: (width: Int, height: Int),
-                             backend: GraphicsBackend, deviceName: String) {
+                             renderSize: (width: Int, height: Int)?, backend: GraphicsBackend, deviceName: String) {
         let frames = max(accumulated.frames, 1)
         let frameMs = accumulated.frameTime / Double(frames) * 1000
         let cpuMs = accumulated.cpuTime / Double(frames) * 1000
@@ -123,7 +123,8 @@ final class DebugOverlay {
             String(format: "CPU %.2f MS  GPU ", cpuMs) + gpu,
             "DRAWS \(stats.drawCalls)  TRIS \(stats.triangles)",
             "\(backend.rawValue) \(deviceName)",
-            "\(framebufferSize.width)X\(framebufferSize.height)",
+            renderSize.map { "RENDER \($0.width)X\($0.height)  WINDOW \(framebufferSize.width)X\(framebufferSize.height)" }
+                ?? "\(framebufferSize.width)X\(framebufferSize.height)",
         ]
     }
 

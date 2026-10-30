@@ -36,6 +36,8 @@ final class CountingRenderPass: RenderPass {
     func setUniformData(_ bytes: UnsafeRawBufferPointer) { inner.setUniformData(bytes) }
     func setTexture(_ texture: GPUTexture) { inner.setTexture(texture) }
     func setPushConstants(_ bytes: UnsafeRawBufferPointer) { inner.setPushConstants(bytes) }
+    func beginOcclusionQuery(_ set: OcclusionQuerySet, index: Int) { inner.beginOcclusionQuery(set, index: index) }
+    func endOcclusionQuery() { inner.endOcclusionQuery() }
 
     func draw(vertexCount: Int, instanceCount: Int, firstVertex: Int) {
         drawCalls += 1

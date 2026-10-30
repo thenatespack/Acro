@@ -107,6 +107,8 @@ public struct PipelineDescriptor: Sendable {
     public var depthBias: DepthBias?
     /// Standard (non-premultiplied) alpha blending.
     public var alphaBlending: Bool = false
+    /// false leaves the color target untouched (e.g. occlusion-query proxies, depth prepasses).
+    public var colorWrites: Bool = true
 
     public init(shader: ShaderSource, vertexLayout: VertexLayout, instanceLayout: VertexLayout? = nil) {
         self.shader = shader
@@ -146,6 +148,14 @@ public struct TextureDescriptor: Sendable {
     var format: TextureFormat { get }
 }
 
+/// Data copied into the current frame's transient memory (see `Frame.upload`). Bind it in
+/// any pass of that frame; it must not be used after the frame ends.
+public struct TransientBuffer {
+    public let buffer: GPUBuffer
+    public let offset: Int
+    public let length: Int
+}
+
 /// Compiled shaders + fixed-function state. Released like `GPUBuffer`.
 @MainActor public protocol RenderPipeline: AnyObject {}
 
@@ -178,6 +188,10 @@ public let maxUniformDataSize = 2048
     func setPushConstants(_ bytes: UnsafeRawBufferPointer)
     func draw(vertexCount: Int, instanceCount: Int, firstVertex: Int)
     func drawIndexed(indexCount: Int, instanceCount: Int, firstIndex: Int)
+    /// Starts counting samples that pass the depth test into `set.results[index]` (see
+    /// `OcclusionQuerySet`). Screen pass only; one query open at a time, closed before the pass ends.
+    func beginOcclusionQuery(_ set: OcclusionQuerySet, index: Int)
+    func endOcclusionQuery()
 }
 
 extension RenderPass {
@@ -187,6 +201,10 @@ extension RenderPass {
 
     public func setVertexBuffer(_ buffer: GPUBuffer, index: Int) {
         setVertexBuffer(buffer, offset: 0, index: index)
+    }
+
+    public func setVertexBuffer(_ transient: TransientBuffer, index: Int) {
+        setVertexBuffer(transient.buffer, offset: transient.offset, index: index)
     }
 
     public func setVertexData<T: BitwiseCopyable>(_ vertices: [T], index: Int = 0) {
@@ -214,30 +232,42 @@ extension RenderPass {
 /// latest, when the device shuts down).
 ///
 /// Frame structure: `beginFrame` → any number of `beginDepthPass`/`endPass` →
-/// `beginScreenPass`/`endPass` → `endFrame`. Games normally use `Frame` instead.
+/// `beginScreenPass` → `beginWindowPass` → `endFrame`. Games normally use `Frame` instead.
 @MainActor public protocol RenderDevice: AnyObject {
     var backend: GraphicsBackend { get }
     /// Human-readable GPU name.
     var deviceName: String { get }
     /// MSAA sample count of the screen pass.
     var sampleCount: Int { get }
+    /// Largest supported texture / render-target dimension.
+    var maxTextureSize: Int { get }
     /// GPU execution time of a recently completed frame, in seconds (nil if unsupported).
     var gpuFrameTime: Double? { get }
 
     func makeBuffer(bytes: UnsafeRawBufferPointer, usage: BufferUsage) throws -> GPUBuffer
     func makeTexture(_ descriptor: TextureDescriptor) throws -> GPUTexture
     func makePipeline(_ descriptor: PipelineDescriptor) throws -> RenderPipeline
+    /// Copies `bytes` into this frame's transient memory (between `beginFrame` and `endFrame`).
+    func uploadTransient(_ bytes: UnsafeRawBufferPointer) -> TransientBuffer
 
     /// Acquires the next drawable. Returns false when there is nothing to draw into
     /// (e.g. the window is minimized); skip the frame in that case.
-    func beginFrame(framebufferSize: (width: Int, height: Int)) throws -> Bool
+    ///
+    /// With a `renderSize`, the screen pass renders offscreen at that size and
+    /// `beginWindowPass` scales the result into the window. nil renders straight to the window.
+    func beginFrame(framebufferSize: (width: Int, height: Int), renderSize: (width: Int, height: Int)?) throws -> Bool
     /// Starts a depth-only pass into `target` (a `.depth32Float` texture).
     func beginDepthPass(target: GPUTexture, clearDepth: Float) -> RenderPass
-    /// Starts the pass that renders to the window.
+    /// Starts the pass the scene renders into (the window, or the offscreen render target).
     func beginScreenPass(clearColor: Vec4, clearDepth: Float) -> RenderPass
+    /// Call right after the screen pass. Returns a pass at window resolution for UI that
+    /// uses `.screen` pipelines. With a render size, this ends the screen pass and draws
+    /// the scene image into the window (letterboxed) first; otherwise it simply returns
+    /// the still-open screen pass.
+    func beginWindowPass() -> RenderPass
     func endPass()
-    /// Submits and presents. Returns the frame's pixels when `captureNextFrame` was set
-    /// before `beginFrame`.
+    /// Submits and presents. Returns the frame's pixels (at render resolution, without
+    /// window-pass UI when a render size is set) when `captureNextFrame` was set before `beginFrame`.
     func endFrame() throws -> Image?
     /// When true, the next frame is read back and returned by `endFrame`. Resets after.
     var captureNextFrame: Bool { get set }
@@ -247,6 +277,10 @@ extension RenderPass {
 }
 
 extension RenderDevice {
+    public func beginFrame(framebufferSize: (width: Int, height: Int)) throws -> Bool {
+        try beginFrame(framebufferSize: framebufferSize, renderSize: nil)
+    }
+
     public func makeBuffer<T: BitwiseCopyable>(_ elements: [T], usage: BufferUsage) throws -> GPUBuffer {
         try elements.withUnsafeBytes { try makeBuffer(bytes: $0, usage: usage) }
     }

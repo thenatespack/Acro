@@ -78,3 +78,27 @@ private func approx(_ a: Vec4, _ b: Vec4, _ eps: Float = 1e-5) -> Bool {
     let d = try big.withUnsafeBytes { try ring.upload($0) }
     #expect(d.chunk == 3 && chunksMade == 3)
 }
+
+@Test func renderResolutionParsesPresetsAndCustomSizes() {
+    #expect(RenderResolution("native") == .native)
+    #expect(RenderResolution("144p") == .fixed(width: 256, height: 144))
+    #expect(RenderResolution("4K") == .fixed(width: 3840, height: 2160))
+    #expect(RenderResolution("16k") == .fixed(width: 15360, height: 8640))
+    #expect(RenderResolution("2880p") == .fixed(width: 5120, height: 2880))
+    #expect(RenderResolution("32k") == .fixed(width: 30720, height: 17280))
+    #expect(RenderResolution("1024x768") == .fixed(width: 1024, height: 768))
+    #expect(RenderResolution("0x5") == nil)
+    #expect(RenderResolution("huge") == nil)
+}
+
+@Test func msaaIsReducedToFitTheBudget() {
+    #expect(RenderResolution.native.affordableSampleCount(8) == 8)
+    #expect(RenderResolution("4k")!.affordableSampleCount(8) == 8)
+    #expect(RenderResolution("16k")!.affordableSampleCount(8) == 4)
+}
+
+@Test func letterboxKeepsAspectRatio() {
+    #expect(letterboxScale(image: (1920, 1080), window: (1920, 1080)) == Vec2(1, 1))
+    #expect(letterboxScale(image: (1000, 1000), window: (2000, 1000)) == Vec2(0.5, 1))
+    #expect(letterboxScale(image: (2000, 1000), window: (1000, 1000)) == Vec2(1, 0.5))
+}

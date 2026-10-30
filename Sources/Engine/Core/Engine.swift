@@ -11,8 +11,13 @@ public struct EngineConfig: Sendable {
     public var showDebugOverlay: Bool
     /// Key that toggles the overlay; nil disables the shortcut.
     public var debugOverlayKey: Key?
-    /// MSAA samples for the screen pass (clamped to what the GPU supports).
-    public var sampleCount: Int
+    /// Quality preset (overridable with `ENGINE_QUALITY=low|medium|high|ultra`).
+    public var quality: RenderQuality
+    /// MSAA samples for the screen pass (clamped to what the GPU supports). nil uses
+    /// `quality.sampleCount`.
+    public var sampleCount: Int?
+    /// Size the scene renders at (overridable with `ENGINE_RESOLUTION=720p|4k|16k|1920x1080|native…`).
+    public var renderResolution: RenderResolution
 
     public init(
         title: String = "Game",
@@ -22,7 +27,9 @@ public struct EngineConfig: Sendable {
         clearColor: Vec4 = Vec4(0.05, 0.05, 0.08, 1),
         showDebugOverlay: Bool = true,
         debugOverlayKey: Key? = .grave,
-        sampleCount: Int = 4
+        quality: RenderQuality = .high,
+        sampleCount: Int? = nil,
+        renderResolution: RenderResolution = .native
     ) {
         self.title = title
         self.width = width
@@ -31,7 +38,9 @@ public struct EngineConfig: Sendable {
         self.clearColor = clearColor
         self.showDebugOverlay = showDebugOverlay
         self.debugOverlayKey = debugOverlayKey
+        self.quality = quality
         self.sampleCount = sampleCount
+        self.renderResolution = renderResolution
     }
 }
 
@@ -63,6 +72,12 @@ public final class Frame {
         self.counter = counter
     }
 
+    /// Copies `elements` into transient memory once, for use by several passes this frame
+    /// (e.g. instances drawn in both the shadow and the screen pass). Valid until the frame ends.
+    public func upload<T: BitwiseCopyable>(_ elements: [T]) -> TransientBuffer {
+        elements.withUnsafeBytes { device.uploadTransient($0) }
+    }
+
     /// Renders depth-only geometry into `target` (e.g. a shadow map). Pipelines used here
     /// must have `target: .depthOnly`.
     public func depthPass(into target: GPUTexture, clearDepth: Float = 1, _ body: (RenderPass) -> Void) {
@@ -77,8 +92,21 @@ public final class Engine {
     public let device: RenderDevice
     public let input = Input()
     public var clearColor: Vec4
+    /// The active quality preset. Games use it to size shadow maps, filters, etc.
+    public let quality: RenderQuality
     /// Depth the screen pass clears to: 1 for standard depth, 0 for reversed-Z.
     public var clearDepth: Float = 1
+    /// Size the scene renders at. Changes take effect next frame; a size larger than
+    /// `device.maxTextureSize`, or too big for the MSAA memory budget at the current sample
+    /// count, is rejected (printed) and the previous value kept.
+    public var renderResolution: RenderResolution {
+        didSet {
+            if let error = validate(renderResolution) {
+                print("Render resolution \(renderResolution) rejected: \(error)")
+                renderResolution = oldValue
+            }
+        }
+    }
     /// Seconds since `run` started.
     public private(set) var time: Double = 0
     public private(set) var frameCount = 0
@@ -90,19 +118,38 @@ public final class Engine {
     let window: PlatformWindow
     private var overlay: DebugOverlay?
     private let countingPass = CountingRenderPass()
+    /// Receives window events during automated screenshots so stray keyboard/mouse input
+    /// (e.g. the window grabbing focus mid-run) can't change the captured frame.
+    private let ignoredInput = Input()
     private var fpsWindow = (frames: 0, elapsed: 0.0)
     private var pendingScreenshots: [URL] = []
     /// Set via ENGINE_SCREENSHOT=<path.png>: capture after ENGINE_SCREENSHOT_FRAME frames (default 60), then quit.
     private var automatedScreenshot: (url: URL, frame: Int)?
+    /// Per-frame sums during an automated screenshot, printed as averages when it's saved.
+    private var screenshotTotals = (frames: 0, update: 0.0, render: 0.0, gpu: 0.0, gpuFrames: 0)
+
+    private func printScreenshotAverages() {
+        let t = screenshotTotals
+        guard t.frames > 0 else { return }
+        func ms(_ total: Double, _ count: Int) -> String { String(format: "%.2f ms", total / Double(count) * 1000) }
+        let gpu = t.gpuFrames > 0 ? ms(t.gpu, t.gpuFrames) : "n/a"
+        print("Averages over \(t.frames) frames: update \(ms(t.update, t.frames)), render \(ms(t.render, t.frames)), "
+            + "GPU \(gpu); last frame \(stats.drawCalls) draws, \(stats.triangles) triangles")
+    }
 
     public var title: String {
         get { window.title }
         set { window.title = newValue }
     }
 
-    /// Framebuffer width / height.
+    /// The size the scene renders at: the fixed render resolution, or the window's framebuffer.
+    public var renderSize: (width: Int, height: Int) {
+        renderResolution.size ?? window.framebufferSize
+    }
+
+    /// Render width / height. Use this for projection matrices.
     public var aspectRatio: Float {
-        let size = window.framebufferSize
+        let size = renderSize
         return size.height > 0 ? Float(size.width) / Float(size.height) : 1
     }
 
@@ -110,6 +157,21 @@ public final class Engine {
         let env = ProcessInfo.processInfo.environment["ENGINE_BACKEND"]?.lowercased()
         let backend = config.backend ?? env.flatMap(GraphicsBackend.init(rawValue:)) ?? .platformDefault
         clearColor = config.clearColor
+        let envQuality = ProcessInfo.processInfo.environment["ENGINE_QUALITY"].flatMap { RenderQuality(rawValue: $0.lowercased()) }
+        quality = envQuality ?? config.quality
+        let envResolution = ProcessInfo.processInfo.environment["ENGINE_RESOLUTION"]
+        let resolution = try envResolution.map {
+            guard let resolution = RenderResolution($0) else { throw GraphicsError("Invalid ENGINE_RESOLUTION '\($0)'") }
+            return resolution
+        } ?? config.renderResolution
+        renderResolution = resolution
+        // An explicit sample count wins unless ENGINE_QUALITY overrides the preset.
+        let requestedSamples = envQuality == nil ? config.sampleCount ?? quality.sampleCount : quality.sampleCount
+        // Huge render sizes get fewer samples so the multisampled targets fit in memory.
+        let sampleCount = resolution.affordableSampleCount(requestedSamples)
+        if sampleCount < requestedSamples {
+            print("MSAA reduced from \(requestedSamples)x to \(sampleCount)x to fit \(resolution) in memory")
+        }
         showDebugOverlay = ProcessInfo.processInfo.environment["ENGINE_OVERLAY"].map { $0 != "0" } ?? config.showDebugOverlay
         debugOverlayKey = config.debugOverlayKey
         if let path = ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT"] {
@@ -122,7 +184,7 @@ public final class Engine {
             #if canImport(Metal) && canImport(AppKit)
             let appKitWindow = AppKitWindow(title: config.title, width: config.width, height: config.height)
             window = appKitWindow
-            device = try MetalRenderDevice(layer: appKitWindow.metalLayer, sampleCount: config.sampleCount)
+            device = try MetalRenderDevice(layer: appKitWindow.metalLayer, sampleCount: sampleCount)
             #else
             throw GraphicsError("The Metal backend is not available on this platform")
             #endif
@@ -130,11 +192,24 @@ public final class Engine {
             #if ENGINE_VULKAN
             let glfwWindow = try GLFWWindow(title: config.title, width: config.width, height: config.height)
             window = glfwWindow
-            device = try VulkanRenderDevice(window: glfwWindow, applicationName: config.title, sampleCount: config.sampleCount)
+            device = try VulkanRenderDevice(window: glfwWindow, applicationName: config.title, sampleCount: sampleCount)
             #else
             throw GraphicsError("The Vulkan backend was not compiled in (install the Vulkan SDK and GLFW, then rebuild)")
             #endif
         }
+        if let error = validate(resolution) { throw GraphicsError("Render resolution \(resolution): \(error)") }
+    }
+
+    /// Why `resolution` can't be used on this device, or nil if it can.
+    private func validate(_ resolution: RenderResolution) -> String? {
+        guard let (width, height) = resolution.size else { return nil }
+        if max(width, height) > device.maxTextureSize {
+            return "exceeds this GPU's maximum texture size of \(device.maxTextureSize)"
+        }
+        if resolution.affordableSampleCount(device.sampleCount) < device.sampleCount {
+            return "too large for \(device.sampleCount)x MSAA (start with this resolution, or lower quality, to reduce MSAA)"
+        }
+        return nil
     }
 
     /// Runs the main loop until the window closes or `quit()` is called.
@@ -158,7 +233,7 @@ public final class Engine {
 
         while !window.shouldClose {
             input.beginFrame()
-            window.pollEvents(into: input)
+            window.pollEvents(into: automatedScreenshot == nil ? input : ignoredInput)
             input.endEvents()
 
             let now = clock.now
@@ -192,7 +267,7 @@ public final class Engine {
             device.captureNextFrame = !pendingScreenshots.isEmpty
 
             let framebufferSize = window.framebufferSize
-            if try device.beginFrame(framebufferSize: framebufferSize) {
+            if try device.beginFrame(framebufferSize: framebufferSize, renderSize: renderResolution.size) {
                 countingPass.resetCounts()
                 let renderStart = clock.now
                 game.renderOffscreen(engine: self, frame: Frame(device: device, counter: countingPass))
@@ -202,18 +277,31 @@ public final class Engine {
                 stats.renderTime = Self.seconds(clock.now - renderStart)
                 stats.drawCalls = countingPass.drawCalls
                 stats.triangles = countingPass.triangles
+                if automatedScreenshot != nil {
+                    screenshotTotals.frames += 1
+                    screenshotTotals.update += stats.updateTime
+                    screenshotTotals.render += stats.renderTime
+                    if let gpu = stats.gpuTime {
+                        screenshotTotals.gpu += gpu
+                        screenshotTotals.gpuFrames += 1
+                    }
+                }
 
+                // UI at window resolution (this also scales a fixed-resolution scene into the window).
+                let windowPass = device.beginWindowPass()
                 overlay?.record(stats)
                 if showDebugOverlay, let overlay {
                     overlay.render(
-                        pass: pass, stats: stats, time: time, framebufferSize: framebufferSize,
-                        contentScale: window.contentScale, backend: device.backend, deviceName: device.deviceName)
+                        pass: windowPass, stats: stats, time: time, framebufferSize: framebufferSize,
+                        renderSize: renderResolution.size, contentScale: window.contentScale,
+                        backend: device.backend, deviceName: device.deviceName)
                 }
                 if let image = try device.endFrame() {
                     for url in pendingScreenshots { try image.writePNG(to: url) }
                     pendingScreenshots.removeAll()
                     if let shot = automatedScreenshot, frameCount >= shot.frame {
                         print("Saved screenshot to \(shot.url.path)")
+                        printScreenshotAverages()
                         quit()
                     }
                 }
