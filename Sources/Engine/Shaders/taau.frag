@@ -1,8 +1,23 @@
 #version 450
 
-// Temporal anti-aliasing upsample (TAAU): see taau.metal for how it works. Every read is a
-// texelFetch (the sampler only exists to form a sampler2D), so Metal and Vulkan produce
-// identical results.
+// Temporal anti-aliasing upsample (TAAU). Runs at the output size and writes the next history:
+// rgb = gamma-encoded color, a = accumulated sample weight. For each output pixel:
+// 1. Load the 3x3 render pixels around it. Each was sampled at its center minus this frame's
+//    jitter, so its distance to the output pixel is known.
+// 2. Current estimate: their weighted average, with a narrow kernel in output pixels, so a
+//    sample only counts toward output pixels it lands near. Over the jitter sequence that
+//    resolves detail finer than a render pixel. A wide kernel (in render pixels) fills in
+//    where there is no history yet.
+// 3. Reproject: the motion vector of the nearest surface in the 3x3 (depth dilation, so edges
+//    move with the foreground) gives the pixel's position last frame. The history is
+//    resampled there with a 4x4 Catmull-Rom filter.
+// 4. Clamp the history to the current neighborhood's color box in YCoCg (variance clipping,
+//    within min/max) to reject stale colors: disocclusions, shading changes, and objects that
+//    moved without motion vectors.
+// 5. Blend by weight: the new sample's against the history's, capped so the history keeps
+//    adapting.
+// Every read is a texelFetch (the sampler only exists to form a sampler2D) and the math is
+// plain arithmetic (no filtering hardware), so Metal and Vulkan produce identical results.
 
 // Texture n is set 2, binding 8 + n; sampler n is binding 16 + n (see `ShaderSource`).
 layout(set = 2, binding = 9) uniform texture2D colorImage;     // scene color, gamma-encoded

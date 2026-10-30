@@ -1,10 +1,30 @@
-# Compiles every GLSL shader (*.vert, *.frag) under Sources\ to SPIR-V next to it.
-# Requires glslc (ships with the Vulkan SDK; $env:VULKAN_SDK\Bin).
+# Regenerates every shader under Sources\ from its GLSL (*.vert, *.frag), the single source:
+# glslc compiles it to SPIR-V (name.vert.spv, for Vulkan), then Scripts\spirv-to-msl.c
+# (SPIRV-Cross C API) turns the SPIR-V into MSL (name.vert.metal, for Metal). Same as
+# compile-shaders.sh; all outputs are committed, so building the package needs neither tool.
+# Requires the Vulkan SDK ($env:VULKAN_SDK: glslc, SPIRV-Cross headers and
+# spirv-cross-c-shared) and clang (ships with Swift for Windows).
+# Untested so far, like the rest of the Windows setup.
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
-$glslc = if ($env:VULKAN_SDK) { Join-Path $env:VULKAN_SDK 'Bin\glslc.exe' } else { 'glslc' }
-Get-ChildItem Sources -Recurse -Include *.vert, *.frag | ForEach-Object {
-    Write-Host "glslc $($_.FullName) -> $($_.FullName).spv"
-    & $glslc --target-env=vulkan1.1 -O $_.FullName -o "$($_.FullName).spv"
-    if ($LASTEXITCODE -ne 0) { throw "glslc failed for $($_.Name)" }
+$sdk = $env:VULKAN_SDK
+$glslc = if ($sdk) { Join-Path $sdk 'Bin\glslc.exe' } else { 'glslc' }
+$shaders = Get-ChildItem Sources -Recurse -Include *.vert, *.frag | Sort-Object FullName
+foreach ($src in $shaders) {
+    Write-Host "glslc $($src.FullName) -> $($src.FullName).spv"
+    & $glslc --target-env=vulkan1.1 -O $src.FullName -o "$($src.FullName).spv"
+    if ($LASTEXITCODE -ne 0) { throw "glslc failed for $($src.Name)" }
+}
+
+if (-not $sdk) { throw 'Set VULKAN_SDK: the SPIR-V -> MSL step needs the SDK''s SPIRV-Cross' }
+New-Item -ItemType Directory -Force .build | Out-Null
+$tool = '.build\spirv-to-msl.exe'
+& clang -x c -O2 Scripts\spirv-to-msl.c "-I$(Join-Path $sdk 'Include\spirv_cross')" "-L$(Join-Path $sdk 'Lib')" `
+    -lspirv-cross-c-shared -o $tool
+if ($LASTEXITCODE -ne 0) { throw 'building spirv-to-msl failed' }
+$env:PATH = "$(Join-Path $sdk 'Bin');$env:PATH"  # spirv-cross-c-shared.dll
+foreach ($src in $shaders) {
+    Write-Host "spirv-to-msl $($src.FullName).spv -> $($src.FullName).metal"
+    & $tool "$($src.FullName).spv" "$($src.FullName).metal" $src.Name
+    if ($LASTEXITCODE -ne 0) { throw "spirv-to-msl failed for $($src.Name)" }
 }

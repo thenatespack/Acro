@@ -276,13 +276,10 @@ final class MetalRenderDevice: RenderDevice {
 
     /// Renders into a single-sample color texture of `format` with no depth.
     private func makeUpscalePipeline(_ name: String, format: MTLPixelFormat) throws -> MTLRenderPipelineState {
-        guard let source = try ShaderSource.load(named: name, bundle: .module).metalSource else {
-            throw GraphicsError("\(name) has no Metal source")
-        }
-        let library = try device.makeLibrary(source: source, options: nil)
+        let functions = try makeFunctions(ShaderSource.load(named: name, bundle: .module), fragment: true)
         let descriptor = MTLRenderPipelineDescriptor()
-        descriptor.vertexFunction = library.makeFunction(name: "vertex_main")
-        descriptor.fragmentFunction = library.makeFunction(name: "fragment_main")
+        descriptor.vertexFunction = functions.vertex
+        descriptor.fragmentFunction = functions.fragment
         descriptor.colorAttachments[0].pixelFormat = format
         return try device.makeRenderPipelineState(descriptor: descriptor)
     }
@@ -395,25 +392,34 @@ final class MetalRenderDevice: RenderDevice {
         }
     }
 
-    func makePipeline(_ descriptor: PipelineDescriptor) throws -> RenderPipeline {
-        guard let source = descriptor.shader.metalSource else {
+    /// Compiles `vertex_main` and (if `fragment`) `fragment_main`, from one MSL source or from
+    /// one per stage (see `ShaderSource.metalFragmentSource`).
+    private func makeFunctions(_ shader: ShaderSource, fragment: Bool) throws -> (vertex: MTLFunction, fragment: MTLFunction?) {
+        guard let source = shader.metalSource else {
             throw GraphicsError("Shader has no Metal source")
         }
         let library = try device.makeLibrary(source: source, options: nil)
         guard let vertexFunction = library.makeFunction(name: "vertex_main") else {
             throw GraphicsError("Metal shader must define vertex_main")
         }
+        guard fragment else { return (vertexFunction, nil) }
+        let fragmentLibrary = try shader.metalFragmentSource.map { try device.makeLibrary(source: $0, options: nil) } ?? library
+        guard let fragmentFunction = fragmentLibrary.makeFunction(name: "fragment_main") else {
+            throw GraphicsError("Metal shader must define fragment_main")
+        }
+        return (vertexFunction, fragmentFunction)
+    }
+
+    func makePipeline(_ descriptor: PipelineDescriptor) throws -> RenderPipeline {
+        let functions = try makeFunctions(descriptor.shader, fragment: descriptor.target == .screen)
 
         let pipelineDescriptor = MTLRenderPipelineDescriptor()
-        pipelineDescriptor.vertexFunction = vertexFunction
+        pipelineDescriptor.vertexFunction = functions.vertex
         pipelineDescriptor.vertexDescriptor = Self.vertexDescriptor(descriptor)
 
         switch descriptor.target {
         case .screen:
-            guard let fragmentFunction = library.makeFunction(name: "fragment_main") else {
-                throw GraphicsError("Metal shader must define fragment_main")
-            }
-            pipelineDescriptor.fragmentFunction = fragmentFunction
+            pipelineDescriptor.fragmentFunction = functions.fragment
             pipelineDescriptor.depthAttachmentPixelFormat = screenDepthFormat
             pipelineDescriptor.rasterSampleCount = sampleCount
             let color = pipelineDescriptor.colorAttachments[0]!

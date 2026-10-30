@@ -20,7 +20,7 @@
 // Byte-identical on Metal and Vulkan: texels are loaded directly (the scene image is sRGB,
 // so loads decode to linear light, and the average is taken in linear light, then written
 // to the sRGB window), footprints and weights are exact integers, and the sum uses explicit
-// fma in a fixed order. Keep in sync with blit.frag / blit.metal.
+// fma in a fixed order.
 
 layout(set = 1, binding = 0) uniform sampler2D image;
 
