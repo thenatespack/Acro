@@ -24,10 +24,20 @@ final class MetalTexture: GPUTexture {
     let format: TextureFormat
     var width: Int { texture.width }
     var height: Int { texture.height }
+    var mipLevelCount: Int { texture.mipmapLevelCount }
 
     init(_ texture: MTLTexture, format: TextureFormat) {
         self.texture = texture
         self.format = format
+    }
+}
+
+final class MetalSampler: GPUSampler {
+    let state: MTLSamplerState
+    let descriptor: SamplerDescriptor
+    init(state: MTLSamplerState, descriptor: SamplerDescriptor) {
+        self.state = state
+        self.descriptor = descriptor
     }
 }
 
@@ -71,6 +81,7 @@ final class MetalRenderDevice: RenderDevice {
     private let layer: CAMetalLayer
     private let comparisonSampler: MTLSamplerState
     private let linearSampler: MTLSamplerState
+    private let samplerCache = SamplerCache<MetalSampler>()
     private var blitPipeline: MetalPipeline!
     /// FSR 1 upscale pass, rendering into `UpscaleTargets.output`.
     private var easuPipeline: MTLRenderPipelineState!
@@ -252,6 +263,9 @@ final class MetalRenderDevice: RenderDevice {
     }
 
     func makeTexture(_ descriptor: TextureDescriptor) throws -> GPUTexture {
+        guard descriptor.format == .depth32Float else {
+            throw GraphicsError("Render targets must be .depth32Float; use makeTexture(pixels:...) for color textures")
+        }
         let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .depth32Float, width: descriptor.width, height: descriptor.height, mipmapped: false)
         textureDescriptor.usage = [.renderTarget, .shaderRead]
@@ -260,6 +274,53 @@ final class MetalRenderDevice: RenderDevice {
             throw GraphicsError("Failed to create \(descriptor.width)x\(descriptor.height) texture")
         }
         return MetalTexture(texture, format: descriptor.format)
+    }
+
+    func makeTexture(pixels: UnsafeRawBufferPointer, width: Int, height: Int, format: TextureFormat,
+                     generateMipmaps: Bool) throws -> GPUTexture {
+        try format.validateUpload(byteCount: pixels.count, width: width, height: height, maxSize: maxTextureSize)
+        let levels = generateMipmaps
+            ? MipChain.generate(pixels: Array(pixels), width: width, height: height, srgb: format == .rgba8Srgb)
+            : [MipChain.Level(width: width, height: height, pixels: Array(pixels))]
+        let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: format == .rgba8Srgb ? .rgba8Unorm_srgb : .rgba8Unorm, width: width, height: height, mipmapped: false)
+        textureDescriptor.mipmapLevelCount = levels.count
+        textureDescriptor.usage = .shaderRead
+        guard let texture = device.makeTexture(descriptor: textureDescriptor) else {
+            throw GraphicsError("Failed to create \(width)x\(height) texture")
+        }
+        for (level, mip) in levels.enumerated() {
+            mip.pixels.withUnsafeBytes {
+                texture.replace(
+                    region: MTLRegionMake2D(0, 0, mip.width, mip.height), mipmapLevel: level, withBytes: $0.baseAddress!,
+                    bytesPerRow: mip.width * 4)
+            }
+        }
+        return MetalTexture(texture, format: format)
+    }
+
+    func makeSampler(_ descriptor: SamplerDescriptor) throws -> GPUSampler {
+        try samplerCache.sampler(for: descriptor) { descriptor in
+            let sampler = MTLSamplerDescriptor()
+            sampler.minFilter = descriptor.minFilter.metal
+            sampler.magFilter = descriptor.magFilter.metal
+            sampler.mipFilter = switch descriptor.mipFilter {
+            case .none: .notMipmapped
+            case .nearest: .nearest
+            case .linear: .linear
+            }
+            let mode: MTLSamplerAddressMode = switch descriptor.addressMode {
+            case .repeat: .repeat
+            case .clampToEdge: .clampToEdge
+            case .mirrorRepeat: .mirrorRepeat
+            }
+            sampler.sAddressMode = mode
+            sampler.tAddressMode = mode
+            guard let state = device.makeSamplerState(descriptor: sampler) else {
+                throw GraphicsError("Failed to create sampler")
+            }
+            return MetalSampler(state: state, descriptor: descriptor)
+        }
     }
 
     func makePipeline(_ descriptor: PipelineDescriptor) throws -> RenderPipeline {
@@ -797,6 +858,36 @@ final class MetalRenderPass: RenderPass {
         encoder.setFragmentSamplerState(comparisonSampler, index: 0)
     }
 
+    func setUniformBuffer(_ buffer: GPUBuffer, offset: Int, index: Int, stage: ShaderStage) {
+        precondition(uniformBufferIndices.contains(index), "Uniform buffer index \(index) is outside \(uniformBufferIndices)")
+        precondition(offset % uniformBufferOffsetAlignment == 0, "Uniform buffer offset must be a multiple of \(uniformBufferOffsetAlignment)")
+        let buffer = (buffer as! MetalBuffer).buffer
+        if stage.contains(.vertex) { encoder.setVertexBuffer(buffer, offset: offset, index: index) }
+        if stage.contains(.fragment) { encoder.setFragmentBuffer(buffer, offset: offset, index: index) }
+    }
+
+    func setUniformData(_ bytes: UnsafeRawBufferPointer, index: Int, stage: ShaderStage) {
+        precondition(uniformBufferIndices.contains(index), "Uniform buffer index \(index) is outside \(uniformBufferIndices)")
+        let allocation = upload(bytes, alignment: uniformBufferOffsetAlignment)
+        if stage.contains(.vertex) { encoder.setVertexBuffer(allocation.chunk.buffer, offset: allocation.offset, index: index) }
+        if stage.contains(.fragment) { encoder.setFragmentBuffer(allocation.chunk.buffer, offset: allocation.offset, index: index) }
+    }
+
+    func setTexture(_ texture: GPUTexture, index: Int, stage: ShaderStage) {
+        precondition(textureIndices.contains(index), "Texture index \(index) is outside \(textureIndices)")
+        let texture = texture as! MetalTexture
+        precondition(!texture.format.isDepth, "Depth textures are bound with setTexture(_:)")
+        if stage.contains(.vertex) { encoder.setVertexTexture(texture.texture, index: index) }
+        if stage.contains(.fragment) { encoder.setFragmentTexture(texture.texture, index: index) }
+    }
+
+    func setSampler(_ sampler: GPUSampler, index: Int, stage: ShaderStage) {
+        precondition(textureIndices.contains(index), "Sampler index \(index) is outside \(textureIndices)")
+        let state = (sampler as! MetalSampler).state
+        if stage.contains(.vertex) { encoder.setVertexSamplerState(state, index: index) }
+        if stage.contains(.fragment) { encoder.setFragmentSamplerState(state, index: index) }
+    }
+
     func setIndexBuffer(_ buffer: GPUBuffer, type: IndexType) {
         indexBuffer = ((buffer as! MetalBuffer).buffer, type)
     }
@@ -843,6 +934,10 @@ final class MetalRenderPass: RenderPass {
             preconditionFailure("\(error)")
         }
     }
+}
+
+private extension SamplerFilter {
+    var metal: MTLSamplerMinMagFilter { self == .nearest ? .nearest : .linear }
 }
 
 private extension VertexFormat {

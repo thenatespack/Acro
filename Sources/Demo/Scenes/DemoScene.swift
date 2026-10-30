@@ -55,4 +55,5 @@ extension DemoScene {
     CullingScene.self,
     ResourceChurnScene.self,
     OcclusionScene.self,
+    TexturesScene.self,
 ]

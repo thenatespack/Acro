@@ -27,6 +27,8 @@ public enum GraphicsBackend: String, Sendable, CaseIterable {
 
 public enum BufferUsage: Sendable {
     case vertex, index
+    /// Bound with `RenderPass.setUniformBuffer`.
+    case uniform
 }
 
 public enum IndexType: Sendable {
@@ -121,6 +123,12 @@ public enum TextureFormat: Sendable {
     /// 32-bit float depth. Render target for depth passes; sampled in shaders with a
     /// linear-filtered comparison sampler (hardware PCF), clamped to a border of 1.
     case depth32Float
+    /// 8-bit RGBA, sampled as-is (data, normal maps, masks).
+    case rgba8Unorm
+    /// 8-bit RGBA with sRGB-encoded color channels: sampling returns linear values.
+    case rgba8Srgb
+
+    var isDepth: Bool { self == .depth32Float }
 }
 
 public struct TextureDescriptor: Sendable {
@@ -146,6 +154,8 @@ public struct TextureDescriptor: Sendable {
     var width: Int { get }
     var height: Int { get }
     var format: TextureFormat { get }
+    /// 1 unless created with mipmaps.
+    var mipLevelCount: Int { get }
 }
 
 /// Data copied into the current frame's transient memory (see `Frame.upload`). Bind it in
@@ -163,13 +173,22 @@ public struct TransientBuffer {
 public let maxPushConstantSize = 128
 /// Maximum size of one `setUniformData` block.
 public let maxUniformDataSize = 2048
+/// Largest range of one uniform buffer binding (the Vulkan-guaranteed minimum).
+public let maxUniformBufferSize = 16384
+/// Alignment of `setUniformBuffer` offsets (the largest any GPU we target requires).
+public let uniformBufferOffsetAlignment = 256
+/// Valid `index` values for uniform buffers. 0 and 1 are the vertex buffer slots.
+public let uniformBufferIndices = 2..<8
+/// Valid `index` values for textures and samplers. 0 is the shadow-map slot (`setTexture(_:)`).
+public let textureIndices = 1..<8
 
 /// Records draw commands for one render pass.
 ///
-/// Shader binding slots (MSL ↔ GLSL):
+/// Shader binding slots (MSL ↔ GLSL); see `ShaderSource` for the full table:
 /// - vertex buffer 0 / 1 (per-vertex / per-instance): `[[buffer(0)]]`/`[[buffer(1)]]` ↔ bindings 0 / 1
 /// - uniform data: `constant T& [[buffer(15)]]` ↔ `layout(set = 0, binding = 0) uniform`
-/// - texture: `[[texture(0)]]` + `[[sampler(0)]]` ↔ `layout(set = 1, binding = 0) uniform sampler2DShadow`
+/// - shadow-map texture: `[[texture(0)]]` + `[[sampler(0)]]` ↔ `layout(set = 1, binding = 0) uniform sampler2DShadow`
+/// - uniform buffer n (2...7), texture n (1...7), sampler n (1...7): see `ShaderSource`
 /// - push constants: `constant T& [[buffer(16)]]` ↔ `layout(push_constant) uniform`
 @MainActor public protocol RenderPass: AnyObject {
     func setPipeline(_ pipeline: RenderPipeline)
@@ -182,8 +201,20 @@ public let maxUniformDataSize = 2048
     /// Copies up to `maxUniformDataSize` bytes into transient memory and binds them as the
     /// uniform block visible to both shader stages.
     func setUniformData(_ bytes: UnsafeRawBufferPointer)
-    /// Binds a texture (with its format's sampler) to the fragment stage.
+    /// Binds a depth texture (a shadow map) with a hardware-comparison sampler to the fragment stage.
     func setTexture(_ texture: GPUTexture)
+    /// Binds `buffer` (created with `.uniform` usage) from `offset` (a multiple of
+    /// `uniformBufferOffsetAlignment`) as uniform buffer `index` (`uniformBufferIndices`),
+    /// at most `maxUniformBufferSize` bytes of it. Bindings persist until replaced.
+    func setUniformBuffer(_ buffer: GPUBuffer, offset: Int, index: Int, stage: ShaderStage)
+    /// Copies `bytes` into per-frame transient memory and binds them as uniform buffer
+    /// `index`, like `setVertexData`. For small data that changes every frame or draw.
+    func setUniformData(_ bytes: UnsafeRawBufferPointer, index: Int, stage: ShaderStage)
+    /// Binds a color texture (`.rgba8Unorm` / `.rgba8Srgb`) as texture `index` (`textureIndices`).
+    /// Pair it with `setSampler` at the same index.
+    func setTexture(_ texture: GPUTexture, index: Int, stage: ShaderStage)
+    /// Binds a sampler as sampler `index` (`textureIndices`).
+    func setSampler(_ sampler: GPUSampler, index: Int, stage: ShaderStage)
     /// Small per-draw data visible to both shader stages (≤ `maxPushConstantSize` bytes).
     func setPushConstants(_ bytes: UnsafeRawBufferPointer)
     func draw(vertexCount: Int, instanceCount: Int, firstVertex: Int)
@@ -209,6 +240,22 @@ extension RenderPass {
 
     public func setVertexData<T: BitwiseCopyable>(_ vertices: [T], index: Int = 0) {
         vertices.withUnsafeBytes { setVertexData($0, index: index) }
+    }
+
+    public func setUniformBuffer(_ buffer: GPUBuffer, index: Int, stage: ShaderStage = .all) {
+        setUniformBuffer(buffer, offset: 0, index: index, stage: stage)
+    }
+
+    public func setUniformData<T: BitwiseCopyable>(_ value: T, index: Int, stage: ShaderStage = .all) {
+        withUnsafeBytes(of: value) { setUniformData($0, index: index, stage: stage) }
+    }
+
+    public func setTexture(_ texture: GPUTexture, index: Int) {
+        setTexture(texture, index: index, stage: .fragment)
+    }
+
+    public func setSampler(_ sampler: GPUSampler, index: Int) {
+        setSampler(sampler, index: index, stage: .fragment)
     }
 
     public func setUniforms<T: BitwiseCopyable>(_ value: T) {
@@ -249,7 +296,15 @@ extension RenderPass {
     var gpuPassTimes: [GPUPassTime] { get }
 
     func makeBuffer(bytes: UnsafeRawBufferPointer, usage: BufferUsage) throws -> GPUBuffer
+    /// An offscreen render target (currently `.depth32Float` only).
     func makeTexture(_ descriptor: TextureDescriptor) throws -> GPUTexture
+    /// A 2D color texture from tightly packed RGBA8 pixels (`width * height * 4` bytes, top
+    /// row first). `generateMipmaps` builds a full chain on the CPU (a box filter, in linear
+    /// light for `.rgba8Srgb`). The data is copied; the texture is freed like a `GPUBuffer`.
+    func makeTexture(pixels: UnsafeRawBufferPointer, width: Int, height: Int, format: TextureFormat,
+                     generateMipmaps: Bool) throws -> GPUTexture
+    /// A sampler for `descriptor`. Identical descriptors return the same object.
+    func makeSampler(_ descriptor: SamplerDescriptor) throws -> GPUSampler
     func makePipeline(_ descriptor: PipelineDescriptor) throws -> RenderPipeline
     /// Copies `bytes` into this frame's transient memory (between `beginFrame` and `endFrame`).
     func uploadTransient(_ bytes: UnsafeRawBufferPointer) -> TransientBuffer
@@ -296,6 +351,13 @@ extension RenderDevice {
 
     public func makeBuffer<T: BitwiseCopyable>(_ elements: [T], usage: BufferUsage) throws -> GPUBuffer {
         try elements.withUnsafeBytes { try makeBuffer(bytes: $0, usage: usage) }
+    }
+
+    public func makeTexture(pixels: [UInt8], width: Int, height: Int, format: TextureFormat = .rgba8Srgb,
+                            generateMipmaps: Bool = false) throws -> GPUTexture {
+        try pixels.withUnsafeBytes {
+            try makeTexture(pixels: $0, width: width, height: height, format: format, generateMipmaps: generateMipmaps)
+        }
     }
 }
 

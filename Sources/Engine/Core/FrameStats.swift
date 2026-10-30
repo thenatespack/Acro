@@ -37,6 +37,14 @@ final class CountingRenderPass: RenderPass {
     func setIndexBuffer(_ buffer: GPUBuffer, type: IndexType) { inner.setIndexBuffer(buffer, type: type) }
     func setUniformData(_ bytes: UnsafeRawBufferPointer) { inner.setUniformData(bytes) }
     func setTexture(_ texture: GPUTexture) { inner.setTexture(texture) }
+    func setUniformBuffer(_ buffer: GPUBuffer, offset: Int, index: Int, stage: ShaderStage) {
+        inner.setUniformBuffer(buffer, offset: offset, index: index, stage: stage)
+    }
+    func setUniformData(_ bytes: UnsafeRawBufferPointer, index: Int, stage: ShaderStage) {
+        inner.setUniformData(bytes, index: index, stage: stage)
+    }
+    func setTexture(_ texture: GPUTexture, index: Int, stage: ShaderStage) { inner.setTexture(texture, index: index, stage: stage) }
+    func setSampler(_ sampler: GPUSampler, index: Int, stage: ShaderStage) { inner.setSampler(sampler, index: index, stage: stage) }
     func setPushConstants(_ bytes: UnsafeRawBufferPointer) { inner.setPushConstants(bytes) }
     func beginOcclusionQuery(_ set: OcclusionQuerySet, index: Int) { inner.beginOcclusionQuery(set, index: index) }
     func endOcclusionQuery() { inner.endOcclusionQuery() }
