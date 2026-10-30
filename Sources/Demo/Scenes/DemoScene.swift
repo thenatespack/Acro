@@ -56,4 +56,5 @@ extension DemoScene {
     ResourceChurnScene.self,
     OcclusionScene.self,
     TexturesScene.self,
+    TextScene.self,
 ]
