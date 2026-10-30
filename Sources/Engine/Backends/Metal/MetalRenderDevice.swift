@@ -831,8 +831,9 @@ final class MetalRenderDevice: RenderDevice {
             preconditionFailure("Failed to create Metal render encoder")
         }
         let pass = MetalRenderPass(
-            encoder: encoder, transient: frame.ring, comparisonSampler: comparisonSampler, occlusion: occlusion,
-            motionVectors: motionVectors)
+            encoder: encoder, transient: frame.ring, comparisonSampler: comparisonSampler,
+            targetSize: (descriptor.colorAttachments[0].texture?.width ?? 1, descriptor.colorAttachments[0].texture?.height ?? 1),
+            occlusion: occlusion, motionVectors: motionVectors)
         currentPass = pass
         return pass
     }
@@ -1035,15 +1036,17 @@ final class MetalRenderPass: RenderPass {
     let encoder: MTLRenderCommandEncoder
     private let transient: TransientRing<MetalBuffer>
     private let comparisonSampler: MTLSamplerState
-    private var indexBuffer: (buffer: MTLBuffer, type: IndexType)?
+    private var indexBuffer: (buffer: MTLBuffer, offset: Int, type: IndexType)?
+    private let targetSize: (width: Int, height: Int)
     /// Set for passes with a visibility-result buffer (the screen pass).
     let occlusion: OcclusionQueryBatch?
     /// The pass has a motion-vector attachment (scene pass with temporal upscaling).
     let motionVectors: Bool
 
     init(encoder: MTLRenderCommandEncoder, transient: TransientRing<MetalBuffer>, comparisonSampler: MTLSamplerState,
-         occlusion: OcclusionQueryBatch?, motionVectors: Bool = false) {
+         targetSize: (width: Int, height: Int), occlusion: OcclusionQueryBatch?, motionVectors: Bool = false) {
         self.encoder = encoder
+        self.targetSize = targetSize
         self.transient = transient
         self.comparisonSampler = comparisonSampler
         self.occlusion = occlusion
@@ -1112,7 +1115,18 @@ final class MetalRenderPass: RenderPass {
     }
 
     func setIndexBuffer(_ buffer: GPUBuffer, type: IndexType) {
-        indexBuffer = ((buffer as! MetalBuffer).buffer, type)
+        indexBuffer = ((buffer as! MetalBuffer).buffer, 0, type)
+    }
+
+    func setIndexData(_ bytes: UnsafeRawBufferPointer, type: IndexType) {
+        let allocation = upload(bytes, alignment: 16)
+        indexBuffer = (allocation.chunk.buffer, allocation.offset, type)
+    }
+
+    func setScissorRect(_ rect: ScissorRect?) {
+        let r = (rect ?? ScissorRect(x: 0, y: 0, width: targetSize.width, height: targetSize.height))
+            .clamped(toWidth: targetSize.width, height: targetSize.height)
+        encoder.setScissorRect(MTLScissorRect(x: r.x, y: r.y, width: r.width, height: r.height))
     }
 
     func setPushConstants(_ bytes: UnsafeRawBufferPointer) {
@@ -1128,13 +1142,13 @@ final class MetalRenderPass: RenderPass {
     }
 
     func drawIndexed(indexCount: Int, instanceCount: Int, firstIndex: Int) {
-        guard let (buffer, type) = indexBuffer else { preconditionFailure("drawIndexed without an index buffer") }
+        guard let (buffer, offset, type) = indexBuffer else { preconditionFailure("drawIndexed without an index buffer") }
         encoder.drawIndexedPrimitives(
             type: .triangle,
             indexCount: indexCount,
             indexType: type == .uint16 ? .uint16 : .uint32,
             indexBuffer: buffer,
-            indexBufferOffset: firstIndex * type.size,
+            indexBufferOffset: offset + firstIndex * type.size,
             instanceCount: instanceCount)
     }
 

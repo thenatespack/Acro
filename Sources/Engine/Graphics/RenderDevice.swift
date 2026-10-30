@@ -31,6 +31,26 @@ public enum BufferUsage: Sendable {
     case uniform
 }
 
+/// A rectangle of a render target in pixels, origin at the top left.
+public struct ScissorRect: Sendable, Equatable {
+    public var x, y, width, height: Int
+
+    public init(x: Int, y: Int, width: Int, height: Int) {
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+    }
+
+    /// This rectangle clipped to a `width` x `height` target, at least 1x1 and inside it
+    /// (backends reject empty or out-of-range scissors).
+    func clamped(toWidth targetWidth: Int, height targetHeight: Int) -> ScissorRect {
+        let left = min(max(x, 0), max(targetWidth - 1, 0)), top = min(max(y, 0), max(targetHeight - 1, 0))
+        let right = min(max(x + width, left + 1), targetWidth), bottom = min(max(y + height, top + 1), targetHeight)
+        return ScissorRect(x: left, y: top, width: max(right - left, 1), height: max(bottom - top, 1))
+    }
+}
+
 public enum IndexType: Sendable {
     case uint16, uint32
 
@@ -204,6 +224,13 @@ public let textureIndices = 1..<8
     /// Use for data that changes every frame (UI, debug lines, particles, instances).
     func setVertexData(_ bytes: UnsafeRawBufferPointer, index: Int)
     func setIndexBuffer(_ buffer: GPUBuffer, type: IndexType)
+    /// Copies `bytes` into per-frame transient memory and binds them as the index buffer, like
+    /// `setVertexData`. `firstIndex` in `drawIndexed` counts from the start of these bytes.
+    func setIndexData(_ bytes: UnsafeRawBufferPointer, type: IndexType)
+    /// Restricts drawing to a rectangle of the pass's target, in pixels with the origin at the
+    /// top left (clamped to the target). nil draws to the whole target again. Passes start
+    /// without a scissor; it persists until changed.
+    func setScissorRect(_ rect: ScissorRect?)
     /// Copies up to `maxUniformDataSize` bytes into transient memory and binds them as the
     /// uniform block visible to both shader stages.
     func setUniformData(_ bytes: UnsafeRawBufferPointer)
@@ -246,6 +273,10 @@ extension RenderPass {
 
     public func setVertexData<T: BitwiseCopyable>(_ vertices: [T], index: Int = 0) {
         vertices.withUnsafeBytes { setVertexData($0, index: index) }
+    }
+
+    public func setIndexData(_ indices: [UInt32]) {
+        indices.withUnsafeBytes { setIndexData($0, type: .uint32) }
     }
 
     public func setUniformBuffer(_ buffer: GPUBuffer, index: Int, stage: ShaderStage = .all) {

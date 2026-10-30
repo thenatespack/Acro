@@ -3,7 +3,7 @@ import Foundation
 
 /// Hosts the test scenes: owns the orbit camera, the shadow pass and scene switching.
 ///
-/// Controls: 1–8 switch scenes, Tab / Shift-Tab cycle the render resolution, U cycles the
+/// Controls: 1–9 and 0 (scene 10) switch scenes, Tab / Shift-Tab cycle the render resolution, U cycles the
 /// upscaler (bilinear, FSR 1, MetalFX spatial/temporal on Metal, TAAU; the temporal ones only
 /// without MSAA), V toggles vsync, Space pauses
 /// animation, arrows/WASD or left-drag orbit, Q/E zoom, Esc quits. Scenes add their own
@@ -63,7 +63,7 @@ final class DemoGame: Game {
             engine.renderResolution = Self.resolutionCycle[next]
             if engine.renderResolution == Self.resolutionCycle[next] { resolutionIndex = next }
         }
-        let numberKeys: [Key] = [.num1, .num2, .num3, .num4, .num5, .num6, .num7, .num8, .num9]
+        let numberKeys: [Key] = [.num1, .num2, .num3, .num4, .num5, .num6, .num7, .num8, .num9, .num0]
         for (i, key) in numberKeys.prefix(allScenes.count).enumerated() where input.wasPressed(key) && i != sceneIndex {
             do { try openScene(i) } catch { print("Failed to open scene \(allScenes[i].name): \(error)") }
             engine.resetTemporalHistory()  // a camera cut
@@ -122,6 +122,7 @@ final class DemoGame: Game {
             print("Scene \(allScenes[sceneIndex].name) failed to draw: \(error)")
             engine.quit()
         }
+        scene.drawUI(engine.ui)
     }
 }
 

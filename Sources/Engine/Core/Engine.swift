@@ -202,9 +202,14 @@ public final class Engine {
     public private(set) var stats = FrameStats()
     public var showDebugOverlay: Bool
     public var debugOverlayKey: Key?
+    /// The 2D UI draw list (see `UIDrawList`). Cleared at the start of each frame; fill it in
+    /// `Game.update` or `Game.render`, in points. The engine draws it in the window pass, at
+    /// window resolution, over the scene and under the debug overlay.
+    public let ui = UIDrawList()
 
     let window: PlatformWindow
     private var overlay: DebugOverlay?
+    private var uiRenderer: UIRenderer?
     private let countingPass = CountingRenderPass()
     /// Receives window events during automated screenshots so stray keyboard/mouse input
     /// (e.g. the window grabbing focus mid-run) can't change the captured frame.
@@ -349,7 +354,13 @@ public final class Engine {
             window.destroy()
         }
 
+        ui.beginFrame(framebufferSize: window.framebufferSize, scale: window.contentScale)
         try game.setup(engine: self)
+        do {
+            uiRenderer = try UIRenderer(device: device)
+        } catch {
+            print("UI renderer unavailable: \(error)")
+        }
         do {
             overlay = try DebugOverlay(device: device)
         } catch {
@@ -379,6 +390,7 @@ public final class Engine {
 
             if let key = debugOverlayKey, input.wasPressed(key) { showDebugOverlay.toggle() }
 
+            ui.beginFrame(framebufferSize: window.framebufferSize, scale: window.contentScale)
             let updateStart = clock.now
             game.update(engine: self, dt: Float(dt))
             applyPendingTitle()
@@ -442,6 +454,7 @@ public final class Engine {
                 // UI at window resolution (this also scales a fixed-resolution scene into the window).
                 let windowPass = device.beginWindowPass()
                 overlay?.record(stats)
+                uiRenderer?.render(ui, into: windowPass)
                 if showDebugOverlay, let overlay {
                     overlay.render(
                         pass: windowPass, stats: stats, time: time, framebufferSize: framebufferSize,

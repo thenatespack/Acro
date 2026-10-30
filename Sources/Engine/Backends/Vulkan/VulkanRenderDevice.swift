@@ -1112,7 +1112,7 @@ final class VulkanRenderDevice: RenderDevice {
         vkCmdSetScissor(cmd, 0, 1, &scissor)
 
         let pass = VulkanRenderPass(
-            commandBuffer: cmd, device: device, layout: pipelineLayout, transient: frame.transient, descriptors: frame.descriptors,
+            commandBuffer: cmd, device: device, layout: pipelineLayout, extent: extent, transient: frame.transient, descriptors: frame.descriptors,
             occlusion: occlusionQueries ? (occlusionPool, occlusionQueryBase, frame.occlusion) : nil,
             motionVectors: motionVectors)
         currentPass = pass
@@ -2223,17 +2223,19 @@ final class VulkanRenderPass: RenderPass {
     private let transient: TransientRing<VulkanTransientChunk>
     private let descriptors: VulkanDescriptorArena
     private var userBindings = VulkanUserBindings()
+    private let extent: VkExtent2D
     /// The frame slot's query range (screen pass only).
     let occlusion: (pool: VkQueryPool, base: UInt32, batch: OcclusionQueryBatch)?
     /// The pass has a motion-vector attachment (scene pass with temporal upscaling).
     let motionVectors: Bool
 
-    init(commandBuffer: VkCommandBuffer, device: VkDevice, layout: VkPipelineLayout,
+    init(commandBuffer: VkCommandBuffer, device: VkDevice, layout: VkPipelineLayout, extent: VkExtent2D,
          transient: TransientRing<VulkanTransientChunk>, descriptors: VulkanDescriptorArena,
          occlusion: (pool: VkQueryPool, base: UInt32, batch: OcclusionQueryBatch)?, motionVectors: Bool = false) {
         self.commandBuffer = commandBuffer
         self.device = device
         self.layout = layout
+        self.extent = extent
         self.transient = transient
         self.descriptors = descriptors
         self.occlusion = occlusion
@@ -2325,6 +2327,21 @@ final class VulkanRenderPass: RenderPass {
         vkCmdBindIndexBuffer(
             commandBuffer, (buffer as! VulkanBuffer).buffer, 0,
             type == .uint16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32)
+    }
+
+    func setIndexData(_ bytes: UnsafeRawBufferPointer, type: IndexType) {
+        let allocation = upload(bytes, alignment: 16, reserve: 0)
+        vkCmdBindIndexBuffer(
+            commandBuffer, allocation.chunk.buffer.buffer, VkDeviceSize(allocation.offset),
+            type == .uint16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32)
+    }
+
+    func setScissorRect(_ rect: ScissorRect?) {
+        let width = Int(extent.width), height = Int(extent.height)
+        let r = (rect ?? ScissorRect(x: 0, y: 0, width: width, height: height)).clamped(toWidth: width, height: height)
+        var scissor = VkRect2D(
+            offset: VkOffset2D(x: Int32(r.x), y: Int32(r.y)), extent: VkExtent2D(width: UInt32(r.width), height: UInt32(r.height)))
+        vkCmdSetScissor(commandBuffer, 0, 1, &scissor)
     }
 
     func setPushConstants(_ bytes: UnsafeRawBufferPointer) {
