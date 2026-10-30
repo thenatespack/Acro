@@ -10,19 +10,43 @@ public enum Upscaler: Equatable, Sendable, CustomStringConvertible {
     case fsr1(sharpness: Float = 0.2)
     /// Apple's MetalFX spatial scaler (Metal backend only).
     case metalFXSpatial
+    /// Apple's MetalFX temporal scaler (Metal backend only). Temporal: see `isTemporal`.
+    case metalFXTemporal
+    /// Temporal anti-aliasing upsample: accumulates jittered frames into a history at the
+    /// output size, reprojected with motion vectors and clamped to the current frame's
+    /// neighborhood, then sharpened with RCAS (`sharpness` in stops, as for `fsr1`). Works on
+    /// every backend. Temporal: see `isTemporal`.
+    case taau(sharpness: Float = 0.5)
 
-    /// Parses `bilinear`, `fsr1`, `fsr1:<sharpness>`, or `metalfx`.
+    /// Parses `bilinear`, `fsr1`, `fsr1:<sharpness>`, `metalfx` (spatial), `metalfx-temporal`,
+    /// `taau`, or `taau:<sharpness>`.
     public init?(_ string: String) {
         let text = string.lowercased().trimmingCharacters(in: .whitespaces)
         switch text {
         case "bilinear": self = .bilinear
         case "fsr", "fsr1": self = .fsr1()
-        case "metalfx": self = .metalFXSpatial
+        case "metalfx", "metalfx-spatial": self = .metalFXSpatial
+        case "metalfx-temporal": self = .metalFXTemporal
+        case "taau": self = .taau()
         default:
             let parts = text.split(separator: ":")
-            guard parts.count == 2, parts[0] == "fsr1" || parts[0] == "fsr", let sharpness = Float(parts[1]), sharpness >= 0
-            else { return nil }
-            self = .fsr1(sharpness: sharpness)
+            guard parts.count == 2, let sharpness = Float(parts[1]), sharpness >= 0 else { return nil }
+            switch parts[0] {
+            case "fsr1", "fsr": self = .fsr1(sharpness: sharpness)
+            case "taau": self = .taau(sharpness: sharpness)
+            default: return nil
+            }
+        }
+    }
+
+    /// Temporal upscalers accumulate detail over frames. They need the game to jitter its
+    /// projection (`Engine.jittered(_:)`) and write motion vectors
+    /// (`PipelineDescriptor.writesMotionVectors`); the engine keeps the scene's depth for them
+    /// and renders the scene without MSAA.
+    public var isTemporal: Bool {
+        switch self {
+        case .metalFXTemporal, .taau: true
+        case .bilinear, .fsr1, .metalFXSpatial: false
         }
     }
 
@@ -31,6 +55,8 @@ public enum Upscaler: Equatable, Sendable, CustomStringConvertible {
         case .bilinear: "bilinear"
         case .fsr1(let sharpness): "FSR 1 (sharpness \(sharpness))"
         case .metalFXSpatial: "MetalFX spatial"
+        case .metalFXTemporal: "MetalFX temporal"
+        case .taau(let sharpness): "TAAU (sharpness \(sharpness))"
         }
     }
 }
@@ -67,7 +93,25 @@ struct RcasConstants {
 extension Upscaler {
     /// The RCAS factor for the final window pass (0 = plain copy).
     var rcasSharpness: Float {
-        if case .fsr1(let sharpness) = self { return exp2(-sharpness) }
-        return 0
+        switch self {
+        case .fsr1(let sharpness), .taau(let sharpness): exp2(-sharpness)
+        case .bilinear, .metalFXSpatial, .metalFXTemporal: 0
+        }
     }
+
+    /// What renders into the upscale target before the window pass, ignoring parameters.
+    var firstStage: UpscalerStage {
+        switch self {
+        case .bilinear: .none
+        case .fsr1: .easu
+        case .metalFXSpatial: .metalFXSpatial
+        case .metalFXTemporal: .metalFXTemporal
+        case .taau: .taau
+        }
+    }
+}
+
+/// The first stage of an upscaler (see `Upscaler.firstStage`); backends key their targets on it.
+enum UpscalerStage: Equatable {
+    case none, easu, metalFXSpatial, metalFXTemporal, taau
 }

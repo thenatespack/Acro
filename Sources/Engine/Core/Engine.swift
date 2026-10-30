@@ -18,7 +18,9 @@ public struct EngineConfig: Sendable {
     public var sampleCount: Int?
     /// Size the scene renders at (overridable with `ENGINE_RESOLUTION=720p|4k|16k|1920x1080|performance|native…`).
     public var renderResolution: RenderResolution
-    /// Scales an offscreen scene into the window (overridable with `ENGINE_UPSCALER=bilinear|fsr1|fsr1:<sharpness>|metalfx`).
+    /// Scales an offscreen scene into the window (overridable with
+    /// `ENGINE_UPSCALER=bilinear|fsr1|fsr1:<sharpness>|metalfx|metalfx-temporal|taau|taau:<sharpness>`).
+    /// A temporal upscaler forces MSAA to 1x.
     public var upscaler: Upscaler
     /// Cap the frame rate at the display refresh rate (overridable with `ENGINE_VSYNC=0|1`).
     /// Turn it off to see how fast a scene really runs.
@@ -116,18 +118,70 @@ public final class Engine {
             }
         }
     }
-    /// How an offscreen scene is scaled into the window. One the backend doesn't support
-    /// is rejected (printed) and the previous value kept.
+    /// How an offscreen scene is scaled into the window. One the backend doesn't support is
+    /// rejected (printed) and the previous value kept, as is a temporal upscaler when the
+    /// device was created with MSAA (the sample count is fixed at startup: start with a
+    /// temporal upscaler, or `sampleCount: 1`, to switch to one at runtime).
     public var upscaler: Upscaler {
         didSet {
-            if device.supports(upscaler) {
-                device.upscaler = upscaler
-            } else {
-                print("Upscaler \(upscaler) is not supported on \(device.backend.rawValue); keeping \(oldValue)")
+            if let error = unsupported(upscaler) {
+                print("Upscaler \(upscaler) rejected: \(error); keeping \(oldValue)")
                 upscaler = oldValue
+            } else {
+                device.upscaler = upscaler
             }
         }
     }
+
+    /// Whether `upscaler` can be selected now (see `upscaler`).
+    public func supports(_ upscaler: Upscaler) -> Bool {
+        unsupported(upscaler) == nil
+    }
+
+    private func unsupported(_ upscaler: Upscaler) -> String? {
+        if !device.supports(upscaler) { return "not supported on \(device.backend.rawValue)" }
+        if upscaler.isTemporal && device.sampleCount > 1 {
+            return "temporal upscalers need 1x MSAA, and this device was created with \(device.sampleCount)x"
+        }
+        return nil
+    }
+
+    /// Whether a temporal upscaler is in use this frame (selected, and the scene renders
+    /// offscreen). Then `jitter` is nonzero and the scene pass has a motion-vector attachment.
+    public var temporalUpscaling: Bool {
+        upscaler.isTemporal && renderResolution.size(window: window.framebufferSize) != nil
+    }
+
+    /// This frame's sub-pixel projection jitter in render pixels (Halton 2, 3; see
+    /// `TemporalJitter`), or zero without temporal upscaling. Apply it with `jittered(_:)`.
+    public var jitter: Vec2 {
+        let window = window.framebufferSize
+        guard upscaler.isTemporal, let render = renderResolution.size(window: window) else { return .zero }
+        let output = letterboxRect(image: render, window: window)
+        let phases = TemporalJitter.phaseCount(renderWidth: render.width, outputWidth: output.width)
+        return TemporalJitter.offset(frame: frameCount, phaseCount: phases)
+    }
+
+    /// The jitter the previous frame was rendered with (zero if it had none).
+    public private(set) var previousJitter: Vec2 = .zero
+
+    /// `projection` (or a view-projection) shifted by this frame's `jitter`. Unchanged without
+    /// temporal upscaling. Compute motion vectors from the unjittered matrices.
+    public func jittered(_ projection: Mat4) -> Mat4 {
+        let jitter = jitter
+        guard jitter != .zero else { return projection }
+        return projection.jittered(clipOffset: TemporalJitter.clipOffset(jitter, renderSize: renderSize))
+    }
+
+    /// Discards a temporal upscaler's accumulated history next frame. Call on camera cuts and
+    /// scene switches; the engine does it itself when the render or window size, or the upscaler, changes.
+    public func resetTemporalHistory() {
+        historyResetRequested = true
+    }
+
+    private var historyResetRequested = true
+    /// What the last frame's temporal history was accumulated for; a change resets it.
+    private var lastTemporalSetup: (render: (width: Int, height: Int), window: (width: Int, height: Int), upscaler: Upscaler)?
     /// Wait for the display refresh before presenting. false renders as fast as possible
     /// (may tear on Vulkan when the surface only offers immediate presentation).
     public var vsync: Bool {
@@ -216,8 +270,19 @@ public final class Engine {
             return resolution
         } ?? config.renderResolution
         renderResolution = resolution
+        let envUpscaler = ProcessInfo.processInfo.environment["ENGINE_UPSCALER"]
+        let upscaler = try envUpscaler.map {
+            guard let upscaler = Upscaler($0) else { throw GraphicsError("Invalid ENGINE_UPSCALER '\($0)'") }
+            return upscaler
+        } ?? config.upscaler
+        self.upscaler = upscaler
         // An explicit sample count wins unless ENGINE_QUALITY overrides the preset.
-        let requestedSamples = envQuality == nil ? config.sampleCount ?? quality.sampleCount : quality.sampleCount
+        var requestedSamples = envQuality == nil ? config.sampleCount ?? quality.sampleCount : quality.sampleCount
+        if upscaler.isTemporal && requestedSamples > 1 {
+            // Temporal upscalers anti-alias themselves and need single-sample depth and motion vectors.
+            print("MSAA reduced from \(requestedSamples)x to 1x for the \(upscaler) upscaler")
+            requestedSamples = 1
+        }
         // Huge render sizes get fewer samples so the multisampled targets fit in memory.
         let sampleCount = resolution.affordableSampleCount(requestedSamples)
         if sampleCount < requestedSamples {
@@ -229,12 +294,6 @@ public final class Engine {
             let frame = ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT_FRAME"].flatMap(Int.init) ?? 60
             automatedScreenshot = (URL(fileURLWithPath: path), frame)
         }
-        let envUpscaler = ProcessInfo.processInfo.environment["ENGINE_UPSCALER"]
-        let upscaler = try envUpscaler.map {
-            guard let upscaler = Upscaler($0) else { throw GraphicsError("Invalid ENGINE_UPSCALER '\($0)'") }
-            return upscaler
-        } ?? config.upscaler
-        self.upscaler = upscaler
 
         switch backend {
         case .metal:
@@ -255,9 +314,7 @@ public final class Engine {
             #endif
         }
         if let error = validate(resolution) { throw GraphicsError("Render resolution \(resolution): \(error)") }
-        guard device.supports(upscaler) else {
-            throw GraphicsError("Upscaler \(upscaler) is not supported on \(device.backend.rawValue)")
-        }
+        if let error = unsupported(upscaler) { throw GraphicsError("Upscaler \(upscaler): \(error)") }
         device.upscaler = upscaler
         device.vsync = ProcessInfo.processInfo.environment["ENGINE_VSYNC"].map { $0 != "0" } ?? config.vsync
         // Screenshots normally capture the scene at render resolution; `window` captures the
@@ -335,6 +392,8 @@ public final class Engine {
 
             let framebufferSize = window.framebufferSize
             let renderSize = renderResolution.size(window: framebufferSize)
+            let temporalInputs = nextTemporalInputs(renderSize: renderSize, window: framebufferSize)
+            device.temporalInputs = temporalInputs
             if try device.beginFrame(framebufferSize: framebufferSize, renderSize: renderSize) {
                 countingPass.resetCounts()
                 let renderStart = clock.now
@@ -391,13 +450,31 @@ public final class Engine {
                         quit()
                     }
                 }
+                previousJitter = temporalInputs.jitter
                 frameCount += 1
             } else {
-                // Minimized or no drawable: don't spin the CPU.
+                // Minimized or no drawable: don't spin the CPU. A reset that wasn't delivered stays pending.
+                if temporalInputs.resetHistory { historyResetRequested = true }
                 if automatedScreenshot != nil { screenshotTotals.skipped += 1 }
                 Thread.sleep(forTimeInterval: 1.0 / 60.0)
             }
         }
+    }
+
+    /// This frame's temporal-upscaler inputs. Resets the history when asked to, and when the
+    /// render size, window size or upscaler differ from the last frame that used one.
+    private func nextTemporalInputs(renderSize: (width: Int, height: Int)?, window: (width: Int, height: Int)) -> TemporalInputs {
+        guard upscaler.isTemporal, let renderSize else {
+            lastTemporalSetup = nil
+            return TemporalInputs()
+        }
+        let unchanged = lastTemporalSetup.map {
+            $0.render == renderSize && $0.window == window && $0.upscaler == upscaler
+        } ?? false
+        let reset = historyResetRequested || !unchanged
+        lastTemporalSetup = (renderSize, window, upscaler)
+        historyResetRequested = false
+        return TemporalInputs(jitter: jitter, resetHistory: reset, reversedDepth: clearDepth == 0)
     }
 
     /// Saves the next rendered frame as a PNG.

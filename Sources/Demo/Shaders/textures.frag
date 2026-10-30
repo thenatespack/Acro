@@ -21,8 +21,11 @@ layout(set = 2, binding = 17) uniform sampler albedoSampler;
 layout(location = 0) in vec3 vWorldPos;
 layout(location = 1) in vec3 vNormal;
 layout(location = 2) in vec2 vUV;
+layout(location = 3) in vec4 vCurrentClip;
+layout(location = 4) in vec4 vPreviousClip;
 
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec2 outMotion;  // see `PipelineDescriptor.writesMotionVectors`
 
 void main() {
     vec3 albedo = texture(sampler2D(albedoMap, albedoSampler), vUV).rgb * params.tint.rgb;
@@ -35,4 +38,6 @@ void main() {
     float dist = length(scene.cameraPos.xyz - vWorldPos);
     float fog = 1.0 - exp(-dist * scene.fogColor.w);
     outColor = vec4(mix(color, scene.fogColor.rgb, fog), 1.0);
+    vec4 current = vCurrentClip, previous = vPreviousClip;
+    outMotion = previous.w > 0.0 ? (previous.xy / previous.w - current.xy / current.w) * vec2(0.5, -0.5) : vec2(0.0);
 }

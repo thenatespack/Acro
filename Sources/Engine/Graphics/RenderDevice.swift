@@ -111,6 +111,12 @@ public struct PipelineDescriptor: Sendable {
     public var alphaBlending: Bool = false
     /// false leaves the color target untouched (e.g. occlusion-query proxies, depth prepasses).
     public var colorWrites: Bool = true
+    /// The fragment shader writes screen-space motion vectors to its second output
+    /// (`float2 [[color(1)]]` / `layout(location = 1) out vec2`; see `TemporalUpscaling.swift`
+    /// for the convention). The scene pass only has that RG16F attachment while a temporal
+    /// upscaler is active; otherwise the output is discarded. Pipelines without this flag
+    /// leave the attachment at 0 (no motion), as do those with `colorWrites` off. Never blended.
+    public var writesMotionVectors: Bool = false
 
     public init(shader: ShaderSource, vertexLayout: VertexLayout, instanceLayout: VertexLayout? = nil) {
         self.shader = shader
@@ -339,6 +345,10 @@ extension RenderPass {
     /// Scales an offscreen scene into the window in `beginWindowPass`.
     var upscaler: Upscaler { get set }
     func supports(_ upscaler: Upscaler) -> Bool
+    /// Jitter, history reset and depth convention for a temporal upscaler, read in
+    /// `beginWindowPass`. While one is active (with a render size), the scene pass also has a
+    /// motion-vector attachment and keeps its depth.
+    var temporalInputs: TemporalInputs { get set }
 
     func waitIdle()
     func shutdown()
@@ -367,7 +377,8 @@ public struct GraphicsError: Error, CustomStringConvertible {
 }
 
 /// GPU time of one pass: `depth` (`beginDepthPass`), `scene` (`beginScreenPass`), `upscale`
-/// (an upscaler's first stage) or `window` (`beginWindowPass` when rendering offscreen).
+/// (an upscaler's first stage: EASU, TAAU or MetalFX) or `window` (`beginWindowPass` when
+/// rendering offscreen).
 public struct GPUPassTime: Sendable {
     public var name: String
     public var seconds: Double

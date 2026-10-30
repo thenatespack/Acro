@@ -26,7 +26,7 @@ demo="$(swift build -c release --show-bin-path)/Demo"
 
 backends=(vulkan)
 [[ "$(uname)" == Darwin ]] && backends=(metal)
-if [[ "$(uname)" == Darwin && "${ENGINE_UPSCALER:-}" != metalfx && -n "$(find .build -name 'CVulkan*' -print -quit 2>/dev/null)" ]]; then
+if [[ "$(uname)" == Darwin && "${ENGINE_UPSCALER:-}" != metalfx* && -n "$(find .build -name 'CVulkan*' -print -quit 2>/dev/null)" ]]; then
     backends+=(vulkan)
 fi
 

@@ -43,6 +43,7 @@ final class TexturesScene: DemoScene {
             shader: try ShaderSource.load(named: "textures", bundle: .module),
             vertexLayout: Renderer.vertexLayout, instanceLayout: Renderer.instanceLayout)
         descriptor.cullMode = .back
+        descriptor.writesMotionVectors = true
         pipeline = try device.makePipeline(descriptor)
 
         let size = 256

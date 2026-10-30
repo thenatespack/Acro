@@ -12,6 +12,8 @@ private let maxFramesInFlight = 3
 /// Passes per frame whose GPU time is measured; later ones go untimed.
 private let maxTimedPasses = 16
 private let screenDepthFormat = MTLPixelFormat.depth32Float
+/// The scene pass's second color attachment while a temporal upscaler is active.
+private let motionVectorFormat = MTLPixelFormat.rg16Float
 
 final class MetalBuffer: GPUBuffer {
     let buffer: MTLBuffer
@@ -46,12 +48,34 @@ final class MetalPipeline: RenderPipeline {
     let depthState: MTLDepthStencilState
     let cullMode: MTLCullMode
     let depthBias: DepthBias?
+    /// `.screen` pipelines: `state` plus a motion-vector attachment, for scene passes that have
+    /// one (temporal upscaling). Built on first use there.
+    private let motionDescriptor: MTLRenderPipelineDescriptor?
+    private var motionState: MTLRenderPipelineState?
 
-    init(state: MTLRenderPipelineState, depthState: MTLDepthStencilState, cullMode: MTLCullMode, depthBias: DepthBias?) {
+    init(state: MTLRenderPipelineState, depthState: MTLDepthStencilState, cullMode: MTLCullMode, depthBias: DepthBias?,
+         motionDescriptor: MTLRenderPipelineDescriptor? = nil) {
         self.state = state
         self.depthState = depthState
         self.cullMode = cullMode
         self.depthBias = depthBias
+        self.motionDescriptor = motionDescriptor
+    }
+
+    /// The variant for a pass with (`motionVectors`) or without a motion-vector attachment.
+    func state(motionVectors: Bool) -> MTLRenderPipelineState {
+        guard motionVectors else { return state }
+        if let motionState { return motionState }
+        guard let motionDescriptor, let device = motionDescriptor.vertexFunction?.device else {
+            preconditionFailure("Depth-only pipelines can't draw in the scene pass")
+        }
+        do {
+            let made = try device.makeRenderPipelineState(descriptor: motionDescriptor)
+            motionState = made
+            return made
+        } catch {
+            preconditionFailure("Failed to create the motion-vector variant of a pipeline: \(error)")
+        }
     }
 }
 
@@ -67,6 +91,7 @@ final class MetalRenderDevice: RenderDevice {
         set { layer.displaySyncEnabled = newValue }
     }
     var upscaler = Upscaler.bilinear
+    var temporalInputs = TemporalInputs()
     var deviceName: String { device.name }
     /// The sum of the pass times when the GPU can time passes. The command buffer's span is the
     /// fallback, but it includes waits for the drawable, so it can read far higher than the GPU's actual work.
@@ -87,6 +112,8 @@ final class MetalRenderDevice: RenderDevice {
     private var easuPipeline: MTLRenderPipelineState!
     /// FSR 1 sharpen pass (also the plain copy after MetalFX), rendering into the window.
     private var rcasPipeline: MetalPipeline!
+    /// TAAU pass, rendering the next history into `UpscaleTargets.outputs`.
+    private var taauPipeline: MTLRenderPipelineState!
     private var upscaleTargets: UpscaleTargets?
     private let frameSemaphore = DispatchSemaphore(value: maxFramesInFlight)
     private let lastGPUTime = LockedValue<Double?>(nil)
@@ -94,8 +121,10 @@ final class MetalRenderDevice: RenderDevice {
     /// Per frame slot: timestamps at the start and end of each pass's vertex and fragment stages.
     /// Empty when the GPU can't sample counters at stage boundaries.
     private var passTimestamps: [MTLCounterSampleBuffer] = []
-    /// Names of the passes timed so far in the current frame.
-    private var timedPasses: [String] = []
+    /// An empty kernel, dispatched around MetalFX to time it (see `time(_:commandBuffer:_:)`).
+    private var markerPipeline: MTLComputePipelineState?
+    /// The passes timed so far in the current frame.
+    private var timedPasses: [TimedPass] = []
     /// CPU (nanoseconds) and GPU timestamps sampled together at startup, to convert GPU ticks to seconds.
     private var timestampOrigin: (cpu: MTLTimestamp, gpu: MTLTimestamp) = (0, 0)
     // One transient ring per frame in flight; the semaphore guarantees the GPU is done
@@ -112,19 +141,35 @@ final class MetalRenderDevice: RenderDevice {
 
     private struct SceneTargets {
         var color: MTLTexture?  // multisampled, memoryless
+        /// Memoryless, except with a temporal upscaler, which reads it.
         var depth: MTLTexture
         /// Single-sample result: sampled by the window pass and read back for screenshots.
         var resolved: MTLTexture
         /// `resolved` read without sRGB decoding: upscalers work on gamma-encoded values.
         var resolvedUnorm: MTLTexture
+        /// Motion vectors, the scene pass's second color attachment (temporal upscalers only).
+        var motion: MTLTexture?
     }
 
     /// First-stage upscaler output at the letterboxed window size (gamma-encoded), plus the
-    /// MetalFX scaler that writes it when that upscaler is active.
+    /// MetalFX scaler that writes it when that upscaler is active. TAAU alternates between two
+    /// outputs, reading the one it wrote last frame as its history.
     private struct UpscaleTargets {
+        var stage: UpscalerStage
         var input: (width: Int, height: Int)
-        var output: MTLTexture
+        var outputs: [MTLTexture]
         var metalFX: MTLFXSpatialScaler?
+        var metalFXTemporal: MTLFXTemporalScaler?
+        /// Temporal upscalers: the output written last, and whether any frame has written one.
+        var current = 0
+        var hasHistory = false
+    }
+
+    /// A pass timed with 4 timestamps: the start and end of its vertex and fragment stages, or
+    /// (`span`) the start and end of the whole range in the first two.
+    private struct TimedPass {
+        var name: String
+        var span = false
     }
 
     private struct FrameState {
@@ -200,6 +245,8 @@ final class MetalRenderDevice: RenderDevice {
             passTimestamps = (0..<maxFramesInFlight).compactMap { _ in try? device.makeCounterSampleBuffer(descriptor: descriptor) }
             if passTimestamps.count != maxFramesInFlight { passTimestamps = [] }
             timestampOrigin = device.sampleTimestamps()
+            let library = try? device.makeLibrary(source: "kernel void marker() {}", options: nil)
+            markerPipeline = library?.makeFunction(name: "marker").flatMap { try? device.makeComputePipelineState(function: $0) }
         }
 
         for _ in 0..<maxFramesInFlight {
@@ -223,27 +270,34 @@ final class MetalRenderDevice: RenderDevice {
         rcas.depthTest = false
         rcas.depthWrite = false
         rcasPipeline = try makePipeline(rcas) as? MetalPipeline
-        easuPipeline = try makeEASUPipeline()
+        easuPipeline = try makeUpscalePipeline("fsr_easu", format: .bgra8Unorm)
+        taauPipeline = try makeUpscalePipeline("taau", format: .rgba16Float)
     }
 
-    /// Renders into a single-sample, gamma-encoded color texture with no depth.
-    private func makeEASUPipeline() throws -> MTLRenderPipelineState {
-        guard let source = try ShaderSource.load(named: "fsr_easu", bundle: .module).metalSource else {
-            throw GraphicsError("fsr_easu has no Metal source")
+    /// Renders into a single-sample color texture of `format` with no depth.
+    private func makeUpscalePipeline(_ name: String, format: MTLPixelFormat) throws -> MTLRenderPipelineState {
+        guard let source = try ShaderSource.load(named: name, bundle: .module).metalSource else {
+            throw GraphicsError("\(name) has no Metal source")
         }
         let library = try device.makeLibrary(source: source, options: nil)
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = library.makeFunction(name: "vertex_main")
         descriptor.fragmentFunction = library.makeFunction(name: "fragment_main")
-        descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        descriptor.colorAttachments[0].pixelFormat = format
         return try device.makeRenderPipelineState(descriptor: descriptor)
     }
 
     func supports(_ upscaler: Upscaler) -> Bool {
         switch upscaler {
-        case .bilinear, .fsr1: true
+        case .bilinear, .fsr1, .taau: true
         case .metalFXSpatial: MTLFXSpatialScalerDescriptor.supportsDevice(device)
+        case .metalFXTemporal: MTLFXTemporalScalerDescriptor.supportsDevice(device)
         }
+    }
+
+    /// Whether this frame's scene pass feeds a temporal upscaler (needs 1x MSAA; `Engine` ensures it).
+    private func temporal(offscreen: Bool) -> Bool {
+        offscreen && upscaler.isTemporal && sampleCount == 1
     }
 
     /// Metal has no query for this; values from the Metal feature set tables (exceeding it
@@ -358,6 +412,13 @@ final class MetalRenderDevice: RenderDevice {
             pipelineDescriptor.depthAttachmentPixelFormat = .depth32Float
             pipelineDescriptor.rasterSampleCount = 1
         }
+        var motionDescriptor: MTLRenderPipelineDescriptor?
+        if descriptor.target == .screen, let copy = pipelineDescriptor.copy() as? MTLRenderPipelineDescriptor {
+            let motion = copy.colorAttachments[1]!
+            motion.pixelFormat = motionVectorFormat
+            motion.writeMask = descriptor.writesMotionVectors && descriptor.colorWrites ? [.red, .green] : []
+            motionDescriptor = copy
+        }
         let state = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
 
         let depthDescriptor = MTLDepthStencilDescriptor()
@@ -372,7 +433,9 @@ final class MetalRenderDevice: RenderDevice {
         case .front: .front
         case .back: .back
         }
-        return MetalPipeline(state: state, depthState: depthState, cullMode: cull, depthBias: descriptor.depthBias)
+        return MetalPipeline(
+            state: state, depthState: depthState, cullMode: cull, depthBias: descriptor.depthBias,
+            motionDescriptor: motionDescriptor)
     }
 
     func uploadTransient(_ bytes: UnsafeRawBufferPointer) -> TransientBuffer {
@@ -427,7 +490,7 @@ final class MetalRenderDevice: RenderDevice {
         frameNumber += 1
         try ensureScreenTargets(width: framebufferSize.width, height: framebufferSize.height)
         if let renderSize {
-            try ensureSceneTargets(width: renderSize.width, height: renderSize.height)
+            try ensureSceneTargets(width: renderSize.width, height: renderSize.height, temporal: temporal(offscreen: true))
         } else {
             sceneTargets = nil
         }
@@ -510,8 +573,18 @@ final class MetalRenderDevice: RenderDevice {
                 msaa: targets.color, target: acquireWindowTarget(), depth: targets.depth, clearColor: clearColor,
                 clearDepth: clearDepth)
         }
+        let motion = frame.offscreen ? sceneTargets?.motion : nil
+        if let motion {
+            // Temporal upscaling: motion vectors (0 where nothing is drawn) and depth are kept for the upscaler.
+            let attachment = descriptor.colorAttachments[1]!
+            attachment.texture = motion
+            attachment.loadAction = .clear
+            attachment.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+            attachment.storeAction = .store
+            descriptor.depthAttachment.storeAction = .store
+        }
         descriptor.visibilityResultBuffer = occlusionResults[frame.slot]
-        return beginPass(descriptor, timedAs: "scene", occlusion: occlusionBatches[frame.slot])
+        return beginPass(descriptor, timedAs: "scene", occlusion: occlusionBatches[frame.slot], motionVectors: motion != nil)
     }
 
     func beginWindowPass() -> RenderPass {
@@ -551,8 +624,8 @@ final class MetalRenderDevice: RenderDevice {
         return pass
     }
 
-    /// Runs the upscaler's first stage (FSR 1 EASU or MetalFX) from the scene image into a
-    /// texture of `size`, for the window pass to sharpen or copy. nil means bilinear.
+    /// Runs the upscaler's first stage (FSR 1 EASU, TAAU or MetalFX) from the scene image into
+    /// a texture of `size`, for the window pass to sharpen or copy. nil means bilinear.
     private func upscale(_ scene: SceneTargets, to size: (width: Int, height: Int),
                          commandBuffer: MTLCommandBuffer) -> MTLTexture? {
         guard upscaler != .bilinear else { return nil }
@@ -565,12 +638,14 @@ final class MetalRenderDevice: RenderDevice {
             upscaler = .bilinear
             return nil
         }
+        // A fresh scaler or history has nothing to blend with yet.
+        let reset = temporalInputs.resetHistory || !targets.hasHistory
         switch upscaler {
         case .bilinear:
             return nil
         case .fsr1:
             let passDescriptor = MTLRenderPassDescriptor()
-            passDescriptor.colorAttachments[0].texture = targets.output
+            passDescriptor.colorAttachments[0].texture = targets.outputs[0]
             passDescriptor.colorAttachments[0].loadAction = .dontCare
             passDescriptor.colorAttachments[0].storeAction = .store
             time(passDescriptor, as: "upscale")
@@ -584,22 +659,63 @@ final class MetalRenderDevice: RenderDevice {
         case .metalFXSpatial:
             guard let scaler = targets.metalFX else { return nil }
             scaler.colorTexture = scene.resolvedUnorm
-            scaler.outputTexture = targets.output
-            scaler.encode(commandBuffer: commandBuffer)
+            scaler.outputTexture = targets.outputs[0]
+            time("upscale", commandBuffer: commandBuffer) { scaler.encode(commandBuffer: commandBuffer) }
+        case .metalFXTemporal:
+            guard let scaler = targets.metalFXTemporal, let motion = scene.motion else { return nil }
+            scaler.colorTexture = scene.resolvedUnorm
+            scaler.depthTexture = scene.depth
+            scaler.motionTexture = motion
+            scaler.outputTexture = targets.outputs[0]
+            // MetalFX takes the offset of the sample within the pixel, the opposite of how far the image moved.
+            scaler.jitterOffsetX = -temporalInputs.jitter.x
+            scaler.jitterOffsetY = -temporalInputs.jitter.y
+            // Motion vectors are in UV units; MetalFX wants render pixels.
+            scaler.motionVectorScaleX = Float(input.width)
+            scaler.motionVectorScaleY = Float(input.height)
+            scaler.isDepthReversed = temporalInputs.reversedDepth
+            scaler.reset = reset
+            time("upscale", commandBuffer: commandBuffer) { scaler.encode(commandBuffer: commandBuffer) }
+            upscaleTargets?.hasHistory = true
+        case .taau:
+            guard let motion = scene.motion else { return nil }
+            let next = 1 - targets.current
+            let passDescriptor = MTLRenderPassDescriptor()
+            passDescriptor.colorAttachments[0].texture = targets.outputs[next]
+            passDescriptor.colorAttachments[0].loadAction = .dontCare
+            passDescriptor.colorAttachments[0].storeAction = .store
+            time(passDescriptor, as: "upscale")
+            guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor) else { return nil }
+            encoder.setRenderPipelineState(taauPipeline)
+            // Texture n matches set 2, binding 8 + n in taau.frag.
+            encoder.setFragmentTexture(scene.resolvedUnorm, index: 1)
+            encoder.setFragmentTexture(scene.depth, index: 2)
+            encoder.setFragmentTexture(motion, index: 3)
+            encoder.setFragmentTexture(targets.outputs[targets.current], index: 4)
+            var constants = TaauConstants(input: input, output: size, inputs: temporalInputs, reset: reset)
+            encoder.setFragmentBytes(&constants, length: MemoryLayout<TaauConstants>.size, index: metalPushConstantIndex)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+            encoder.endEncoding()
+            upscaleTargets?.current = next
+            upscaleTargets?.hasHistory = true
+            return targets.outputs[next]
         }
-        return targets.output
+        return targets.outputs[0]
     }
 
     private func ensureUpscaleTargets(input: (width: Int, height: Int), output: (width: Int, height: Int)) throws -> UpscaleTargets {
-        let wantsMetalFX = upscaler == .metalFXSpatial
-        if let targets = upscaleTargets, targets.input == input, targets.output.width == output.width,
-           targets.output.height == output.height, (targets.metalFX != nil) == wantsMetalFX {
+        let stage = upscaler.firstStage
+        if let targets = upscaleTargets, targets.stage == stage, targets.input == input,
+           targets.outputs[0].width == output.width, targets.outputs[0].height == output.height {
             return targets
         }
         upscaleTargets = nil
         var usage: MTLTextureUsage = [.renderTarget, .shaderRead]
-        var scaler: MTLFXSpatialScaler?
-        if wantsMetalFX {
+        var format = MTLPixelFormat.bgra8Unorm
+        var spatial: MTLFXSpatialScaler?
+        var temporal: MTLFXTemporalScaler?
+        switch stage {
+        case .metalFXSpatial:
             let descriptor = MTLFXSpatialScalerDescriptor()
             descriptor.inputWidth = input.width
             descriptor.inputHeight = input.height
@@ -611,17 +727,38 @@ final class MetalRenderDevice: RenderDevice {
             guard let made = descriptor.makeSpatialScaler(device: device) else {
                 throw GraphicsError("Failed to create a MetalFX spatial scaler")
             }
-            scaler = made
+            spatial = made
             usage.formUnion(made.outputTextureUsage)
+        case .metalFXTemporal:
+            let descriptor = MTLFXTemporalScalerDescriptor()
+            descriptor.inputWidth = input.width
+            descriptor.inputHeight = input.height
+            descriptor.outputWidth = output.width
+            descriptor.outputHeight = output.height
+            descriptor.colorTextureFormat = .bgra8Unorm
+            descriptor.depthTextureFormat = screenDepthFormat
+            descriptor.motionTextureFormat = motionVectorFormat
+            descriptor.outputTextureFormat = .bgra8Unorm
+            guard let made = descriptor.makeTemporalScaler(device: device) else {
+                throw GraphicsError("Failed to create a MetalFX temporal scaler")
+            }
+            temporal = made
+            usage.formUnion(made.outputTextureUsage)
+        case .taau:
+            // Color plus accumulated weight, with headroom so small blends don't stall in 8 bits.
+            format = .rgba16Float
+        case .none, .easu:
+            break
         }
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .bgra8Unorm, width: output.width, height: output.height, mipmapped: false)
+            pixelFormat: format, width: output.width, height: output.height, mipmapped: false)
         descriptor.usage = usage
         descriptor.storageMode = .private
-        guard let texture = device.makeTexture(descriptor: descriptor) else {
+        let outputs = (0..<(stage == .taau ? 2 : 1)).compactMap { _ in device.makeTexture(descriptor: descriptor) }
+        guard outputs.count == (stage == .taau ? 2 : 1) else {
             throw GraphicsError("Failed to create \(output.width)x\(output.height) upscale target")
         }
-        let targets = UpscaleTargets(input: input, output: texture, metalFX: scaler)
+        let targets = UpscaleTargets(stage: stage, input: input, outputs: outputs, metalFX: spatial, metalFXTemporal: temporal)
         upscaleTargets = targets
         return targets
     }
@@ -650,7 +787,7 @@ final class MetalRenderDevice: RenderDevice {
     }
 
     private func beginPass(_ descriptor: MTLRenderPassDescriptor, timedAs name: String,
-                           occlusion: OcclusionQueryBatch? = nil) -> RenderPass {
+                           occlusion: OcclusionQueryBatch? = nil, motionVectors: Bool = false) -> RenderPass {
         guard let frame else { preconditionFailure("Render pass started outside a frame") }
         precondition(currentPass == nil, "Previous pass was not ended")
         time(descriptor, as: name)
@@ -658,7 +795,8 @@ final class MetalRenderDevice: RenderDevice {
             preconditionFailure("Failed to create Metal render encoder")
         }
         let pass = MetalRenderPass(
-            encoder: encoder, transient: frame.ring, comparisonSampler: comparisonSampler, occlusion: occlusion)
+            encoder: encoder, transient: frame.ring, comparisonSampler: comparisonSampler, occlusion: occlusion,
+            motionVectors: motionVectors)
         currentPass = pass
         return pass
     }
@@ -676,13 +814,38 @@ final class MetalRenderDevice: RenderDevice {
         attachment.endOfVertexSampleIndex = first + 1
         attachment.startOfFragmentSampleIndex = first + 2
         attachment.endOfFragmentSampleIndex = first + 3
-        timedPasses.append(name)
+        timedPasses.append(TimedPass(name: name))
+    }
+
+    /// Times work encoded by `body` that isn't one of our render passes (MetalFX encodes its own
+    /// compute passes): one-thread compute passes before and after it sample the start and the
+    /// end (an empty pass samples nothing).
+    private func time(_ name: String, commandBuffer: MTLCommandBuffer, _ body: () -> Void) {
+        guard let frame, let markerPipeline, !passTimestamps.isEmpty, timedPasses.count < maxTimedPasses else {
+            return body()
+        }
+        let first = timedPasses.count * 4
+        func marker(start: Int, end: Int) {
+            let descriptor = MTLComputePassDescriptor()
+            let attachment = descriptor.sampleBufferAttachments[0]!
+            attachment.sampleBuffer = passTimestamps[frame.slot]
+            attachment.startOfEncoderSampleIndex = start
+            attachment.endOfEncoderSampleIndex = end
+            guard let encoder = commandBuffer.makeComputeCommandEncoder(descriptor: descriptor) else { return }
+            encoder.setComputePipelineState(markerPipeline)
+            encoder.dispatchThreads(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1))
+            encoder.endEncoding()
+        }
+        marker(start: first, end: MTLCounterDontSample)
+        body()
+        marker(start: MTLCounterDontSample, end: first + 1)
+        timedPasses.append(TimedPass(name: name, span: true))
     }
 
     /// Converts the frame's pass timestamps to `lastPassTimes` once the GPU is done.
     private func resolvePassTimes(of commandBuffer: MTLCommandBuffer, slot: Int) {
         guard !timedPasses.isEmpty else { return }
-        let names = timedPasses
+        let passes = timedPasses
         timedPasses = []
         // Only read once the GPU is done with it, and not reused until this slot comes back around.
         nonisolated(unsafe) let sampleBuffer = passTimestamps[slot]
@@ -690,7 +853,7 @@ final class MetalRenderDevice: RenderDevice {
         let device = device
         let origin = timestampOrigin
         commandBuffer.addCompletedHandler { _ in
-            guard let data = try? sampleBuffer.resolveCounterRange(0..<names.count * 4) else { return }
+            guard let data = try? sampleBuffer.resolveCounterRange(0..<passes.count * 4) else { return }
             // GPU ticks have no fixed unit: measure them against the CPU clock (nanoseconds) since startup.
             let now = device.sampleTimestamps()
             guard now.gpu > origin.gpu, now.cpu > origin.cpu else { return }
@@ -703,9 +866,9 @@ final class MetalRenderDevice: RenderDevice {
                     guard begin != MTLCounterErrorValue, end != MTLCounterErrorValue, begin > 0, end > begin else { return 0 }
                     return end - begin
                 }
-                return names.indices.map { i in
-                    let busy = stage(i * 4) + stage(i * 4 + 2)
-                    return GPUPassTime(name: names[i], seconds: Double(busy) * nanosecondsPerTick * 1e-9)
+                return passes.indices.map { i in
+                    let busy = passes[i].span ? stage(i * 4) : stage(i * 4) + stage(i * 4 + 2)
+                    return GPUPassTime(name: passes[i].name, seconds: Double(busy) * nanosecondsPerTick * 1e-9)
                 }
             }
             passTimes.set(times)
@@ -771,9 +934,12 @@ final class MetalRenderDevice: RenderDevice {
                          try makeAttachment(screenDepthFormat, width, height))
     }
 
-    /// Offscreen scene targets at the render size.
-    private func ensureSceneTargets(width: Int, height: Int) throws {
-        if let targets = sceneTargets, targets.resolved.width == width, targets.resolved.height == height { return }
+    /// Offscreen scene targets at the render size. `temporal` adds motion vectors and keeps the depth.
+    private func ensureSceneTargets(width: Int, height: Int, temporal: Bool) throws {
+        if let targets = sceneTargets, targets.resolved.width == width, targets.resolved.height == height,
+           (targets.motion != nil) == temporal {
+            return
+        }
         sceneTargets = nil  // free the old ones before allocating (they can be huge)
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: layer.pixelFormat, width: width, height: height, mipmapped: false)
@@ -788,9 +954,23 @@ final class MetalRenderDevice: RenderDevice {
         }
         sceneTargets = SceneTargets(
             color: sampleCount > 1 ? try makeAttachment(layer.pixelFormat, width, height) : nil,
-            depth: try makeAttachment(screenDepthFormat, width, height),
+            depth: temporal ? try makeSampledTarget(screenDepthFormat, width, height)
+                : try makeAttachment(screenDepthFormat, width, height),
             resolved: resolved,
-            resolvedUnorm: resolvedUnorm)
+            resolvedUnorm: resolvedUnorm,
+            motion: temporal ? try makeSampledTarget(motionVectorFormat, width, height) : nil)
+    }
+
+    /// A single-sample render target that later passes read (temporal upscaler inputs).
+    private func makeSampledTarget(_ format: MTLPixelFormat, _ width: Int, _ height: Int) throws -> MTLTexture {
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: format, width: width, height: height, mipmapped: false)
+        descriptor.usage = [.renderTarget, .shaderRead]
+        descriptor.storageMode = .private
+        guard let texture = device.makeTexture(descriptor: descriptor) else {
+            throw GraphicsError("Failed to create \(width)x\(height) render target")
+        }
+        return texture
     }
 
     /// A screen-pass attachment that is never stored (multisampled when MSAA is on).
@@ -818,19 +998,22 @@ final class MetalRenderPass: RenderPass {
     private var indexBuffer: (buffer: MTLBuffer, type: IndexType)?
     /// Set for passes with a visibility-result buffer (the screen pass).
     let occlusion: OcclusionQueryBatch?
+    /// The pass has a motion-vector attachment (scene pass with temporal upscaling).
+    let motionVectors: Bool
 
     init(encoder: MTLRenderCommandEncoder, transient: TransientRing<MetalBuffer>, comparisonSampler: MTLSamplerState,
-         occlusion: OcclusionQueryBatch?) {
+         occlusion: OcclusionQueryBatch?, motionVectors: Bool = false) {
         self.encoder = encoder
         self.transient = transient
         self.comparisonSampler = comparisonSampler
         self.occlusion = occlusion
+        self.motionVectors = motionVectors
         encoder.setFrontFacing(.counterClockwise)
     }
 
     func setPipeline(_ pipeline: RenderPipeline) {
         let pipeline = pipeline as! MetalPipeline
-        encoder.setRenderPipelineState(pipeline.state)
+        encoder.setRenderPipelineState(pipeline.state(motionVectors: motionVectors))
         encoder.setDepthStencilState(pipeline.depthState)
         encoder.setCullMode(pipeline.cullMode)
         let bias = pipeline.depthBias ?? DepthBias(constant: 0, slopeScale: 0)

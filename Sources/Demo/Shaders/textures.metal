@@ -9,6 +9,8 @@ struct Scene {
     float4 cameraPos;     // xyz: eye, w: time
     float4 fogColor;      // rgb: fog/sky color, w: density
     float4 shadowParams;
+    float4x4 currentViewProj;   // unjittered, for motion vectors
+    float4x4 previousViewProj;  // last frame's, unjittered
 };
 
 // Uniform buffers bound by the scene: `Params` at buffer(2) (static GPUBuffer), `FrameData` at
@@ -37,6 +39,13 @@ struct VertexOut {
     float3 worldPos;
     float3 normal;
     float2 uv;
+    float4 currentClip;   // unjittered, for motion vectors
+    float4 previousClip;
+};
+
+struct FragmentOut {
+    float4 color [[color(0)]];
+    float2 motion [[color(1)]];  // see `PipelineDescriptor.writesMotionVectors`
 };
 
 // Planar projection along the dominant axis of the (axis-aligned) face normal.
@@ -55,12 +64,15 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]], constant Scene& scene [[b
     out.worldPos = world.xyz;
     out.normal = in.normal;
     out.uv = projectUV(world.xyz, in.normal) * params.uvScale.xy + frame.scroll.xy;
+    // Static geometry: only the camera moves.
+    out.currentClip = scene.currentViewProj * world;
+    out.previousClip = scene.previousViewProj * world;
     return out;
 }
 
-fragment float4 fragment_main(VertexOut in [[stage_in]], constant Scene& scene [[buffer(15)]],
-                              constant Params& params [[buffer(2)]],
-                              texture2d<float> albedoMap [[texture(1)]], sampler albedoSampler [[sampler(1)]]) {
+fragment FragmentOut fragment_main(VertexOut in [[stage_in]], constant Scene& scene [[buffer(15)]],
+                                   constant Params& params [[buffer(2)]],
+                                   texture2d<float> albedoMap [[texture(1)]], sampler albedoSampler [[sampler(1)]]) {
     float3 albedo = albedoMap.sample(albedoSampler, in.uv).rgb * params.tint.rgb;
     float3 n = normalize(in.normal);
     float3 l = normalize(scene.lightDir.xyz);
@@ -70,5 +82,9 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], constant Scene& scene [
     float3 color = albedo * (ambient + diffuse);
     float dist = length(scene.cameraPos.xyz - in.worldPos);
     float fog = 1.0 - exp(-dist * scene.fogColor.w);
-    return float4(mix(color, scene.fogColor.rgb, fog), 1.0);
+    FragmentOut out;
+    out.color = float4(mix(color, scene.fogColor.rgb, fog), 1.0);
+    float4 current = in.currentClip, previous = in.previousClip;
+    out.motion = previous.w > 0.0 ? (previous.xy / previous.w - current.xy / current.w) * float2(0.5, -0.5) : float2(0.0);
+    return out;
 }

@@ -4,7 +4,8 @@ import Foundation
 /// Hosts the test scenes: owns the orbit camera, the shadow pass and scene switching.
 ///
 /// Controls: 1–8 switch scenes, Tab / Shift-Tab cycle the render resolution, U cycles the
-/// upscaler (bilinear, FSR 1, MetalFX on Metal), V toggles vsync, Space pauses
+/// upscaler (bilinear, FSR 1, MetalFX spatial/temporal on Metal, TAAU; the temporal ones only
+/// without MSAA), V toggles vsync, Space pauses
 /// animation, arrows/WASD or left-drag orbit, Q/E zoom, Esc quits. Scenes add their own
 /// keys (see each scene's doc comment).
 final class DemoGame: Game {
@@ -37,6 +38,7 @@ final class DemoGame: Game {
     private func openScene(_ index: Int) throws {
         sceneIndex = index
         scene = try allScenes[index].init(renderer: renderer)
+        renderer.resetMotion()
         view = scene.initialView
         animationTime = 0
     }
@@ -47,7 +49,7 @@ final class DemoGame: Game {
         if input.wasPressed(.space) { paused.toggle() }
         if input.wasPressed(.v) { engine.vsync.toggle() }
         if input.wasPressed(.u) {
-            let upscalers = [Upscaler.bilinear, .fsr1(), .metalFXSpatial].filter { engine.device.supports($0) }
+            let upscalers = [Upscaler.bilinear, .fsr1(), .metalFXSpatial, .metalFXTemporal, .taau()].filter { engine.supports($0) }
             let index = upscalers.firstIndex(of: engine.upscaler) ?? 0
             engine.upscaler = upscalers[(index + 1) % upscalers.count]
         }
@@ -61,6 +63,7 @@ final class DemoGame: Game {
         let numberKeys: [Key] = [.num1, .num2, .num3, .num4, .num5, .num6, .num7, .num8, .num9]
         for (i, key) in numberKeys.prefix(allScenes.count).enumerated() where input.wasPressed(key) && i != sceneIndex {
             do { try openScene(i) } catch { print("Failed to open scene \(allScenes[i].name): \(error)") }
+            engine.resetTemporalHistory()  // a camera cut
         }
 
         view.yaw += input.axis(negative: .left, positive: .right) * 2 * dt
@@ -84,7 +87,8 @@ final class DemoGame: Game {
         let lighting = scene.lighting
         engine.clearColor = Vec4(lighting.fogColor, 1)
         engine.clearDepth = camera.reversedZ ? 0 : 1
-        renderer.prepare(camera: camera, lighting: lighting, aspect: engine.aspectRatio, time: animationTime)
+        renderer.prepare(camera: camera, lighting: lighting, aspect: engine.aspectRatio, time: animationTime,
+                         jitter: { engine.jittered($0) })
 
         let type = allScenes[sceneIndex]
         var title = "\(sceneIndex + 1)/\(allScenes.count) \(type.name)"

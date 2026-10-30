@@ -16,8 +16,17 @@ layout(location = 1) in vec3 vNormal;
 layout(location = 2) in vec4 vColor;
 layout(location = 3) in vec4 vLightClip;
 layout(location = 4) in vec4 vParams;
+layout(location = 5) in vec4 vCurrentClip;
+layout(location = 6) in vec4 vPreviousClip;
 
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec2 outMotion;  // see `PipelineDescriptor.writesMotionVectors`
+
+// Texture-space offset from this pixel to where its surface was last frame (0 if it was behind the camera).
+vec2 motionVector(vec4 current, vec4 previous) {
+    if (previous.w <= 0.0) return vec2(0.0);
+    return (previous.xy / previous.w - current.xy / current.w) * vec2(0.5, -0.5);
+}
 
 // Tent-filtered PCF over (2r+1)² texels from 4 (r = 1) or 9 (r = 2) hardware comparison
 // taps, each placed and weighted by where the sample falls inside its texel (Castaño,
@@ -80,4 +89,5 @@ void main() {
     float dist = length(scene.cameraPos.xyz - vWorldPos);
     float fog = 1.0 - exp(-dist * scene.fogColor.w);
     outColor = vec4(mix(color, scene.fogColor.rgb, fog), vColor.a);
+    outMotion = motionVector(vCurrentClip, vPreviousClip);
 }

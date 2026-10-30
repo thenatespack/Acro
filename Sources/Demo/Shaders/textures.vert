@@ -7,6 +7,8 @@ layout(set = 0, binding = 0, std140) uniform Scene {
     vec4 cameraPos;
     vec4 fogColor;
     vec4 shadowParams;
+    mat4 currentViewProj;   // unjittered, for motion vectors
+    mat4 previousViewProj;  // last frame's, unjittered
 } scene;
 
 // Uniform buffer n is set 2, binding n (see `ShaderSource`).
@@ -29,6 +31,8 @@ layout(location = 5) in vec4 model3;
 layout(location = 0) out vec3 vWorldPos;
 layout(location = 1) out vec3 vNormal;
 layout(location = 2) out vec2 vUV;
+layout(location = 3) out vec4 vCurrentClip;   // unjittered, for motion vectors
+layout(location = 4) out vec4 vPreviousClip;
 
 // Planar projection along the dominant axis of the (axis-aligned) face normal.
 vec2 projectUV(vec3 world, vec3 normal) {
@@ -44,4 +48,7 @@ void main() {
     vWorldPos = world.xyz;
     vNormal = inNormal;
     vUV = projectUV(world.xyz, inNormal) * params.uvScale.xy + frame.scroll.xy;
+    // Static geometry: only the camera moves.
+    vCurrentClip = scene.currentViewProj * world;
+    vPreviousClip = scene.previousViewProj * world;
 }

@@ -1,14 +1,17 @@
 #include <metal_stdlib>
 using namespace metal;
 
-// Must match `SceneUniforms` in main.swift.
+// Must match `SceneUniforms` in Renderer.swift.
 struct Scene {
-    float4x4 viewProj;
+    float4x4 viewProj;    // jittered with a temporal upscaler
     float4x4 lightViewProj;
     float4 lightDir;      // xyz: direction toward the light, w: intensity
     float4 cameraPos;     // xyz: eye, w: time
     float4 fogColor;      // rgb: fog/sky color, w: density
     float4 shadowParams;  // x: shadow-map texel size, y: depth bias, z: PCF radius in texels
+    float4x4 currentViewProj;   // unjittered, for motion vectors
+    float4x4 previousViewProj;  // last frame's, unjittered
+    float4 motionParams;        // x: last frame's time
 };
 
 struct VertexIn {
@@ -29,6 +32,13 @@ struct VertexOut {
     float4 color;
     float4 params;
     float4 lightClip;
+    float4 currentClip;   // unjittered, for motion vectors
+    float4 previousClip;
+};
+
+struct FragmentOut {
+    float4 color [[color(0)]];
+    float2 motion [[color(1)]];  // see `PipelineDescriptor.writesMotionVectors`
 };
 
 // Instances with params.w > 0 spin about their local Y axis (1 rad/s) and bob vertically
@@ -45,14 +55,19 @@ static float bob(float4 params, float time) {
 vertex VertexOut vertex_main(VertexIn in [[stage_in]], constant Scene& scene [[buffer(15)]]) {
     float4x4 model = float4x4(in.model0, in.model1, in.model2, in.model3);
     float3 position = in.position, normal = in.normal;
-    float4 world;
+    float4 world, previousWorld;
     if (in.params.w > 0.0) {
         float3x3 r = spin(in.params, scene.cameraPos.w);
         position = r * position;
         normal = r * normal;
         world = model * float4(position, 1.0) + float4(0.0, bob(in.params, scene.cameraPos.w), 0.0, 0.0);
+        // Where the animation had this vertex last frame, for motion vectors.
+        float previousTime = scene.motionParams.x;
+        previousWorld = model * float4(spin(in.params, previousTime) * in.position, 1.0)
+            + float4(0.0, bob(in.params, previousTime), 0.0, 0.0);
     } else {
         world = model * float4(position, 1.0);
+        previousWorld = world;
     }
     // model = T * R * S, so R * (n / s) is the correctly transformed normal.
     float3 scaleSq = float3(dot(in.model0.xyz, in.model0.xyz), dot(in.model1.xyz, in.model1.xyz),
@@ -66,7 +81,15 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]], constant Scene& scene [[b
     out.color = in.color;
     out.params = in.params;
     out.lightClip = scene.lightViewProj * world;
+    out.currentClip = scene.currentViewProj * world;
+    out.previousClip = scene.previousViewProj * previousWorld;
     return out;
+}
+
+// Texture-space offset from this pixel to where its surface was last frame (0 if it was behind the camera).
+static float2 motionVector(float4 current, float4 previous) {
+    if (previous.w <= 0.0) return float2(0.0);
+    return (previous.xy / previous.w - current.xy / current.w) * float2(0.5, -0.5);
 }
 
 // Tent-filtered PCF over (2r+1)² texels from 4 (r = 1) or 9 (r = 2) hardware comparison
@@ -107,8 +130,8 @@ static float shadowFactor(constant Scene& scene, float4 lightClip, depth2d<float
     return sum * norm;
 }
 
-fragment float4 fragment_main(VertexOut in [[stage_in]], constant Scene& scene [[buffer(15)]],
-                              depth2d<float> shadowMap [[texture(0)]], sampler shadowSampler [[sampler(0)]]) {
+fragment FragmentOut fragment_main(VertexOut in [[stage_in]], constant Scene& scene [[buffer(15)]],
+                                   depth2d<float> shadowMap [[texture(0)]], sampler shadowSampler [[sampler(0)]]) {
     float3 n = normalize(in.normal);
     float3 l = normalize(scene.lightDir.xyz);
     float3 v = normalize(scene.cameraPos.xyz - in.worldPos);
@@ -130,5 +153,8 @@ fragment float4 fragment_main(VertexOut in [[stage_in]], constant Scene& scene [
     color = mix(color, albedo, in.params.y);
     float dist = length(scene.cameraPos.xyz - in.worldPos);
     float fog = 1.0 - exp(-dist * scene.fogColor.w);
-    return float4(mix(color, scene.fogColor.rgb, fog), in.color.a);
+    FragmentOut out;
+    out.color = float4(mix(color, scene.fogColor.rgb, fog), in.color.a);
+    out.motion = motionVector(in.currentClip, in.previousClip);
+    return out;
 }

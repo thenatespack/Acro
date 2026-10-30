@@ -33,14 +33,20 @@ struct Instance {
     }
 }
 
-/// Matches `Scene` in the lit/shadow shaders (std140-compatible: only mat4 and vec4).
+/// Matches `Scene` in the lit/shadow/textures shaders (std140-compatible: only mat4 and vec4).
 struct SceneUniforms {
+    /// Jittered when a temporal upscaler is active (`Engine.jittered`).
     var viewProj: Mat4
     var lightViewProj: Mat4
     var lightDir: Vec4
     var cameraPos: Vec4
     var fogColor: Vec4
     var shadowParams: Vec4
+    /// Unjittered view-projections of this frame and the previous one, for motion vectors.
+    var currentViewProj: Mat4
+    var previousViewProj: Mat4
+    /// x: the previous frame's animation time (for vertex-animated instances).
+    var motionParams: Vec4
 }
 
 struct Mesh {
@@ -107,6 +113,8 @@ final class Renderer {
     private(set) var shadowMap: GPUTexture!
     private(set) var uniforms: SceneUniforms!
     private(set) var eye = Vec3.zero
+    /// The unjittered view-projection and animation time of the last `prepare`, for motion vectors.
+    private var previousFrame: (viewProj: Mat4, time: Float)?
 
     private let litShader: ShaderSource
     private let shadowShader: ShaderSource
@@ -161,6 +169,8 @@ final class Renderer {
         descriptor.depthTest = style.depthTest
         descriptor.colorWrites = style.colorWrites
         descriptor.depthCompare = style.reversedZ ? .greater : .less
+        // Blended surfaces keep the motion of what's behind them.
+        descriptor.writesMotionVectors = !style.blending
         return try device.makePipeline(descriptor)
     }
 
@@ -192,21 +202,33 @@ final class Renderer {
             indexCount: indices.count)
     }
 
-    /// Computes this frame's uniforms. Call once per frame before any pass.
-    func prepare(camera: Camera, lighting: Lighting, aspect: Float, time: Float) {
+    /// Computes this frame's uniforms. Call once per frame before any pass. `jitter` applies
+    /// the temporal upscaler's projection jitter (`Engine.jittered`).
+    func prepare(camera: Camera, lighting: Lighting, aspect: Float, time: Float, jitter: (Mat4) -> Mat4 = { $0 }) {
         let light = normalize(lighting.direction)
         let lightView = Mat4.lookAt(eye: light * 60, target: .zero, up: abs(light.y) > 0.99 ? Vec3(0, 0, 1) : Vec3(0, 1, 0))
         let e = lighting.shadowExtent
         let lightProjection = Mat4.orthographic(left: -e, right: e, bottom: -e, top: e, near: 1, far: 60 + e * 2)
         eye = camera.eye
+        let viewProj = camera.viewProjection(aspect: aspect)
+        let previous = previousFrame ?? (viewProj, time)
+        previousFrame = (viewProj, time)
         uniforms = SceneUniforms(
-            viewProj: camera.viewProjection(aspect: aspect),
+            viewProj: jitter(viewProj),
             lightViewProj: lightProjection * lightView,
             lightDir: Vec4(light, lighting.intensity),
             cameraPos: Vec4(camera.eye, time),
             fogColor: Vec4(lighting.fogColor, lighting.fogDensity),
             shadowParams: Vec4(1 / Float(shadowMap.width), 0.0005,
-                               ProcessInfo.processInfo.environment["T_RADIUS"].flatMap(Float.init) ?? Float(quality.shadowFilterRadius), 0))
+                               ProcessInfo.processInfo.environment["T_RADIUS"].flatMap(Float.init) ?? Float(quality.shadowFilterRadius), 0),
+            currentViewProj: viewProj,
+            previousViewProj: previous.viewProj,
+            motionParams: Vec4(previous.time, 0, 0, 0))
+    }
+
+    /// Forgets the previous frame (after a camera cut or scene switch), so the next one has no motion.
+    func resetMotion() {
+        previousFrame = nil
     }
 
     func bind(_ pass: RenderPass) {
