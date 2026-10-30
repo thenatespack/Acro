@@ -245,7 +245,7 @@ final class MetalRenderDevice: RenderDevice {
             passTimestamps = (0..<maxFramesInFlight).compactMap { _ in try? device.makeCounterSampleBuffer(descriptor: descriptor) }
             if passTimestamps.count != maxFramesInFlight { passTimestamps = [] }
             timestampOrigin = device.sampleTimestamps()
-            let library = try? device.makeLibrary(source: "kernel void marker() {}", options: nil)
+            let library = try? device.makeLibrary(source: "kernel void marker(metal::texture2d<float> t [[texture(0)]]) {}", options: nil)
             markerPipeline = library?.makeFunction(name: "marker").flatMap { try? device.makeComputePipelineState(function: $0) }
         }
 
@@ -678,22 +678,23 @@ final class MetalRenderDevice: RenderDevice {
             guard let scaler = targets.metalFX else { return nil }
             scaler.colorTexture = scene.resolvedUnorm
             scaler.outputTexture = targets.outputs[0]
-            time("upscale", commandBuffer: commandBuffer) { scaler.encode(commandBuffer: commandBuffer) }
+            time("upscale", input: scene.resolvedUnorm, output: targets.outputs[0], commandBuffer: commandBuffer) { scaler.encode(commandBuffer: commandBuffer) }
         case .metalFXTemporal:
             guard let scaler = targets.metalFXTemporal, let motion = scene.motion else { return nil }
             scaler.colorTexture = scene.resolvedUnorm
             scaler.depthTexture = scene.depth
             scaler.motionTexture = motion
             scaler.outputTexture = targets.outputs[0]
-            // MetalFX takes the offset of the sample within the pixel, the opposite of how far the image moved.
-            scaler.jitterOffsetX = -temporalInputs.jitter.x
-            scaler.jitterOffsetY = -temporalInputs.jitter.y
+            // Same convention as ours (render pixels, y down, how far the image moved). Checked against
+            // a native render of a paused scene: the negated offset more than doubles the error.
+            scaler.jitterOffsetX = temporalInputs.jitter.x
+            scaler.jitterOffsetY = temporalInputs.jitter.y
             // Motion vectors are in UV units; MetalFX wants render pixels.
             scaler.motionVectorScaleX = Float(input.width)
             scaler.motionVectorScaleY = Float(input.height)
             scaler.isDepthReversed = temporalInputs.reversedDepth
             scaler.reset = reset
-            time("upscale", commandBuffer: commandBuffer) { scaler.encode(commandBuffer: commandBuffer) }
+            time("upscale", input: scene.resolvedUnorm, output: targets.outputs[0], commandBuffer: commandBuffer) { scaler.encode(commandBuffer: commandBuffer) }
             upscaleTargets?.hasHistory = true
         case .taau:
             guard let motion = scene.motion else { return nil }
@@ -836,14 +837,17 @@ final class MetalRenderDevice: RenderDevice {
     }
 
     /// Times work encoded by `body` that isn't one of our render passes (MetalFX encodes its own
-    /// compute passes): one-thread compute passes before and after it sample the start and the
-    /// end (an empty pass samples nothing).
-    private func time(_ name: String, commandBuffer: MTLCommandBuffer, _ body: () -> Void) {
+    /// compute passes), from reading `input` to writing `output`. One-thread compute passes
+    /// before and after it sample the start and the end (an empty pass samples nothing). Each
+    /// binds one of the textures, so hazard tracking orders it after the input's writer and
+    /// after the work; unbound, the GPU may run the markers alongside it.
+    private func time(_ name: String, input: MTLTexture, output: MTLTexture, commandBuffer: MTLCommandBuffer,
+                      _ body: () -> Void) {
         guard let frame, let markerPipeline, !passTimestamps.isEmpty, timedPasses.count < maxTimedPasses else {
             return body()
         }
         let first = timedPasses.count * 4
-        func marker(start: Int, end: Int) {
+        func marker(start: Int, end: Int, texture: MTLTexture) {
             let descriptor = MTLComputePassDescriptor()
             let attachment = descriptor.sampleBufferAttachments[0]!
             attachment.sampleBuffer = passTimestamps[frame.slot]
@@ -851,12 +855,13 @@ final class MetalRenderDevice: RenderDevice {
             attachment.endOfEncoderSampleIndex = end
             guard let encoder = commandBuffer.makeComputeCommandEncoder(descriptor: descriptor) else { return }
             encoder.setComputePipelineState(markerPipeline)
+            encoder.setTexture(texture, index: 0)
             encoder.dispatchThreads(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1))
             encoder.endEncoding()
         }
-        marker(start: first, end: MTLCounterDontSample)
+        marker(start: first, end: MTLCounterDontSample, texture: input)
         body()
-        marker(start: MTLCounterDontSample, end: first + 1)
+        marker(start: MTLCounterDontSample, end: first + 1, texture: output)
         timedPasses.append(TimedPass(name: name, span: true))
     }
 
