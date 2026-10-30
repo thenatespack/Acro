@@ -3,11 +3,13 @@ import Foundation
 
 /// Hosts the test scenes: owns the orbit camera, the shadow pass and scene switching.
 ///
-/// Controls: 1–9 and 0 (scene 10) switch scenes, Tab / Shift-Tab cycle the render resolution, U cycles the
+/// Controls: 1–9 and 0 (scene 10) switch scenes, ] / [ step to the next / previous scene (wrapping, for
+/// scenes past 10), Tab / Shift-Tab cycle the render resolution, U cycles the
 /// upscaler (bilinear, FSR 1, MetalFX spatial/temporal on Metal, TAAU; the temporal ones only
 /// without MSAA), V toggles vsync, Space pauses
 /// animation, arrows/WASD or left-drag orbit, Q/E zoom, Esc quits. Scenes add their own
-/// keys (see each scene's doc comment).
+/// keys (see each scene's doc comment). While a scene's widgets want the pointer or keyboard
+/// (`UIContext.wantsPointer` / `wantsKeyboard`), the camera and these keys leave it alone.
 final class DemoGame: Game {
     private let initialScene: Int
     private var renderer: Renderer!
@@ -37,7 +39,8 @@ final class DemoGame: Game {
         try openScene(initialScene)
     }
 
-    private func openScene(_ index: Int) throws {
+    private func openScene(_ index: Int, input: Input? = nil) throws {
+        if let input { scene?.uiContext?.resign(input: input) }
         sceneIndex = index
         scene = try allScenes[index].init(renderer: renderer)
         renderer.resetMotion()
@@ -47,34 +50,23 @@ final class DemoGame: Game {
 
     func update(engine: Engine, dt: Float) {
         let input = engine.input
-        if let title = textTest.update(input) { engine.title = title; return }  // F2: text input debug mode
-        if input.wasPressed(.escape) { engine.quit() }
-        if input.wasPressed(.space) { paused.toggle() }
-        if input.wasPressed(.v) { engine.vsync.toggle() }
-        if input.wasPressed(.u) {
-            let upscalers = [Upscaler.bilinear, .fsr1(), .metalFXSpatial, .metalFXTemporal, .taau()].filter { engine.supports($0) }
-            let index = upscalers.firstIndex(of: engine.upscaler) ?? 0
-            engine.upscaler = upscalers[(index + 1) % upscalers.count]
-        }
-        if input.wasPressed(.tab) {
-            let step = input.isDown(.leftShift) || input.isDown(.rightShift) ? -1 : 1
-            let count = Self.resolutionCycle.count
-            let next = ((resolutionIndex ?? 0) + step + count) % count
-            engine.renderResolution = Self.resolutionCycle[next]
-            if engine.renderResolution == Self.resolutionCycle[next] { resolutionIndex = next }
-        }
-        let numberKeys: [Key] = [.num1, .num2, .num3, .num4, .num5, .num6, .num7, .num8, .num9, .num0]
-        for (i, key) in numberKeys.prefix(allScenes.count).enumerated() where input.wasPressed(key) && i != sceneIndex {
-            do { try openScene(i) } catch { print("Failed to open scene \(allScenes[i].name): \(error)") }
-            engine.resetTemporalHistory()  // a camera cut
-        }
+        let ui = scene.uiContext
+        // F2: text input debug mode.
+        if let title = textTest.update(input, canStart: !(ui?.wantsKeyboard ?? false)) { engine.title = title; return }
+        // Widgets see input first; what they take, the camera and shortcuts don't.
+        ui?.update(engine: engine, dt: dt)
+        let keyboardFree = !(ui?.wantsKeyboard ?? false)
+        let pointerFree = !(ui?.wantsPointer ?? false)
+        if keyboardFree { handleShortcuts(engine: engine) }
 
-        view.yaw += input.axis(negative: .left, positive: .right) * 2 * dt
-        view.yaw += input.axis(negative: .a, positive: .d) * 2 * dt
-        view.pitch += input.axis(negative: .down, positive: .up) * 2 * dt
-        view.pitch += input.axis(negative: .s, positive: .w) * 2 * dt
-        view.distance *= 1 - input.axis(negative: .e, positive: .q) * 1.2 * dt
-        if input.isDown(.left as MouseButton) {
+        if keyboardFree {
+            view.yaw += input.axis(negative: .left, positive: .right) * 2 * dt
+            view.yaw += input.axis(negative: .a, positive: .d) * 2 * dt
+            view.pitch += input.axis(negative: .down, positive: .up) * 2 * dt
+            view.pitch += input.axis(negative: .s, positive: .w) * 2 * dt
+            view.distance *= 1 - input.axis(negative: .e, positive: .q) * 1.2 * dt
+        }
+        if pointerFree && input.isDown(.left as MouseButton) {
             view.yaw -= input.mouseDelta.x * 0.01
             view.pitch += input.mouseDelta.y * 0.01
         }
@@ -102,6 +94,35 @@ final class DemoGame: Game {
             + (engine.renderResolution == .native ? " native" : " \(engine.upscaler) to window")
         title += ", \(engineInfo)" + (engine.vsync ? "" : " · vsync off")
         if engine.title != title { engine.title = title }
+    }
+
+    /// Global keys: quit, pause, vsync, upscaler, resolution and scene switching.
+    private func handleShortcuts(engine: Engine) {
+        let input = engine.input
+        if input.wasPressed(.escape) { engine.quit() }
+        if input.wasPressed(.space) { paused.toggle() }
+        if input.wasPressed(.v) { engine.vsync.toggle() }
+        if input.wasPressed(.u) {
+            let upscalers = [Upscaler.bilinear, .fsr1(), .metalFXSpatial, .metalFXTemporal, .taau()].filter { engine.supports($0) }
+            let index = upscalers.firstIndex(of: engine.upscaler) ?? 0
+            engine.upscaler = upscalers[(index + 1) % upscalers.count]
+        }
+        if input.wasPressed(.tab) {
+            let step = input.isDown(.leftShift) || input.isDown(.rightShift) ? -1 : 1
+            let count = Self.resolutionCycle.count
+            let next = ((resolutionIndex ?? 0) + step + count) % count
+            engine.renderResolution = Self.resolutionCycle[next]
+            if engine.renderResolution == Self.resolutionCycle[next] { resolutionIndex = next }
+        }
+        let numberKeys: [Key] = [.num1, .num2, .num3, .num4, .num5, .num6, .num7, .num8, .num9, .num0]
+        var target: Int?
+        for (i, key) in numberKeys.prefix(allScenes.count).enumerated() where input.wasPressed(key) { target = i }
+        if input.wasPressed(.rightBracket) { target = (sceneIndex + 1) % allScenes.count }
+        if input.wasPressed(.leftBracket) { target = (sceneIndex + allScenes.count - 1) % allScenes.count }
+        if let target, target != sceneIndex {
+            do { try openScene(target, input: input) } catch { print("Failed to open scene \(allScenes[target].name): \(error)") }
+            engine.resetTemporalHistory()  // a camera cut
+        }
     }
 
     func renderOffscreen(engine: Engine, frame: Frame) {

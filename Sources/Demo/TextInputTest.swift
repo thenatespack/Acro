@@ -13,11 +13,15 @@ struct TextInputTest {
         caret += s.count
     }
 
+    private(set) var isActive = false
+
     /// Returns the window title to show while active, or nil when the test isn't running.
-    mutating func update(_ input: Input) -> String? {
-        if !input.isTextInputActive {
-            guard input.wasPressed(.f2) else { return nil }
+    /// `canStart` is false while something else (a focused widget) owns the keyboard.
+    mutating func update(_ input: Input, canStart: Bool = true) -> String? {
+        if !isActive {
+            guard canStart, !input.isTextInputActive, input.wasPressed(.f2) else { return nil }
             input.startTextInput(rect: TextInputRect(x: 20, y: 20, width: 2, height: 20))
+            isActive = true
         }
         for event in input.textEvents {
             switch event {
@@ -40,6 +44,7 @@ struct TextInputTest {
                 case .c where e.modifiers.contains(.shortcut): Clipboard.string = text
                 case .escape:
                     input.stopTextInput()
+                    isActive = false
                     return nil
                 default: break
                 }
