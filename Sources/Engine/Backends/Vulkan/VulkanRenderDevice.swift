@@ -359,7 +359,7 @@ final class VulkanRenderDevice: RenderDevice {
                 length: length, usage: usageFlags | vkFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT),
                 properties: vkFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT), mapped: false)
         } catch {
-            let buffer = try createHostBuffer(length: length, usage: usageFlags)
+            let buffer = try createHostBuffer(length: length, usage: usageFlags | vkFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT))
             buffer.mapped!.copyMemory(from: bytes.baseAddress!, byteCount: length)
             return buffer
         }
@@ -421,6 +421,38 @@ final class VulkanRenderDevice: RenderDevice {
             try vkCheck(vkQueueSubmit(queue, 1, &submit, fence), "vkQueueSubmit")
         }
         try vkCheck(vkWaitForFences(device, 1, &fence, VkBool32(VK_TRUE), UInt64.max), "vkWaitForFences")
+    }
+
+    /// Records a copy from this frame's transient memory into the frame's command buffer, between
+    /// two barriers. The first makes the copy wait for every earlier read of the buffer (this
+    /// frame's earlier passes, and earlier frames still in flight: a barrier's first scope covers
+    /// everything submitted before it on the queue) and earlier copies; the second makes the new
+    /// data visible to the vertex input and shader reads of later passes and frames.
+    func updateBuffer(_ buffer: GPUBuffer, offset: Int, bytes: UnsafeRawBufferPointer) throws {
+        precondition(current != nil, "updateBuffer outside a frame")
+        precondition(!inRenderPass, "updateBuffer called inside a pass; call it between passes")
+        let target = buffer as! VulkanBuffer
+        try validateBufferUpdate(bufferLength: target.length, offset: offset, byteCount: bytes.count)
+        guard bytes.count > 0 else { return }
+        let source = uploadTransient(bytes)
+        let cmd = frames[frameIndex].commandBuffer
+        let readStages = vkFlags(VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT)
+        let transfer = vkFlags(VK_PIPELINE_STAGE_TRANSFER_BIT)
+
+        var before = VkMemoryBarrier()
+        before.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER
+        before.srcAccessMask = vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT)
+        before.dstAccessMask = vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT)
+        vkCmdPipelineBarrier(cmd, readStages | transfer, transfer, 0, 1, &before, 0, nil, 0, nil)
+
+        var region = VkBufferCopy(srcOffset: VkDeviceSize(source.offset), dstOffset: VkDeviceSize(offset), size: VkDeviceSize(bytes.count))
+        vkCmdCopyBuffer(cmd, (source.buffer as! VulkanBuffer).buffer, target.buffer, 1, &region)
+
+        var after = VkMemoryBarrier()
+        after.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER
+        after.srcAccessMask = vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT)
+        after.dstAccessMask = vkFlags(VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT, VK_ACCESS_INDEX_READ_BIT, VK_ACCESS_UNIFORM_READ_BIT)
+        vkCmdPipelineBarrier(cmd, transfer, readStages, 0, 1, &after, 0, nil, 0, nil)
     }
 
     func makeTexture(_ descriptor: TextureDescriptor) throws -> GPUTexture {
@@ -1522,7 +1554,8 @@ final class VulkanRenderDevice: RenderDevice {
     private func createTransientChunk(size: Int) throws -> VulkanTransientChunk {
         let buffer = try createHostBuffer(
             length: size,
-            usage: vkFlags(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT))
+            usage: vkFlags(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                           VK_BUFFER_USAGE_TRANSFER_SRC_BIT))
         let set = try allocateDescriptorSet(layout: uniformSetLayout)
         var bufferInfo = VkDescriptorBufferInfo(buffer: buffer.buffer, offset: 0, range: VkDeviceSize(maxUniformDataSize))
         var write = VkWriteDescriptorSet()

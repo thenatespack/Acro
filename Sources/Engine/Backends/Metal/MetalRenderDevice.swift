@@ -262,6 +262,24 @@ final class MetalRenderDevice: RenderDevice {
         return MetalBuffer(buffer)
     }
 
+    /// Blits from this frame's transient memory into the buffer, in the frame's command buffer.
+    /// Buffers use default hazard tracking, so the blit waits for earlier command buffers (and
+    /// encoders) that read the buffer, and later ones wait for the blit.
+    func updateBuffer(_ buffer: GPUBuffer, offset: Int, bytes: UnsafeRawBufferPointer) throws {
+        guard let frame else { preconditionFailure("updateBuffer outside a frame") }
+        precondition(currentPass == nil, "updateBuffer called inside a pass; call it between passes")
+        let target = buffer as! MetalBuffer
+        try validateBufferUpdate(bufferLength: target.length, offset: offset, byteCount: bytes.count)
+        guard bytes.count > 0 else { return }
+        let source = uploadTransient(bytes)
+        guard let blit = frame.commandBuffer.makeBlitCommandEncoder() else {
+            preconditionFailure("Failed to create Metal blit encoder")
+        }
+        blit.copy(from: (source.buffer as! MetalBuffer).buffer, sourceOffset: source.offset,
+                  to: target.buffer, destinationOffset: offset, size: bytes.count)
+        blit.endEncoding()
+    }
+
     func makeTexture(_ descriptor: TextureDescriptor) throws -> GPUTexture {
         guard descriptor.format == .depth32Float else {
             throw GraphicsError("Render targets must be .depth32Float; use makeTexture(pixels:...) for color textures")
