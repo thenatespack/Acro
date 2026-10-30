@@ -302,6 +302,24 @@ extension RenderPass {
     var gpuPassTimes: [GPUPassTime] { get }
 
     func makeBuffer(bytes: UnsafeRawBufferPointer, usage: BufferUsage) throws -> GPUBuffer
+    /// Replaces `bytes.count` bytes of a buffer from `makeBuffer`, starting at `offset`.
+    ///
+    /// The bytes are copied immediately (the caller's memory need not outlive the call) into
+    /// the frame's transient memory, and a GPU copy into `buffer` is recorded at this point in
+    /// the frame. Nothing waits: the GPU executes it in order with the frame's passes, after
+    /// the reads of earlier frames that may still be in flight (the queue's submission order
+    /// plus a barrier on Vulkan, in-order encoders and hazard tracking on Metal).
+    ///
+    /// Visibility: passes begun after this call, and every later frame, see the new data. Passes
+    /// already recorded this frame (and earlier frames) still see the old data, so updating a
+    /// buffer that an earlier pass of the same frame drew from is well-defined.
+    ///
+    /// Must be called between `beginFrame` and `endFrame` while no pass is open (e.g. in
+    /// `Game.renderOffscreen` via `Frame.updateBuffer`, not inside a `depthPass` body or `render`);
+    /// otherwise it traps, since a copy can't be recorded inside a render pass. Throws if the
+    /// range isn't inside the buffer. Intended for occasional edits (a few KiB to MiB per
+    /// frame); the data passes through transient memory, so don't use it for bulk streaming.
+    func updateBuffer(_ buffer: GPUBuffer, offset: Int, bytes: UnsafeRawBufferPointer) throws
     /// An offscreen render target (currently `.depth32Float` only).
     func makeTexture(_ descriptor: TextureDescriptor) throws -> GPUTexture
     /// A 2D color texture from tightly packed RGBA8 pixels (`width * height * 4` bytes, top
@@ -361,6 +379,11 @@ extension RenderDevice {
 
     public func makeBuffer<T: BitwiseCopyable>(_ elements: [T], usage: BufferUsage) throws -> GPUBuffer {
         try elements.withUnsafeBytes { try makeBuffer(bytes: $0, usage: usage) }
+    }
+
+    /// Replaces the start of `buffer` (or `offset` bytes in) with `elements`; see `updateBuffer(_:offset:bytes:)`.
+    public func updateBuffer<T: BitwiseCopyable>(_ buffer: GPUBuffer, offset: Int = 0, elements: [T]) throws {
+        try elements.withUnsafeBytes { try updateBuffer(buffer, offset: offset, bytes: $0) }
     }
 
     public func makeTexture(pixels: [UInt8], width: Int, height: Int, format: TextureFormat = .rgba8Srgb,

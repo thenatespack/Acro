@@ -63,6 +63,7 @@ void main() {
     mat3 m3 = mat3(model0.xyz, model1.xyz, model2.xyz);
 
     gl_Position = scene.viewProj * world;
+    gl_Position.y = -gl_Position.y;  // clip space is y-up; see beginPass in VulkanRenderDevice
     vWorldPos = world.xyz;
     vNormal = m3 * (normal / scaleSq);
     vColor = inColor;

@@ -1,0 +1,49 @@
+name: Windows
+
+# Build-only check: there is no GPU on the hosted runner, so nothing is run.
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: compnerd/gha-setup-swift@main
+        with:
+          branch: swift-6.0-release
+          tag: 6.0.3-RELEASE
+
+      - name: Install Vulkan SDK
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe -OutFile vulkan-sdk.exe
+          .\vulkan-sdk.exe --accept-licenses --default-answer --confirm-command install
+          $sdk = (Get-ChildItem C:\VulkanSDK | Sort-Object Name -Descending | Select-Object -First 1).FullName
+          "VULKAN_SDK=$sdk" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "$sdk\Bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Install GLFW (prebuilt)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.bin.WIN64.zip -OutFile glfw.zip
+          Expand-Archive glfw.zip -DestinationPath $env:RUNNER_TEMP
+          $dir = Join-Path $env:RUNNER_TEMP 'glfw-3.4.bin.WIN64'
+          # The engine expects $GLFW_DIR\include and $GLFW_DIR\lib (static glfw3.lib, /MD).
+          Copy-Item "$dir\lib-vc2022" "$dir\lib" -Recurse
+          "GLFW_DIR=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: Install zlib (vcpkg)
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install zlib:x64-windows
+          $dir = Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed\x64-windows'
+          # The engine expects $ZLIB_DIR\include and $ZLIB_DIR\lib (zlib.lib); zlib1.dll must be on PATH to run.
+          "ZLIB_DIR=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "$dir\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Build
+        shell: cmd
+        run: swift build -c release

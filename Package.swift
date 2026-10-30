@@ -17,11 +17,19 @@ let vulkanEnabled: Bool = {
 let vulkanEnabled = true
 #endif
 
-var engineDependencies: [Target.Dependency] = []
+var engineDependencies: [Target.Dependency] = ["CZlib"]
 var engineSwiftSettings: [SwiftSetting] = []
 var vulkanTargets: [Target] = []
 
 if vulkanEnabled {
+    #if os(Windows)
+    // No pkg-config on Windows. Separate module maps (under Windows/) link vulkan-1 and
+    // glfw3; header and library locations come from VULKAN_SDK / GLFW_DIR (see below).
+    vulkanTargets = [
+        .systemLibrary(name: "CVulkan", path: "Windows/CVulkan"),
+        .systemLibrary(name: "CGLFW", path: "Windows/CGLFW"),
+    ]
+    #else
     vulkanTargets = [
         .systemLibrary(
             name: "CVulkan",
@@ -34,9 +42,48 @@ if vulkanEnabled {
             providers: [.brew(["glfw"]), .apt(["libglfw3-dev"])]
         ),
     ]
+    #endif
     engineDependencies += ["CVulkan", "CGLFW"]
     engineSwiftSettings.append(.define("ENGINE_VULKAN"))
 }
+
+// Windows: point the compiler and linker at the Vulkan SDK ($VULKAN_SDK\Include, \Lib), GLFW
+// ($GLFW_DIR\include, \lib) and zlib ($ZLIB_DIR\include, \lib). These use unsafeFlags, so on
+// Windows this package can only be built as a root package, not consumed as a dependency.
+// Without the env vars, set CPATH / LIB yourself or pass -Xcc -I... -Xlinker /LIBPATH:... on
+// the command line.
+var windowsLinkerSettings: [LinkerSetting] = []
+#if os(Windows)
+do {
+    let env = ProcessInfo.processInfo.environment
+    var cFlags: [String] = []
+    var libFlags: [String] = []
+    var dirs: [String] = env["ZLIB_DIR"].map { [$0] } ?? []
+    if vulkanEnabled, let sdk = env["VULKAN_SDK"] {
+        cFlags += ["-Xcc", "-I\(sdk)\\Include"]
+        libFlags += ["-L\(sdk)\\Lib"]
+    }
+    if vulkanEnabled, let glfw = env["GLFW_DIR"] { dirs.append(glfw) }
+    for dir in dirs {
+        cFlags += ["-Xcc", "-I\(dir)\\include"]
+        libFlags += ["-L\(dir)\\lib"]
+    }
+    if !cFlags.isEmpty { engineSwiftSettings.append(.unsafeFlags(cFlags)) }
+    if !libFlags.isEmpty { windowsLinkerSettings = [.unsafeFlags(libFlags)] }
+}
+#endif
+
+// zlib for the PNG writer (Image.swift). Ships with macOS and virtually every Linux distro;
+// on Windows it comes from vcpkg or similar (see ZLIB_DIR above).
+#if os(Windows)
+let zlibTarget: Target = .systemLibrary(name: "CZlib", path: "Windows/CZlib")
+#else
+let zlibTarget: Target = .systemLibrary(
+    name: "CZlib",
+    pkgConfig: "zlib",
+    providers: [.apt(["zlib1g-dev"]), .brew(["zlib"])]
+)
+#endif
 
 let package = Package(
     name: "SwiftGameEngine",
@@ -46,17 +93,20 @@ let package = Package(
         .executable(name: "Demo", targets: ["Demo"]),
     ],
     targets: vulkanTargets + [
+        zlibTarget,
         .target(
             name: "Engine",
             dependencies: engineDependencies,
             resources: [.copy("Shaders")],
-            swiftSettings: engineSwiftSettings
+            swiftSettings: engineSwiftSettings,
+            linkerSettings: windowsLinkerSettings
         ),
         .executableTarget(
             name: "Demo",
             dependencies: ["Engine"],
-            resources: [.copy("Shaders")]
+            resources: [.copy("Shaders")],
+            linkerSettings: windowsLinkerSettings
         ),
-        .testTarget(name: "EngineTests", dependencies: ["Engine"]),
+        .testTarget(name: "EngineTests", dependencies: ["Engine", "CZlib"]),
     ]
 )

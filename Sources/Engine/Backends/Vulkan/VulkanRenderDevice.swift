@@ -407,7 +407,7 @@ final class VulkanRenderDevice: RenderDevice {
                 length: length, usage: usageFlags | vkFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT),
                 properties: vkFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT), mapped: false)
         } catch {
-            let buffer = try createHostBuffer(length: length, usage: usageFlags)
+            let buffer = try createHostBuffer(length: length, usage: usageFlags | vkFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT))
             buffer.mapped!.copyMemory(from: bytes.baseAddress!, byteCount: length)
             return buffer
         }
@@ -469,6 +469,38 @@ final class VulkanRenderDevice: RenderDevice {
             try vkCheck(vkQueueSubmit(queue, 1, &submit, fence), "vkQueueSubmit")
         }
         try vkCheck(vkWaitForFences(device, 1, &fence, VkBool32(VK_TRUE), UInt64.max), "vkWaitForFences")
+    }
+
+    /// Records a copy from this frame's transient memory into the frame's command buffer, between
+    /// two barriers. The first makes the copy wait for every earlier read of the buffer (this
+    /// frame's earlier passes, and earlier frames still in flight: a barrier's first scope covers
+    /// everything submitted before it on the queue) and earlier copies; the second makes the new
+    /// data visible to the vertex input and shader reads of later passes and frames.
+    func updateBuffer(_ buffer: GPUBuffer, offset: Int, bytes: UnsafeRawBufferPointer) throws {
+        precondition(current != nil, "updateBuffer outside a frame")
+        precondition(!inRenderPass, "updateBuffer called inside a pass; call it between passes")
+        let target = buffer as! VulkanBuffer
+        try validateBufferUpdate(bufferLength: target.length, offset: offset, byteCount: bytes.count)
+        guard bytes.count > 0 else { return }
+        let source = uploadTransient(bytes)
+        let cmd = frames[frameIndex].commandBuffer
+        let readStages = vkFlags(VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT)
+        let transfer = vkFlags(VK_PIPELINE_STAGE_TRANSFER_BIT)
+
+        var before = VkMemoryBarrier()
+        before.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER
+        before.srcAccessMask = vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT)
+        before.dstAccessMask = vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT)
+        vkCmdPipelineBarrier(cmd, readStages | transfer, transfer, 0, 1, &before, 0, nil, 0, nil)
+
+        var region = VkBufferCopy(srcOffset: VkDeviceSize(source.offset), dstOffset: VkDeviceSize(offset), size: VkDeviceSize(bytes.count))
+        vkCmdCopyBuffer(cmd, (source.buffer as! VulkanBuffer).buffer, target.buffer, 1, &region)
+
+        var after = VkMemoryBarrier()
+        after.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER
+        after.srcAccessMask = vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT)
+        after.dstAccessMask = vkFlags(VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT, VK_ACCESS_INDEX_READ_BIT, VK_ACCESS_UNIFORM_READ_BIT)
+        vkCmdPipelineBarrier(cmd, transfer, readStages, 0, 1, &after, 0, nil, 0, nil)
     }
 
     func makeTexture(_ descriptor: TextureDescriptor) throws -> GPUTexture {
@@ -675,7 +707,7 @@ final class VulkanRenderDevice: RenderDevice {
         case .front: vkFlags(VK_CULL_MODE_FRONT_BIT)
         case .back: vkFlags(VK_CULL_MODE_BACK_BIT)
         }
-        // With the flipped (negative-height) viewport this matches Metal's winding.
+        // With the vertex shaders' y flip this matches Metal's winding.
         rasterization.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE
         rasterization.lineWidth = 1
         if let bias = descriptor.depthBias {
@@ -904,16 +936,16 @@ final class VulkanRenderDevice: RenderDevice {
             pass.setPipeline(blitPipeline)
             var set: VkDescriptorSet? = offscreen.descriptorSet
             vkCmdBindDescriptorSets(pass.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, 1, &set, 0, nil)
-            pass.setPushConstants(letterboxScale(image: image, window: window))
+            pass.setPushConstants(BlitConstants(image: image, window: window))
             pass.draw(vertexCount: 3)
         }
         return pass
     }
 
-    /// Flipped like every pass's viewport (y-up clip space), covering the given window pixels.
+    /// Covers the given window pixels (see `beginPass` for the y-up clip space convention).
     private func setViewport(_ cmd: VkCommandBuffer, x: Int, y: Int, width: Int, height: Int) {
         var viewport = VkViewport(
-            x: Float(x), y: Float(y + height), width: Float(width), height: -Float(height), minDepth: 0, maxDepth: 1)
+            x: Float(x), y: Float(y), width: Float(width), height: Float(height), minDepth: 0, maxDepth: 1)
         vkCmdSetViewport(cmd, 0, 1, &viewport)
     }
 
@@ -1069,9 +1101,12 @@ final class VulkanRenderDevice: RenderDevice {
             vkCmdBeginRenderPass(cmd, &passInfo, VK_SUBPASS_CONTENTS_INLINE)
         }
 
-        // Flip Y in every pass so clip space is y-up and textures are laid out like Metal's.
+        // Clip space is y-up like Metal's: every vertex shader negates gl_Position.y, so the viewport is
+        // not flipped. (A negative-height viewport gives the same image, but MoltenVK then hands Metal
+        // y-mirrored geometry, and Metal's clipping and attribute interpolation of large triangles round
+        // differently when mirrored, so the lit scenes stopped matching native Metal to the last bit.)
         let width = Float(extent.width), height = Float(extent.height)
-        var viewport = VkViewport(x: 0, y: height, width: width, height: -height, minDepth: 0, maxDepth: 1)
+        var viewport = VkViewport(x: 0, y: 0, width: width, height: height, minDepth: 0, maxDepth: 1)
         vkCmdSetViewport(cmd, 0, 1, &viewport)
         var scissor = VkRect2D(offset: VkOffset2D(x: 0, y: 0), extent: extent)
         vkCmdSetScissor(cmd, 0, 1, &scissor)
@@ -1717,7 +1752,8 @@ final class VulkanRenderDevice: RenderDevice {
     private func createTransientChunk(size: Int) throws -> VulkanTransientChunk {
         let buffer = try createHostBuffer(
             length: size,
-            usage: vkFlags(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT))
+            usage: vkFlags(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                           VK_BUFFER_USAGE_TRANSFER_SRC_BIT))
         let set = try allocateDescriptorSet(layout: uniformSetLayout)
         var bufferInfo = VkDescriptorBufferInfo(buffer: buffer.buffer, offset: 0, range: VkDeviceSize(maxUniformDataSize))
         var write = VkWriteDescriptorSet()

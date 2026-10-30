@@ -89,6 +89,13 @@ public final class Frame {
         elements.withUnsafeBytes { device.uploadTransient($0) }
     }
 
+    /// Replaces part of a static buffer's contents; later passes of this frame and all later
+    /// frames see the new data. Call it between passes, not inside a pass body. See
+    /// `RenderDevice.updateBuffer(_:offset:bytes:)` for the full semantics.
+    public func updateBuffer<T: BitwiseCopyable>(_ buffer: GPUBuffer, offset: Int = 0, elements: [T]) throws {
+        try device.updateBuffer(buffer, offset: offset, elements: elements)
+    }
+
     /// Renders depth-only geometry into `target` (e.g. a shadow map). Pipelines used here
     /// must have `target: .depthOnly`.
     public func depthPass(into target: GPUTexture, clearDepth: Float = 1, _ body: (RenderPass) -> Void) {
