@@ -55,7 +55,7 @@ final class DemoGame: Game {
         if let title = textTest.update(input, canStart: !(ui?.wantsKeyboard ?? false)) { engine.title = title; return }
         // Widgets see input first; what they take, the camera and shortcuts don't.
         ui?.update(engine: engine, dt: dt)
-        let keyboardFree = !(ui?.wantsKeyboard ?? false)
+        let keyboardFree = !(ui?.wantsKeyboard ?? false) && !scene.wantsKeyboard
         let pointerFree = !(ui?.wantsPointer ?? false)
         if keyboardFree { handleShortcuts(engine: engine) }
 
