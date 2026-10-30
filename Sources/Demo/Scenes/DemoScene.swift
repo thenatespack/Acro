@@ -72,4 +72,5 @@ extension DemoScene {
     WidgetsScene.self,
     DockingScene.self,
     InspectorScene.self,
+    ViewportsScene.self,
 ]

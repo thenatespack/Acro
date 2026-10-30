@@ -169,6 +169,35 @@ public struct TextureDescriptor: Sendable {
     }
 }
 
+/// An offscreen color + depth target for game code (see `RenderTarget`).
+public struct RenderTargetDescriptor: Sendable, Equatable {
+    public var width: Int
+    public var height: Int
+    /// Render with the device's MSAA sample count (`RenderDevice.sampleCount`) and resolve
+    /// into `texture` at the end of each pass. false renders single-sampled.
+    public var multisampled: Bool
+
+    public init(width: Int, height: Int, multisampled: Bool = true) {
+        self.width = width
+        self.height = height
+        self.multisampled = multisampled
+    }
+}
+
+/// GPU side of an offscreen render target: an sRGB color image in the window's format (so
+/// every `.screen` pipeline can draw into it), a depth buffer that only lives during the pass,
+/// and, when multisampled, the MSAA color image resolved into `texture`. Released like `GPUBuffer`.
+@MainActor public protocol GPURenderTarget: AnyObject {
+    var width: Int { get }
+    var height: Int { get }
+    /// 1, or the device's sample count.
+    var sampleCount: Int { get }
+    /// The single-sample result (`.rgba8Srgb`: sampling returns linear values). Bind it with
+    /// `setTexture(_:index:)` or `UIDrawList.drawImage` in any later pass of the frame. It keeps
+    /// its own memory alive, so a draw list may hold it after the target is resized.
+    var texture: GPUTexture { get }
+}
+
 /// GPU memory holding vertex or index data. Released when the last reference goes
 /// away; backends defer the actual free until in-flight frames no longer use it.
 @MainActor public protocol GPUBuffer: AnyObject {
@@ -315,8 +344,8 @@ extension RenderPass {
 /// A graphics backend. Resources it creates are freed when released (or, at the
 /// latest, when the device shuts down).
 ///
-/// Frame structure: `beginFrame` → any number of `beginDepthPass`/`endPass` →
-/// `beginScreenPass` → `beginWindowPass` → `endFrame`. Games normally use `Frame` instead.
+/// Frame structure: `beginFrame` → any number of `beginDepthPass` / `beginPass(target:…)` +
+/// `endPass` → `beginScreenPass` → `beginWindowPass` → `endFrame`. Games normally use `Frame` instead.
 @MainActor public protocol RenderDevice: AnyObject {
     var backend: GraphicsBackend { get }
     /// Human-readable GPU name.
@@ -372,6 +401,14 @@ extension RenderPass {
     func beginFrame(framebufferSize: (width: Int, height: Int), renderSize: (width: Int, height: Int)?) throws -> Bool
     /// Starts a depth-only pass into `target` (a `.depth32Float` texture).
     func beginDepthPass(target: GPUTexture, clearDepth: Float) -> RenderPass
+    /// An offscreen color target with depth (see `RenderTargetDescriptor`). Its texture starts
+    /// out shader-readable with undefined contents.
+    func makeRenderTarget(_ descriptor: RenderTargetDescriptor) throws -> GPURenderTarget
+    /// Starts a pass into `target` (color and depth cleared), timed as `label`. Any number may be
+    /// recorded before the screen pass; each one's result is readable by every later pass of the
+    /// frame (the window pass included). Takes `.screen` pipelines; there is no motion-vector
+    /// attachment and no occlusion queries.
+    func beginPass(target: GPURenderTarget, clearColor: Vec4, clearDepth: Float, label: String) -> RenderPass
     /// Starts the pass the scene renders into (the window, or the offscreen render target).
     func beginScreenPass(clearColor: Vec4, clearDepth: Float) -> RenderPass
     /// Call right after the screen pass. Returns a pass at window resolution for UI that
@@ -431,8 +468,8 @@ public struct GraphicsError: Error, CustomStringConvertible {
 }
 
 /// GPU time of one pass: `depth` (`beginDepthPass`), `scene` (`beginScreenPass`), `upscale`
-/// (an upscaler's first stage: EASU, TAAU or MetalFX) or `window` (`beginWindowPass` when
-/// rendering offscreen).
+/// (an upscaler's first stage: EASU, TAAU or MetalFX), `window` (`beginWindowPass` when
+/// rendering offscreen) or a render target pass's label.
 public struct GPUPassTime: Sendable {
     public var name: String
     public var seconds: Double

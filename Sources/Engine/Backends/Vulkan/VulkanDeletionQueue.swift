@@ -8,12 +8,15 @@ enum VulkanResource: @unchecked Sendable {
     case buffer(VkBuffer, VkDeviceMemory)
     case pipeline(VkPipeline)
     case texture(VkImage, VkDeviceMemory, VkImageView, VkFramebuffer?, VkDescriptorSet?)
+    /// A render target's pass-only attachments (depth, MSAA color) and its framebuffer.
+    case attachments([(VkImage, VkDeviceMemory, VkImageView)], VkFramebuffer)
 
     var key: Int {
         switch self {
         case .buffer(let buffer, _): Int(bitPattern: buffer)
         case .pipeline(let pipeline): Int(bitPattern: pipeline)
         case .texture(let image, _, _, _, _): Int(bitPattern: image)
+        case .attachments(_, let framebuffer): Int(bitPattern: framebuffer)
         }
     }
 }

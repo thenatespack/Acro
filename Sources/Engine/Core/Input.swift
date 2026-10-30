@@ -12,6 +12,85 @@ public enum MouseButton: Hashable, Sendable, CaseIterable {
     case left, right, middle
 }
 
+/// The mouse cursor's look over the window (`Input.cursor`).
+public enum CursorShape: Hashable, Sendable, CaseIterable {
+    case arrow
+    /// Text insertion (over text fields).
+    case iBeam
+    /// Links and clickable items.
+    case pointingHand
+    /// Dragging a vertical edge or splitter left / right.
+    case resizeHorizontal
+    /// Dragging a horizontal edge or splitter up / down.
+    case resizeVertical
+    case crosshair
+    case notAllowed
+    /// No cursor over the window (it still moves; see `Input.isMouseCaptured` to lock it).
+    case hidden
+}
+
+/// Relative ("captured") mouse mode, as a state machine: the game asks for it, and it is only
+/// active while the window has focus. Losing focus or pressing Esc ends it, and the game has
+/// to ask again (so a click back into the window never grabs the mouse by surprise).
+public struct MouseCapture: Equatable, Sendable {
+    /// The game wants the mouse captured.
+    public private(set) var requested = false
+    /// The window has keyboard focus.
+    public private(set) var focused = true
+
+    public init() {}
+
+    /// Captured right now: the platform hides and locks the cursor and reports raw motion.
+    public var isActive: Bool { requested && focused }
+
+    /// Asks for (or ends) capture. Ignored while the window doesn't have focus.
+    public mutating func request(_ captured: Bool) {
+        requested = captured && focused
+    }
+
+    public mutating func setFocused(_ focused: Bool) {
+        self.focused = focused
+        if !focused { requested = false }
+    }
+
+    /// Esc while captured ends the capture. Returns whether it did (the key is then swallowed).
+    public mutating func escapePressed() -> Bool {
+        guard isActive else { return false }
+        requested = false
+        return true
+    }
+}
+
+/// Turns cursor positions and raw motion into a per-frame delta (the CPU side of
+/// `Input.mouseDelta`). Uncaptured, the delta is the position change since the last frame;
+/// captured, the cursor doesn't move and the delta is the sum of the platform's raw motion,
+/// unbounded by the screen edges. The frame capture starts or ends in reports no motion, so
+/// a cursor warped by the platform doesn't jump the camera.
+public struct MouseMotion: Sendable {
+    private var lastPosition: Vec2?
+    private var raw = Vec2.zero
+    private var wasCaptured = false
+
+    public init() {}
+
+    /// Platforms report motion from every mouse-move event, in points (y down).
+    public mutating func addRaw(_ delta: Vec2) {
+        raw += delta
+    }
+
+    /// The delta for the frame whose events have all been reported.
+    public mutating func endFrame(position: Vec2, captured: Bool) -> Vec2 {
+        defer {
+            raw = .zero
+            lastPosition = position
+            wasCaptured = captured
+        }
+        if captured != wasCaptured { return .zero }
+        if captured { return raw }
+        return lastPosition.map { position - $0 } ?? .zero
+    }
+}
+
 /// Per-frame input state. Platform windows report raw up/down state; this type
 /// derives the "pressed this frame" / "released this frame" edges.
 @MainActor
@@ -23,11 +102,33 @@ public final class Input {
     private var buttonsPressed = Set<MouseButton>()
     private var buttonsReleased = Set<MouseButton>()
 
-    /// Cursor position in window points, origin at the top-left.
+    /// Cursor position in window points, origin at the top-left. It stays put while the mouse
+    /// is captured.
     public internal(set) var mousePosition: Vec2 = .zero
-    /// Cursor movement since the previous frame, in window points.
+    /// Cursor movement since the previous frame, in window points (y down). While the mouse is
+    /// captured this is the raw motion, unbounded by the screen edges (fly cameras).
     public private(set) var mouseDelta: Vec2 = .zero
-    private var lastMousePosition: Vec2?
+    private var motion = MouseMotion()
+    private(set) var capture = MouseCapture()
+    /// Esc released the capture and is down: its press and repeats are not reported.
+    private var escapeSwallowed = false
+
+    /// The cursor's shape over the window this frame. Reset to `.arrow` at the start of every
+    /// frame, so set it every frame while it should differ (e.g. while hovering a splitter).
+    /// Hidden while the mouse is captured, whatever this says.
+    public var cursor: CursorShape = .arrow
+
+    /// Relative mouse mode for fly cameras and drags: the cursor is hidden and locked in place,
+    /// and `mouseDelta` reports raw, unbounded motion. Setting it is a request: it is ignored
+    /// while the window is not focused, and capture ends by itself when the window loses focus
+    /// or (with `escapeReleasesCapture`) when Esc is pressed. Read it back to see whether the
+    /// mouse is captured now. Ignored during ENGINE_SCREENSHOT runs.
+    public var isMouseCaptured: Bool {
+        get { capture.isActive }
+        set { capture.request(newValue) }
+    }
+    /// Esc ends a capture, and that press isn't reported to the game (a safety exit).
+    public var escapeReleasesCapture = true
     /// Scroll wheel / trackpad movement this frame, in points. Positive y scrolls up (towards
     /// the top of a document, i.e. content moves down), positive x scrolls left. Trackpads report
     /// precise deltas; a mouse wheel notch is about 10–40 points depending on the platform.
@@ -113,7 +214,7 @@ public final class Input {
 
     /// Queues a key for the active text input; platforms call this for every key down / repeat.
     func textKeyEvent(_ key: Key, modifiers: KeyModifiers, isRepeat: Bool) {
-        guard isTextInputActive, KeyEvent.isRoutedAsKey(key, modifiers: modifiers) else { return }
+        guard isTextInputActive, KeyEvent.isRoutedAsKey(key, modifiers: modifiers), !swallowsEscape(key) else { return }
         textEvents.append(.key(KeyEvent(key: key, modifiers: modifiers, isRepeat: isRepeat)))
     }
 
@@ -131,6 +232,7 @@ public final class Input {
     }
 
     func beginFrame() {
+        cursor = .arrow
         keysPressed.removeAll(keepingCapacity: true)
         keysReleased.removeAll(keepingCapacity: true)
         textEvents.removeAll(keepingCapacity: true)
@@ -141,12 +243,32 @@ public final class Input {
     }
 
     func endEvents() {
-        mouseDelta = lastMousePosition.map { mousePosition - $0 } ?? .zero
-        lastMousePosition = mousePosition
+        mouseDelta = motion.endFrame(position: mousePosition, captured: capture.isActive)
+    }
+
+    /// Platforms report the motion of every mouse-move event, in points (used while captured).
+    func addMouseMotion(_ delta: Vec2) {
+        motion.addRaw(delta)
+    }
+
+    /// Platforms report whether the window has keyboard focus every frame.
+    func setWindowFocused(_ focused: Bool) {
+        capture.setFocused(focused)
+    }
+
+    /// Whether Esc going down should only end the capture (and be swallowed until released).
+    private func swallowsEscape(_ key: Key) -> Bool {
+        guard key == .escape else { return false }
+        if escapeSwallowed { return true }
+        guard escapeReleasesCapture, capture.escapePressed() else { return false }
+        escapeSwallowed = true
+        return true
     }
 
     func setKey(_ key: Key, down: Bool) {
+        if key == .escape && !down { escapeSwallowed = false }
         if down {
+            if swallowsEscape(key) { return }
             if isTextInputActive && !key.isModifier { return }  // owned by text input (see startTextInput)
             if keysDown.insert(key).inserted { keysPressed.insert(key) }
         } else if keysDown.remove(key) != nil {
@@ -160,7 +282,7 @@ public final class Input {
 
     /// Platforms call this for every key down and auto-repeat (see `keyPresses`).
     func recordKeyPress(_ key: Key, modifiers: KeyModifiers, isRepeat: Bool) {
-        guard !key.isModifier else { return }
+        guard !key.isModifier, !swallowsEscape(key) else { return }
         keyPresses.append(KeyEvent(key: key, modifiers: modifiers, isRepeat: isRepeat))
     }
 

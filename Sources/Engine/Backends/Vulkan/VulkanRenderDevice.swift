@@ -74,14 +74,17 @@ final class VulkanPipeline: RenderPipeline {
     private let deletionQueue: VulkanDeletionQueue
     let pipeline: VkPipeline
     /// `.screen` pipelines: builds the variant for scene passes with a motion-vector attachment
-    /// (temporal upscaling), on first use there.
-    private let makeMotionVariant: (@MainActor () throws -> VulkanPipeline)?
+    /// (temporal upscaling), or (`true`) for single-sample render targets on a multisampled
+    /// device, on first use there.
+    private let makeVariant: (@MainActor (_ singleSample: Bool) throws -> VulkanPipeline)?
     private var motionVariant: VulkanPipeline?
+    private var singleSampleVariant: VulkanPipeline?
 
-    init(_ pipeline: VkPipeline, deletionQueue: VulkanDeletionQueue, makeMotionVariant: (@MainActor () throws -> VulkanPipeline)? = nil) {
+    init(_ pipeline: VkPipeline, deletionQueue: VulkanDeletionQueue,
+         makeVariant: (@MainActor (_ singleSample: Bool) throws -> VulkanPipeline)? = nil) {
         self.pipeline = pipeline
         self.deletionQueue = deletionQueue
-        self.makeMotionVariant = makeMotionVariant
+        self.makeVariant = makeVariant
         resource = .pipeline(pipeline)
         deletionQueue.register(resource)
     }
@@ -90,18 +93,53 @@ final class VulkanPipeline: RenderPipeline {
         deletionQueue.release(resource)
     }
 
-    /// The variant for a pass with (`motionVectors`) or without a motion-vector attachment.
-    func handle(motionVectors: Bool) -> VkPipeline {
-        guard motionVectors else { return pipeline }
-        if let motionVariant { return motionVariant.pipeline }
-        guard let makeMotionVariant else { preconditionFailure("This pipeline can't draw in the scene pass") }
+    /// The variant for a pass with (`motionVectors`) or without a motion-vector attachment, and
+    /// for a single-sample render target on a multisampled device (`singleSample`).
+    func handle(motionVectors: Bool, singleSample: Bool = false) -> VkPipeline {
+        if motionVectors { return variant(&motionVariant, singleSample: false) }
+        if singleSample { return variant(&singleSampleVariant, singleSample: true) }
+        return pipeline
+    }
+
+    private func variant(_ cached: inout VulkanPipeline?, singleSample: Bool) -> VkPipeline {
+        if let cached { return cached.pipeline }
+        guard let makeVariant else { preconditionFailure("This pipeline can't draw in color passes") }
         do {
-            let variant = try makeMotionVariant()
-            motionVariant = variant
+            let variant = try makeVariant(singleSample)
+            cached = variant
             return variant.pipeline
         } catch {
-            preconditionFailure("Failed to create the motion-vector variant of a pipeline: \(error)")
+            preconditionFailure("Failed to create a variant of a pipeline: \(error)")
         }
+    }
+}
+
+/// See `GPURenderTarget`. `resolved` is the sampled texture (its own resource, so a draw list
+/// can keep it alive); the pass-only attachments and the framebuffer are released together.
+final class VulkanRenderTarget: GPURenderTarget {
+    private let resource: VulkanResource
+    private let deletionQueue: VulkanDeletionQueue
+    let resolved: VulkanTexture
+    let framebuffer: VkFramebuffer
+    let renderPass: VkRenderPass
+    let sampleCount: Int
+    var width: Int { resolved.width }
+    var height: Int { resolved.height }
+    var texture: GPUTexture { resolved }
+
+    init(resolved: VulkanTexture, attachments: [(VkImage, VkDeviceMemory, VkImageView)], framebuffer: VkFramebuffer,
+         renderPass: VkRenderPass, sampleCount: Int, deletionQueue: VulkanDeletionQueue) {
+        self.resolved = resolved
+        self.framebuffer = framebuffer
+        self.renderPass = renderPass
+        self.sampleCount = sampleCount
+        self.deletionQueue = deletionQueue
+        resource = .attachments(attachments, framebuffer)
+        deletionQueue.register(resource)
+    }
+
+    deinit {
+        deletionQueue.release(resource)
     }
 }
 
@@ -213,6 +251,12 @@ final class VulkanRenderDevice: RenderDevice {
     private let screenRenderPass: VkRenderPass
     /// Compatible with `screenRenderPass` (same attachments), but leaves the result shader-readable.
     private let offscreenRenderPass: VkRenderPass
+    /// `offscreenRenderPass` at 1x, for single-sample render targets when the device is
+    /// multisampled (nil when it isn't: `offscreenRenderPass` is 1x then).
+    private let singleSampleTargetPass: VkRenderPass?
+    /// Render target images created outside a frame, moved to the shader-read layout at the
+    /// start of the next one (so sampling a target before its first pass is valid).
+    private var pendingTargetLayouts: [VkImage] = []
     private let depthRenderPass: VkRenderPass
     private let uniformSetLayout: VkDescriptorSetLayout
     private let textureSetLayout: VkDescriptorSetLayout
@@ -308,6 +352,8 @@ final class VulkanRenderDevice: RenderDevice {
         screenRenderPass = try Self.createScreenRenderPass(device: device, colorFormat: surfaceFormat.format, samples: samples)
         offscreenRenderPass = try Self.createScreenRenderPass(
             device: device, colorFormat: surfaceFormat.format, samples: samples, offscreen: true)
+        singleSampleTargetPass = samples == VK_SAMPLE_COUNT_1_BIT ? nil : try Self.createScreenRenderPass(
+            device: device, colorFormat: surfaceFormat.format, samples: VK_SAMPLE_COUNT_1_BIT, offscreen: true)
         depthRenderPass = try Self.createDepthRenderPass(device: device)
         unormFormat = switch surfaceFormat.format {
         case VK_FORMAT_B8G8R8A8_SRGB: VK_FORMAT_B8G8R8A8_UNORM
@@ -533,6 +579,62 @@ final class VulkanRenderDevice: RenderDevice {
             framebuffer: framebuffer, descriptorSet: set, deletionQueue: deletionQueue)
     }
 
+    func makeRenderTarget(_ descriptor: RenderTargetDescriptor) throws -> GPURenderTarget {
+        try descriptor.validate(maxSize: maxTextureSize)
+        let extent = VkExtent2D(width: UInt32(descriptor.width), height: UInt32(descriptor.height))
+        let targetSamples = descriptor.multisampled ? samples : VK_SAMPLE_COUNT_1_BIT
+        let renderPass = targetSamples == samples ? offscreenRenderPass : singleSampleTargetPass!
+        let resolved = try createImage(
+            extent: extent, format: surfaceFormat.format, samples: VK_SAMPLE_COUNT_1_BIT,
+            usage: vkFlags(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_USAGE_SAMPLED_BIT),
+            aspect: vkFlags(VK_IMAGE_ASPECT_COLOR_BIT))
+        // Wrapped right away so a failure below still frees it.
+        let texture = VulkanTexture(
+            width: descriptor.width, height: descriptor.height, format: .rgba8Srgb, image: resolved.image,
+            memory: resolved.memory, view: resolved.view, deletionQueue: deletionQueue)
+        try makeTargetShaderReadable(resolved.image)
+        var attachments: [ImageAllocation] = []
+        do {
+            // Depth and MSAA color only live inside the pass (lazily allocated / memoryless where possible).
+            attachments.append(try createImage(
+                extent: extent, format: depthFormat, samples: targetSamples,
+                usage: vkFlags(VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT),
+                aspect: vkFlags(VK_IMAGE_ASPECT_DEPTH_BIT)))
+            if targetSamples != VK_SAMPLE_COUNT_1_BIT {
+                attachments.append(try createImage(
+                    extent: extent, format: surfaceFormat.format, samples: targetSamples,
+                    usage: vkFlags(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT),
+                    aspect: vkFlags(VK_IMAGE_ASPECT_COLOR_BIT)))
+            }
+            let views = attachments.count == 2 ? [attachments[1].view, attachments[0].view, resolved.view]
+                : [resolved.view, attachments[0].view]
+            let framebuffer = try createFramebuffer(renderPass: renderPass, attachments: views, extent: extent)
+            return VulkanRenderTarget(
+                resolved: texture, attachments: attachments.map { ($0.image, $0.memory, $0.view) }, framebuffer: framebuffer,
+                renderPass: renderPass, sampleCount: Int(targetSamples.rawValue), deletionQueue: deletionQueue)
+        } catch {
+            for allocation in attachments {
+                vkDestroyImageView(device, allocation.view, nil)
+                vkDestroyImage(device, allocation.image, nil)
+                vkFreeMemory(device, allocation.memory, nil)
+            }
+            throw error
+        }
+    }
+
+    /// Moves a new render target's texture to the shader-read layout, where every pass into it
+    /// leaves it: right away in the frame's command buffer between passes, at the start of the
+    /// next frame when created between frames, or with a blocking submit inside a pass.
+    private func makeTargetShaderReadable(_ image: VkImage) throws {
+        if current == nil {
+            pendingTargetLayouts.append(image)
+        } else if !inRenderPass {
+            recordShaderReadable([image], cmd: frames[frameIndex].commandBuffer)
+        } else {
+            try makeShaderReadable([image])
+        }
+    }
+
     func makeTexture(pixels: UnsafeRawBufferPointer, width: Int, height: Int, format: TextureFormat,
                      generateMipmaps: Bool) throws -> GPUTexture {
         try format.validateUpload(byteCount: pixels.count, width: width, height: height, maxSize: maxTextureSize)
@@ -639,9 +741,10 @@ final class VulkanRenderDevice: RenderDevice {
 
     /// `colorPass` replaces the screen pass for `.screen` pipelines: a single-sample render
     /// pass with one color attachment (used by the upscale passes). `motionVectors` builds the
-    /// variant for `temporalScenePass`, with the motion-vector attachment.
+    /// variant for `temporalScenePass`, with the motion-vector attachment, and `singleSample`
+    /// the one for `singleSampleTargetPass`.
     private func createPipeline(_ descriptor: PipelineDescriptor, colorPass: VkRenderPass? = nil,
-                                motionVectors: Bool = false) throws -> VulkanPipeline {
+                                motionVectors: Bool = false, singleSample: Bool = false) throws -> VulkanPipeline {
         let isScreen = descriptor.target == .screen
         guard let vertexCode = descriptor.shader.spirvVertex else {
             throw GraphicsError("Shader has no SPIR-V vertex stage (run Scripts/compile-shaders.sh)")
@@ -718,7 +821,8 @@ final class VulkanRenderDevice: RenderDevice {
 
         var multisample = VkPipelineMultisampleStateCreateInfo()
         multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO
-        multisample.rasterizationSamples = isScreen && colorPass == nil && !motionVectors ? samples : VK_SAMPLE_COUNT_1_BIT
+        multisample.rasterizationSamples = isScreen && colorPass == nil && !motionVectors && !singleSample
+            ? samples : VK_SAMPLE_COUNT_1_BIT
 
         var depthStencil = VkPipelineDepthStencilStateCreateInfo()
         depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO
@@ -770,20 +874,22 @@ final class VulkanRenderDevice: RenderDevice {
         info.pColorBlendState = arena.store(colorBlend)
         info.pDynamicState = arena.store(dynamicState)
         info.layout = pipelineLayout
-        info.renderPass = !isScreen ? depthRenderPass : motionVectors ? temporalScenePass : colorPass ?? screenRenderPass
+        info.renderPass = !isScreen ? depthRenderPass : motionVectors ? temporalScenePass
+            : singleSample ? singleSampleTargetPass! : colorPass ?? screenRenderPass
         info.subpass = 0
 
         var pipeline: VkPipeline?
         try vkCheck(vkCreateGraphicsPipelines(device, nil, 1, &info, nil, &pipeline), "vkCreateGraphicsPipelines")
-        // Pipelines that can draw in the scene pass get a variant for temporal upscaling.
-        var makeMotionVariant: (@MainActor () throws -> VulkanPipeline)?
-        if isScreen && colorPass == nil && !motionVectors {
-            makeMotionVariant = { [weak self] in
+        // Pipelines that can draw in the scene pass get variants for temporal upscaling and
+        // single-sample render targets.
+        var makeVariant: (@MainActor (Bool) throws -> VulkanPipeline)?
+        if isScreen && colorPass == nil && !motionVectors && !singleSample {
+            makeVariant = { [weak self] singleSample in
                 guard let self else { throw GraphicsError("The device was released") }
-                return try createPipeline(descriptor, motionVectors: true)
+                return try createPipeline(descriptor, motionVectors: !singleSample, singleSample: singleSample)
             }
         }
-        return VulkanPipeline(pipeline!, deletionQueue: deletionQueue, makeMotionVariant: makeMotionVariant)
+        return VulkanPipeline(pipeline!, deletionQueue: deletionQueue, makeVariant: makeVariant)
     }
 
     func uploadTransient(_ bytes: UnsafeRawBufferPointer) -> TransientBuffer {
@@ -859,6 +965,11 @@ final class VulkanRenderDevice: RenderDevice {
             vkCmdResetQueryPool(cmd, occlusionPool, occlusionQueryBase, UInt32(frame.occlusionQueriesToReset))
             frames[frameIndex].occlusionQueriesToReset = 0
         }
+        if !pendingTargetLayouts.isEmpty {
+            // Targets released since are still alive: the deletion queue frees them after this frame at the earliest.
+            recordShaderReadable(pendingTargetLayouts, cmd: cmd)
+            pendingTargetLayouts.removeAll()
+        }
         frame.transient.reset()
         frame.descriptors.reset()
 
@@ -888,6 +999,19 @@ final class VulkanRenderDevice: RenderDevice {
         let extent = VkExtent2D(width: UInt32(texture.width), height: UInt32(texture.height))
         return beginPass(
             renderPass: depthRenderPass, framebuffer: texture.framebuffer!, extent: extent, clearValues: [clear], timedAs: "depth")
+    }
+
+    /// The render pass is `offscreenRenderPass` (or its 1x twin), so `.screen` pipelines are
+    /// compatible. Its subpass dependencies order the pass after earlier reads of the texture
+    /// (the previous frame's window pass) and make the result visible to later fragment-shader
+    /// reads; it ends in the shader-read layout.
+    func beginPass(target: GPURenderTarget, clearColor: Vec4, clearDepth: Float, label: String) -> RenderPass {
+        let target = target as! VulkanRenderTarget
+        return beginPass(
+            renderPass: target.renderPass, framebuffer: target.framebuffer,
+            extent: VkExtent2D(width: UInt32(target.width), height: UInt32(target.height)),
+            clearValues: Self.colorDepthClear(clearColor, clearDepth), timedAs: label,
+            singleSample: target.sampleCount == 1 && samples != VK_SAMPLE_COUNT_1_BIT)
     }
 
     func beginScreenPass(clearColor: Vec4, clearDepth: Float) -> RenderPass {
@@ -1036,24 +1160,26 @@ final class VulkanRenderDevice: RenderDevice {
 
     /// Moves fresh color images to the shader-read layout (contents stay undefined).
     private func makeShaderReadable(_ images: [VkImage]) throws {
-        try submitAndWait { cmd in
-            let barriers = images.map { image in
-                var barrier = VkImageMemoryBarrier()
-                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER
-                barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED
-                barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-                barrier.dstAccessMask = vkFlags(VK_ACCESS_SHADER_READ_BIT)
-                barrier.srcQueueFamilyIndex = UInt32.max  // VK_QUEUE_FAMILY_IGNORED
-                barrier.dstQueueFamilyIndex = UInt32.max
-                barrier.image = image
-                barrier.subresourceRange = VkImageSubresourceRange(
-                    aspectMask: vkFlags(VK_IMAGE_ASPECT_COLOR_BIT), baseMipLevel: 0, levelCount: 1, baseArrayLayer: 0, layerCount: 1)
-                return barrier
-            }
-            vkCmdPipelineBarrier(
-                cmd, vkFlags(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT), vkFlags(VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT),
-                0, 0, nil, 0, nil, UInt32(barriers.count), barriers)
+        try submitAndWait { cmd in recordShaderReadable(images, cmd: cmd) }
+    }
+
+    private func recordShaderReadable(_ images: [VkImage], cmd: VkCommandBuffer) {
+        let barriers = images.map { image in
+            var barrier = VkImageMemoryBarrier()
+            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER
+            barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED
+            barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+            barrier.dstAccessMask = vkFlags(VK_ACCESS_SHADER_READ_BIT)
+            barrier.srcQueueFamilyIndex = UInt32.max  // VK_QUEUE_FAMILY_IGNORED
+            barrier.dstQueueFamilyIndex = UInt32.max
+            barrier.image = image
+            barrier.subresourceRange = VkImageSubresourceRange(
+                aspectMask: vkFlags(VK_IMAGE_ASPECT_COLOR_BIT), baseMipLevel: 0, levelCount: 1, baseArrayLayer: 0, layerCount: 1)
+            return barrier
         }
+        vkCmdPipelineBarrier(
+            cmd, vkFlags(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT), vkFlags(VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT),
+            0, 0, nil, 0, nil, UInt32(barriers.count), barriers)
     }
 
     private func destroy(_ targets: UpscaleTargets) {
@@ -1078,7 +1204,7 @@ final class VulkanRenderDevice: RenderDevice {
 
     private func beginPass(renderPass: VkRenderPass, framebuffer: VkFramebuffer, extent: VkExtent2D,
                            clearValues: [VkClearValue], timedAs name: String, occlusionQueries: Bool = false,
-                           motionVectors: Bool = false) -> RenderPass {
+                           motionVectors: Bool = false, singleSample: Bool = false) -> RenderPass {
         precondition(current != nil, "Render pass started outside a frame")
         precondition(!inRenderPass, "Previous pass was not ended")
         let frame = frames[frameIndex]
@@ -1114,7 +1240,7 @@ final class VulkanRenderDevice: RenderDevice {
         let pass = VulkanRenderPass(
             commandBuffer: cmd, device: device, layout: pipelineLayout, extent: extent, transient: frame.transient, descriptors: frame.descriptors,
             occlusion: occlusionQueries ? (occlusionPool, occlusionQueryBase, frame.occlusion) : nil,
-            motionVectors: motionVectors)
+            motionVectors: motionVectors, singleSample: singleSample)
         currentPass = pass
         return pass
     }
@@ -1259,6 +1385,7 @@ final class VulkanRenderDevice: RenderDevice {
         vkDestroyDescriptorSetLayout(device, userSetLayout, nil)
         vkDestroyRenderPass(device, screenRenderPass, nil)
         vkDestroyRenderPass(device, offscreenRenderPass, nil)
+        if let singleSampleTargetPass { vkDestroyRenderPass(device, singleSampleTargetPass, nil) }
         vkDestroyRenderPass(device, depthRenderPass, nil)
         vkDestroyDevice(device, nil)
         vkDestroySurfaceKHR(instance, surface, nil)
@@ -2125,6 +2252,13 @@ final class VulkanRenderDevice: RenderDevice {
                 vkDestroyImageView(device, view, nil)
                 vkDestroyImage(device, image, nil)
                 vkFreeMemory(device, memory, nil)
+            case .attachments(let images, let framebuffer):
+                vkDestroyFramebuffer(device, framebuffer, nil)
+                for (image, memory, view) in images {
+                    vkDestroyImageView(device, view, nil)
+                    vkDestroyImage(device, image, nil)
+                    vkFreeMemory(device, memory, nil)
+                }
             }
         }
     }
@@ -2228,10 +2362,14 @@ final class VulkanRenderPass: RenderPass {
     let occlusion: (pool: VkQueryPool, base: UInt32, batch: OcclusionQueryBatch)?
     /// The pass has a motion-vector attachment (scene pass with temporal upscaling).
     let motionVectors: Bool
+    /// A single-sample render target on a multisampled device: pipelines use their 1x variant.
+    let singleSample: Bool
 
     init(commandBuffer: VkCommandBuffer, device: VkDevice, layout: VkPipelineLayout, extent: VkExtent2D,
          transient: TransientRing<VulkanTransientChunk>, descriptors: VulkanDescriptorArena,
-         occlusion: (pool: VkQueryPool, base: UInt32, batch: OcclusionQueryBatch)?, motionVectors: Bool = false) {
+         occlusion: (pool: VkQueryPool, base: UInt32, batch: OcclusionQueryBatch)?, motionVectors: Bool = false,
+         singleSample: Bool = false) {
+        self.singleSample = singleSample
         self.commandBuffer = commandBuffer
         self.device = device
         self.layout = layout
@@ -2243,7 +2381,7 @@ final class VulkanRenderPass: RenderPass {
     }
 
     func setPipeline(_ pipeline: RenderPipeline) {
-        let handle = (pipeline as! VulkanPipeline).handle(motionVectors: motionVectors)
+        let handle = (pipeline as! VulkanPipeline).handle(motionVectors: motionVectors, singleSample: singleSample)
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, handle)
     }
 
