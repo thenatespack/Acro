@@ -787,3 +787,57 @@ private func temporaryDirectory() -> URL {
         #expect(lines.contains("Undo depth: 3 · redo: 0"))
     }
 }
+
+// MARK: Asset dropdowns
+
+@MainActor private func dropdowns(in widget: Widget) -> [Dropdown] {
+    (widget as? Dropdown).map { [$0] } ?? widget.children.flatMap { dropdowns(in: $0) }
+}
+
+@MainActor @Suite struct AssetChoiceTests {
+    @Test func onlyMeshRendererAssetKeysGetOptions() {
+        let choices = AssetChoices(meshes: { ["cube", "sphere"] }, materials: { ["default", "checker"] })
+        #expect(choices.options(component: "MeshRenderer", path: "mesh") == ["cube", "sphere"])
+        #expect(choices.options(component: "MeshRenderer", path: "material") == ["default", "checker"])
+        #expect(choices.options(component: "MeshRenderer", path: "tint") == nil)
+        #expect(choices.options(component: "Transform", path: "mesh") == nil)
+    }
+
+    /// The mesh field is a dropdown of the registered meshes; picking one is one undo step.
+    @Test func meshFieldIsADropdownAndPickingIsOneUndoStep() throws {
+        let session = makeSession()
+        let panel = InspectorPanel(session: session)
+        panel.assetChoices = AssetChoices(meshes: { ["cube", "plane", "sphere"] }, materials: { ["default", "checker"] })
+        let sphere = entity(named: "Blue Sphere", in: session)
+        session.selection.select(id("Blue Sphere", session))
+        panel.refresh()
+
+        let mesh = try #require(dropdowns(in: panel.grid).first { $0.options.contains("plane") })
+        #expect(mesh.selectedOption == "sphere")
+        #expect(dropdowns(in: panel.grid).contains { $0.options == ["default", "checker"] })
+
+        let depth = session.undo.undoDepth
+        let cube = try #require(mesh.options.firstIndex(of: "cube"))
+        mesh.select(cube)
+        mesh.onChange?(cube)
+        #expect(session.world.get(MeshRenderer.self, for: sphere)?.mesh == .cube)
+        #expect(session.undo.undoDepth == depth + 1)
+
+        _ = try session.undo.undo()
+        panel.refresh()
+        #expect(session.world.get(MeshRenderer.self, for: sphere)?.mesh == .sphere)
+        #expect(mesh.selectedOption == "sphere")
+    }
+
+    /// A key that isn't registered (e.g. from a hand-edited file) still shows and stays selectable.
+    @Test func unknownCurrentKeyIsKept() throws {
+        let session = makeSession()
+        let panel = InspectorPanel(session: session)
+        panel.assetChoices = AssetChoices(meshes: { ["cube"] }, materials: { ["default"] })
+        session.selection.select(id("Blue Sphere", session))
+        panel.refresh()
+        let mesh = try #require(dropdowns(in: panel.grid).first { $0.options.contains("cube") && $0.options.count == 2 })
+        #expect(mesh.options == ["cube", "sphere"])
+        #expect(mesh.selectedOption == "sphere")
+    }
+}

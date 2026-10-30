@@ -29,7 +29,7 @@ public struct PropertyEdit: Equatable, Sendable {
 /// |---|---|
 /// | `bool` | `Checkbox` |
 /// | `int` / `float` | `NumberField` (range / step hints; with `usesSlidersForRanges`, a `Slider` beside it when a finite range is hinted) |
-/// | `string` | `TextField` (commits on Enter or focus loss, Esc reverts) |
+/// | `string` | `TextField` (commits on Enter or focus loss, Esc reverts); a `Dropdown` when `stringChoices` lists options for the field (e.g. mesh / material keys) |
 /// | `vec2` / `vec3` / `vec4` | `VectorField`; `vec3` / `vec4` with the `color` hint: `ColorSwatch` (linear RGB, opens a `ColorPicker`; alpha is kept; HDR values above 1 are clamped by the picker) |
 /// | `quat` | `VectorField` of Euler degrees (`Quat.eulerDegrees`) |
 /// | `enumeration` | `Dropdown` |
@@ -85,6 +85,11 @@ public final class PropertyGrid: Stack {
     }
     /// Names an entity for `entity` fields; nil results show "Entity <index>".
     public var entityName: ((Entity) -> String?)?
+    /// Options for a `string` field, by component name and field path; when it returns a list
+    /// the field is a `Dropdown` of those strings instead of a text box (asset keys such as
+    /// `MeshRenderer.mesh`). A current value missing from the list is added so it stays visible.
+    /// Asked when a section is built; assign it again if the options change.
+    public var stringChoices: ((_ componentName: String, _ path: String) -> [String]?)? { didSet { rebuild(); refresh() } }
     /// Components to show by name (nil: all that are shown by default).
     public var componentFilter: ((String) -> Bool)? { didSet { rebuild(); refresh() } }
     /// Also show components whose type opts out of serialization.
@@ -392,6 +397,21 @@ public final class PropertyGrid: Stack {
         case .string:
             var initial = ""
             if case .string(let s)? = field.value { initial = s }
+            if var options = stringChoices?(b.component, b.path) {
+                if !options.contains(initial) { options.append(initial) }
+                let dropdown = Dropdown(options: options, selectedIndex: options.firstIndex(of: initial) ?? 0, name: name)
+                dropdown.onChange = { [weak self, weak b, weak dropdown] i in
+                    if let self, let b, let options = dropdown?.options, options.indices.contains(i) {
+                        self.atomicEdit(b, .string(options[i]))
+                    }
+                }
+                b.update = { [weak dropdown] f in
+                    guard case .string(let s)? = f.value, let dropdown else { return }
+                    if !dropdown.options.contains(s) { dropdown.options.append(s) }
+                    if let i = dropdown.options.firstIndex(of: s) { dropdown.select(i) }
+                }
+                return (dropdown, true)
+            }
             let editor = TextEditor(text: initial, name: name)
             editor.onCommit = { [weak self, weak b] text in if let self, let b { self.atomicEdit(b, .string(text)) } }
             b.update = { f in

@@ -6,12 +6,39 @@ import Foundation
 /// recorded one undo step per gesture (`InspectorEditRecorder`), a remove button per component
 /// (`RemoveComponentCommand`) and "Add Component" (`AddComponentCommand` with the catalog's
 /// default value). With several entities selected it shows the primary one only.
+/// Dropdown options for asset-key fields in the inspector: `MeshRenderer.mesh` lists the
+/// registered meshes and `MeshRenderer.material` the registered materials.
+@MainActor
+public struct AssetChoices {
+    public var meshes: () -> [String]
+    public var materials: () -> [String]
+
+    public init(meshes: @escaping () -> [String], materials: @escaping () -> [String]) {
+        self.meshes = meshes
+        self.materials = materials
+    }
+
+    /// The options for a field, or nil when it isn't an asset key (it stays a text field).
+    public func options(component: String, path: String) -> [String]? {
+        guard component == MeshRenderer.componentName else { return nil }
+        switch path {
+        case "mesh": return meshes()
+        case "material": return materials()
+        default: return nil
+        }
+    }
+}
+
 @MainActor
 public final class InspectorPanel {
     public let session: EditorSession
     public let grid: PropertyGrid
     public let recorder: InspectorEditRecorder
     public let view: VStack
+    /// Turns asset-key fields into dropdowns of the registered keys (see `AssetChoices`).
+    public var assetChoices: AssetChoices? {
+        didSet { grid.stringChoices = assetChoices.map { choices in { choices.options(component: $0, path: $1) } } }
+    }
 
     private let nameField = TextField(placeholder: "Name", name: "entityName")
     private let idLabel = Label("", role: .caption, name: "entityID")

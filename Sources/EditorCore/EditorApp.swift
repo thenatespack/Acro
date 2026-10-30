@@ -118,6 +118,9 @@ public final class EditorApp: Game {
             return p
         }
         inspector = InspectorPanel(session: session)
+        inspector.assetChoices = AssetChoices(
+            meshes: { [unowned self] in sceneRenderer.prep.meshes.keys },
+            materials: { [unowned self] in sceneRenderer.prep.materials.keys })
         console = ConsolePanel(log: session.log)
         console.showsTime = !options.deterministic
 
