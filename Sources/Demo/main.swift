@@ -37,6 +37,10 @@ final class DemoGame: Game {
             + "\(engine.device.backend.rawValue) on \(engine.device.deviceName)"
         resolutionIndex = Self.resolutionCycle.firstIndex(of: engine.renderResolution)
         try openScene(initialScene)
+        // ENGINE_MCP=1: the entity tools act on the open scene's World, whichever property holds it.
+        engine.mcp?.world = { [unowned self] in
+            scene.map { Mirror(reflecting: $0).children.lazy.compactMap { $0.value as? World }.first } ?? nil
+        }
     }
 
     private func openScene(_ index: Int, input: Input? = nil) throws {

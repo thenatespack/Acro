@@ -28,6 +28,10 @@ public struct EngineConfig: Sendable {
     /// Cap the frame rate at the display refresh rate (overridable with `ENGINE_VSYNC=0|1`).
     /// Turn it off to see how fast a scene really runs.
     public var vsync: Bool
+    /// Host an MCP server so AI clients can pause, step, drive (injected input), screenshot and
+    /// inspect the game (see GameMCP.swift). Off by default; `ENGINE_MCP=1` (stdio),
+    /// `ENGINE_MCP=http[:<port>]` or `ENGINE_MCP=0` override it.
+    public var mcp: EngineMCPMode = .off
 
     public init(
         title: String = "Game",
@@ -268,6 +272,31 @@ public final class Engine {
     }
     private var audioSystem: AudioSystem?
 
+    /// Scripted input (`InputStep`s) played into `input` over game time, after the window's
+    /// events each frame (see InputInjection.swift). Waits while paused.
+    public let inputPlayer = InputPlayer()
+    /// Multiplies the dt `Game.update` and `world` get (0 to 100). Audio and `time` keep real time.
+    public var timeScale: Double = 1 {
+        didSet { timeScale = min(max(timeScale.isFinite ? timeScale : 1, 0), 100) }
+    }
+    /// While paused `Game.update` and `world` get dt 0 and `inputPlayer` waits; the window
+    /// keeps rendering and handling events. `step(frames:)` runs frames one at a time.
+    public var isPaused = false
+    /// Frames `step(frames:)` still has to run.
+    public private(set) var pendingSteps = 0
+    /// Game time: the scaled dt summed over the frames that weren't paused.
+    public private(set) var gameTime: Double = 0
+    public private(set) var gameFrameCount = 0
+    /// The MCP server, when `EngineConfig.mcp` or `ENGINE_MCP` turned it on.
+    public private(set) var mcp: GameMCP?
+
+    /// Pauses and runs `frames` frames at a fixed 1/60 s (the world's fixed step, when there is
+    /// a world), one per rendered frame, so stepping is deterministic.
+    public func step(frames: Int = 1) {
+        isPaused = true
+        pendingSteps += max(frames, 0)
+    }
+
     let window: PlatformWindow
     private var overlay: DebugOverlay?
     private var uiRenderer: UIRenderer?
@@ -334,6 +363,13 @@ public final class Engine {
     }
 
     public init(config: EngineConfig = EngineConfig()) throws {
+        // First: a stdio transport claims standard output before anything is printed.
+        let mcpMode = EngineMCPMode.fromEnvironment() ?? config.mcp
+        if mcpMode != .off {
+            let mcp = GameMCP()
+            mcp.start(mcpMode)
+            self.mcp = mcp
+        }
         let env = ProcessInfo.processInfo.environment["ENGINE_BACKEND"]?.lowercased()
         let backend = config.backend ?? env.flatMap(GraphicsBackend.init(rawValue:)) ?? .platformDefault
         clearColor = config.clearColor
@@ -398,6 +434,7 @@ public final class Engine {
         // Screenshots normally capture the scene at render resolution; `window` captures the
         // upscaled image the window shows instead.
         device.captureWindow = ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT_SOURCE"]?.lowercased() == "window"
+        mcp?.engine = self
     }
 
     /// Why `resolution` can't be used on this device, or nil if it can.
@@ -415,6 +452,7 @@ public final class Engine {
     /// Runs the main loop until the window closes or `quit()` is called.
     public func run(_ game: Game) throws {
         defer {
+            mcp?.stop()
             audioSystem?.shutdown()
             device.waitIdle()
             device.shutdown()
@@ -446,6 +484,15 @@ public final class Engine {
         while !window.shouldClose {
             input.beginFrame()
             window.pollEvents(into: automatedScreenshot == nil ? input : ignoredInput)
+            // MCP requests (they may inject input, pause or step), then this frame's injected input.
+            if let mcp {
+                mcp.pump()
+                if mcp.stdioClientDisconnected { quit() }
+            }
+            let stepping = isPaused && pendingSteps > 0
+            if stepping { pendingSteps -= 1 }
+            let advancing = !isPaused || stepping
+            if advancing { inputPlayer.apply(to: input) }
             input.endEvents()
 
             let now = clock.now
@@ -459,14 +506,21 @@ public final class Engine {
             } else {
                 time = Self.seconds(now - start)
             }
+            // The game's dt: scaled, 0 while paused, a fixed step when stepping.
+            let gameDt = stepping ? world?.fixedTimestep ?? 1.0 / 60.0 : advancing ? dt * timeScale : 0
 
             if let key = debugOverlayKey, input.wasPressed(key) { showDebugOverlay.toggle() }
 
             ui.beginFrame(framebufferSize: window.framebufferSize, scale: window.contentScale)
             debugDraw.beginFrame(dt: Float(dt))
             let updateStart = clock.now
-            game.update(engine: self, dt: Float(dt))
-            world?.update(dt: dt)
+            game.update(engine: self, dt: Float(gameDt))
+            world?.update(dt: gameDt)
+            if advancing {
+                inputPlayer.advance(by: gameDt)
+                gameTime += gameDt
+                gameFrameCount += 1
+            }
             audioSystem?.update(dt: dt)
             if automatedScreenshot == nil {
                 // Screenshot runs leave the user's cursor alone (their input is ignored anyway).

@@ -9,6 +9,8 @@ import Engine
 /// | Cmd/Ctrl+S | `scene.save` |
 /// | Cmd/Ctrl+D | `entity.duplicate` |
 /// | Cmd/Ctrl+P | `play.toggle` |
+/// | Shift+Cmd/Ctrl+P | `play.pause` (pause / resume) |
+/// | Alt+Cmd/Ctrl+P | `play.step` (one frame) |
 /// | Shift+Cmd/Ctrl+I | `asset.import` (into the current assets folder) |
 /// | Delete or Backspace (also with Cmd/Ctrl) | `entity.delete` |
 /// | F | `view.frameSelection` |
@@ -39,7 +41,9 @@ public struct EditorShortcuts: Sendable {
         case .y where !isMac && mods == .control: action = .redo
         case .s where shortcut && !shift: action = .save
         case .d where shortcut && !shift: action = .duplicate
-        case .p where shortcut && !shift: action = .togglePlay
+        case .p where shortcut && mods.contains(.alt): action = .step
+        case .p where shortcut && shift: action = .togglePause
+        case .p where shortcut: action = .togglePlay
         case .i where shortcut && shift: action = .importAsset
         case .delete, .backspace: action = plain || mods == shortcutModifier ? .delete : nil
         case .f where plain: action = .focusSelection
@@ -54,6 +58,7 @@ public struct EditorShortcuts: Sendable {
     /// Every command with a shortcut.
     public static let boundCommands: [CommandID] = [
         .undo, .redo, .save, .duplicate, .delete, .focusSelection, .clearSelection, .togglePlay, .importAsset,
+        .togglePause, .step,
     ]
 
     /// The key press that runs `command` (its first binding), for showing in tooltips; nil when
@@ -65,6 +70,8 @@ public struct EditorShortcuts: Sendable {
         case .save: KeyEvent(key: .s, modifiers: shortcutModifier)
         case .duplicate: KeyEvent(key: .d, modifiers: shortcutModifier)
         case .togglePlay: KeyEvent(key: .p, modifiers: shortcutModifier)
+        case .togglePause: KeyEvent(key: .p, modifiers: [shortcutModifier, .shift])
+        case .step: KeyEvent(key: .p, modifiers: [shortcutModifier, .alt])
         case .importAsset: KeyEvent(key: .i, modifiers: [shortcutModifier, .shift])
         case .delete: KeyEvent(key: .delete)
         case .focusSelection: KeyEvent(key: .f)

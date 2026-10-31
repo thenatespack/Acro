@@ -86,7 +86,10 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
         with scene.hierarchy, entity.find, entity.get and component.types (or the editor://scene, \
         editor://entity/{id} and editor://scene/file resources), the project's assets from editor://assets and the \
         console with log.read. See it with view.screenshot (viewport, game camera, any camera, window, panel, \
-        asset thumbnail) and point at it with view.pick (a pixel of a screenshot) or scene.raycast. Entities are \
+        asset thumbnail) and point at it with view.pick (a pixel of a screenshot) or scene.raycast. Playtest with \
+        play.start {paused: true}, input.inject (keys, mouse, text over game time; the KeyboardMover component \
+        walks with WASD), play.step {frames} (deterministic), view.screenshot {source: "game"} and play.stop, which \
+        restores the scene; while playing the entity tools read and edit the live world. Entities are \
         named by 32-hex-digit ids, assets by "asset:<id>[#<object>]" references or paths under Assets/; vectors \
         are [x, y, z] arrays and rotations quaternions [x, y, z, w].
         """

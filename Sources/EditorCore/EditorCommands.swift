@@ -13,7 +13,9 @@ public enum BuiltinCommands {
     public static let all: [any EditorCommand.Type] = [
         SceneNewCommand.self, SceneOpenCommand.self, SceneSaveCommand.self, SceneSaveAsCommand.self,
         EditUndoCommand.self, EditRedoCommand.self, EditBatchCommand.self, EditBeginBatchCommand.self, EditEndBatchCommand.self,
-        PlayStartCommand.self, PlayStopCommand.self, PlayToggleCommand.self,
+        PlayStartCommand.self, PlayStopCommand.self, PlayToggleCommand.self, PlayPauseCommand.self, PlayStepCommand.self,
+        PlaySetTimeScaleCommand.self, PlayStateCommand.self, ViewGameCameraCommand.self,
+        InputInjectCommand.self, InputClearCommand.self, InputStateCommand.self,
         ToolSetCommand.self,
         ProjectOpenCommand.self, ProjectNewCommand.self,
         LayoutResetCommand.self, ViewFrameSelectionCommand.self,
@@ -40,6 +42,9 @@ extension CommandID {
     public static let focusSelection: CommandID = "view.frameSelection"
     public static let clearSelection: CommandID = "selection.clear"
     public static let togglePlay: CommandID = "play.toggle"
+    public static let togglePause: CommandID = "play.pause"
+    public static let step: CommandID = "play.step"
+    public static let toggleGameCamera: CommandID = "view.gameCamera"
     public static let importAsset: CommandID = "asset.import"
 }
 
@@ -160,15 +165,21 @@ private func undoBlockedReason(_ session: EditorSession) -> String? {
 // MARK: Play mode
 
 public enum PlayStartCommand: EditorCommand {
+    public struct Arguments: Codable, Equatable, Sendable {
+        /// Start paused, before the first frame (then play.step runs frames deterministically).
+        public var paused: Bool?
+        public init(paused: Bool? = nil) { self.paused = paused }
+    }
+
     public static let id: CommandID = "play.start"
     public static let title = "Play"
-    public static let doc = "Snapshots the scene and runs its systems; edits while playing are discarded on stop."
+    public static let doc = "Snapshots the scene and runs its systems (with physics when it has colliders); edits while playing apply to the live world and are discarded on stop. `paused` starts paused, for play.step."
     public static let isIdempotent = true
     public static func isAvailable(in session: EditorSession) -> Bool { !session.isPlaying }
     public static func unavailableReason(in session: EditorSession) -> String? { "already playing" }
-    public static func run(_ arguments: NoArguments, in session: EditorSession) throws -> NoResult {
-        session.play()
-        return NoResult()
+    public static func run(_ arguments: Arguments, in session: EditorSession) throws -> PlayStateResult {
+        session.play(paused: arguments.paused ?? false)
+        return session.playStateResult
     }
 }
 

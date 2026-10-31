@@ -17,7 +17,8 @@ let vulkanEnabled: Bool = {
 let vulkanEnabled = true
 #endif
 
-var engineDependencies: [Target.Dependency] = ["CZlib", "CStbTrueType", "CStbImage", "CAudio"]
+// EngineMCP (Foundation only) lets any game host an MCP server (`EngineConfig.mcp`).
+var engineDependencies: [Target.Dependency] = ["CZlib", "CStbTrueType", "CStbImage", "CAudio", "EngineMCP"]
 var engineSwiftSettings: [SwiftSetting] = []
 var vulkanTargets: [Target] = []
 

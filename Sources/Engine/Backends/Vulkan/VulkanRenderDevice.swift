@@ -1562,6 +1562,7 @@ final class VulkanRenderDevice: RenderDevice {
         vkDestroyRenderPass(device, depthRenderPass, nil)
         vkDestroyDevice(device, nil)
         vkDestroySurfaceKHR(instance, surface, nil)
+        VulkanDebugMessenger.uninstall(from: instance)
         vkDestroyInstance(instance, nil)
     }
 
@@ -1590,6 +1591,8 @@ final class VulkanRenderDevice: RenderDevice {
             }
             if availableLayers.contains(where: { vkString($0.layerName) == "VK_LAYER_KHRONOS_validation" }) {
                 layers.append("VK_LAYER_KHRONOS_validation")
+                // Messages go to EngineLog (the editor's console) through a debug messenger.
+                extensions.append(VulkanDebugMessenger.extensionName)
             } else {
                 print("[Vulkan] ENGINE_VULKAN_VALIDATION=1 but VK_LAYER_KHRONOS_validation is not installed")
             }
@@ -1614,6 +1617,7 @@ final class VulkanRenderDevice: RenderDevice {
 
         var instance: VkInstance?
         try vkCheck(vkCreateInstance(&info, nil, &instance), "vkCreateInstance")
+        if !layers.isEmpty { VulkanDebugMessenger.install(on: instance!) }
         return instance!
     }
 

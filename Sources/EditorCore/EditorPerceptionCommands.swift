@@ -539,7 +539,7 @@ public enum DiagnosticsGetCommand: EditorCommand {
         /// Assets still importing in the background.
         public var importing: Int
         /// Graphics validation messages that reached the console (Vulkan's validation layer,
-        /// with ENGINE_VULKAN_VALIDATION=1; it also prints to standard output).
+        /// with ENGINE_VULKAN_VALIDATION=1, through `EngineLog`).
         public var validation: [LogLine]
         /// Whether ENGINE_VULKAN_VALIDATION=1 is set.
         public var validationEnabled: Bool

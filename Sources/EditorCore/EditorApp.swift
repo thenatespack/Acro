@@ -116,6 +116,14 @@ public final class EditorApp: Game, EditorHost {
     /// Screenshot targets rendered this frame, kept until the next one.
     private var captureTargets: [RenderTarget] = []
     private var lastStats: EditorStatsSnapshot?
+    /// The viewport shows the game camera this frame (playing, `showsGameCamera`, a Camera entity).
+    private var gameViewActive = false
+    /// Real keys and buttons forwarded to the game as down (game view).
+    private var forwardedKeys = Set<Key>()
+    private var forwardedButtons = Set<MouseButton>()
+    private var forwardedPointer: Vec2?
+    /// Engine messages (Vulkan validation) on their way to the console.
+    private let engineMessages = EngineMessageInbox()
 
     public init(options: EditorOptions) {
         self.options = options
@@ -139,6 +147,7 @@ public final class EditorApp: Game, EditorHost {
 
     public func setup(engine: Engine) throws {
         self.engine = engine
+        engineMessages.install()
         sceneRenderer = try SceneRenderer(device: engine.device, quality: engine.quality)
         try sceneRenderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(0.6, 0.6, 0.58, 1), checker: true, specular: 0.1),
                                            key: StarterScene.checkerMaterial.key)
@@ -265,7 +274,7 @@ public final class EditorApp: Game, EditorHost {
         meshBoundsCache.removeAll()
         // Rebuilding the dropdowns resets the inspector's grid, so only when the choices changed
         // (not for every reimport, such as a material edited live).
-        let keys = session.assets.map { $0.references(of: .mesh) + $0.references(of: .material) } ?? []
+        let keys = session.assets.map { $0.references(of: .mesh) + $0.references(of: .material) + $0.references(of: .texture) } ?? []
         if keys != shownAssetKeys || session.assets !== shownAssets {
             shownAssetKeys = keys
             shownAssets = session.assets
@@ -322,6 +331,7 @@ public final class EditorApp: Game, EditorHost {
     public func update(engine: Engine, dt: Float) {
         let input = engine.input
         session.log.time = engine.time
+        engineMessages.drain(into: session.log)
         // Requests from MCP clients run here, between frames, before the UI reads the session.
         if let mcp {
             mcp.pump()
@@ -366,7 +376,7 @@ public final class EditorApp: Game, EditorHost {
         resizeTarget(scale: engine.ui.scale)
         buildGizmos()
         viewportWidget.texture = target.texture
-        viewportWidget.caption = "Perspective · \(session.tool.title)" + (session.isPlaying ? " · Playing" : "")
+        viewportWidget.caption = playCaption()
         viewportWidget.isPlaying = session.isPlaying
         ui.draw(into: engine.ui)
         drawAssetDrag(into: engine.ui)
@@ -455,9 +465,76 @@ public final class EditorApp: Game, EditorHost {
 
     // MARK: Viewport
 
+    /// The viewport's caption: the camera and tool, and the play state.
+    private func playCaption() -> String {
+        guard session.isPlaying else { return "Perspective · \(session.tool.title)" }
+        let state = session.isPaused ? "Paused · frame \(session.playFrame)" : "Playing"
+            + (session.timeScale != 1 ? " · \(Toolbar.timeScaleTitle(session.timeScale))" : "")
+        guard gameViewActive, let camera = RenderPrep.findCamera(in: session.world)?.entity else {
+            return "Perspective · \(session.tool.title) · \(state)"
+        }
+        return "Game · \(session.displayName(of: camera)) · \(state)"
+    }
+
+    /// The scene's game camera view at the viewport's aspect, when the viewport should show it.
+    private func gameView(aspect: Float) -> SceneView? {
+        guard session.isPlaying, session.showsGameCamera,
+              let camera = RenderPrep.findCamera(in: session.world)?.entity else { return nil }
+        return SceneView(camera: camera, in: session.world, aspect: aspect)
+    }
+
+    /// Game view: the keyboard (unless the UI is typing) and the mouse over the viewport go to
+    /// the game's input as events, positions relative to the viewport. Presses start only over
+    /// the viewport; what is down stays down until released.
+    private func forwardInputToGame(_ input: Input, keyboardFree: Bool) {
+        let rect = viewportWidget.frame
+        let hovered = viewportWidget.isEffectivelyVisible && rect.contains(input.mousePosition) && !ui.wantsPointer
+        var events: [InputEvent] = []
+        for key in Key.allCases {
+            let down = keyboardFree && input.isDown(key)
+            guard down != forwardedKeys.contains(key) else { continue }
+            if down { forwardedKeys.insert(key) } else { forwardedKeys.remove(key) }
+            events.append(.key(key, down: down))
+        }
+        for button in MouseButton.allCases {
+            let down = input.isDown(button) && (forwardedButtons.contains(button) || (hovered && input.wasPressed(button)))
+            guard down != forwardedButtons.contains(button) else { continue }
+            if down { forwardedButtons.insert(button) } else { forwardedButtons.remove(button) }
+            events.append(.button(button, down: down))
+        }
+        if hovered || !forwardedButtons.isEmpty {
+            let local = input.mousePosition - Vec2(rect.x, rect.y)
+            if local != forwardedPointer {
+                forwardedPointer = local
+                events.append(.mouseMove(to: local))
+            }
+            if hovered && input.scrollDelta != .zero { events.append(.scroll(input.scrollDelta)) }
+        }
+        session.forwardToGame(events)
+    }
+
+    /// Lets go of what game view forwarded (it was turned off, or play stopped).
+    private func releaseForwardedInput() {
+        guard !forwardedKeys.isEmpty || !forwardedButtons.isEmpty || forwardedPointer != nil else { return }
+        session.forwardToGame(forwardedKeys.map { .key($0, down: false) } + forwardedButtons.map { .button($0, down: false) })
+        forwardedKeys.removeAll()
+        forwardedButtons.removeAll()
+        forwardedPointer = nil
+    }
+
     private func updateViewport(engine: Engine, dt: Float, keyboardFree: Bool) {
         let input = engine.input
         viewport.rect = viewportWidget.isEffectivelyVisible ? viewportWidget.frame : .zero
+        if gameView(aspect: sizer.aspectRatio) != nil {
+            // The game has the viewport: no editor camera, picking or gizmos.
+            forwardInputToGame(input, keyboardFree: keyboardFree)
+            if captureRequested {
+                input.isMouseCaptured = false
+                captureRequested = false
+            }
+            return
+        }
+        releaseForwardedInput()
         var frameInput = ViewportInput(mousePosition: input.mousePosition)
         frameInput.mouseDelta = input.mouseDelta
         for button in MouseButton.allCases {
@@ -492,7 +569,13 @@ public final class EditorApp: Game, EditorHost {
                 session.log.error("Resizing the viewport to \(size.width)x\(size.height) failed: \(error)")
             }
         }
-        currentView = viewport.view(aspect: target.aspectRatio, clearColor: viewportClearColor())
+        if let game = gameView(aspect: target.aspectRatio) {
+            currentView = game
+            gameViewActive = true
+        } else {
+            currentView = viewport.view(aspect: target.aspectRatio, clearColor: viewportClearColor())
+            gameViewActive = false
+        }
     }
 
     private func viewportClearColor() -> Vec4 { session.viewportClearColor }
@@ -516,8 +599,10 @@ public final class EditorApp: Game, EditorHost {
     private func buildGizmos() {
         guard let view = currentView else { return }
         let context = toolContext(view: view)
-        fillGizmos(gizmos, context: context, grid: true, gizmos: true)
+        // The game view shows what the game camera sees, nothing of the editor's.
+        fillGizmos(gizmos, context: context, grid: !gameViewActive, gizmos: !gameViewActive)
         toolDraw.removeAll()
+        guard !gameViewActive else { return }
         for tool in viewport.tools { tool.draw(into: toolDraw, context: context) }
     }
 
@@ -562,6 +647,10 @@ public final class EditorApp: Game, EditorHost {
         guard let view = currentView, sizer.width > 0 else { return }
         sceneRenderer.beginViews(world: session.world, frame: frame, shadowFocus: view)
         let world = session.world
+        guard !gameViewActive else {
+            sceneRenderer.renderView(view, into: target, frame: frame, debugDraw: gizmos)
+            return
+        }
         let debugView = DebugView(view: view.view, projection: view.projection,
                                   viewportSize: (target.width, target.height), reversedZ: view.reversedZ)
         outline.renderView(view, sceneRenderer: sceneRenderer, world: world, selection: session.selection.entities(in: world),
@@ -766,7 +855,11 @@ extension EditorApp {
                 frame.readBack(target) { image in job.future.resolve(image) }
                 continue
             }
-            let request = job.request
+            var request = job.request
+            if request.view == nil && gameViewActive {
+                // The viewport shows the game camera: so does its screenshot, without editor overlays.
+                (request.grid, request.gizmos, request.outline) = (false, false, false)
+            }
             guard let view = request.view ?? currentView else {
                 job.future.fail(CommandError.failed("The viewport isn't visible"))
                 continue
@@ -890,6 +983,12 @@ final class Toolbar {
     private let undoButton: Button
     private let redoButton: Button
     private let playButton: Button
+    private let pauseButton: Button
+    private let stepButton: Button
+    private let gameViewButton: Button
+    private let timeScale: Dropdown
+    /// The time scales the toolbar offers.
+    static let timeScales: [Double] = [0.1, 0.25, 0.5, 1, 2, 4]
     private let toolButtons: [(EditorTool, Button)]
     private let resetButton: Button
     /// Buttons enabled by their command's availability.
@@ -902,10 +1001,23 @@ final class Toolbar {
         undoButton = Button("Undo", name: "undo") { session.run(EditUndoCommand.self) }
         redoButton = Button("Redo", name: "redo") { session.run(EditRedoCommand.self) }
         playButton = Button("Play", name: "play") { session.run(PlayToggleCommand.self) }
+        pauseButton = Button("Pause", name: "pause") { session.run(PlayPauseCommand.self, .init()) }
+        stepButton = Button("Step", name: "step") { session.run(PlayStepCommand.self, .init()) }
+        gameViewButton = Button("Game", name: "gameView") { session.run(ViewGameCameraCommand.self, .init()) }
+        timeScale = Dropdown(options: Self.timeScales.map(Self.timeScaleTitle), selectedIndex: Self.timeScales.firstIndex(of: 1) ?? 0,
+                             name: "timeScale") { index in
+            session.run(PlaySetTimeScaleCommand.self, .init(scale: Self.timeScales[index]))
+        }
+        timeScale.tooltip = "Play speed (time scale)"
+        timeScale.style.width = 64
+        gameViewButton.tooltip = "Show the scene's camera in the viewport while playing, and send it the keyboard and mouse"
         toolButtons = EditorTool.allCases.map { tool in
             (tool, Button(tool.title, name: tool.rawValue) { session.run(ToolSetCommand.self, .init(tool: tool)) })
         }
         path.style.width = 220
+        // The path fields give way first when the window is narrow.
+        path.style.shrink = 1
+        path.style.minWidth = 72
         let shortcuts = app.shortcuts
         let newButton = Button("New", name: "new") { session.run(SceneNewCommand.self) }
         let openButton = Button("Open", name: "open") { [unowned app] in app.open() }
@@ -918,6 +1030,8 @@ final class Toolbar {
         newProjectButton.tooltip = "Create a project (Project.json, Assets/, Library/) at the project path"
         projectPath.tooltip = "Project folder, used by Open Project and New Project"
         projectPath.style.width = 160
+        projectPath.style.shrink = 1
+        projectPath.style.minWidth = 64
         newButton.tooltip = "Start a new scene"
         openButton.tooltip = "Open the scene file at the path"
         saveButton.tooltip = shortcuts.tooltip("Save the scene", for: .save)
@@ -935,7 +1049,7 @@ final class Toolbar {
             Separator(.vertical),
             undoButton, redoButton,
             Separator(.vertical),
-            playButton,
+            playButton, pauseButton, stepButton, timeScale, gameViewButton,
             Separator(.vertical),
         ] + toolButtons.map(\.1) + [
             Separator(.vertical),
@@ -959,12 +1073,24 @@ final class Toolbar {
         redoButton.tooltip = shortcuts.tooltip(undo.redoTitle, for: .redo)
         playButton.tooltip = shortcuts.tooltip(session.isPlaying ? "Stop and restore the scene" : "Play the scene", for: .togglePlay)
         playButton.role = session.isPlaying ? .primary : .normal
+        set(pauseButton, title: session.isPaused ? "Resume" : "Pause", enabled: session.isPlaying)
+        set(stepButton, title: stepButton.title, enabled: session.isPlaying)
+        pauseButton.tooltip = shortcuts.tooltip(session.isPaused ? "Resume the game" : "Pause the game", for: .togglePause)
+        stepButton.tooltip = shortcuts.tooltip("Pause and run one frame", for: .step)
+        let gameRole: Button.Role = session.showsGameCamera ? .primary : .normal
+        if gameViewButton.role != gameRole { gameViewButton.role = gameRole }
+        if let index = Self.timeScales.firstIndex(of: session.timeScale), timeScale.selectedIndex != index { timeScale.select(index) }
         for (tool, button) in toolButtons {
             let role: Button.Role = tool == session.tool ? .primary : .normal
             if button.role != role { button.role = role }
         }
         let title = session.document.title + (session.isPlaying ? " (playing)" : "")
         if titleLabel.text != title { titleLabel.text = title }
+    }
+
+    /// "0.5×", "1×", "2×".
+    static func timeScaleTitle(_ scale: Double) -> String {
+        (scale == scale.rounded() ? String(Int(scale)) : String(scale)) + "×"
     }
 
     private func set(_ button: Button, title: String, enabled: Bool) {
