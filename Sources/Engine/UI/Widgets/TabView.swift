@@ -20,6 +20,8 @@ public final class DockPanel {
     public var drawsBackground = true
     /// Shown when hovering the tab's title; the full title appears instead when the tab cuts it off.
     public var tooltip: String?
+    /// An icon before the tab's title.
+    public var icon: VectorIcon? { didSet { if icon != oldValue { owner?.setNeedsLayout() } } }
     /// Called after the user closes the panel (close button, middle click, `DockSpace.closePanel`).
     public var onClose: (() -> Void)?
     /// The tab view currently showing it.
@@ -236,7 +238,16 @@ public final class TabView: Widget {
 
     private func naturalWidth(_ panel: DockPanel, theme: UITheme) -> Float {
         let text = (cachedLayout(panel.title, size: theme.fontSize).width * scale).rounded(.up) / scale
-        return min(max(text + 2 * theme.controlPaddingX + (panel.isClosable ? 20 : 0), minTabWidth), maxTabWidth)
+        return min(max(text + 2 * theme.controlPaddingX + (panel.isClosable ? 20 : 0) + iconSpace(panel, theme: theme), minTabWidth),
+                   maxTabWidth)
+    }
+
+    /// A tab icon's edge (a little under the theme's, to sit in the bar).
+    private func iconEdge(_ theme: UITheme) -> Float { theme.iconSize - 2 }
+
+    /// Room an icon takes before the title (icon and gap), 0 without one.
+    private func iconSpace(_ panel: DockPanel, theme: UITheme) -> Float {
+        panel.icon == nil ? 0 : iconEdge(theme) + 6
     }
 
     // MARK: Layout
@@ -440,8 +451,8 @@ public final class TabView: Widget {
     private func titleRect(_ i: Int, in rect: UIRect, showClose: Bool) -> UIRect {
         let theme = theme
         let textRight = showClose ? (closeButtonRect(i)?.x ?? rect.maxX) - 2 : rect.maxX - theme.controlPaddingX
-        return UIRect(x: rect.x + theme.controlPaddingX, y: rect.y, width: max(0, textRight - rect.x - theme.controlPaddingX),
-                      height: rect.height)
+        let x = rect.x + theme.controlPaddingX + iconSpace(tabs[i], theme: theme)
+        return UIRect(x: x, y: rect.y, width: max(0, textRight - x), height: rect.height)
     }
 
     private func drawTab(_ i: Int, in rect: UIRect, list: UIDrawList, theme: UITheme, hovered: Bool) {
@@ -468,6 +479,14 @@ public final class TabView: Widget {
         let textRect = titleRect(i, in: rect, showClose: showClose)
         let layout = cachedLayout(panel.title, size: theme.fontSize)
         let color = selected ? theme.textColor : theme.secondaryTextColor
+        if let icon = panel.icon {
+            let edge = iconEdge(theme)
+            let iconRect = UIRect(x: rect.x + theme.controlPaddingX, y: rect.center.y + 1 - edge / 2, width: edge, height: edge)
+            if iconRect.maxX <= textRect.maxX + 1 {
+                list.drawIcon(icon, in: iconRect, color: isEffectivelyEnabled ? (selected ? theme.accent.mixed(with: theme.textColor, 0.35) : color)
+                                                                              : theme.disabledTextColor)
+            }
+        }
         drawEllipsized(panel.title, layout: layout, size: theme.fontSize, in: textRect,
                        color: isEffectivelyEnabled ? color : theme.disabledTextColor, list: list)
         if showClose, let close {

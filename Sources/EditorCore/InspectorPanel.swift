@@ -109,6 +109,8 @@ public final class InspectorPanel {
     public let prefabView = VStack(spacing: 4, name: "prefabSection")
 
     private let nameField = TextField(placeholder: "Name", name: "entityName")
+    /// The entity's main component's icon, before its name.
+    private let entityIcon = IconView(nil, name: "entityIcon")
     private let idLabel = Label("", role: .caption, name: "entityID")
     private let subtitle = Label("", role: .caption, name: "selectionCount")
     private let emptyLabel = Label("Nothing selected", role: .secondary, name: "empty")
@@ -131,6 +133,8 @@ public final class InspectorPanel {
         view = VStack(spacing: 6, padding: EdgeInsets(8), name: "inspectorPanel")
         addButton = Button("Add Component", name: "addComponent")
         addButton.tooltip = "Add a component to the selected entity"
+        addButton.icon = EditorIcons.named("plus")
+        grid.componentIcon = { EditorIcons.component($0) }
         scroll = ScrollView(grid, name: "inspectorScroll")
 
         grid.appliesEditsToWorld = false
@@ -156,7 +160,7 @@ public final class InspectorPanel {
         nameField.onEndEditing = { [unowned self] text in commitName(text) }
         addButton.action = { [unowned self] in showAddMenu() }
 
-        let header = HStack(spacing: 6, [nameField])
+        let header = HStack(spacing: 6, alignment: .center, [entityIcon, nameField])
         assetView.view.style.grow = 1
         assetView.view.style.shrink = 1
         prefabView.isHidden = true
@@ -174,7 +178,7 @@ public final class InspectorPanel {
         assetView.show(asset)
         let entity = asset == nil ? session.selection.primaryEntity(in: world) : nil
         if asset != nil {
-            for widget in [nameField, idLabel, subtitle, scroll, addButton, emptyLabel, prefabView] as [Widget] where !widget.isHidden {
+            for widget in [entityIcon, nameField, idLabel, subtitle, scroll, addButton, emptyLabel, prefabView] as [Widget] where !widget.isHidden {
                 widget.isHidden = true
             }
             if shownEntity != nil {
@@ -200,11 +204,19 @@ public final class InspectorPanel {
         }
         refreshPrefab()
         let hasEntity = entity != nil
-        for widget in [nameField, idLabel, subtitle, scroll, addButton] as [Widget] where widget.isHidden == hasEntity {
+        for widget in [entityIcon, nameField, idLabel, subtitle, scroll, addButton] as [Widget] where widget.isHidden == hasEntity {
             widget.isHidden = !hasEntity
         }
         emptyLabel.isHidden = hasEntity
         guard let entity else { return }
+        let (kind, component) = EditorIcons.entityKind(entity, in: world)
+        let icon = EditorIcons.entityIcon(kind: kind, component: component)
+        let iconColor: UIColor? = kind == .prefab ? EditorIcons.prefabColor(theme: view.theme) : nil
+        if entityIcon.color != iconColor { entityIcon.color = iconColor }
+        if entityIcon.icon != icon {
+            entityIcon.icon = icon
+            entityIcon.tooltip = component ?? (kind == .group ? "Group" : "Empty entity")
+        }
         if !nameField.isFocused {
             let name = world.get(Name.self, for: entity)?.value ?? ""
             if nameField.text != name { nameField.text = name }
@@ -376,6 +388,7 @@ public final class InspectorPanel {
             return
         }
         let menu = PopupMenu(items: names, anchor: addButton)
+        menu.itemIcons = names.map { EditorIcons.component($0) }
         menu.command = ComponentAddCommand.id.rawValue
         menu.onSelect = { [unowned self] index in session.run(ComponentAddCommand.self, .init(entity: id, component: names[index])) }
         context.presentOverlay(menu)

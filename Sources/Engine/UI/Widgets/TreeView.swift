@@ -9,6 +9,11 @@ public final class TreeNode {
     public var isExpanded: Bool
     /// Anything the owner wants to attach (an entity, an asset…).
     public var userData: Any?
+    /// An icon before the title (`theme.iconSize`). Set it before the tree reloads, or call
+    /// `setNeedsDisplay` on the tree after changing it.
+    public var icon: VectorIcon?
+    /// The icon's color; nil uses the secondary text color. Selected rows use the text color.
+    public var iconColor: UIColor?
 
     public init(_ title: String, isExpanded: Bool = false, children: [TreeNode] = [], userData: Any? = nil) {
         self.title = title
@@ -614,7 +619,7 @@ public final class TreeView: RowListView {
         let h = effectiveRowHeight
         let rect = UIRect(x: viewport.x, y: viewport.y + Float(row) * h - scroll.offset, width: viewport.width, height: h)
         // The field's own padding puts its text where the row's title is drawn.
-        let x = disclosureRect(row: row, in: rect).maxX + 2 - field.padding.left
+        let x = textRect(row: row, in: rect).x - field.padding.left
         field.layout(in: UIRect(x: x, y: rect.y + 1, width: max(60, viewport.maxX - x - 2), height: h - 2))
     }
 
@@ -699,8 +704,15 @@ public final class TreeView: RowListView {
                 list.drawLine(from: c + Vec2(s / 2, 0), to: c + Vec2(-s / 2, s), width: theme.iconStrokeWidth, color: arrow, cap: .round)
             }
         }
-        if node === renamingNode { return }
         let dragged = drag?.ids.contains(ObjectIdentifier(node)) ?? false
+        if let icon = node.icon {
+            let edge = theme.iconSize
+            let x = disclosure.maxX + 1
+            let tint = !isEffectivelyEnabled ? theme.disabledTextColor : selected ? theme.textColor : node.iconColor ?? theme.secondaryTextColor
+            list.drawIcon(icon, in: UIRect(x: x, y: rect.center.y - edge / 2, width: edge, height: edge),
+                          color: dragged ? tint.withAlpha(tint.a * 0.45) : tint)
+        }
+        if node === renamingNode { return }
         let layout = cachedLayout(node.title, size: theme.fontSize)
         drawEllipsized(node.title, layout: layout, size: theme.fontSize, in: textRect(row: row, in: rect),
                        color: dragged ? color.withAlpha(0.45) : color, list: list)
@@ -708,7 +720,8 @@ public final class TreeView: RowListView {
 
     private func textRect(row: Int, in rect: UIRect) -> UIRect {
         let disclosure = disclosureRect(row: row, in: rect)
-        return UIRect(x: disclosure.maxX + 2, y: rect.y, width: rect.maxX - disclosure.maxX - 2, height: rect.height)
+        let x = disclosure.maxX + 2 + (rows[row].node.icon != nil ? theme.iconSize + 5 : 0)
+        return UIRect(x: x, y: rect.y, width: max(0, rect.maxX - x), height: rect.height)
     }
 
     /// The node's full title while its row cuts it off (not while it is being renamed).

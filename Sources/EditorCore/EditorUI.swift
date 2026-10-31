@@ -108,25 +108,48 @@ final class StatusBar {
         self.app = app
         let theme = app.ui?.theme ?? UITheme()
         aiStatus.tooltip = "AI clients (MCP): what they are doing; the Activity panel lists every call"
-        view = HStack(spacing: 8, padding: EdgeInsets(horizontal: 10, vertical: 3), name: "statusBar", [Spacer(), aiStatus])
+        view = HStack(spacing: 12, padding: EdgeInsets(horizontal: 10, vertical: 3), name: "statusBar", [buildStatus, Spacer(), aiStatus])
         view.background = theme.panelBackground
         refresh()
     }
 
+    /// "Building game code…" / "Exporting the game…" while a build runs.
+    let buildStatus: Label = {
+        let label = Label("", role: .caption, name: "buildStatus")
+        label.tooltip = "Game code or a game export is being built; progress is on the console"
+        label.icon = EditorIcons.named("hammer")
+        return label
+    }()
+
     func refresh() {
         let status = Self.status(app: app)
-        let hidden = status == nil
+        let building = Self.buildingStatus(app: app)
+        let hidden = status == nil && building == nil
         if view.isHidden != hidden { view.isHidden = hidden }
+        if buildStatus.isHidden != (building == nil) { buildStatus.isHidden = building == nil }
+        if let building, buildStatus.text != building { buildStatus.text = building }
+        if aiStatus.isHidden != (status == nil) { aiStatus.isHidden = status == nil }
         guard let status else { return }
         if aiStatus.text != status.text { aiStatus.text = status.text }
+        // The icon says the state at a glance: waiting, connected, or an agent acting.
+        let icon = EditorIcons.named(status.acting ? "bot" : status.connected ? "plug-zap" : "plug")
+        if aiStatus.icon != icon { aiStatus.icon = icon }
         // The accent is a fill color; as small text it needs lifting toward the text color to read.
         let theme = app.ui.theme
         let color: UIColor? = status.acting ? theme.accent.mixed(with: theme.textColor, 0.4) : nil
         if aiStatus.color != color { aiStatus.color = color }
     }
 
+    /// What is being built, or nil.
+    static func buildingStatus(app: EditorApp) -> String? {
+        let session = app.session
+        if session.gameModule.isBusy { return "Building game code…" }
+        if session.gameExport.isBusy { return "Exporting the game…" }
+        return nil
+    }
+
     /// The status text and whether an agent is acting right now; nil without an MCP server.
-    static func status(app: EditorApp) -> (text: String, acting: Bool)? {
+    static func status(app: EditorApp) -> (text: String, acting: Bool, connected: Bool)? {
         guard let mcp = app.mcp else { return nil }
         let session = app.session
         let running = session.activity.running
@@ -145,6 +168,6 @@ final class StatusBar {
             text = "AI connected" + (names.isEmpty ? "" : " (\(names.joined(separator: ", ")))")
         }
         if session.aiSettings.readOnly { text += " · read-only" }
-        return (text, acting)
+        return (text, acting, mcp.server.clientCount > 0 || running != nil)
     }
 }

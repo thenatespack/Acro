@@ -544,6 +544,35 @@ public final class UIDrawList {
         }
     }
 
+    // MARK: Icons
+
+    /// Draws `icon` centered in `rect` (points), as a square as large as the rect's shorter
+    /// side, tinted with `color`. The icon is rasterized for exactly the pixel size it covers
+    /// under the current scale and transform (cached per size in `glyphAtlas`, so it batches
+    /// with text) and placed on whole pixels, so it is equally crisp at every backing scale and zoom.
+    public func drawIcon(_ icon: VectorIcon, in rect: UIRect, color: UIColor) {
+        guard color.a * opacity > 0 else { return }
+        let side = min(rect.width, rect.height)
+        let pixels = Int((side * pixelScale).rounded())
+        guard pixels >= 2, let info = glyphAtlas.info(for: icon, pixels: min(pixels, Self.maxIconPixels)) else { return }
+        let center = px(rect.center)
+        let size = Float(pixels)
+        let x0 = (center.x - size / 2).rounded(), y0 = (center.y - size / 2).rounded()
+        let x1 = x0 + size, y1 = y0 + size
+        let rgba = Vec4(color.r, color.g, color.b, color.a * opacity)
+        let params = Vec4(0, UIQuadMode.mask.shaderMode, 0, 0)
+        let big = Vec2(repeating: 1e5)
+        func vertex(_ x: Float, _ y: Float, _ u: Float, _ v: Float) -> UIVertex {
+            UIVertex(position: Vec2(x, y), uv: Vec2(u, v), color: rgba, local: .zero, halfSize: big, radii: .zero, params: params)
+        }
+        appendQuad(vertex(x0, y0, info.uvMin.x, info.uvMin.y), vertex(x1, y0, info.uvMax.x, info.uvMin.y),
+                   vertex(x1, y1, info.uvMax.x, info.uvMax.y), vertex(x0, y1, info.uvMin.x, info.uvMax.y),
+                   source: .glyphPage(info.page), sampler: nil)
+    }
+
+    /// Icons larger than this many pixels are rasterized at this size and scaled up.
+    public static let maxIconPixels = 256
+
     /// The `.sdf` smoothing (the distance range the edge ramps over) that antialiases glyphs of
     /// the bundled atlas over one framebuffer pixel at an em size of `pixelSize` pixels: the
     /// atlas changes by `onEdgeValue / padding` per texel (of 255), at `sdfSize` texels per em.

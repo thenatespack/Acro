@@ -378,6 +378,12 @@ public final class EditorGameModule {
             let make = component.makeDefault
             EditorComponentCatalog.register(named: component.name, make: make)
             names.append(component.name)
+            // Its icon (ABI 1.2; older modules have none and get the fallback).
+            if let icon = new.module.componentIcons[component.name] {
+                do { try EditorIcons.register(icon, forComponent: component.name) } catch {
+                    warnings.append("icon of \(component.name): \(error)")
+                }
+            }
         }
         loaded = new
         registeredNames = names
@@ -455,6 +461,7 @@ public final class EditorGameModule {
         }
         ComponentRegistry.unregister(names)
         EditorComponentCatalog.unregister(names)
+        EditorIcons.unregister(names)
         registeredNames = []
     }
 

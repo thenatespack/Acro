@@ -302,12 +302,14 @@ public final class AssetInspectorView {
         switch item {
         case .folder(let path):
             title.text = path.isEmpty ? "Assets" : String(path.split(separator: "/").last ?? "")
+            title.icon = EditorIcons.asset(.folder)
             subtitle.text = "Folder · Assets/\(path)"
             idLabel.text = ""
             return
         case .asset(let id):
             guard let record = assets.record(id) else { return missing() }
             title.text = record.fileName
+            title.icon = EditorIcons.asset(EditorIcons.assetKind(forFile: record.path))
             subtitle.text = "Assets/\(record.path)" + (record.importer.map { " · \($0) importer" } ?? " · no importer")
             idLabel.text = "ID \(id.description)"
             if let error = record.importError { content.addChild(note("Import failed: \(error)")) }
@@ -342,6 +344,7 @@ public final class AssetInspectorView {
             guard let record = assets.record(reference.asset),
                   let object = record.objects.first(where: { $0.id == reference.subAsset }) else { return missing() }
             title.text = object.name
+            title.icon = EditorIcons.asset(EditorIcons.AssetIconKind(object.kind))
             subtitle.text = "\(object.kind.rawValue.capitalized) in Assets/\(record.path)"
             idLabel.text = reference.description
             if object.kind == .material { addMaterialForm(reference) }
@@ -390,6 +393,7 @@ public final class AssetInspectorView {
         list.addChild(Label("Contents", role: .secondary))
         for object in record.objects {
             let label = Label("\(object.kind.rawValue) · \(object.name)", role: .caption)
+            label.icon = EditorIcons.asset(EditorIcons.AssetIconKind(object.kind))
             list.addChild(label)
         }
         return list
@@ -403,6 +407,7 @@ public final class AssetInspectorView {
 
     private func missing() {
         title.text = "Missing asset"
+        title.icon = EditorIcons.named("circle-x")
         subtitle.text = ""
         idLabel.text = ""
     }

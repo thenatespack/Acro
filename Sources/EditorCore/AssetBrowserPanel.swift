@@ -224,8 +224,16 @@ final class AssetGridView: Widget {
                 rect.x += (thumb.width - rect.width) / 2
             }
             list.drawImage(texture, in: snappedRect(rect), radii: UICornerRadii(listMode ? 2 : 4))
+            // The asset's kind as a badge in the thumbnail's corner (a texture, a material and a
+            // mesh can look alike).
+            if !listMode {
+                let badge = UIRect(x: thumb.x + 2, y: thumb.maxY - 20, width: 18, height: 18)
+                list.fillRect(badge, color: UIColor(0, 0, 0, 0.6), radii: UICornerRadii(9))
+                list.drawIcon(EditorIcons.asset(EditorIcons.assetKind(entry.kind, path: entry.path)), in: badge.inset(by: 3),
+                              color: UIColor(hex: 0xf4f6fa))
+            }
         } else {
-            Self.drawIcon(entry.kind, in: thumb, list: list, theme: theme)
+            Self.drawIcon(entry, in: thumb, list: list, theme: theme)
         }
         if let expander = expanderRect(index) {
             let c = expander.center
@@ -266,26 +274,14 @@ final class AssetGridView: Widget {
         list.drawText(layout, font: theme.font, at: Vec2(snap(x), snap(rect.y + (rect.height - layout.height) / 2)), color: color)
     }
 
-    /// Icons for entries without a thumbnail, drawn from shapes.
-    static func drawIcon(_ kind: AssetBrowserEntry.Kind, in rect: UIRect, list: UIDrawList, theme: UITheme) {
+    /// The icon of an entry without a thumbnail: its kind's (`EditorIcons.asset`), in the
+    /// middle of the thumbnail square.
+    static func drawIcon(_ entry: AssetBrowserEntry, in rect: UIRect, list: UIDrawList, theme: UITheme) {
+        let kind = EditorIcons.assetKind(entry.kind, path: entry.path)
         let side = min(rect.width, rect.height)
-        let c = rect.center
-        switch kind {
-        case .folder:
-            let w = side * 0.8, h = side * 0.6
-            let body = UIRect(x: c.x - w / 2, y: c.y - h / 2 + side * 0.04, width: w, height: h)
-            let tab = UIRect(x: body.x, y: body.y - side * 0.08, width: w * 0.42, height: side * 0.14)
-            let color = UIColor(hex: 0xd9a646)
-            list.fillRect(tab, color: color.withAlpha(0.85), radii: UICornerRadii(side * 0.04))
-            list.fillRect(body, color: color, radii: UICornerRadii(side * 0.06))
-        default:
-            let w = side * 0.62, h = side * 0.78
-            let page = UIRect(x: c.x - w / 2, y: c.y - h / 2, width: w, height: h)
-            list.fillRect(page, color: theme.controlBackground, radii: UICornerRadii(side * 0.05))
-            list.strokeRect(page, color: theme.controlBorder, width: 1, radii: UICornerRadii(side * 0.05))
-            let label = kind == .file ? "?" : String(kind.rawValue.prefix(1)).uppercased()
-            list.drawText(label, at: Vec2(c.x - side * 0.08, c.y - side * 0.14), size: side * 0.26, color: theme.secondaryTextColor)
-        }
+        let edge = side < 32 ? side : (side * 0.6).rounded()
+        list.drawIcon(EditorIcons.asset(kind), in: UIRect(x: rect.center.x - edge / 2, y: rect.center.y - edge / 2, width: edge, height: edge),
+                      color: EditorIcons.assetColor(kind, theme: theme))
     }
 }
 
@@ -355,7 +351,14 @@ public final class AssetBrowserPanel {
         breadcrumb.style.shrink = 1
         breadcrumb.style.width = 0
         breadcrumb.style.minWidth = 60
-        let toolbar = HStack(spacing: 6, name: "assetToolbar", [breadcrumb, search, importButton, newFolder, newMaterial, rename, delete, viewToggle])
+        // Icon-only buttons (titles stay their labels; tooltips say what they do), so the bar
+        // keeps to one row in a narrow panel more often.
+        for (button, icon) in [(importButton, "file-down"), (newFolder, "folder-plus"), (newMaterial, "palette"), (rename, "pencil"),
+                               (delete, "trash-2"), (viewToggle, "list")] {
+            button.icon = EditorIcons.named(icon)
+            button.showsTitle = false
+        }
+        let toolbar = HStack(spacing: 4, name: "assetToolbar", [breadcrumb, search, importButton, newFolder, newMaterial, rename, delete, viewToggle])
         toolbar.wraps = true  // rows of buttons in a narrow panel, instead of buttons past its edge
 
         let renameOK = Button("Rename", role: .primary, name: "renameOK")
@@ -398,6 +401,7 @@ public final class AssetBrowserPanel {
         viewToggle.action = { [unowned self] in
             grid.listMode.toggle()
             viewToggle.title = grid.listMode ? "Grid" : "List"
+            viewToggle.icon = EditorIcons.named(grid.listMode ? "layout-grid" : "list")
         }
         renameOK.action = { [unowned self] in commitRename() }
         renameCancel.action = { [unowned self] in renameBar.isHidden = true }
@@ -453,10 +457,12 @@ public final class AssetBrowserPanel {
         shownFolders = folders
         let expandedPaths = Set(folderNodes.filter { $0.value.isExpanded }.map(\.key))
         let root = TreeNode("Assets", isExpanded: true, userData: "")
+        root.icon = EditorIcons.named("folder")
         folderNodes = ["": root]
         for path in folders {
             let parent = folderNodes[EditorSession.parentFolder(of: path)] ?? root
             let node = TreeNode(String(path.split(separator: "/").last ?? ""), isExpanded: expandedPaths.contains(path), userData: path)
+            node.icon = EditorIcons.named("folder")
             parent.addChild(node)
             folderNodes[path] = node
         }

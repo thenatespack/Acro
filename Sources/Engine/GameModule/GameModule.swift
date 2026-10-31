@@ -41,7 +41,8 @@ import Foundation
 // host refuses another one. Minor versions add optional parts a module may use, and old
 // modules keep loading: `register` records the minor version the module was compiled
 // against (`GameModule.abiMinorVersion`, 0 for modules from before minor versions).
-// 1.1 added the reload hooks (`willUnload` / `didLoad`, below).
+// 1.1 added the reload hooks (`willUnload` / `didLoad`, below); 1.2 component icons for the
+// editor (`icon(_:for:)`; modules without them get the editor's fallback icon).
 //
 // ## State across reloads
 //
@@ -76,7 +77,7 @@ public enum GameModuleABI {
     @inlinable public static var version: Int32 { 1 }
     /// Optional additions within the major version (see "Versions" above); recorded in
     /// `GameModule.abiMinorVersion` by `register`, compiled into the module like `version`.
-    @inlinable public static var minorVersion: Int32 { 1 }
+    @inlinable public static var minorVersion: Int32 { 2 }
     /// A symbol only Engine defines; a module that defines it too carries its own Engine.
     public static let engineMarker = "swift_game_engine_host_marker"
 }
@@ -137,6 +138,24 @@ public final class GameModule {
     public func component<C: Component>(_ type: C.Type, make: @escaping () -> C) {
         components.append(GameComponent(type: type, makeDefault: make))
     }
+
+    /// Registers a component type with its editor icon (see `icon(_:for:)`).
+    public func component<C: Component>(_ type: C.Type, icon: String, make: @escaping () -> C) {
+        component(type, make: make)
+        self.icon(icon, for: C.componentName)
+    }
+
+    /// The editor's icon for the component named `componentName` (Add Component, inspector
+    /// headers, hierarchy rows): a built-in icon's name (`VectorIcon.builtinNames`, Lucide
+    /// names such as "coins" or "heart") or SVG markup on a 24x24 view box
+    /// (`<circle cx="12" cy="12" r="8"/>`, see `VectorIcon`). Components without one get a
+    /// fallback icon (ABI 1.2).
+    public func icon(_ icon: String, for componentName: String) {
+        componentIcons[componentName] = icon
+    }
+
+    /// Editor icons by component name, as given to `icon(_:for:)`.
+    public private(set) var componentIcons: [String: String] = [:]
 
     /// Registers a system for `stage`, run by the host's world while the game runs. `name`
     /// must be unique in the world (prefix it with the game's name); `before` / `after` name

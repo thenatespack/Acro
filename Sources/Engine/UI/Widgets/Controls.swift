@@ -132,6 +132,9 @@ public final class Label: Widget {
     public var fontSize: Float? { didSet { setNeedsLayout() } }
     public var wraps = false { didSet { setNeedsLayout() } }
     public var alignment: TextAlignment = .left { didSet { setNeedsDisplay() } }
+    /// An icon before the text, about 1.25 times the text size, in `iconColor` or the text's color.
+    public var icon: VectorIcon? { didSet { if icon != oldValue { setNeedsLayout() } } }
+    public var iconColor: UIColor? { didSet { setNeedsDisplay() } }
     private var cache = CachedTextLayout()
 
     public init(_ text: String, role: LabelRole = .body, name: String = "") {
@@ -168,15 +171,29 @@ public final class Label: Widget {
         }
     }
 
+    /// The icon's edge (0 without one) and the gap after it.
+    private var iconSpace: (edge: Float, gap: Float) {
+        icon == nil ? (0, 0) : ((size * 1.25).rounded(), (size * 0.4).rounded())
+    }
+
     public override func measureContent(width: Float?) -> Vec2 {
-        let layout = cache.get(text, font: theme.font, size: size, maxWidth: wraps ? width : nil)
+        let (edge, gap) = iconSpace
+        let layout = cache.get(text, font: theme.font, size: size, maxWidth: wraps ? width.map { $0 - edge - gap } : nil)
         // Round the width up to whole pixels so laying out at the snapped width doesn't re-wrap.
-        return Vec2((layout.width * scale).rounded(.up) / scale, layout.height)
+        return Vec2((layout.width * scale).rounded(.up) / scale + edge + gap, max(layout.height, edge))
     }
 
     public override func draw(_ list: UIDrawList, theme: UITheme) {
         super.draw(list, theme: theme)
-        let content = contentRect
+        var content = contentRect
+        if let icon {
+            let (edge, gap) = iconSpace
+            let y = wraps ? content.y + (theme.lineHeight(size) - edge) / 2 : content.center.y - edge / 2
+            list.drawIcon(icon, in: UIRect(x: content.x, y: y, width: edge, height: edge),
+                          color: isEffectivelyEnabled ? iconColor ?? textColor(theme) : theme.disabledTextColor)
+            content.x += edge + gap
+            content.width = max(0, content.width - edge - gap)
+        }
         if wraps {
             let layout = cache.get(text, font: theme.font, size: size, maxWidth: content.width + 0.5 / scale,
                                    alignment: alignment)
@@ -191,7 +208,8 @@ public final class Label: Widget {
 
     /// Whether a single-line label is cut off at its current width.
     public var isTruncated: Bool {
-        !wraps && truncatedText(text, size: size, width: contentRect.width) != nil
+        let (edge, gap) = iconSpace
+        return !wraps && truncatedText(text, size: size, width: max(0, contentRect.width - edge - gap)) != nil
     }
 
     /// An explicit `tooltip`, else the full text while it is truncated.
@@ -238,6 +256,12 @@ public final class Button: Widget {
     public var title: String { didSet { if title != oldValue { setNeedsLayout() } } }
     public var role: Role { didSet { setNeedsDisplay() } }
     public var action: (() -> Void)?
+    /// An icon before the title (`theme.iconSize`, in the title's color: dimmed when disabled,
+    /// `accentText` on a primary button).
+    public var icon: VectorIcon? { didSet { if icon != oldValue { setNeedsLayout() } } }
+    /// False shows only the icon (a square button). The title stays the button's accessibility
+    /// label and becomes its tooltip unless it has one.
+    public var showsTitle = true { didSet { if showsTitle != oldValue { setNeedsLayout() } } }
     private var cache = CachedTextLayout()
 
     public init(_ title: String, role: Role = .normal, name: String = "", action: (() -> Void)? = nil) {
@@ -259,9 +283,19 @@ public final class Button: Widget {
     public override func measureContent(width: Float?) -> Vec2 {
         let theme = theme
         let style = theme.style(for: self)
+        let height = style.height ?? theme.controlHeight
+        if icon != nil && !showsTitle {
+            // Square (wider when the control is too short for the icon and a margin).
+            return Vec2(max(height, theme.iconSize + 10), height)
+        }
         let layout = cache.get(title, font: theme.font, size: style.fontSize ?? theme.fontSize)
-        return Vec2((layout.width * scale).rounded(.up) / scale + 2 * (style.paddingX ?? theme.controlPaddingX),
-                    style.height ?? theme.controlHeight)
+        return Vec2((layout.width * scale).rounded(.up) / scale + 2 * (style.paddingX ?? theme.controlPaddingX) + iconSpace(theme),
+                    height)
+    }
+
+    /// Room the icon takes before the title (icon and gap), 0 without one.
+    private func iconSpace(_ theme: UITheme) -> Float {
+        icon == nil ? 0 : theme.iconSize + theme.spacing
     }
 
     public override func handleEvent(_ event: UIEvent) -> Bool {
@@ -304,6 +338,28 @@ public final class Button: Widget {
         let color = !enabled ? theme.disabledTextColor
             : role == .primary ? theme.accentText : style.textColor ?? theme.textColor
         let size = style.fontSize ?? theme.fontSize
+        if let icon {
+            let edge = theme.iconSize
+            if !showsTitle {
+                list.drawIcon(icon, in: UIRect(x: frame.center.x - edge / 2, y: frame.center.y - edge / 2, width: edge, height: edge),
+                              color: color)
+                return
+            }
+            // Icon and title centered together; the title gives way first.
+            let layout = cache.get(title, font: theme.font, size: size)
+            let rect = titleRect
+            let textWidth = min((layout.width * scale).rounded(.up) / scale, max(0, rect.width - iconSpace(theme)))
+            let x = snap(max(rect.x, rect.center.x - (edge + theme.spacing + textWidth) / 2))
+            list.drawIcon(icon, in: UIRect(x: x, y: frame.center.y - edge / 2, width: edge, height: edge), color: color)
+            let textRect = UIRect(x: x + edge + theme.spacing, y: frame.y, width: max(0, rect.maxX - x - edge - theme.spacing),
+                                  height: frame.height)
+            if overflows(layout, width: textRect.width) {
+                drawEllipsized(title, layout: layout, size: size, in: textRect, color: color, list: list)
+            } else {
+                drawLine(layout, font: theme.font, in: textRect, alignment: .left, color: color, list: list)
+            }
+            return
+        }
         let layout = cache.get(title, font: theme.font, size: size)
         if overflows(layout, width: titleRect.width) {
             drawEllipsized(title, layout: layout, size: size, in: titleRect, color: color, list: list)
@@ -319,15 +375,17 @@ public final class Button: Widget {
         return UIRect(x: frame.x + inset, y: frame.y, width: max(0, frame.width - 2 * inset), height: frame.height)
     }
 
-    /// Whether the title is cut off (ellipsized) at the current width.
+    /// Whether the title is cut off (ellipsized) at the current width (never for an icon-only button).
     public var titleIsTruncated: Bool {
+        guard showsTitle || icon == nil else { return false }
         let theme = theme
-        return truncatedText(title, size: theme.style(for: self).fontSize ?? theme.fontSize, width: titleRect.width) != nil
+        let width = titleRect.width - iconSpace(theme)
+        return truncatedText(title, size: theme.style(for: self).fontSize ?? theme.fontSize, width: max(0, width)) != nil
     }
 
-    /// An explicit `tooltip`, else the full title while it is truncated.
+    /// An explicit `tooltip`, else the full title while it is truncated or only the icon shows.
     public override func tooltip(at point: Vec2) -> String? {
-        tooltip ?? (titleIsTruncated ? title : nil)
+        tooltip ?? (titleIsTruncated || (icon != nil && !showsTitle) ? title : nil)
     }
 }
 

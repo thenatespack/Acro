@@ -36,6 +36,7 @@ public final class ConsolePanel {
         filter.style.width = 120
         filter.onChange = { [unowned self] index in minimumLevel = Self.levels[index].level }
         let clearButton = Button("Clear", name: "consoleClear")
+        clearButton.icon = EditorIcons.named("eraser")
         clearButton.action = { [unowned self] in if let onClear { onClear() } else { log.clear() } }
         clearButton.command = "log.clear"
         filter.command = "log.read"
@@ -72,6 +73,7 @@ public final class ConsolePanel {
         lines.removeAllChildren()
         for entry in entries {
             let label = Label(format(entry), role: entry.level == .info ? .secondary : .body)
+            label.icon = EditorIcons.log(entry.level)
             switch entry.level {
             case .info: break
             case .warning: label.color = view.theme.warningTextColor

@@ -66,6 +66,8 @@ public final class EditorSession {
     public let selection = EditorSelection()
     public let log: EditorLog
     public var tool: EditorTool = .move { didSet { if tool != oldValue { changed() } } }
+    /// Gizmo drags snap (0.5 units, 15°, 0.1 scale steps); holding Cmd/Ctrl inverts it for one drag.
+    public var snapping = false { didSet { if snapping != oldValue { changed() } } }
     public private(set) var playState: PlayState = .editing
     /// Called after the tool, the play state or the document changed (toolbar refresh).
     public var onChange: (() -> Void)?

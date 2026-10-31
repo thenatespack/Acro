@@ -20,8 +20,21 @@ public final class TransformTool: ViewportTool {
     private var isGizmoDrag = false
     private var undo: UndoStack?
 
+    /// Icons for the entities without a mesh (cameras, lights, audio, particles, triggers,
+    /// sprites), drawn by the host over the viewport and picked by `picker` like meshes.
+    public let billboards = ViewportBillboards()
+    /// What gets a billboard (default: `EditorIcons.billboards(in:)`); nil shows none.
+    public var billboardSource: ((World) -> [ViewportBillboard])? = { EditorIcons.billboards(in: $0) }
+
     public init(meshes: any PickMeshSource) {
         picker = ScenePicker(meshes: meshes)
+        picker.billboards = billboards
+        billboards.secondaryColor = UIColor(0.9, 0.36, 0.1)
+    }
+
+    /// Lays the billboards out for `view` (also run before every pick, so clicks see the current view).
+    public func updateBillboards(view: ViewportProjection, world: World) {
+        billboards.update(billboardSource?(world) ?? [], view: view, occluders: picker, world: world)
     }
 
     public var isDragging: Bool { gizmo.isDragging }
@@ -29,6 +42,7 @@ public final class TransformTool: ViewportTool {
     public func handlePointer(_ event: ViewportPointerEvent, context: ViewportToolContext) -> Bool {
         if let button = event.button, button != .left { return false }
         gizmo.mode = Self.mode(for: context.toolMode)
+        gizmo.snapping.isEnabled = context.snapping
         let view = ViewportProjection(context.view, size: context.viewportSize, pixelScale: context.pixelScale)
         let world = context.world
         let selection = context.selection.entities(in: world)
@@ -68,6 +82,7 @@ public final class TransformTool: ViewportTool {
             }
             defer { pressPosition = nil }
             guard pressPosition != nil else { return true }
+            updateBillboards(view: view, world: world)
             let hit = picker.pick(at: event.position, in: view, world: world)
             let id = hit.flatMap { world.id(of: $0.entity) }
             if event.modifiers.contains(.shift) || event.modifiers.contains(.shortcut) {

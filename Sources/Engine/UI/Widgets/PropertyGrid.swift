@@ -85,6 +85,10 @@ public final class PropertyGrid: Stack {
     }
     /// Names an entity for `entity` fields; nil results show "Entity <index>".
     public var entityName: ((Entity) -> String?)?
+    /// An icon for a component's section header, by component name (nil: none).
+    public var componentIcon: ((String) -> VectorIcon?)? {
+        didSet { for section in sections { section.header.icon = componentIcon?(section.name) } }
+    }
     /// Options for a `string` field, by component name and field path; when it returns a list
     /// the field is a `Dropdown` of those strings instead of a text box (asset keys such as
     /// `MeshRenderer.mesh`). A current value missing from the list is added so it stays visible.
@@ -220,6 +224,7 @@ public final class PropertyGrid: Stack {
             let body = VStack(spacing: 3, padding: EdgeInsets(top: 6, left: 8, bottom: 8, right: 8), name: "body.\(name)")
             let section = Section(name: name, header: header, body: body)
             header.showsRemove = onRemoveComponent != nil
+            header.icon = componentIcon?(name)
             let collapsedNow = collapsed.contains("\(name)/")
             header.isCollapsed = collapsedNow
             body.isHidden = collapsedNow
@@ -628,6 +633,8 @@ final class GridHeader: Widget {
     var title: String { didSet { if title != oldValue { setNeedsDisplay() } } }
     var isCollapsed = false { didSet { if isCollapsed != oldValue { setNeedsDisplay() } } }
     var showsRemove = false { didSet { setNeedsDisplay() } }
+    /// A component's icon, between the disclosure triangle and the title.
+    var icon: VectorIcon? { didSet { if icon != oldValue { setNeedsDisplay() } } }
     var depth = 0
     var indent: Float = 0 { didSet { setNeedsDisplay() } }
     var onToggle: (() -> Void)?
@@ -658,7 +665,7 @@ final class GridHeader: Widget {
 
     /// Where the title goes: after the disclosure triangle, before the remove button.
     private var titleRect: UIRect {
-        let x = frame.x + indent + 24
+        let x = frame.x + indent + 24 + (icon != nil ? theme.iconSize + 6 : 0)
         let right = (isComponent && showsRemove) ? removeRect.x : frame.maxX
         return UIRect(x: x, y: frame.y, width: max(0, right - x - 4), height: frame.height)
     }
@@ -699,6 +706,11 @@ final class GridHeader: Widget {
         } else {
             list.drawLine(from: c + Vec2(-s, -s / 2), to: c + Vec2(0, s / 2), width: theme.iconStrokeWidth, color: arrow, cap: .round)
             list.drawLine(from: c + Vec2(0, s / 2), to: c + Vec2(s, -s / 2), width: theme.iconStrokeWidth, color: arrow, cap: .round)
+        }
+        if let icon {
+            let edge = theme.iconSize
+            list.drawIcon(icon, in: UIRect(x: frame.x + indent + 22, y: frame.center.y - edge / 2, width: edge, height: edge),
+                          color: theme.accent.mixed(with: theme.textColor, 0.35))
         }
         let layout = cache.get(title, font: theme.font, size: theme.fontSize)
         drawEllipsized(title, layout: layout, size: theme.fontSize, in: titleRect, color: isComponent ? theme.textColor : theme.secondaryTextColor,

@@ -138,6 +138,8 @@ let package = Package(
         .target(
             name: "Engine",
             dependencies: engineDependencies,
+            // UI/Icons: Lucide icon paths (ISC), see its LICENSES.md.
+            exclude: ["UI/Icons/LICENSES.md"],
             resources: [.copy("Shaders"), .copy("Fonts")],
             swiftSettings: engineSwiftSettings,
             linkerSettings: windowsLinkerSettings

@@ -90,6 +90,8 @@ public struct UITheme {
     public var borderWidth: Float = 1
     /// Chevrons, close crosses and other line icons.
     public var iconStrokeWidth: Float = 1.5
+    /// Edge of `VectorIcon`s in buttons, labels, rows, tabs and menus.
+    public var iconSize: Float = 16
     public var checkmarkWidth: Float = 2
     public var rowHeight: Float = 22
     public var treeIndent: Float = 16
@@ -291,6 +293,7 @@ public struct UITheme {
         t.focusRingOffset = 2
         t.checkmarkWidth = 3
         t.iconStrokeWidth = 2.5
+        t.iconSize = 22
         t.dialogPadding = 26
         t.dialogSpacing = 18
         t.buttonSpacing = 12
