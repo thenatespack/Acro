@@ -128,6 +128,20 @@ extension PhysicsWorld {
     /// also fires triggers. Dynamic bodies it walks into get `pushForce` as an impulse.
     @discardableResult
     public func moveCharacter(_ controller: inout CharacterController, from position: Vec3, dt: Float, body: BodyID? = nil) -> Vec3 {
+        stepCharacter(&controller, from: position, dt: dt, body: body, sideEffects: true)
+    }
+
+    /// The same step as `moveCharacter` without touching the world: no pushes, and `body` (only
+    /// skipped by the queries) isn't moved. Re-runnable from any saved `controller` and
+    /// position, which is what client-side prediction needs: rewind to the server's state and
+    /// replay the inputs since (see `NetCharacterPrediction`). The position and controller it
+    /// produces are exactly `moveCharacter`'s in the same world.
+    @discardableResult
+    public func predictCharacter(_ controller: inout CharacterController, from position: Vec3, dt: Float, ignoring body: BodyID? = nil) -> Vec3 {
+        stepCharacter(&controller, from: position, dt: dt, body: body, sideEffects: false)
+    }
+
+    private func stepCharacter(_ controller: inout CharacterController, from position: Vec3, dt: Float, body: BodyID?, sideEffects: Bool) -> Vec3 {
         guard dt > 0 else { return position }
         var sweep = CharacterSweep(world: self, controller: controller, body: body)
         var c = controller
@@ -213,7 +227,7 @@ extension PhysicsWorld {
         c.isGrounded = grounded
 
         // Push what it ran into (once per body), along the way it is walking.
-        if c.pushForce > 0, lengthSquared(flat) > 1e-12 {
+        if sideEffects, c.pushForce > 0, lengthSquared(flat) > 1e-12 {
             let direction = normalize(flat)
             var pushed: [BodyID] = []
             for hit in hits where hit.normal.y < sweep.walkable && !pushed.contains(hit.body) && motion(of: hit.body) == .dynamic {
@@ -223,7 +237,7 @@ extension PhysicsWorld {
         }
 
         controller = c
-        if let body, let current = self.pose(of: body) {
+        if sideEffects, let body, let current = self.pose(of: body) {
             moveKinematic(body, to: Pose(position: pos, rotation: current.rotation), dt: dt)
         }
         return pos

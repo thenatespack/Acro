@@ -80,6 +80,8 @@ public final class LoopbackNetwork {
         public var bytesSent = 0
     }
     public private(set) var stats = Stats()
+    /// The same counted per sending endpoint (bandwidth per direction).
+    public private(set) var statsBySender: [PeerID: Stats] = [:]
 
     private struct InFlight {
         var deliverAt: Double
@@ -107,9 +109,12 @@ public final class LoopbackNetwork {
         precondition(bytes.count <= NetLimits.maxDatagramSize, "datagram of \(bytes.count) bytes")
         stats.sent += 1
         stats.bytesSent += bytes.count
+        statsBySender[from, default: Stats()].sent += 1
+        statsBySender[from, default: Stats()].bytesSent += bytes.count
         let link = linkOverrides[Link(from: from, to: to)] ?? conditions
         if link.loss > 0, rng.nextUnit() < link.loss {
             stats.dropped += 1
+            statsBySender[from, default: Stats()].dropped += 1
             return
         }
         let copies = link.duplicate > 0 && rng.nextUnit() < link.duplicate ? 2 : 1
