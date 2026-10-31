@@ -661,7 +661,7 @@ final class GridHeader: Widget {
     }
 
     override func draw(_ list: UIDrawList, theme: UITheme) {
-        let radii = UICornerRadii(isComponent ? 4 : 3)
+        let radii = UICornerRadii(isComponent ? theme.smallCornerRadius : theme.rowCornerRadius)
         if isComponent {
             list.fillRect(frame, color: isHovered ? theme.controlHover : theme.controlBackground, radii: radii)
         } else if isHovered {
@@ -671,11 +671,11 @@ final class GridHeader: Widget {
         let s: Float = 3.5
         let arrow = theme.secondaryTextColor
         if isCollapsed {
-            list.drawLine(from: c + Vec2(-s / 2, -s), to: c + Vec2(s / 2, 0), width: 1.5, color: arrow, cap: .round)
-            list.drawLine(from: c + Vec2(s / 2, 0), to: c + Vec2(-s / 2, s), width: 1.5, color: arrow, cap: .round)
+            list.drawLine(from: c + Vec2(-s / 2, -s), to: c + Vec2(s / 2, 0), width: theme.iconStrokeWidth, color: arrow, cap: .round)
+            list.drawLine(from: c + Vec2(s / 2, 0), to: c + Vec2(-s / 2, s), width: theme.iconStrokeWidth, color: arrow, cap: .round)
         } else {
-            list.drawLine(from: c + Vec2(-s, -s / 2), to: c + Vec2(0, s / 2), width: 1.5, color: arrow, cap: .round)
-            list.drawLine(from: c + Vec2(0, s / 2), to: c + Vec2(s, -s / 2), width: 1.5, color: arrow, cap: .round)
+            list.drawLine(from: c + Vec2(-s, -s / 2), to: c + Vec2(0, s / 2), width: theme.iconStrokeWidth, color: arrow, cap: .round)
+            list.drawLine(from: c + Vec2(0, s / 2), to: c + Vec2(s, -s / 2), width: theme.iconStrokeWidth, color: arrow, cap: .round)
         }
         let layout = cache.get(title, font: theme.font, size: theme.fontSize)
         drawEllipsized(title, layout: layout, size: theme.fontSize, in: titleRect, color: isComponent ? theme.textColor : theme.secondaryTextColor,
@@ -685,8 +685,8 @@ final class GridHeader: Widget {
             let center = r.center
             let hovered = r.contains(context?.pointerPosition ?? Vec2(-1, -1)) && isHovered
             let color = hovered ? theme.textColor : theme.secondaryTextColor
-            list.drawLine(from: center + Vec2(-3.5, -3.5), to: center + Vec2(3.5, 3.5), width: 1.5, color: color, cap: .round)
-            list.drawLine(from: center + Vec2(3.5, -3.5), to: center + Vec2(-3.5, 3.5), width: 1.5, color: color, cap: .round)
+            list.drawLine(from: center + Vec2(-3.5, -3.5), to: center + Vec2(3.5, 3.5), width: theme.iconStrokeWidth, color: color, cap: .round)
+            list.drawLine(from: center + Vec2(3.5, -3.5), to: center + Vec2(-3.5, 3.5), width: theme.iconStrokeWidth, color: color, cap: .round)
         }
     }
 }

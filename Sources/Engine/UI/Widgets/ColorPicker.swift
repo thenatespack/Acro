@@ -191,12 +191,12 @@ public final class ColorPicker: Widget {
 
     public override func draw(_ list: UIDrawList, theme: UITheme) {
         let sq = squareRect
-        let radii = UICornerRadii(4)
+        let radii = UICornerRadii(theme.smallCornerRadius)
         // Saturation left to right (white to the pure hue), then value top to bottom (a black overlay).
         let pure = HSV(h: hsv.h, s: 1, v: 1).color()
         list.fillRect(sq, fill: .linearGradient(start: .white, end: pure, angle: 0), radii: radii)
         list.fillRect(sq, fill: .linearGradient(start: .black.withAlpha(0), end: .black, angle: .pi / 2), radii: radii)
-        list.strokeRect(sq, color: theme.controlBorder, width: 1, radii: radii)
+        list.strokeRect(sq, color: theme.controlBorder, width: theme.borderWidth, radii: radii)
 
         // Hue bar: six gradient segments.
         let bar = hueRect
@@ -208,7 +208,7 @@ public final class ColorPicker: Widget {
             list.fillRect(UIRect(x: bar.x, y: bar.y + Float(i) * segment, width: bar.width, height: segment),
                           fill: .linearGradient(start: top, end: bottom), radii: corners)
         }
-        list.strokeRect(bar, color: theme.controlBorder, width: 1, radii: radii)
+        list.strokeRect(bar, color: theme.controlBorder, width: theme.borderWidth, radii: radii)
 
         // Markers.
         let marker = Vec2(sq.x + hsv.s * sq.width, sq.y + (1 - hsv.v) * sq.height)
@@ -224,6 +224,6 @@ public final class ColorPicker: Widget {
         let field = hexField.frame
         let swatch = UIRect(x: sq.x, y: field.y, width: field.height, height: field.height)
         list.fillRect(swatch, color: color, radii: UICornerRadii(theme.cornerRadius))
-        list.strokeRect(swatch, color: theme.controlBorder, width: 1, radii: UICornerRadii(theme.cornerRadius))
+        list.strokeRect(swatch, color: theme.controlBorder, width: theme.borderWidth, radii: UICornerRadii(theme.cornerRadius))
     }
 }

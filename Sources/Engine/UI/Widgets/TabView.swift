@@ -442,7 +442,7 @@ public final class TabView: Widget {
         }
         if selected && isFocused && context?.focusVisible == true {
             list.strokeRect(rect.inset(by: EdgeInsets(top: 3, left: 2, bottom: 2, right: 2)), color: theme.focusRing,
-                            width: theme.focusRingWidth, radii: UICornerRadii(3))
+                            width: theme.focusRingWidth, radii: UICornerRadii(theme.rowCornerRadius))
         }
         let close = closeButtonRect(i)
         let showClose = close != nil && (selected || hovered || pressedClose === panel)
@@ -455,12 +455,12 @@ public final class TabView: Widget {
             let pointer = context?.pointerPosition ?? Vec2(-1e6, -1e6)
             if close.contains(pointer) && (pressedClose === panel || pressedClose == nil) {
                 list.fillRect(close, color: pressedClose === panel ? theme.controlPressed : theme.controlHover,
-                              radii: UICornerRadii(3))
+                              radii: UICornerRadii(theme.rowCornerRadius))
             }
             let c = close.center, s: Float = 3.5
             let xColor = selected ? theme.secondaryTextColor : theme.placeholderColor
-            list.drawLine(from: c + Vec2(-s, -s), to: c + Vec2(s, s), width: 1.5, color: xColor, cap: .round)
-            list.drawLine(from: c + Vec2(-s, s), to: c + Vec2(s, -s), width: 1.5, color: xColor, cap: .round)
+            list.drawLine(from: c + Vec2(-s, -s), to: c + Vec2(s, s), width: theme.iconStrokeWidth, color: xColor, cap: .round)
+            list.drawLine(from: c + Vec2(-s, s), to: c + Vec2(s, -s), width: theme.iconStrokeWidth, color: xColor, cap: .round)
         }
     }
 }

@@ -368,7 +368,7 @@ public final class TextField: Widget {
         let radii = UICornerRadii(theme.cornerRadius)
         list.fillRect(frame, color: enabled ? theme.fieldBackground : theme.fieldBackground.withAlpha(0.5), radii: radii)
         list.strokeRect(frame, color: focused ? theme.accent : isHovered ? theme.controlBorder.mixed(with: .white, 0.15)
-                        : theme.controlBorder, width: focused ? 1.5 : 1, radii: radii)
+                        : theme.controlBorder, width: focused ? theme.borderWidth + 0.5 : theme.borderWidth, radii: radii)
 
         let content = contentRect
         let size = theme.fontSize

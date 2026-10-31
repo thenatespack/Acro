@@ -322,7 +322,7 @@ public final class NumberField: Widget {
         let radii = UICornerRadii(theme.cornerRadius)
         list.fillRect(frame, color: enabled ? theme.fieldBackground : theme.fieldBackground.withAlpha(0.5), radii: radii)
         list.strokeRect(frame, color: active ? theme.accent : (isHovered && enabled) ? theme.controlBorder.mixed(with: .white, 0.15)
-                        : theme.controlBorder, width: active ? 1.5 : 1, radii: radii)
+                        : theme.controlBorder, width: active ? theme.borderWidth + 0.5 : theme.borderWidth, radii: radii)
         guard !isTyping else { return }
         var content = frame.inset(by: EdgeInsets(horizontal: 6, vertical: 0))
         let size = theme.fontSize

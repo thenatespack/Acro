@@ -673,11 +673,11 @@ public final class TreeView: RowListView {
             let s: Float = 3.5
             let arrow = theme.secondaryTextColor
             if node.isExpanded {
-                list.drawLine(from: c + Vec2(-s, -s / 2), to: c + Vec2(0, s / 2), width: 1.5, color: arrow, cap: .round)
-                list.drawLine(from: c + Vec2(0, s / 2), to: c + Vec2(s, -s / 2), width: 1.5, color: arrow, cap: .round)
+                list.drawLine(from: c + Vec2(-s, -s / 2), to: c + Vec2(0, s / 2), width: theme.iconStrokeWidth, color: arrow, cap: .round)
+                list.drawLine(from: c + Vec2(0, s / 2), to: c + Vec2(s, -s / 2), width: theme.iconStrokeWidth, color: arrow, cap: .round)
             } else {
-                list.drawLine(from: c + Vec2(-s / 2, -s), to: c + Vec2(s / 2, 0), width: 1.5, color: arrow, cap: .round)
-                list.drawLine(from: c + Vec2(s / 2, 0), to: c + Vec2(-s / 2, s), width: 1.5, color: arrow, cap: .round)
+                list.drawLine(from: c + Vec2(-s / 2, -s), to: c + Vec2(s / 2, 0), width: theme.iconStrokeWidth, color: arrow, cap: .round)
+                list.drawLine(from: c + Vec2(s / 2, 0), to: c + Vec2(-s / 2, s), width: theme.iconStrokeWidth, color: arrow, cap: .round)
             }
         }
         if node === renamingNode { return }
@@ -716,8 +716,8 @@ public final class TreeView: RowListView {
         func rowTop(_ row: Int) -> Float { snap(viewport.y + Float(row) * h - scroll.offset) }
         if target.position == .into, let row = target.row {
             let rect = UIRect(x: viewport.x, y: rowTop(row), width: viewport.width, height: h)
-            list.fillRect(rect, color: accent.withAlpha(0.22), radii: UICornerRadii(3))
-            list.strokeRect(rect, color: accent, width: 1.5, radii: UICornerRadii(3))
+            list.fillRect(rect, color: accent.withAlpha(0.22), radii: UICornerRadii(theme.rowCornerRadius))
+            list.strokeRect(rect, color: accent, width: 1.5, radii: UICornerRadii(theme.rowCornerRadius))
             return
         }
         let y: Float, depth: Int
@@ -744,8 +744,9 @@ public final class TreeView: RowListView {
         let size = Vec2((layout.width * scale).rounded(.up) / scale + 16, theme.rowHeight)
         let origin = context.pointerPosition + Vec2(12, 10)
         let rect = UIRect(x: origin.x, y: origin.y, width: size.x, height: size.y)
-        list.fillRect(rect, color: theme.popupBackground.withAlpha(0.92), radii: UICornerRadii(4))
-        list.strokeRect(rect, color: theme.accent.withAlpha(0.8), width: 1, radii: UICornerRadii(4))
+        list.fillRect(rect, color: theme.popupBackground.withAlpha(0.92), radii: UICornerRadii(theme.smallCornerRadius))
+        list.strokeRect(rect, color: theme.accent.withAlpha(0.8), width: theme.borderWidth,
+                        radii: UICornerRadii(theme.smallCornerRadius))
         drawLine(layout, font: theme.font, in: UIRect(x: rect.x + 8, y: rect.y, width: rect.width - 16, height: rect.height),
                  color: theme.textColor, list: list)
     }

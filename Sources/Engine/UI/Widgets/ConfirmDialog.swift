@@ -3,7 +3,10 @@
 ///
 /// It covers the viewport, so clicks behind it go nowhere (a click on the dimmed area does
 /// nothing). The confirm button starts focused: Enter or Space confirms, Esc or Cancel cancels.
-/// Exactly one of `onConfirm` / `onCancel` runs, then the dialog closes.
+/// Exactly one of `onConfirm` / `onCancel` runs, then the dialog closes. With directional
+/// navigation (`UIContext.directionalNavigation` or a gamepad) Left / Right move between the
+/// buttons, A confirms the focused one and B cancels. Sizes and colors come from the theme
+/// (`dialogPadding`, `dialogSpacing`, `buttonSpacing`, `dialogMaxWidth`, `modalDim`).
 @MainActor
 public final class ConfirmDialog: Widget {
     public var onConfirm: (() -> Void)?
@@ -11,6 +14,7 @@ public final class ConfirmDialog: Widget {
     public let confirmButton: Button
     public let cancelButton: Button
     private let card: VStack
+    private let buttons: HStack
     private var resolved = false
 
     /// - Parameter confirmTitle: the confirm button's title, naming the action ("Delete").
@@ -20,7 +24,7 @@ public final class ConfirmDialog: Widget {
         let heading = Label(title, role: .heading, name: "confirmTitle")
         let body = Label(message, role: .body, name: "confirmMessage")
         body.wraps = true
-        let buttons = HStack(spacing: 8, name: "confirmButtons", [Spacer(), cancelButton, confirmButton])
+        buttons = HStack(spacing: 8, name: "confirmButtons", [Spacer(), cancelButton, confirmButton])
         card = VStack(spacing: 12, padding: EdgeInsets(18), name: "confirmCard", [heading, body, buttons])
         super.init(name: name)
         card.background = .clear  // drawn by `draw`, with its shadow
@@ -46,7 +50,11 @@ public final class ConfirmDialog: Widget {
     public override func overlayFrame(in viewport: UIRect) -> UIRect { viewport }
 
     public override func layoutChildren() {
-        let width = min(420, max(frame.width - 32, 120))
+        let theme = theme
+        card.spacing = theme.dialogSpacing
+        card.padding = EdgeInsets(theme.dialogPadding)
+        buttons.spacing = theme.buttonSpacing
+        let width = min(theme.dialogMaxWidth, max(frame.width - 32, 120))
         let height = card.measure(width: width).y
         card.layout(in: UIRect(x: (frame.x + (frame.width - width) / 2).rounded(), y: (frame.y + (frame.height - height) / 2.4).rounded(),
                                width: width, height: height))
@@ -65,11 +73,11 @@ public final class ConfirmDialog: Widget {
     }
 
     public override func draw(_ list: UIDrawList, theme: UITheme) {
-        list.fillRect(frame, color: UIColor(0, 0, 0, 0.5))
-        let radii = UICornerRadii(theme.cornerRadius + 3)
-        list.fillRect(card.frame.inset(by: -6), color: theme.shadow.withAlpha(theme.shadow.a / 2), radii: UICornerRadii(theme.cornerRadius + 9))
+        list.fillRect(frame, color: theme.modalDim)
+        let radii = UICornerRadii(theme.dialogCornerRadius)
+        list.fillRect(card.frame.inset(by: -6), color: theme.shadow.withAlpha(theme.shadow.a / 2), radii: UICornerRadii(theme.dialogCornerRadius + 6))
         list.fillRect(card.frame, color: theme.popupBackground, radii: radii)
-        list.strokeRect(card.frame, color: theme.popupBorder, width: 1, radii: radii)
+        list.strokeRect(card.frame, color: theme.popupBorder, width: theme.borderWidth, radii: radii)
     }
 
     /// Esc (handled by the context) or `dismissOverlay` from elsewhere counts as Cancel.

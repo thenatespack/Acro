@@ -33,14 +33,14 @@ public final class ColorPopup: Widget {
     }
 
     public override func draw(_ list: UIDrawList, theme: UITheme) {
-        let radii = UICornerRadii(theme.cornerRadius + 1)
+        let radii = UICornerRadii(theme.popupCornerRadius)
         for i in 1...3 {
             let grow = Float(i) * 2
             list.fillRect(UIRect(x: frame.x - grow / 2, y: frame.y + grow, width: frame.width + grow, height: frame.height),
-                          color: theme.shadow.withAlpha(theme.shadow.a / 3), radii: UICornerRadii(theme.cornerRadius + grow))
+                          color: theme.shadow.withAlpha(theme.shadow.a / 3), radii: UICornerRadii(theme.popupCornerRadius - 1 + grow))
         }
         list.fillRect(frame, color: theme.popupBackground, radii: radii)
-        list.strokeRect(frame, color: theme.popupBorder, width: 1, radii: radii)
+        list.strokeRect(frame, color: theme.popupBorder, width: theme.borderWidth, radii: radii)
     }
 
     public override func overlayFrame(in viewport: UIRect) -> UIRect {
@@ -139,7 +139,7 @@ public final class ColorSwatch: Widget {
         let radii = UICornerRadii(theme.cornerRadius)
         list.fillRect(frame, color: color.withAlpha(enabled ? 1 : 0.5), radii: radii)
         list.strokeRect(frame, color: isOpen ? theme.accent : isHovered ? theme.controlBorder.mixed(with: .white, 0.25)
-                        : theme.controlBorder, width: isOpen ? 1.5 : 1, radii: radii)
+                        : theme.controlBorder, width: isOpen ? theme.borderWidth + 0.5 : theme.borderWidth, radii: radii)
         // The hex code, dark or light for contrast.
         let luma = 0.299 * color.r + 0.587 * color.g + 0.114 * color.b
         let layout = cache.get(color.hexString, font: theme.font, size: theme.smallFontSize)

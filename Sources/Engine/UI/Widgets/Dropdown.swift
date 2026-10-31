@@ -97,15 +97,15 @@ public final class PopupMenu: Widget {
     }
 
     public override func draw(_ list: UIDrawList, theme: UITheme) {
-        let radii = UICornerRadii(theme.cornerRadius + 1)
+        let radii = UICornerRadii(theme.popupCornerRadius)
         // A soft drop shadow from a few stacked translucent rects.
         for i in 1...3 {
             let grow = Float(i) * 2
             list.fillRect(UIRect(x: frame.x - grow / 2, y: frame.y + grow, width: frame.width + grow, height: frame.height),
-                          color: theme.shadow.withAlpha(theme.shadow.a / 3), radii: UICornerRadii(theme.cornerRadius + grow))
+                          color: theme.shadow.withAlpha(theme.shadow.a / 3), radii: UICornerRadii(theme.popupCornerRadius - 1 + grow))
         }
         list.fillRect(frame, color: theme.popupBackground, radii: radii)
-        list.strokeRect(frame, color: theme.popupBorder, width: 1, radii: radii)
+        list.strokeRect(frame, color: theme.popupBorder, width: theme.borderWidth, radii: radii)
         let content = contentRect
         for (i, item) in items.enumerated() {
             let row = UIRect(x: content.x, y: content.y + Float(i) * rowHeight, width: content.width, height: rowHeight)
@@ -114,8 +114,8 @@ public final class PopupMenu: Widget {
             if i == checkedIndex {
                 let c = Vec2(row.x + 9, row.center.y)
                 let color = highlighted ? theme.accentText : theme.textColor
-                list.drawLine(from: c + Vec2(-3.5, 0), to: c + Vec2(-1, 2.5), width: 1.5, color: color, cap: .round)
-                list.drawLine(from: c + Vec2(-1, 2.5), to: c + Vec2(4, -3), width: 1.5, color: color, cap: .round)
+                list.drawLine(from: c + Vec2(-3.5, 0), to: c + Vec2(-1, 2.5), width: theme.iconStrokeWidth, color: color, cap: .round)
+                list.drawLine(from: c + Vec2(-1, 2.5), to: c + Vec2(4, -3), width: theme.iconStrokeWidth, color: color, cap: .round)
             }
             let layout = cachedLayout(item, size: theme.fontSize)
             let textRect = UIRect(x: row.x + 18, y: row.y, width: row.width - 18, height: row.height)
@@ -226,7 +226,7 @@ public final class Dropdown: Widget {
             : (isPressed || isOpen) ? theme.controlPressed : isHovered ? theme.controlHover : theme.controlBackground
         let radii = UICornerRadii(theme.cornerRadius)
         list.fillRect(frame, color: fill, radii: radii)
-        list.strokeRect(frame, color: isOpen ? theme.accent : theme.controlBorder, width: 1, radii: radii)
+        list.strokeRect(frame, color: isOpen ? theme.accent : theme.controlBorder, width: theme.borderWidth, radii: radii)
         let color = enabled ? theme.textColor : theme.disabledTextColor
         if let option = selectedOption {
             let layout = cache.get(option, font: theme.font, size: theme.fontSize)
@@ -236,9 +236,9 @@ public final class Dropdown: Widget {
         let c = Vec2(frame.maxX - theme.controlPaddingX - 4, frame.center.y)
         let s: Float = 3.5
         let dy: Float = isOpen ? -1 : 1
-        list.drawLine(from: c + Vec2(-s, -s / 2 * dy), to: c + Vec2(0, s / 2 * dy), width: 1.5, color: theme.secondaryTextColor,
+        list.drawLine(from: c + Vec2(-s, -s / 2 * dy), to: c + Vec2(0, s / 2 * dy), width: theme.iconStrokeWidth, color: theme.secondaryTextColor,
                       cap: .round)
-        list.drawLine(from: c + Vec2(0, s / 2 * dy), to: c + Vec2(s, -s / 2 * dy), width: 1.5, color: theme.secondaryTextColor,
+        list.drawLine(from: c + Vec2(0, s / 2 * dy), to: c + Vec2(s, -s / 2 * dy), width: theme.iconStrokeWidth, color: theme.secondaryTextColor,
                       cap: .round)
     }
 }
