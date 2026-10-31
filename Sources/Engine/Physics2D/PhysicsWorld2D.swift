@@ -51,6 +51,9 @@ public final class PhysicsWorld2D {
     public var speculativeDistance: Float = 0.02
     /// Approach speeds below this don't bounce.
     public var restitutionThreshold: Float = 1
+    /// Solves independent islands in parallel (the rest of the step stays on the calling
+    /// thread). Results are the same for any thread count.
+    public var jobs = JobSystem.shared
 
     /// Events of the steps since the last `clearEvents()` (`advance(by:)` and the ECS
     /// integration clear them once per frame).
@@ -477,9 +480,9 @@ public final class PhysicsWorld2D {
         for i in bodies.indices where bodies[i].isAlive && bodies[i].motion != .static { bodies[i].previousPose = bodies[i].pose }
         findNewPairs()
         updateContacts(dt)
-        buildIslandsAndWake()
-        solve(dt)
-        updateSleep(dt)
+        Profiler.scope("islands") { buildIslandsAndWake() }
+        Profiler.scope("solver") { solve(dt) }
+        Profiler.scope("sleep update") { updateSleep(dt) }
         // Kinematic bodies fall asleep after every step (their target is spent) but did move.
         for i in bodies.indices where bodies[i].isAlive && (bodies[i].isAwake || bodies[i].motion == .kinematic) && bodies[i].motion != .static {
             refreshProxies(i)

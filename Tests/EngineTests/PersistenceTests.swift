@@ -246,6 +246,92 @@ private struct Progress: Codable, Equatable {
         #expect(world.isAlive(hero))
     }
 
+    /// Rewrites the world payload of `slot`'s file (the header stays valid, so `load` works).
+    private func editWorld(of saves: SaveGames, slot: String, _ edit: (String) -> String) throws {
+        let url = saves.directory.appendingPathComponent("\(slot).save.json")
+        var file = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let world = try #require(file["world"] as? String)
+        let edited = edit(world)
+        #expect(edited != world)
+        file["world"] = edited
+        try JSONSerialization.data(withJSONObject: file).write(to: url)
+    }
+
+    /// The file loads (its header and world string are fine) but the entities in it don't
+    /// decode: `apply` throws from its scratch-world check and the world keeps every entity,
+    /// handle, parent link and component.
+    @Test(arguments: ["wrong type", "missing entity", "not a scene"])
+    func worldThatFailsValidationDespawnsNothing(damage: String) throws {
+        defer { cleanUp() }
+        let saves = SaveGames(app: "x", directory: dir)
+        let (world, hero, door) = makeWorld()
+        try saves.save(slot: "s", state: Progress(), world: world)
+        try editWorld(of: saves, slot: "s") { text in
+            switch damage {
+            case "wrong type": text.replacingOccurrences(of: #""hp" : 7"#, with: #""hp" : "seven""#)
+            case "missing entity": text.replacingOccurrences(of: #"{ "$entity" : 0 }"#, with: #"{ "$entity" : 42 }"#)
+            default: #"{"entities": "nope"}"#
+            }
+        }
+        // Play on, then try to load.
+        world.modify(Transform.self, for: hero) { $0.position = Vec3(100, 0, 0) }
+        let before = world.entities
+        let game = try saves.load(slot: "s")
+        #expect(game.hasWorld)
+        #expect(throws: SaveError.self) { try game.apply(to: world) }
+        #expect(world.entities == before)
+        #expect(world.isAlive(hero) && world.isAlive(door))
+        #expect(world.get(Transform.self, for: hero)?.position == Vec3(100, 0, 0))
+        #expect(world.get(PersistenceTestsHealth.self, for: hero)?.hp == 7)
+        #expect(world.children(of: hero).count == 1)
+        #expect(world.saveableRoots().count == 2)
+    }
+
+    /// A `Saveable` entity under an unsaved parent (a weapon in a level's rack) comes back under
+    /// that parent, at its sibling index, with its local transform; without the parent it loads
+    /// as a root where it was in the world.
+    @Test func saveableChildOfAnUnsavedParentKeepsItsParent() throws {
+        defer { cleanUp() }
+        let saves = SaveGames(app: "x", directory: dir)
+        let world = World()
+        let rack = world.spawn(Transform(position: Vec3(10, 0, 0), rotation: Quat(angle: .pi / 2, axis: Vec3(0, 1, 0))), Name("Rack"))
+        let first = world.spawn(Transform(), Name("Peg"))
+        world.setParent(first, to: rack)
+        let sword = world.spawn(Transform(position: Vec3(1, 2, 0)), Name("Sword"), Saveable(), PersistenceTestsHealth(hp: 3))
+        world.setParent(sword, to: rack, at: 0)
+        let gem = world.spawn(Transform(position: Vec3(0, 0.5, 0)), Name("Gem"))
+        world.setParent(gem, to: sword)
+        world.propagateTransforms()
+        let swordWorld = world.worldMatrix(of: sword)
+        try saves.save(slot: "s", state: Progress(), world: world)
+        #expect(world.id(of: rack) != nil)
+
+        // The rack moves and the sword is dropped elsewhere; loading puts it back on the rack.
+        world.modify(Transform.self, for: rack) { $0.position = Vec3(20, 0, 0) }
+        world.setParent(sword, to: nil)
+        world.modify(Transform.self, for: sword) { $0.position = Vec3(-5, 0, 0) }
+        let game = try saves.load(slot: "s")
+        let roots = try game.apply(to: world)
+        #expect(roots.count == 1)
+        let newSword = try #require(world.query(named: "Sword").first)
+        #expect(world.parent(of: newSword) == rack)
+        #expect(world.children(of: rack).first == newSword)
+        #expect(world.get(Transform.self, for: newSword)?.position == Vec3(1, 2, 0))
+        #expect(world.get(Name.self, for: try #require(world.children(of: newSword).first))?.value == "Gem")
+        #expect(world.get(GlobalTransform.self, for: newSword)?.position.x ?? 0 > 15)
+
+        // Without the rack: a root, placed where it was when saved.
+        world.despawn(rack)
+        let orphan = try #require(try game.apply(to: world).first)
+        #expect(world.parent(of: orphan) == nil)
+        #expect(world.get(Name.self, for: orphan)?.value == "Sword")
+        let placed = world.worldMatrix(of: orphan)
+        for (a, b) in zip([placed.c0, placed.c1, placed.c2, placed.c3], [swordWorld.c0, swordWorld.c1, swordWorld.c2, swordWorld.c3]) {
+            #expect(((a - b) * (a - b)).sum() < 1e-8)
+        }
+        #expect(world.query(named: "Sword").count == 1)
+    }
+
     @Test func newerVersionIsRejectedAndOlderMigrates() throws {
         defer { cleanUp() }
         let saves = SaveGames(app: "x", directory: dir)

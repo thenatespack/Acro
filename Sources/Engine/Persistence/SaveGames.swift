@@ -17,7 +17,12 @@ import Foundation
 // - `state`: any Codable game value (progress, inventory, flags).
 // - `world`: the entities marked `Saveable` and their subtrees, written by `World.save` (see
 //   World+Serialization.swift), so components, hierarchy and `EntityID`s are the scene format's.
-//   A `Saveable` child of an unsaved parent is saved as a root and loses its parent.
+// - `parents`: for each saved entity whose parent isn't saved (a `Saveable` sword in a
+//   level's weapon rack), the parent's `EntityID` (given one if it had none), its sibling
+//   index and its world transform. `apply` puts it back under that parent, at that index,
+//   with its saved local transform (so it follows the rack if the rack moved). If no entity
+//   has that id at load time (the rack was destroyed, or the parent had no id in the scene
+//   file and the scene was reloaded since), it loads as a root at its saved world transform.
 //
 // References: every saved entity is given a persistent `EntityID` first, and `apply` despawns
 // the current `Saveable` entities before loading, so the loaded entities get their ids back
@@ -80,6 +85,8 @@ public struct SaveGame {
     public let info: SaveSlotInfo
     let state: JSONValue
     let worldData: Data?
+    /// Unsaved parents of the world's roots.
+    let parents: [SavedParentLink]
 
     /// The game state saved with it, decoded as `T`.
     public func state<T: Decodable>(_ type: T.Type = T.self) throws -> T {
@@ -89,9 +96,10 @@ public struct SaveGame {
     /// Whether the save holds entities.
     public var hasWorld: Bool { worldData != nil }
 
-    /// Replaces `world`'s `Saveable` entities with the saved ones and returns the new roots.
-    /// The file is checked first (decoded into a scratch world), so a damaged one throws
-    /// before anything is despawned. Not callable inside a query.
+    /// Replaces `world`'s `Saveable` entities with the saved ones and returns the saved roots
+    /// (those that had an unsaved parent are back under it, see `parents` above). The file is
+    /// checked first (decoded into a scratch world), so a damaged one throws before anything is
+    /// despawned. Not callable inside a query.
     @MainActor
     @discardableResult
     public func apply(to world: World) throws -> [Entity] {
@@ -100,8 +108,31 @@ public struct SaveGame {
             throw SaveError.corrupt(slot: info.slot, reason: "\(error)")
         }
         for entity in world.saveableRoots() { world.despawn(entity) }
-        return try world.load(worldData)
+        let roots = try world.load(worldData)
+        var moved = false
+        for link in parents where link.root >= 0 && link.root < roots.count {
+            let root = roots[link.root]
+            if let parent = world.entity(for: link.parent), world.setParent(root, to: parent, at: link.index) {
+                moved = true
+            } else if world.has(Transform.self, for: root) {
+                world.modify(Transform.self, for: root) { $0 = link.world }
+                moved = true
+            }
+        }
+        if moved { world.propagateTransforms() }
+        return roots
     }
+}
+
+/// Where a saved root was in the hierarchy when its parent wasn't saved.
+struct SavedParentLink: Codable, Equatable {
+    /// The root's position among the world payload's roots.
+    var root: Int
+    var parent: EntityID
+    /// Its sibling index under the parent.
+    var index: Int
+    /// Its world transform, for loading it without the parent.
+    var world: Transform
 }
 
 extension World {
@@ -137,6 +168,7 @@ public final class SaveGames {
         var info: SaveSlotInfo
         var state: JSONValue
         var world: String?
+        var parents: [SavedParentLink]?
     }
 
     // MARK: Slots
@@ -148,13 +180,22 @@ public final class SaveGames {
                                        playtime: Double = 0, thumbnail: Image? = nil, date: Date = Date()) throws -> SaveSlotInfo {
         try checkName(slot)
         var worldText: String?
+        var parents: [SavedParentLink] = []
         if let world {
             let roots = world.saveableRoots()
             for root in roots { world.ensureIDs(inSubtreeOf: root) }
             worldText = String(decoding: try world.save(roots), as: UTF8.self)
+            // The file's roots (as `World.save` picks them, in that order) that have a parent.
+            let fileRoots = roots.filter { entity in !roots.contains { world.isDescendant(entity, of: $0) } }
+            for (k, root) in fileRoots.enumerated() {
+                guard let parent = world.parent(of: root), let id = world.ensureID(of: parent) else { continue }
+                parents.append(SavedParentLink(root: k, parent: id, index: world.siblingIndex(of: root) ?? 0,
+                                               world: Transform(matrix: world.worldMatrix(of: root))))
+            }
         }
         let info = SaveSlotInfo(slot: slot, savedAt: date, playtime: playtime, sceneName: sceneName, hasThumbnail: thumbnail != nil)
-        let header = Header(format: Self.format, version: version, info: info, state: try JSONValue.encoding(state), world: worldText)
+        let header = Header(format: Self.format, version: version, info: info, state: try JSONValue.encoding(state), world: worldText,
+                            parents: parents.isEmpty ? nil : parents)
         let encoder = SceneCoder.encoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         try AtomicFile.write(try encoder.encode(header), to: file(slot))
@@ -243,7 +284,8 @@ public final class SaveGames {
             let header = try JSONValue.object(root).decode(Header.self)
             var info = header.info
             info.slot = slot
-            return SaveGame(info: info, state: header.state, worldData: header.world.map { Data($0.utf8) })
+            return SaveGame(info: info, state: header.state, worldData: header.world.map { Data($0.utf8) },
+                            parents: header.parents ?? [])
         } catch {
             throw corrupt(error)
         }

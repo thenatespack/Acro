@@ -89,8 +89,8 @@ struct JointData {
     var axialImpulse: Float = 0
 }
 
-extension PhysicsWorld {
-    func prepareJoints() {
+extension SolverIsland {
+    mutating func prepareJoints() {
         for j in joints.indices where joints[j].isAlive {
             let a = bodies[joints[j].a], b = bodies[joints[j].b]
             guard a.isSolverActive || b.isSolverActive else { continue }
@@ -136,7 +136,7 @@ extension PhysicsWorld {
         }
     }
 
-    func warmStartJoints() {
+    mutating func warmStartJoints() {
         for j in joints.indices where joints[j].isAlive {
             let joint = joints[j]
             guard bodies[joint.a].isSolverActive || bodies[joint.b].isSolverActive else { continue }
@@ -149,7 +149,7 @@ extension PhysicsWorld {
 
     /// One pass over the joints. With `useBias`, soft: the errors are pushed out by the spring
     /// of `softness`; without (the relax pass), rigid velocity constraints only.
-    func solveJoints(softness: Softness, useBias: Bool) {
+    mutating func solveJoints(softness: Softness, useBias: Bool) {
         let biasRate = useBias ? softness.biasRate : 0
         let massScale = useBias ? softness.massScale : 1
         let impulseScale = useBias ? softness.impulseScale : 0
@@ -187,7 +187,7 @@ extension PhysicsWorld {
     }
 
     /// Applies `linear` at the anchors (+ to B, − to A) and a pure `angular` impulse.
-    private func applyJointImpulse(_ joint: JointData, linear: Vec3, angular: Vec3) {
+    private mutating func applyJointImpulse(_ joint: JointData, linear: Vec3, angular: Vec3) {
         let a = joint.a, b = joint.b
         bodies[a].linearVelocity -= linear * bodies[a].invMass
         bodies[a].angularVelocity -= bodies[a].invInertiaWorld * (cross(joint.rA, linear) + angular)

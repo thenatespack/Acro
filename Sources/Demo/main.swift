@@ -37,6 +37,12 @@ final class DemoGame: Game {
             + "\(engine.device.backend.rawValue) on \(engine.device.deviceName)"
         resolutionIndex = Self.resolutionCycle.firstIndex(of: engine.renderResolution)
         try openScene(initialScene)
+        // DEMO_INPUT_SCRIPT: a JSON array of `InputStep`s (inline, or a file path) played from
+        // the first frame, e.g. to drive a scene in a screenshot run.
+        if let script = ProcessInfo.processInfo.environment["DEMO_INPUT_SCRIPT"], !script.isEmpty {
+            let data = FileManager.default.fileExists(atPath: script) ? try Data(contentsOf: URL(fileURLWithPath: script)) : Data(script.utf8)
+            _ = try engine.inputPlayer.enqueue(JSONDecoder().decode([InputStep].self, from: data))
+        }
         // ENGINE_MCP=1: the entity tools act on the open scene's World, whichever property holds it.
         engine.mcp?.world = { [unowned self] in
             scene.map { Mirror(reflecting: $0).children.lazy.compactMap { $0.value as? World }.first } ?? nil

@@ -59,24 +59,159 @@ struct Softness2D {
     static let rigid = Softness2D(hertz: 0, dampingRatio: 0, h: 0)
 }
 
-extension PhysicsWorld2D {
-    /// The fastest push-out of overlapping bodies, m/s.
-    static let maxPushOut: Float = 3
+/// The step's solver settings, shared by every island.
+struct SolverSettings2D: Sendable {
+    var substeps: Int
+    var velocityIterations: Int
+    /// The substep.
+    var h: Float
+    var softness: Softness2D
+    var jointSoftness: Softness2D
+    var gravity: Vec2
+    var linearSlop: Float
+    var restitutionThreshold: Float
+}
 
+// Islands in parallel, as in 3D (see ContactSolver.swift and `SolverPlanner`): each unit of
+// islands is solved in a `SolverIsland2D` on the job system, with its dynamic bodies' copies
+// written back and kinematic bodies moved by the world, so results are bit-identical to one
+// serial solve for any thread count. A mouse joint's spin damping only acts on a dynamic
+// body (a kinematic one is a read-only neighbour).
+extension PhysicsWorld2D {
     func solve(_ dt: Float) {
-        var constraints = makeContactConstraints()
         let n = max(substeps, 1)
         let h = dt / Float(n)
         let contactHertz = min(self.contactHertz, 0.25 / h)
-        let softness = Softness2D(hertz: contactHertz, dampingRatio: contactDampingRatio, h: h)
-        let jointSoftness = Softness2D(hertz: 2 * contactHertz, dampingRatio: jointDampingRatio, h: h)
-        for _ in 0..<n {
+        let settings = SolverSettings2D(
+            substeps: n, velocityIterations: velocityIterations, h: h,
+            softness: Softness2D(hertz: contactHertz, dampingRatio: contactDampingRatio, h: h),
+            jointSoftness: Softness2D(hertz: 2 * contactHertz, dampingRatio: jointDampingRatio, h: h),
+            gravity: gravity, linearSlop: linearSlop, restitutionThreshold: restitutionThreshold)
+        let (units, local) = Profiler.scope("solver islands") { planSolverUnits() }
+        let solved = solveUnits(units, local: local, settings: settings)
+        Profiler.scope("solver write back") {
+            for (unit, island) in zip(units, solved) {
+                for (k, i) in unit.members.enumerated() { bodies[i] = island.bodies[k] }
+                for (k, j) in unit.joints.enumerated() {
+                    var joint = island.joints[k]
+                    joint.a = joints[j].a
+                    joint.b = joints[j].b
+                    joints[j] = joint
+                }
+                for c in island.constraints {
+                    for (j, p) in c.points.enumerated() {
+                        contacts[c.contact].points[j].normalImpulse = p.normalImpulse
+                        contacts[c.contact].points[j].tangentImpulse = p.tangentImpulse
+                    }
+                }
+            }
+        }
+        // Kinematic bodies aren't in any island (islands move copies of them).
+        for i in bodies.indices where bodies[i].isAlive && bodies[i].isAwake && bodies[i].motion == .kinematic {
+            for _ in 0..<n { SolverIsland2D.integratePosition(&bodies[i], h) }
+        }
+        finishKinematicMoves()
+    }
+
+    private func planSolverUnits() -> ([SolverUnit], [Int32]) {
+        var planner = SolverPlanner(isDynamic: bodies.map { $0.isAlive && $0.motion == .dynamic },
+                                    isAwakeDynamic: bodies.map { $0.isAlive && $0.motion == .dynamic && $0.isAwake })
+        for (ci, c) in contacts.enumerated() where !c.isTrigger && !c.points.isEmpty {
+            guard bodies[c.a].isSolverActive || bodies[c.b].isSolverActive else { continue }
+            planner.addContact(ci, c.a, c.b, points: c.points.count)
+        }
+        for j in joints.indices where joints[j].isAlive {
+            guard bodies[joints[j].a].isSolverActive || bodies[joints[j].b].isSolverActive else { continue }
+            planner.addJoint(j, joints[j].a, joints[j].b)
+        }
+        return planner.units()
+    }
+
+    /// The units on the job system (each job reads the world's arrays and returns its island).
+    private func solveUnits(_ units: [SolverUnit], local: [Int32], settings: SolverSettings2D) -> [SolverIsland2D] {
+        let (bodies, contacts, joints) = (self.bodies, self.contacts, self.joints)
+        let order = units.indices.sorted { (units[$0].work, $1) > (units[$1].work, $0) }
+        let byOrder = jobs.parallelMap(order.count, name: "solve islands") { k in
+            var island = SolverIsland2D(unit: units[order[k]], bodies: bodies, contacts: contacts, joints: joints,
+                                        local: local, settings: settings)
+            island.solve()
+            return island
+        }
+        var result = [SolverIsland2D?](repeating: nil, count: units.count)
+        for (k, u) in order.enumerated() { result[u] = byOrder[k] }
+        return result.map { $0! }
+    }
+
+    /// Kinematic bodies moved with `moveKinematic` land exactly on their target and stop until
+    /// moved again; forces are cleared.
+    private func finishKinematicMoves() {
+        for i in bodies.indices where bodies[i].isAlive && bodies[i].motion != .static {
+            bodies[i].force = .zero
+            bodies[i].torque = 0
+            if bodies[i].motion == .kinematic {
+                // What `velocity(of:at:)` reports until the next step: how far the body moved.
+                bodies[i].carryLinear = bodies[i].kinematicTarget == nil ? .zero : bodies[i].linearVelocity
+                bodies[i].carryAngular = bodies[i].kinematicTarget == nil ? 0 : bodies[i].angularVelocity
+            }
+            if bodies[i].motion == .kinematic, let target = bodies[i].kinematicTarget {
+                bodies[i].pose = target
+                bodies[i].kinematicTarget = nil
+                bodies[i].linearVelocity = .zero
+                bodies[i].angularVelocity = 0
+                bodies[i].updateDerived()
+            }
+        }
+    }
+}
+
+/// One 2D solver job: copies of a unit's bodies (members, then neighbours), its joints and its
+/// contact constraints, with body indices local to `bodies`. Runs on any thread.
+struct SolverIsland2D {
+    /// The fastest push-out of overlapping bodies, m/s.
+    static let maxPushOut: Float = 3
+
+    var bodies: [Body2D] = []
+    var joints: [JointData2D] = []
+    var constraints: [ContactConstraint2D] = []
+    let settings: SolverSettings2D
+    var linearSlop: Float { settings.linearSlop }
+    var restitutionThreshold: Float { settings.restitutionThreshold }
+
+    init(unit: SolverUnit, bodies world: [Body2D], contacts: [Contact2D], joints worldJoints: [JointData2D], local: [Int32],
+         settings: SolverSettings2D) {
+        self.settings = settings
+        bodies.reserveCapacity(unit.members.count + unit.neighbours.count)
+        for i in unit.members { bodies.append(world[i]) }
+        var neighbourIndex: [Int: Int] = [:]
+        for i in unit.neighbours {
+            neighbourIndex[i] = bodies.count
+            bodies.append(world[i])
+        }
+        func map(_ i: Int) -> Int { local[i] >= 0 ? Int(local[i]) : neighbourIndex[i]! }
+        joints.reserveCapacity(unit.joints.count)
+        for j in unit.joints {
+            var joint = worldJoints[j]
+            joint.a = map(joint.a)
+            joint.b = map(joint.b)
+            joints.append(joint)
+        }
+        constraints.reserveCapacity(unit.contacts.count)
+        for ci in unit.contacts {
+            constraints.append(makeContactConstraint(ci, contacts[ci], map(contacts[ci].a), map(contacts[ci].b)))
+        }
+    }
+
+    mutating func solve() {
+        var constraints = self.constraints
+        self.constraints = []
+        let h = settings.h, softness = settings.softness, jointSoftness = settings.jointSoftness
+        for _ in 0..<settings.substeps {
             integrateVelocities(h)
             for k in constraints.indices { updateAnchors(&constraints[k]) }
             prepareJoints(h: h)
             warmStart(constraints)
             warmStartJoints()
-            for iteration in 0..<velocityIterations {
+            for iteration in 0..<settings.velocityIterations {
                 solveJoints(h: h, softness: jointSoftness, useBias: true)
                 // Alternate the order (symmetric Gauss-Seidel), so the order's bias cancels out.
                 let reversed = iteration % 2 == 1
@@ -94,17 +229,11 @@ extension PhysicsWorld2D {
             }
         }
         applyRestitution(&constraints)
-        finishKinematicMoves()
-
-        for c in constraints {
-            for (j, p) in c.points.enumerated() {
-                contacts[c.contact].points[j].normalImpulse = p.normalImpulse
-                contacts[c.contact].points[j].tangentImpulse = p.tangentImpulse
-            }
-        }
+        self.constraints = constraints
     }
 
-    func integrateVelocities(_ dt: Float) {
+    mutating func integrateVelocities(_ dt: Float) {
+        let gravity = settings.gravity
         for i in bodies.indices where bodies[i].isAlive && bodies[i].isSolverActive {
             var b = bodies[i]
             if b.motion == .dynamic {
@@ -120,23 +249,31 @@ extension PhysicsWorld2D {
         }
     }
 
-    private func makeContactConstraints() -> [ContactConstraint2D] {
-        var constraints: [ContactConstraint2D] = []
-        for (ci, c) in contacts.enumerated() where !c.isTrigger && !c.points.isEmpty {
-            let a = bodies[c.a], b = bodies[c.b]
-            guard a.isSolverActive || b.isSolverActive else { continue }
-            var points: [ContactConstraintPoint2D] = []
-            points.reserveCapacity(c.points.count)
-            for m in c.points {
-                let rA = a.pose.rotation.rotate(m.localA), rB = b.pose.rotation.rotate(m.localB)
-                let dv = b.linearVelocity + cross2(b.angularVelocity, rB) - a.linearVelocity - cross2(a.angularVelocity, rA)
-                points.append(ContactConstraintPoint2D(localA: m.localA, localB: m.localB, normalImpulse: m.normalImpulse,
-                                                       tangentImpulse: m.tangentImpulse, approachSpeed: dot2(dv, c.normal)))
-            }
-            constraints.append(ContactConstraint2D(contact: ci, a: c.a, b: c.b, friction: c.friction,
-                                                   restitution: c.restitution, normal: c.normal, points: points))
+    mutating func integratePositions(_ dt: Float) {
+        for i in bodies.indices where bodies[i].isAlive && bodies[i].isSolverActive {
+            Self.integratePosition(&bodies[i], dt)
         }
-        return constraints
+    }
+
+    static func integratePosition(_ body: inout Body2D, _ dt: Float) {
+        body.center += body.linearVelocity * dt
+        body.pose.rotation = body.pose.rotation.integrated(body.angularVelocity, dt)
+        body.pose.position = body.center - body.pose.rotation.rotate(body.localCenter)
+    }
+
+    /// The constraint of world contact `ci`, between local bodies `ia` and `ib`.
+    private func makeContactConstraint(_ ci: Int, _ c: Contact2D, _ ia: Int, _ ib: Int) -> ContactConstraint2D {
+        let a = bodies[ia], b = bodies[ib]
+        var points: [ContactConstraintPoint2D] = []
+        points.reserveCapacity(c.points.count)
+        for m in c.points {
+            let rA = a.pose.rotation.rotate(m.localA), rB = b.pose.rotation.rotate(m.localB)
+            let dv = b.linearVelocity + cross2(b.angularVelocity, rB) - a.linearVelocity - cross2(a.angularVelocity, rA)
+            points.append(ContactConstraintPoint2D(localA: m.localA, localB: m.localB, normalImpulse: m.normalImpulse,
+                                                   tangentImpulse: m.tangentImpulse, approachSpeed: dot2(dv, c.normal)))
+        }
+        return ContactConstraint2D(contact: ci, a: ia, b: ib, friction: c.friction,
+                                   restitution: c.restitution, normal: c.normal, points: points)
     }
 
     /// Anchor offsets (and effective masses) from the bodies' current rotations.
@@ -158,7 +295,7 @@ extension PhysicsWorld2D {
         }
     }
 
-    private func warmStart(_ constraints: [ContactConstraint2D]) {
+    private mutating func warmStart(_ constraints: [ContactConstraint2D]) {
         for c in constraints {
             let tangent = rightPerp(c.normal)
             for p in c.points { apply(c.normal * p.normalImpulse + tangent * p.tangentImpulse, c.a, p.rA, c.b, p.rB) }
@@ -167,7 +304,7 @@ extension PhysicsWorld2D {
 
     /// One pass over a manifold. With `softness`, overlapping points get a soft push-out bias;
     /// without (the relax pass), only the velocity constraints.
-    private func solveContact(_ c: inout ContactConstraint2D, softness: Softness2D?, h: Float, reversed: Bool) {
+    private mutating func solveContact(_ c: inout ContactConstraint2D, softness: Softness2D?, h: Float, reversed: Bool) {
         let a = c.a, b = c.b
         let n = c.normal, tangent = rightPerp(n)
         // Friction first, bounded by the current normal impulses.
@@ -205,7 +342,7 @@ extension PhysicsWorld2D {
     }
 
     /// Bounces points that were approaching fast and got pushed apart.
-    private func applyRestitution(_ constraints: inout [ContactConstraint2D]) {
+    private mutating func applyRestitution(_ constraints: inout [ContactConstraint2D]) {
         for k in constraints.indices where constraints[k].restitution > 0 {
             let c = constraints[k]
             for j in c.points.indices {
@@ -227,41 +364,10 @@ extension PhysicsWorld2D {
 
     /// `impulse` pushes B and pulls A.
     @inline(__always)
-    func apply(_ impulse: Vec2, _ a: Int, _ rA: Vec2, _ b: Int, _ rB: Vec2) {
+    mutating func apply(_ impulse: Vec2, _ a: Int, _ rA: Vec2, _ b: Int, _ rB: Vec2) {
         bodies[a].linearVelocity -= impulse * bodies[a].invMass
         bodies[a].angularVelocity -= bodies[a].invInertia * cross2(rA, impulse)
         bodies[b].linearVelocity += impulse * bodies[b].invMass
         bodies[b].angularVelocity += bodies[b].invInertia * cross2(rB, impulse)
-    }
-
-    func integratePositions(_ dt: Float) {
-        for i in bodies.indices where bodies[i].isAlive && bodies[i].isSolverActive {
-            var b = bodies[i]
-            b.center += b.linearVelocity * dt
-            b.pose.rotation = b.pose.rotation.integrated(b.angularVelocity, dt)
-            b.pose.position = b.center - b.pose.rotation.rotate(b.localCenter)
-            bodies[i] = b
-        }
-    }
-
-    /// Kinematic bodies moved with `moveKinematic` land exactly on their target and stop until
-    /// moved again; forces are cleared.
-    private func finishKinematicMoves() {
-        for i in bodies.indices where bodies[i].isAlive && bodies[i].motion != .static {
-            bodies[i].force = .zero
-            bodies[i].torque = 0
-            if bodies[i].motion == .kinematic {
-                // What `velocity(of:at:)` reports until the next step: how far the body moved.
-                bodies[i].carryLinear = bodies[i].kinematicTarget == nil ? .zero : bodies[i].linearVelocity
-                bodies[i].carryAngular = bodies[i].kinematicTarget == nil ? 0 : bodies[i].angularVelocity
-            }
-            if bodies[i].motion == .kinematic, let target = bodies[i].kinematicTarget {
-                bodies[i].pose = target
-                bodies[i].kinematicTarget = nil
-                bodies[i].linearVelocity = .zero
-                bodies[i].angularVelocity = 0
-                bodies[i].updateDerived()
-            }
-        }
     }
 }
