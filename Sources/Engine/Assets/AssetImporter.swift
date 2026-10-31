@@ -39,7 +39,9 @@ import Foundation
 // - Other files the import reads (a glTF's `.bin`) go through `context.readDependency(relativePath:)`,
 //   which records them: the asset is reimported when one of them changes, not only its source.
 // - Extra derived files (anything worth caching beyond the returned objects) can go in
-//   `context.artifactsDirectory`, which is emptied before every import.
+//   `context.artifactsDirectory`, which is emptied before every import. Expensive results worth
+//   keeping across reimports (the texture importer's compressed mips) go in
+//   `context.cacheDirectory`, keyed by what they were made from.
 
 /// Converts files of some types into `ImportedAsset`s. See the notes above.
 public protocol AssetImporter: Sendable {
@@ -76,8 +78,12 @@ public struct ImportContext: Sendable {
     public let sourceURL: URL
     /// The source's path relative to `Assets/`, with "/" separators.
     public let assetPath: String
-    /// `Library/Artifacts/<id>/`: created and emptied before the import. Put derived files here.
+    /// `Library/Artifacts/<id>/files/`: created and emptied before the import. Put derived files here.
     public let artifactsDirectory: URL
+    /// `Library/Artifacts/<id>/cache/` (nil outside a database): kept across reimports of the
+    /// asset and removed with it. Not created; name files by a hash of everything they depend on
+    /// (source, settings, encoder version), since a reimport doesn't clear stale ones.
+    public let cacheDirectory: URL?
     /// Problems that didn't stop the import; they show up in the scan report.
     public var warnings: [String] = []
     /// Every asset in the project at the time of the import, by path relative to `Assets/`.
@@ -86,11 +92,12 @@ public struct ImportContext: Sendable {
     let dependencyLog = DependencyLog()
 
     public init(assetID: AssetID, sourceURL: URL, assetPath: String, artifactsDirectory: URL,
-                assetsByPath: [String: AssetID] = [:]) {
+                cacheDirectory: URL? = nil, assetsByPath: [String: AssetID] = [:]) {
         self.assetID = assetID
         self.sourceURL = sourceURL
         self.assetPath = assetPath
         self.artifactsDirectory = artifactsDirectory
+        self.cacheDirectory = cacheDirectory
         self.assetsByPath = assetsByPath
     }
 

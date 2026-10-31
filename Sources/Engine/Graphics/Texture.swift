@@ -78,13 +78,15 @@ final class SamplerCache<Sampler: AnyObject> {
 extension TextureFormat {
     /// Checks a texture's size and the byte count of its first level.
     func validateUpload(byteCount: Int, width: Int, height: Int, maxSize: Int) throws {
-        guard isUploadable else { throw GraphicsError("Pixel data needs .rgba8Unorm, .rgba8Srgb or .rgba16Float, not \(self)") }
+        guard isUploadable else {
+            throw GraphicsError("Pixel data needs .rgba8Unorm, .rgba8Srgb, .rgba16Float or a compressed format, not \(self)")
+        }
         guard width > 0, height > 0, width <= maxSize, height <= maxSize else {
             throw GraphicsError("Texture size \(width)x\(height) is outside 1...\(maxSize)")
         }
-        guard byteCount == width * height * bytesPerPixel else {
+        guard byteCount == self.byteCount(width: width, height: height) else {
             throw GraphicsError(
-                "Expected \(width * height * bytesPerPixel) bytes of \(self) data for \(width)x\(height), got \(byteCount)")
+                "Expected \(self.byteCount(width: width, height: height)) bytes of \(self) data for \(width)x\(height), got \(byteCount)")
         }
     }
 
@@ -101,8 +103,9 @@ extension TextureFormat {
             guard level.width == expected.width, level.height == expected.height else {
                 throw GraphicsError("Mip level \(index) is \(level.width)x\(level.height), expected \(expected.width)x\(expected.height)")
             }
-            guard level.pixels.count == level.width * level.height * bytesPerPixel else {
-                throw GraphicsError("Mip level \(index) has \(level.pixels.count) bytes, expected \(level.width * level.height * bytesPerPixel)")
+            let expectedBytes = byteCount(width: level.width, height: level.height)
+            guard level.pixels.count == expectedBytes else {
+                throw GraphicsError("Mip level \(index) has \(level.pixels.count) bytes, expected \(expectedBytes)")
             }
         }
     }
@@ -120,8 +123,18 @@ extension TextureFormat {
         else {
             throw GraphicsError("Region \(region.width)x\(region.height) at (\(region.x), \(region.y)) is outside the \(level.width)x\(level.height) mip level")
         }
-        guard byteCount == region.width * region.height * bytesPerPixel else {
-            throw GraphicsError("Expected \(region.width * region.height * bytesPerPixel) bytes for the region, got \(byteCount)")
+        // Compressed formats are written in whole blocks: the region starts on a block and
+        // covers whole blocks, except where it reaches the level's right or bottom edge.
+        let block = blockSize
+        guard region.x % block == 0, region.y % block == 0,
+              region.width % block == 0 || region.x + region.width == level.width,
+              region.height % block == 0 || region.y + region.height == level.height
+        else {
+            throw GraphicsError("Region \(region.width)x\(region.height) at (\(region.x), \(region.y)) isn't aligned to \(self)'s \(block)x\(block) blocks")
+        }
+        let expectedBytes = self.byteCount(width: region.width, height: region.height)
+        guard byteCount == expectedBytes else {
+            throw GraphicsError("Expected \(expectedBytes) bytes for the region, got \(byteCount)")
         }
     }
 }
@@ -138,7 +151,8 @@ public struct TextureRegion: Sendable, Equatable {
     }
 }
 
-/// The pixels of one mip level, tightly packed, top row first, in the texture's format.
+/// The pixels of one mip level, tightly packed, top row first, in the texture's format (for a
+/// compressed format, rows of 4x4 blocks: `format.byteCount(width:height:)` bytes).
 public struct TextureMipLevel: Sendable {
     public var width: Int
     public var height: Int

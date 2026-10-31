@@ -3,16 +3,42 @@ import Foundation
 /// Imports PNG, JPEG, TGA and Radiance HDR images (`ImageDecoder.decodeAny`) as one `texture`
 /// sub-asset: RGBA8, sRGB or linear, with a mip chain unless turned off. Use linear
 /// (`sRGB: false`) for data such as normal maps and masks. `.hdr` files stay float
-/// (`TextureAsset.floatImage`, uploaded as `.rgba16Float`) and ignore `sRGB`.
+/// (`TextureAsset.floatImage`, uploaded as `.rgba16Float`) and ignore `sRGB` and `compression`.
+///
+/// With `compression` (BC7 / ASTC 4x4, or `auto` for this machine's GPUs), the mip chain is
+/// built and block-compressed here (`TextureCodec`), so the Library caches the compressed
+/// levels. The encodings are also kept in `ImportContext.cacheDirectory`, keyed by the source's
+/// hash, the format, quality and mipmaps, so a reimport with the same inputs (a forced one, or
+/// switching compression back) doesn't encode again.
 public struct TextureImporter: AssetImporter {
     public struct Settings: Codable, Equatable, Sendable {
         /// Color data (true) or linear data such as normals and masks (false).
         public var sRGB: Bool = true
         public var mipmaps: Bool = true
+        /// Block compression of 8-bit images. Linear textures (normal maps, masks) are encoded
+        /// with all channels weighted alike, color with perceptual weights.
+        public var compression: TextureCompression = .none
+        /// Encoder effort when compressing.
+        public var compressionQuality: TextureCompressionQuality = .normal
 
-        public init(sRGB: Bool = true, mipmaps: Bool = true) {
+        public init(sRGB: Bool = true, mipmaps: Bool = true, compression: TextureCompression = .none,
+                    compressionQuality: TextureCompressionQuality = .normal) {
             self.sRGB = sRGB
             self.mipmaps = mipmaps
+            self.compression = compression
+            self.compressionQuality = compressionQuality
+        }
+
+        private enum CodingKeys: String, CodingKey { case sRGB, mipmaps, compression, compressionQuality }
+
+        /// Every key is optional, so sidecars from before `compression` existed decode. All of
+        /// them are encoded, so the editor's inspector lists them.
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            sRGB = try c.decodeIfPresent(Bool.self, forKey: .sRGB) ?? true
+            mipmaps = try c.decodeIfPresent(Bool.self, forKey: .mipmaps) ?? true
+            compression = try c.decodeIfPresent(TextureCompression.self, forKey: .compression) ?? .none
+            compressionQuality = try c.decodeIfPresent(TextureCompressionQuality.self, forKey: .compressionQuality) ?? .normal
         }
     }
 
@@ -24,11 +50,77 @@ public struct TextureImporter: AssetImporter {
     public var defaultSettings: Settings { Settings() }
 
     public func importAsset(_ context: inout ImportContext, settings: Settings) throws -> ImportedAsset {
-        let image = try ImageDecoder.decodeAny(context.data())
+        let data = try context.data()
+        let image = try ImageDecoder.decodeAny(data)
+        var texture = TextureAsset(decoded: image, isSRGB: settings.sRGB, generatesMipmaps: settings.mipmaps)
+        if let format = settings.compression.format(srgb: settings.sRGB) {
+            if case .rgba8(let pixels) = texture.pixels {
+                texture = TextureAsset(compressedLevels: try Self.compress(
+                    pixels, format: format, settings: settings, sourceHash: ContentHash.hex(data), context: context), format: format)
+            } else {
+                context.warnings.append("\(context.assetPath): HDR textures aren't compressed; compression \(settings.compression) ignored")
+            }
+        }
         var asset = ImportedAsset()
         asset.add("texture", name: ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension,
-                  .texture(TextureAsset(decoded: image, isSRGB: settings.sRGB, generatesMipmaps: settings.mipmaps)))
+                  .texture(texture))
         return asset
+    }
+
+    /// The compressed mip chain from `context.cacheDirectory` when one was made from the same
+    /// inputs, else freshly encoded (and cached).
+    static func compress(_ image: Image, format: TextureFormat, settings: Settings, sourceHash: String,
+                         context: ImportContext) throws -> [TextureMipLevel] {
+        let key = "\(sourceHash) \(format) \(settings.compressionQuality) mipmaps:\(settings.mipmaps) codec:\(TextureCodec.version)"
+        let file = context.cacheDirectory?.appendingPathComponent("\(format.rawValue).bin")
+        if let file, let levels = CompressedTextureCache.read(file, key: key, format: format,
+                                                              width: image.width, height: image.height) {
+            return levels
+        }
+        let start = DispatchTime.now().uptimeNanoseconds
+        let levels = try TextureCodec.encode(image, format: format, mipmaps: settings.mipmaps, quality: settings.compressionQuality)
+        let milliseconds = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
+        EngineLog.debug("Encoded \(context.assetPath) (\(image.width)x\(image.height), \(levels.count) levels) as \(format) in "
+                        + String(format: "%.0f ms", milliseconds), category: .assets)
+        if let file { CompressedTextureCache.write(levels, key: key, to: file) }
+        return levels
+    }
+}
+
+/// One cached encoding: "TXC1", the key's length (UInt32) and UTF-8 bytes, the level count
+/// (UInt32), then every level's blocks (their sizes follow from the image size and format).
+enum CompressedTextureCache {
+    private static let magic = Array("TXC1".utf8)
+
+    static func read(_ url: URL, key: String, format: TextureFormat, width: Int, height: Int) -> [TextureMipLevel]? {
+        guard let data = FileManager.default.contents(atPath: url.path), data.count >= 12,
+              Array(data.prefix(4)) == magic else { return nil }
+        let bytes = [UInt8](data)
+        func u32(_ offset: Int) -> Int { bytes[offset..<offset + 4].reversed().reduce(0) { $0 << 8 | Int($1) } }
+        let keyLength = u32(4)
+        guard 8 + keyLength + 4 <= bytes.count, String(decoding: bytes[8..<8 + keyLength], as: UTF8.self) == key else { return nil }
+        let count = u32(8 + keyLength)
+        guard count >= 1, count <= MipChain.levelCount(width: width, height: height) else { return nil }
+        var offset = 12 + keyLength
+        var levels: [TextureMipLevel] = []
+        for level in 0..<count {
+            let size = MipChain.size(width: width, height: height, level: level)
+            let length = format.byteCount(width: size.width, height: size.height)
+            guard offset + length <= bytes.count else { return nil }
+            levels.append(TextureMipLevel(width: size.width, height: size.height, pixels: Array(bytes[offset..<offset + length])))
+            offset += length
+        }
+        return offset == bytes.count ? levels : nil
+    }
+
+    /// Best effort: a cache that can't be written only costs an encode next time.
+    static func write(_ levels: [TextureMipLevel], key: String, to url: URL) {
+        func u32(_ value: Int) -> [UInt8] { (0..<4).map { UInt8(truncatingIfNeeded: value >> ($0 * 8)) } }
+        let keyBytes = Array(key.utf8)
+        var data = Data(magic + u32(keyBytes.count) + keyBytes + u32(levels.count))
+        for level in levels { data.append(contentsOf: level.pixels) }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
     }
 }
 

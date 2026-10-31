@@ -210,7 +210,7 @@ public struct PipelineDescriptor: Sendable {
     }
 }
 
-public enum TextureFormat: Sendable, Equatable {
+public enum TextureFormat: String, Sendable, Equatable {
     /// 32-bit float depth. Render target for depth passes; sampled in shaders with a
     /// linear-filtered comparison sampler (hardware PCF), clamped to a border of 1.
     case depth32Float
@@ -225,24 +225,64 @@ public enum TextureFormat: Sendable, Equatable {
     /// sampled like the others (missing channels read as 0, alpha as 1). GLSL format qualifiers
     /// `r8`, `r16f`, `rg16f`, `r32f`.
     case r8Unorm, r16Float, rg16Float, r32Float
+    /// BC7 block compression (desktop GPUs, Apple silicon too): 4x4 texels in 16 bytes, RGBA,
+    /// linear or sRGB like the RGBA8 pair. Encoded on the CPU by `TextureCodec`; not every GPU
+    /// samples it (`RenderDevice.supports(_:)`; `makeTexture(compressedLevels:format:)` falls back).
+    case bc7Unorm, bc7Srgb
+    /// ASTC 4x4 LDR block compression (Apple and mobile GPUs): 4x4 texels in 16 bytes, like BC7.
+    case astc4x4Unorm, astc4x4Srgb
 
     var isDepth: Bool { self == .depth32Float }
 
     /// Formats `makeTexture(pixels:...)` / `makeTexture(levels:format:)` accept.
-    var isUploadable: Bool { self == .rgba8Unorm || self == .rgba8Srgb || self == .rgba16Float }
+    var isUploadable: Bool { self == .rgba8Unorm || self == .rgba8Srgb || self == .rgba16Float || isCompressed }
 
     /// Formats a storage texture can have.
     static let storageFormats: [TextureFormat] = [.rgba16Float, .rgba8Unorm, .r8Unorm, .r16Float, .rg16Float, .r32Float]
 
-    /// Bytes per texel.
+    /// The block-compressed formats.
+    public static let compressedFormats: [TextureFormat] = [.bc7Unorm, .bc7Srgb, .astc4x4Unorm, .astc4x4Srgb]
+
+    /// Stored as 4x4 blocks (`blockSize`) rather than texels.
+    public var isCompressed: Bool { blockSize > 1 }
+
+    /// Color channels are sRGB-encoded (sampling returns linear values).
+    public var isSRGB: Bool { self == .rgba8Srgb || self == .bc7Srgb || self == .astc4x4Srgb }
+
+    /// The 8-bit format a compressed one decodes to (itself for the others).
+    public var decompressedFormat: TextureFormat {
+        guard isCompressed else { return self }
+        return isSRGB ? .rgba8Srgb : .rgba8Unorm
+    }
+
+    /// Width and height of a block in texels: 4 for the compressed formats, else 1.
+    public var blockSize: Int {
+        switch self {
+        case .bc7Unorm, .bc7Srgb, .astc4x4Unorm, .astc4x4Srgb: 4
+        default: 1
+        }
+    }
+
+    /// Bytes per block (per texel for the uncompressed formats).
+    public var bytesPerBlock: Int { isCompressed ? 16 : bytesPerPixel }
+
+    /// Bytes per texel; for the compressed formats the average (16 bytes per 4x4 block is 1).
     var bytesPerPixel: Int {
         switch self {
         case .r8Unorm: 1
         case .r16Float: 2
         case .depth32Float, .rgba8Unorm, .rgba8Srgb, .rg16Float, .r32Float: 4
         case .rgba16Float: 8
+        case .bc7Unorm, .bc7Srgb, .astc4x4Unorm, .astc4x4Srgb: 1
         }
     }
+
+    /// Bytes of one row of blocks (of texels when uncompressed) of an image `width` texels wide.
+    public func bytesPerRow(width: Int) -> Int { (width + blockSize - 1) / blockSize * bytesPerBlock }
+
+    /// Bytes of a tightly packed `width` x `height` image (or region) in this format: partial
+    /// blocks at the right and bottom edges count whole.
+    public func byteCount(width: Int, height: Int) -> Int { bytesPerRow(width: width) * ((height + blockSize - 1) / blockSize) }
 }
 
 public struct TextureDescriptor: Sendable {
@@ -647,6 +687,10 @@ public struct DrawIndexedIndirectArguments: Sendable, BitwiseCopyable, Equatable
     /// Scales an offscreen scene into the window in `beginWindowPass`.
     var upscaler: Upscaler { get set }
     func supports(_ upscaler: Upscaler) -> Bool
+    /// Whether textures of `format` can be created and sampled with filtering. Always true for
+    /// the uncompressed formats; the compressed ones depend on the GPU (BC7: desktop GPUs and
+    /// Apple silicon; ASTC: Apple and mobile GPUs).
+    func supports(_ format: TextureFormat) -> Bool
     /// Jitter, history reset and depth convention for a temporal upscaler, read in
     /// `beginWindowPass`. While one is active (with a render size), the scene pass also has a
     /// motion-vector attachment and keeps its depth.
@@ -724,6 +768,9 @@ extension RenderDevice {
         }
         guard format != .rgba16Float else {
             throw GraphicsError("Mip generation for .rgba16Float needs the float source: use makeTexture(image: FloatImage)")
+        }
+        guard !format.isCompressed else {
+            throw GraphicsError("Mips of \(format) are encoded with the image: use TextureCodec.encode and makeTexture(compressedLevels:format:)")
         }
         return try makeTexture(
             levels: MipChain.generate(pixels: Array(pixels), width: width, height: height, srgb: format == .rgba8Srgb),

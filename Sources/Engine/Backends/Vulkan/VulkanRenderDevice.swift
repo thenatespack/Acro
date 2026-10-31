@@ -379,6 +379,9 @@ final class VulkanRenderDevice: RenderDevice {
     private let storageImageExtendedFormats: Bool
     /// Shaders may write storage images declared without a format (FSR 3's clear pass).
     private let storageImageWriteWithoutFormat: Bool
+    /// The `textureCompressionBC` / `textureCompressionASTC_LDR` features (BC7 / ASTC 4x4 textures).
+    private let textureCompressionBC: Bool
+    private let textureCompressionASTC: Bool
     /// FSR 3 (shared with Metal: it records compute passes through this device), made on first use.
     private var fsr3: FSR3Upscaler?
     /// Set 1 binding of FSR 3's output for the window pass, for the output texture it was made for.
@@ -442,6 +445,8 @@ final class VulkanRenderDevice: RenderDevice {
         independentBlend = features.independentBlend != 0
         storageImageExtendedFormats = features.shaderStorageImageExtendedFormats != 0
         storageImageWriteWithoutFormat = features.shaderStorageImageWriteWithoutFormat != 0
+        textureCompressionBC = features.textureCompressionBC != 0
+        textureCompressionASTC = features.textureCompressionASTC_LDR != 0
         var queue: VkQueue?
         vkGetDeviceQueue(device, family, 0, &queue)
         self.queue = queue!
@@ -762,6 +767,21 @@ final class VulkanRenderDevice: RenderDevice {
         return texture
     }
 
+    func supports(_ format: TextureFormat) -> Bool {
+        let feature = switch format {
+        case .bc7Unorm, .bc7Srgb: textureCompressionBC
+        case .astc4x4Unorm, .astc4x4Srgb: textureCompressionASTC
+        default: true
+        }
+        guard feature else { return false }
+        guard format.isCompressed else { return true }
+        var properties = VkFormatProperties()
+        vkGetPhysicalDeviceFormatProperties(physicalDevice, Self.vkFormat(format), &properties)
+        let required = vkFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT, VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT,
+                               VK_FORMAT_FEATURE_TRANSFER_DST_BIT)
+        return properties.optimalTilingFeatures & required == required
+    }
+
     /// Whether `format` can be a storage texture: written, and sampled with linear filtering (but
     /// `.r32Float`), and for the one- and two-channel formats (formats GLSL calls "extended"), with
     /// the device feature that lets shaders declare them.
@@ -851,6 +871,7 @@ final class VulkanRenderDevice: RenderDevice {
 
     func makeTexture(levels: [TextureMipLevel], format: TextureFormat) throws -> GPUTexture {
         try format.validateLevels(levels, maxSize: maxTextureSize)
+        guard supports(format) else { throw GraphicsError("This GPU can't sample \(format) textures") }
         let (width, height) = (levels[0].width, levels[0].height)
 
         let extent = VkExtent2D(width: UInt32(width), height: UInt32(height))
@@ -918,6 +939,10 @@ final class VulkanRenderDevice: RenderDevice {
         case .rg16Float: VK_FORMAT_R16G16_SFLOAT
         case .r32Float: VK_FORMAT_R32_SFLOAT
         case .rgba8Unorm, .depth32Float: VK_FORMAT_R8G8B8A8_UNORM
+        case .bc7Unorm: VK_FORMAT_BC7_UNORM_BLOCK
+        case .bc7Srgb: VK_FORMAT_BC7_SRGB_BLOCK
+        case .astc4x4Unorm: VK_FORMAT_ASTC_4x4_UNORM_BLOCK
+        case .astc4x4Srgb: VK_FORMAT_ASTC_4x4_SRGB_BLOCK
         }
     }
 
@@ -1978,6 +2003,9 @@ final class VulkanRenderDevice: RenderDevice {
         // Storage textures in one- and two-channel formats, and FSR 3's format-less clear.
         features.shaderStorageImageExtendedFormats = supported.shaderStorageImageExtendedFormats
         features.shaderStorageImageWriteWithoutFormat = supported.shaderStorageImageWriteWithoutFormat
+        // Block-compressed textures (`TextureFormat.bc7Unorm` ..., `.astc4x4Unorm` ...).
+        features.textureCompressionBC = supported.textureCompressionBC
+        features.textureCompressionASTC_LDR = supported.textureCompressionASTC_LDR
         info.pEnabledFeatures = arena.store(features)
         #if os(macOS)
         if portabilitySubset {

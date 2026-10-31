@@ -287,12 +287,16 @@ public enum TexturePixels: Sendable {
     case rgba8(Image)
     /// Linear float RGBA (Radiance HDR), uploaded as `.rgba16Float`.
     case rgbaFloat(FloatImage)
+    /// A block-compressed mip chain (`TextureCodec`) in one of `TextureFormat.compressedFormats`,
+    /// level 0 first.
+    case compressed(format: TextureFormat, levels: [TextureMipLevel])
 }
 
-/// A texture as pixels (RGBA8 `Image` or linear `FloatImage`), how to interpret them and
-/// whether the GPU copy gets a mip chain. `SceneRenderer` uploads it with
-/// `RenderDevice.makeTexture(image:srgb:generateMipmaps:)` (`.rgba16Float` for float pixels)
-/// unless `SceneRenderer.textureUploader` says otherwise.
+/// A texture as pixels (RGBA8 `Image`, linear `FloatImage` or a compressed mip chain), how to
+/// interpret them and whether the GPU copy gets a mip chain. `SceneRenderer` uploads it with
+/// `RenderDevice.makeTexture(image:srgb:generateMipmaps:)` (`.rgba16Float` for float pixels,
+/// `makeTexture(compressedLevels:format:)` for compressed ones) unless
+/// `SceneRenderer.textureUploader` says otherwise.
 public struct TextureAsset: Sendable {
     public var pixels: TexturePixels
     /// Color data (albedo) is sRGB-encoded (`.rgba8Srgb`); data such as normal maps and masks
@@ -312,6 +316,15 @@ public struct TextureAsset: Sendable {
         self.generatesMipmaps = generatesMipmaps
     }
 
+    /// A compressed texture (`TextureCodec.encode`): sRGB and mipmapped as its format and level
+    /// count say.
+    public init(compressedLevels levels: [TextureMipLevel], format: TextureFormat) {
+        precondition(format.isCompressed && !levels.isEmpty, "A compressed texture needs a compressed format and a level")
+        pixels = .compressed(format: format, levels: levels)
+        isSRGB = format.isSRGB
+        generatesMipmaps = levels.count > 1
+    }
+
     public init(decoded: DecodedImage, isSRGB: Bool = true, generatesMipmaps: Bool = true) {
         switch decoded {
         case .rgba8(let image): self.init(image: image, isSRGB: isSRGB, generatesMipmaps: generatesMipmaps)
@@ -320,7 +333,8 @@ public struct TextureAsset: Sendable {
     }
 
     /// The 8-bit pixels. For a float texture this is a clamped 0...1 conversion (not sRGB
-    /// encoded); use `floatImage` to read the real values.
+    /// encoded); use `floatImage` to read the real values. A compressed texture's level 0 is
+    /// decoded (transparent black if its data is damaged).
     public var image: Image {
         get {
             switch pixels {
@@ -328,6 +342,10 @@ public struct TextureAsset: Sendable {
             case .rgbaFloat(let image):
                 return Image(width: image.width, height: image.height,
                              pixels: image.pixels.map { UInt8((min(max($0, 0), 1) * 255).rounded()) })
+            case .compressed(let format, let levels):
+                return (try? TextureCodec.decode(levels[0], format: format))
+                    ?? Image(width: levels[0].width, height: levels[0].height,
+                             pixels: [UInt8](repeating: 0, count: levels[0].width * levels[0].height * 4))
             }
         }
         set { pixels = .rgba8(newValue) }
@@ -341,10 +359,17 @@ public struct TextureAsset: Sendable {
 
     public var isHDR: Bool { floatImage != nil }
 
+    /// The compressed mip chain, or nil for RGBA8 and float pixels.
+    public var compressedLevels: [TextureMipLevel]? {
+        if case .compressed(_, let levels) = pixels { return levels }
+        return nil
+    }
+
     public var width: Int {
         switch pixels {
         case .rgba8(let image): image.width
         case .rgbaFloat(let image): image.width
+        case .compressed(_, let levels): levels[0].width
         }
     }
 
@@ -352,13 +377,20 @@ public struct TextureAsset: Sendable {
         switch pixels {
         case .rgba8(let image): image.height
         case .rgbaFloat(let image): image.height
+        case .compressed(_, let levels): levels[0].height
         }
     }
 
-    public var format: TextureFormat { isHDR ? .rgba16Float : isSRGB ? .rgba8Srgb : .rgba8Unorm }
+    /// The format it is uploaded in (a compressed one may still become RGBA8 on a GPU without it).
+    public var format: TextureFormat {
+        if case .compressed(let format, _) = pixels { return format }
+        return isHDR ? .rgba16Float : isSRGB ? .rgba8Srgb : .rgba8Unorm
+    }
 
-    /// Approximate GPU bytes (with a mip chain's third), for upload budgets.
+    /// Approximate GPU bytes (with a mip chain's third), for upload budgets; exact for
+    /// compressed textures.
     public var gpuByteCount: Int {
+        if let levels = compressedLevels { return levels.reduce(0) { $0 + $1.pixels.count } }
         let base = width * height * (isHDR ? 8 : 4)
         return generatesMipmaps ? base + base / 3 : base
     }

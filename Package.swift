@@ -18,7 +18,7 @@ let vulkanEnabled = true
 #endif
 
 // EngineMCP (Foundation only) lets any game host an MCP server (`EngineConfig.mcp`).
-var engineDependencies: [Target.Dependency] = ["CZlib", "CStbTrueType", "CStbImage", "CAudio", "EngineMCP"]
+var engineDependencies: [Target.Dependency] = ["CZlib", "CStbTrueType", "CStbImage", "CAudio", "CTextureCodec", "EngineMCP"]
 var engineSwiftSettings: [SwiftSetting] = []
 var vulkanTargets: [Target] = []
 
@@ -86,6 +86,15 @@ let zlibTarget: Target = .systemLibrary(
 )
 #endif
 
+// The block-compression encoders (CTextureCodec) are optimized in debug builds too: unoptimized,
+// astc-encoder's SIMD wrappers are many times slower. That needs unsafeFlags, which SwiftPM
+// refuses in packages used as versioned dependencies, so they are only added when this package
+// is built from a checkout of its own (not from another package's .build/checkouts or Xcode's
+// SourcePackages).
+let isDependencyCheckout = ["/.build/checkouts/", "/SourcePackages/checkouts/"].contains { Context.packageDirectory.contains($0) }
+let textureCodecCFlags: [CSetting] = isDependencyCheckout ? [] : [.unsafeFlags(["-O2"], .when(configuration: .debug))]
+let textureCodecCXXFlags: [CXXSetting] = isDependencyCheckout ? [] : [.unsafeFlags(["-O2"], .when(configuration: .debug))]
+
 let package = Package(
     name: "SwiftGameEngine",
     platforms: [.macOS(.v14)],
@@ -108,6 +117,15 @@ let package = Package(
             exclude: ["LICENSES.md"],
             linkerSettings: [.linkedLibrary("dl", .when(platforms: [.linux])), .linkedLibrary("pthread", .when(platforms: [.linux])),
                              .linkedLibrary("m", .when(platforms: [.linux]))]
+        ),
+        // Vendored texture block compression: bc7enc / bc7decomp (MIT or public domain) and Arm's
+        // astc-encoder 5.7.0 library sources (Apache-2.0). See Sources/CTextureCodec/LICENSES.md.
+        .target(
+            name: "CTextureCodec",
+            exclude: ["LICENSES.md", "vendor/bc7enc/LICENSE", "vendor/astcenc/LICENSE.txt"],
+            cSettings: textureCodecCFlags,
+            // Only 4x4 blocks are used: smaller per-block working sets.
+            cxxSettings: [.define("ASTCENC_BLOCK_MAX_TEXELS", to: "16")] + textureCodecCXXFlags
         ),
         .target(
             name: "Engine",
