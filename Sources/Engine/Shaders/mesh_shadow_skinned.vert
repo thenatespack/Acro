@@ -16,7 +16,9 @@ layout(location = 5) in vec4 model2;
 layout(location = 6) in vec4 model3;
 
 void main() {
-    mat4 model = mat4(model0, model1, model2, model3) * skinMatrix();
-    gl_Position = frame.lightViewProj * (model * vec4(inPosition, 1.0));
+    // precise: see skinning.glsl (the backends' depths must match bit for bit).
+    precise mat4 model = mat4(model0, model1, model2, model3) * skinMatrix();
+    precise vec4 clip = frame.lightViewProj * (model * vec4(inPosition, 1.0));
+    gl_Position = clip;
     gl_Position.y = -gl_Position.y;  // clip space is y-up; see beginPass in VulkanRenderDevice
 }

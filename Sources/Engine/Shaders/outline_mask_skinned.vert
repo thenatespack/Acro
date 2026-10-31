@@ -18,7 +18,9 @@ layout(push_constant) uniform PushConstants {
 } pc;
 
 void main() {
-    mat4 model = mat4(inModel0, inModel1, inModel2, inModel3) * skinMatrix();
-    gl_Position = pc.viewProj * (model * vec4(inPosition, 1.0));
+    // precise: see skinning.glsl.
+    precise mat4 model = mat4(inModel0, inModel1, inModel2, inModel3) * skinMatrix();
+    precise vec4 clip = pc.viewProj * (model * vec4(inPosition, 1.0));
+    gl_Position = clip;
     gl_Position.y = -gl_Position.y;  // clip space is y-up; see beginPass in VulkanRenderDevice
 }

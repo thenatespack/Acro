@@ -16,9 +16,15 @@ layout(set = 2, binding = 2, std140) uniform Skin {
 layout(location = 14) in vec4 inJoints;   // joint indices (as floats)
 layout(location = 15) in vec4 inWeights;  // sum to 1
 
+// Positions computed from these matrices are `precise` (no fused multiply-adds or reordering
+// left to the Metal compiler) in every skinned vertex shader: Metal compiles them with fast
+// math, and the same MSL compiled natively (joints in a plain buffer) and by MoltenVK (joints
+// behind an argument buffer) contracted differently, so a skinned shadow caster's depth
+// differed by an ulp between backends, which flipped a shadow comparison now and then.
+//
 // The weighted sum of the vertex's joint matrices (mesh space, bind pose to posed).
 mat4 skinMatrix() {
-    vec4 r0 = vec4(0.0), r1 = vec4(0.0), r2 = vec4(0.0);
+    precise vec4 r0 = vec4(0.0), r1 = vec4(0.0), r2 = vec4(0.0);
     for (int k = 0; k < 4; k++) {
         int j = int(inJoints[k]) * 3;
         r0 += skin.joints[j] * inWeights[k];
@@ -30,7 +36,7 @@ mat4 skinMatrix() {
 
 // The same with last frame's joint matrices.
 mat4 previousSkinMatrix() {
-    vec4 r0 = vec4(0.0), r1 = vec4(0.0), r2 = vec4(0.0);
+    precise vec4 r0 = vec4(0.0), r1 = vec4(0.0), r2 = vec4(0.0);
     for (int k = 0; k < 4; k++) {
         int j = int(inJoints[k]) * 3;
         r0 += skin.previousJoints[j] * inWeights[k];

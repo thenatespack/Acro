@@ -39,24 +39,28 @@ layout(location = 7) out vec4 vPreviousClip;
 layout(location = 8) out vec4 vTangent;       // world-space tangent, w: bitangent sign (mirroring included)
 
 void main() {
-    mat4 model = mat4(model0, model1, model2, model3) * skinMatrix();
-    mat4 previousModel = mat4(previous0, previous1, previous2, previous3) * previousSkinMatrix();
-    vec4 world = model * vec4(inPosition, 1.0);
-    vec4 previousWorld = previousModel * vec4(inPosition, 1.0);
+    // precise: see skinning.glsl (positions and motion vectors must match between backends).
+    precise mat4 model = mat4(model0, model1, model2, model3) * skinMatrix();
+    precise mat4 previousModel = mat4(previous0, previous1, previous2, previous3) * previousSkinMatrix();
+    precise vec4 world = model * vec4(inPosition, 1.0);
+    precise vec4 previousWorld = previousModel * vec4(inPosition, 1.0);
 
     // Normals by the cofactor matrix, as in mesh.vert (blended joints can scale and shear).
     vec3 a = model[0].xyz, b = model[1].xyz, c = model[2].xyz;
     mat3 cofactor = mat3(cross(b, c), cross(c, a), cross(a, b));
     float handedness = dot(cross(a, b), c) < 0.0 ? -1.0 : 1.0;
 
-    gl_Position = frame.viewProj * world;
+    precise vec4 clip = frame.viewProj * world;
+    gl_Position = clip;
     gl_Position.y = -gl_Position.y;  // clip space is y-up; see beginPass in VulkanRenderDevice
     vWorldPos = world.xyz;
     vNormal = cofactor * inNormal * handedness;
     vUV = inUV;
     vColor = inColor;
     vParams = inParams;
-    vCurrentClip = frame.currentViewProj * world;
-    vPreviousClip = frame.previousViewProj * previousWorld;
+    precise vec4 currentClip = frame.currentViewProj * world;
+    precise vec4 previousClip = frame.previousViewProj * previousWorld;
+    vCurrentClip = currentClip;
+    vPreviousClip = previousClip;
     vTangent = vec4(mat3(a, b, c) * inTangent.xyz, inTangent.w * handedness);
 }
