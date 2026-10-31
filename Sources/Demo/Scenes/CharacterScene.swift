@@ -54,12 +54,16 @@ final class CharacterScene: DemoScene {
     /// Screenshot runs never touch the real user's saves (`ENGINE_USER_DATA_DIR` opts back in).
     private let savesEnabled = ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT"] == nil || UserData.isOverridden
 
-    /// What a quick save keeps: the character's spot and heading, and where each crate is.
+    /// What a quick save keeps: the character's spot and heading, and where each crate is and
+    /// how it is turned (`crateRotations` is missing in saves from before it was added).
     private struct QuickSave: Codable {
         var hero: Vec3
         var yaw: Float
         var crates: [Vec3]
+        var crateRotations: [Quat]?
     }
+    /// Frames until the post-load check prints where things ended up (see `quickLoad`).
+    private var verifyLoad: (frames: Int, state: QuickSave)?
     private static let sky = Vec3(0.62, 0.72, 0.86)
     private static let start = Vec3(-5.5, 0, 0)
     private static let layerCharacter: UInt32 = 2
@@ -254,12 +258,13 @@ final class CharacterScene: DemoScene {
     /// F5: writes the character and crate positions to the "quick" slot.
     private func quickSave() {
         guard savesEnabled else { return show("Saving is off in screenshot runs") }
-        let state = QuickSave(
-            hero: world.get(Transform.self, for: hero)?.position ?? Self.start, yaw: yaw,
-            crates: crates.map { world.get(Transform.self, for: $0)?.position ?? .zero })
+        // The simulation's poses, not the interpolated transforms drawn between steps.
+        let crates = self.crates.map(exactPose)
+        let state = QuickSave(hero: exactPose(of: hero).position, yaw: yaw, crates: crates.map(\.position),
+                              crateRotations: crates.map(\.rotation))
         do {
             try saves.save(slot: "quick", state: state, sceneName: Self.name, playtime: Double(now))
-            show("Quick saved")
+            show("Quick saved", detail: Self.describe(state))
         } catch {
             show("Quick save failed: \(error)")
         }
@@ -271,18 +276,23 @@ final class CharacterScene: DemoScene {
         do {
             let state = try saves.load(slot: "quick").state(QuickSave.self)
             guard state.crates.count == crates.count else { return show("Quick save doesn't match this scene") }
+            let before = QuickSave(hero: exactPose(of: hero).position, yaw: yaw, crates: crates.map { exactPose(of: $0).position })
             // Teleport by editing the transforms (the physics sync moves the bodies), and stop
             // everything so nothing carries momentum from before the load.
             world.modify(Transform.self, for: hero) { $0.position = state.hero }
             world.modify(CharacterController.self, for: hero) { $0.verticalVelocity = 0; $0.moveVelocity = .zero }
-            for (crate, position) in zip(crates, state.crates) {
-                world.modify(Transform.self, for: crate) { $0.position = position }
+            for (k, (crate, position)) in zip(crates, state.crates).enumerated() {
+                world.modify(Transform.self, for: crate) {
+                    $0.position = position
+                    if let rotation = state.crateRotations?[k] { $0.rotation = rotation }
+                }
                 world.modify(RigidBody.self, for: crate) { $0.linearVelocity = .zero; $0.angularVelocity = .zero }
             }
             yaw = state.yaw
             focus = state.hero
             userActive = true
-            show("Quick loaded")
+            verifyLoad = (2, state)
+            show("Quick loaded", detail: "\(Self.describe(state)), was \(Self.describe(before))")
         } catch SaveError.notFound {
             show("No quick save yet (F5)")
         } catch {
@@ -290,9 +300,33 @@ final class CharacterScene: DemoScene {
         }
     }
 
-    private func show(_ text: String) {
+    /// Shows `text` in the title for a few seconds; prints it with `detail` (for scripted runs).
+    private func show(_ text: String, detail: String = "") {
         message = (text, now + 3)
-        print("Character: \(text)")
+        print("Character: \(text)\(detail.isEmpty ? "" : " " + detail)")
+    }
+
+    /// The body's simulated pose (the transform when it has none).
+    private func exactPose(of entity: Entity) -> Pose {
+        if let id = physics.body(for: entity), let pose = physics.pose(of: id) { return pose }
+        let t = world.get(Transform.self, for: entity) ?? Transform()
+        return Pose(position: t.position, rotation: t.rotation)
+    }
+
+    private static func describe(_ state: QuickSave) -> String {
+        func f(_ v: Vec3) -> String { String(format: "(%.3f, %.3f, %.3f)", v.x, v.y, v.z) }
+        return "hero \(f(state.hero)) crates \(state.crates.map(f).joined(separator: " "))"
+    }
+
+    /// A few fixed steps after a quick load: where the character and crates are now, and how
+    /// far from the save (printed, so a scripted F5 / F9 run can check the load worked).
+    private func checkLoad() {
+        guard let (frames, state) = verifyLoad else { return }
+        guard frames == 0 else { return verifyLoad = (frames - 1, state) }
+        verifyLoad = nil
+        let now = QuickSave(hero: exactPose(of: hero).position, yaw: yaw, crates: crates.map { exactPose(of: $0).position })
+        let error = zip([now.hero] + now.crates, [state.hero] + state.crates).map { length($0 - $1) }.max() ?? 0
+        print("Character: after load \(Self.describe(now)), largest distance from the save \(String(format: "%.4f", error)) m")
     }
 
     func camera(orbitEye: Vec3, target: Vec3) -> ViewCamera {
@@ -333,6 +367,7 @@ final class CharacterScene: DemoScene {
             $0.jump = $0.jump || jump
         }
         world.update(dt: Double(dt))
+        checkLoad()
 
         // Turn toward the way it walks (the visual child only: the entity itself must not be
         // edited while it is drawn interpolated).
