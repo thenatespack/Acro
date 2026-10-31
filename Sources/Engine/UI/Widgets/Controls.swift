@@ -144,6 +144,7 @@ public final class Label: Widget {
     private var size: Float {
         if let fontSize { return fontSize }
         let theme = theme
+        if let size = theme.style(for: self).fontSize { return size }
         switch role {
         case .body, .secondary: return theme.fontSize
         case .heading: return theme.headingFontSize
@@ -154,6 +155,7 @@ public final class Label: Widget {
     private func textColor(_ theme: UITheme) -> UIColor {
         if !isEffectivelyEnabled { return theme.disabledTextColor }
         if let color { return color }
+        if let color = theme.style(for: self).textColor { return color }
         switch role {
         case .body, .heading: return theme.textColor
         case .secondary, .caption: return theme.secondaryTextColor
@@ -246,8 +248,10 @@ public final class Button: Widget {
 
     public override func measureContent(width: Float?) -> Vec2 {
         let theme = theme
-        let layout = cache.get(title, font: theme.font, size: theme.fontSize)
-        return Vec2((layout.width * scale).rounded(.up) / scale + 2 * theme.controlPaddingX, theme.controlHeight)
+        let style = theme.style(for: self)
+        let layout = cache.get(title, font: theme.font, size: style.fontSize ?? theme.fontSize)
+        return Vec2((layout.width * scale).rounded(.up) / scale + 2 * (style.paddingX ?? theme.controlPaddingX),
+                    style.height ?? theme.controlHeight)
     }
 
     public override func handleEvent(_ event: UIEvent) -> Bool {
@@ -267,23 +271,29 @@ public final class Button: Widget {
 
     public override func draw(_ list: UIDrawList, theme: UITheme) {
         let enabled = isEffectivelyEnabled
+        let style = theme.style(for: self)
         let fill: UIColor
         let border: UIColor
         switch role {
         case .normal:
-            fill = !enabled ? theme.controlBackground.withAlpha(0.5)
-                : isPressed ? theme.controlPressed : isHovered ? theme.controlHover : theme.controlBackground
-            border = theme.controlBorder
+            let background = style.background ?? theme.controlBackground
+            fill = !enabled ? background.withAlpha(0.5)
+                : isPressed ? style.pressedBackground ?? theme.controlPressed
+                : isHovered ? style.hoverBackground ?? theme.controlHover : background
+            border = style.borderColor ?? theme.controlBorder
         case .primary:
-            fill = !enabled ? theme.accent.withAlpha(0.35)
-                : isPressed ? theme.accentPressed : isHovered ? theme.accentHover : theme.accent
+            let accent = style.accent ?? theme.accent
+            fill = !enabled ? accent.withAlpha(0.35)
+                : isPressed ? style.pressedBackground ?? theme.accentPressed
+                : isHovered ? style.hoverBackground ?? theme.accentHover : accent
             border = fill
         }
-        let radii = UICornerRadii(theme.cornerRadius)
+        let radii = UICornerRadii(style.cornerRadius ?? theme.cornerRadius)
         list.fillRect(frame, color: fill, radii: radii)
-        if role == .normal { list.strokeRect(frame, color: border, width: 1, radii: radii) }
-        let color = !enabled ? theme.disabledTextColor : role == .primary ? theme.accentText : theme.textColor
-        let layout = cache.get(title, font: theme.font, size: theme.fontSize)
+        if role == .normal { list.strokeRect(frame, color: border, width: style.borderWidth ?? theme.borderWidth, radii: radii) }
+        let color = !enabled ? theme.disabledTextColor
+            : role == .primary ? theme.accentText : style.textColor ?? theme.textColor
+        let layout = cache.get(title, font: theme.font, size: style.fontSize ?? theme.fontSize)
         drawLine(layout, font: theme.font, in: frame, alignment: .center, color: color, list: list)
     }
 }
@@ -349,12 +359,13 @@ public final class Checkbox: Widget {
         let enabled = isEffectivelyEnabled
         let size = indicatorSize(theme)
         let box = UIRect(x: frame.x, y: snap(frame.y + (frame.height - size.y) / 2), width: size.x, height: size.y)
-        let accent = isPressed ? theme.accentPressed : isHovered ? theme.accentHover : theme.accent
+        let style = theme.style(for: self)
+        let accent = isPressed ? theme.accentPressed : isHovered ? theme.accentHover : style.accent ?? theme.accent
         let off = isPressed ? theme.controlPressed : isHovered ? theme.controlHover : theme.controlBackground
         let alpha: Float = enabled ? 1 : 0.45
         switch kind {
         case .checkbox:
-            let radii = UICornerRadii(4)
+            let radii = UICornerRadii(theme.smallCornerRadius)
             if isOn {
                 list.fillRect(box, color: accent.withAlpha(alpha), radii: radii)
                 // A check mark from two round-capped strokes.
@@ -363,11 +374,12 @@ public final class Checkbox: Widget {
                 let b = Vec2(box.x + s * 0.43, box.y + s * 0.70)
                 let c = Vec2(box.x + s * 0.76, box.y + s * 0.31)
                 let color = theme.accentText.withAlpha(alpha)
-                list.drawLine(from: a, to: b, width: 2, color: color, cap: .round)
-                list.drawLine(from: b, to: c, width: 2, color: color, cap: .round)
+                list.drawLine(from: a, to: b, width: theme.checkmarkWidth, color: color, cap: .round)
+                list.drawLine(from: b, to: c, width: theme.checkmarkWidth, color: color, cap: .round)
             } else {
                 list.fillRect(box, color: off.withAlpha(alpha), radii: radii)
-                list.strokeRect(box, color: theme.controlBorder.withAlpha(alpha), width: 1, radii: radii)
+                list.strokeRect(box, color: (style.borderColor ?? theme.controlBorder).withAlpha(alpha),
+                                width: style.borderWidth ?? theme.borderWidth, radii: radii)
             }
         case .toggleSwitch:
             let radii = UICornerRadii(size.y / 2)
@@ -381,15 +393,16 @@ public final class Checkbox: Widget {
             let layout = cache.get(title, font: theme.font, size: theme.fontSize)
             let textRect = UIRect(x: box.maxX + theme.spacing, y: frame.y, width: frame.maxX - box.maxX - theme.spacing,
                                   height: frame.height)
-            drawLine(layout, font: theme.font, in: textRect, color: enabled ? theme.textColor : theme.disabledTextColor,
-                     list: list)
+            drawLine(layout, font: theme.font, in: textRect,
+                     color: enabled ? style.textColor ?? theme.textColor : theme.disabledTextColor, list: list)
         }
     }
 }
 
 /// A horizontal slider over `range`. With `step` > 0 values snap to `range.lowerBound + k * step`.
 /// Drag or click the track; arrows (or +/- a step, 1% without one), Page Up/Down (10 steps),
-/// Home/End adjust it when focused.
+/// Home/End adjust it when focused. With directional navigation on (`UIContext.navigatesDirectionally`)
+/// only Left / Right adjust it, so Up / Down move focus through a menu.
 public final class Slider: Widget {
     public private(set) var value: Float
     public var range: ClosedRange<Float> { didSet { setValue(value) } }
@@ -478,6 +491,7 @@ public final class Slider: Widget {
             return true
         case .key(let e):
             let big = e.modifiers.contains(.shift) ? 10 : 1 as Float
+            if (e.key == .up || e.key == .down) && context?.navigatesDirectionally == true { return false }
             switch e.key {
             case .left, .down: userSet(value - keyboardStep * big)
             case .right, .up: userSet(value + keyboardStep * big)
@@ -500,7 +514,8 @@ public final class Slider: Widget {
         let trackRect = UIRect(x: t.x, y: snap(t.y - h / 2), width: t.width, height: h)
         list.fillRect(trackRect, color: theme.trackBackground, radii: UICornerRadii(h / 2))
         let filled = UIRect(x: trackRect.x, y: trackRect.y, width: t.width * fraction, height: h)
-        list.fillRect(filled, color: enabled ? theme.accent : theme.trackBackground.mixed(with: .white, 0.15),
+        let accent = theme.style(for: self).accent ?? theme.accent
+        list.fillRect(filled, color: enabled ? accent : theme.trackBackground.mixed(with: .white, 0.15),
                       radii: UICornerRadii(h / 2))
         let s = theme.sliderThumbSize
         let thumb = UIRect(x: t.x + t.width * fraction - s / 2, y: snap(t.y - s / 2), width: s, height: s)

@@ -259,6 +259,17 @@ struct UIBatch {
 /// with the one below. They are scissor rectangles in whole framebuffer pixels (edges are
 /// rounded to the nearest pixel, so clip edges are not antialiased) and always rectangular:
 /// there is no rounded clipping. Items entirely outside the clip are dropped on the CPU.
+///
+/// Transforms and opacity: `pushTransform(scale:offset:)` maps the points of later items
+/// through `p * scale + offset` (composed with the transforms below it), so a whole widget
+/// tree can be zoomed (`UIContext.uiScale`), slid in a menu transition or drawn at a world
+/// label's distance scale; text then rasterizes at the transformed pixel size, so it stays
+/// sharp. `pushOpacity` multiplies the alpha of later items. With neither pushed the output is
+/// exactly what the plain point coordinates give.
+///
+/// HiDPI: at a fractional pixel scale (a backing scale of 1.25 or 1.5, or any scale times a
+/// zoom) stroke widths are rounded to whole pixels (at least one), so 1-point borders stay
+/// crisp instead of spreading over two pixel rows. Integral scales draw strokes as given.
 @MainActor
 public final class UIDrawList {
     /// Framebuffer pixels per point (the window's backing scale factor).
@@ -275,6 +286,13 @@ public final class UIDrawList {
     private(set) var batches: [UIBatch] = []
     private var clipStack: [UIPixelRect] = []
     private var atlas: GlyphAtlas?
+    /// Points to framebuffer pixels for the current transform: `p * pixelScale + pixelOffset`.
+    private var pixelScale: Float = 1
+    private var pixelOffset = Vec2.zero
+    private var transformStack: [(scale: Float, offset: Vec2)] = []
+    /// Multiplies the alpha of everything drawn (`pushOpacity`).
+    public private(set) var opacity: Float = 1
+    private var opacityStack: [Float] = []
 
     public init() {}
 
@@ -295,11 +313,18 @@ public final class UIDrawList {
         do { return try Font.bundledUI() } catch { fatalError("UIDrawList: \(error)") }
     }()
 
-    /// Clears the list for a new frame. The engine calls this before `Game.update`.
-    func beginFrame(framebufferSize: (width: Int, height: Int), scale: Float) {
+    /// Clears the list for a new frame. The engine calls this before `Game.update` for
+    /// `engine.ui`; call it yourself for a list drawn elsewhere (e.g. into a `RenderTarget`
+    /// with a `UIRenderer`), with the target's pixel size and pixels per point.
+    public func beginFrame(framebufferSize: (width: Int, height: Int), scale: Float) {
         precondition(clipStack.isEmpty, "UIDrawList: pushClip without a matching popClip")
+        precondition(transformStack.isEmpty, "UIDrawList: pushTransform without a matching popTransform")
+        precondition(opacityStack.isEmpty, "UIDrawList: pushOpacity without a matching popOpacity")
         self.framebufferSize = framebufferSize
         self.scale = max(scale, 0.01)
+        pixelScale = self.scale
+        pixelOffset = .zero
+        opacity = 1
         vertices.removeAll(keepingCapacity: true)
         indices.removeAll(keepingCapacity: true)
         batches.removeAll(keepingCapacity: true)
@@ -316,15 +341,16 @@ public final class UIDrawList {
     /// widgets that would be clipped away.
     public var clipBounds: UIRect? {
         let c = clip
-        return c.isEmpty ? nil : UIRect(x: Float(c.x0) / scale, y: Float(c.y0) / scale,
-                                         width: Float(c.x1 - c.x0) / scale, height: Float(c.y1 - c.y0) / scale)
+        guard !c.isEmpty else { return nil }
+        let x0 = (Float(c.x0) - pixelOffset.x) / pixelScale, y0 = (Float(c.y0) - pixelOffset.y) / pixelScale
+        return UIRect(x: x0, y: y0, width: Float(c.x1 - c.x0) / pixelScale, height: Float(c.y1 - c.y0) / pixelScale)
     }
 
     /// Restricts drawing to `rect` (points) intersected with the current clip, until the matching `popClip`.
     public func pushClip(_ rect: UIRect) {
         let pixels = UIPixelRect(
-            x0: Int((rect.x * scale).rounded()), y0: Int((rect.y * scale).rounded()),
-            x1: Int((rect.maxX * scale).rounded()), y1: Int((rect.maxY * scale).rounded()))
+            x0: Int(px(rect.x, 0).rounded()), y0: Int(px(rect.y, 1).rounded()),
+            x1: Int(px(rect.maxX, 0).rounded()), y1: Int(px(rect.maxY, 1).rounded()))
         clipStack.append(clip.intersection(pixels))
     }
 
@@ -338,6 +364,62 @@ public final class UIDrawList {
         pushClip(rect)
         body()
         popClip()
+    }
+
+    // MARK: Transforms and opacity
+
+    /// Later items map their points through `p * scale + offset` (in the current transform's
+    /// points), until the matching `popTransform`. `scale` must be positive.
+    public func pushTransform(scale: Float = 1, offset: Vec2 = .zero) {
+        transformStack.append((pixelScale, pixelOffset))
+        pixelOffset = pixelOffset + offset * pixelScale
+        pixelScale *= max(scale, 1e-4)
+    }
+
+    public func popTransform() {
+        precondition(!transformStack.isEmpty, "UIDrawList: popTransform without a matching pushTransform")
+        (pixelScale, pixelOffset) = transformStack.removeLast()
+    }
+
+    /// Runs `body` with a transform pushed.
+    public func withTransform(scale: Float = 1, offset: Vec2 = .zero, _ body: () -> Void) {
+        pushTransform(scale: scale, offset: offset)
+        body()
+        popTransform()
+    }
+
+    /// Framebuffer pixels per point under the current transform (`scale` with none pushed).
+    public var effectiveScale: Float { pixelScale }
+
+    /// Multiplies the alpha of later items by `alpha` (0...1; nested values multiply) until `popOpacity`.
+    public func pushOpacity(_ alpha: Float) {
+        opacityStack.append(opacity)
+        opacity *= min(max(alpha, 0), 1)
+    }
+
+    public func popOpacity() {
+        precondition(!opacityStack.isEmpty, "UIDrawList: popOpacity without a matching pushOpacity")
+        opacity = opacityStack.removeLast()
+    }
+
+    public func withOpacity(_ alpha: Float, _ body: () -> Void) {
+        pushOpacity(alpha)
+        body()
+        popOpacity()
+    }
+
+    /// A point coordinate in framebuffer pixels (`axis` 0 is x, 1 is y).
+    @inline(__always) private func px(_ value: Float, _ axis: Int) -> Float {
+        value * pixelScale + (axis == 0 ? pixelOffset.x : pixelOffset.y)
+    }
+
+    @inline(__always) private func px(_ point: Vec2) -> Vec2 { point * pixelScale + pixelOffset }
+
+    /// A stroke width in pixels: whole pixels (at least one) when `scale` is fractional.
+    public static func strokePixels(_ width: Float, scale: Float) -> Float {
+        let pixels = width * scale
+        guard scale != scale.rounded(), pixels > 0 else { return pixels }
+        return max(pixels.rounded(), 1)
     }
 
     // MARK: Shapes
@@ -368,8 +450,8 @@ public final class UIDrawList {
 
     /// A straight line `width` points thick, antialiased along its length and ends.
     public func drawLine(from a: Vec2, to b: Vec2, width: Float = 1, color: UIColor, cap: UILineCap = .butt) {
-        let p0 = a * scale, p1 = b * scale
-        let thickness = max(width * scale, 0)
+        let p0 = px(a), p1 = px(b)
+        let thickness = max(width * pixelScale, 0)
         guard thickness > 0 else { return }
         let delta = p1 - p0
         let length = (delta * delta).sum().squareRoot()
@@ -384,7 +466,7 @@ public final class UIDrawList {
         for (sx, sy) in [(-1, -1), (1, -1), (1, 1), (-1, 1)] as [(Float, Float)] {
             let local = (halfSize + margin) * Vec2(sx, sy)
             corners.append(UIVertex(
-                position: center + u * local.x + v * local.y, uv: .zero, color: Vec4(color.r, color.g, color.b, color.a),
+                position: center + u * local.x + v * local.y, uv: .zero, color: Vec4(color.r, color.g, color.b, color.a * opacity),
                 local: local, halfSize: halfSize, radii: Vec4(repeating: radius), params: .zero))
         }
         add(corners, texture: nil, sampler: nil)
@@ -415,7 +497,7 @@ public final class UIDrawList {
         if case .sdf(let value) = mode { smoothing = value }
         let big = Vec2(repeating: 1e5)  // far inside: full coverage, so the SDF doesn't affect the quad
         add(corners.map {
-            UIVertex(position: $0.position * scale, uv: $0.uv, color: Vec4($0.color.r, $0.color.g, $0.color.b, $0.color.a),
+            UIVertex(position: px($0.position), uv: $0.uv, color: Vec4($0.color.r, $0.color.g, $0.color.b, $0.color.a * opacity),
                      local: .zero, halfSize: big, radii: .zero, params: Vec4(0, mode.shaderMode, smoothing, 0))
         }, texture: texture, sampler: sampler)
     }
@@ -438,18 +520,18 @@ public final class UIDrawList {
     /// The origin is snapped to whole pixels and each line's baseline to a pixel row, so text
     /// looks the same wherever it is drawn. `glyphs` limits drawing to a range of `layout.glyphs`.
     public func drawText(_ layout: TextLayout, font: Font, at origin: Vec2, color: UIColor, glyphs: Range<Int>? = nil) {
-        guard color.a > 0, !layout.glyphs.isEmpty else { return }
+        guard color.a * opacity > 0, !layout.glyphs.isEmpty else { return }
         let atlas = glyphAtlas
-        let pixelSize = layout.size * scale
+        let pixelSize = layout.size * pixelScale
         let smoothing = Self.sdfSmoothing(pixelSize: pixelSize)
-        let originX = (origin.x * scale).rounded()
-        let rgba = Vec4(color.r, color.g, color.b, color.a)
+        let originX = px(origin.x, 0).rounded()
+        let rgba = Vec4(color.r, color.g, color.b, color.a * opacity)
         let params = Vec4(0, UIQuadMode.sdf(smoothing: smoothing).shaderMode, smoothing, 0)
         let big = Vec2(repeating: 1e5)
         for placed in layout.glyphs[glyphs ?? layout.glyphs.indices] {
             guard let info = atlas.info(for: placed.glyph, in: font) else { continue }
-            let baseline = ((origin.y + placed.y) * scale).rounded()
-            let x0 = originX + placed.x * scale + info.offset.x * pixelSize
+            let baseline = px(origin.y + placed.y, 1).rounded()
+            let x0 = originX + placed.x * pixelScale + info.offset.x * pixelSize
             let y0 = baseline + info.offset.y * pixelSize
             let x1 = x0 + info.extent.x * pixelSize, y1 = y0 + info.extent.y * pixelSize
             func vertex(_ x: Float, _ y: Float, _ u: Float, _ v: Float) -> UIVertex {
@@ -477,11 +559,11 @@ public final class UIDrawList {
 
     private func addBox(_ rect: UIRect, fill: UIFill, radii: UICornerRadii, stroke: Float, mode: Float, smoothing: Float,
                         texture: GPUTexture?, sampler: GPUSampler?, uv: UIRect) {
-        let box = UIRect(x: rect.x * scale, y: rect.y * scale, width: rect.width * scale, height: rect.height * scale)
+        let box = UIRect(x: px(rect.x, 0), y: px(rect.y, 1), width: rect.width * pixelScale, height: rect.height * pixelScale)
         guard box.width > 0, box.height > 0 else { return }
-        let r = radii.fitted(toWidth: box.width, height: box.height, scale: scale)
+        let r = radii.fitted(toWidth: box.width, height: box.height, scale: pixelScale)
         let halfSize = Vec2(box.width, box.height) / 2
-        let strokeWidth = stroke > 0 ? min(stroke * scale, min(halfSize.x, halfSize.y)) : 0
+        let strokeWidth = stroke > 0 ? min(Self.strokePixels(stroke, scale: pixelScale), min(halfSize.x, halfSize.y)) : 0
         let radiiVector = Vec4(r.topLeft, r.topRight, r.bottomRight, r.bottomLeft)
         let margin = Self.antialiasMargin
         let center = box.center
@@ -495,7 +577,7 @@ public final class UIDrawList {
             let t = (position - Vec2(box.x, box.y)) / Vec2(box.width, box.height)
             corners.append(UIVertex(
                 position: position, uv: Vec2(uv.x + uv.width * t.x, uv.y + uv.height * t.y),
-                color: Vec4(color.r, color.g, color.b, color.a), local: local, halfSize: halfSize, radii: radiiVector,
+                color: Vec4(color.r, color.g, color.b, color.a * opacity), local: local, halfSize: halfSize, radii: radiiVector,
                 params: Vec4(strokeWidth, mode, smoothing, 0)))
         }
         add(corners, texture: texture, sampler: sampler)

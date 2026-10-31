@@ -2,15 +2,16 @@ import Foundation
 
 /// Draws a `UIDrawList` into the window pass: uploads glyph-atlas pages that changed, then one
 /// vertex and one index upload, then one indexed draw per batch with the batch's texture,
-/// sampler and scissor.
+/// sampler and scissor. The engine owns one for `engine.ui`; make another to draw a list of your
+/// own into a `RenderTarget` (`frame.renderPass(into:)`), e.g. a UI panel shown on a quad in the world.
 @MainActor
-final class UIRenderer {
+public final class UIRenderer {
     private let pipeline: RenderPipeline
     private let whiteTexture: GPUTexture
     private let defaultSampler: GPUSampler
     private let device: RenderDevice
 
-    init(device: RenderDevice) throws {
+    public init(device: RenderDevice) throws {
         self.device = device
         var descriptor = PipelineDescriptor(
             shader: try ShaderSource.load(named: "ui", bundle: .module), vertexLayout: UIVertex.layout)
@@ -24,7 +25,9 @@ final class UIRenderer {
         defaultSampler = try device.makeSampler(SamplerDescriptor(filter: .linear, mipFilter: .none, addressMode: .clampToEdge))
     }
 
-    func render(_ list: UIDrawList, into pass: RenderPass) {
+    /// Draws `list` (filled since its last `beginFrame`) into `pass`, which must be the window pass or a
+    /// `.screen`-compatible target pass whose size is `list.framebufferSize`.
+    public func render(_ list: UIDrawList, into pass: RenderPass) {
         guard !list.batches.isEmpty else { return }
         if let atlas = list.glyphAtlasIfCreated {
             do {

@@ -100,4 +100,5 @@ extension DemoScene {
     SkinningScene.self,
     ParticlesScene.self,
     Physics2DScene.self,
+    HUDScene.self,
 ]

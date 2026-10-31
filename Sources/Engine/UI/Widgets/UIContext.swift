@@ -56,6 +56,14 @@ public struct UIContextStats: Sendable, Equatable {
 /// - Keys and text go to the focused widget and bubble. Unhandled Tab / Shift-Tab move focus;
 ///   unhandled Esc closes the topmost overlay, or else clears focus. With nothing focused and no
 ///   overlay open, the keyboard is left to the game entirely.
+/// - With `directionalNavigation` (or `gamepadNavigation`), unhandled arrow keys move focus to
+///   the nearest focusable widget that way (see Navigation.swift).
+///
+/// Scale: `update(engine:dt:)` lays out in window points divided by `uiScale` (a user zoom on
+/// top of the backing scale), on a pixel grid of `backing scale * uiScale`, and `draw(into:)`
+/// draws through a matching transform, so widgets, borders and text stay pixel-exact at any
+/// combination (1, 1.25, 1.5, 2, …). `viewport`, `scale` and `pointerPosition` are in these
+/// zoomed points.
 @MainActor
 public final class UIContext {
     /// The tree's root. It fills the viewport and isn't hit-testable itself, so the game still
@@ -65,6 +73,28 @@ public final class UIContext {
         didSet { invalidateAll() }
     }
     public var clipboard: UIClipboard = SystemClipboard()
+
+    /// User zoom on top of the window's backing scale (1 = 100%, clamped to 0.25...8). Changing it relayouts.
+    public var uiScale: Float = 1 {
+        didSet {
+            uiScale = min(max(uiScale.isFinite ? uiScale : 1, 0.25), 8)
+            if uiScale != oldValue { invalidateAll() }
+        }
+    }
+    /// Maps the window's mouse position (points) into this context's space before `uiScale`,
+    /// or returns nil when the pointer isn't over it. For a UI drawn somewhere other than the
+    /// window, e.g. a panel on a quad in the world (map the mouse ray's hit to panel points).
+    public var pointerMapping: ((Vec2) -> Vec2?)?
+    /// Unhandled arrow keys move focus spatially (see `moveFocus(_:)`). Off by default (the
+    /// editor's arrows stay with the focused widget); on implicitly with `gamepadNavigation`.
+    public var directionalNavigation = false
+    /// Moving past the last widget in a direction wraps around to the other side.
+    public var navigationWraps = false
+    /// Reads gamepad navigation (D-pad / stick, A, B, shoulders) each `update` and feeds it in as key events.
+    public var gamepadNavigation: UINavigationInput?
+    /// Called when Esc (or B) reaches the context unhandled with no overlay open, before focus
+    /// is cleared. Return true to keep focus (e.g. a game menu that closes itself).
+    public var onUnhandledBack: (() -> Bool)?
 
     public private(set) var focusedWidget: Widget?
     /// The focus came from the keyboard (Tab), so the focus ring is drawn.
@@ -143,13 +173,16 @@ public final class UIContext {
     /// Processes `input` for a viewport of `viewportSize` points at `scale` pixels per point.
     public func update(input: Input, dt: Float, viewportSize: Vec2, scale: Float) {
         time += Double(dt)
-        setViewport(size: viewportSize, scale: scale)
+        let zoom = uiScale
+        setViewport(size: viewportSize / zoom, scale: scale * zoom)
         pointerConsumed = false
         keyboardConsumed = false
         modifiers = input.modifiers
         layoutIfNeeded()
 
-        pointerMoved(to: input.mousePosition)
+        var mouse = input.mousePosition
+        if let pointerMapping { mouse = pointerMapping(mouse) ?? Vec2(-1e6, -1e6) }
+        pointerMoved(to: mouse / zoom)
         for button in MouseButton.allCases {
             let pressed = input.wasPressed(button), released = input.wasReleased(button)
             if pressed && released && input.isDown(button) {
@@ -171,6 +204,9 @@ public final class UIContext {
             }
         } else if !input.isTextInputActive {
             for key in input.keyPresses { keyPressed(key) }
+        }
+        if let gamepadNavigation {
+            for key in gamepadNavigation.events(input: input, dt: dt) { keyPressed(key) }
         }
         syncTextInput(input)
         layoutIfNeeded()
@@ -200,12 +236,16 @@ public final class UIContext {
         layoutIfNeeded()
         let start = ContinuousClock.now
         let itemsBefore = list.stats.items
+        let zoomed = uiScale != 1
+        if zoomed { list.pushTransform(scale: uiScale) }
+        defer { if zoomed { list.popTransform() } }
         root.paint(list, theme: theme)
         if focusVisible, let focused = focusedWidget, focused.showsFocusRing, focused.isEffectivelyVisible {
             let w = theme.focusRingWidth
-            let ring = UIRect(x: focused.frame.x - w - 1, y: focused.frame.y - w - 1,
-                              width: focused.frame.width + 2 * (w + 1), height: focused.frame.height + 2 * (w + 1))
-            list.strokeRect(ring, color: theme.focusRing, width: w, radii: UICornerRadii(theme.cornerRadius + w + 1))
+            let gap = theme.focusRingOffset
+            let ring = UIRect(x: focused.frame.x - w - gap, y: focused.frame.y - w - gap,
+                              width: focused.frame.width + 2 * (w + gap), height: focused.frame.height + 2 * (w + gap))
+            list.strokeRect(ring, color: theme.focusRing, width: w, radii: UICornerRadii(theme.cornerRadius + w + gap))
         }
         for overlay in overlays { overlay.paint(list, theme: theme) }
         drawTooltip(into: list)
@@ -358,7 +398,15 @@ public final class UIContext {
         case .tab where focusedWidget != nil:
             if key.modifiers.contains(.shift) { focusPrevious() } else { focusNext() }
         case .escape:
-            if let top = overlays.last { dismissOverlay(top) } else { focus(nil) }
+            if let top = overlays.last {
+                dismissOverlay(top)
+            } else if !(onUnhandledBack?() ?? false) {
+                focus(nil)
+            }
+        case .up, .down, .left, .right:
+            if navigatesDirectionally, key.modifiers.isEmpty, focusedWidget != nil, let direction = UINavDirection(key: key.key) {
+                moveFocus(direction)
+            }
         default:
             break
         }
@@ -417,6 +465,74 @@ public final class UIContext {
 
     public func focusNext() { moveFocus(by: 1) }
     public func focusPrevious() { moveFocus(by: -1) }
+
+    /// Arrow keys move focus (`directionalNavigation`, or a gamepad navigation input is set).
+    public var navigatesDirectionally: Bool { directionalNavigation || gamepadNavigation != nil }
+
+    /// Moves focus from the focused widget to its explicit target for `direction`
+    /// (`Widget.setNavigation`), else to the nearest focusable widget that way inside its
+    /// navigation scope (`UINavigation.nearest`), wrapping around with `navigationWraps`. With
+    /// nothing focused it focuses the first focusable widget. Returns whether focus moved.
+    @discardableResult
+    public func moveFocus(_ direction: UINavDirection) -> Bool {
+        layoutIfNeeded()
+        guard let current = focusedWidget else {
+            guard let first = focusOrder.first else { return false }
+            focus(first, visible: true)
+            return true
+        }
+        if let target = current.navigationTarget(direction), isFocusable(target) {
+            focus(target, visible: true)
+            return true
+        }
+        let scope = navigationScope(of: current)
+        let candidates = focusableWidgets(in: scope).filter { $0 !== current }
+        let rects = candidates.map(\.frame)
+        var index = UINavigation.nearest(from: current.frame, direction: direction, candidates: rects)
+        if index == nil, navigationWraps, !candidates.isEmpty {
+            // Search again from just beyond the opposite edge of everything in the scope.
+            let bounds = rects.reduce(current.frame) { r, f in
+                UIRect(x: min(r.x, f.x), y: min(r.y, f.y), width: max(r.maxX, f.maxX) - min(r.x, f.x),
+                       height: max(r.maxY, f.maxY) - min(r.y, f.y))
+            }
+            var from = current.frame
+            switch direction {
+            case .down: from.y = bounds.y - from.height - 1
+            case .up: from.y = bounds.maxY + 1
+            case .right: from.x = bounds.x - from.width - 1
+            case .left: from.x = bounds.maxX + 1
+            }
+            index = UINavigation.nearest(from: from, direction: direction, candidates: rects)
+        }
+        guard let index else { return false }
+        focus(candidates[index], visible: true)
+        return true
+    }
+
+    /// The subtree directional navigation from `widget` stays in: the nearest ancestor (or
+    /// itself) with `isNavigationScope`, else the overlay or root it belongs to.
+    public func navigationScope(of widget: Widget) -> Widget {
+        var node: Widget? = widget
+        var top = widget
+        while let current = node {
+            if current.isNavigationScope { return current }
+            top = current
+            node = current.parent
+        }
+        return top
+    }
+
+    /// Focusable, enabled, visible widgets in `subtree`, in tree order.
+    public func focusableWidgets(in subtree: Widget) -> [Widget] {
+        var result: [Widget] = []
+        func visit(_ widget: Widget) {
+            guard !widget.isHidden, widget.isEnabled else { return }
+            if widget.acceptsFocus { result.append(widget) }
+            for child in widget.children { visit(child) }
+        }
+        visit(subtree)
+        return result.filter { isFocusable($0) }
+    }
 
     private func moveFocus(by step: Int) {
         let order = focusOrder
@@ -578,9 +694,9 @@ public final class UIContext {
 
     private func drawTooltip(into list: UIDrawList) {
         guard let box = tooltipFrame, let layout = tooltipLayout else { return }
-        let radii = UICornerRadii(4)
+        let radii = UICornerRadii(theme.smallCornerRadius)
         list.fillRect(box, color: theme.tooltipBackground, radii: radii)
-        list.strokeRect(box, color: theme.tooltipBorder, width: 1, radii: radii)
+        list.strokeRect(box, color: theme.tooltipBorder, width: theme.borderWidth, radii: radii)
         list.drawText(layout, font: theme.font,
                       at: Vec2(box.x + theme.tooltipPadding.x, box.y + theme.tooltipPadding.y), color: theme.tooltipText)
     }
@@ -637,7 +753,8 @@ public final class UIContext {
         if let focused = focusedWidget, focused.wantsTextInput, focused.isEffectivelyEnabled,
            ownsTextInput || !input.isTextInputActive {
             let r = focused.textInputCaretRect
-            let rect = TextInputRect(x: r.x, y: r.y, width: r.width, height: r.height)
+            let z = uiScale
+            let rect = TextInputRect(x: r.x * z, y: r.y * z, width: r.width * z, height: r.height * z)
             if !ownsTextInput || input.textInputRect != rect { input.startTextInput(rect: rect) }
             ownsTextInput = true
             composition = input.composition

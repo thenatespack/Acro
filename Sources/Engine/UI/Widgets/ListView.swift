@@ -155,7 +155,7 @@ open class RowListView: Widget {
     public override func draw(_ list: UIDrawList, theme: UITheme) {
         let radii = UICornerRadii(theme.cornerRadius)
         list.fillRect(frame, color: theme.fieldBackground, radii: radii)
-        list.strokeRect(frame, color: isFocused ? theme.accent.withAlpha(0.8) : theme.controlBorder, width: 1, radii: radii)
+        list.strokeRect(frame, color: isFocused ? theme.accent.withAlpha(0.8) : theme.controlBorder, width: theme.borderWidth, radii: radii)
     }
 
     public override func drawForeground(_ list: UIDrawList, theme: UITheme) {
@@ -168,9 +168,9 @@ open class RowListView: Widget {
                 let rect = rowRect(row)
                 let selected = isRowSelected(row)
                 if selected {
-                    list.fillRect(rect, color: isFocused ? theme.rowSelectedFocused : theme.rowSelected, radii: UICornerRadii(3))
+                    list.fillRect(rect, color: isFocused ? theme.rowSelectedFocused : theme.rowSelected, radii: UICornerRadii(theme.rowCornerRadius))
                 } else if row == hoveredRow {
-                    list.fillRect(rect, color: theme.rowHover, radii: UICornerRadii(3))
+                    list.fillRect(rect, color: theme.rowHover, radii: UICornerRadii(theme.rowCornerRadius))
                 }
                 drawRow(row, in: rect, list: list, theme: theme, selected: selected)
             }

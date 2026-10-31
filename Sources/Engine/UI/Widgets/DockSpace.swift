@@ -735,8 +735,8 @@ public final class DockSpace: Widget {
         guard let drag = tabDrag else { return }
         if let target = drag.target {
             let rect = snappedRect(previewRect(target)).inset(by: 2)
-            list.fillRect(rect, color: theme.accent.withAlpha(0.22), radii: UICornerRadii(4))
-            list.strokeRect(rect, color: theme.accent.withAlpha(0.85), width: 2, radii: UICornerRadii(4))
+            list.fillRect(rect, color: theme.accent.withAlpha(0.22), radii: UICornerRadii(theme.smallCornerRadius))
+            list.strokeRect(rect, color: theme.accent.withAlpha(0.85), width: 2, radii: UICornerRadii(theme.smallCornerRadius))
             // Where in the bar the tab goes.
             if case .tab(let node, let index) = target, let view = node.view as? TabView {
                 let rects = view.tabRects
@@ -752,7 +752,7 @@ public final class DockSpace: Widget {
         let ghost = snappedRect(UIRect(x: pointer.x + 10, y: pointer.y + 8, width: width, height: theme.controlHeight))
         list.fillRect(ghost.offsetBy(Vec2(0, 2)), color: theme.shadow, radii: UICornerRadii(theme.cornerRadius))
         list.fillRect(ghost, color: theme.popupBackground, radii: UICornerRadii(theme.cornerRadius))
-        list.strokeRect(ghost, color: theme.accent, width: 1, radii: UICornerRadii(theme.cornerRadius))
+        list.strokeRect(ghost, color: theme.accent, width: theme.borderWidth, radii: UICornerRadii(theme.cornerRadius))
         drawLine(layout, font: theme.font, in: ghost, alignment: .center, color: theme.textColor, list: list)
     }
 }
@@ -870,16 +870,16 @@ final class DockFloatingWindow: Widget {
     }
 
     override func draw(_ list: UIDrawList, theme: UITheme) {
-        let radii = UICornerRadii(theme.cornerRadius + 1)
+        let radii = UICornerRadii(theme.popupCornerRadius)
         for i in 1...3 {
             let grow = Float(i) * 3
             list.fillRect(UIRect(x: frame.x - grow / 2, y: frame.y + grow, width: frame.width + grow, height: frame.height),
-                          color: theme.shadow.withAlpha(theme.shadow.a / 3), radii: UICornerRadii(theme.cornerRadius + grow))
+                          color: theme.shadow.withAlpha(theme.shadow.a / 3), radii: UICornerRadii(theme.popupCornerRadius - 1 + grow))
         }
         list.fillRect(frame, color: theme.panelBackground, radii: radii)
     }
 
     override func drawForeground(_ list: UIDrawList, theme: UITheme) {
-        list.strokeRect(frame, color: theme.popupBorder, width: 1, radii: UICornerRadii(theme.cornerRadius + 1))
+        list.strokeRect(frame, color: theme.popupBorder, width: theme.borderWidth, radii: UICornerRadii(theme.popupCornerRadius))
     }
 }

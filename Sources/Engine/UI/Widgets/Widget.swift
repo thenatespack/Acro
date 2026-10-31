@@ -234,6 +234,24 @@ open class Widget {
     public var borderWidth: Float = 1 { didSet { setNeedsDisplay() } }
     public var cornerRadius: Float = 0 { didSet { setNeedsDisplay() } }
 
+    /// Picks a `UITheme.styles` override for this widget (before its type name).
+    public var styleClass: String? { didSet { if styleClass != oldValue { setNeedsLayout() } } }
+
+    /// Visual-only transform and fade of this widget and its subtree, applied when painting
+    /// (menu transitions, world-space labels, pulses): points map through
+    /// `frame.origin + (p - frame.origin) * visualScale + visualOffset`, and alpha is
+    /// multiplied by `opacity`. Layout and hit testing ignore them.
+    public var visualOffset = Vec2.zero { didSet { setNeedsDisplay() } }
+    public var visualScale: Float = 1 { didSet { setNeedsDisplay() } }
+    public var opacity: Float = 1 { didSet { setNeedsDisplay() } }
+
+    /// Directional navigation stops at this widget's subtree: while focus is inside it, the
+    /// arrow keys / D-pad only reach focusable widgets inside it (a menu screen, a dialog).
+    public var isNavigationScope = false
+    /// Explicit targets for directional navigation from this widget, overriding the spatial
+    /// search (see `setNavigation(_:to:)`).
+    private var navigationLinks: [UINavDirection: WeakWidget] = [:]
+
     /// Last `measure` result, keyed by the proposed width. Cleared by `setNeedsLayout`.
     private var measureCache: (width: Float?, size: Vec2)?
 
@@ -245,6 +263,16 @@ open class Widget {
 
     /// Whether this widget takes keyboard focus (on click and with Tab).
     open var acceptsFocus: Bool { false }
+
+    /// Makes moving `direction` from this widget go to `target` (nil restores the spatial search).
+    public func setNavigation(_ direction: UINavDirection, to target: Widget?) {
+        navigationLinks[direction] = target.map(WeakWidget.init)
+    }
+
+    /// The explicit navigation target for `direction`, if one was set and still exists.
+    public func navigationTarget(_ direction: UINavDirection) -> Widget? {
+        navigationLinks[direction]?.widget
+    }
     /// A focused widget that answers true gets `.text` events and `Input.startTextInput` (with
     /// `textInputCaretRect`), and all keys arrive through the text input stream.
     open var wantsTextInput: Bool { false }
@@ -401,6 +429,13 @@ open class Widget {
         for child in children { child.removeFromParent() }
     }
 
+    /// Reorders the children for painting and hit testing only (no layout), e.g. world labels
+    /// sorted far to near.
+    func sortChildren(by areInIncreasingOrder: (Widget, Widget) -> Bool) {
+        children.sort(by: areInIncreasingOrder)
+        setNeedsDisplay()
+    }
+
     /// Moves `child` to the end of `children`: painted last and hit first.
     public func bringChildToFront(_ child: Widget) {
         guard let index = children.firstIndex(where: { $0 === child }), index != children.count - 1 else { return }
@@ -493,7 +528,20 @@ open class Widget {
 
     /// Paints this widget and its subtree, skipping it when it lies outside the current clip.
     func paint(_ list: UIDrawList, theme: UITheme) {
-        guard !isHidden, let clip = list.clipBounds else { return }
+        guard !isHidden, opacity > 0 else { return }
+        let transformed = visualScale != 1 || visualOffset != .zero
+        if transformed {
+            let origin = Vec2(frame.x, frame.y)
+            list.pushTransform(scale: visualScale, offset: origin + visualOffset - origin * visualScale)
+        }
+        if opacity < 1 { list.pushOpacity(opacity) }
+        paintContent(list, theme: theme)
+        if opacity < 1 { list.popOpacity() }
+        if transformed { list.popTransform() }
+    }
+
+    private func paintContent(_ list: UIDrawList, theme: UITheme) {
+        guard let clip = list.clipBounds else { return }
         // A little slack for strokes and shadows that extend past the frame.
         let slack: Float = 4
         let bounds = UIRect(x: frame.x - slack, y: frame.y - slack, width: frame.width + 2 * slack,
@@ -505,6 +553,12 @@ open class Widget {
         if clipsContent { list.popClip() }
         drawForeground(list, theme: theme)
     }
+}
+
+/// A weak reference to a widget (navigation links don't keep their targets alive).
+struct WeakWidget {
+    weak var widget: Widget?
+    init(_ widget: Widget) { self.widget = widget }
 }
 
 /// An empty widget that takes free space in a stack (`grow` 1 by default).
