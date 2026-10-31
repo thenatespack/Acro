@@ -259,7 +259,7 @@ private struct Everything: Component, Equatable {
 }
 
 private struct Marker: Component, Equatable {
-    static let componentName = "Test.Marker"
+    static let componentName = "Test.InspectorMarker"
     var label = "m"
 }
 
@@ -357,7 +357,7 @@ private struct Marker: Component, Equatable {
     // A component added to the entity rebuilds the section list.
     world.add(Marker(), to: e)
     grid.refresh()
-    #expect(grid.componentNames.last == "Test.Marker")
+    #expect(grid.componentNames.last == "Test.InspectorMarker")
 }
 
 @MainActor @Test func gridKeepsFocusAndTypedTextAcrossRefreshes() {
