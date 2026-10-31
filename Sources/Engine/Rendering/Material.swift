@@ -4,7 +4,7 @@ import Foundation
 public enum ShadingModel: String, Sendable, Codable, CaseIterable {
     /// Metallic-roughness PBR: Cook-Torrance GGX specular with Smith height-correlated
     /// visibility and Schlick Fresnel, Lambert diffuse, and an ambient term from the
-    /// hemisphere light (diffuse irradiance plus a split-sum specular approximation).
+    /// hemisphere light or the sky's image-based lighting (diffuse irradiance plus split-sum specular).
     case pbr
     /// The engine's original Blinn-Phong model (`specular`, `shininess`; metallic and
     /// roughness are ignored). The built-in default material uses it, and `.material` files
