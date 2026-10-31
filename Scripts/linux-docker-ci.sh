@@ -6,7 +6,9 @@
 #
 # SWIFT_IMAGE (default: the workflow's image) picks the toolchain; PLATFORM=linux/amd64 runs
 # x86_64 under emulation (slow). The checkout is copied (without .build / .git) into a Docker
-# volume, so builds are incremental between runs and never touch the macOS .build folder.
+# volume, so builds are incremental between runs and never touch the macOS .build folder. Each
+# checkout (e.g. each git worktree) gets its own volume, so runs from several checkouts at once
+# don't overwrite each other's sources.
 # TEST_FILTER=NetworkingTests limits swift test; SCENES / ENGINE_RESOLUTION as in the workflow.
 # Logs land in .build/linux-ci/ and screenshots in .build/linux-ci/shots.
 set -euo pipefail
@@ -18,7 +20,8 @@ platform=${PLATFORM:-}
 steps=("$@")
 [[ ${#steps[@]} -eq 0 ]] && steps=(build release test render)
 tag="sge-linux-ci:$(echo "$image${platform:+-$platform}" | tr ':/' '--')"
-volume="sge-linux-ci-$(echo "$image${platform:+-$platform}" | tr ':/.' '---')"
+checkout=$(printf '%s' "$PWD" | cksum | cut -d' ' -f1)
+volume="sge-linux-ci-$(echo "$image${platform:+-$platform}" | tr ':/.' '---')-$checkout"
 out=.build/linux-ci
 mkdir -p "$out"
 
