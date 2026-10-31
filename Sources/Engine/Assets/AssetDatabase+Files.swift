@@ -265,8 +265,10 @@ extension AssetDatabase {
         refresh()
     }
 
-    /// The contents of the file of asset `id`.
+    /// The contents of the file of asset `id` (from the pack, for a mounted database: only
+    /// assets stored as files, such as audio).
     public func fileData(of id: AssetID) throws -> Data {
+        if let pack { return try pack.data(of: id) }
         guard let path = path(of: id) else { throw AssetError.noSuchAsset(id.description) }
         return try Data(contentsOf: project.url(forAssetPath: path))
     }

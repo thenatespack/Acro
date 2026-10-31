@@ -62,12 +62,17 @@ public struct AudioImporter: AssetImporter {
 
 extension AssetDatabase {
     /// The source file of an asset, if it exists in the project.
+    /// nil for a database mounted from a pack (it has no source files).
     public func sourceURL(of id: AssetID) -> URL? {
-        path(of: id).map { project.url(forAssetPath: $0) }
+        guard pack == nil else { return nil }
+        return path(of: id).map { project.url(forAssetPath: $0) }
     }
 
     /// Fully decodes an audio asset.
     public func loadSound(_ id: AssetID) throws -> SoundBuffer {
+        if pack != nil {
+            return try SoundBuffer(data: fileData(of: id), name: record(id).map { ($0.fileName as NSString).deletingPathExtension } ?? "")
+        }
         guard let url = sourceURL(of: id) else { throw AudioError("No asset \(id)") }
         return try SoundBuffer(contentsOf: url)
     }
@@ -78,11 +83,19 @@ extension AssetDatabase {
     @discardableResult
     public func play(_ id: AssetID, on audio: AudioSystem, bus: AudioBus? = nil, volume: Float = 1,
                      loop: Bool? = nil) throws -> Voice {
-        guard let url = sourceURL(of: id) else { throw AudioError("No asset \(id)") }
-        let decoder = try AudioFile.decoder(contentsOf: url)
+        let decoder: AudioDecoder
+        let name: String
+        if pack != nil {
+            // A pack keeps the file's bytes; streaming decodes them from memory.
+            decoder = try AudioFile.decoder(data: fileData(of: id))
+            name = record(id).map { ($0.fileName as NSString).deletingPathExtension } ?? ""
+        } else {
+            guard let url = sourceURL(of: id) else { throw AudioError("No asset \(id)") }
+            decoder = try AudioFile.decoder(contentsOf: url)
+            name = url.deletingPathExtension().lastPathComponent
+        }
         let settings = settings(of: id, as: AudioImporter.Settings.self) ?? AudioImporter.Settings()
         let duration = decoder.frameCount.map { Double($0) / decoder.sampleRate } ?? .infinity
-        let name = url.deletingPathExtension().lastPathComponent
         if settings.stream ?? (duration >= AudioImporter.streamThreshold) {
             return audio.playStream(decoder, on: bus, volume: volume, loop: loop ?? true, name: name)
         }

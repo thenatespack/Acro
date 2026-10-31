@@ -151,10 +151,15 @@ public final class AssetDatabase {
     /// Called after a scan or import changed something (the report says what).
     public var onChange: ((AssetScanReport) -> Void)?
 
+    /// The pack this database was mounted from (`init(mounting:)`); nil for a project's.
+    public let pack: AssetPack?
+    /// Pack entries that failed to load (damaged), so they are reported once.
+    var packLoadFailures: Set<AssetID> = []
+
     private var idsByPath: [String: AssetID] = [:]
     private var index: LibraryIndex
-    private var loaded: [AssetID: ImportedAsset] = [:]
-    private var revisions: [AssetID: Int] = [:]
+    var loaded: [AssetID: ImportedAsset] = [:]
+    var revisions: [AssetID: Int] = [:]
     /// Background jobs not applied yet, with the source hash they were started for.
     private var pendingJobs: [AssetID: String] = [:]
     /// Assets that changed again while their job ran: reimported when it finishes.
@@ -171,9 +176,33 @@ public final class AssetDatabase {
     public init(project: Project, importers: AssetImporterRegistry? = nil) {
         self.project = project
         self.importers = importers ?? AssetImporterRegistry.standard
+        pack = nil
         index = LibraryIndex.load(from: Self.indexURL(project))
         if ProcessInfo.processInfo.environment["ENGINE_HOT_RELOAD"].map({ $0 != "0" && !$0.isEmpty }) == true { startWatching() }
     }
+
+    /// A read-only database over a cooked pack (AssetPack.swift): its assets resolve from the
+    /// pack, with no importers, sources or `Library/`. Scanning, importing, settings and
+    /// watching do nothing; an id the pack lacks is `.missing` (see AssetDatabase+Pack.swift).
+    public init(mounting pack: AssetPack) {
+        self.pack = pack
+        project = Project(root: pack.url.deletingLastPathComponent(), settings: ProjectSettings(name: pack.manifest.name))
+        importers = AssetImporterRegistry()
+        index = LibraryIndex()
+        for entry in pack.manifest.assets {
+            records[entry.id] = AssetRecord(
+                id: entry.id, path: entry.path, importer: entry.importer, objects: entry.objectInfos, importError: nil,
+                sidecar: AssetSidecar(id: entry.id, importer: entry.importer, settings: nil),
+                sourceHash: entry.data?.hash ?? "", size: Int64(entry.byteCount), modified: 0)
+        }
+        idsByPath = Dictionary(records.values.map { ($0.path, $0.id) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// The Library index entry of `id` (what was last imported, with which settings).
+    func libraryEntry(_ id: AssetID) -> LibraryIndex.Entry? { index.assets[id.description] }
+
+    /// Every asset by path relative to `Assets/` (what `ImportContext` resolves paths with).
+    var assetsByPath: [String: AssetID] { idsByPath }
 
     /// Opens the project at `url` and returns its database after a `refresh()`.
     public static func open(projectAt url: URL, importers: AssetImporterRegistry? = nil) throws -> (AssetDatabase, AssetScanReport) {
@@ -218,6 +247,7 @@ public final class AssetDatabase {
     /// Nil if it has no importer or its import fails.
     public func asset(_ id: AssetID) -> ImportedAsset? {
         if let asset = loaded[id] { return asset }
+        if pack != nil { return packAsset(id) }
         guard let record = records[id], record.importer != nil else { return nil }
         if !needsImport(record), let cached = AssetArtifacts.read(from: artifactsURL(id)) {
             loaded[id] = cached
@@ -259,6 +289,7 @@ public final class AssetDatabase {
 
     /// The asset's effective import settings (sidecar values over the importer's defaults).
     public func settings(of id: AssetID) -> JSONValue? {
+        if let pack { return pack.entry(id)?.settings }
         guard let record = records[id], let importer = record.importer.flatMap(importers.importer(named:)) else { return nil }
         return importer.effectiveSettings(record.sidecar.settings)
     }
@@ -271,6 +302,7 @@ public final class AssetDatabase {
     /// Writes new import settings to the asset's sidecar and reimports it.
     public func setSettings<S: Encodable>(_ settings: S, for id: AssetID) throws {
         guard var record = records[id] else { throw AssetError.noSuchAsset(id.description) }
+        if let pack { throw AssetError.unreadable("\(pack.name) is a cooked pack: its import settings can't change") }
         record.sidecar.settings = try AssetJSON.value(settings)
         try record.sidecar.write(to: AssetSidecar.url(for: project.url(forAssetPath: record.path)))
         records[id] = record
@@ -284,6 +316,7 @@ public final class AssetDatabase {
     /// Scans, then imports every asset that is out of date (see the notes above).
     @discardableResult
     public func refresh() -> AssetScanReport {
+        if pack != nil { return AssetScanReport() }
         var report = scanFiles()
         for record in allRecords where record.importer != nil {
             let cached = FileManager.default.fileExists(atPath: artifactsURL(record.id).appendingPathComponent(AssetArtifacts.manifestName).path)
@@ -352,7 +385,7 @@ public final class AssetDatabase {
     /// Prepares the import of `id` (main actor); run it with `job.run()` on any thread and
     /// hand the result to `apply(_:)`.
     public func importJob(for id: AssetID) -> AssetImportJob? {
-        guard let record = records[id], let importer = record.importer.flatMap(importers.importer(named:)) else { return nil }
+        guard pack == nil, let record = records[id], let importer = record.importer.flatMap(importers.importer(named:)) else { return nil }
         let directory = artifactsURL(id)
         let context = ImportContext(assetID: id, sourceURL: project.url(forAssetPath: record.path), assetPath: record.path,
                                     artifactsDirectory: directory.appendingPathComponent("files", isDirectory: true),
@@ -412,12 +445,13 @@ public final class AssetDatabase {
         index.assets[id.description] = entry
     }
 
-    private func bumpRevision() -> Int {
+    func bumpRevision() -> Int {
         revision += 1
         return revision
     }
 
     private func saveIndex(_ report: inout AssetScanReport) {
+        guard pack == nil else { return }
         do {
             try index.save(to: Self.indexURL(project))
         } catch {
@@ -468,6 +502,7 @@ public final class AssetDatabase {
 
     private func scanFiles() -> AssetScanReport {
         var report = AssetScanReport()
+        guard pack == nil else { return report }  // a pack's records are fixed
         let (files, sidecarPaths) = listAssets()
         let suffix = "." + AssetSidecar.fileExtension
 
@@ -638,6 +673,7 @@ extension AssetDatabase {
     public func loadState(of id: AssetID) -> AssetLoadState {
         guard let record = records[id] else { return .missing }
         if loaded[id] != nil { return .loaded }
+        if pack != nil { return packLoadFailures.contains(id) ? .failed : .unloaded }
         if pendingJobs[id] != nil { return .loading }
         if record.importer == nil { return .failed }
         if record.importError != nil && !needsImport(record) { return .failed }
@@ -649,6 +685,11 @@ extension AssetDatabase {
     @discardableResult
     public func request(_ id: AssetID) -> AssetLoadState {
         let state = loadState(of: id)
+        if pack != nil, state == .unloaded {
+            // Reading a pack entry is a copy out of the mapped file: done at once.
+            _ = packAsset(id)
+            return loadState(of: id)
+        }
         guard state == .unloaded, let record = records[id] else { return state }
         submit(id, cacheOnly: !needsImport(record))
         return .loading
@@ -721,6 +762,7 @@ extension AssetDatabase {
     /// them. Use `waitForAll()` to block until they are done.
     @discardableResult
     public func refreshAsync() -> AssetScanReport {
+        if pack != nil { return AssetScanReport() }
         var report = scanFiles()
         for record in allRecords where record.importer != nil {
             if pendingJobs[record.id] == record.sourceHash { continue }
@@ -749,7 +791,7 @@ extension AssetDatabase {
     /// calls every frame (call it yourself when no renderer uses the database). Also started
     /// by `ENGINE_HOT_RELOAD=1`.
     public func startWatching(interval: Double = 0.5) {
-        guard watcher == nil else { return }
+        guard watcher == nil, pack == nil else { return }
         let watcher = FileWatcher(directory: project.assetsURL)
         watcher.startCollecting(interval: interval)  // `pump()` collects the changes
         self.watcher = watcher

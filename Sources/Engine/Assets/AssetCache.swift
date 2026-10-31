@@ -78,7 +78,7 @@ public struct AssetObjectInfo: Equatable, Sendable, Codable {
 enum AssetArtifacts {
     static let manifestName = "import.json"
 
-    struct Manifest: Codable {
+    struct Manifest: Codable, Sendable {
         static let currentVersion = 1
         var version = Manifest.currentVersion
         var vertexStride = MemoryLayout<MeshVertex>.stride
@@ -86,7 +86,7 @@ enum AssetArtifacts {
         var objects: [Object]
     }
 
-    struct Object: Codable {
+    struct Object: Codable, Sendable {
         var id: SubAssetID
         var name: String
         var kind: AssetKind
@@ -110,9 +110,24 @@ enum AssetArtifacts {
     }
 
     static func write(_ asset: ImportedAsset, to directory: URL) throws {
-        let fm = FileManager.default
-        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        let (manifest, files) = encode(asset)
+        try write(manifest: manifest, files: files, to: directory)
+    }
+
+    /// Writes an encoded import (`encode`) to `directory`.
+    static func write(manifest: Manifest, files: [String: Data], to directory: URL) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for (name, data) in files.sorted(by: { $0.key < $1.key }) {
+            try data.write(to: directory.appendingPathComponent(name))
+        }
+        try AssetJSON.encode(manifest).write(to: directory.appendingPathComponent(manifestName), options: .atomic)
+    }
+
+    /// The import as a manifest plus its binary files by name: what `write` stores, and what
+    /// asset packs store (AssetPack.swift).
+    static func encode(_ asset: ImportedAsset) -> (manifest: Manifest, files: [String: Data]) {
         var objects: [Object] = []
+        var files: [String: Data] = [:]
         for (n, object) in asset.objects.enumerated() {
             var entry = Object(id: object.id, name: object.name, kind: object.kind)
             switch object.value {
@@ -128,7 +143,7 @@ enum AssetArtifacts {
                     }
                     entry.skinned = true
                 }
-                try data.write(to: directory.appendingPathComponent(file))
+                files[file] = data
                 entry.file = file
                 entry.vertexCount = geometry.vertices.count
                 entry.indexCount = geometry.indices.count
@@ -136,14 +151,14 @@ enum AssetArtifacts {
                 let file = "texture-\(n).bin"
                 switch texture.pixels {
                 case .rgba8(let image):
-                    try Data(image.pixels).write(to: directory.appendingPathComponent(file))
+                    files[file] = Data(image.pixels)
                 case .rgbaFloat(let image):
-                    try image.pixels.withUnsafeBytes { try Data($0).write(to: directory.appendingPathComponent(file)) }
+                    files[file] = image.pixels.withUnsafeBytes { Data($0) }
                     entry.hdr = true
                 case .compressed(let format, let levels):
                     var data = Data(capacity: texture.gpuByteCount)
                     for level in levels { data.append(contentsOf: level.pixels) }
-                    try data.write(to: directory.appendingPathComponent(file))
+                    files[file] = data
                     entry.compressedFormat = format.rawValue
                     entry.mipLevels = levels.count
                 }
@@ -159,25 +174,36 @@ enum AssetArtifacts {
             }
             objects.append(entry)
         }
-        try AssetJSON.encode(Manifest(main: asset.main, objects: objects))
-            .write(to: directory.appendingPathComponent(manifestName), options: .atomic)
+        return (Manifest(main: asset.main, objects: objects), files)
     }
 
     /// Bytes of one cached `SkinInfluence`: four UInt16 joints, four Float weights.
     static let influenceBytes = 24
 
-    /// The cached import, or nil if it is missing, from another format version or damaged.
-    static func read(from directory: URL) -> ImportedAsset? {
+    /// The manifest in `directory`, if it is of this format version and vertex layout.
+    static func readManifest(from directory: URL) -> Manifest? {
         guard let data = FileManager.default.contents(atPath: directory.appendingPathComponent(manifestName).path),
               let manifest = try? AssetJSON.decoder().decode(Manifest.self, from: data),
               manifest.version == Manifest.currentVersion, manifest.vertexStride == MemoryLayout<MeshVertex>.stride else { return nil }
+        return manifest
+    }
+
+    /// The cached import, or nil if it is missing, from another format version or damaged.
+    static func read(from directory: URL) -> ImportedAsset? {
+        guard let manifest = readManifest(from: directory) else { return nil }
+        return decode(manifest) { FileManager.default.contents(atPath: directory.appendingPathComponent($0).path) }
+    }
+
+    /// The import `manifest` describes, its binary files read by `contents` (nil: missing);
+    /// nil when a file doesn't fit the manifest.
+    static func decode(_ manifest: Manifest, file contents: (String) -> Data?) -> ImportedAsset? {
         var asset = ImportedAsset(main: manifest.main)
         for entry in manifest.objects {
             let value: AssetObject
             switch entry.kind {
             case .mesh:
                 guard let file = entry.file, let vertexCount = entry.vertexCount, let indexCount = entry.indexCount,
-                      let bytes = FileManager.default.contents(atPath: directory.appendingPathComponent(file).path) else { return nil }
+                      let bytes = contents(file) else { return nil }
                 let vertexBytes = vertexCount * MemoryLayout<MeshVertex>.stride
                 let indexEnd = vertexBytes + indexCount * 4
                 let skinBytes = entry.skinned == true ? vertexCount * Self.influenceBytes : 0
@@ -199,7 +225,7 @@ enum AssetArtifacts {
                 value = .mesh(MeshGeometry(vertices: vertices, indices: indices, skin: skin))
             case .texture:
                 guard let file = entry.file, let width = entry.width, let height = entry.height,
-                      let bytes = FileManager.default.contents(atPath: directory.appendingPathComponent(file).path) else { return nil }
+                      let bytes = contents(file) else { return nil }
                 if let name = entry.compressedFormat {
                     guard let format = TextureFormat(rawValue: name), format.isCompressed, let count = entry.mipLevels,
                           count >= 1, count <= MipChain.levelCount(width: width, height: height) else { return nil }

@@ -53,13 +53,17 @@ public struct ProjectSettings: Equatable, Sendable, Codable {
     /// The project's game code, which the editor loads and hot-reloads (`"game": {"target":
     /// "MyGame", "package": ".."}`; see `GameModuleSettings`). nil: none.
     public var game: GameModuleSettings?
+    /// What Build Game and `--cook` use by default (`"build": {"scenes": ["Scenes/Main.scene"]}`;
+    /// see `GameBuildSettings`). nil: none.
+    public var build: GameBuildSettings?
 
-    public init(name: String, game: GameModuleSettings? = nil) {
+    public init(name: String, game: GameModuleSettings? = nil, build: GameBuildSettings? = nil) {
         self.name = name
         self.game = game
+        self.build = build
     }
 
-    private enum CodingKeys: String, CodingKey { case format, version, name, game }
+    private enum CodingKeys: String, CodingKey { case format, version, name, game, build }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -67,6 +71,7 @@ public struct ProjectSettings: Equatable, Sendable, Codable {
         guard version <= Self.currentVersion else { throw AssetError.unsupportedProjectVersion(version) }
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
         game = try c.decodeIfPresent(GameModuleSettings.self, forKey: .game)
+        build = try c.decodeIfPresent(GameBuildSettings.self, forKey: .build)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -75,6 +80,7 @@ public struct ProjectSettings: Equatable, Sendable, Codable {
         try c.encode(Self.currentVersion, forKey: .version)
         try c.encode(name, forKey: .name)
         try c.encodeIfPresent(game, forKey: .game)
+        try c.encodeIfPresent(build, forKey: .build)
     }
 }
 
