@@ -421,9 +421,20 @@ final class MetalRenderDevice: RenderDevice {
         try target.format.validateUpdate(
             region, mipLevel: mipLevel, byteCount: bytes.count,
             width: target.width, height: target.height, mipLevelCount: target.mipLevelCount)
-        target.texture.replace(
-            region: MTLRegionMake2D(region.x, region.y, region.width, region.height), mipmapLevel: mipLevel,
-            withBytes: bytes.baseAddress!, bytesPerRow: region.width * target.format.bytesPerPixel)
+        // Blit from a staging buffer on the device queue rather than `replace(region:)` from the
+        // CPU: command buffers run in commit order with hazard tracking, so frames already
+        // submitted still sample the old texels and later frames see the new ones (as on Vulkan).
+        guard let staging = device.makeBuffer(bytes: bytes.baseAddress!, length: bytes.count, options: .storageModeShared),
+              let commandBuffer = queue.makeCommandBuffer(),
+              let blit = commandBuffer.makeBlitCommandEncoder() else {
+            throw GraphicsError("Failed to encode a texture update")
+        }
+        blit.copy(from: staging, sourceOffset: 0, sourceBytesPerRow: region.width * target.format.bytesPerPixel,
+                  sourceBytesPerImage: bytes.count, sourceSize: MTLSize(width: region.width, height: region.height, depth: 1),
+                  to: target.texture, destinationSlice: 0, destinationLevel: mipLevel,
+                  destinationOrigin: MTLOrigin(x: region.x, y: region.y, z: 0))
+        blit.endEncoding()
+        commandBuffer.commit()
     }
 
     func makeSampler(_ descriptor: SamplerDescriptor) throws -> GPUSampler {

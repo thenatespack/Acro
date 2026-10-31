@@ -410,8 +410,9 @@ extension RenderPass {
     /// every pass recorded after the call. On Vulkan it runs on its own command buffer with the
     /// image transitions it needs and waits for the queue, so it is safe against frames still in
     /// flight but costs a stall; batch changes into one call (the glyph atlas uploads one
-    /// bounding rectangle per page). On Metal the bytes are written directly, so don't change
-    /// texels that frames still in flight are sampling.
+    /// bounding rectangle per page). On Metal it blits from a staging buffer on its own command
+    /// buffer, ordered after frames already submitted (no stall). Either way, frames in flight
+    /// keep sampling the old texels.
     func updateTexture(_ texture: GPUTexture, region: TextureRegion, mipLevel: Int, bytes: UnsafeRawBufferPointer) throws
     /// A sampler for `descriptor`. Identical descriptors return the same object.
     func makeSampler(_ descriptor: SamplerDescriptor) throws -> GPUSampler
