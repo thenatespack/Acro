@@ -174,16 +174,17 @@ final class DependencyLog: @unchecked Sendable {
 /// created; add importers there at startup (or to `database.importers` for one database).
 public struct AssetImporterRegistry: Sendable {
     /// The importers new databases start with: the built-in ones (`OBJImporter`,
-    /// `MaterialFileImporter`, `TextureImporter`, `GLTFImporter`) plus whatever the app registers.
+    /// `MaterialFileImporter`, `TextureImporter`, `GLTFImporter`, `AudioImporter`) plus whatever the app registers.
     @MainActor public static var standard = AssetImporterRegistry.builtIn
 
-    /// `OBJImporter`, `MaterialFileImporter`, `TextureImporter` and `GLTFImporter`.
+    /// `OBJImporter`, `MaterialFileImporter`, `TextureImporter`, `GLTFImporter` and `AudioImporter`.
     public static var builtIn: AssetImporterRegistry {
         var registry = AssetImporterRegistry()
         registry.register(OBJImporter())
         registry.register(MaterialFileImporter())
         registry.register(TextureImporter())
         registry.register(GLTFImporter())
+        registry.register(AudioImporter())
         return registry
     }
 

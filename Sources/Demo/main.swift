@@ -41,6 +41,7 @@ final class DemoGame: Game {
 
     private func openScene(_ index: Int, input: Input? = nil) throws {
         if let input { scene?.uiContext?.resign(input: input) }
+        scene?.willClose()
         sceneIndex = index
         scene = try allScenes[index].init(renderer: renderer)
         renderer.resetMotion()
@@ -75,7 +76,7 @@ final class DemoGame: Game {
 
         let sceneDt = paused ? 0 : dt
         animationTime += sceneDt
-        scene.update(input: input, dt: sceneDt, time: animationTime)
+        scene.update(engine: engine, dt: sceneDt, time: animationTime)
 
         let orbit = Vec3(cosf(view.pitch) * sinf(view.yaw), sinf(view.pitch), cosf(view.pitch) * cosf(view.yaw))
         camera = scene.camera(orbitEye: view.target + orbit * view.distance, target: view.target)

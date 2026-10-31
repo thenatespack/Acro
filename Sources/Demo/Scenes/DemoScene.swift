@@ -29,6 +29,10 @@ protocol DemoScene: AnyObject {
 
     /// `time` is the animation clock (stops while paused).
     func update(input: Input, dt: Float, time: Float)
+    /// The same with engine access (e.g. `engine.audio`). Defaults to `update(input:dt:time:)`.
+    func update(engine: Engine, dt: Float, time: Float)
+    /// Called before the host switches to another scene (stop sounds, etc.).
+    func willClose()
     /// Extra offscreen passes, recorded before the shadow pass.
     func renderOffscreen(frame: Frame)
     /// The same with engine access (jitter, aspect, clear color). Defaults to `renderOffscreen(frame:)`.
@@ -53,6 +57,8 @@ extension DemoScene {
     var status: String { "" }
     func camera(orbitEye: Vec3, target: Vec3) -> ViewCamera { ViewCamera(eye: orbitEye, target: target) }
     func update(input: Input, dt: Float, time: Float) {}
+    func update(engine: Engine, dt: Float, time: Float) { update(input: engine.input, dt: dt, time: time) }
+    func willClose() {}
     func renderOffscreen(frame: Frame) {}
     func renderOffscreen(engine: Engine, frame: Frame) { renderOffscreen(frame: frame) }
     func drawUI(_ ui: UIDrawList) {}
@@ -81,4 +87,5 @@ extension DemoScene {
     ImagesScene.self,
     GLTFScene.self,
     PBRScene.self,
+    AudioScene.self,
 ]

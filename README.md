@@ -7,6 +7,7 @@ Sources/
   Engine/
     Core/            Engine loop, Game protocol, math (Mat4/Vec*), Input, TextInput, FrameStats, Image/PNGEncoder (compressed PNG writer)
     Debug/           Performance overlay + built-in 5x7 bitmap font
+    Audio/           AudioSystem (voices, buses, ducking), AudioMixer (real-time mixing), devices, WAV/Vorbis/MP3 decoders
     Assets/          Model import: ImportedModel (CPU-side meshes, materials, textures, nodes), GLTFReader (glTF 2.0 / GLB)
     Scene/           World (entities, sparse-set components, queries), Transform hierarchy, staged systems
     Assets/          Projects, sidecar asset ids, AssetDatabase, importers (OBJ, .material), Library cache, FileWatcher
@@ -22,6 +23,7 @@ Sources/
   CVulkan, CGLFW, CZlib/  System-library module maps (Windows variants under Windows/)
   CStbTrueType/      Vendored stb_truetype (public domain)
   CStbImage/         Vendored stb_image v2.30 (public domain; PNG/JPEG/TGA/HDR, decode from memory only)
+  CAudio/            Vendored miniaudio (device output), stb_vorbis, dr_mp3 (public domain / MIT-0)
   Demo/              Test scenes (Renderer + Scenes/) and their shaders
 Scripts/compile-shaders.sh   GLSL -> SPIR-V -> MSL (+ spirv-to-msl.c, the SPIRV-Cross driver)
 Scripts/render-scenes.sh     Render every demo scene on every backend and compare
@@ -246,6 +248,25 @@ On macOS the window view is an NSTextInputClient, so dead keys (option+e, e), th
 ### Mouse capture and cursors
 `input.cursor` sets the cursor shape over the window (`.arrow`, `.iBeam`, `.pointingHand`, `.resizeHorizontal`, `.resizeVertical`, `.crosshair`, `.notAllowed`, `.hidden`). It resets to `.arrow` every frame, so set it every frame while it should differ. `input.isMouseCaptured = true` asks for relative mouse mode: the cursor is hidden and locked, and `mouseDelta` reports raw motion in points that isn't stopped by the screen edges. The request is ignored while the window lacks focus. Capture ends when the window loses focus or Esc is pressed (that press isn't reported; see `escapeReleasesCapture`), and the game has to ask again. On macOS this uses `CGAssociateMouseAndMouseCursorPosition` and `NSCursor`; on GLFW it uses `GLFW_CURSOR_DISABLED` with raw mouse motion where supported, and `notAllowed` needs GLFW 3.4. Screenshot runs leave the cursor alone. `UIContext.desiredCursor` (from the docking widgets) isn't wired to `input.cursor` yet.
 
+### Audio
+`engine.audio` (an `AudioSystem`) plays sounds. It is created the first time you use it, so games without sound never open a device. It mixes in Swift and needs only an `AudioDevice` that pulls interleaved stereo float: `AVAudioEngineDevice` (macOS default; an `AVAudioSourceNode` at the hardware rate), `MiniaudioDevice` (Linux/Windows default, also on macOS) and `OfflineAudioDevice`, which renders on demand into memory for tests and headless runs. Set `ENGINE_AUDIO=avaudioengine|miniaudio|offline` to choose one. Automated screenshots use the offline device unless `ENGINE_AUDIO` names a backend. It renders exactly `dt` worth of audio per frame, so anything audio-driven in a screenshot is deterministic. A device that fails to start falls back to the offline one (silent).
+
+```swift
+let shot = try SoundBuffer(contentsOf: url)                               // WAV/Ogg Vorbis/MP3, fully decoded
+let v = engine.audio.play(shot, volume: 0.8, pitch: 1.2, pan: -0.5)       // one-shot on the sfx bus
+let music = try engine.audio.playStream(contentsOf: song)                 // streamed, looping, music bus
+engine.audio.duck(engine.audio.music, while: engine.audio.voice, to: 0.3) // music dips under dialogue
+engine.audio.music.volume = 0.5; engine.audio.sfx.isPaused = true
+music.stop(fade: 1)
+```
+
+- **Formats:** WAV (PCM 8/16/24/32-bit, float 32/64, `WAVE_FORMAT_EXTENSIBLE`; streamed from disk) in Swift. Ogg Vorbis (stb_vorbis) and MP3 (dr_mp3) decode incrementally from the compressed file in memory. Files with more than two channels keep the first two (Vorbis mixes down). `WAVWriter` writes WAV files. `AudioImporter` (built in) gives sound files asset ids and checks that they decode. `assets.play(id, on: engine.audio)` streams or decodes according to its `stream` setting (by default, files longer than 10 s stream).
+- **Voices:** `Voice` handles have `stop/pause/resume(fade:)`, `volume`, `pitch` (speed and pitch, by resampling), balance `pan` and `position`. A handle stays safe after its sound ends. Looping buffers can loop a sub-range after an intro (`loopRange`). Sample-rate conversion and pitch are one linear-interpolation step. At most `maxVoices` (64) play at once; past that, `play` returns an inert handle.
+- **Buses:** `master`, `music`, `sfx`, `voice`, plus `addBus(_:parent:)` (32 in total). Each has `volume`, `isMuted`, `isPaused` (fades out and holds its voices) and `level` (post-fader peak since the last frame). Ducking lowers a bus while a trigger bus has playing voices, with linear attack/release ramps. Volume, pan, mute, pause, stop and duck changes all ramp (10 ms by default), so nothing clicks. The master is clamped to [-1, 1].
+- **Threading:** the game thread only queues commands into a lock-free single-producer single-consumer ring. The audio callback (`AudioMixer.render`) drains it and mixes into buffers allocated once. It never allocates, frees, locks or waits. Sample data is passed as raw pointers that the game thread keeps alive until the mixer reports, through an atomic per voice slot, that the voice finished. Streams decode on the game thread in `update` (called by `Engine.run` every frame) into a 2 s ring per voice. A hitch longer than that is heard as silence (`streamUnderruns` counts it).
+- **Vendored:** `Sources/CAudio` holds miniaudio 0.11.25, stb_vorbis 1.22 and dr_mp3 0.7.4, all public domain or MIT-0/MIT (see `Sources/CAudio/LICENSES.md`). miniaudio loads its backends at run time. Linux links only `dl`, `pthread` and `m`.
+- **Not yet:** 3D positional audio, effects (filters, reverb), FLAC, and streaming on a background thread. The Linux and Windows device paths compile from the same code as `ENGINE_AUDIO=miniaudio` on macOS but haven't been run on those systems.
+
 ## Editor
 
 `swift run -c release Editor [path/to/scene.json] [--backend metal|vulkan]` starts the in-engine editor, built from the engine's own systems (`Sources/EditorCore`, a library with all the logic and tests in `Tests/EditorTests`; `Sources/Editor` is the thin executable). Without a path it opens a starter scene (camera, sun, environment, floor, a few primitives, a spinning group).
@@ -425,6 +446,7 @@ swift run -c release Demo --scene shadows --quality ultra --resolution 4k   # --
 | 17 | `images` | Decoded PNG/HDR textures: mip chains receding to the horizon, sRGB vs linear upload of the same bytes, an `.rgba16Float` HDR cube, a texture updated in place every frame | M toggles the floor's mipmaps |
 | 18 | `gltf` | glTF 2.0 import (Khronos OrientationTest: arrows must point into their targets), or any file via `DEMO_GLTF=<path>` | |
 | 19 | `pbr` | PBR materials: spheres from dielectric to metal (bottom to top) and smooth to rough (left to right), a normal-mapped brick slab, an emissive panel, an alpha-masked plant (cutout shadow too), the Khronos BoomBox (CC0; all five texture maps, textures downscaled) | |
+| 20 | `audio` | Audio: streamed looping music, one-shots with pitch and pan, an ambience loop on a user bus with its pan swept, dialogue that ducks the music, bus meters, level history and a voice list (all sounds synthesized; offline device under `ENGINE_SCREENSHOT`) | **B** blip, **K** kick, **H** hi-hat, **T** dialogue, **M** music, **L** ambience, **X** mute music, **P** pause sfx, **G** ducking |
 
 Everywhere: **1–9** and **0** (scene 10) switch scenes, **]** / **[** next / previous scene, **F2** toggles a text-input test mode (echoes typing in the window title), **Tab / Shift-Tab** cycle the render resolution (native, quality, performance, 144p … 16k), **U** cycles the upscaler (temporal ones only without MSAA), **V** toggles vsync, **Space** pauses animation, arrows/WASD or left-drag orbit, **Q/E** zoom, **Esc** quits. The window title shows the scene, its state, the render size, the quality and the backend.
 

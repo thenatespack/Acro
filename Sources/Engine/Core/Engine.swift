@@ -230,6 +230,17 @@ public final class Engine {
     /// stages, transform propagation, render prep) right after `Game.update` each frame, with
     /// the same dt (a fixed 1/60 s in screenshot mode, so fixed steps stay deterministic).
     public var world: World?
+    /// Sound output (see `AudioSystem`). Created on first use, so games without sound never
+    /// open an audio device: the platform default (`ENGINE_AUDIO` overrides it), or the silent
+    /// offline device during automated screenshots so frames don't depend on audio timing.
+    /// `run` calls `audio.update(dt:)` after `Game.update` each frame and shuts it down at exit.
+    public var audio: AudioSystem {
+        if let audioSystem { return audioSystem }
+        let system = AudioSystem.makeDefault(headless: automatedScreenshot != nil)
+        audioSystem = system
+        return system
+    }
+    private var audioSystem: AudioSystem?
 
     let window: PlatformWindow
     private var overlay: DebugOverlay?
@@ -373,6 +384,7 @@ public final class Engine {
     /// Runs the main loop until the window closes or `quit()` is called.
     public func run(_ game: Game) throws {
         defer {
+            audioSystem?.shutdown()
             device.waitIdle()
             device.shutdown()
             window.destroy()
@@ -419,6 +431,7 @@ public final class Engine {
             let updateStart = clock.now
             game.update(engine: self, dt: Float(dt))
             world?.update(dt: dt)
+            audioSystem?.update(dt: dt)
             if automatedScreenshot == nil {
                 // Screenshot runs leave the user's cursor alone (their input is ignored anyway).
                 window.applyCursor(input.cursor, captured: input.isMouseCaptured)
