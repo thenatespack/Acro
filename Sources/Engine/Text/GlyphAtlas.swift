@@ -25,10 +25,11 @@ public struct GlyphInfo: Sendable {
 /// pixel between neighbors, so bilinear filtering never mixes glyphs). A full page is kept and
 /// another one added, so UVs stay valid and existing glyphs never move; draw one batch per page.
 ///
-/// The `RenderDevice` has no texture sub-region update, so a page that gained glyphs is
-/// re-created from its CPU copy (`uploadDirtyPages`, one `pageSize`² x 4 byte upload per dirty
-/// page). That is cheap when text is stable and fine for new glyphs trickling in, but warm the
-/// atlas up front (`prewarm`) for large character sets.
+/// A page's texture is created once (when it first has glyphs). After that `uploadDirtyPages`
+/// writes only the bounding rectangle of the glyphs added since the last upload
+/// (`RenderDevice.updateTexture`), so new glyphs trickling in cost a few KiB instead of a whole
+/// page. Several new glyphs in one frame share one update per page; warm the atlas up front
+/// (`prewarm`) for large character sets so no update lands in a frame at all.
 @MainActor
 public final class GlyphAtlas {
     /// Pixels per em of the stored bitmaps.
@@ -42,7 +43,13 @@ public final class GlyphAtlas {
         var packer: ShelfPacker
         var pixels: [UInt8]
         var texture: GPUTexture?
-        var dirty = false
+        /// Bounding box of the pixels written since the last upload (x/y inclusive-exclusive).
+        var dirty: (x0: Int, y0: Int, x1: Int, y1: Int)?
+
+        func markDirty(x: Int, y: Int, width: Int, height: Int) {
+            guard let d = dirty else { dirty = (x, y, x + width, y + height); return }
+            dirty = (min(d.x0, x), min(d.y0, y), max(d.x1, x + width), max(d.y1, y + height))
+        }
 
         init(size: Int) {
             packer = ShelfPacker(width: size, height: size)
@@ -115,7 +122,7 @@ public final class GlyphAtlas {
                 page.pixels[i + 3] = value
             }
         }
-        page.dirty = true
+        page.markDirty(x: x, y: y, width: w, height: h)
         let size = Float(pageSize)
         return GlyphInfo(
             page: index,
@@ -125,15 +132,34 @@ public final class GlyphAtlas {
             extent: Vec2(Float(w), Float(h)) / Self.sdfSize)
     }
 
-    /// Creates or re-creates the texture of every page that changed since the last call.
-    /// `device.makeTexture` blocks on Vulkan, so prefer calling this outside a hot path
-    /// (e.g. after `prewarm`); `TextRenderer.render` calls it for you.
-    public func uploadDirtyPages(device: RenderDevice) throws {
-        for page in pages where page.dirty || page.texture == nil {
-            page.texture = try device.makeTexture(
-                pixels: page.pixels, width: pageSize, height: pageSize, format: .rgba8Unorm, generateMipmaps: false)
-            page.dirty = false
+    /// Creates the texture of every new page and writes the changed rectangle of every page that
+    /// gained glyphs since the last call. Both block on Vulkan, so prefer calling this outside a
+    /// hot path (e.g. after `prewarm`); `TextRenderer.render` calls it for you. Returns how many
+    /// texels were uploaded (0 when nothing changed), mostly useful for tests and stats.
+    @discardableResult
+    public func uploadDirtyPages(device: RenderDevice) throws -> Int {
+        var uploaded = 0
+        for page in pages {
+            guard let texture = page.texture else {
+                page.texture = try device.makeTexture(
+                    pixels: page.pixels, width: pageSize, height: pageSize, format: .rgba8Unorm, generateMipmaps: false)
+                page.dirty = nil
+                uploaded += pageSize * pageSize
+                continue
+            }
+            guard let d = page.dirty else { continue }
+            let width = d.x1 - d.x0, height = d.y1 - d.y0
+            var rows = [UInt8]()
+            rows.reserveCapacity(width * height * 4)
+            for y in d.y0..<d.y1 {
+                let start = (y * pageSize + d.x0) * 4
+                rows.append(contentsOf: page.pixels[start..<start + width * 4])
+            }
+            try device.updateTexture(texture, region: TextureRegion(x: d.x0, y: d.y0, width: width, height: height), pixels: rows)
+            page.dirty = nil
+            uploaded += width * height
         }
+        return uploaded
     }
 
     /// The texture of `page` as of the last `uploadDirtyPages`.

@@ -19,6 +19,7 @@ Sources/
     Backends/Vulkan/ VulkanRenderDevice (+ helpers)
   CVulkan, CGLFW, CZlib/  System-library module maps (Windows variants under Windows/)
   CStbTrueType/      Vendored stb_truetype (public domain)
+  CStbImage/         Vendored stb_image v2.30 (public domain; PNG/JPEG/TGA/HDR, decode from memory only)
   Demo/              Test scenes (Renderer + Scenes/) and their shaders
 Scripts/compile-shaders.sh   GLSL -> SPIR-V -> MSL (+ spirv-to-msl.c, the SPIRV-Cross driver)
 Scripts/render-scenes.sh     Render every demo scene on every backend and compare
@@ -67,7 +68,10 @@ Buffer indices 0 and 1 are vertex buffers. On Vulkan, textures and samplers are 
 
 ### Textures, samplers and uniform buffers
 
-- `device.makeTexture(pixels:width:height:format:generateMipmaps:)` creates a 2D `.rgba8Unorm` or `.rgba8Srgb` texture. Mipmaps are generated on the CPU (box filter, in linear light for sRGB), so both backends sample identical data.
+- **Decoding** (`ImageDecoder`, CPU only, any thread, no shared state): `decode(_ data:)` / `decode(contentsOf:)` give an 8-bit RGBA `Image` from PNG, JPEG or TGA (gray, gray+alpha and RGB expand to RGBA; 16-bit PNG reduces to 8). `decodeFloat` gives a linear `FloatImage` (RGBA32F), what Radiance HDR files hold. `decodeAny` picks by content (`DecodedImage.rgba8` / `.rgba32F`), `size(of:)` reads just the header. Failures throw `ImageDecodeError` with stb_image's reason.
+- **Upload** (main thread; blocks on Vulkan): `device.makeTexture(image: Image, srgb:, generateMipmaps: true)` (true for color maps, false for normal / roughness / data), `makeTexture(image: FloatImage, generateMipmaps:)` (an `.rgba16Float` texture, mips filtered in float) or `makeTexture(decoded:srgb:)`. Decode on a background thread, upload on the main thread.
+- `device.updateTexture(texture, region: TextureRegion(x:y:width:height:), mipLevel:, pixels:)` overwrites a sub-rectangle of one mip level (synchronous, allowed inside a pass; on Vulkan it uses its own command buffer with the layout transitions and waits for the queue, on Metal it writes directly). Other mips are not regenerated. The glyph atlas uses it to upload only the bounding box of new glyphs per page.
+- `device.makeTexture(pixels:width:height:format:generateMipmaps:)` creates a 2D `.rgba8Unorm`, `.rgba8Srgb` or `.rgba16Float` (half-float bytes, no CPU mips) texture; `makeTexture(levels:format:)` takes explicit `TextureMipLevel`s. Mipmaps are generated on the CPU (box filter, in linear light for sRGB), so both backends sample identical data.
 - `device.makeSampler(SamplerDescriptor(filter:mipFilter:addressMode:))` returns a cached sampler (nearest/linear, mip none/nearest/linear, repeat/clamp/mirror).
 - In a pass: `setTexture(_:index:)`, `setSampler(_:index:)`, `setUniformBuffer(_:index:)` for a static buffer created with `.uniform` usage, or `setUniformData(_:index:)` to copy per-draw data (≤16 KiB) into the frame's ring buffer. Pass `stage:` to bind to the vertex and/or fragment stage.
 - On Vulkan, bindings are collected per pass and written into a descriptor set (set 2) allocated from the frame slot's pool on the first draw after a change. The pool is reset when that slot's fence signals.

@@ -39,6 +39,7 @@ final class VulkanBuffer: GPUBuffer {
 final class VulkanTexture: GPUTexture {
     private let resource: VulkanResource
     private let deletionQueue: VulkanDeletionQueue
+    let image: VkImage
     let width: Int
     let height: Int
     let format: TextureFormat
@@ -52,6 +53,7 @@ final class VulkanTexture: GPUTexture {
     init(width: Int, height: Int, format: TextureFormat, mipLevelCount: Int = 1, image: VkImage, memory: VkDeviceMemory,
          view: VkImageView, framebuffer: VkFramebuffer? = nil, descriptorSet: VkDescriptorSet? = nil,
          deletionQueue: VulkanDeletionQueue) {
+        self.image = image
         self.width = width
         self.height = height
         self.format = format
@@ -635,17 +637,13 @@ final class VulkanRenderDevice: RenderDevice {
         }
     }
 
-    func makeTexture(pixels: UnsafeRawBufferPointer, width: Int, height: Int, format: TextureFormat,
-                     generateMipmaps: Bool) throws -> GPUTexture {
-        try format.validateUpload(byteCount: pixels.count, width: width, height: height, maxSize: maxTextureSize)
-        let srgb = format == .rgba8Srgb
-        let levels = generateMipmaps
-            ? MipChain.generate(pixels: Array(pixels), width: width, height: height, srgb: srgb)
-            : [MipChain.Level(width: width, height: height, pixels: Array(pixels))]
+    func makeTexture(levels: [TextureMipLevel], format: TextureFormat) throws -> GPUTexture {
+        try format.validateLevels(levels, maxSize: maxTextureSize)
+        let (width, height) = (levels[0].width, levels[0].height)
 
         let extent = VkExtent2D(width: UInt32(width), height: UInt32(height))
         let allocation = try createImage(
-            extent: extent, format: srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM, samples: VK_SAMPLE_COUNT_1_BIT,
+            extent: extent, format: Self.vkFormat(format), samples: VK_SAMPLE_COUNT_1_BIT,
             usage: vkFlags(VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_USAGE_TRANSFER_DST_BIT),
             aspect: vkFlags(VK_IMAGE_ASPECT_COLOR_BIT), mipLevels: levels.count)
         // Wrapped right away so a failure below still frees the image.
@@ -697,6 +695,60 @@ final class VulkanRenderDevice: RenderDevice {
                     dstStage: vkFlags(VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT))
         }
         return texture
+    }
+
+    private static func vkFormat(_ format: TextureFormat) -> VkFormat {
+        switch format {
+        case .rgba8Srgb: VK_FORMAT_R8G8B8A8_SRGB
+        case .rgba16Float: VK_FORMAT_R16G16B16A16_SFLOAT
+        default: VK_FORMAT_R8G8B8A8_UNORM
+        }
+    }
+
+    /// Copies the region through a staging buffer on a one-off command buffer. The image goes
+    /// shader-read -> transfer-dst -> shader-read (the layout every sampled texture rests in),
+    /// and the wait for the queue means no earlier frame is still reading it when it is written.
+    func updateTexture(_ texture: GPUTexture, region: TextureRegion, mipLevel: Int, bytes: UnsafeRawBufferPointer) throws {
+        let target = texture as! VulkanTexture
+        try target.format.validateUpdate(
+            region, mipLevel: mipLevel, byteCount: bytes.count,
+            width: target.width, height: target.height, mipLevelCount: target.mipLevelCount)
+        let staging = try createHostBuffer(length: bytes.count, usage: vkFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT))
+        staging.mapped!.copyMemory(from: bytes.baseAddress!, byteCount: bytes.count)
+        var copy = VkBufferImageCopy()
+        copy.imageSubresource = VkImageSubresourceLayers(
+            aspectMask: vkFlags(VK_IMAGE_ASPECT_COLOR_BIT), mipLevel: UInt32(mipLevel), baseArrayLayer: 0, layerCount: 1)
+        copy.imageOffset = VkOffset3D(x: Int32(region.x), y: Int32(region.y), z: 0)
+        copy.imageExtent = VkExtent3D(width: UInt32(region.width), height: UInt32(region.height), depth: 1)
+        // Only the touched level changes layout; the others stay shader-readable.
+        let range = VkImageSubresourceRange(
+            aspectMask: vkFlags(VK_IMAGE_ASPECT_COLOR_BIT), baseMipLevel: UInt32(mipLevel), levelCount: 1,
+            baseArrayLayer: 0, layerCount: 1)
+        let shaderStages = vkFlags(VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT)
+        let image = target.image
+        try submitAndWait { cmd in
+            func barrier(from: VkImageLayout, to: VkImageLayout, srcAccess: VkAccessFlags, dstAccess: VkAccessFlags,
+                         srcStage: VkPipelineStageFlags, dstStage: VkPipelineStageFlags) {
+                var barrier = VkImageMemoryBarrier()
+                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER
+                barrier.oldLayout = from
+                barrier.newLayout = to
+                barrier.srcAccessMask = srcAccess
+                barrier.dstAccessMask = dstAccess
+                barrier.srcQueueFamilyIndex = UInt32.max  // VK_QUEUE_FAMILY_IGNORED
+                barrier.dstQueueFamilyIndex = UInt32.max
+                barrier.image = image
+                barrier.subresourceRange = range
+                vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, nil, 0, nil, 1, &barrier)
+            }
+            barrier(from: VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, to: VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    srcAccess: 0, dstAccess: vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT),
+                    srcStage: shaderStages, dstStage: vkFlags(VK_PIPELINE_STAGE_TRANSFER_BIT))
+            vkCmdCopyBufferToImage(cmd, staging.buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy)
+            barrier(from: VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, to: VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    srcAccess: vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT), dstAccess: vkFlags(VK_ACCESS_SHADER_READ_BIT),
+                    srcStage: vkFlags(VK_PIPELINE_STAGE_TRANSFER_BIT), dstStage: shaderStages)
+        }
     }
 
     /// Records `body` into a one-off command buffer, submits it and waits. For rare uploads
