@@ -1,0 +1,37 @@
+{
+  "id": "walk-to-wall",
+  "prompt": "Playtest: walk the Player forward until it hits a wall, then leave the game paused there.",
+  "setup": [
+    {"tool": "scene.new", "arguments": {"confirm": true}},
+    {"tool": "entity.find", "arguments": {"name": "Floor", "exact": true}},
+    {"tool": "component.add", "arguments": {"entity": "@1.entities.0.id", "component": "Collider"}},
+    {"tool": "entity.create", "arguments": {"template": "cube", "name": "Player", "position": [0, 0.5, 4]}},
+    {"tool": "component.add", "arguments": {"entity": "@3.entity", "component": "Collider"}},
+    {"tool": "component.add", "arguments": {"entity": "@3.entity", "component": "RigidBody"}},
+    {"tool": "component.add", "arguments": {"entity": "@3.entity", "component": "KeyboardMover"}},
+    {"tool": "entity.create", "arguments": {"template": "cube", "name": "Wall", "position": [0, 1, -1]}},
+    {"tool": "component.setField", "arguments": {"entity": "@7.entity", "path": "Transform.scale", "value": [8, 2, 0.5]}},
+    {"tool": "component.add", "arguments": {"entity": "@7.entity", "component": "Collider"}}
+  ],
+  "transcript": [
+    {"tool": "entity.find", "arguments": {"name": "Player", "exact": true}},
+    {"tool": "entity.get", "arguments": {"entity": "@0.entities.0.id"}, "note": "it has KeyboardMover: W walks forward (-Z), and a dynamic RigidBody, so walls stop it"},
+    {"tool": "play.start", "arguments": {"paused": true}},
+    {"tool": "input.inject", "arguments": {"steps": [{"key": "w", "duration": 6}]}},
+    {"tool": "play.step", "arguments": {"frames": 60}},
+    {"tool": "entity.get", "arguments": {"entity": "@0.entities.0.id"}},
+    {"tool": "play.step", "arguments": {"frames": 60}},
+    {"tool": "entity.get", "arguments": {"entity": "@0.entities.0.id"}},
+    {"tool": "play.step", "arguments": {"frames": 60}},
+    {"tool": "entity.get", "arguments": {"entity": "@0.entities.0.id"}, "note": "z stopped changing near the wall's face: it hit the wall"},
+    {"tool": "input.clear", "arguments": {}},
+    {"tool": "scene.raycast", "arguments": {"origin": "@9.world.position", "direction": [0, 0, -1], "maxDistance": 2}, "note": "what is in front: the Wall"},
+    {"tool": "view.screenshot", "arguments": {"source": "game", "maxSize": 800}, "requires": "window"}
+  ],
+  "checks": [
+    {"kind": "tool", "description": "still playing, paused", "tool": "play.state", "expect": {"playing": true, "paused": true}},
+    {"kind": "position", "description": "the Player stopped at the wall's face (z = -0.75 - 0.5), not through it", "find": {"name": "Player", "exact": true},
+     "axis": 2, "min": -0.35, "max": -0.15},
+    {"kind": "screenshot", "description": "the game view shows the player against the wall (graded by eye)", "arguments": {"source": "game"}, "requires": "window"}
+  ]
+}

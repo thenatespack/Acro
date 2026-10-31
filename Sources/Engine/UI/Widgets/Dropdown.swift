@@ -16,6 +16,9 @@ public final class PopupMenu: Widget {
     public var onSelect: ((Int) -> Void)?
     /// Called when the menu closes for any reason.
     public var onDismiss: (() -> Void)?
+    /// The command each item runs, by index (introspection; see UIAccessibility.swift). Items
+    /// without one report the menu's `command` (a dropdown's menu gets the dropdown's).
+    public var itemCommandIDs: [String?] = []
 
     public init(items: [String], anchor: Widget? = nil, name: String = "menu") {
         self.items = items
@@ -44,6 +47,18 @@ public final class PopupMenu: Widget {
     }
 
     public override func overlayDismissed() { onDismiss?() }
+
+    public override var accessibilityRole: UIAccessibilityRole { .menu }
+
+    public override var accessibilityItems: [UIAccessibilityItem] {
+        let content = contentRect
+        return items.enumerated().map { i, item in
+            UIAccessibilityItem(key: "item:\(item)", role: .menuItem, label: item,
+                                frame: UIRect(x: content.x, y: content.y + Float(i) * rowHeight, width: content.width, height: rowHeight),
+                                isSelected: i == checkedIndex,
+                                command: itemCommandIDs.indices.contains(i) ? itemCommandIDs[i] ?? effectiveCommand : effectiveCommand)
+        }
+    }
 
     /// The item under a window point.
     public func item(at point: Vec2) -> Int? {
@@ -142,6 +157,8 @@ public final class Dropdown: Widget {
     }
 
     public override var acceptsFocus: Bool { true }
+    public override var accessibilityRole: UIAccessibilityRole { .dropdown }
+    public override var accessibilityValue: String? { selectedOption }
     public var isOpen: Bool { menu != nil }
 
     public var selectedOption: String? { options.indices.contains(selectedIndex) ? options[selectedIndex] : nil }
@@ -158,6 +175,7 @@ public final class Dropdown: Widget {
         let menu = PopupMenu(items: options, anchor: self)
         menu.highlightedIndex = selectedIndex
         menu.checkedIndex = selectedIndex
+        menu.command = effectiveCommand
         menu.onSelect = { [weak self] index in
             guard let self else { return }
             let changed = index != self.selectedIndex

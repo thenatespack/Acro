@@ -11,6 +11,8 @@ public final class ConsolePanel {
     public var maxLines = 300
     /// Whether lines start with the time stamp.
     public var showsTime = true
+    /// What Clear does (the app runs `log.clear`); default: clears the log.
+    public var onClear: (() -> Void)?
 
     public private(set) var minimumLevel: LogLevel = .info
     private let filter: Dropdown
@@ -33,7 +35,10 @@ public final class ConsolePanel {
         view = VStack(spacing: 4, padding: EdgeInsets(top: 4, left: 4, bottom: 0, right: 4), name: "consolePanel")
         filter.style.width = 120
         filter.onChange = { [unowned self] index in minimumLevel = Self.levels[index].level }
-        let clearButton = Button("Clear", name: "consoleClear") { [unowned log] in log.clear() }
+        let clearButton = Button("Clear", name: "consoleClear")
+        clearButton.action = { [unowned self] in if let onClear { onClear() } else { log.clear() } }
+        clearButton.command = "log.clear"
+        filter.command = "log.read"
         filter.tooltip = "Show only messages at this level or above"
         clearButton.tooltip = "Clear the console"
         let bar = HStack(spacing: 8, padding: EdgeInsets(horizontal: 4, vertical: 0), [

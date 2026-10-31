@@ -228,6 +228,16 @@ open class Widget {
     /// a tip of its own). See `tooltip(at:)` and `UIContext`.
     public var tooltip: String?
 
+    /// What UI tests, automation and assistive tools call this widget; nil falls back to
+    /// `accessibilityText`, the tooltip, then the name (see UIAccessibility.swift).
+    public var accessibilityLabel: String?
+    /// The id of the action this widget (and descendants without one of their own) runs, for
+    /// tools that drive the UI: an editor sets its command ids here ("scene.save").
+    public var command: String?
+    /// Commands for this widget's accessibility items by key prefix ("row", "tab", "close"),
+    /// inherited by descendants: `["tab": "panel.focus"]`.
+    public var itemCommands: [String: String] = [:]
+
     /// Optional decoration painted by the default `draw`: a background, a border and a corner radius.
     public var background: UIColor? { didSet { setNeedsDisplay() } }
     public var borderColor: UIColor? { didSet { setNeedsDisplay() } }
@@ -263,6 +273,16 @@ open class Widget {
 
     /// Whether this widget takes keyboard focus (on click and with Tab).
     open var acceptsFocus: Bool { false }
+
+    /// What kind of control this is, for `UIContext.accessibilitySnapshot` (see UIAccessibility.swift).
+    open var accessibilityRole: UIAccessibilityRole { .group }
+    /// The text the widget shows as its title (a button's title, a label's text), if any.
+    open var accessibilityText: String? { nil }
+    /// The widget's current value as text (a field's text, a checkbox's state), if it has one.
+    open var accessibilityValue: String? { nil }
+    /// Parts drawn by the widget itself that act like controls: rows, tabs, menu items, close
+    /// buttons. Frames are in window points.
+    open var accessibilityItems: [UIAccessibilityItem] { [] }
 
     /// Makes moving `direction` from this widget go to `target` (nil restores the spatial search).
     public func setNavigation(_ direction: UINavDirection, to target: Widget?) {

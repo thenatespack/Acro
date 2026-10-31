@@ -76,6 +76,11 @@ public final class ColorSwatch: Widget {
     }
 
     public override var acceptsFocus: Bool { true }
+    public override var accessibilityRole: UIAccessibilityRole { .colorWell }
+    /// Linear "r g b a", each 0…1 with 3 decimals.
+    public override var accessibilityValue: String? {
+        [color.r, color.g, color.b, color.a].map { String(format: "%.3f", $0) }.joined(separator: " ")
+    }
     public var isOpen: Bool { popup != nil }
 
     /// Sets the color without callbacks (ignored while the popup is open).

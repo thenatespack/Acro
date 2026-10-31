@@ -379,6 +379,17 @@ public final class UIContext {
         }
     }
 
+    /// The modifier keys held, for synthetic input (`update` sets them from `Input` each frame).
+    public func setModifiers(_ modifiers: KeyModifiers) {
+        self.modifiers = modifiers
+    }
+
+    /// Makes the next press a single click even if it lands on the last one's spot in time
+    /// (synthetic input that runs faster than the double-click interval).
+    public func resetClickCount() {
+        lastClick = nil
+    }
+
     /// Wheel / trackpad scrolling at the pointer (see `Input.scrollDelta`).
     public func scrolled(by delta: Vec2) {
         dismissTooltip()

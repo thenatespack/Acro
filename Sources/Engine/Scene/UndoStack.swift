@@ -132,6 +132,9 @@ public struct GroupCommand: UndoCommand {
     }
     /// Increases on every change to the stack.
     public private(set) var changeCount = 0
+    /// Put in front of the label of every step recorded while it is set, so the history says
+    /// who made a step (the editor sets "AI: " while an MCP client's call runs).
+    public var labelPrefix: String?
 
     private var undoSteps: [any UndoCommand] = []
     private var redoSteps: [any UndoCommand] = []
@@ -280,7 +283,17 @@ public struct GroupCommand: UndoCommand {
     // MARK: Internals
 
     private func push(_ command: any UndoCommand) {
-        undoSteps.append(command)
+        if let labelPrefix, !command.label.hasPrefix(labelPrefix) {
+            // The step keeps doing what it did, under a label that says who made it.
+            if var group = command as? GroupCommand {
+                group.label = labelPrefix + group.label
+                undoSteps.append(group)
+            } else {
+                undoSteps.append(GroupCommand(labelPrefix + command.label, [command]))
+            }
+        } else {
+            undoSteps.append(command)
+        }
         trim()
     }
 

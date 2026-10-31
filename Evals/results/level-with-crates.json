@@ -1,0 +1,276 @@
+{
+  "checks" : [
+    {
+      "description" : "a floor",
+      "kind" : "count",
+      "outcome" : "pass"
+    },
+    {
+      "description" : "three crates: cubes with a material file",
+      "kind" : "entities",
+      "outcome" : "pass"
+    },
+    {
+      "description" : "the crates' material has a texture",
+      "kind" : "material",
+      "outcome" : "pass"
+    },
+    {
+      "description" : "a light",
+      "kind" : "count",
+      "outcome" : "pass"
+    },
+    {
+      "description" : "a camera",
+      "kind" : "count",
+      "outcome" : "pass"
+    },
+    {
+      "description" : "nothing is missing",
+      "kind" : "tool",
+      "outcome" : "pass"
+    },
+    {
+      "description" : "the build is one AI undo step",
+      "kind" : "undo",
+      "outcome" : "pass"
+    },
+    {
+      "description" : "the game camera sees three crates on a lit floor (graded by eye)",
+      "kind" : "screenshot",
+      "outcome" : "skipped (needs a window)"
+    }
+  ],
+  "id" : "level-with-crates",
+  "mode" : "headless",
+  "prompt" : "Make a small level with a floor, three lit textured crates and a camera. Use the texture crate.png in the project.",
+  "steps" : [
+    {
+      "arguments" : {
+        "path" : "."
+      },
+      "outcome" : "ok",
+      "phase" : "setup",
+      "step" : 0,
+      "tool" : "project.new"
+    },
+    {
+      "arguments" : {
+        "confirm" : true
+      },
+      "outcome" : "ok",
+      "phase" : "setup",
+      "step" : 1,
+      "tool" : "scene.new"
+    },
+    {
+      "arguments" : {
+        "depth" : 0
+      },
+      "outcome" : "ok",
+      "phase" : "setup",
+      "step" : 2,
+      "tool" : "scene.hierarchy"
+    },
+    {
+      "arguments" : {
+        "entities" : [
+          "f3a5d217f506bc300a1cdd4f6ac6acf8",
+          "db3dd55fb2e4cad1186c875da82de2d8",
+          "abd3573052c0f57a69515da24d1a5798",
+          "62182e54c4f8adfc541ca83b17189b30",
+          "59b65d60f1370ddc3a79eb48492df5e0",
+          "266d83c282ad15aaa85170ec820ab04d"
+        ]
+      },
+      "outcome" : "ok",
+      "phase" : "setup",
+      "step" : 3,
+      "tool" : "entity.delete"
+    },
+    {
+      "arguments" : {
+        "folder" : "",
+        "sources" : [
+          "crate.png"
+        ]
+      },
+      "outcome" : "ok",
+      "phase" : "transcript",
+      "step" : 0,
+      "tool" : "asset.import"
+    },
+    {
+      "arguments" : {
+        "path" : "crate.png"
+      },
+      "outcome" : "ok",
+      "phase" : "transcript",
+      "step" : 1,
+      "tool" : "asset.get"
+    },
+    {
+      "arguments" : {
+        "material" : {
+          "roughness" : 0.8,
+          "shading" : "pbr",
+          "texture" : "asset:f99ab69a1e69408769b8bb9e8f110845#texture"
+        },
+        "name" : "Crate"
+      },
+      "outcome" : "ok",
+      "phase" : "transcript",
+      "step" : 2,
+      "tool" : "asset.newMaterial"
+    },
+    {
+      "arguments" : {
+        "calls" : [
+          {
+            "arguments" : {
+              "name" : "Floor",
+              "position" : [
+                0,
+                0,
+                0
+              ],
+              "template" : "plane"
+            },
+            "command" : "entity.create"
+          },
+          {
+            "arguments" : {
+              "name" : "Crate 1",
+              "position" : [
+                -1.5,
+                0.5,
+                0
+              ],
+              "template" : "cube"
+            },
+            "command" : "entity.create"
+          },
+          {
+            "arguments" : {
+              "name" : "Crate 2",
+              "position" : [
+                0,
+                0.5,
+                0.5
+              ],
+              "template" : "cube"
+            },
+            "command" : "entity.create"
+          },
+          {
+            "arguments" : {
+              "name" : "Crate 3",
+              "position" : [
+                1.4,
+                0.5,
+                -0.4
+              ],
+              "template" : "cube"
+            },
+            "command" : "entity.create"
+          },
+          {
+            "arguments" : {
+              "asset" : "asset:08ef82df1a7fe34b3b3689c7c68e6e75",
+              "entity" : "$1.entity",
+              "kind" : "material"
+            },
+            "command" : "asset.assign"
+          },
+          {
+            "arguments" : {
+              "asset" : "asset:08ef82df1a7fe34b3b3689c7c68e6e75",
+              "entity" : "$2.entity",
+              "kind" : "material"
+            },
+            "command" : "asset.assign"
+          },
+          {
+            "arguments" : {
+              "asset" : "asset:08ef82df1a7fe34b3b3689c7c68e6e75",
+              "entity" : "$3.entity",
+              "kind" : "material"
+            },
+            "command" : "asset.assign"
+          },
+          {
+            "arguments" : {
+              "name" : "Sun",
+              "position" : [
+                0,
+                5,
+                0
+              ],
+              "template" : "empty"
+            },
+            "command" : "entity.create"
+          },
+          {
+            "arguments" : {
+              "component" : "DirectionalLight",
+              "entity" : "$7.entity"
+            },
+            "command" : "component.add"
+          },
+          {
+            "arguments" : {
+              "name" : "Camera",
+              "position" : [
+                0,
+                3,
+                7
+              ],
+              "template" : "empty"
+            },
+            "command" : "entity.create"
+          },
+          {
+            "arguments" : {
+              "component" : "Camera",
+              "entity" : "$9.entity"
+            },
+            "command" : "component.add"
+          },
+          {
+            "arguments" : {
+              "entity" : "$9.entity",
+              "path" : "Transform.rotation",
+              "value" : [
+                -0.199,
+                0,
+                0,
+                0.98
+              ]
+            },
+            "command" : "component.setField"
+          }
+        ],
+        "label" : "Build the level"
+      },
+      "outcome" : "ok",
+      "phase" : "transcript",
+      "step" : 3,
+      "tool" : "edit.batch"
+    },
+    {
+      "arguments" : {
+
+      },
+      "outcome" : "ok",
+      "phase" : "transcript",
+      "step" : 4,
+      "tool" : "diagnostics.get"
+    },
+    {
+      "outcome" : "skipped (needs a window)",
+      "phase" : "transcript",
+      "step" : 5,
+      "tool" : "view.screenshot"
+    }
+  ]
+}

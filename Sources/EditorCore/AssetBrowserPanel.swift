@@ -33,6 +33,21 @@ final class AssetGridView: Widget {
     }
 
     override var acceptsFocus: Bool { true }
+    override var accessibilityRole: UIAccessibilityRole { .list }
+
+    /// A "cell:<title>" item per entry, and "expand:<title>" for a model's triangle.
+    override var accessibilityItems: [UIAccessibilityItem] {
+        var items: [UIAccessibilityItem] = []
+        for (index, entry) in entries.enumerated() {
+            items.append(UIAccessibilityItem(key: "cell:\(entry.title)", role: .listItem, label: entry.title, value: entry.path,
+                                             frame: cellRect(index), isSelected: entry.item == selected))
+            if let expander = expanderRect(index) {
+                items.append(UIAccessibilityItem(key: "expand:\(entry.title)", role: .button, label: "Expand \(entry.title)",
+                                                 frame: expander))
+            }
+        }
+        return items
+    }
 
     private var columns: Int {
         listMode ? 1 : max(1, Int((contentRect.width / cellSize.x).rounded(.down)))
@@ -322,6 +337,16 @@ public final class AssetBrowserPanel {
         rename.tooltip = "Rename the selected file or folder (its id is kept)"
         delete.tooltip = "Delete the selected file or folder"
         viewToggle.tooltip = "Switch between thumbnails and a list"
+        // What each control runs (introspection, parity). The view mode and the search only
+        // change what the panel shows: asset.list reads the same.
+        let tagged: [(Widget, CommandID)] = [
+            (importButton, AssetImportCommand.id), (newFolder, AssetNewFolderCommand.id), (newMaterial, AssetNewMaterialCommand.id),
+            (rename, AssetRenameCommand.id), (delete, AssetDeleteCommand.id), (viewToggle, AssetListCommand.id),
+            (search, AssetListCommand.id),
+        ]
+        for (widget, id) in tagged { widget.command = id.rawValue }
+        folderTree.itemCommands = ["row": AssetListCommand.id.rawValue, "toggle": AssetListCommand.id.rawValue]
+        grid.itemCommands = ["cell": AssetSelectCommand.id.rawValue, "expand": AssetGetCommand.id.rawValue]
         search.style.width = 140
         search.style.minWidth = 70
         search.style.shrink = 1
@@ -337,12 +362,14 @@ public final class AssetBrowserPanel {
         renameField.style.grow = 1
         renameField.style.width = 0
         renameBar = HStack(spacing: 6, name: "renameBar", [Label("Rename to", role: .secondary), renameField, renameCancel, renameOK])
+        renameBar.command = AssetRenameCommand.id.rawValue
         renameBar.isHidden = true
         let importOK = Button("Import", role: .primary, name: "importOK")
         let importCancel = Button("Cancel", name: "importCancel")
         importField.style.grow = 1
         importField.style.width = 0
         importBar = HStack(spacing: 6, name: "importBar", [Label("Import", role: .secondary), importField, importCancel, importOK])
+        importBar.command = AssetImportCommand.id.rawValue
         importBar.isHidden = true
 
         let gridScroll = ScrollView(grid, name: "assetGridScroll")
@@ -498,6 +525,7 @@ public final class AssetBrowserPanel {
             message: (isFolder ? "Assets/\(path) and everything in it will be deleted." : "Assets/\(path) will be deleted.")
                 + " This can't be undone, and scenes that use \(isFolder ? "these assets" : "it") will show them as missing.",
             confirmTitle: "Delete", name: "deleteAssetDialog")
+        dialog.command = AssetDeleteCommand.id.rawValue
         dialog.onConfirm = { [unowned self] in
             model.deleteSelection()
             sync()
@@ -507,26 +535,30 @@ public final class AssetBrowserPanel {
 
     private func showContextMenu(for entry: AssetBrowserEntry?, at position: Vec2) {
         guard let context = view.context else { return }
-        var items: [(String, () -> Void)] = [
-            ("Import…", { [unowned self] in beginImport() }),
-            ("New Folder", { [unowned self] in model.newFolder(); sync() }),
-            ("New Material", { [unowned self] in model.newMaterial(); sync() }),
+        // (title, the command it runs or the tool that gives an agent the same, action)
+        var items: [(String, CommandID, () -> Void)] = [
+            ("Import…", AssetImportCommand.id, { [unowned self] in beginImport() }),
+            ("New Folder", AssetNewFolderCommand.id, { [unowned self] in model.newFolder(); sync() }),
+            ("New Material", AssetNewMaterialCommand.id, { [unowned self] in model.newMaterial(); sync() }),
         ]
         if let entry {
-            if case .folder = entry.item { items.append(("Open", { [unowned self] in model.activate(entry); sync() })) }
+            if case .folder = entry.item {
+                items.append(("Open", AssetListCommand.id, { [unowned self] in model.activate(entry); sync() }))
+            }
             if !entry.isSubAsset {
-                items.append(("Rename", { [unowned self] in beginRename() }))
-                items.append(("Delete", { [unowned self] in askDelete() }))
+                items.append(("Rename", AssetRenameCommand.id, { [unowned self] in beginRename() }))
+                items.append(("Delete", AssetDeleteCommand.id, { [unowned self] in askDelete() }))
             }
             if case .asset(let id) = entry.item, model.session.assets?.record(id)?.importer == GLTFImporter().name {
-                items.append(("Extract Materials", { [unowned self] in
+                items.append(("Extract Materials", AssetExtractMaterialsCommand.id, { [unowned self] in
                     model.session.run(AssetExtractMaterialsCommand.self, .init(asset: id))
                     model.invalidate()
                 }))
             }
             #if os(macOS)
             if let url = model.session.project?.url(forAssetPath: entry.path) {
-                items.append(("Show in Finder", {
+                // An agent has the path from asset.get; revealing it in Finder is for the user.
+                items.append(("Show in Finder", AssetGetCommand.id, {
                     let process = Process()
                     process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
                     process.arguments = ["-R", url.path]
@@ -536,8 +568,9 @@ public final class AssetBrowserPanel {
             #endif
         }
         let menu = PopupMenu(items: items.map(\.0))
+        menu.itemCommandIDs = items.map { $0.1.rawValue }
         menu.anchorRect = UIRect(x: position.x, y: position.y, width: 1, height: 1)
-        menu.onSelect = { index in items[index].1() }
+        menu.onSelect = { index in items[index].2() }
         context.presentOverlay(menu)
     }
 }

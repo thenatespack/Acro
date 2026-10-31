@@ -7,7 +7,8 @@ import Foundation
 
 let usage = """
     Usage: Editor [scene.json] [--project <folder>] [--backend metal|vulkan]
-                  [--mcp] [--headless] [--mcp-port <port>] [--mcp-http | --no-mcp-http]
+                  [--mcp] [--headless] [--mcp-port <port>] [--mcp-http | --no-mcp-http] [--mcp-read-only]
+           Editor --mcp-tool-docs
 
     Opens the scene file, or starts with a new scene; --project opens a project (Project.json,
     Assets/, Library/) and imports its assets. Environment: EDITOR_PREFS=<file> moves the
@@ -18,6 +19,8 @@ let usage = """
     written to <project>/Library/mcp.json; --no-mcp-http or EDITOR_MCP_HTTP=0 turns it off.
     --mcp serves a client on stdin/stdout instead (`claude mcp add swift-engine -- swift run Editor --mcp`);
     add --mcp-http to serve HTTP too. --headless runs without a window (needs --mcp or --mcp-http).
+    --mcp-read-only exposes only read-only tools. --mcp-tool-docs prints the tool reference
+    (docs/MCPTools.md) generated from the command registry.
     """
 
 var config = EngineConfig(title: "Editor", width: 1440, height: 900, showDebugOverlay: false)
@@ -27,6 +30,7 @@ var mcpStdio = false
 var headless = false
 var mcpHTTP: Bool?
 var mcpPort: UInt16?
+var mcpReadOnly = false
 var arguments = Array(CommandLine.arguments.dropFirst())
 
 func fail(_ message: String) -> Never {
@@ -55,6 +59,11 @@ while !arguments.isEmpty {
         mcpHTTP = true
     case "--no-mcp-http":
         mcpHTTP = false
+    case "--mcp-read-only":
+        mcpReadOnly = true
+    case "--mcp-tool-docs":
+        print(EditorToolReference.markdown(), terminator: "")
+        exit(0)
     case "--mcp-port":
         guard let port = arguments.first.flatMap({ UInt16($0) }) else { fail("--mcp-port needs a port number") }
         arguments.removeFirst()
@@ -73,6 +82,7 @@ options.mcp.stdio = mcpStdio
 // With stdio the client launched the editor; HTTP only when asked (another editor may hold the port).
 options.mcp.http = mcpHTTP ?? (mcpStdio ? false : options.mcp.http)
 if let mcpPort { options.mcp.port = mcpPort }
+options.mcp.readOnly = mcpReadOnly
 
 if headless {
     exit(EditorHeadless.run(options: options))

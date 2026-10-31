@@ -238,7 +238,7 @@ public enum ViewScreenshotCommand: EditorDeferredCommand {
     public static let doc = "Returns a PNG of `source`: \"viewport\" (default; what the user sees, from the editor camera), \"game\" (the scene's Camera, or `camera`), \"camera\" (from `eye` looking at `target`, `fov` degrees, without moving the user's view), \"window\", \"panel\" (`panel`) or \"thumbnail\" (`asset`). `grid`, `gizmos` and `outline` toggle the viewport overlays; `maxSize` scales it down. Finishes after the next frame renders. Needs the editor window."
     public static let isReadOnly = true
     public static let isIdempotent = true
-    public static func isAvailable(in session: EditorSession) -> Bool { session.host != nil }
+    public static func isAvailable(in session: EditorSession) -> Bool { session.host?.canRender == true }
     public static func unavailableReason(in session: EditorSession) -> String? {
         "screenshots need the editor window and GPU (the editor is running headless)"
     }
@@ -532,8 +532,19 @@ public struct ImportProblem: Codable, Equatable, Sendable {
     public var message: String
 }
 
+/// A renderer whose mesh doesn't exist (it draws nothing).
+public struct MissingMesh: Codable, Equatable, Sendable {
+    public var entity: EntityID
+    public var name: String
+    /// The `MeshRenderer.mesh` key or asset reference that resolves to nothing.
+    public var mesh: String
+}
+
 public enum DiagnosticsGetCommand: EditorCommand {
     public struct Result: Codable, Equatable, Sendable {
+        /// Entities whose `MeshRenderer.mesh` names no mesh (not a built-in or registered key,
+        /// not an object of a project asset): they draw nothing.
+        public var missingMeshes: [MissingMesh]
         /// Assets whose import failed (fix the file or its settings, then they reimport).
         public var importErrors: [ImportProblem]
         /// Assets still importing in the background.
@@ -550,7 +561,7 @@ public enum DiagnosticsGetCommand: EditorCommand {
 
     public static let id: CommandID = "diagnostics.get"
     public static let title = "Diagnostics"
-    public static let doc = "Returns what is wrong: assets whose import failed (with the importer's message), how many are still importing, graphics validation messages in the console, and the latest console warnings and errors."
+    public static let doc = "Returns what is wrong: entities whose MeshRenderer names a mesh that doesn't exist (they draw nothing), assets whose import failed (with the importer's message), how many are still importing, graphics validation messages in the console, and the latest console warnings and errors."
     public static let isReadOnly = true
     public static let isIdempotent = true
     public static func unavailableReason(in session: EditorSession) -> String? { nil }
@@ -564,7 +575,26 @@ public enum DiagnosticsGetCommand: EditorCommand {
             ["validation error", "validation warning", "vuid-", "validation layer"].contains { entry.message.lowercased().contains($0) }
         }
         let backend = session.host?.frameStats?.backend
-        return Result(importErrors: failed, importing: assets?.pendingLoadCount ?? 0, validation: validation.suffix(50).map(LogLine.init),
+        var missing: [MissingMesh] = []
+        let world = session.world
+        let meshes = session.pickMeshes
+        var renderers: [(Entity, MeshHandle)] = []
+        world.query(MeshRenderer.self) { entity, renderer in renderers.append((entity, renderer.mesh)) }
+        for (entity, mesh) in renderers {
+            let exists: Bool
+            if let reference = mesh.assetReference {
+                // An object of an asset the project has (loaded or not).
+                exists = assets?.record(reference.asset).map { record in
+                    reference.subAsset == nil || record.objects.contains { $0.id == reference.subAsset }
+                } ?? false
+            } else {
+                exists = meshes.pickBounds(mesh) != nil
+            }
+            if !exists, let id = world.ensureID(of: entity) {
+                missing.append(MissingMesh(entity: id, name: session.displayName(of: entity), mesh: mesh.key))
+            }
+        }
+        return Result(missingMeshes: missing, importErrors: failed, importing: assets?.pendingLoadCount ?? 0, validation: validation.suffix(50).map(LogLine.init),
                       validationEnabled: ProcessInfo.processInfo.environment["ENGINE_VULKAN_VALIDATION"] == "1",
                       problems: problems.suffix(50).map(LogLine.init), backend: backend.flatMap { $0.isEmpty ? nil : $0 })
     }

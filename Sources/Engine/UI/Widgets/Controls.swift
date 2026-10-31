@@ -141,6 +141,9 @@ public final class Label: Widget {
         isHitTestable = false
     }
 
+    public override var accessibilityRole: UIAccessibilityRole { .label }
+    public override var accessibilityText: String? { text }
+
     private var size: Float {
         if let fontSize { return fontSize }
         let theme = theme
@@ -210,6 +213,8 @@ public final class Separator: Widget {
         isHitTestable = false
     }
 
+    public override var accessibilityRole: UIAccessibilityRole { .separator }
+
     public override func measureContent(width: Float?) -> Vec2 {
         axis == .horizontal ? Vec2(0, 1) : Vec2(1, 0)
     }
@@ -240,6 +245,8 @@ public final class Button: Widget {
     }
 
     public override var acceptsFocus: Bool { true }
+    public override var accessibilityRole: UIAccessibilityRole { .button }
+    public override var accessibilityText: String? { title }
 
     /// Runs the action as if clicked.
     public func activate() {
@@ -322,6 +329,9 @@ public final class Checkbox: Widget {
     }
 
     public override var acceptsFocus: Bool { true }
+    public override var accessibilityRole: UIAccessibilityRole { kind == .checkbox ? .checkbox : .toggle }
+    public override var accessibilityText: String? { title }
+    public override var accessibilityValue: String? { isOn ? "on" : "off" }
 
     public func toggle() {
         isOn.toggle()
@@ -425,6 +435,8 @@ public final class Slider: Widget {
     }
 
     public override var acceptsFocus: Bool { true }
+    public override var accessibilityRole: UIAccessibilityRole { .slider }
+    public override var accessibilityValue: String? { String(value) }
 
     /// Clamps to the range and snaps to the step.
     public func quantize(_ v: Float) -> Float {

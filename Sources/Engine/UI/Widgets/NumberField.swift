@@ -84,6 +84,13 @@ public final class NumberField: Widget {
     }
 
     public override var acceptsFocus: Bool { true }
+    public override var accessibilityRole: UIAccessibilityRole { .numberField }
+    /// In a `VectorField`: its label and the axis ("Position X"); else the axis prefix, if any.
+    public override var accessibilityText: String? {
+        guard let prefix else { return nil }
+        return (parent as? VectorField)?.effectiveAccessibilityLabel.map { "\($0) \(prefix)" } ?? prefix
+    }
+    public override var accessibilityValue: String? { text }
 
     // MARK: Value
 

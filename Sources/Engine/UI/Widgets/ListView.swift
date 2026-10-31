@@ -22,6 +22,23 @@ open class RowListView: Widget {
     /// Number of rows; subclasses provide it.
     open var rowCount: Int { 0 }
 
+    open override var accessibilityRole: UIAccessibilityRole { .list }
+    /// A row's label for `accessibilityItems`; nil leaves the row out (the default).
+    open func rowAccessibilityLabel(_ row: Int) -> String? { nil }
+    /// A row's value for `accessibilityItems` ("expanded").
+    open func rowAccessibilityValue(_ row: Int) -> String? { nil }
+    open var rowAccessibilityRole: UIAccessibilityRole { .listItem }
+
+    /// One "row:<label>" item per row (scrolled-out rows too, with their would-be frames).
+    open override var accessibilityItems: [UIAccessibilityItem] {
+        (0..<rowCount).compactMap { row in
+            guard let label = rowAccessibilityLabel(row) else { return nil }
+            return UIAccessibilityItem(key: "row:\(label)", role: rowAccessibilityRole, label: label,
+                                       value: rowAccessibilityValue(row), frame: rowRect(row), isSelected: isRowSelected(row),
+                                       tooltip: rowTooltip(row, in: rowRect(row)))
+        }
+    }
+
     /// Draws row `row` into `rect` (the selection and hover backgrounds are already drawn).
     open func drawRow(_ row: Int, in rect: UIRect, list: UIDrawList, theme: UITheme, selected: Bool) {}
 
@@ -199,6 +216,7 @@ public final class ListView: RowListView {
     }
 
     public override var rowCount: Int { items.count }
+    public override func rowAccessibilityLabel(_ row: Int) -> String? { items[row] }
 
     public override func selectionChanged() { onSelect?(selectedRow) }
     public override func rowActivated(_ row: Int) { onActivate?(row) }

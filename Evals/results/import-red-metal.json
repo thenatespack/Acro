@@ -1,0 +1,149 @@
+{
+  "checks" : [
+    {
+      "description" : "every renderer of the model uses a red metal material",
+      "kind" : "material",
+      "outcome" : "pass"
+    },
+    {
+      "description" : "the scene is saved and uses the model",
+      "kind" : "file",
+      "outcome" : "pass"
+    },
+    {
+      "description" : "the import worked",
+      "kind" : "tool",
+      "outcome" : "pass"
+    }
+  ],
+  "id" : "import-red-metal",
+  "mode" : "headless",
+  "prompt" : "Import this .glb (Box.glb in the project folder), make its materials red metal, and save the scene.",
+  "steps" : [
+    {
+      "arguments" : {
+        "path" : "."
+      },
+      "outcome" : "ok",
+      "phase" : "setup",
+      "step" : 0,
+      "tool" : "project.new"
+    },
+    {
+      "arguments" : {
+        "confirm" : true
+      },
+      "outcome" : "ok",
+      "phase" : "setup",
+      "step" : 1,
+      "tool" : "scene.new"
+    },
+    {
+      "arguments" : {
+        "depth" : 0
+      },
+      "outcome" : "ok",
+      "phase" : "setup",
+      "step" : 2,
+      "tool" : "scene.hierarchy"
+    },
+    {
+      "arguments" : {
+        "entities" : [
+          "f3a5d217f506bc300a1cdd4f6ac6acf8",
+          "db3dd55fb2e4cad1186c875da82de2d8",
+          "abd3573052c0f57a69515da24d1a5798",
+          "62182e54c4f8adfc541ca83b17189b30",
+          "59b65d60f1370ddc3a79eb48492df5e0",
+          "266d83c282ad15aaa85170ec820ab04d"
+        ]
+      },
+      "outcome" : "ok",
+      "phase" : "setup",
+      "step" : 3,
+      "tool" : "entity.delete"
+    },
+    {
+      "arguments" : {
+        "sources" : [
+          "Box.glb"
+        ]
+      },
+      "outcome" : "ok",
+      "phase" : "transcript",
+      "step" : 0,
+      "tool" : "asset.import"
+    },
+    {
+      "arguments" : {
+        "path" : "Box.glb"
+      },
+      "outcome" : "ok",
+      "phase" : "transcript",
+      "step" : 1,
+      "tool" : "asset.get"
+    },
+    {
+      "arguments" : {
+        "asset" : "b87a03d6ff89dbed6b26fe7b47a10551"
+      },
+      "outcome" : "ok",
+      "phase" : "transcript",
+      "step" : 2,
+      "tool" : "asset.extractMaterials"
+    },
+    {
+      "arguments" : {
+        "asset" : "asset:bf9cd998acacd8f28207c5de761211ac"
+      },
+      "outcome" : "ok",
+      "phase" : "transcript",
+      "step" : 3,
+      "tool" : "material.get"
+    },
+    {
+      "arguments" : {
+        "asset" : "bf9cd998acacd8f28207c5de761211ac",
+        "material" : {
+          "baseColor" : [
+            0.8,
+            0.04,
+            0.03,
+            1
+          ],
+          "metallic" : 1,
+          "roughness" : 0.3,
+          "shading" : "pbr"
+        }
+      },
+      "outcome" : "ok",
+      "phase" : "transcript",
+      "step" : 4,
+      "tool" : "material.set"
+    },
+    {
+      "arguments" : {
+        "asset" : "asset:b87a03d6ff89dbed6b26fe7b47a10551",
+        "position" : [
+          0,
+          0.5,
+          0
+        ]
+      },
+      "outcome" : "ok",
+      "phase" : "transcript",
+      "step" : 5,
+      "tool" : "asset.instantiate"
+    },
+    {
+      "arguments" : {
+        "confirm" : true,
+        "path" : "box.json"
+      },
+      "outcome" : "ok",
+      "phase" : "transcript",
+      "step" : 6,
+      "tool" : "scene.saveAs"
+    }
+  ]
+}

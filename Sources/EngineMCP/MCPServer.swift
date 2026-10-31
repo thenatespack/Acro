@@ -89,6 +89,12 @@ public final class MCPServer {
     /// Clients that have sent `initialize`.
     public var clientCount: Int { sessions.count }
 
+    /// The names clients gave in `initialize` (`clientInfo.name`), sorted.
+    public var clientNames: [String] { sessions.values.compactMap(\.clientName).sorted() }
+
+    /// The name `session`'s client gave in `initialize`, if any.
+    public func clientName(of session: MCPClientSession) -> String? { sessions[session]?.clientName }
+
     /// The resource URIs some client is subscribed to (what the host should watch).
     public var subscribedResources: Set<String> {
         sessions.values.reduce(into: []) { $0.formUnion($1.subscriptions) }

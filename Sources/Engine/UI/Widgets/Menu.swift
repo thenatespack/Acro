@@ -254,6 +254,9 @@ public final class OptionSelector: Widget {
     }
 
     public override var acceptsFocus: Bool { true }
+    public override var accessibilityRole: UIAccessibilityRole { .dropdown }
+    public override var accessibilityText: String? { title }
+    public override var accessibilityValue: String? { selectedOption }
 
     public var selectedOption: String? { options.indices.contains(selectedIndex) ? options[selectedIndex] : nil }
 
