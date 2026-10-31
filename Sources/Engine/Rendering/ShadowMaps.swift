@@ -372,6 +372,10 @@ public struct ShadowCasterBatches {
 
     private var slots: [Int: Int] = [:]
     private var members: [(batch: Int32, item: Int32)] = []
+    /// Per tile, then per item: whether the tile draws the item.
+    private var drawsItem: [Bool] = []
+    /// Runs the caster tests (batches of 512 items; the result doesn't depend on its thread count).
+    public var jobs = JobSystem.shared
 
     public init() {}
 
@@ -381,12 +385,23 @@ public struct ShadowCasterBatches {
         tileBatches.removeAll(keepingCapacity: true)
         drawn = 0
         culled = 0
-        for tile in tiles {
+        // The culling tests in parallel, the batching in item order.
+        let n = items.count, jobs = self.jobs
+        drawsItem.removeAll(keepingCapacity: true)
+        drawsItem.append(contentsOf: repeatElement(false, count: n * tiles.count))
+        drawsItem.withUnsafeMutableBufferPointer { draws in
+            jobs.parallelFor(0..<n, batchSize: 512, name: "cull shadow casters") { range in
+                for i in range where items[i].castsShadows {
+                    for (t, tile) in tiles.enumerated() { draws[t * n + i] = tile.draws(items[i].bounds) }
+                }
+            }
+        }
+        for t in tiles.indices {
             slots.removeAll(keepingCapacity: true)
             members.removeAll(keepingCapacity: true)
             let first = batches.count
             for (i, item) in items.enumerated() where item.castsShadows {
-                guard tile.draws(item.bounds) else {
+                guard drawsItem[t * n + i] else {
                     culled += 1
                     continue
                 }

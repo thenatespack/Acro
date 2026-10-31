@@ -2,12 +2,15 @@ import Foundation
 
 /// The profiler's part of the overlay: the last frames as stacked bars (CPU scopes at the top
 /// level of the main thread, then that frame's GPU passes next to them) and the newest frame
-/// as an icicle chart of its nested scopes.
+/// as an icicle chart of its nested scopes, with a lane per other thread (job workers) below it
+/// on the same time axis.
 extension DebugOverlay {
     private static let timelineFrames = 80
     /// Bar height reaches the top at this frame time.
     private static let timelineCeiling = 1.0 / 30.0
     private static let icicleRows = 6
+    /// Most worker lanes shown under the icicle chart.
+    private static let maxLanes = 16
 
     private static let palette: [(Float, Float, Float, Float)] = [
         (0.35, 0.65, 0.95, 1), (0.95, 0.60, 0.25, 1), (0.45, 0.80, 0.45, 1), (0.80, 0.50, 0.85, 1),
@@ -23,6 +26,8 @@ extension DebugOverlay {
 
     func appendProfilerTimeline(framebufferSize: (width: Int, height: Int), scale ui: Float) {
         let frames = Array(Profiler.frames.suffix(Self.timelineFrames))
+        // Other threads of the newest frame, in profiler order (workers register in order).
+        let lanes = Array(Set(frames.last?.events.lazy.filter { $0.thread != 0 }.map(\.thread) ?? []).sorted().prefix(Self.maxLanes))
         let pixel = ui
         let padding = 8 * ui
         let columnWidth = 6 * ui
@@ -31,7 +36,7 @@ extension DebugOverlay {
         let barsHeight = 64 * ui
         let rowHeight = Float(BitmapFont.glyphHeight + 2) * pixel
         let headerHeight = Float(BitmapFont.glyphHeight + 3) * 1.5 * ui
-        let icicleHeight = Float(Self.icicleRows) * rowHeight
+        let icicleHeight = Float(Self.icicleRows + lanes.count) * rowHeight
         let panelWidth = width + padding * 2
         let panelHeight = padding * 4 + headerHeight * 2 + barsHeight + icicleHeight
         let originX = 10 * ui
@@ -69,8 +74,10 @@ extension DebugOverlay {
         rect(left, target, width, max(ui, 1), color: (1, 1, 1, 0.35))
         y = barsTop + barsHeight + padding
 
-        // The newest frame's nested scopes on the main thread, each row one depth.
-        text("LAST FRAME", x: left, y: y, pixel: 1.5 * ui, color: (0.85, 0.85, 0.85, 1))
+        // The newest frame's nested scopes on the main thread, each row one depth, then one
+        // row per other thread with its outermost scopes (jobs, loop shares).
+        let threads = JobSystem.shared.threadCount
+        text("LAST FRAME  (\(threads) JOB THREAD\(threads == 1 ? "" : "S"))", x: left, y: y, pixel: 1.5 * ui, color: (0.85, 0.85, 0.85, 1))
         y += headerHeight
         guard let last else { return }
         let mainEvents = last.events.filter { $0.thread == 0 }
@@ -78,10 +85,16 @@ extension DebugOverlay {
         let span = max(last.end, mainEvents.map { $0.start + $0.duration }.max() ?? last.end) - origin
         guard span > 0 else { return }
         rect(left, y, width, icicleHeight, color: (1, 1, 1, 0.06))
-        for event in mainEvents where event.depth < Self.icicleRows {
-            let x0 = left + Float((event.start - origin) / span) * width
-            let w = max(Float(event.duration / span) * width, 1)
-            let top = y + Float(event.depth) * rowHeight
+        var rows: [(event: ProfilerEvent, row: Int)] = mainEvents.filter { $0.depth < Self.icicleRows }.map { ($0, $0.depth) }
+        for (lane, thread) in lanes.enumerated() {
+            rect(left, y + Float(Self.icicleRows + lane) * rowHeight, width, max(ui, 1), color: (1, 1, 1, 0.12))
+            rows += last.events.filter { $0.thread == thread && $0.depth == 0 }.map { ($0, Self.icicleRows + lane) }
+        }
+        for (event, row) in rows {
+            let x0 = left + Float(max(event.start - origin, 0) / span) * width
+            guard x0 < left + width else { continue }
+            let w = min(max(Float(event.duration / span) * width, 1), left + width - x0)
+            let top = y + Float(row) * rowHeight
             rect(x0, top, w - 1, rowHeight - 1, color: Self.color(for: event.name))
             let label = event.name.uppercased()
             if Float(label.count * BitmapFont.advance) * pixel + 2 * pixel <= w {

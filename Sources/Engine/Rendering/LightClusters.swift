@@ -144,6 +144,8 @@ public struct LightClusters: Sendable {
     public private(set) var indices: [UInt16] = []
 
     public var isEmpty: Bool { lights.isEmpty }
+    /// Bins the lights in parallel, 8 per batch (the result doesn't depend on its thread count).
+    public var jobs = JobSystem.shared
 
     public init() {}
 
@@ -154,10 +156,12 @@ public struct LightClusters: Sendable {
     }
 
     /// The slice a view depth (distance in front of the camera) falls in.
-    public func slice(depth: Float) -> Int {
+    public func slice(depth: Float) -> Int { Self.slice(depth: depth, near: near, sliceScale: sliceScale) }
+
+    static func slice(depth: Float, near: Float, sliceScale: Float) -> Int {
         guard depth > 0 else { return 0 }
         let s = (log2f(depth / near) * sliceScale).rounded(.down)
-        return Int(min(max(s, 0), Float(Self.slices - 1)))
+        return Int(min(max(s, 0), Float(slices - 1)))
     }
 
     /// The tile a point in normalized device coordinates (y up, the top row is tile 0) falls in.
@@ -237,10 +241,13 @@ public struct LightClusters: Sendable {
         for s in 1..<Self.slices { sliceDepths[s] = near * exp2f(Float(s) / sliceScale) }
         sliceDepths[Self.slices] = far
 
-        // (cluster, light) pairs, nearest light first.
-        var references: [(cluster: Int32, light: UInt16)] = []
-        for (index, v) in visible.enumerated() {
-            lights.append(input[v.light])
+        // (cluster, light) pairs, nearest light first: each light's on the job system, joined in order.
+        for v in visible { lights.append(input[v.light]) }
+        let (near, sliceScale) = (self.near, self.sliceScale)
+        func slice(depth: Float) -> Int { Self.slice(depth: depth, near: near, sliceScale: sliceScale) }
+        let perLight = jobs.parallelMap(visible.count, batchSize: 8, name: "light clusters") { index -> [(cluster: Int32, light: UInt16)] in
+            var references: [(cluster: Int32, light: UInt16)] = []
+            let v = visible[index]
             let c = v.center, r = v.radius, depth = -c.z
             // Padded a little, so a fragment on a slice boundary that the GPU's log2 rounds
             // into the neighboring slice still finds the light.
@@ -268,7 +275,9 @@ public struct LightClusters: Sendable {
                     }
                 }
             }
+            return references
         }
+        let references = perLight.flatMap { $0 }
 
         // Counting sort into per-cluster lists, within the limits.
         var kept = [Bool](repeating: false, count: references.count)

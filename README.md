@@ -6,7 +6,8 @@ A small cross-platform game engine in Swift: **Metal on macOS, Vulkan everywhere
 Sources/
   Engine/
     Core/            Engine loop, Game protocol, math (Mat4/Vec*), Input, TextInput, FrameStats, Image/PNGEncoder (compressed PNG writer)
-    Debug/           Performance overlay + built-in 5x7 bitmap font
+    Debug/           Performance overlay + built-in 5x7 bitmap font, CPU profiler
+    Jobs/            JobSystem: worker pool, jobs with dependencies and groups, parallelFor / parallelMap, parallel ECS queries
     Audio/           AudioSystem (voices, buses, ducking, sends), AudioMixer (real-time mixing), 3D audio, filters and reverb, devices, WAV/Vorbis/MP3 decoders
     Assets/          Model import: ImportedModel (CPU-side meshes, materials, textures, nodes), GLTFReader (glTF 2.0 / GLB)
     Scene/           World (entities, sparse-set components, queries), Transform hierarchy, staged systems
@@ -138,6 +139,31 @@ An `Entity` handle is only valid in the running world. `world.id(of:)` returns a
 - **Play mode and load:** set `isRecording = false` while playing, and call `clear()` after loading.
 - **Limit:** undoing a despawn restores `Entity` references among the entities inside the subtree; `Entity` handles from outside to it stay stale (use `EntityRef`, which follows the id and resolves again). Despawn/undo of a 1000-entity subtree costs ~25 ms each way.
 
+### Job system
+
+`JobSystem.shared` (Sources/Engine/Jobs/) is a fixed pool of worker threads for CPU work that splits into independent pieces.
+
+```swift
+let jobs = JobSystem.shared
+let bounds = jobs.parallelMap(meshes.count, batchSize: 16, name: "bounds") { meshes[$0].bounds }   // results in index order
+jobs.parallelFor(0..<count, batchSize: 1024, name: "cull") { range in for i in range { visible[i] = test(i) } }
+let a = jobs.schedule("a") { … }, b = jobs.schedule("b") { … }
+jobs.wait(jobs.schedule("combine", after: [a, b]) { … })        // or JobGroup + wait(group)
+world.parallelQueryMutating(Velocity.self, Transform.self) { _, v, t in t.position += v.value * dt }
+```
+
+- **Threads:** `ENGINE_JOB_THREADS=<n>` sets how many threads run jobs, counting the calling thread (`n - 1` workers); the default is one per core, at most 16. `0` or `1` runs everything inline on the calling thread, in submission order.
+- **Waiting helps:** `wait`, `parallelFor` and `parallelMap` run queued jobs while they wait instead of blocking, so the main thread does its share of a loop, and a job can wait for other jobs (or run a nested loop) without deadlocking the pool. Any thread may schedule and wait, the main thread included.
+- **Loops:** batches are claimed one at a time by the caller and up to one helper per worker; pick a batch size worth tens of microseconds. A loop with a single batch (or inline) runs on the calling thread with no scheduling.
+- **Rules for bodies:** a loop body runs on several threads at once. It may read shared data and write only its own indices (the closure isn't `@Sendable`, so the compiler won't check this). It must not mutate a `World`, `PhysicsWorld` or other main-actor objects; reading a world nobody writes meanwhile is fine. `World.parallelQueryMutating` (one or two component types) visits each entity on exactly one thread; its body may change only those components, and structural changes are deferred like in other queries.
+- **Determinism:** every engine use computes per-item results in parallel and merges them in item order, so results are bit-identical for any thread count (`JobSystemDeterminismTests`; screenshots with `ENGINE_JOB_THREADS=1` match the default):
+  - `SceneRenderer`: skinned meshes' joint matrices and posed bounds (`RenderPrep`, "skin poses"), camera and shadow-caster visibility tests (`RenderList`, "cull"; `ShadowCasterBatches`, "cull shadow casters", per item and atlas tile), and light binning per light (`LightClusters`, "light clusters").
+  - `world.addAnimationSystem`: every `Animator`'s update and clip sampling ("animators"); poses are written, events reported and missing clips warned about in storage order.
+  - `PhysicsWorld`: the broadphase pair search ("physics pairs", sorted afterwards) and the narrowphase per contact ("narrowphase"); events and contact removal follow in contact order. The solver stays serial, so it is unchanged.
+  - Each of these has a `jobs` property (or parameter) to give it another pool, e.g. `JobSystem(threadCount: 1)` in a test.
+- **Profiler:** workers are named `job worker N`; every job and each worker's share of a loop records a scope named after it (see CPU profiler).
+- **Measured** (M5, release, `ENGINE_PROFILE_TRACE`, CPU time per frame on the main thread averaged over frames 100–300, `ENGINE_JOB_THREADS=1` → default 10 threads): `crowd` physics 6.95 → 5.36 ms (narrowphase 3.07 → 1.18 ms; the solver's 3.4–3.6 ms is serial), animators 0.14 → 0.12 ms, shadow-caster culling 0.084 → 0.064 ms; `lights` render prep 1.32 → 0.34 ms (light clusters 1.07 → 0.19 ms). Small scenes (`skinning`, `physics`, `ecs`, `character`) run their few batches inline and stay within noise. Frame time is presentation-bound on this Mac, so compare profiler scopes, not FPS.
+
 ### Rendering entities
 `SceneRenderer` (`Sources/Engine/Rendering/`) draws a `World`: a forward renderer with one shadow-casting directional light (cascaded shadow maps), clustered point and spot lights (a few with shadows), hemisphere ambient or a skybox with image-based lighting, exponential fog, instancing, frustum and shadow-caster culling, a back-to-front sorted transparent pass, and motion vectors plus jitter for the temporal upscalers. It is opt-in, and games that don't use it are unaffected:
 
@@ -206,7 +232,7 @@ sceneRenderer.draw(pass)                                                        
 - **Interpolation:** `RigidBody.interpolation` (`.inherit` / `.on` / `.off`) or `PhysicsWorld.interpolatesPoses`: the displayed `Transform` of dynamic and kinematic bodies is placed between the last two steps by `time.alpha` ("physics.interpolate" in `.update`) and the exact one put back before the next fixed step ("physics.restore"), so the simulation, `pose(of:)` and game systems in `.fixedUpdate` stay exact (`interpolationDoesNotChangeTheSimulation` test). A `Transform` the game edits in between wins; edit the whole transform, or call `restoreExactTransforms(in:)` first (e.g. before saving). Without ECS: `interpolatedPose(of:alpha:)`.
 - **Debug:** `physics.drawDebug(into: debugDraw, options:)`: collider wireframes (static gray, kinematic blue, dynamic green, sleeping dark, triggers yellow), contact points with normals, fat AABBs, joints, centers of mass.
 - **Determinism:** bodies, contacts and joints are arrays in creation order, new pairs are sorted, dictionaries are only used for lookups, nothing reads a clock: the same calls give bit-identical results (`simulationIsDeterministic` test), and the `physics` scene is byte-identical on Metal and Vulkan.
-- **Limits:** compound parts share one material and layer (per-part friction and triggers aren't supported), no continuous collision beyond speculative contacts, no joint limits or motors, no rolling resistance, characters don't rotate with platforms, take one capsule size, and a platform's carry velocity lags a step; single-threaded.
+- **Limits:** compound parts share one material and layer (per-part friction and triggers aren't supported), no continuous collision beyond speculative contacts, no joint limits or motors, no rolling resistance, characters don't rotate with platforms, take one capsule size, and a platform's carry velocity lags a step. The pair search and narrowphase run on the job system; the solver, islands and sleep are single-threaded.
 
 ### 2D physics
 `Sources/Engine/Physics2D/` is the 2D counterpart of the physics above (plain Swift, same design: AABB-tree broadphase, soft-step sequential impulses after Box2D v3 with warm starting, speculative contacts, sleeping by island, fixed timestep, deterministic by construction). Units are meters, kilograms (density is kg/m²) and radians, y up.
@@ -568,6 +594,7 @@ Results are read back when the frame slot is reused: 3 frames later on Metal (vi
 | `ENGINE_CRASH_DIR=<dir>` / `ENGINE_CRASH_REPORTS=0` | Where crash reports go (default `<tmp>/EngineCrashReports`) / turn the signal handlers off |
 | `ENGINE_PROFILER=1` | Start with the CPU profiler on and its timeline in the overlay (F3 toggles it, F4 saves a trace; see CPU profiler) |
 | `ENGINE_PROFILE_TRACE=<file.json>` | Record the whole run and write Chrome trace JSON at exit |
+| `ENGINE_JOB_THREADS=<n>` | Threads running jobs, counting the main thread (default: one per core, at most 16); `0` / `1` runs everything inline (see Job system) |
 | `ENGINE_VULKAN_VALIDATION=1` | Enable `VK_LAYER_KHRONOS_validation`; its warnings and errors go through a debug messenger to `EngineLog` (printed, or in the editor's console, `log.read` and `diagnostics.get`). On macOS with Homebrew, also set `VK_LAYER_PATH=$(brew --prefix vulkan-validationlayers)/share/vulkan/explicit_layer.d` and `DYLD_LIBRARY_PATH=$(brew --prefix vulkan-validationlayers)/lib`. Launch the binary directly, because SIP-protected wrappers such as `timeout` strip `DYLD_*`. |
 
 `engine.saveScreenshot(to:)` captures the next frame from game code.
@@ -606,9 +633,9 @@ Crash reports: `Engine.run` installs handlers for SIGSEGV, SIGABRT, SIGILL, SIGB
 Profiler.scope("pathfinding") { solve() }            // nests; also Profiler.begin("x") / Profiler.end()
 ```
 
-Turn it on with `ENGINE_PROFILER=1`, F3 (`EngineConfig.profilerKey`) or `Profiler.isEnabled`. The engine marks its loop: `events`, `update`, `world` (with a `stage …` scope per system stage and one scope per system, named as registered, plus `propagateTransforms`), `render prep` (`SceneRenderer.prepare` / `beginViews`), `acquire`, `renderOffscreen`, `window wait`, `render`, `postprocess`, `ui`, `overlay` and `present`. While the profiler is on, the overlay (when visible) adds a panel at the bottom left: the last 80 frames as stacked bars (left: top-level CPU scopes of the main thread; right, narrower: the GPU passes of the frame that had finished by then, colored by name against a 33 ms ceiling and a 60 FPS line) and below it the newest frame's nested scopes as an icicle chart. With vsync on, `acquire` / `window wait` / `present` hold the frame wait, which is why they dominate.
+Turn it on with `ENGINE_PROFILER=1`, F3 (`EngineConfig.profilerKey`) or `Profiler.isEnabled`. The engine marks its loop: `events`, `update`, `world` (with a `stage …` scope per system stage and one scope per system, named as registered, plus `propagateTransforms`), `render prep` (`SceneRenderer.prepare` / `beginViews`), `acquire`, `renderOffscreen`, `window wait`, `render`, `postprocess`, `ui`, `overlay` and `present`; inside them, the job system's loops (see Job system) and the physics step's parts (`physics sync in`, `physics pairs`, `narrowphase`, `islands`, `solver`, `sleep update`, `physics sync out`). While the profiler is on, the overlay (when visible) adds a panel at the bottom left: the last 80 frames as stacked bars (left: top-level CPU scopes of the main thread; right, narrower: the GPU passes of the frame that had finished by then, colored by name against a 33 ms ceiling and a 60 FPS line) and below it the newest frame's nested scopes as an icicle chart, with a lane per job worker under it (their jobs and loop shares on the same time axis), with the job thread count in its title. With vsync on, `acquire` / `window wait` / `present` hold the frame wait, which is why they dominate.
 
-Export: `ENGINE_PROFILE_TRACE=out.json` records the whole run (up to 100k frames) and writes it at exit; F4 (`profilerExportKey`) saves the ring to `<tmp>/EngineProfiles/profile-<time>.json`; `Profiler.exportChromeTrace(to:)` does it from code. The JSON is Chrome's Trace Event Format: open it in chrome://tracing or ui.perfetto.dev. Threads are tracks (`main`, `thread N`), plus a `frames` track and a `GPU` track whose pass durations are laid end to end from each frame's start (their lengths are exact; their placement is not).
+Export: `ENGINE_PROFILE_TRACE=out.json` records the whole run (up to 100k frames) and writes it at exit; F4 (`profilerExportKey`) saves the ring to `<tmp>/EngineProfiles/profile-<time>.json`; `Profiler.exportChromeTrace(to:)` does it from code. The JSON is Chrome's Trace Event Format: open it in chrome://tracing or ui.perfetto.dev. Threads are tracks (`main`, `job worker N`, other threads `thread N`), plus a `frames` track and a `GPU` track whose pass durations are laid end to end from each frame's start (their lengths are exact; their placement is not).
 
 ### Continuous integration
 
@@ -740,6 +767,7 @@ swift run -c release Demo --scene shadows --quality ultra --resolution 4k   # --
 | 31 | `particles` | GPU particles (compute simulation, indirect draws): a brazier fire under a column of sorted, alpha-blended smoke, sparks fountaining off a pillar, streaked and bouncing on the floor, and a 128k-particle spiral galaxy orbiting above, at night with bloom; the title shows the live particle count and the GPU time of the `particles` compute pass | **F** fire and smoke, **K** sparks, **G** galaxy, **B** burst of sparks |
 | 32 | `physics2d` | 2D rigid bodies drawn with the sprite renderer (procedural textures): a pyramid of boxes, a bridge of revolute-jointed planks with crates, a car with motorized wheels driving over chain-shape terrain, a pinball-style pen with bouncy bumpers (restitution 1.2), balls, one-way shelves and a kinematic paddle, mouse dragging through a mouse joint; the title shows body, awake and contact counts | **G** debug view (shapes, contacts, joints through `DebugDraw`), **F** drop shapes, **R** reset, left-drag grabs a body |
 | 33 | `hud` | Game HUD and menus in the "game" theme: health / stamina bars with a damage trail, ammo counter, minimap panel, objective text in the safe area; name tags and health bars over the units (world-space widgets scaled by distance, faded far away and dimmed behind the terminal); an in-world terminal whose UI is rendered into a render target on a quad, clickable through a ray hit; a pause menu with an options screen (theme, UI scale, quality selectors, volume slider, toggles, confirm dialogs). Screenshot runs open the options screen (`HUD_MENU=0` turns it off, `HUD_MENU=1` opens it interactively) | **M** / **Start** pause; arrows / D-pad / left stick move focus, Enter / A activate, Esc / B back, Left / Right change values; mouse on the terminal. The menu takes the keyboard while open; otherwise the demo's keys work |
+| 34 | `crowd` | Job system stress test: 144 skinned foxes, each with its own `Animator`, clip, speed and start time; 640 boxes and spheres dropped into a walled pen; 2500 shadow-casting posts (many culled). The title shows the job thread count and the CPU time of the world update and render prep (averaged over 30 frames); `ENGINE_JOB_THREADS=1` renders the same image | **R** reset |
 
 Everywhere: **1–9** and **0** (scene 10) switch scenes, **]** / **[** next / previous scene, **F2** toggles a text-input test mode (echoes typing in the window title), **Tab / Shift-Tab** cycle the render resolution (native, quality, performance, 144p … 16k), **U** cycles the upscaler (bilinear, FSR 1, MetalFX spatial and temporal, TAAU, FSR 3; temporal ones only without MSAA), **V** toggles vsync, **Space** pauses animation, arrows/WASD or left-drag orbit, **Q/E** zoom, **Esc** quits. The window title shows the scene, its state, the render size, the quality and the backend.
 
@@ -751,6 +779,7 @@ Everywhere: **1–9** and **0** (scene 10) switch scenes, **]** / **[** next / p
 
 The full roadmap (ECS, assets, physics, audio, UI, in-engine editor) lives on the project task board. Physics limits are listed under **Physics**, skeletal animation limits under **Skeletal animation**.
 
+- Job system: asset loading doesn't use it yet (the asset database has its own small `AssetLoadQueue`); the physics solver, transform propagation and ECS system scheduling are serial (a parallel solver needs graph coloring, which changes the solve order and so the results); there is no work stealing (one shared queue) and no job priorities.
 - Creating a static buffer or texture on Vulkan blocks on the upload (edit them later with `updateBuffer` / `updateTexture`; use `setVertexData` / `setUniformData` for per-frame data).
 - Textures are 2D RGBA8 or RGBA16F only: no compressed formats (BC7/ASTC), cube maps or arrays (environments are equirectangular). Storage textures have one mip level and float/unorm formats only (`.rgba16Float`, `.rgba8Unorm`, `.r8Unorm`, `.r16Float`, `.rg16Float`, `.r32Float`; no integer formats, so no texture atomics: use a storage buffer).
 - Compute: no indirect dispatch, no async compute queue (passes run on the graphics queue in recording order), no subgroup operations; Vulkan barriers are global rather than per resource. Synchronization validation (`validate_sync`) didn't report a hazard even with a barrier deliberately removed on MoltenVK, so the barriers are checked by the `ComputeTests` (compute → indirect draw → compute in one frame on both backends) rather than by the layer.

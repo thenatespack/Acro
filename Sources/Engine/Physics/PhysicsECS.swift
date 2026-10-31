@@ -34,9 +34,9 @@ extension World {
         }
         addSystem("physics", stage: .fixedUpdate) { world in
             if world.time.fixedStepsThisFrame == 1 { physics.clearEvents() }
-            physics.syncFromWorld(world, dt: world.time.delta)
+            Profiler.scope("physics sync in") { physics.syncFromWorld(world, dt: world.time.delta) }
             physics.step(world.time.delta)
-            physics.syncToWorld(world)
+            Profiler.scope("physics sync out") { physics.syncToWorld(world) }
         }
         addSystem("physics.events", stage: .update, before: systemNames(in: .update).first) { world in
             // A frame without fixed steps has no events (don't report the last frame's twice).

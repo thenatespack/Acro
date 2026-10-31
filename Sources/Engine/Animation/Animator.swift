@@ -424,18 +424,48 @@ extension World {
     /// frame's dt with clips from `library` and writes the animated targets' `Transform`s, then
     /// reports the events reached through `onEvent`. Transform propagation later in the frame
     /// moves skinned meshes' joints (see `Skin`).
+    ///
+    /// Animators advance and sample their clips in parallel on `jobs` (each touches only its
+    /// own component and pose; the library is only read); poses are then written, events
+    /// reported and missing clips warned about in storage order, so the result is the same for
+    /// any thread count.
     public func addAnimationSystem(_ library: AnimationLibrary, name: String = "animation", stage: SystemStage = .update,
-                                   onEvent: ((Entity, FiredAnimationEvent) -> Void)? = nil) {
+                                   jobs: JobSystem = .shared, onEvent: ((Entity, FiredAnimationEvent) -> Void)? = nil) {
         var reported = Set<String>()
+        var animators: [Animator] = []
+        var poses: [AnimationPose] = []
+        var missing: [[String]] = []
         addSystem(name, stage: stage) { world in
             let dt = world.time.delta
-            var fired: [(Entity, FiredAnimationEvent)] = []
-            world.queryMutating(Animator.self) { entity, animator in
-                let pose = animator.update(dt: dt) { handle in
-                    if let clip = library.clip(handle) { return clip }
-                    if reported.insert(handle.key).inserted { EngineLog.warning("no animation clip registered as '\(handle.key)'", category: .animation) }
-                    return nil
+            animators.removeAll(keepingCapacity: true)
+            world.query(Animator.self) { _, animator in animators.append(animator) }
+            let count = animators.count
+            poses = Array(repeating: AnimationPose([]), count: count)
+            missing = Array(repeating: [], count: count)
+            animators.withUnsafeMutableBufferPointer { animators in
+                poses.withUnsafeMutableBufferPointer { poses in
+                    missing.withUnsafeMutableBufferPointer { missing in
+                        jobs.parallelFor(0..<count, batchSize: 8, name: "animators") { range in
+                            for i in range {
+                                poses[i] = animators[i].update(dt: dt) { handle in
+                                    if let clip = library.clip(handle) { return clip }
+                                    missing[i].append(handle.key)
+                                    return nil
+                                }
+                            }
+                        }
+                    }
                 }
+            }
+            var fired: [(Entity, FiredAnimationEvent)] = []
+            var index = 0
+            world.queryMutating(Animator.self) { entity, animator in
+                animator = animators[index]
+                let pose = poses[index]
+                for key in missing[index] where reported.insert(key).inserted {
+                    EngineLog.warning("no animation clip registered as '\(key)'", category: .animation)
+                }
+                index += 1
                 for i in 0..<min(pose.count, animator.targets.count) where pose.animated[i] {
                     world.modify(Transform.self, for: animator.targets[i]) { $0 = pose.transforms[i] }
                 }

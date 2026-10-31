@@ -23,6 +23,8 @@ public struct ProfilerFrame: Sendable {
     /// GPU time per pass of the most recent frame the GPU had finished when this one ended (it
     /// lags the CPU by a frame or two), empty when the backend can't time passes.
     public var gpuPasses: [GPUPassTime] = []
+    /// Names given with `Profiler.nameCurrentThread` (job workers) of the threads in `events`.
+    public var threadNames: [UInt64: String] = [:]
 
     public var duration: Double { end - start }
 }
@@ -71,6 +73,12 @@ public enum Profiler {
     @inline(__always)
     public static func end() {
         if isEnabled { ProfilerCore.shared.end() }
+    }
+
+    /// Names the calling thread in the timeline and in traces (e.g. "job worker 3"). Works
+    /// whether or not the profiler is enabled; the job system names its workers.
+    public static func nameCurrentThread(_ name: String) {
+        ProfilerCore.shared.nameCurrentThread(name)
     }
 
     /// Starts frame `index`, finishing the previous one. The engine calls this.
@@ -128,6 +136,7 @@ final class ProfilerCore: @unchecked Sendable {
     private var openScopes: [UInt64: [(name: String, start: Double)]] = [:]
     private var threadNumbers: [ObjectIdentifier: UInt64] = [:]
     private var nextThreadNumber: UInt64 = 1
+    private var threadNames: [UInt64: String] = [:]
     private var pending: [ProfilerEvent] = []
     private var currentIndex = 0
     private var currentStart = 0.0
@@ -181,6 +190,10 @@ final class ProfilerCore: @unchecked Sendable {
         return number
     }
 
+    func nameCurrentThread(_ name: String) {
+        lock.withLock { threadNames[threadID()] = name }
+    }
+
     func begin(_ name: String) {
         let time = now()
         lock.withLock { openScopes[threadID(), default: []].append((name, time)) }
@@ -217,7 +230,12 @@ final class ProfilerCore: @unchecked Sendable {
     /// Caller holds the lock. Files the pending events as a frame (if any were recorded).
     private func finishFrame(at time: Double, gpuPasses: [GPUPassTime]) {
         guard !pending.isEmpty || !gpuPasses.isEmpty else { return }
-        let frame = ProfilerFrame(index: currentIndex, start: currentStart, end: time, events: pending, gpuPasses: gpuPasses)
+        var frame = ProfilerFrame(index: currentIndex, start: currentStart, end: time, events: pending, gpuPasses: gpuPasses)
+        if !threadNames.isEmpty {
+            for event in pending where event.thread != 0 && frame.threadNames[event.thread] == nil {
+                if let name = threadNames[event.thread] { frame.threadNames[event.thread] = name }
+            }
+        }
         pending = []
         if ring.count < capacity {
             ring.append(frame)
@@ -260,9 +278,11 @@ final class ProfilerCore: @unchecked Sendable {
     static func chromeTrace(frames: [ProfilerFrame]) -> String {
         let frameTrack = 1_000_000, gpuTrack = 1_000_001
         var tracks: Set<UInt64> = []
+        var names: [UInt64: String] = [:]
         var events: [String] = []
         func micro(_ seconds: Double) -> String { String(format: "%.3f", seconds * 1e6) }
         for frame in frames {
+            names.merge(frame.threadNames) { old, _ in old }
             events.append("{\"name\":\"Frame \(frame.index)\",\"cat\":\"frame\",\"ph\":\"X\",\"ts\":\(micro(frame.start)),"
                 + "\"dur\":\(micro(frame.duration)),\"pid\":1,\"tid\":\(frameTrack)}")
             for event in frame.events {
@@ -282,7 +302,11 @@ final class ProfilerCore: @unchecked Sendable {
         }
         var metadata = ["{\"name\":\"process_name\",\"ph\":\"M\",\"pid\":1,\"args\":{\"name\":\"Engine\"}}",
                         thread(frameTrack, "frames"), thread(gpuTrack, "GPU")]
-        for id in tracks.sorted() { metadata.append(thread(Int(id), id == 0 ? "main" : "thread \(id)")) }
+        for id in tracks.sorted() {
+            metadata.append(thread(Int(id), id == 0 ? "main" : names[id] ?? "thread \(id)"))
+            // Perfetto / chrome://tracing order tracks by this: main, then workers in order.
+            metadata.append("{\"name\":\"thread_sort_index\",\"ph\":\"M\",\"pid\":1,\"tid\":\(id),\"args\":{\"sort_index\":\(id)}}")
+        }
         return "{\"displayTimeUnit\":\"ms\",\"traceEvents\":[\n" + (metadata + events).joined(separator: ",\n") + "\n]}\n"
     }
 
