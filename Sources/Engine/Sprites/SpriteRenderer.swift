@@ -49,23 +49,23 @@ public final class SpriteRenderer {
     /// Sprites, vertices and draw calls of the last `render`.
     public private(set) var stats = SpriteBatchStats()
 
-    private let alphaPipeline: RenderPipeline
-    private let opaquePipeline: RenderPipeline
+    /// One pipeline per `SpriteBlend`.
+    private let pipelines: [SpriteBlend: RenderPipeline]
     private let defaultSampler: GPUSampler
     private var atlases: [String: SpriteAtlas] = [:]
 
     public init(device: RenderDevice) throws {
-        func pipeline(blending: Bool) throws -> RenderPipeline {
-            var descriptor = PipelineDescriptor(
-                shader: try ShaderSource.load(named: "sprite", bundle: .module), vertexLayout: SpriteVertex.layout)
+        let shader = try ShaderSource.load(named: "sprite", bundle: .module)
+        var pipelines: [SpriteBlend: RenderPipeline] = [:]
+        for blend in [SpriteBlend.alpha, .opaque, .additive] {
+            var descriptor = PipelineDescriptor(shader: shader, vertexLayout: SpriteVertex.layout)
             descriptor.cullMode = .none
             descriptor.depthTest = false
             descriptor.depthWrite = false
-            descriptor.alphaBlending = blending
-            return try device.makePipeline(descriptor)
+            descriptor.blendMode = blend.blendMode
+            pipelines[blend] = try device.makePipeline(descriptor)
         }
-        alphaPipeline = try pipeline(blending: true)
-        opaquePipeline = try pipeline(blending: false)
+        self.pipelines = pipelines
         defaultSampler = try device.makeSampler(SamplerDescriptor(filter: .linear, mipFilter: .none, addressMode: .clampToEdge))
     }
 
@@ -96,7 +96,7 @@ public final class SpriteRenderer {
         stats = SpriteBatchStats(sprites: batch.count, drawCalls: data.draws.count, vertices: data.vertices.count)
         guard !data.draws.isEmpty else { return stats }
         var pipeline = data.draws[0].blend
-        pass.setPipeline(pipeline == .alpha ? alphaPipeline : opaquePipeline)
+        pass.setPipeline(pipelines[pipeline]!)
         pass.setPushConstants(viewProjection)
         pass.setVertexData(data.vertices)
         pass.setIndexData(data.indices)
@@ -104,7 +104,7 @@ public final class SpriteRenderer {
         var sampler: GPUSampler?
         for draw in data.draws {
             if pipeline != draw.blend {
-                pass.setPipeline(draw.blend == .alpha ? alphaPipeline : opaquePipeline)
+                pass.setPipeline(pipelines[draw.blend]!)
                 pipeline = draw.blend
             }
             if texture !== draw.texture {

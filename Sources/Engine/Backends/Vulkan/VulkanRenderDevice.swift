@@ -9,6 +9,8 @@ private let maxTimedPasses = 32
 private let timestampsPerFrame = 2 + maxTimedPasses * 2
 private let depthFormat = VK_FORMAT_D32_SFLOAT
 private let allStages = vkFlags(VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT)
+/// The push-constant range of the shared pipeline layout (graphics and compute pipelines).
+private let pushConstantStages = vkFlags(VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_COMPUTE_BIT)
 /// Layout depth textures are kept in between passes (written as attachments, read as samplers).
 private let depthReadLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
 
@@ -49,10 +51,15 @@ final class VulkanTexture: GPUTexture {
     let framebuffer: VkFramebuffer?
     /// Depth render targets only: set 1 (combined image sampler) for sampling the texture.
     let descriptorSet: VkDescriptorSet?
+    /// Storage textures stay in the general layout (written by compute, sampled by any stage).
+    let isStorage: Bool
+    /// The layout the image rests in between passes, as sampled.
+    var layout: VkImageLayout { isStorage ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }
 
     init(width: Int, height: Int, format: TextureFormat, mipLevelCount: Int = 1, image: VkImage, memory: VkDeviceMemory,
-         view: VkImageView, framebuffer: VkFramebuffer? = nil, descriptorSet: VkDescriptorSet? = nil,
+         view: VkImageView, framebuffer: VkFramebuffer? = nil, descriptorSet: VkDescriptorSet? = nil, isStorage: Bool = false,
          deletionQueue: VulkanDeletionQueue) {
+        self.isStorage = isStorage
         self.image = image
         self.width = width
         self.height = height
@@ -122,6 +129,25 @@ final class VulkanPipeline: RenderPipeline {
     }
 }
 
+final class VulkanComputePipeline: ComputePipeline {
+    private let resource: VulkanResource
+    private let deletionQueue: VulkanDeletionQueue
+    let pipeline: VkPipeline
+    let workgroupSize: ComputeSize
+
+    init(_ pipeline: VkPipeline, workgroupSize: ComputeSize, deletionQueue: VulkanDeletionQueue) {
+        self.pipeline = pipeline
+        self.workgroupSize = workgroupSize
+        self.deletionQueue = deletionQueue
+        resource = .pipeline(pipeline)
+        deletionQueue.register(resource)
+    }
+
+    deinit {
+        deletionQueue.release(resource)
+    }
+}
+
 /// See `GPURenderTarget`. `resolved` is the sampled texture (its own resource, so a draw list
 /// can keep it alive); the pass-only attachments and the framebuffer are released together.
 final class VulkanRenderTarget: GPURenderTarget {
@@ -181,6 +207,9 @@ private struct FrameSync {
     /// Leading queries of this slot's range to reset before reuse (all of them at first,
     /// since new query pools start out undefined).
     var occlusionQueriesToReset = maxOcclusionQueriesPerFrame
+    /// Buffer readbacks recorded by this slot's last submission (host-visible copies), handed
+    /// over once its fence has signaled.
+    var bufferReadbacks: [(copy: VulkanBuffer, completion: @MainActor ([UInt8]) -> Void)] = []
 }
 
 private struct ImageAllocation {
@@ -334,6 +363,7 @@ final class VulkanRenderDevice: RenderDevice {
     private var needsSwapchainRebuild = false
     private var current: CurrentFrame?
     private var currentPass: VulkanRenderPass?
+    private var currentComputePass: VulkanComputePass?
     private var inRenderPass: Bool { currentPass != nil }
     /// Timestamp query that `endPass` writes to close the current pass's timing, if timed.
     private var timedPassEnd: UInt32?
@@ -348,8 +378,8 @@ final class VulkanRenderDevice: RenderDevice {
     /// `maxOcclusionQueriesPerFrame` occlusion queries per frame slot.
     private let occlusionPool: VkQueryPool
 
-    init(window: GLFWWindow, applicationName: String, sampleCount requestedSamples: Int) throws {
-        let instance = try Self.createInstance(applicationName: applicationName)
+    init(window: VulkanSurfaceProvider, applicationName: String, sampleCount requestedSamples: Int) throws {
+        let instance = try Self.createInstance(applicationName: applicationName, surfaceExtensions: window.requiredInstanceExtensions)
         let surface = try window.createSurface(instance: instance)
         self.instance = instance
         self.surface = surface
@@ -487,21 +517,17 @@ final class VulkanRenderDevice: RenderDevice {
 
     func makeBuffer(bytes: UnsafeRawBufferPointer, usage: BufferUsage) throws -> GPUBuffer {
         guard bytes.count > 0 else { throw GraphicsError("Cannot create an empty buffer") }
-        let usageFlags = switch usage {
-        case .vertex: vkFlags(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT)
-        case .index: vkFlags(VK_BUFFER_USAGE_INDEX_BUFFER_BIT)
-        case .uniform: vkFlags(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)
-        }
+        let usageFlags = Self.bufferUsage(usage)
         // Static buffers live in device-local memory, filled through a staging buffer. Falls back to
         // host-visible memory when the device has no device-local type usable for buffers.
         let length = bytes.count
         let raw: RawBuffer
         do {
             raw = try createRawBuffer(
-                length: length, usage: usageFlags | vkFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT),
+                length: length, usage: usageFlags,
                 properties: vkFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT), mapped: false)
         } catch {
-            let buffer = try createHostBuffer(length: length, usage: usageFlags | vkFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT))
+            let buffer = try createHostBuffer(length: length, usage: usageFlags)
             buffer.mapped!.copyMemory(from: bytes.baseAddress!, byteCount: length)
             return buffer
         }
@@ -517,6 +543,51 @@ final class VulkanRenderDevice: RenderDevice {
             throw error
         }
         return VulkanBuffer(buffer: raw.buffer, memory: raw.memory, length: length, mapped: nil, deletionQueue: deletionQueue)
+    }
+
+    private static func bufferUsage(_ usage: BufferUsage) -> VkBufferUsageFlags {
+        let usageFlags = switch usage {
+        case .vertex: vkFlags(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT)
+        case .index: vkFlags(VK_BUFFER_USAGE_INDEX_BUFFER_BIT)
+        case .uniform: vkFlags(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)
+        case .storage: vkFlags(
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VK_BUFFER_USAGE_TRANSFER_SRC_BIT)
+        }
+        return usageFlags | vkFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+    }
+
+    /// Device-local and zeroed with `vkCmdFillBuffer` (blocking, like `makeBuffer(bytes:)`).
+    func makeBuffer(length: Int, usage: BufferUsage) throws -> GPUBuffer {
+        guard length > 0 else { throw GraphicsError("Cannot create an empty buffer") }
+        let usageFlags = Self.bufferUsage(usage)
+        let raw: RawBuffer
+        do {
+            raw = try createRawBuffer(length: length, usage: usageFlags, properties: vkFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT), mapped: false)
+        } catch {
+            let buffer = try createHostBuffer(length: length, usage: usageFlags)
+            memset(buffer.mapped!, 0, length)
+            return buffer
+        }
+        let buffer = VulkanBuffer(buffer: raw.buffer, memory: raw.memory, length: length, mapped: nil, deletionQueue: deletionQueue)
+        try submitAndWait { cmd in
+            vkCmdFillBuffer(cmd, raw.buffer, 0, VkDeviceSize.max, 0)  // VK_WHOLE_SIZE
+            Self.recordMemoryBarrier(cmd, from: vkFlags(VK_PIPELINE_STAGE_TRANSFER_BIT), vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT),
+                                     to: vkFlags(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT),
+                                     vkFlags(VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_MEMORY_WRITE_BIT))
+        }
+        return buffer
+    }
+
+    /// A global memory barrier: everything before at `sourceStages` (its `sourceAccess` writes
+    /// made available) before everything after at `destinationStages` (`destinationAccess` visible).
+    private static func recordMemoryBarrier(_ cmd: VkCommandBuffer, from sourceStages: VkPipelineStageFlags, _ sourceAccess: VkAccessFlags,
+                                            to destinationStages: VkPipelineStageFlags, _ destinationAccess: VkAccessFlags) {
+        var barrier = VkMemoryBarrier()
+        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER
+        barrier.srcAccessMask = sourceAccess
+        barrier.dstAccessMask = destinationAccess
+        vkCmdPipelineBarrier(cmd, sourceStages, destinationStages, 0, 1, &barrier, 0, nil, 0, nil)
     }
 
     /// Records and submits a one-shot copy and waits for it. Uploads happen at load time and are
@@ -539,15 +610,11 @@ final class VulkanRenderDevice: RenderDevice {
         try vkCheck(vkBeginCommandBuffer(cmd, &beginInfo), "vkBeginCommandBuffer")
         var region = VkBufferCopy(srcOffset: 0, dstOffset: 0, size: VkDeviceSize(length))
         vkCmdCopyBuffer(cmd, source, destination, 1, &region)
-        // Make the copy visible to vertex input and to uniform reads in later submissions.
-        var barrier = VkMemoryBarrier()
-        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER
-        barrier.srcAccessMask = vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT)
-        barrier.dstAccessMask = vkFlags(VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT, VK_ACCESS_INDEX_READ_BIT, VK_ACCESS_UNIFORM_READ_BIT)
-        vkCmdPipelineBarrier(
-            cmd, vkFlags(VK_PIPELINE_STAGE_TRANSFER_BIT),
-            vkFlags(VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT),
-            0, 1, &barrier, 0, nil, 0, nil)
+        // Make the copy visible to every later use in later submissions (vertex input, uniform and
+        // storage reads, indirect arguments, compute writes).
+        Self.recordMemoryBarrier(cmd!, from: vkFlags(VK_PIPELINE_STAGE_TRANSFER_BIT), vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT),
+                                 to: vkFlags(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT),
+                                 vkFlags(VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_MEMORY_WRITE_BIT))
         try vkCheck(vkEndCommandBuffer(cmd), "vkEndCommandBuffer")
 
         var fenceInfo = VkFenceCreateInfo()
@@ -572,13 +639,14 @@ final class VulkanRenderDevice: RenderDevice {
     /// data visible to the vertex input and shader reads of later passes and frames.
     func updateBuffer(_ buffer: GPUBuffer, offset: Int, bytes: UnsafeRawBufferPointer) throws {
         precondition(current != nil, "updateBuffer outside a frame")
-        precondition(!inRenderPass, "updateBuffer called inside a pass; call it between passes")
+        precondition(!inRenderPass && currentComputePass == nil, "updateBuffer called inside a pass; call it between passes")
         let target = buffer as! VulkanBuffer
         try validateBufferUpdate(bufferLength: target.length, offset: offset, byteCount: bytes.count)
         guard bytes.count > 0 else { return }
         let source = uploadTransient(bytes)
         let cmd = frames[frameIndex].commandBuffer
-        let readStages = vkFlags(VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT)
+        let readStages = vkFlags(VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT)
         let transfer = vkFlags(VK_PIPELINE_STAGE_TRANSFER_BIT)
 
         var before = VkMemoryBarrier()
@@ -593,11 +661,13 @@ final class VulkanRenderDevice: RenderDevice {
         var after = VkMemoryBarrier()
         after.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER
         after.srcAccessMask = vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT)
-        after.dstAccessMask = vkFlags(VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT, VK_ACCESS_INDEX_READ_BIT, VK_ACCESS_UNIFORM_READ_BIT)
+        after.dstAccessMask = vkFlags(VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT, VK_ACCESS_INDEX_READ_BIT, VK_ACCESS_UNIFORM_READ_BIT,
+                                      VK_ACCESS_INDIRECT_COMMAND_READ_BIT, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT)
         vkCmdPipelineBarrier(cmd, transfer, readStages, 0, 1, &after, 0, nil, 0, nil)
     }
 
     func makeTexture(_ descriptor: TextureDescriptor) throws -> GPUTexture {
+        if descriptor.storage { return try makeStorageTexture(descriptor) }
         guard descriptor.format == .depth32Float else {
             throw GraphicsError("Render targets must be .depth32Float; use makeTexture(pixels:...) for color textures")
         }
@@ -625,6 +695,35 @@ final class VulkanRenderDevice: RenderDevice {
             width: descriptor.width, height: descriptor.height, format: descriptor.format,
             image: allocation.image, memory: allocation.memory, view: allocation.view,
             framebuffer: framebuffer, descriptorSet: set, deletionQueue: deletionQueue)
+    }
+
+    /// Created in, and kept in, the general layout: compute passes write it, any stage samples it.
+    private func makeStorageTexture(_ descriptor: TextureDescriptor) throws -> GPUTexture {
+        try descriptor.validateStorage(maxSize: maxTextureSize)
+        let allocation = try createImage(
+            extent: VkExtent2D(width: UInt32(descriptor.width), height: UInt32(descriptor.height)), format: Self.vkFormat(descriptor.format),
+            samples: VK_SAMPLE_COUNT_1_BIT,
+            usage: vkFlags(VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                           VK_IMAGE_USAGE_TRANSFER_DST_BIT),
+            aspect: vkFlags(VK_IMAGE_ASPECT_COLOR_BIT))
+        let texture = VulkanTexture(
+            width: descriptor.width, height: descriptor.height, format: descriptor.format, image: allocation.image,
+            memory: allocation.memory, view: allocation.view, isStorage: true, deletionQueue: deletionQueue)
+        try submitAndWait { cmd in
+            var barrier = VkImageMemoryBarrier()
+            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER
+            barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED
+            barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL
+            barrier.dstAccessMask = vkFlags(VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT)
+            barrier.srcQueueFamilyIndex = UInt32.max  // VK_QUEUE_FAMILY_IGNORED
+            barrier.dstQueueFamilyIndex = UInt32.max
+            barrier.image = allocation.image
+            barrier.subresourceRange = VkImageSubresourceRange(
+                aspectMask: vkFlags(VK_IMAGE_ASPECT_COLOR_BIT), baseMipLevel: 0, levelCount: 1, baseArrayLayer: 0, layerCount: 1)
+            vkCmdPipelineBarrier(cmd, vkFlags(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT), vkFlags(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT),
+                                 0, 0, nil, 0, nil, 1, &barrier)
+        }
+        return texture
     }
 
     func makeRenderTarget(_ descriptor: RenderTargetDescriptor) throws -> GPURenderTarget {
@@ -788,8 +887,9 @@ final class VulkanRenderDevice: RenderDevice {
         let range = VkImageSubresourceRange(
             aspectMask: vkFlags(VK_IMAGE_ASPECT_COLOR_BIT), baseMipLevel: UInt32(mipLevel), levelCount: 1,
             baseArrayLayer: 0, layerCount: 1)
-        let shaderStages = vkFlags(VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT)
-        let image = target.image
+        let shaderStages = vkFlags(VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                   VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT)
+        let image = target.image, restingLayout = target.layout
         try submitAndWait { cmd in
             func barrier(from: VkImageLayout, to: VkImageLayout, srcAccess: VkAccessFlags, dstAccess: VkAccessFlags,
                          srcStage: VkPipelineStageFlags, dstStage: VkPipelineStageFlags) {
@@ -805,11 +905,11 @@ final class VulkanRenderDevice: RenderDevice {
                 barrier.subresourceRange = range
                 vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, nil, 0, nil, 1, &barrier)
             }
-            barrier(from: VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, to: VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            barrier(from: restingLayout, to: VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                     srcAccess: 0, dstAccess: vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT),
                     srcStage: shaderStages, dstStage: vkFlags(VK_PIPELINE_STAGE_TRANSFER_BIT))
             vkCmdCopyBufferToImage(cmd, staging.buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy)
-            barrier(from: VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, to: VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            barrier(from: VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, to: restingLayout,
                     srcAccess: vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT), dstAccess: vkFlags(VK_ACCESS_SHADER_READ_BIT),
                     srcStage: vkFlags(VK_PIPELINE_STAGE_TRANSFER_BIT), dstStage: shaderStages)
         }
@@ -853,6 +953,28 @@ final class VulkanRenderDevice: RenderDevice {
 
     func makePipeline(_ descriptor: PipelineDescriptor) throws -> RenderPipeline {
         try createPipeline(descriptor)
+    }
+
+    func makeComputePipeline(_ descriptor: ComputePipelineDescriptor) throws -> ComputePipeline {
+        guard let code = descriptor.shader.spirvCompute else {
+            throw GraphicsError("Shader has no SPIR-V compute stage (run Scripts/compile-shaders.sh)")
+        }
+        let size = try descriptor.resolvedWorkgroupSize()
+        let module = try createShaderModule(code)
+        defer { vkDestroyShaderModule(device, module, nil) }
+        let arena = Arena()
+        var stage = VkPipelineShaderStageCreateInfo()
+        stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO
+        stage.stage = VK_SHADER_STAGE_COMPUTE_BIT
+        stage.module = module
+        stage.pName = arena.cString("main")
+        var info = VkComputePipelineCreateInfo()
+        info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO
+        info.stage = stage
+        info.layout = pipelineLayout
+        var pipeline: VkPipeline?
+        try vkCheck(vkCreateComputePipelines(device, nil, 1, &info, nil, &pipeline), "vkCreateComputePipelines")
+        return VulkanComputePipeline(pipeline!, workgroupSize: size, deletionQueue: deletionQueue)
     }
 
     /// `colorPass` replaces the screen pass for `.screen` pipelines: a single-sample render
@@ -951,13 +1073,13 @@ final class VulkanRenderDevice: RenderDevice {
         var blendAttachment = VkPipelineColorBlendAttachmentState()
         blendAttachment.colorWriteMask = descriptor.colorWrites ? vkFlags(
             VK_COLOR_COMPONENT_R_BIT, VK_COLOR_COMPONENT_G_BIT, VK_COLOR_COMPONENT_B_BIT, VK_COLOR_COMPONENT_A_BIT) : 0
-        if descriptor.alphaBlending {
+        if isScreen, let factors = descriptor.blendMode.factors {
             blendAttachment.blendEnable = VkBool32(VK_TRUE)
-            blendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA
-            blendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA
+            blendAttachment.srcColorBlendFactor = factors.sourceColor.vulkan
+            blendAttachment.dstColorBlendFactor = factors.destinationColor.vulkan
             blendAttachment.colorBlendOp = VK_BLEND_OP_ADD
-            blendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE
-            blendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA
+            blendAttachment.srcAlphaBlendFactor = factors.sourceAlpha.vulkan
+            blendAttachment.dstAlphaBlendFactor = factors.destinationAlpha.vulkan
             blendAttachment.alphaBlendOp = VK_BLEND_OP_ADD
         }
         var blendAttachments = isScreen || colorTarget != nil ? [blendAttachment] : []
@@ -1054,6 +1176,7 @@ final class VulkanRenderDevice: RenderDevice {
         var fence: VkFence? = frame.inFlight
         try vkCheck(vkWaitForFences(device, 1, &fence, VkBool32(VK_TRUE), UInt64.max), "vkWaitForFences")
 
+        deliverBufferReadbacks(slot: frameIndex)
         // This slot's fence covers frame (serial - maxFramesInFlight), so every earlier frame is done too.
         if frameSerial >= UInt64(maxFramesInFlight) {
             destroy(deletionQueue.collect(completedThrough: frameSerial - UInt64(maxFramesInFlight)))
@@ -1357,7 +1480,7 @@ final class VulkanRenderDevice: RenderDevice {
                            clearValues: [VkClearValue], timedAs name: String, occlusionQueries: Bool = false,
                            kind: VulkanPassKind) -> RenderPass {
         precondition(current != nil, "Render pass started outside a frame")
-        precondition(!inRenderPass, "Previous pass was not ended")
+        precondition(!inRenderPass && currentComputePass == nil, "Previous pass was not ended")
         let frame = frames[frameIndex]
         let cmd = frame.commandBuffer
         if let timestampPool, frame.timedPasses.count < maxTimedPasses {
@@ -1395,7 +1518,74 @@ final class VulkanRenderDevice: RenderDevice {
         return pass
     }
 
+    /// Compute passes are bracketed by global memory barriers (see `ComputePass`): before, from
+    /// every earlier command's writes (and, as an execution dependency, its reads: no
+    /// write-after-read hazard) to the compute stage; after, from the compute stage's writes to
+    /// every later command. Dispatches inside are separated by compute-to-compute barriers.
+    func beginComputePass(label: String) -> ComputePass {
+        precondition(current != nil, "Compute pass started outside a frame")
+        precondition(!inRenderPass && currentComputePass == nil, "Previous pass was not ended")
+        let frame = frames[frameIndex]
+        let cmd = frame.commandBuffer
+        if let timestampPool, frame.timedPasses.count < maxTimedPasses {
+            let query = timestampBase + 2 + UInt32(frame.timedPasses.count * 2)
+            vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestampPool, query)
+            frames[frameIndex].timedPasses.append(label)
+            timedPassEnd = query + 1
+        }
+        Self.recordMemoryBarrier(cmd, from: vkFlags(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT), vkFlags(VK_ACCESS_MEMORY_WRITE_BIT),
+                                 to: vkFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT),
+                                 vkFlags(VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_UNIFORM_READ_BIT))
+        let pass = VulkanComputePass(
+            commandBuffer: cmd, device: device, layout: pipelineLayout, transient: frame.transient, descriptors: frame.descriptors)
+        currentComputePass = pass
+        return pass
+    }
+
+    /// Copies the range into a new host-visible buffer at this point of the command buffer (after a
+    /// barrier from every earlier write); `beginFrame` hands it over once the slot's fence has signaled.
+    func readBack(_ buffer: GPUBuffer, offset: Int, length: Int, completion: @escaping @MainActor ([UInt8]) -> Void) {
+        precondition(current != nil, "readBack outside a frame")
+        precondition(!inRenderPass && currentComputePass == nil, "readBack called inside a pass; call it between passes")
+        validateBufferReadback(buffer, offset: offset, length: length)
+        let copy: VulkanBuffer
+        do {
+            copy = try createHostBuffer(length: length, usage: vkFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT))
+        } catch {
+            preconditionFailure("\(error)")
+        }
+        let cmd = frames[frameIndex].commandBuffer
+        let transfer = vkFlags(VK_PIPELINE_STAGE_TRANSFER_BIT)
+        Self.recordMemoryBarrier(cmd, from: vkFlags(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT), vkFlags(VK_ACCESS_MEMORY_WRITE_BIT),
+                                 to: transfer, vkFlags(VK_ACCESS_TRANSFER_READ_BIT))
+        var region = VkBufferCopy(srcOffset: VkDeviceSize(offset), dstOffset: 0, size: VkDeviceSize(length))
+        vkCmdCopyBuffer(cmd, (buffer as! VulkanBuffer).buffer, copy.buffer, 1, &region)
+        Self.recordMemoryBarrier(cmd, from: transfer, vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT),
+                                 to: vkFlags(VK_PIPELINE_STAGE_HOST_BIT), vkFlags(VK_ACCESS_HOST_READ_BIT))
+        frames[frameIndex].bufferReadbacks.append((copy, completion))
+    }
+
+    /// Hands a slot's buffer readbacks to their completions; its fence must have signaled.
+    private func deliverBufferReadbacks(slot: Int) {
+        let readbacks = frames[slot].bufferReadbacks
+        frames[slot].bufferReadbacks = []
+        for (copy, completion) in readbacks {
+            completion(Array(UnsafeRawBufferPointer(start: copy.mapped!, count: copy.length)))
+        }
+    }
+
     func endPass() {
+        if let compute = currentComputePass {
+            Self.recordMemoryBarrier(compute.commandBuffer, from: vkFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT),
+                                     vkFlags(VK_ACCESS_SHADER_WRITE_BIT), to: vkFlags(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT),
+                                     vkFlags(VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_MEMORY_WRITE_BIT))
+            if let timestampPool, let query = timedPassEnd {
+                vkCmdWriteTimestamp(compute.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, query)
+                timedPassEnd = nil
+            }
+            currentComputePass = nil
+            return
+        }
         guard inRenderPass else { return }
         // Only the scene pass has occlusion queries.
         if currentPass?.occlusion != nil { current?.sceneEnded = true }
@@ -1515,6 +1705,8 @@ final class VulkanRenderDevice: RenderDevice {
     func waitIdle() {
         vkDeviceWaitIdle(device)
         destroy(deletionQueue.collect(completedThrough: nil))
+        // The frame being recorded (if any) hasn't been submitted; its readbacks wait for endFrame.
+        for slot in frames.indices where current == nil || slot != frameIndex { deliverBufferReadbacks(slot: slot) }
     }
 
     func shutdown() {
@@ -1566,9 +1758,9 @@ final class VulkanRenderDevice: RenderDevice {
         vkDestroyInstance(instance, nil)
     }
 
-    private static func createInstance(applicationName: String) throws -> VkInstance {
+    private static func createInstance(applicationName: String, surfaceExtensions: [String]) throws -> VkInstance {
         let arena = Arena()
-        var extensions = GLFWWindow.requiredInstanceExtensions()
+        var extensions = surfaceExtensions
         var flags: VkInstanceCreateFlags = 0
 
         let available: [VkExtensionProperties] = try vkEnumerate("vkEnumerateInstanceExtensionProperties") {
@@ -1638,7 +1830,9 @@ final class VulkanRenderDevice: RenderDevice {
             let family = families.indices.first { index in
                 var presentSupport: VkBool32 = 0
                 vkGetPhysicalDeviceSurfaceSupportKHR(device, UInt32(index), surface, &presentSupport)
-                return families[index].queueFlags & vkFlags(VK_QUEUE_GRAPHICS_BIT) != 0 && presentSupport != 0
+                // Compute passes share the graphics queue.
+                return families[index].queueFlags & vkFlags(VK_QUEUE_GRAPHICS_BIT, VK_QUEUE_COMPUTE_BIT)
+                    == vkFlags(VK_QUEUE_GRAPHICS_BIT, VK_QUEUE_COMPUTE_BIT) && presentSupport != 0
             }
             guard let family else { continue }
 
@@ -1948,7 +2142,8 @@ final class VulkanRenderDevice: RenderDevice {
         return layout!
     }
 
-    /// One layout shared by every pipeline: set 0 = uniforms, set 1 = texture, plus push constants.
+    /// One layout shared by every pipeline, graphics and compute: set 0 = uniforms, set 1 = texture
+    /// (both graphics only), set 2 = game bindings, plus push constants.
     private static func createPipelineLayout(device: VkDevice, setLayouts: [VkDescriptorSetLayout]) throws -> VkPipelineLayout {
         let arena = Arena()
         var info = VkPipelineLayoutCreateInfo()
@@ -1957,7 +2152,7 @@ final class VulkanRenderDevice: RenderDevice {
         info.pSetLayouts = arena.array(setLayouts.map { Optional($0) })
         info.pushConstantRangeCount = 1
         info.pPushConstantRanges = arena.store(
-            VkPushConstantRange(stageFlags: allStages, offset: 0, size: UInt32(maxPushConstantSize)))
+            VkPushConstantRange(stageFlags: pushConstantStages, offset: 0, size: UInt32(maxPushConstantSize)))
         var layout: VkPipelineLayout?
         try vkCheck(vkCreatePipelineLayout(device, &info, nil, &layout), "vkCreatePipelineLayout")
         return layout!
@@ -2634,7 +2829,12 @@ final class VulkanRenderPass: RenderPass {
         precondition(textureIndices.contains(index), "Texture index \(index) is outside \(textureIndices)")
         let texture = texture as! VulkanTexture
         precondition(!texture.format.isDepth, "Depth textures are bound with setTexture(_:)")
-        userBindings.bindTexture(texture.view, index: index)
+        userBindings.bindTexture(texture.view, layout: texture.layout, index: index)
+    }
+
+    func setStorageBuffer(_ buffer: GPUBuffer, offset: Int, index: Int, stage: ShaderStage) {
+        validateStorageBinding(buffer, offset: offset, index: index)
+        userBindings.bindStorageBuffer(buffer: (buffer as! VulkanBuffer).buffer, offset: offset, range: buffer.length - offset, index: index)
     }
 
     func setSampler(_ sampler: GPUSampler, index: Int, stage: ShaderStage) {
@@ -2681,7 +2881,7 @@ final class VulkanRenderPass: RenderPass {
 
     func setPushConstants(_ bytes: UnsafeRawBufferPointer) {
         precondition(bytes.count <= maxPushConstantSize, "Push constants exceed \(maxPushConstantSize) bytes")
-        vkCmdPushConstants(commandBuffer, layout, allStages, 0, UInt32(bytes.count), bytes.baseAddress)
+        vkCmdPushConstants(commandBuffer, layout, pushConstantStages, 0, UInt32(bytes.count), bytes.baseAddress)
     }
 
     func draw(vertexCount: Int, instanceCount: Int, firstVertex: Int) {
@@ -2692,6 +2892,16 @@ final class VulkanRenderPass: RenderPass {
     func drawIndexed(indexCount: Int, instanceCount: Int, firstIndex: Int) {
         flushUserBindings()
         vkCmdDrawIndexed(commandBuffer, UInt32(indexCount), UInt32(instanceCount), UInt32(firstIndex), 0, 0)
+    }
+
+    func drawIndirect(_ buffer: GPUBuffer, offset: Int) {
+        flushUserBindings()
+        vkCmdDrawIndirect(commandBuffer, (buffer as! VulkanBuffer).buffer, VkDeviceSize(offset), 1, 0)
+    }
+
+    func drawIndexedIndirect(_ buffer: GPUBuffer, offset: Int) {
+        flushUserBindings()
+        vkCmdDrawIndexedIndirect(commandBuffer, (buffer as! VulkanBuffer).buffer, VkDeviceSize(offset), 1, 0)
     }
 
     func beginOcclusionQuery(_ set: OcclusionQuerySet, index: Int) {
@@ -2711,6 +2921,121 @@ final class VulkanRenderPass: RenderPass {
             return try transient.upload(bytes, alignment: alignment, reserve: reserve)
         } catch {
             preconditionFailure("\(error)")
+        }
+    }
+}
+
+/// See `ComputePass`. Bindings are recorded like a render pass's set 2 and written into a fresh
+/// descriptor set before the next dispatch after a change.
+final class VulkanComputePass: ComputePass {
+    let commandBuffer: VkCommandBuffer
+    private let device: VkDevice
+    private let layout: VkPipelineLayout
+    private let transient: TransientRing<VulkanTransientChunk>
+    private let descriptors: VulkanDescriptorArena
+    private var userBindings = VulkanUserBindings()
+    private var pipeline: VulkanComputePipeline?
+    /// A dispatch was recorded: the next one waits for its writes.
+    private var dispatched = false
+
+    init(commandBuffer: VkCommandBuffer, device: VkDevice, layout: VkPipelineLayout,
+         transient: TransientRing<VulkanTransientChunk>, descriptors: VulkanDescriptorArena) {
+        self.commandBuffer = commandBuffer
+        self.device = device
+        self.layout = layout
+        self.transient = transient
+        self.descriptors = descriptors
+    }
+
+    func setPipeline(_ pipeline: ComputePipeline) {
+        let pipeline = pipeline as! VulkanComputePipeline
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.pipeline)
+        self.pipeline = pipeline
+    }
+
+    func setStorageBuffer(_ buffer: GPUBuffer, offset: Int, index: Int) {
+        validateStorageBinding(buffer, offset: offset, index: index)
+        userBindings.bindStorageBuffer(buffer: (buffer as! VulkanBuffer).buffer, offset: offset, range: buffer.length - offset, index: index)
+    }
+
+    func setStorageTexture(_ texture: GPUTexture, index: Int) {
+        precondition(storageTextureIndices.contains(index), "Storage texture index \(index) is outside \(storageTextureIndices)")
+        let texture = texture as! VulkanTexture
+        precondition(texture.isStorage, "Not a storage texture (TextureDescriptor.storage)")
+        userBindings.bindStorageImage(texture.view, index: index)
+    }
+
+    func setTexture(_ texture: GPUTexture, index: Int) {
+        precondition(textureIndices.contains(index), "Texture index \(index) is outside \(textureIndices)")
+        let texture = texture as! VulkanTexture
+        precondition(!texture.format.isDepth, "Depth textures can't be bound in compute passes")
+        userBindings.bindTexture(texture.view, layout: texture.layout, index: index)
+    }
+
+    func setSampler(_ sampler: GPUSampler, index: Int) {
+        precondition(textureIndices.contains(index), "Sampler index \(index) is outside \(textureIndices)")
+        userBindings.bindSampler((sampler as! VulkanSampler).sampler, index: index)
+    }
+
+    func setUniformBuffer(_ buffer: GPUBuffer, offset: Int, index: Int) {
+        precondition(uniformBufferIndices.contains(index), "Uniform buffer index \(index) is outside \(uniformBufferIndices)")
+        precondition(offset % uniformBufferOffsetAlignment == 0, "Uniform buffer offset must be a multiple of \(uniformBufferOffsetAlignment)")
+        precondition(offset < buffer.length, "Uniform buffer offset is past the end of the buffer")
+        userBindings.bindUniform(
+            buffer: (buffer as! VulkanBuffer).buffer, offset: offset, range: min(buffer.length - offset, maxUniformBufferSize),
+            index: index)
+    }
+
+    func setUniformData(_ bytes: UnsafeRawBufferPointer, index: Int) {
+        precondition(uniformBufferIndices.contains(index), "Uniform buffer index \(index) is outside \(uniformBufferIndices)")
+        precondition(bytes.count <= maxUniformBufferSize, "Uniform data exceeds \(maxUniformBufferSize) bytes")
+        do {
+            let allocation = try transient.upload(bytes, alignment: uniformBufferOffsetAlignment)
+            userBindings.bindUniform(
+                buffer: allocation.chunk.buffer.buffer, offset: allocation.offset, range: max(bytes.count, 1), index: index)
+        } catch {
+            preconditionFailure("\(error)")
+        }
+    }
+
+    func setPushConstants(_ bytes: UnsafeRawBufferPointer) {
+        precondition(bytes.count <= maxPushConstantSize, "Push constants exceed \(maxPushConstantSize) bytes")
+        vkCmdPushConstants(commandBuffer, layout, pushConstantStages, 0, UInt32(bytes.count), bytes.baseAddress)
+    }
+
+    func dispatch(groups: ComputeSize) {
+        precondition(pipeline != nil, "dispatch without a compute pipeline")
+        guard groups.count > 0 else { return }
+        if userBindings.isDirty {
+            do {
+                var set: VkDescriptorSet? = try userBindings.makeSet(from: descriptors, device: device)
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 2, 1, &set, 0, nil)
+            } catch {
+                preconditionFailure("\(error)")
+            }
+        }
+        if dispatched {
+            // Each dispatch sees the previous ones' writes (and doesn't overwrite what they still read).
+            var barrier = VkMemoryBarrier()
+            barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER
+            barrier.srcAccessMask = vkFlags(VK_ACCESS_SHADER_WRITE_BIT)
+            barrier.dstAccessMask = vkFlags(VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_UNIFORM_READ_BIT)
+            let compute = vkFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT)
+            vkCmdPipelineBarrier(commandBuffer, compute, compute, 0, 1, &barrier, 0, nil, 0, nil)
+        }
+        dispatched = true
+        vkCmdDispatch(commandBuffer, UInt32(groups.x), UInt32(groups.y), UInt32(groups.z))
+    }
+}
+
+extension BlendFactor {
+    var vulkan: VkBlendFactor {
+        switch self {
+        case .zero: VK_BLEND_FACTOR_ZERO
+        case .one: VK_BLEND_FACTOR_ONE
+        case .sourceAlpha: VK_BLEND_FACTOR_SRC_ALPHA
+        case .oneMinusSourceAlpha: VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA
+        case .destinationColor: VK_BLEND_FACTOR_DST_COLOR
         }
     }
 }

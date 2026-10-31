@@ -129,7 +129,9 @@ let package = Package(
         // thin executable that runs it (`swift run Editor [scene.json]`).
         .target(name: "EditorCore", dependencies: ["Engine", "EngineMCP"], linkerSettings: windowsLinkerSettings),
         .executableTarget(name: "Editor", dependencies: ["EditorCore", "Engine"], linkerSettings: windowsLinkerSettings),
-        .testTarget(name: "EngineTests", dependencies: ["Engine", "CZlib"], resources: [.copy("Resources")]),
+        // ENGINE_VULKAN lets GPU tests (ComputeTests) run on the Vulkan backend too.
+        .testTarget(name: "EngineTests", dependencies: ["Engine", "CZlib"], resources: [.copy("Resources")],
+                    swiftSettings: vulkanEnabled ? [.define("ENGINE_VULKAN")] : []),
         .testTarget(name: "EditorTests", dependencies: ["EditorCore", "Engine", "EngineMCP"]),
         .testTarget(name: "EngineMCPTests", dependencies: ["EngineMCP"]),
     ]

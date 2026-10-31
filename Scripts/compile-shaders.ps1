@@ -1,4 +1,4 @@
-# Regenerates every shader under Sources\ from its GLSL (*.vert, *.frag), the single source:
+# Regenerates every shader under Sources\ and Tests\ from its GLSL (*.vert, *.frag, *.comp), the single source:
 # glslc compiles it to SPIR-V (name.vert.spv, for Vulkan), then Scripts\spirv-to-msl.c
 # (SPIRV-Cross C API) turns the SPIR-V into MSL (name.vert.metal, for Metal). Same as
 # compile-shaders.sh; all outputs are committed, so building the package needs neither tool.
@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
 $sdk = $env:VULKAN_SDK
 $glslc = if ($sdk) { Join-Path $sdk 'Bin\glslc.exe' } else { 'glslc' }
-$shaders = Get-ChildItem Sources -Recurse -Include *.vert, *.frag | Sort-Object FullName
+$shaders = Get-ChildItem Sources, Tests -Recurse -Include *.vert, *.frag, *.comp | Sort-Object FullName
 foreach ($src in $shaders) {
     Write-Host "glslc $($src.FullName) -> $($src.FullName).spv"
     & $glslc --target-env=vulkan1.1 -O $src.FullName -o "$($src.FullName).spv"

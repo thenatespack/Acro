@@ -1,0 +1,126 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// One fixed simulation step of one emitter, one invocation per slot: slots in this step's
+// spawn range get a new particle, then every live particle is integrated (gravity, drag,
+// turbulence, attraction, ground collision) and aged; expired ones die. Each workgroup also
+// writes how many of its slots are alive, for particle_compact.comp.
+
+#include "particles.glsl"
+
+layout(local_size_x = 256) in;
+
+layout(set = 2, binding = 2, std140) uniform Params { EmitterParams emitter; };
+layout(set = 2, binding = 24, std430) buffer Particles { Particle particles[]; };
+// [0..3]: draw arguments, then one live count per workgroup.
+layout(set = 2, binding = 25, std430) buffer State { uint state[]; };
+
+shared uint groupAlive;
+
+const float TAU = 6.28318530718;
+
+// A smooth, divergence-free-looking swirl field: cheap sines, good enough for flames and smoke.
+vec3 turbulenceField(vec3 p, float t) {
+    return vec3(sin(p.y * 1.7 + p.z * 0.9 + t), sin(p.z * 1.3 + p.x * 1.1 + t * 1.21), sin(p.x * 1.5 + p.y * 0.7 + t * 0.83));
+}
+
+Particle spawnParticle(uint spawnIndex) {
+    uint key = pcgHash(spawnIndex ^ pcgHash(emitter.spawn.w));
+    vec3 local = vec3(0.0);
+    vec3 axis = emitter.shape.yzw;
+    uint kind = uint(emitter.shape.x);
+    if (kind == 1u) {  // sphere: uniform in the volume
+        float z = particleRandom(key, 0u) * 2.0 - 1.0, phi = particleRandom(key, 1u) * TAU;
+        vec3 dir = vec3(sqrt(max(1.0 - z * z, 0.0)) * vec2(cos(phi), sin(phi)), z);
+        local = dir * axis.x * pow(particleRandom(key, 2u), 1.0 / 3.0);
+    } else if (kind == 2u) {  // box
+        local = (vec3(particleRandom(key, 0u), particleRandom(key, 1u), particleRandom(key, 2u)) * 2.0 - 1.0) * axis;
+    } else if (kind == 3u) {  // disc in the local XZ plane, optionally gathered into spiral arms
+        float r = axis.x * sqrt(particleRandom(key, 0u));
+        float angle = particleRandom(key, 1u) * TAU;
+        if (emitter.disc.x > 0.0) {
+            // Arms: denser toward the center (radius uniform rather than area-uniform), each arm
+            // a band of the given width that twists with the radius.
+            r = axis.x * particleRandom(key, 0u);
+            float arm = floor(particleRandom(key, 1u) * emitter.disc.x);
+            angle = arm * TAU / emitter.disc.x + emitter.arms.x + r * emitter.disc.y + (particleRandom(key, 3u) - 0.5) * emitter.disc.z;
+        }
+        local = vec3(cos(angle) * r, (particleRandom(key, 2u) - 0.5) * axis.y, sin(angle) * r);
+    }
+
+    // A direction in the cone of half-angle acos(direction.w) around the emitter's direction.
+    vec3 forward = normalize(emitter.direction.xyz);
+    vec3 helper = abs(forward.y) < 0.99 ? vec3(0, 1, 0) : vec3(1, 0, 0);
+    vec3 side = normalize(cross(helper, forward)), up = cross(forward, side);
+    float cosTheta = mix(emitter.direction.w, 1.0, particleRandom(key, 4u));
+    float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0)), phi = particleRandom(key, 5u) * TAU;
+    vec3 localDirection = forward * cosTheta + (side * cos(phi) + up * sin(phi)) * sinTheta;
+    float speed = mix(emitter.speedLife.x, emitter.speedLife.y, particleRandom(key, 6u));
+    vec3 localVelocity = localDirection * speed;
+    if (emitter.sizeSpin.w != 0.0) {
+        // Orbit around the local Y axis: × the circular speed for the attraction (a spring: v = sqrt(k) r,
+        // so everything circles in the same period), or a plain speed without one.
+        float r = length(local.xz);
+        vec3 tangent = r > 1e-4 ? vec3(-local.z, 0.0, local.x) / r : vec3(0.0);
+        float orbital = emitter.turbulence.w > 0.0 ? sqrt(emitter.turbulence.w) * r : 1.0;
+        localVelocity += tangent * emitter.sizeSpin.w * orbital;
+    }
+
+    Particle p;
+    p.position = vec4((emitter.transform * vec4(local, 1.0)).xyz, 0.0);
+    p.velocity = vec4((emitter.transform * vec4(localVelocity, 0.0)).xyz,
+                      max(mix(emitter.speedLife.z, emitter.speedLife.w, particleRandom(key, 7u)), 1e-3));
+    p.attributes = vec4(mix(emitter.sizeSpin.x, emitter.sizeSpin.y, particleRandom(key, 8u)), particleRandom(key, 9u) * TAU,
+                        (particleRandom(key, 10u) * 2.0 - 1.0) * emitter.sizeSpin.z, particleRandom(key, 11u));
+    return p;
+}
+
+void main() {
+    uint slot = gl_GlobalInvocationID.x;
+    uint capacity = emitter.info.x;
+    if (gl_LocalInvocationIndex == 0u) groupAlive = 0u;
+    barrier();
+
+    if (slot < capacity) {
+        Particle p = particles[slot];
+        float dt = emitter.disc.w;
+        // Slots in this step's spawn range (a ring, wrapping at the capacity) get new particles,
+        // spread over the step so a fast emitter doesn't leave bands.
+        uint offset = (slot + capacity - emitter.spawn.x) % capacity;
+        if (offset < emitter.spawn.y) {
+            p = spawnParticle(emitter.spawn.z + offset);
+            dt *= (float(emitter.spawn.y - offset) - 0.5) / float(emitter.spawn.y);
+        }
+        if (p.velocity.w > 0.0) {
+            // Multiply-adds are explicit fma()s, so their rounding doesn't depend on what the
+            // compiler fuses: particles integrated for seconds amplify last-bit differences.
+            vec3 position = p.position.xyz, velocity = p.velocity.xyz;
+            vec3 acceleration = emitter.forces.xyz;
+            if (emitter.turbulence.x != 0.0) {
+                vec3 field = turbulenceField(position * emitter.turbulence.y, emitter.turbulence.z);
+                acceleration = fma(vec3(emitter.turbulence.x), field, acceleration);
+            }
+            if (emitter.turbulence.w != 0.0) {
+                // A spring toward the emitter: everything orbits in the same period, so spiral
+                // arms keep their shape instead of winding up.
+                acceleration = fma(emitter.transform[3].xyz - position, vec3(emitter.turbulence.w), acceleration);
+            }
+            velocity = fma(acceleration, vec3(dt), velocity);
+            velocity /= fma(emitter.forces.w, dt, 1.0);
+            position = fma(velocity, vec3(dt), position);
+            if (emitter.ground.x > 0.0 && position.y < emitter.ground.y && velocity.y < 0.0) {
+                position.y = fma(emitter.ground.y - position.y, emitter.ground.z, emitter.ground.y);
+                velocity.y = -velocity.y * emitter.ground.z;
+                velocity.xz *= 1.0 - emitter.ground.w;
+            }
+            float age = p.position.w + dt;
+            p.position = vec4(position, age);
+            p.velocity = vec4(velocity, age < p.velocity.w ? p.velocity.w : 0.0);
+        }
+        particles[slot] = p;
+        if (p.velocity.w > 0.0) atomicAdd(groupAlive, 1u);
+    }
+
+    barrier();
+    if (gl_LocalInvocationIndex == 0u) state[4u + gl_WorkGroupID.x] = groupAlive;
+}

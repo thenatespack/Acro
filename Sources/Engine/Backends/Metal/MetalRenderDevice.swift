@@ -8,6 +8,9 @@ import QuartzCore
 let metalInstanceBufferIndex = 1
 let metalUniformBufferIndex = 15
 let metalPushConstantIndex = 16
+/// MSL index of storage buffer 0 / storage texture 0 (see `ShaderSource`).
+let metalStorageBufferBase = 20
+let metalStorageTextureBase = 8
 private let maxFramesInFlight = 3
 /// Passes per frame whose GPU time is measured; later ones go untimed.
 private let maxTimedPasses = 32
@@ -111,6 +114,16 @@ final class MetalPipeline: RenderPipeline {
     }
 }
 
+final class MetalComputePipeline: ComputePipeline {
+    let state: MTLComputePipelineState
+    let workgroupSize: ComputeSize
+
+    init(state: MTLComputePipelineState, workgroupSize: ComputeSize) {
+        self.state = state
+        self.workgroupSize = workgroupSize
+    }
+}
+
 /// See `GPURenderTarget`. The depth (and MSAA color) attachments are memoryless where supported.
 final class MetalRenderTarget: GPURenderTarget {
     let resolved: MetalTexture
@@ -140,6 +153,8 @@ final class MetalRenderDevice: RenderDevice {
     var captureWindow = false
     /// `readBack` requests of the current frame.
     private var targetReadbacks: [(target: MetalRenderTarget, completion: @MainActor (Image) -> Void)] = []
+    /// Buffer readbacks waiting for their command buffer, delivered by `deliverBufferReadbacks`.
+    private var bufferReadbacks: [(commandBuffer: MTLCommandBuffer, copy: MTLBuffer, completion: @MainActor ([UInt8]) -> Void)] = []
     var vsync: Bool {
         get { layer.displaySyncEnabled }
         set { layer.displaySyncEnabled = newValue }
@@ -262,6 +277,7 @@ final class MetalRenderDevice: RenderDevice {
     /// Window-sized target for frames that couldn't get a drawable (rendered, then dropped).
     private var fallbackWindowTarget: MTLTexture?
     private var currentPass: MetalRenderPass?
+    private var currentComputePass: MetalComputePass?
 
     init(layer: CAMetalLayer, sampleCount requestedSamples: Int) throws {
         guard let device = MTLCreateSystemDefaultDevice() else { throw GraphicsError("No Metal device available") }
@@ -383,12 +399,21 @@ final class MetalRenderDevice: RenderDevice {
         return MetalBuffer(buffer)
     }
 
+    /// Shared memory, so the CPU can zero it (Apple GPUs have unified memory: no cost to the GPU).
+    func makeBuffer(length: Int, usage: BufferUsage) throws -> GPUBuffer {
+        guard length > 0, let buffer = device.makeBuffer(length: length, options: .storageModeShared) else {
+            throw GraphicsError("Failed to create Metal buffer of \(length) bytes")
+        }
+        memset(buffer.contents(), 0, length)
+        return MetalBuffer(buffer)
+    }
+
     /// Blits from this frame's transient memory into the buffer, in the frame's command buffer.
     /// Buffers use default hazard tracking, so the blit waits for earlier command buffers (and
     /// encoders) that read the buffer, and later ones wait for the blit.
     func updateBuffer(_ buffer: GPUBuffer, offset: Int, bytes: UnsafeRawBufferPointer) throws {
         guard let frame else { preconditionFailure("updateBuffer outside a frame") }
-        precondition(currentPass == nil, "updateBuffer called inside a pass; call it between passes")
+        precondition(currentPass == nil && currentComputePass == nil, "updateBuffer called inside a pass; call it between passes")
         let target = buffer as! MetalBuffer
         try validateBufferUpdate(bufferLength: target.length, offset: offset, byteCount: bytes.count)
         guard bytes.count > 0 else { return }
@@ -402,6 +427,18 @@ final class MetalRenderDevice: RenderDevice {
     }
 
     func makeTexture(_ descriptor: TextureDescriptor) throws -> GPUTexture {
+        if descriptor.storage {
+            try descriptor.validateStorage(maxSize: maxTextureSize)
+            let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: descriptor.format == .rgba16Float ? .rgba16Float : .rgba8Unorm,
+                width: descriptor.width, height: descriptor.height, mipmapped: false)
+            textureDescriptor.usage = [.shaderRead, .shaderWrite]
+            textureDescriptor.storageMode = .private
+            guard let texture = device.makeTexture(descriptor: textureDescriptor) else {
+                throw GraphicsError("Failed to create \(descriptor.width)x\(descriptor.height) storage texture")
+            }
+            return MetalTexture(texture, format: descriptor.format)
+        }
         guard descriptor.format == .depth32Float else {
             throw GraphicsError("Render targets must be .depth32Float; use makeTexture(pixels:...) for color textures")
         }
@@ -552,12 +589,12 @@ final class MetalRenderDevice: RenderDevice {
             let color = pipelineDescriptor.colorAttachments[0]!
             color.pixelFormat = layer.pixelFormat
             color.writeMask = descriptor.colorWrites ? .all : []
-            if descriptor.alphaBlending {
+            if let factors = descriptor.blendMode.factors {
                 color.isBlendingEnabled = true
-                color.sourceRGBBlendFactor = .sourceAlpha
-                color.destinationRGBBlendFactor = .oneMinusSourceAlpha
-                color.sourceAlphaBlendFactor = .one
-                color.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+                color.sourceRGBBlendFactor = factors.sourceColor.metal
+                color.destinationRGBBlendFactor = factors.destinationColor.metal
+                color.sourceAlphaBlendFactor = factors.sourceAlpha.metal
+                color.destinationAlphaBlendFactor = factors.destinationAlpha.metal
             }
         case .depthOnly:
             pipelineDescriptor.fragmentFunction = functions.fragment
@@ -593,6 +630,23 @@ final class MetalRenderDevice: RenderDevice {
             state: state, depthState: depthState, cullMode: cull, depthBias: descriptor.depthBias, format: format,
             screenDescriptor: isScreen ? pipelineDescriptor : nil, fullFragment: isScreen ? functions.fragment : nil,
             writesMotionVectors: descriptor.writesMotionVectors && descriptor.colorWrites)
+    }
+
+    func makeComputePipeline(_ descriptor: ComputePipelineDescriptor) throws -> ComputePipeline {
+        guard let source = descriptor.shader.metalComputeSource else { throw GraphicsError("Compute shader has no Metal source") }
+        let size = try descriptor.resolvedWorkgroupSize()
+        // MoltenVK compiles kernels with relaxed math; with the default (fast) the same MSL rounds
+        // differently in places (long particle simulations drift apart by a few ulps), so match it.
+        let options = MTLCompileOptions()
+        if #available(macOS 15.0, *) { options.mathMode = .relaxed }
+        guard let function = try device.makeLibrary(source: source, options: options).makeFunction(name: "compute_main") else {
+            throw GraphicsError("Metal compute shader must define compute_main")
+        }
+        let state = try device.makeComputePipelineState(function: function)
+        guard size.count > 0, size.count <= state.maxTotalThreadsPerThreadgroup else {
+            throw GraphicsError("Workgroup of \(size) exceeds the \(state.maxTotalThreadsPerThreadgroup) threads this GPU allows")
+        }
+        return MetalComputePipeline(state: state, workgroupSize: size)
     }
 
     func uploadTransient(_ bytes: UnsafeRawBufferPointer) -> TransientBuffer {
@@ -640,6 +694,7 @@ final class MetalRenderDevice: RenderDevice {
             return false
         }
 
+        deliverBufferReadbacks()
         let slot = frameNumber % maxFramesInFlight
         let ring = transientRings[slot]
         ring.reset()
@@ -983,7 +1038,7 @@ final class MetalRenderDevice: RenderDevice {
     private func beginPass(_ descriptor: MTLRenderPassDescriptor, timedAs name: String,
                            occlusion: OcclusionQueryBatch? = nil, format: MetalPassFormat?) -> RenderPass {
         guard let frame else { preconditionFailure("Render pass started outside a frame") }
-        precondition(currentPass == nil, "Previous pass was not ended")
+        precondition(currentPass == nil && currentComputePass == nil, "Previous pass was not ended")
         time(descriptor, as: name)
         guard let encoder = frame.commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else {
             preconditionFailure("Failed to create Metal render encoder")
@@ -996,6 +1051,55 @@ final class MetalRenderDevice: RenderDevice {
             occlusion: occlusion, format: format)
         currentPass = pass
         return pass
+    }
+
+    /// A serial compute encoder in the frame's command buffer: its dispatches run in order, and
+    /// hazard tracking (every buffer and texture we create is tracked) orders it against the
+    /// render and blit encoders around it, so no explicit barriers are needed.
+    func beginComputePass(label: String) -> ComputePass {
+        guard let frame else { preconditionFailure("Compute pass started outside a frame") }
+        precondition(currentPass == nil && currentComputePass == nil, "Previous pass was not ended")
+        let descriptor = MTLComputePassDescriptor()
+        descriptor.dispatchType = .serial
+        if !passTimestamps.isEmpty, timedPasses.count < maxTimedPasses {
+            let attachment = descriptor.sampleBufferAttachments[0]!
+            let first = timedPasses.count * 4
+            attachment.sampleBuffer = passTimestamps[frame.slot]
+            attachment.startOfEncoderSampleIndex = first
+            attachment.endOfEncoderSampleIndex = first + 1
+            timedPasses.append(TimedPass(name: label, span: true))
+        }
+        guard let encoder = frame.commandBuffer.makeComputeCommandEncoder(descriptor: descriptor) else {
+            preconditionFailure("Failed to create Metal compute encoder")
+        }
+        let pass = MetalComputePass(encoder: encoder, transient: frame.ring)
+        currentComputePass = pass
+        return pass
+    }
+
+    /// Blits the range into a new shared buffer in the frame's command buffer; `beginFrame` and
+    /// `waitIdle` hand it over once that command buffer has completed.
+    func readBack(_ buffer: GPUBuffer, offset: Int, length: Int, completion: @escaping @MainActor ([UInt8]) -> Void) {
+        guard let frame else { preconditionFailure("readBack outside a frame") }
+        precondition(currentPass == nil && currentComputePass == nil, "readBack called inside a pass; call it between passes")
+        validateBufferReadback(buffer, offset: offset, length: length)
+        guard let copy = device.makeBuffer(length: length, options: .storageModeShared),
+              let blit = frame.commandBuffer.makeBlitCommandEncoder() else {
+            preconditionFailure("Failed to encode a buffer readback")
+        }
+        blit.copy(from: (buffer as! MetalBuffer).buffer, sourceOffset: offset, to: copy, destinationOffset: 0, size: length)
+        blit.endEncoding()
+        bufferReadbacks.append((frame.commandBuffer, copy, completion))
+    }
+
+    /// Hands finished buffer readbacks to their completions, in request order.
+    private func deliverBufferReadbacks(waitingForAll: Bool = false) {
+        while let first = bufferReadbacks.first {
+            if waitingForAll { first.commandBuffer.waitUntilCompleted() }
+            guard first.commandBuffer.status == .completed || first.commandBuffer.status == .error else { return }
+            bufferReadbacks.removeFirst()
+            first.completion(Array(UnsafeRawBufferPointer(start: first.copy.contents(), count: first.copy.length)))
+        }
     }
 
     /// Samples GPU timestamps around the pass's vertex and fragment stages, for `gpuPassTimes`.
@@ -1077,6 +1181,11 @@ final class MetalRenderDevice: RenderDevice {
     }
 
     func endPass() {
+        if let compute = currentComputePass {
+            compute.encoder.endEncoding()
+            currentComputePass = nil
+            return
+        }
         // Only the scene pass has occlusion queries.
         if currentPass?.occlusion != nil { frame?.sceneEnded = true }
         currentPass?.occlusion?.checkClosed()
@@ -1153,6 +1262,7 @@ final class MetalRenderDevice: RenderDevice {
         let commandBuffer = queue.makeCommandBuffer()
         commandBuffer?.commit()
         commandBuffer?.waitUntilCompleted()
+        if frame == nil { deliverBufferReadbacks(waitingForAll: true) }
     }
 
     func shutdown() {}
@@ -1333,6 +1443,24 @@ final class MetalRenderPass: RenderPass {
             type: .triangle, vertexStart: firstVertex, vertexCount: vertexCount, instanceCount: instanceCount)
     }
 
+    func setStorageBuffer(_ buffer: GPUBuffer, offset: Int, index: Int, stage: ShaderStage) {
+        validateStorageBinding(buffer, offset: offset, index: index)
+        let buffer = (buffer as! MetalBuffer).buffer
+        if stage.contains(.vertex) { encoder.setVertexBuffer(buffer, offset: offset, index: metalStorageBufferBase + index) }
+        if stage.contains(.fragment) { encoder.setFragmentBuffer(buffer, offset: offset, index: metalStorageBufferBase + index) }
+    }
+
+    func drawIndirect(_ buffer: GPUBuffer, offset: Int) {
+        encoder.drawPrimitives(type: .triangle, indirectBuffer: (buffer as! MetalBuffer).buffer, indirectBufferOffset: offset)
+    }
+
+    func drawIndexedIndirect(_ buffer: GPUBuffer, offset: Int) {
+        guard let (indices, indexOffset, type) = indexBuffer else { preconditionFailure("drawIndexedIndirect without an index buffer") }
+        encoder.drawIndexedPrimitives(
+            type: .triangle, indexType: type == .uint16 ? .uint16 : .uint32, indexBuffer: indices, indexBufferOffset: indexOffset,
+            indirectBuffer: (buffer as! MetalBuffer).buffer, indirectBufferOffset: offset)
+    }
+
     func drawIndexed(indexCount: Int, instanceCount: Int, firstIndex: Int) {
         guard let (buffer, offset, type) = indexBuffer else { preconditionFailure("drawIndexed without an index buffer") }
         encoder.drawIndexedPrimitives(
@@ -1365,8 +1493,91 @@ final class MetalRenderPass: RenderPass {
     }
 }
 
+/// See `ComputePass`. Bindings go straight to the encoder, which keeps them across dispatches.
+final class MetalComputePass: ComputePass {
+    let encoder: MTLComputeCommandEncoder
+    private let transient: TransientRing<MetalBuffer>
+    private var pipeline: MetalComputePipeline?
+
+    init(encoder: MTLComputeCommandEncoder, transient: TransientRing<MetalBuffer>) {
+        self.encoder = encoder
+        self.transient = transient
+    }
+
+    func setPipeline(_ pipeline: ComputePipeline) {
+        let pipeline = pipeline as! MetalComputePipeline
+        encoder.setComputePipelineState(pipeline.state)
+        self.pipeline = pipeline
+    }
+
+    func setStorageBuffer(_ buffer: GPUBuffer, offset: Int, index: Int) {
+        validateStorageBinding(buffer, offset: offset, index: index)
+        encoder.setBuffer((buffer as! MetalBuffer).buffer, offset: offset, index: metalStorageBufferBase + index)
+    }
+
+    func setStorageTexture(_ texture: GPUTexture, index: Int) {
+        precondition(storageTextureIndices.contains(index), "Storage texture index \(index) is outside \(storageTextureIndices)")
+        let texture = (texture as! MetalTexture).texture
+        precondition(texture.usage.contains(.shaderWrite), "Not a storage texture (TextureDescriptor.storage)")
+        encoder.setTexture(texture, index: metalStorageTextureBase + index)
+    }
+
+    func setTexture(_ texture: GPUTexture, index: Int) {
+        precondition(textureIndices.contains(index), "Texture index \(index) is outside \(textureIndices)")
+        encoder.setTexture((texture as! MetalTexture).texture, index: index)
+    }
+
+    func setSampler(_ sampler: GPUSampler, index: Int) {
+        precondition(textureIndices.contains(index), "Sampler index \(index) is outside \(textureIndices)")
+        encoder.setSamplerState((sampler as! MetalSampler).state, index: index)
+    }
+
+    func setUniformBuffer(_ buffer: GPUBuffer, offset: Int, index: Int) {
+        precondition(uniformBufferIndices.contains(index), "Uniform buffer index \(index) is outside \(uniformBufferIndices)")
+        precondition(offset % uniformBufferOffsetAlignment == 0, "Uniform buffer offset must be a multiple of \(uniformBufferOffsetAlignment)")
+        encoder.setBuffer((buffer as! MetalBuffer).buffer, offset: offset, index: index)
+    }
+
+    func setUniformData(_ bytes: UnsafeRawBufferPointer, index: Int) {
+        precondition(uniformBufferIndices.contains(index), "Uniform buffer index \(index) is outside \(uniformBufferIndices)")
+        precondition(bytes.count <= maxUniformBufferSize, "Uniform data exceeds \(maxUniformBufferSize) bytes")
+        do {
+            let allocation = try transient.upload(bytes, alignment: uniformBufferOffsetAlignment)
+            encoder.setBuffer(allocation.chunk.buffer, offset: allocation.offset, index: index)
+        } catch {
+            preconditionFailure("\(error)")
+        }
+    }
+
+    func setPushConstants(_ bytes: UnsafeRawBufferPointer) {
+        precondition(bytes.count <= maxPushConstantSize, "Push constants exceed \(maxPushConstantSize) bytes")
+        guard let base = bytes.baseAddress else { return }
+        encoder.setBytes(base, length: bytes.count, index: metalPushConstantIndex)
+    }
+
+    func dispatch(groups: ComputeSize) {
+        guard let pipeline else { preconditionFailure("dispatch without a compute pipeline") }
+        guard groups.count > 0 else { return }
+        let size = pipeline.workgroupSize
+        encoder.dispatchThreadgroups(MTLSize(width: groups.x, height: groups.y, depth: groups.z),
+                                     threadsPerThreadgroup: MTLSize(width: size.x, height: size.y, depth: size.z))
+    }
+}
+
 private extension SamplerFilter {
     var metal: MTLSamplerMinMagFilter { self == .nearest ? .nearest : .linear }
+}
+
+extension BlendFactor {
+    var metal: MTLBlendFactor {
+        switch self {
+        case .zero: .zero
+        case .one: .one
+        case .sourceAlpha: .sourceAlpha
+        case .oneMinusSourceAlpha: .oneMinusSourceAlpha
+        case .destinationColor: .destinationColor
+        }
+    }
 }
 
 private extension VertexFormat {

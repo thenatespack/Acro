@@ -48,6 +48,9 @@ final class CountingRenderPass: RenderPass {
     func setTexture(_ texture: GPUTexture, index: Int, stage: ShaderStage) { inner.setTexture(texture, index: index, stage: stage) }
     func setSampler(_ sampler: GPUSampler, index: Int, stage: ShaderStage) { inner.setSampler(sampler, index: index, stage: stage) }
     func setPushConstants(_ bytes: UnsafeRawBufferPointer) { inner.setPushConstants(bytes) }
+    func setStorageBuffer(_ buffer: GPUBuffer, offset: Int, index: Int, stage: ShaderStage) {
+        inner.setStorageBuffer(buffer, offset: offset, index: index, stage: stage)
+    }
     func beginOcclusionQuery(_ set: OcclusionQuerySet, index: Int) { inner.beginOcclusionQuery(set, index: index) }
     func endOcclusionQuery() { inner.endOcclusionQuery() }
 
@@ -61,5 +64,16 @@ final class CountingRenderPass: RenderPass {
         drawCalls += 1
         triangles += indexCount / 3 * instanceCount
         inner.drawIndexed(indexCount: indexCount, instanceCount: instanceCount, firstIndex: firstIndex)
+    }
+
+    /// Counts the call; the GPU decides the triangles, so they aren't counted.
+    func drawIndirect(_ buffer: GPUBuffer, offset: Int) {
+        drawCalls += 1
+        inner.drawIndirect(buffer, offset: offset)
+    }
+
+    func drawIndexedIndirect(_ buffer: GPUBuffer, offset: Int) {
+        drawCalls += 1
+        inner.drawIndexedIndirect(buffer, offset: offset)
     }
 }

@@ -4,7 +4,7 @@ import CVulkan
 
 /// GLFW window used with the Vulkan backend (Linux, Windows, and macOS via MoltenVK).
 @MainActor
-final class GLFWWindow: PlatformWindow {
+final class GLFWWindow: PlatformWindow, VulkanSurfaceProvider {
     let handle: OpaquePointer
     private var currentTitle: String
     /// The input that char/key/scroll callbacks feed. Callbacks only run inside `glfwPollEvents`, where it is set.
@@ -17,7 +17,8 @@ final class GLFWWindow: PlatformWindow {
     private var lastCapturedPosition: Vec2?
     private let gamepads = makePlatformGamepadSource()
 
-    init(title: String, width: Int, height: Int) throws {
+    /// `visible` false creates a hidden window (GPU tests that need a Vulkan surface).
+    init(title: String, width: Int, height: Int, visible: Bool = true) throws {
         #if os(macOS)
         // Hand GLFW the loader we link against so it doesn't need to dlopen one itself.
         glfwInitVulkanLoader(vkGetInstanceProcAddr)
@@ -29,6 +30,7 @@ final class GLFWWindow: PlatformWindow {
         }
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API)
         glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE)
+        glfwWindowHint(GLFW_VISIBLE, visible ? GLFW_TRUE : GLFW_FALSE)
         guard let handle = glfwCreateWindow(Int32(width), Int32(height), title, nil, nil) else {
             glfwTerminate()
             throw GraphicsError("glfwCreateWindow failed")
@@ -59,6 +61,8 @@ final class GLFWWindow: PlatformWindow {
         glfwGetWindowContentScale(handle, &x, &y)
         return x
     }
+
+    var requiredInstanceExtensions: [String] { Self.requiredInstanceExtensions() }
 
     /// Instance extensions required to create a surface for this window.
     static func requiredInstanceExtensions() -> [String] {

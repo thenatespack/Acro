@@ -98,4 +98,5 @@ extension DemoScene {
     Audio3DScene.self,
     CharacterScene.self,
     SkinningScene.self,
+    ParticlesScene.self,
 ]

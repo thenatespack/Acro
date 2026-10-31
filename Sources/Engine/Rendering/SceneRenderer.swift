@@ -210,6 +210,9 @@ public final class SceneRenderer {
     private var lightData = LightClusters.GPUData()
     /// Bound as the light buffers when there are no point or spot lights (16 KiB of zeros).
     private let emptyLightBuffer: GPUBuffer
+    /// GPU particles of the world's `ParticleEmitter`s (see `SceneRenderer+Particles.swift`),
+    /// created with the first emitter; nil until then.
+    public internal(set) var particles: ParticleSystem?
 
     /// The light as `prepare` / `beginViews` set it up, with the frame's shadows.
     private struct LightSetup {
@@ -502,6 +505,7 @@ public final class SceneRenderer {
         shadowSetup = light.shadows
         debugView = DebugView(viewProjection: jittered, cameraPosition: eye, viewportSize: size, reversedZ: camera.reversedZ,
                               projectionScale: camera.projection(aspect: engine.aspectRatio).c1.y)
+        prepareParticles(world: world, cameraPosition: eye)
     }
 
     /// Sets up the sky and image-based lighting of `environment` for this frame.
@@ -599,6 +603,7 @@ public final class SceneRenderer {
         uploaded = list.instances.isEmpty ? nil : frame.upload(list.instances)
         environmentLighting.render()
         renderShadowAtlas(shadowsActive ? shadowSetup : nil, frame: frame)
+        particles?.simulate(frame: frame)
     }
 
     /// Renders every tile of `shadows` into the atlas in one depth pass (resizing the atlas to
@@ -672,6 +677,9 @@ public final class SceneRenderer {
         environmentLighting.render()
         buildShadowCasters(light.shadows)
         renderShadowAtlas(light.shadows, frame: frame)
+        prepareParticles(world: world, cameraPosition: shadowFocus?.eye ?? Vec3(focus.view.inverse.c3.x, focus.view.inverse.c3.y,
+                                                                                focus.view.inverse.c3.z))
+        particles?.simulate(frame: frame)
     }
 
     /// Renders the world as gathered by `beginViews` from `view` into `target` (cleared to
@@ -860,6 +868,7 @@ public final class SceneRenderer {
                 draw(pass, batch, instances: uploaded)
             }
         }
+        drawParticles(in: pass, uniforms: uniforms, reversedZ: reversedZ)
     }
 
     private func draw(_ pass: RenderPass, _ batch: RenderBatch, instances: TransientBuffer) {

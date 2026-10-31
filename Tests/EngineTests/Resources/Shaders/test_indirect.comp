@@ -1,0 +1,22 @@
+#version 450
+// ComputeTests: writes a quad (two triangles) covering the left or right half of clip space into
+// a vertex storage buffer, and draw arguments for it at the start of another buffer.
+layout(local_size_x = 1) in;
+
+layout(set = 2, binding = 24, std430) buffer Positions { vec4 positions[]; };
+layout(set = 2, binding = 25, std430) buffer Arguments { uint arguments[]; };
+
+layout(push_constant) uniform Push {
+    float left;
+    float right;
+} push;
+
+void main() {
+    vec2 corners[6] = vec2[](vec2(push.left, -1), vec2(push.right, -1), vec2(push.right, 1),
+                             vec2(push.left, -1), vec2(push.right, 1), vec2(push.left, 1));
+    for (int i = 0; i < 6; i++) positions[i] = vec4(corners[i], 0.5, 1);
+    arguments[0] = 6u;  // vertexCount
+    arguments[1] = 1u;  // instanceCount
+    arguments[2] = 0u;
+    arguments[3] = 0u;
+}

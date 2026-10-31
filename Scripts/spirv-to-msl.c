@@ -1,11 +1,11 @@
-// Cross-compiles one SPIR-V stage (vertex or fragment) to MSL for the Metal backend.
+// Cross-compiles one SPIR-V stage (vertex, fragment or compute) to MSL for the Metal backend.
 // Built and run by Scripts/compile-shaders.sh; links the SPIRV-Cross C API.
 //
 //   spirv-to-msl <in.spv> <out.metal> <GLSL source path> [fragment output mask]
 //
 // Uses the same SPIRV-Cross that MoltenVK uses to run our SPIR-V on Metal, so native Metal
 // executes the same MSL as Vulkan-on-MoltenVK, apart from three things set here:
-// - Entry point `main` is renamed `vertex_main` / `fragment_main`.
+// - Entry point `main` is renamed `vertex_main` / `fragment_main` / `compute_main`.
 // - Resources get the Metal indices of the binding table in `ShaderSource` (the spirv-cross
 //   CLI can't remap descriptor sets / push constants, hence this driver). A resource outside
 //   the table is an error.
@@ -71,6 +71,8 @@ static int metalIndex(unsigned set, unsigned binding, unsigned *buffer, unsigned
     if (set == 2 && binding >= 2 && binding <= 7) { *buffer = binding; return 1; } // uniform buffer n
     if (set == 2 && binding >= 8 && binding <= 15) { *texture = binding - 8; return 1; }
     if (set == 2 && binding >= 16 && binding <= 23) { *sampler = binding - 16; return 1; }
+    if (set == 2 && binding >= 24 && binding <= 31) { *buffer = 20 + binding - 24; return 1; } // storage buffer n
+    if (set == 2 && binding >= 32 && binding <= 39) { *texture = 8 + binding - 32; return 1; } // storage texture n
     return 0;
 }
 
@@ -104,7 +106,8 @@ int main(int argc, char **argv) {
     const char *entry;
     if (model == SpvExecutionModelVertex) entry = "vertex_main";
     else if (model == SpvExecutionModelFragment) entry = "fragment_main";
-    else fail("only vertex and fragment shaders are supported", argv[1]);
+    else if (model == SpvExecutionModelGLCompute) entry = "compute_main";
+    else fail("only vertex, fragment and compute shaders are supported", argv[1]);
     check(spvc_compiler_rename_entry_point(compiler, "main", entry, model), context, "rename entry point");
 
     spvc_compiler_options options;
@@ -155,8 +158,9 @@ int main(int argc, char **argv) {
             remap.desc_set = set;
             remap.binding = binding;
             remap.count = 1;
-            int buffer = kinds[k].type == SPVC_RESOURCE_TYPE_UNIFORM_BUFFER;
-            int texture = kinds[k].type == SPVC_RESOURCE_TYPE_SAMPLED_IMAGE || kinds[k].type == SPVC_RESOURCE_TYPE_SEPARATE_IMAGE;
+            int buffer = kinds[k].type == SPVC_RESOURCE_TYPE_UNIFORM_BUFFER || kinds[k].type == SPVC_RESOURCE_TYPE_STORAGE_BUFFER;
+            int texture = kinds[k].type == SPVC_RESOURCE_TYPE_SAMPLED_IMAGE || kinds[k].type == SPVC_RESOURCE_TYPE_SEPARATE_IMAGE
+                || kinds[k].type == SPVC_RESOURCE_TYPE_STORAGE_IMAGE;
             int sampler = kinds[k].type == SPVC_RESOURCE_TYPE_SAMPLED_IMAGE || kinds[k].type == SPVC_RESOURCE_TYPE_SEPARATE_SAMPLERS;
             unsigned b = ~0u, t = ~0u, s = ~0u;
             int known = (buffer || texture || sampler) && metalIndex(set, binding, &b, &t, &s)

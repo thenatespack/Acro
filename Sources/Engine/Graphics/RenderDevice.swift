@@ -29,6 +29,10 @@ public enum BufferUsage: Sendable {
     case vertex, index
     /// Bound with `RenderPass.setUniformBuffer`.
     case uniform
+    /// Written and read by shaders (`ComputePass.setStorageBuffer`, `RenderPass.setStorageBuffer`),
+    /// and also usable as vertex, index, uniform and indirect-argument data (`drawIndirect`).
+    /// Device memory on Vulkan, shared memory on Metal.
+    case storage
 }
 
 /// A rectangle of a render target in pixels, origin at the top left.
@@ -122,6 +126,50 @@ public enum PipelineTarget: Sendable, Equatable {
     case color(TextureFormat)
 }
 
+/// How a pipeline combines its fragment color with the color already in the target.
+/// Factors per mode, `src` the shader's output and `dst` the target (color; alpha):
+///
+/// | Mode | Color | Alpha |
+/// |---|---|---|
+/// | `opaque` | src | src |
+/// | `alpha` | src · srcα + dst · (1 − srcα) | src + dst · (1 − srcα) |
+/// | `premultipliedAlpha` | src + dst · (1 − srcα) | src + dst · (1 − srcα) |
+/// | `additive` | src · srcα + dst | dst |
+/// | `multiply` | src · dst | dst |
+///
+/// Additive is weighted by alpha so faded-out particles and sprites add nothing; its sum doesn't
+/// depend on draw order except for floating-point rounding (so draws stay ordered for
+/// reproducible output). Multiply ignores alpha: transparent texels must be white.
+public enum BlendMode: String, Sendable, Codable, CaseIterable {
+    case opaque, alpha, premultipliedAlpha, additive, multiply
+
+    /// The fixed-function factors, nil for `opaque` (blending off). Backends map these 1:1.
+    var factors: BlendFactors? {
+        switch self {
+        case .opaque: nil
+        case .alpha: BlendFactors(sourceColor: .sourceAlpha, destinationColor: .oneMinusSourceAlpha,
+                                  sourceAlpha: .one, destinationAlpha: .oneMinusSourceAlpha)
+        case .premultipliedAlpha: BlendFactors(sourceColor: .one, destinationColor: .oneMinusSourceAlpha,
+                                               sourceAlpha: .one, destinationAlpha: .oneMinusSourceAlpha)
+        case .additive: BlendFactors(sourceColor: .sourceAlpha, destinationColor: .one, sourceAlpha: .zero, destinationAlpha: .one)
+        case .multiply: BlendFactors(sourceColor: .destinationColor, destinationColor: .zero, sourceAlpha: .zero, destinationAlpha: .one)
+        }
+    }
+}
+
+/// A blend factor of `BlendFactors` (the operation is always add).
+enum BlendFactor: Sendable, Equatable {
+    case zero, one, sourceAlpha, oneMinusSourceAlpha, destinationColor
+}
+
+/// `result = source · sourceFactor + destination · destinationFactor`, for color and alpha.
+struct BlendFactors: Sendable, Equatable {
+    var sourceColor: BlendFactor
+    var destinationColor: BlendFactor
+    var sourceAlpha: BlendFactor
+    var destinationAlpha: BlendFactor
+}
+
 public struct PipelineDescriptor: Sendable {
     public var shader: ShaderSource
     /// Per-vertex data from vertex buffer slot 0.
@@ -135,8 +183,14 @@ public struct PipelineDescriptor: Sendable {
     public var depthWrite: Bool = true
     public var depthCompare: CompareFunction = .less
     public var depthBias: DepthBias?
-    /// Standard (non-premultiplied) alpha blending.
-    public var alphaBlending: Bool = false
+    /// How the output is blended into `.screen` targets (see `BlendMode`). `.color` pipelines don't blend.
+    public var blendMode: BlendMode = .opaque
+    /// Standard (non-premultiplied) alpha blending: `blendMode == .alpha`. Setting it to false
+    /// turns any blending off.
+    public var alphaBlending: Bool {
+        get { blendMode == .alpha }
+        set { blendMode = newValue ? .alpha : .opaque }
+    }
     /// false leaves the color target untouched (e.g. occlusion-query proxies, depth prepasses).
     public var colorWrites: Bool = true
     /// The fragment shader writes screen-space motion vectors to its second output
@@ -183,11 +237,27 @@ public struct TextureDescriptor: Sendable {
     public var width: Int
     public var height: Int
     public var format: TextureFormat
+    /// A storage texture: written (and read) by compute shaders with `ComputePass.setStorageTexture`,
+    /// sampled like any texture with `setTexture(_:index:)`. Formats `.rgba16Float` and
+    /// `.rgba8Unorm`; contents start out undefined. Without it, the format must be `.depth32Float`
+    /// (a depth render target).
+    public var storage: Bool
 
-    public init(width: Int, height: Int, format: TextureFormat) {
+    public init(width: Int, height: Int, format: TextureFormat, storage: Bool = false) {
         self.width = width
         self.height = height
         self.format = format
+        self.storage = storage
+    }
+
+    /// Checks a storage texture's format and size.
+    func validateStorage(maxSize: Int) throws {
+        guard format == .rgba16Float || format == .rgba8Unorm else {
+            throw GraphicsError("Storage textures must be .rgba16Float or .rgba8Unorm, not \(format)")
+        }
+        guard width > 0, height > 0, width <= maxSize, height <= maxSize else {
+            throw GraphicsError("Storage texture of \(width)x\(height) is outside 1...\(maxSize)")
+        }
     }
 }
 
@@ -271,6 +341,12 @@ public let uniformBufferOffsetAlignment = 256
 public let uniformBufferIndices = 2..<8
 /// Valid `index` values for textures and samplers. 0 is the shadow-map slot (`setTexture(_:)`).
 public let textureIndices = 1..<8
+/// Valid `index` values for storage buffers (`setStorageBuffer`).
+public let storageBufferIndices = 0..<8
+/// Valid `index` values for storage textures (`ComputePass.setStorageTexture`).
+public let storageTextureIndices = 0..<8
+/// Alignment of storage buffer binding offsets (the largest `minStorageBufferOffsetAlignment` we target).
+public let storageBufferOffsetAlignment = 256
 
 /// Records draw commands for one render pass.
 ///
@@ -314,8 +390,18 @@ public let textureIndices = 1..<8
     func setSampler(_ sampler: GPUSampler, index: Int, stage: ShaderStage)
     /// Small per-draw data visible to both shader stages (≤ `maxPushConstantSize` bytes).
     func setPushConstants(_ bytes: UnsafeRawBufferPointer)
+    /// Binds `buffer` (created with `.storage` usage) from `offset` (a multiple of
+    /// `storageBufferOffsetAlignment`) as read-only storage buffer `index` (`storageBufferIndices`):
+    /// GLSL `layout(set = 2, binding = 24 + n, std430) readonly buffer`. E.g. per-instance data a
+    /// compute pass wrote, indexed with `gl_InstanceIndex`.
+    func setStorageBuffer(_ buffer: GPUBuffer, offset: Int, index: Int, stage: ShaderStage)
     func draw(vertexCount: Int, instanceCount: Int, firstVertex: Int)
     func drawIndexed(indexCount: Int, instanceCount: Int, firstIndex: Int)
+    /// Draws with arguments the GPU reads from `buffer` (`.storage` usage) at `offset` (a multiple
+    /// of 4): `DrawIndirectArguments`, typically written by a compute pass earlier in the frame.
+    func drawIndirect(_ buffer: GPUBuffer, offset: Int)
+    /// `drawIndexed` with `DrawIndexedIndirectArguments` from `buffer` (index buffer as set).
+    func drawIndexedIndirect(_ buffer: GPUBuffer, offset: Int)
     /// Starts counting samples that pass the depth test into `set.results[index]` (see
     /// `OcclusionQuerySet`). Screen pass only; one query open at a time, closed before the pass ends.
     func beginOcclusionQuery(_ set: OcclusionQuerySet, index: Int)
@@ -374,13 +460,52 @@ extension RenderPass {
     public func drawIndexed(indexCount: Int, instanceCount: Int = 1) {
         drawIndexed(indexCount: indexCount, instanceCount: instanceCount, firstIndex: 0)
     }
+
+    public func setStorageBuffer(_ buffer: GPUBuffer, index: Int, stage: ShaderStage = .vertex) {
+        setStorageBuffer(buffer, offset: 0, index: index, stage: stage)
+    }
+}
+
+/// The layout `drawIndirect` reads (`VkDrawIndirectCommand`, `MTLDrawPrimitivesIndirectArguments`).
+public struct DrawIndirectArguments: Sendable, BitwiseCopyable, Equatable {
+    public var vertexCount: UInt32
+    public var instanceCount: UInt32
+    public var firstVertex: UInt32
+    /// Must be 0 (Vulkan's `drawIndirectFirstInstance` isn't required).
+    public var firstInstance: UInt32
+
+    public init(vertexCount: UInt32, instanceCount: UInt32, firstVertex: UInt32 = 0, firstInstance: UInt32 = 0) {
+        self.vertexCount = vertexCount
+        self.instanceCount = instanceCount
+        self.firstVertex = firstVertex
+        self.firstInstance = firstInstance
+    }
+}
+
+/// The layout `drawIndexedIndirect` reads (`VkDrawIndexedIndirectCommand`, `MTLDrawIndexedPrimitivesIndirectArguments`).
+public struct DrawIndexedIndirectArguments: Sendable, BitwiseCopyable, Equatable {
+    public var indexCount: UInt32
+    public var instanceCount: UInt32
+    public var firstIndex: UInt32
+    public var vertexOffset: Int32
+    /// Must be 0.
+    public var firstInstance: UInt32
+
+    public init(indexCount: UInt32, instanceCount: UInt32, firstIndex: UInt32 = 0, vertexOffset: Int32 = 0, firstInstance: UInt32 = 0) {
+        self.indexCount = indexCount
+        self.instanceCount = instanceCount
+        self.firstIndex = firstIndex
+        self.vertexOffset = vertexOffset
+        self.firstInstance = firstInstance
+    }
 }
 
 /// A graphics backend. Resources it creates are freed when released (or, at the
 /// latest, when the device shuts down).
 ///
-/// Frame structure: `beginFrame` → any number of `beginDepthPass` / `beginPass(target:…)` +
-/// `endPass` → `beginScreenPass` → `beginWindowPass` → `endFrame`. Games normally use `Frame` instead.
+/// Frame structure: `beginFrame` → any number of `beginDepthPass` / `beginPass(target:…)` /
+/// `beginComputePass` + `endPass` → `beginScreenPass` → `beginWindowPass` → `endFrame`. Games
+/// normally use `Frame` instead.
 @MainActor public protocol RenderDevice: AnyObject {
     var backend: GraphicsBackend { get }
     /// Human-readable GPU name.
@@ -397,6 +522,9 @@ extension RenderPass {
     var gpuPassTimes: [GPUPassTime] { get }
 
     func makeBuffer(bytes: UnsafeRawBufferPointer, usage: BufferUsage) throws -> GPUBuffer
+    /// A buffer of `length` zero bytes, typically `.storage` for a compute pass to fill. Like
+    /// `makeBuffer(bytes:)`, blocks on Vulkan until it is ready.
+    func makeBuffer(length: Int, usage: BufferUsage) throws -> GPUBuffer
     /// Replaces `bytes.count` bytes of a buffer from `makeBuffer`, starting at `offset`.
     ///
     /// The bytes are copied immediately (the caller's memory need not outlive the call) into
@@ -415,7 +543,7 @@ extension RenderPass {
     /// range isn't inside the buffer. Intended for occasional edits (a few KiB to MiB per
     /// frame); the data passes through transient memory, so don't use it for bulk streaming.
     func updateBuffer(_ buffer: GPUBuffer, offset: Int, bytes: UnsafeRawBufferPointer) throws
-    /// An offscreen render target (currently `.depth32Float` only).
+    /// A `.depth32Float` render target, or a storage texture (`TextureDescriptor.storage`).
     func makeTexture(_ descriptor: TextureDescriptor) throws -> GPUTexture
     /// A 2D color texture from explicit mip levels (`TextureMipLevel`, level 0 first, each half
     /// the size of the previous, at least one). The data is copied; the texture is freed like
@@ -437,6 +565,8 @@ extension RenderPass {
     /// A sampler for `descriptor`. Identical descriptors return the same object.
     func makeSampler(_ descriptor: SamplerDescriptor) throws -> GPUSampler
     func makePipeline(_ descriptor: PipelineDescriptor) throws -> RenderPipeline
+    /// A compute pipeline (see `ComputePass`).
+    func makeComputePipeline(_ descriptor: ComputePipelineDescriptor) throws -> ComputePipeline
     /// Copies `bytes` into this frame's transient memory (between `beginFrame` and `endFrame`).
     func uploadTransient(_ bytes: UnsafeRawBufferPointer) -> TransientBuffer
 
@@ -456,6 +586,9 @@ extension RenderPass {
     /// frame (the window pass included). Takes `.screen` pipelines; there is no motion-vector
     /// attachment and no occlusion queries.
     func beginPass(target: GPURenderTarget, clearColor: Vec4, clearDepth: Float, label: String) -> RenderPass
+    /// Starts a compute pass, timed as `label` and ended with `endPass`. Allowed whenever no other
+    /// pass is open; see `ComputePass` for how it is ordered against other passes.
+    func beginComputePass(label: String) -> ComputePass
     /// Starts the pass the scene renders into (the window, or the offscreen render target).
     func beginScreenPass(clearColor: Vec4, clearDepth: Float) -> RenderPass
     /// Render the scene pass into a linear RGBA16F image instead of the window's sRGB format,
@@ -487,6 +620,11 @@ extension RenderPass {
     /// `endFrame` waits for the GPU, like a captured frame, and calls `completion` with the
     /// pixels (RGBA8, top row first). Call it inside a frame, after the passes into `target`.
     func readBack(_ target: GPURenderTarget, completion: @escaping @MainActor (Image) -> Void)
+    /// Copies `length` bytes of `buffer` from `offset` at this point of the frame (between
+    /// passes) and hands them to `completion` once the GPU has finished the frame, without
+    /// stalling: at the start of a later frame (when its frame slot comes around again) or in
+    /// `waitIdle`. For GPU-computed counters and tests.
+    func readBack(_ buffer: GPUBuffer, offset: Int, length: Int, completion: @escaping @MainActor ([UInt8]) -> Void)
     /// Capture the window image (after upscaling and window-pass UI) instead of the scene at
     /// render resolution.
     var captureWindow: Bool { get set }
@@ -512,6 +650,10 @@ extension RenderDevice {
 
     public func makeBuffer<T: BitwiseCopyable>(_ elements: [T], usage: BufferUsage) throws -> GPUBuffer {
         try elements.withUnsafeBytes { try makeBuffer(bytes: $0, usage: usage) }
+    }
+
+    public func makeComputePipeline(shader: ShaderSource) throws -> ComputePipeline {
+        try makeComputePipeline(ComputePipelineDescriptor(shader: shader))
     }
 
     /// A texture from a decoded 8-bit image (see `ImageDecoder`), with a full mip chain unless
@@ -588,7 +730,8 @@ public struct GraphicsError: Error, CustomStringConvertible {
     public init(_ description: String) { self.description = description }
 }
 
-/// GPU time of one pass: `depth` (`beginDepthPass`), `scene` (`beginScreenPass`), post-processing
+/// GPU time of one pass: `depth` (`beginDepthPass`), `scene` (`beginScreenPass`), compute passes
+/// by their label (e.g. `particles`), post-processing
 /// passes by their label (`bloom`, `exposure`, `tonemap`), `upscale`
 /// (an upscaler's first stage: EASU, TAAU or MetalFX), `window` (`beginWindowPass` when
 /// rendering offscreen) or a render target pass's label.
