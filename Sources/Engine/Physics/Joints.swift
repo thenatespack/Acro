@@ -1,6 +1,12 @@
 // Joints: velocity constraints between two bodies (or a body and the world), solved with
-// the contacts by sequential impulses with warm starting. Position drift is corrected with
-// a Baumgarte bias.
+// the contacts by sequential impulses with warm starting. Drift is corrected softly (after
+// Box2D v3): while iterating, each constraint is a stiff damped spring (twice the contact
+// frequency, at most a quarter of the substep rate; `jointDampingRatio`) that pushes the
+// anchors back together and lets go of part of its accumulated impulse; the relax pass after
+// the positions are integrated solves it rigidly without the push, so the correction moves
+// positions but leaves no velocity behind.
+// (A rigid Baumgarte bias, which the warm start then reapplied, fed energy into the chain
+// demo: an out-of-plane wobble grew until hinges and the chain flailed.)
 
 /// What a joint holds together.
 public enum JointKind: String, Codable, Sendable, CaseIterable {
@@ -70,23 +76,21 @@ struct JointData {
     var rA = Vec3.zero, rB = Vec3.zero
     var linearMass = Mat3.zero
     var angularMass = Mat3.zero
-    var linearBias = Vec3.zero, angularBias = Vec3.zero
+    /// Position errors at the start of the substep (anchor gap, angular errors, length).
+    var linearError = Vec3.zero, angularError = Vec3.zero
     var perpendicular1 = Vec3.zero, perpendicular2 = Vec3.zero
     var hingeMass = Vec4.zero
-    var hingeBias = Vec2.zero
+    var hingeError = Vec2.zero
     var axis = Vec3.zero
     var axialMass: Float = 0
-    var axialBias: Float = 0
+    var axialError: Float = 0
     var linearImpulse = Vec3.zero, angularImpulse = Vec3.zero
     var hingeImpulse = Vec2.zero
     var axialImpulse: Float = 0
 }
 
 extension PhysicsWorld {
-    static let jointBaumgarte: Float = 0.2
-
-    func prepareJoints(dt: Float) {
-        let beta = Self.jointBaumgarte / dt
+    func prepareJoints() {
         for j in joints.indices where joints[j].isAlive {
             let a = bodies[joints[j].a], b = bodies[joints[j].b]
             guard a.isSolverActive || b.isSolverActive else { continue }
@@ -101,7 +105,7 @@ extension PhysicsWorld {
                 let skewA = Mat3.skew(joint.rA), skewB = Mat3.skew(joint.rB)
                 let k = Mat3.identity * (a.invMass + b.invMass) - skewA * iA * skewA - skewB * iB * skewB
                 joint.linearMass = k.inverse
-                joint.linearBias = (pB - pA) * beta
+                joint.linearError = pB - pA
             case .distance:
                 let d = pB - pA
                 let len = length(d)
@@ -109,7 +113,7 @@ extension PhysicsWorld {
                 let ca = cross(joint.rA, joint.axis), cb = cross(joint.rB, joint.axis)
                 let k = a.invMass + b.invMass + dot(ca, iA * ca) + dot(cb, iB * cb)
                 joint.axialMass = k > 0 ? 1 / k : 0
-                joint.axialBias = (len - joint.length) * beta
+                joint.axialError = len - joint.length
             }
             let angular = iA + iB
             if joint.kind == .hinge {
@@ -121,12 +125,12 @@ extension PhysicsWorld {
                 let det = k11 * k22 - k12 * k12
                 joint.hingeMass = abs(det) > 1e-12 ? Vec4(k22, -k12, -k12, k11) / det : .zero
                 let error = cross(axisA, axisB)
-                joint.hingeBias = Vec2(dot(error, p1), dot(error, p2)) * beta
+                joint.hingeError = Vec2(dot(error, p1), dot(error, p2))
             } else if joint.kind == .fixed {
                 joint.angularMass = angular.inverse
                 var q = qB * (qA * joint.relativeRotation).conjugate
                 if q.w < 0 { q = Quat(vector: -q.vector) }
-                joint.angularBias = q.imaginary * (2 * beta)
+                joint.angularError = q.imaginary * 2
             }
             joints[j] = joint
         }
@@ -143,7 +147,12 @@ extension PhysicsWorld {
         }
     }
 
-    func solveJoints() {
+    /// One pass over the joints. With `useBias`, soft: the errors are pushed out by the spring
+    /// of `softness`; without (the relax pass), rigid velocity constraints only.
+    func solveJoints(softness: Softness, useBias: Bool) {
+        let biasRate = useBias ? softness.biasRate : 0
+        let massScale = useBias ? softness.massScale : 1
+        let impulseScale = useBias ? softness.impulseScale : 0
         for j in joints.indices where joints[j].isAlive {
             var joint = joints[j]
             let a = bodies[joint.a], b = bodies[joint.b]
@@ -151,25 +160,25 @@ extension PhysicsWorld {
             // Angular rows first, then the point, which matters most visually.
             if joint.kind == .hinge {
                 let dw = b.angularVelocity - a.angularVelocity
-                let cdot = Vec2(dot(dw, joint.perpendicular1), dot(dw, joint.perpendicular2)) + joint.hingeBias
+                let cdot = Vec2(dot(dw, joint.perpendicular1), dot(dw, joint.perpendicular2)) + joint.hingeError * biasRate
                 let m = joint.hingeMass
-                let lambda = -Vec2(m.x * cdot.x + m.z * cdot.y, m.y * cdot.x + m.w * cdot.y)
+                let lambda = -Vec2(m.x * cdot.x + m.z * cdot.y, m.y * cdot.x + m.w * cdot.y) * massScale - joint.hingeImpulse * impulseScale
                 joint.hingeImpulse += lambda
                 applyJointImpulse(joint, linear: .zero, angular: joint.perpendicular1 * lambda.x + joint.perpendicular2 * lambda.y)
             } else if joint.kind == .fixed {
-                let cdot = b.angularVelocity - a.angularVelocity + joint.angularBias
-                let lambda = -(joint.angularMass * cdot)
+                let cdot = b.angularVelocity - a.angularVelocity + joint.angularError * biasRate
+                let lambda = -(joint.angularMass * cdot) * massScale - joint.angularImpulse * impulseScale
                 joint.angularImpulse += lambda
                 applyJointImpulse(joint, linear: .zero, angular: lambda)
             }
             let va = bodies[joint.a], vb = bodies[joint.b]
             let dv = vb.linearVelocity + cross(vb.angularVelocity, joint.rB) - va.linearVelocity - cross(va.angularVelocity, joint.rA)
             if joint.kind == .distance {
-                let lambda = -joint.axialMass * (dot(dv, joint.axis) + joint.axialBias)
+                let lambda = -joint.axialMass * massScale * (dot(dv, joint.axis) + joint.axialError * biasRate) - joint.axialImpulse * impulseScale
                 joint.axialImpulse += lambda
                 applyJointImpulse(joint, linear: joint.axis * lambda, angular: .zero)
             } else {
-                let lambda = -(joint.linearMass * (dv + joint.linearBias))
+                let lambda = -(joint.linearMass * (dv + joint.linearError * biasRate)) * massScale - joint.linearImpulse * impulseScale
                 joint.linearImpulse += lambda
                 applyJointImpulse(joint, linear: lambda, angular: .zero)
             }

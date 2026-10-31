@@ -1,9 +1,9 @@
 // The solver: sequential impulses with soft contacts and substepping (after Box2D v3's "soft
 // step"). Each step's contact manifolds are solved over `substeps` substeps; each substep
 // integrates velocities, warm starts, solves contacts and joints `velocityIterations` times
-// with a soft push-out bias, integrates positions, then relaxes (solves again without the
-// bias, so the push-out adds no energy). Restitution is a final pass using the approach
-// speed from before the step.
+// with a soft push-out bias, integrates positions, then relaxes (solves joints and contacts
+// again without the bias, so the push-out adds no energy). Restitution is a final pass using
+// the approach speed from before the step.
 //
 // Per contact point there is a normal impulse (no pulling; a speculative point, still
 // apart, lets the bodies approach up to the gap). Friction acts per manifold at its center:
@@ -69,15 +69,19 @@ extension PhysicsWorld {
         var constraints = makeContactConstraints()
         let n = max(substeps, 1)
         let h = dt / Float(n)
-        let softness = Softness(hertz: min(contactHertz, 0.25 / h), dampingRatio: contactDampingRatio, h: h)
+        let contactHertz = min(self.contactHertz, 0.25 / h)
+        let softness = Softness(hertz: contactHertz, dampingRatio: contactDampingRatio, h: h)
+        // Joints are stiffer than contacts, but no stiffer than a quarter of the substep rate
+        // either: at half of it (120 Hz at 240) a resting chain jitters and never sleeps.
+        let jointSoftness = Softness(hertz: min(2 * contactHertz, 0.25 / h), dampingRatio: jointDampingRatio, h: h)
         for _ in 0..<n {
             integrateVelocities(h)
             for k in constraints.indices { updateAnchors(&constraints[k]) }
-            prepareJoints(dt: h)
+            prepareJoints()
             warmStart(constraints)
             warmStartJoints()
             for iteration in 0..<velocityIterations {
-                solveJoints()
+                solveJoints(softness: jointSoftness, useBias: true)
                 // Alternate the order (symmetric Gauss-Seidel), so the order's bias cancels out.
                 let reversed = iteration % 2 == 1
                 for k in constraints.indices {
@@ -87,6 +91,7 @@ extension PhysicsWorld {
             }
             integratePositions(h)
             // Relax: remove the velocity the push-out added.
+            solveJoints(softness: jointSoftness, useBias: false)
             for k in constraints.indices {
                 updateAnchors(&constraints[k], massesToo: false)
                 solveContact(&constraints[k], softness: nil, h: h, reversed: false)

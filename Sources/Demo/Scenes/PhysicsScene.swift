@@ -162,6 +162,7 @@ final class PhysicsScene: DemoScene {
             let x = anchor.x + length * (Float(k) + 0.5)
             let link = box("Link", mesh: "cube", material: "metal", at: Vec3(x, anchor.y, anchor.z), size: Vec3(length - 0.06, 0.18, 0.3),
                            tint: hsv(0.08, 0.5, 0.85), density: 2000)
+            damp(link)
             // Hinged about z at its left end, to the previous link (or the world).
             world.add(Joint(.hinge, connectedTo: previous, anchor: Vec3(-length / 2, 0, 0), axis: Vec3(0, 0, 1)), to: link)
             previous = link
@@ -169,7 +170,17 @@ final class PhysicsScene: DemoScene {
         // A weight at the end.
         let weight = box("Weight", mesh: "sphere", material: "metal", at: anchor + Vec3(length * 7 + 0.35, 0, 0),
                          size: Vec3(repeating: 0.7), tint: Vec3(0.9, 0.75, 0.4), shape: .sphere(radius: 0.5), density: 3000)
+        damp(weight)
         world.add(Joint(.ball, connectedTo: previous, anchor: Vec3(-0.35, 0, 0)), to: weight)
+    }
+
+    /// Air drag and joint friction, so the chain's swing dies down within ~10 s and it falls
+    /// asleep hanging (without it, it swings for minutes).
+    private func damp(_ entity: Entity) {
+        world.modify(RigidBody.self, for: entity) {
+            $0.linearDamping = 0.4
+            $0.angularDamping = 0.5
+        }
     }
 
     /// A glass trigger zone, and a ball dropped into it.

@@ -30,9 +30,11 @@ public final class PhysicsWorld {
     /// Constraint iterations per substep.
     public var velocityIterations = 2
     /// Contact stiffness: overlapping bodies are pushed apart by a spring of this frequency
-    /// (capped at a quarter of the substep rate) and damping ratio.
+    /// (capped at a quarter of the substep rate) and damping ratio; joints pull their anchors
+    /// back together at twice the frequency (same cap), with `jointDampingRatio`.
     public var contactHertz: Float = 60
     public var contactDampingRatio: Float = 10
+    public var jointDampingRatio: Float = 2
     /// The step `advance(by:)` takes.
     public var fixedTimestep: Float = 1.0 / 60.0
     /// `advance(by:)` drops time beyond this many steps per call.
