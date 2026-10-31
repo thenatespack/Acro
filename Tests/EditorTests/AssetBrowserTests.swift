@@ -47,6 +47,19 @@ private let glTFResources = URL(fileURLWithPath: #filePath).deletingLastPathComp
 }
 
 @MainActor @Suite struct AssetBrowserTests {
+    @Test func panelSaysToOpenAProjectWithoutOne() throws {
+        let panel = AssetBrowserPanel(session: makeSession())
+        let noProject = try #require(panel.view.children.first { $0.name == "noProject" })
+        let split = try #require(panel.view.children.first { $0.name == "assetSplit" })
+        #expect(!noProject.isHidden && split.isHidden)
+
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        #expect(panel.model.session.newProject(path: folder.path))
+        panel.sync()
+        #expect(noProject.isHidden && !split.isHidden)
+    }
+
     @Test func listsFoldersFilesAndExpandedModels() throws {
         let folder = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: folder) }

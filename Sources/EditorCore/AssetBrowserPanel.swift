@@ -398,7 +398,7 @@ public final class AssetBrowserPanel {
     public func sync() {
         let hasProject = model.session.assets != nil
         if content.isHidden == hasProject { content.isHidden = !hasProject }
-        if noProject.isHidden != !hasProject { noProject.isHidden = hasProject }
+        if noProject.isHidden != hasProject { noProject.isHidden = hasProject }
         let entries = model.entries
         let folders = model.folders
         let pending = model.session.assets?.pendingLoadCount ?? 0
