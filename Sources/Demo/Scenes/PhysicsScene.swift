@@ -330,7 +330,7 @@ final class PhysicsScene: DemoScene {
     }
 
     /// A capsule along Y: hemispheres of `radius` at ±`halfHeight` joined by a cylinder.
-    private static func capsuleMesh(radius: Float, halfHeight: Float, segments: Int = 24, rings: Int = 12) -> MeshGeometry {
+    static func capsuleMesh(radius: Float, halfHeight: Float, segments: Int = 24, rings: Int = 12) -> MeshGeometry {
         var geometry = MeshGeometry(vertices: [], indices: [])
         // Rings from the top pole down; the equator twice (top and bottom of the cylinder).
         var latitudes: [(theta: Float, offset: Float)] = []

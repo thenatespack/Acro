@@ -95,4 +95,5 @@ extension DemoScene {
     SpritesScene.self,
     SkyScene.self,
     PhysicsScene.self,
+    CharacterScene.self,
 ]
