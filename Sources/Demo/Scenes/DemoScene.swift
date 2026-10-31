@@ -90,4 +90,5 @@ extension DemoScene {
     InputScene.self,
     LightsScene.self,
     AudioScene.self,
+    Shadows2Scene.self,
 ]

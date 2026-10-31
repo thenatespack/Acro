@@ -3,7 +3,7 @@
 // SceneRenderer's lit forward shader. Must match `SceneRenderer.FrameUniforms`.
 layout(set = 0, binding = 0, std140) uniform Frame {
     mat4 viewProj;          // jittered with a temporal upscaler
-    mat4 lightViewProj;
+    mat4 lightViewProj;     // unused here (the shadow passes' projection)
     mat4 currentViewProj;   // unjittered, for motion vectors
     mat4 previousViewProj;  // last frame's, unjittered
     vec4 lightDir;          // xyz: direction toward the light, w: intensity
@@ -34,7 +34,6 @@ layout(location = 0) out vec3 vWorldPos;
 layout(location = 1) out vec3 vNormal;
 layout(location = 2) out vec2 vUV;
 layout(location = 3) out vec4 vColor;
-layout(location = 4) out vec4 vLightClip;
 layout(location = 5) out vec4 vParams;
 layout(location = 6) out vec4 vCurrentClip;   // unjittered, for motion vectors
 layout(location = 7) out vec4 vPreviousClip;
@@ -60,7 +59,6 @@ void main() {
     vUV = inUV;
     vColor = inColor;
     vParams = inParams;
-    vLightClip = frame.lightViewProj * world;
     vCurrentClip = frame.currentViewProj * world;
     vPreviousClip = frame.previousViewProj * previousWorld;
     // Tangents transform like positions; a mirroring model matrix flips the bitangent.
