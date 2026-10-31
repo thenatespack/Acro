@@ -232,7 +232,7 @@ private struct Random {
 
     // Reflection sees the fields (for the inspector), with a color picker for the color.
     let fields = try #require(world.fields(of: "SpotLight", for: spot))
-    #expect(Set(fields.map(\.name)) == ["color", "intensity", "range", "innerConeAngle", "outerConeAngle"])
+    #expect(Set(fields.map(\.name)) == ["color", "intensity", "range", "innerConeAngle", "outerConeAngle", "castsShadows"])
     #expect(fields.first { $0.name == "color" }?.hints.color == true)
     try world.setField("range", of: "PointLight", for: point, to: .float(9))
     #expect(world.get(PointLight.self, for: point)?.range == 9)

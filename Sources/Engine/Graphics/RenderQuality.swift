@@ -13,7 +13,7 @@ public enum RenderQuality: String, Sendable, CaseIterable {
         }
     }
 
-    /// Suggested shadow-map resolution (square).
+    /// Suggested shadow-map resolution (square): `SceneRenderer` uses it per shadow cascade.
     public var shadowMapSize: Int {
         switch self {
         case .low: 1024
@@ -28,6 +28,16 @@ public enum RenderQuality: String, Sendable, CaseIterable {
         case .low: 0
         case .medium, .high: 1
         case .ultra: 2
+        }
+    }
+
+    /// Shadow cascades `SceneRenderer` splits a following `DirectionalLight`'s shadow into
+    /// (unless the light sets `cascadeCount`).
+    public var shadowCascades: Int {
+        switch self {
+        case .low: 2
+        case .medium: 3
+        case .high, .ultra: 4
         }
     }
 

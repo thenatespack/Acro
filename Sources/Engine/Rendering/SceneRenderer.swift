@@ -51,12 +51,14 @@ public struct SceneRenderStats: Sendable {
     public var list = RenderListStats()
     /// Point and spot lights of the last view prepared (`LightClusters`).
     public var lights = LightClusters.Stats()
+    /// Cascades, shadowed point / spot lights and atlas tiles of the last frame.
+    public var shadows = ShadowStats()
     /// CPU seconds spent gathering, culling and batching (`prepare`).
     public var prepareTime: Double = 0
 }
 
-/// Draws a `World`'s entities: a forward renderer with one shadow-casting directional light,
-/// clustered point and spot lights, hemisphere ambient, exponential fog, instancing, frustum and shadow-caster culling, a
+/// Draws a `World`'s entities: a forward renderer with one shadow-casting directional light
+/// (cascaded shadow maps), clustered point and spot lights (a few with shadows), hemisphere ambient, exponential fog, instancing, frustum and shadow-caster culling, a
 /// back-to-front sorted transparent pass and motion vectors for temporal upscalers.
 ///
 /// Opt-in, driven by the game:
@@ -75,11 +77,12 @@ public struct SceneRenderStats: Sendable {
 ///
 /// To render into `RenderTarget`s instead, from any number of cameras per frame (an editor
 /// view next to the game camera's), call `beginViews` once in `Game.renderOffscreen`, then
-/// `renderView` per view. The views share the frame's gathered entities and its shadow map,
-/// which is rendered once, for every caster in the light's frustum, centered for the
-/// `shadowFocus` camera (the game camera by default): give the light a fixed `shadowCenter`
-/// and a larger `shadowExtent` when views look at different places. Views have no motion
-/// vectors or jitter. Use one of the two paths per frame (they share the shadow map).
+/// `renderView` per view. The views share the frame's gathered entities and its shadow atlas,
+/// which is rendered once, for the `shadowFocus` camera: cascades fitted to it when it has a
+/// perspective projection, else a single square of `shadowExtent` in front of it (the game
+/// camera by default). Give the light a fixed `shadowCenter` and a larger `shadowExtent` when
+/// views look at different places. Views have no motion vectors or jitter. Use one of the two
+/// paths per frame (they share the shadow atlas).
 ///
 /// `debugDraw` (the engine's by default with `init(engine:)`) is drawn over the scene in the
 /// screen pass; `renderView` takes its own, so each view can show different gizmos.
@@ -114,12 +117,21 @@ public final class SceneRenderer {
     /// The shadow pipeline for alpha-tested casters (mesh_shadow_mask), created on first use.
     private var shadowMaskPipeline: RenderPipeline?
     private var pipelines: [PipelineKey: RenderPipeline] = [:]
-    public let shadowMap: GPUTexture
+    /// The shadow atlas: every cascade, spot-light map and point-light face of the frame in
+    /// one depth texture (`ShadowAtlasLayout`). Recreated when the layout's size changes.
+    public private(set) var shadowMap: GPUTexture
     private var shadowMapCleared = false
+    /// Casters per atlas tile, for the frame's `ShadowSetup` (from `prepare` / `beginViews`).
+    private var shadowCasters = ShadowCasterBatches()
+    /// Tints each shadow cascade (red, green, blue, yellow) to show where they fall. Also on
+    /// with `ENGINE_SHOW_CASCADES=1`.
+    public var showsShadowCascades = ProcessInfo.processInfo.environment["ENGINE_SHOW_CASCADES"] == "1"
 
     private var uniforms: FrameUniforms?
     private var reversedZ = false
     private var shadowsActive = false
+    /// The shadows `prepare` set up for `renderShadows`.
+    private var shadowSetup: ShadowSetup?
     private var uploaded: TransientBuffer?
     private var previousViewProj: Mat4?
     private var reportedMissing: Set<String> = []
@@ -171,8 +183,7 @@ public final class SceneRenderer {
     private var debugRenderer: DebugDrawRenderer?
     /// Shared by this frame's `renderView` calls (from `beginViews`).
     private var views: ViewsFrame?
-    /// Shadow casters in the light's frustum (`beginViews`), and each view's batches.
-    private var shadowList = RenderList()
+    /// Each view's batches (`renderView`).
     private var viewList = RenderList()
     /// This frame's point and spot lights (`gather`), binned for the `prepare` camera and for
     /// each `renderView`, and the uniform data they're uploaded from.
@@ -183,14 +194,15 @@ public final class SceneRenderer {
     /// Bound as the light buffers when there are no point or spot lights (16 KiB of zeros).
     private let emptyLightBuffer: GPUBuffer
 
-    /// The light as `prepare` / `beginViews` set it up.
+    /// The light as `prepare` / `beginViews` set it up, with the frame's shadows.
     private struct LightSetup {
         var toLight: Vec3
         var color: Vec3
         var intensity: Float
         var bias: Float
-        var viewProj: Mat4
-        var culling: ShadowCasterCulling?
+        var shadows: ShadowSetup?
+        /// The directional light casts shadows.
+        var sunShadows: Bool { (shadows?.stats.cascades ?? 0) > 0 }
     }
 
     private struct ViewsFrame {
@@ -216,6 +228,8 @@ public final class SceneRenderer {
         var viewDepth = Vec4.zero
         var clusterScale = Vec4.zero
         var clusterGrid = Vec4.zero
+        /// Shadow cascades and point / spot light shadows (see ShadowMaps.swift / shadows.glsl).
+        var shadows = ShadowUniforms()
 
         /// Points the shader's cluster lookup at `clusters`, binned for `view` and a target of `size` pixels.
         mutating func setClusters(_ clusters: LightClusters, view: Mat4, size: (width: Int, height: Int)) {
@@ -282,8 +296,8 @@ public final class SceneRenderer {
         shadow.cullMode = .none  // single-sided planes still cast shadows
         shadow.depthBias = DepthBias(constant: 1.5, slopeScale: 2.5)
         shadowPipeline = try device.makePipeline(shadow)
-        shadowMap = try device.makeTexture(
-            TextureDescriptor(width: quality.shadowMapSize, height: quality.shadowMapSize, format: .depth32Float))
+        let atlas = ShadowAtlasLayout(tileSize: quality.shadowMapSize, cascades: quality.shadowCascades, localShadows: false)
+        shadowMap = try device.makeTexture(TextureDescriptor(width: atlas.width, height: atlas.height, format: .depth32Float))
         whiteTexture = try device.makeTexture(pixels: [255, 255, 255, 255], width: 1, height: 1, format: .rgba8Unorm)
         emptyLightBuffer = try device.makeBuffer([Vec4](repeating: .zero, count: LightClusters.GPUData.entries), usage: .uniform)
 
@@ -384,6 +398,7 @@ public final class SceneRenderer {
             debugView = nil
             stats.list = RenderListStats()
             stats.lights = LightClusters.Stats()
+            stats.shadows = ShadowStats()
             return
         }
         reversedZ = camera.reversedZ
@@ -395,14 +410,16 @@ public final class SceneRenderer {
         let jitteredProjection = engine.jittered(camera.projection(aspect: engine.aspectRatio))
         let jittered = jitteredProjection * view
         let eye = Vec3(cameraWorld.c3.x, cameraWorld.c3.y, cameraWorld.c3.z)
-        let forward = -Vec3(view.c0.z, view.c1.z, view.c2.z)
 
         let environment = RenderPrep.findEnvironment(in: world)
-        let light = lightSetup(world: world, eye: eye, forward: forward)
-        shadowsActive = light.culling != nil
+        let viewFrustum = Frustum(viewProjection: jittered)
+        let light = lightSetup(world: world, focus: ShadowSetup.Focus(
+            view: view, projection: camera.projection(aspect: engine.aspectRatio), frustum: viewFrustum))
+        shadowsActive = light.shadows != nil
 
-        list.build(items: prep.items, view: Frustum(viewProjection: jittered), cameraPosition: eye, shadows: light.culling)
+        list.build(items: prep.items, view: viewFrustum, cameraPosition: eye, shadows: nil)
         stats.list = list.stats
+        buildShadowCasters(light.shadows)
 
         let previous = previousViewProj ?? viewProj
         previousViewProj = viewProj
@@ -414,6 +431,8 @@ public final class SceneRenderer {
         clusters.write(to: &lightData)
         stats.lights = clusters.stats
         uniforms!.setClusters(clusters, view: view, size: size)
+        if let shadows = light.shadows { uniforms!.shadows = shadows.uniforms(for: clusters) }
+        shadowSetup = light.shadows
         debugView = DebugView(viewProjection: jittered, cameraPosition: eye, viewportSize: size, reversedZ: camera.reversedZ,
                               projectionScale: camera.projection(aspect: engine.aspectRatio).c1.y)
     }
@@ -432,41 +451,41 @@ public final class SceneRenderer {
         }
     }
 
-    /// The first directional light's parameters and, when it casts shadows, its shadow
-    /// projection (around `eye + forward * extent`, unless it has a fixed center) and culling.
-    private func lightSetup(world: World, eye: Vec3, forward: Vec3) -> LightSetup {
-        var setup = LightSetup(toLight: normalize(Vec3(0.5, 0.75, 0.35)), color: .zero, intensity: 0, bias: 0,
-                               viewProj: .identity, culling: nil)
-        guard let (light, lightWorld) = RenderPrep.findLight(in: world) else { return setup }
-        setup.toLight = -light.travelDirection(world: lightWorld)
-        setup.color = light.color
-        setup.intensity = light.intensity
-        setup.bias = light.shadowBias
-        guard light.castsShadows else { return setup }
-        setup.viewProj = Self.lightViewProjection(
-            toLight: setup.toLight, center: light.shadowCenter ?? eye + forward * light.shadowExtent,
-            extent: light.shadowExtent, distance: light.shadowDistance, mapSize: shadowMap.width,
-            snap: light.shadowCenter == nil)
-        var floor = Float.infinity
-        for item in prep.items where item.instance.params.x > 0 {
-            floor = min(floor, item.bounds.center.y - item.bounds.halfExtent.y)
+    /// The first directional light's parameters and the frame's shadows (`ShadowSetup`: the
+    /// light's cascades or fixed map, and the shadowed point / spot lights), set up for `focus`.
+    private func lightSetup(world: World, focus: ShadowSetup.Focus) -> LightSetup {
+        var setup = LightSetup(toLight: normalize(Vec3(0.5, 0.75, 0.35)), color: .zero, intensity: 0, bias: 0, shadows: nil)
+        let found = RenderPrep.findLight(in: world)
+        if let (light, lightWorld) = found {
+            setup.toLight = -light.travelDirection(world: lightWorld)
+            setup.color = light.color
+            setup.intensity = light.intensity
+            setup.bias = light.shadowBias
         }
-        setup.culling = ShadowCasterCulling(
-            lightFrustum: Frustum(viewProjection: setup.viewProj), toLight: setup.toLight,
-            receiverFloor: floor.isFinite ? floor : -.infinity,
-            maxSweep: light.shadowDistance + light.shadowExtent * 2)
+        setup.shadows = ShadowSetup.build(light: found?.light, toLight: setup.toLight, focus: focus, lights: &punctualLights,
+                                          items: prep.items, quality: quality, showCascades: showsShadowCascades)
+        stats.shadows = setup.shadows?.stats ?? ShadowStats()
         return setup
+    }
+
+    /// Culls and batches casters for every tile of `shadows`, and counts them in `stats.list`.
+    private func buildShadowCasters(_ shadows: ShadowSetup?) {
+        guard let shadows else { return }
+        shadowCasters.build(items: prep.items, tiles: shadows.tiles.map(\.culling))
+        stats.list.shadowCasters = shadowCasters.drawn
+        stats.list.culledShadowCasters = shadowCasters.culled
+        stats.list.drawCalls += shadowCasters.batches.count
     }
 
     private func makeUniforms(viewProj: Mat4, current: Mat4, previous: Mat4, eye: Vec3, light: LightSetup,
                               environment: SceneEnvironment) -> FrameUniforms {
         FrameUniforms(
             viewProj: viewProj,
-            lightViewProj: light.viewProj,
+            lightViewProj: light.shadows.map { $0.tiles.first?.clip ?? .identity } ?? .identity,
             currentViewProj: current,
             previousViewProj: previous,
             lightDir: Vec4(light.toLight, light.intensity),
-            lightColor: Vec4(light.color, light.culling != nil ? 1 : 0),
+            lightColor: Vec4(light.color, light.sunShadows ? 1 : 0),
             cameraPos: Vec4(eye, 0),
             fogColor: Vec4(environment.fogColor, environment.fogDensity),
             skyColor: Vec4(environment.skyColor, environment.ambientIntensity),
@@ -500,19 +519,48 @@ public final class SceneRenderer {
         return projection * view
     }
 
-    /// Uploads this frame's instances once and renders the shadow map. Call after `prepare`,
+    /// Uploads this frame's instances once and renders the shadow atlas. Call after `prepare`,
     /// from `Game.renderOffscreen`.
     public func renderShadows(frame: Frame) {
-        guard let uniforms else { return }
+        guard uniforms != nil else { return }
         uploaded = list.instances.isEmpty ? nil : frame.upload(list.instances)
-        guard shadowsActive || !shadowMapCleared else { return }
-        shadowMapCleared = true
-        frame.depthPass(into: shadowMap) { pass in
-            pass.setPipeline(shadowPipeline)
-            pass.setUniforms(uniforms)
-            guard shadowsActive, let uploaded else { return }
-            drawShadows(pass, list.shadow, instances: uploaded)
+        renderShadowAtlas(shadowsActive ? shadowSetup : nil, frame: frame)
+    }
+
+    /// Renders every tile of `shadows` into the atlas in one depth pass (resizing the atlas to
+    /// its layout first). Without shadows, only clears the atlas once, so it's valid to bind.
+    private func renderShadowAtlas(_ shadows: ShadowSetup?, frame: Frame) {
+        if let layout = shadows?.layout, layout.width != shadowMap.width || layout.height != shadowMap.height {
+            do {
+                shadowMap = try device.makeTexture(TextureDescriptor(width: layout.width, height: layout.height, format: .depth32Float))
+                shadowMapCleared = false
+            } catch {
+                print("SceneRenderer: shadow atlas of \(layout.width)x\(layout.height) unavailable: \(error)")
+            }
         }
+        guard let shadows, shadows.layout.width == shadowMap.width, shadows.layout.height == shadowMap.height else {
+            guard !shadowMapCleared else { return }
+            shadowMapCleared = true
+            frame.depthPass(into: shadowMap) { _ in }
+            return
+        }
+        shadowMapCleared = true
+        let instances = shadowCasters.instances.isEmpty ? nil : frame.upload(shadowCasters.instances)
+        frame.depthPass(into: shadowMap) { pass in
+            guard let instances else { return }
+            pass.setPipeline(shadowPipeline)
+            for (tile, range) in zip(shadows.tiles, shadowCasters.tileBatches) where !range.isEmpty {
+                pass.setScissorRect(ScissorRect(x: tile.rect.x, y: tile.rect.y, width: tile.rect.width, height: tile.rect.height))
+                pass.setUniforms(ShadowPassUniforms(viewProj: tile.clip, lightViewProj: tile.clip))
+                drawShadows(pass, shadowCasters.batches[range], instances: instances)
+            }
+        }
+    }
+
+    /// The prefix of `Frame` the shadow shaders read (mesh_shadow.vert): the tile's projection.
+    private struct ShadowPassUniforms: BitwiseCopyable {
+        var viewProj: Mat4
+        var lightViewProj: Mat4
     }
 
     /// Draws the prepared frame into the screen pass: opaque batches, then transparent ones
@@ -535,31 +583,19 @@ public final class SceneRenderer {
         let start = ContinuousClock.now
         defer { stats.prepareTime = Self.seconds(since: start) }
         gather(world)
-        let focus = shadowFocus ?? RenderPrep.findCamera(in: world, preferred: camera).map {
-            SceneView(view: Camera.viewMatrix(world: $0.world), projection: .identity)
+        let focus: ShadowSetup.Focus
+        if let shadowFocus {
+            focus = ShadowSetup.Focus(view: shadowFocus.view, projection: shadowFocus.projection,
+                                      frustum: Frustum(viewProjection: shadowFocus.viewProjection))
+        } else {
+            // The views may look anywhere: no perspective to fit cascades to, no view to cull with.
+            let view = RenderPrep.findCamera(in: world, preferred: camera).map { Camera.viewMatrix(world: $0.world) } ?? .identity
+            focus = ShadowSetup.Focus(view: view, projection: nil, frustum: nil)
         }
-        let eye = focus?.eye ?? .zero, forward = focus?.forward ?? Vec3(0, 0, -1)
-        let light = lightSetup(world: world, eye: eye, forward: forward)
+        let light = lightSetup(world: world, focus: focus)
         views = ViewsFrame(light: light, environment: RenderPrep.findEnvironment(in: world))
-
-        guard let culling = light.culling else {
-            guard !shadowMapCleared else { return }
-            shadowMapCleared = true
-            frame.depthPass(into: shadowMap) { _ in }
-            return
-        }
-        // Every caster the light sees: the views may look anywhere.
-        shadowList.build(items: prep.items, view: culling.lightFrustum, cameraPosition: eye, shadows: culling, cameraBatches: false)
-        shadowMapCleared = true
-        let instances = shadowList.instances.isEmpty ? nil : frame.upload(shadowList.instances)
-        let uniforms = makeUniforms(viewProj: light.viewProj, current: light.viewProj, previous: light.viewProj, eye: eye,
-                                    light: light, environment: views!.environment)
-        frame.depthPass(into: shadowMap) { pass in
-            pass.setPipeline(shadowPipeline)
-            pass.setUniforms(uniforms)
-            guard let instances else { return }
-            drawShadows(pass, shadowList.shadow, instances: instances)
-        }
+        buildShadowCasters(light.shadows)
+        renderShadowAtlas(light.shadows, frame: frame)
     }
 
     /// Renders the world as gathered by `beginViews` from `view` into `target` (cleared to
@@ -580,6 +616,7 @@ public final class SceneRenderer {
         if !viewClusters.isEmpty { viewClusters.write(to: &lightData) }
         stats.lights = viewClusters.stats
         uniforms.setClusters(viewClusters, view: view.view, size: (target.width, target.height))
+        if let shadows = views.light.shadows { uniforms.shadows = shadows.uniforms(for: viewClusters) }
         let lights = viewClusters.isEmpty ? nil : lightData
         frame.renderPass(into: target, clearColor: view.clearColor, clearDepth: view.reversedZ ? 0 : 1) { pass in
             if let instances {
@@ -609,7 +646,7 @@ public final class SceneRenderer {
     }
 
     /// Shadow batches: depth only, except alpha-tested ones, which sample their material's alpha.
-    private func drawShadows(_ pass: RenderPass, _ batches: [RenderBatch], instances: TransientBuffer) {
+    private func drawShadows(_ pass: RenderPass, _ batches: ArraySlice<RenderBatch>, instances: TransientBuffer) {
         var masked = false
         for batch in batches {
             if batch.material >= 0, let pipeline = maskedShadowPipeline() {

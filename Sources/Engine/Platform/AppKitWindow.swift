@@ -2,6 +2,18 @@
 import AppKit
 import QuartzCore
 
+/// Keeps a window that is larger than its screen at the requested size (AppKit would shrink
+/// it to fit), so `--window 1920x1080` really gives a 4K drawable on a smaller display. The
+/// title bar stays at the top of the screen. Windows that fit are constrained as usual.
+private final class GameWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        guard let visible = (screen ?? self.screen ?? NSScreen.main)?.visibleFrame,
+              frameRect.width > visible.width || frameRect.height > visible.height
+        else { return super.constrainFrameRect(frameRect, to: screen) }
+        return NSRect(x: visible.minX, y: visible.maxY - frameRect.height, width: frameRect.width, height: frameRect.height)
+    }
+}
+
 /// Native macOS window whose content view is backed by a `CAMetalLayer`.
 /// Events are pumped manually each frame (no `NSApp.run()`), like a classic game loop.
 @MainActor
@@ -20,7 +32,7 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
 
-        window = NSWindow(
+        window = GameWindow(
             contentRect: NSRect(x: 0, y: 0, width: width, height: height),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,

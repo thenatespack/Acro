@@ -95,14 +95,25 @@ public struct Camera: Component, Codable, Equatable, Sendable {
     }
 }
 
-/// A sun-like light shining in one direction everywhere, optionally casting shadows from a
-/// shadow map (sized by `engine.quality.shadowMapSize`, filtered with `shadowFilterRadius`).
+/// A sun-like light shining in one direction everywhere, optionally casting shadows.
 ///
 /// The light travels along `direction` if set, else along its entity's forward axis (local
 /// -Z of the `GlobalTransform`), so rotating the entity aims it. `SceneRenderer` uses the
 /// first directional light by entity index; others are ignored.
+///
+/// Shadows: without a `shadowCenter`, the shadow follows the camera as cascaded shadow maps
+/// (`cascadeCount` cascades, each `engine.quality.shadowMapSize` square, filtered with
+/// `shadowFilterRadius`) covering the view out to `shadowMaxDistance`. With a fixed
+/// `shadowCenter`, one shadow map covers the square `shadowCenter ± shadowExtent`, as before
+/// cascades existed. See `ShadowCascades` for the split scheme.
 public struct DirectionalLight: Component, Codable, Equatable, Sendable {
     public static let componentName = "DirectionalLight"
+    public static var fieldHints: [String: FieldHints] {
+        ["cascadeCount": FieldHints(range: 1...4, step: 1, tooltip: "Shadow cascades (nil: the render quality's)"),
+         "cascadeSplitLambda": FieldHints(range: 0...1, step: 0.01, tooltip: "0: uniform cascade splits, 1: logarithmic"),
+         "cascadeBlend": FieldHints(range: 0...0.5, step: 0.01, tooltip: "Fraction of each cascade blended into the next"),
+         "shadowNormalOffset": FieldHints(range: 0...8, step: 0.1, tooltip: "Receiver offset along the normal, in shadow-map texels")]
+    }
     /// Linear RGB.
     public var color: Vec3
     public var intensity: Float
@@ -110,18 +121,33 @@ public struct DirectionalLight: Component, Codable, Equatable, Sendable {
     /// uses the entity's forward axis.
     public var direction: Vec3?
     public var castsShadows: Bool
-    /// Half-size, in world units, of the square area the shadow map covers.
+    /// Half-size, in world units, of the square area a fixed (`shadowCenter`) shadow map
+    /// covers. Without a center it sets the default `shadowMaxDistance` (2 × extent).
     public var shadowExtent: Float
-    /// Center of the shadowed area. nil centers it on the point `shadowExtent` in front of the
-    /// camera (snapped to shadow-map texels, so shadows don't shimmer as the camera moves).
+    /// Center of a fixed shadowed square. nil makes the shadow follow the camera in cascades
+    /// (snapped to shadow-map texels, so shadows don't shimmer as the camera moves).
     public var shadowCenter: Vec3?
-    /// How far toward the light (from the center) casters are still included.
+    /// How far toward the light (beyond the shadowed area) casters are still included.
     public var shadowDistance: Float
-    /// Depth bias, in shadow-map depth units, against acne on lit surfaces.
+    /// Depth bias, in shadow-map depth units (per cascade), against acne on lit surfaces.
     public var shadowBias: Float
+    /// Shadow cascades (1–4); nil uses `engine.quality.shadowCascades`.
+    public var cascadeCount: Int?
+    /// View distance the cascades cover (clamped to the camera's far plane); nil is 2 × `shadowExtent`.
+    public var shadowMaxDistance: Float?
+    /// Blend between uniform (0) and logarithmic (1) cascade split distances.
+    public var cascadeSplitLambda: Float
+    /// Fraction of each cascade's depth range over which it blends into the next one (the
+    /// last cascade fades out over it).
+    public var cascadeBlend: Float
+    /// How far receivers are pushed along their normal before the shadow lookup, in
+    /// shadow-map texels of their cascade (against acne at grazing angles).
+    public var shadowNormalOffset: Float
 
     public init(color: Vec3 = Vec3(1, 1, 1), intensity: Float = 1.3, direction: Vec3? = nil, castsShadows: Bool = true,
-                shadowExtent: Float = 30, shadowCenter: Vec3? = nil, shadowDistance: Float = 60, shadowBias: Float = 0.0005) {
+                shadowExtent: Float = 30, shadowCenter: Vec3? = nil, shadowDistance: Float = 60, shadowBias: Float = 0.0005,
+                cascadeCount: Int? = nil, shadowMaxDistance: Float? = nil, cascadeSplitLambda: Float = 0.75,
+                cascadeBlend: Float = 0.1, shadowNormalOffset: Float = 1) {
         self.color = color
         self.intensity = intensity
         self.direction = direction
@@ -130,6 +156,31 @@ public struct DirectionalLight: Component, Codable, Equatable, Sendable {
         self.shadowCenter = shadowCenter
         self.shadowDistance = shadowDistance
         self.shadowBias = shadowBias
+        self.cascadeCount = cascadeCount
+        self.shadowMaxDistance = shadowMaxDistance
+        self.cascadeSplitLambda = cascadeSplitLambda
+        self.cascadeBlend = cascadeBlend
+        self.shadowNormalOffset = shadowNormalOffset
+    }
+
+    /// Missing fields (scene files written before cascades) take their defaults.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = DirectionalLight()
+        self.init(
+            color: try c.decodeIfPresent(Vec3.self, forKey: .color) ?? d.color,
+            intensity: try c.decodeIfPresent(Float.self, forKey: .intensity) ?? d.intensity,
+            direction: try c.decodeIfPresent(Vec3.self, forKey: .direction),
+            castsShadows: try c.decodeIfPresent(Bool.self, forKey: .castsShadows) ?? d.castsShadows,
+            shadowExtent: try c.decodeIfPresent(Float.self, forKey: .shadowExtent) ?? d.shadowExtent,
+            shadowCenter: try c.decodeIfPresent(Vec3.self, forKey: .shadowCenter),
+            shadowDistance: try c.decodeIfPresent(Float.self, forKey: .shadowDistance) ?? d.shadowDistance,
+            shadowBias: try c.decodeIfPresent(Float.self, forKey: .shadowBias) ?? d.shadowBias,
+            cascadeCount: try c.decodeIfPresent(Int.self, forKey: .cascadeCount),
+            shadowMaxDistance: try c.decodeIfPresent(Float.self, forKey: .shadowMaxDistance),
+            cascadeSplitLambda: try c.decodeIfPresent(Float.self, forKey: .cascadeSplitLambda) ?? d.cascadeSplitLambda,
+            cascadeBlend: try c.decodeIfPresent(Float.self, forKey: .cascadeBlend) ?? d.cascadeBlend,
+            shadowNormalOffset: try c.decodeIfPresent(Float.self, forKey: .shadowNormalOffset) ?? d.shadowNormalOffset)
     }
 
     /// The normalized direction the light travels in, for an entity with world matrix `world`.
@@ -150,18 +201,33 @@ public struct PointLight: Component, Codable, Equatable, Sendable {
     public static let componentName = "PointLight"
     public static var fieldHints: [String: FieldHints] {
         ["color": FieldHints(color: true), "intensity": FieldHints(range: 0...1000, step: 0.1),
-         "range": FieldHints(range: 0.01...1000, step: 0.1, tooltip: "Distance at which the light fades out completely")]
+         "range": FieldHints(range: 0.01...1000, step: 0.1, tooltip: "Distance at which the light fades out completely"),
+         "castsShadows": FieldHints(tooltip: "Six shadow-map faces in the shadow atlas (a few lights per view)")]
     }
     /// Linear RGB.
     public var color: Vec3
     public var intensity: Float
     /// World-space distance beyond which the light contributes nothing.
     public var range: Float
+    /// Casts shadows (opt-in): six faces in `SceneRenderer`'s shadow atlas, for at most
+    /// `ShadowAtlasLayout.maxPointShadows` lights per frame, the most prominent ones.
+    public var castsShadows: Bool
 
-    public init(color: Vec3 = Vec3(1, 1, 1), intensity: Float = 5, range: Float = 10) {
+    public init(color: Vec3 = Vec3(1, 1, 1), intensity: Float = 5, range: Float = 10, castsShadows: Bool = false) {
         self.color = color
         self.intensity = intensity
         self.range = range
+        self.castsShadows = castsShadows
+    }
+
+    /// Missing fields (scene files written before light shadows) take their defaults.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = PointLight()
+        self.init(color: try c.decodeIfPresent(Vec3.self, forKey: .color) ?? d.color,
+                  intensity: try c.decodeIfPresent(Float.self, forKey: .intensity) ?? d.intensity,
+                  range: try c.decodeIfPresent(Float.self, forKey: .range) ?? d.range,
+                  castsShadows: try c.decodeIfPresent(Bool.self, forKey: .castsShadows) ?? d.castsShadows)
     }
 }
 
@@ -176,7 +242,8 @@ public struct SpotLight: Component, Codable, Equatable, Sendable {
         ["color": FieldHints(color: true), "intensity": FieldHints(range: 0...1000, step: 0.1),
          "range": FieldHints(range: 0.01...1000, step: 0.1, tooltip: "Distance at which the light fades out completely"),
          "innerConeAngle": FieldHints(range: 0...1.57, step: 0.01, tooltip: "Half-angle of full intensity, radians"),
-         "outerConeAngle": FieldHints(range: 0...1.57, step: 0.01, tooltip: "Half-angle where the light reaches zero, radians")]
+         "outerConeAngle": FieldHints(range: 0...1.57, step: 0.01, tooltip: "Half-angle where the light reaches zero, radians"),
+         "castsShadows": FieldHints(tooltip: "A perspective shadow map in the shadow atlas (a few lights per view)")]
     }
     /// Linear RGB.
     public var color: Vec3
@@ -184,14 +251,30 @@ public struct SpotLight: Component, Codable, Equatable, Sendable {
     public var range: Float
     public var innerConeAngle: Float
     public var outerConeAngle: Float
+    /// Casts shadows (opt-in): a perspective shadow map in `SceneRenderer`'s shadow atlas, for
+    /// at most `ShadowAtlasLayout.maxSpotShadows` lights per frame, the most prominent ones.
+    public var castsShadows: Bool
 
     public init(color: Vec3 = Vec3(1, 1, 1), intensity: Float = 10, range: Float = 15,
-                innerConeAngle: Float = 0.35, outerConeAngle: Float = 0.5) {
+                innerConeAngle: Float = 0.35, outerConeAngle: Float = 0.5, castsShadows: Bool = false) {
         self.color = color
         self.intensity = intensity
         self.range = range
         self.innerConeAngle = innerConeAngle
         self.outerConeAngle = outerConeAngle
+        self.castsShadows = castsShadows
+    }
+
+    /// Missing fields (scene files written before light shadows) take their defaults.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = SpotLight()
+        self.init(color: try c.decodeIfPresent(Vec3.self, forKey: .color) ?? d.color,
+                  intensity: try c.decodeIfPresent(Float.self, forKey: .intensity) ?? d.intensity,
+                  range: try c.decodeIfPresent(Float.self, forKey: .range) ?? d.range,
+                  innerConeAngle: try c.decodeIfPresent(Float.self, forKey: .innerConeAngle) ?? d.innerConeAngle,
+                  outerConeAngle: try c.decodeIfPresent(Float.self, forKey: .outerConeAngle) ?? d.outerConeAngle,
+                  castsShadows: try c.decodeIfPresent(Bool.self, forKey: .castsShadows) ?? d.castsShadows)
     }
 }
 

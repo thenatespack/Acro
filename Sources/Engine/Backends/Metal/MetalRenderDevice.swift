@@ -986,9 +986,11 @@ final class MetalRenderDevice: RenderDevice {
         guard let encoder = frame.commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else {
             preconditionFailure("Failed to create Metal render encoder")
         }
+        // Depth-only passes (shadow maps) take their size from the depth attachment.
+        let sizing = descriptor.colorAttachments[0].texture ?? descriptor.depthAttachment.texture
         let pass = MetalRenderPass(
             encoder: encoder, transient: frame.ring, comparisonSampler: comparisonSampler,
-            targetSize: (descriptor.colorAttachments[0].texture?.width ?? 1, descriptor.colorAttachments[0].texture?.height ?? 1),
+            targetSize: (sizing?.width ?? 1, sizing?.height ?? 1),
             occlusion: occlusion, format: format)
         currentPass = pass
         return pass
