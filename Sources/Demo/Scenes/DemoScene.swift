@@ -103,4 +103,5 @@ extension DemoScene {
     HUDScene.self,
     CompressionScene.self,
     CrowdScene.self,
+    NetScene.self,
 ]
