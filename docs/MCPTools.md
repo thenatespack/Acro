@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Editor › AI control). 88 tools.
+named by its id (see README › Editor › AI control). 89 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -31,7 +31,7 @@ optional arguments.
 | `selection` | [`selection.clear`](#selectionclear), [`selection.get`](#selectionget), [`selection.set`](#selectionset) |
 | `stats` | [`stats.get`](#statsget) |
 | `tool` | [`tool.set`](#toolset) |
-| `transform` | [`transform.set`](#transformset) |
+| `transform` | [`transform.lookAt`](#transformlookat), [`transform.set`](#transformset) |
 | `ui` | [`ui.click`](#uiclick), [`ui.drag`](#uidrag), [`ui.find`](#uifind), [`ui.hover`](#uihover), [`ui.key`](#uikey), [`ui.scroll`](#uiscroll), [`ui.snapshot`](#uisnapshot), [`ui.type`](#uitype) |
 | `view` | [`view.frameSelection`](#viewframeselection), [`view.gameCamera`](#viewgamecamera), [`view.pick`](#viewpick), [`view.screenshot`](#viewscreenshot) |
 
@@ -104,7 +104,7 @@ Writes the asset's import settings to its sidecar and reimports it. Not undoable
 
 Arguments:
 
-- `asset`: asset id — An asset id: 32 hex digits (see the editor://assets resource).
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `confirm`: true — Must be true: this tool can lose work that undo can't bring back.
 - `settings`: any — Any JSON value.
 
@@ -116,7 +116,7 @@ Sets the entity's MeshRenderer mesh or material to the asset (an entity without 
 
 Arguments:
 
-- `asset`: asset reference — An asset: "asset:<id>" for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `asset`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `entity`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
 - `kind?`: "mesh" \| "material" \| "texture" \| "prefab"
 
@@ -139,7 +139,7 @@ Writes the model's materials to .material files in "<model> Materials/", remaps 
 
 Arguments:
 
-- `asset`: asset id — An asset id: 32 hex digits (see the editor://assets resource).
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 
 Result:
 
@@ -153,7 +153,7 @@ One asset's metadata: id, path, importer, kind, load state, import error, object
 
 Arguments:
 
-- `asset?`: asset reference — An asset: "asset:<id>" for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `path?`: string
 
 Result:
@@ -186,7 +186,7 @@ Places a model, prefab or mesh in the scene at `position`, under `parent` (defau
 
 Arguments:
 
-- `asset`: asset reference — An asset: "asset:<id>" for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `asset`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `parent?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
 - `position?`: number[3] — [x, y, z]
 
@@ -252,12 +252,12 @@ Writes a .material file in `folder` (default parameters, or `material`). Returns
 Arguments:
 
 - `folder?`: string
-- `material?`: {addressMode?: "repeat" \| "clampToEdge" \| "mirrorRepeat", alphaCutoff?: number, alphaMode?: "opaque" \| "mask" \| "blend", baseColor?: number[4], checker?: boolean, doubleSided?: boolean, emissive?: number, emissiveColor?: number[3], emissiveStrength?: number, emissiveTexture?: asset reference, filter?: "linear" \| "nearest", metallic?: number, metallicRoughnessTexture?: asset reference, mipFilter?: "linear" \| "nearest" \| "none", normalScale?: number, normalTexture?: asset reference, occlusionStrength?: number, occlusionTexture?: asset reference, roughness?: number, shading?: "pbr" \| "blinnPhong", shininess?: number, specular?: number, texture?: asset reference, uvOffset?: number[2], uvRotation?: number, uvScale?: number[2]}
+- `material?`: {addressMode?: "repeat" \| "clampToEdge" \| "mirrorRepeat", alphaCutoff?: number, alphaMode?: "opaque" \| "mask" \| "blend", baseColor?: number[4], checker?: boolean, doubleSided?: boolean, emissive?: number, emissiveColor?: number[3], emissiveStrength?: number, emissiveTexture?: asset id, filter?: "linear" \| "nearest", metallic?: number, metallicRoughnessTexture?: asset id, mipFilter?: "linear" \| "nearest" \| "none", normalScale?: number, normalTexture?: asset id, occlusionStrength?: number, occlusionTexture?: asset id, roughness?: number, shading?: "pbr" \| "blinnPhong", shininess?: number, specular?: number, texture?: asset id, uvOffset?: number[2], uvRotation?: number, uvScale?: number[2]}
 - `name?`: string
 
 Result:
 
-- `asset`: asset id — An asset id: 32 hex digits (see the editor://assets resource).
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `path`: string
 
 ### `asset.reimport`
@@ -268,7 +268,7 @@ Imports the asset again now, even if it is up to date (prefab instances in the s
 
 Arguments:
 
-- `asset?`: asset reference — An asset: "asset:<id>" for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `path?`: string
 
 Result:
@@ -301,7 +301,7 @@ Selects an asset (or one of its objects) in the asset browser, opening its folde
 
 Arguments:
 
-- `asset?`: asset reference — An asset: "asset:<id>" for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `path?`: string
 
 ### `asset.waitForImports`
@@ -348,7 +348,7 @@ Arguments:
 
 **Set Field** · _undoable_, _idempotent_
 
-Sets one field of a component by reflection path (what the inspector edits): `component` "Transform" with `path` "position", or just `path` "Transform.position.x" (a trailing .x/.y/.z/.w sets one element of a vector). With `space` "world", Transform's position, rotation and scale are given in world space. Undoable (one step; edit.undo reverts it).
+Sets one field of a component by reflection path (what the inspector edits): `component` "Transform" with `path` "position", or just `path` "Transform.position.x" (a trailing .x/.y/.z/.w sets one element of a vector). A rotation (a quaternion field) is [x, y, z, w] or {"eulerDegrees": [x, y, z]} (Z roll, then X pitch, then Y yaw). With `space` "world", Transform's position, rotation and scale are given in world space. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
@@ -401,7 +401,7 @@ Result:
 
 **Batch** · _undoable_
 
-Runs `calls` (each {command, arguments}) in order as ONE undo step named `label`. If a call fails, everything the batch did is undone, the selection is restored, and the error names the call. A string "$<n>.<path>" in arguments is replaced by part of call n's result ("$0.entity" is the entity call 0 created). File operations and screenshots aren't rolled back or can't be batched. Undoable (one step; edit.undo reverts it).
+Runs `calls` (each {command, arguments}) in order as ONE undo step named `label`. If a call fails, everything the batch did is undone, the selection is restored, and the error names the call. A string "$<n>.<path>" in arguments is replaced by part of call n's result ("$0.entity" is the entity call 0 created); "{$<n>.<path>}" inside a longer string interpolates it ("asset:{$2.asset}"). File operations and screenshots aren't rolled back or can't be batched. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
@@ -580,6 +580,8 @@ Result:
 - `paused`: boolean
 - `physics`: boolean
 - `playing`: boolean
+- `reason?`: string
+- `stepped?`: integer
 - `time`: number
 - `timeScale`: number
 
@@ -597,7 +599,7 @@ Arguments:
 Result:
 
 - `seconds`: number
-- `state`: {buttons: ["left" \| "right" \| "middle"], frame: integer, gameCamera: boolean, inputPending: integer, inputSeconds: number, keys: [string (73 cases)], paused: boolean, physics: boolean, playing: boolean, time: number, timeScale: number}
+- `state`: {buttons: ["left" \| "right" \| "middle"], frame: integer, gameCamera: boolean, inputPending: integer, inputSeconds: number, keys: [string (73 cases)], paused: boolean, physics: boolean, playing: boolean, reason?: string, stepped?: integer, time: number, timeScale: number}
 
 ### `input.state`
 
@@ -664,25 +666,26 @@ Reads a material: a .material file or a model's material object, with every para
 
 Arguments:
 
-- `asset`: asset reference — An asset: "asset:<id>" for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `asset`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 
 Result:
 
 - `editable`: boolean
-- `material`: {addressMode?: "repeat" \| "clampToEdge" \| "mirrorRepeat", alphaCutoff?: number, alphaMode?: "opaque" \| "mask" \| "blend", baseColor?: number[4], checker?: boolean, doubleSided?: boolean, emissive?: number, emissiveColor?: number[3], emissiveStrength?: number, emissiveTexture?: asset reference, filter?: "linear" \| "nearest", metallic?: number, metallicRoughnessTexture?: asset reference, mipFilter?: "linear" \| "nearest" \| "none", normalScale?: number, normalTexture?: asset reference, occlusionStrength?: number, occlusionTexture?: asset reference, roughness?: number, shading?: "pbr" \| "blinnPhong", shininess?: number, specular?: number, texture?: asset reference, uvOffset?: number[2], uvRotation?: number, uvScale?: number[2]}
+- `material`: {addressMode?: "repeat" \| "clampToEdge" \| "mirrorRepeat", alphaCutoff?: number, alphaMode?: "opaque" \| "mask" \| "blend", baseColor?: number[4], checker?: boolean, doubleSided?: boolean, emissive?: number, emissiveColor?: number[3], emissiveStrength?: number, emissiveTexture?: asset id, filter?: "linear" \| "nearest", metallic?: number, metallicRoughnessTexture?: asset id, mipFilter?: "linear" \| "nearest" \| "none", normalScale?: number, normalTexture?: asset id, occlusionStrength?: number, occlusionTexture?: asset id, roughness?: number, shading?: "pbr" \| "blinnPhong", shininess?: number, specular?: number, texture?: asset id, uvOffset?: number[2], uvRotation?: number, uvScale?: number[2]}
 
 ### `material.set`
 
 **Edit Material** · _undoable_, _idempotent_
 
-Writes `material` to the .material file and reimports it (the viewport updates). Undoable (one step; edit.undo reverts it).
+Changes the .material file's fields and reimports it (the viewport updates). Fields left out in `material` keep their current values (`null` clears a texture); `reset: true` starts from the default material instead. A model's own materials are read-only: asset.extractMaterials makes editable .material files. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
-- `asset`: asset id — An asset id: 32 hex digits (see the editor://assets resource).
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `label?`: string
-- `material`: {addressMode?: "repeat" \| "clampToEdge" \| "mirrorRepeat", alphaCutoff?: number, alphaMode?: "opaque" \| "mask" \| "blend", baseColor?: number[4], checker?: boolean, doubleSided?: boolean, emissive?: number, emissiveColor?: number[3], emissiveStrength?: number, emissiveTexture?: asset reference, filter?: "linear" \| "nearest", metallic?: number, metallicRoughnessTexture?: asset reference, mipFilter?: "linear" \| "nearest" \| "none", normalScale?: number, normalTexture?: asset reference, occlusionStrength?: number, occlusionTexture?: asset reference, roughness?: number, shading?: "pbr" \| "blinnPhong", shininess?: number, specular?: number, texture?: asset reference, uvOffset?: number[2], uvRotation?: number, uvScale?: number[2]}
-- `previous?`: {addressMode?: "repeat" \| "clampToEdge" \| "mirrorRepeat", alphaCutoff?: number, alphaMode?: "opaque" \| "mask" \| "blend", baseColor?: number[4], checker?: boolean, doubleSided?: boolean, emissive?: number, emissiveColor?: number[3], emissiveStrength?: number, emissiveTexture?: asset reference, filter?: "linear" \| "nearest", metallic?: number, metallicRoughnessTexture?: asset reference, mipFilter?: "linear" \| "nearest" \| "none", normalScale?: number, normalTexture?: asset reference, occlusionStrength?: number, occlusionTexture?: asset reference, roughness?: number, shading?: "pbr" \| "blinnPhong", shininess?: number, specular?: number, texture?: asset reference, uvOffset?: number[2], uvRotation?: number, uvScale?: number[2]}
+- `material`: {addressMode?: "repeat" \| "clampToEdge" \| "mirrorRepeat", alphaCutoff?: number, alphaMode?: "opaque" \| "mask" \| "blend", baseColor?: number[4], checker?: boolean, doubleSided?: boolean, emissive?: number, emissiveColor?: number[3], emissiveStrength?: number, emissiveTexture?: asset id, filter?: "linear" \| "nearest", metallic?: number, metallicRoughnessTexture?: asset id, mipFilter?: "linear" \| "nearest" \| "none", normalScale?: number, normalTexture?: asset id, occlusionStrength?: number, occlusionTexture?: asset id, roughness?: number, shading?: "pbr" \| "blinnPhong", shininess?: number, specular?: number, texture?: asset id, uvOffset?: number[2], uvRotation?: number, uvScale?: number[2]}
+- `previous?`: {addressMode?: "repeat" \| "clampToEdge" \| "mirrorRepeat", alphaCutoff?: number, alphaMode?: "opaque" \| "mask" \| "blend", baseColor?: number[4], checker?: boolean, doubleSided?: boolean, emissive?: number, emissiveColor?: number[3], emissiveStrength?: number, emissiveTexture?: asset id, filter?: "linear" \| "nearest", metallic?: number, metallicRoughnessTexture?: asset id, mipFilter?: "linear" \| "nearest" \| "none", normalScale?: number, normalTexture?: asset id, occlusionStrength?: number, occlusionTexture?: asset id, roughness?: number, shading?: "pbr" \| "blinnPhong", shininess?: number, specular?: number, texture?: asset id, uvOffset?: number[2], uvRotation?: number, uvScale?: number[2]}
+- `reset?`: boolean
 - `transient?`: boolean
 
 ## panel
@@ -768,6 +771,8 @@ Result:
 - `paused`: boolean
 - `physics`: boolean
 - `playing`: boolean
+- `reason?`: string
+- `stepped?`: integer
 - `time`: number
 - `timeScale`: number
 
@@ -792,6 +797,8 @@ Result:
 - `paused`: boolean
 - `physics`: boolean
 - `playing`: boolean
+- `reason?`: string
+- `stepped?`: integer
 - `time`: number
 - `timeScale`: number
 
@@ -816,6 +823,8 @@ Result:
 - `paused`: boolean
 - `physics`: boolean
 - `playing`: boolean
+- `reason?`: string
+- `stepped?`: integer
 - `time`: number
 - `timeScale`: number
 
@@ -838,6 +847,8 @@ Result:
 - `paused`: boolean
 - `physics`: boolean
 - `playing`: boolean
+- `reason?`: string
+- `stepped?`: integer
 - `time`: number
 - `timeScale`: number
 
@@ -845,12 +856,14 @@ Result:
 
 **Step**
 
-Pauses play mode and runs `frames` game frames now (default 1), each `dt` seconds (default 1/60), with the input scheduled for them. Deterministic: the same scene, input and steps give the same result.
+Pauses play mode and runs `frames` game frames now (default 1), each `dt` seconds (default 1/60), with the input scheduled for them. Deterministic: the same scene, input and steps give the same result. With `until` {entity, stopped: true, epsilon?, window?} it runs frames (at most `maxFrames`, default 600) until the entity's world position moved less than `epsilon` (default 0.001) over the last `window` frames (default 10), i.e. it came to rest. Returns the play state with `stepped` (frames run) and `reason`: "frames" (ran them all), "stopped" (the condition held) or "maxFrames" (it never did: the entity is still moving).
 
 Arguments:
 
 - `dt?`: number
 - `frames?`: integer
+- `maxFrames?`: integer
+- `until?`: {entity: entity id, epsilon?: number, stopped: boolean, window?: integer}
 
 Result:
 
@@ -863,6 +876,8 @@ Result:
 - `paused`: boolean
 - `physics`: boolean
 - `playing`: boolean
+- `reason?`: string
+- `stepped?`: integer
 - `time`: number
 - `timeScale`: number
 
@@ -910,7 +925,7 @@ Arguments:
 Result:
 
 - `path`: string
-- `prefab`: asset reference — An asset: "asset:<id>" for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 
 ### `prefab.overrides`
 
@@ -927,7 +942,7 @@ Result:
 - `added`: [entity id]
 - `canApply`: boolean
 - `overrides`: [{component?: string, entity?: entity id, kind: "field" \| "addedComponent" \| "removedComponent" \| "removedEntity", path?: string, prefabEntity: string, value?: any}]
-- `prefab`: asset reference — An asset: "asset:<id>" for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `prefabEntity?`: string
 - `root`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
 
@@ -1011,11 +1026,12 @@ Result:
 
 **New Scene** · _destructive_
 
-Replaces the open scene with the starter scene. Clears the undo history; unsaved changes are lost. Not while playing. Destructive: pass confirm: true.
+Replaces the open scene with a new one: the starter scene (default) or, with `template: "empty"`, a scene with no entities. Clears the undo history; unsaved changes are lost. Not while playing. Destructive: pass confirm: true.
 
 Arguments:
 
 - `confirm`: true — Must be true: this tool can lose work that undo can't bring back.
+- `template?`: string
 
 ### `scene.open`
 
@@ -1059,11 +1075,11 @@ Result:
 
 **Save Scene** · _destructive_, _idempotent_
 
-Saves the scene to its file, or to `path` when it has never been saved. Not while playing. Destructive: pass confirm: true.
+Saves the scene to its file, or to `path` when it has never been saved. Not while playing. Destructive only when `path` names an existing file that isn't the scene's own (saving to the scene's own file or to a new file needs no confirm): then pass confirm: true.
 
 Arguments:
 
-- `confirm`: true — Must be true: this tool can lose work that undo can't bring back.
+- `confirm?`: true — Required only when `path` names an existing file that isn't the scene's own (saving to the scene's own file or to a new file needs no confirm): that can lose work that undo can't bring back.
 - `path?`: string
 
 Result:
@@ -1074,11 +1090,11 @@ Result:
 
 **Save Scene As** · _destructive_, _idempotent_
 
-Saves the scene to `path`, which becomes its file. Not while playing. Destructive: pass confirm: true.
+Saves the scene to `path`, which becomes its file. Not while playing. Destructive only when `path` is an existing file that isn't the scene's own (a new file or the scene's own file needs no confirm): then pass confirm: true.
 
 Arguments:
 
-- `confirm`: true — Must be true: this tool can lose work that undo can't bring back.
+- `confirm?`: true — Required only when `path` is an existing file that isn't the scene's own (a new file or the scene's own file needs no confirm): that can lose work that undo can't bring back.
 - `path`: string
 
 Result:
@@ -1163,6 +1179,18 @@ Arguments:
 - `tool`: "move" \| "rotate" \| "scale"
 
 ## transform
+
+### `transform.lookAt`
+
+**Look At** · _undoable_, _idempotent_
+
+Turns the entity so its local -Z (a camera's or light's forward) points at `target` (another entity or a world point [x, y, z]), keeping +Y toward `up` (default [0, 1, 0]). Only the rotation changes. Aiming straight along `up` picks another up vector. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `entity`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `target`: entity id \| number[3] — What to aim at: an entity id or a world point [x, y, z].
+- `up?`: number[3] — [x, y, z]
 
 ### `transform.set`
 
@@ -1422,7 +1450,7 @@ Returns a PNG of `source`: "viewport" (default; what the user sees, from the edi
 
 Arguments:
 
-- `asset?`: asset reference — An asset: "asset:<id>" for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `camera?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
 - `eye?`: number[3] — [x, y, z]
 - `fov?`: number

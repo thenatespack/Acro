@@ -73,7 +73,8 @@ private let repository = URL(fileURLWithPath: #filePath).deletingLastPathCompone
     }
 
     /// Runs steps, substituting "@<n>.<path>" (whole strings) and "{@<n>.<path>}" (inside
-    /// strings) with parts of earlier results ("$" is edit.batch's own). Steps that need a window are skipped headless.
+    /// strings) with parts of earlier results ("$" is edit.batch's own). A step's "expect" lists result fields it must have.
+    /// Steps that need a window are skipped headless.
     func run(_ steps: [JSON], phase: String) -> [String] {
         var results: [JSON] = []
         var errors: [String] = []
@@ -90,6 +91,10 @@ private let repository = URL(fileURLWithPath: #filePath).deletingLastPathCompone
             log.append(["phase": .string(phase), "step": .int(Int64(index)), "tool": .string(tool), "arguments": arguments,
                         "outcome": error.map { .string("error: \($0)") } ?? "ok"])
             if let error { errors.append("\(phase) step \(index) \(tool): \(error)") }
+            // A step can state what its result must hold ("expect": {"reason": "stopped"}).
+            for (key, expected) in step["expect"]?.objectValue ?? [:] where error == nil && result[key] != expected {
+                errors.append("\(phase) step \(index) \(tool): \(key) is \(result[key]?.text ?? "missing"), want \(expected.text)")
+            }
         }
         return errors
     }

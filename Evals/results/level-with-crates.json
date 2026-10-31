@@ -21,6 +21,11 @@
       "outcome" : "pass"
     },
     {
+      "description" : "the sun is aimed down at the crates (rotated about X), not left at its default",
+      "kind" : "entities",
+      "outcome" : "pass"
+    },
+    {
       "description" : "a camera",
       "kind" : "count",
       "outcome" : "pass"
@@ -56,37 +61,13 @@
     },
     {
       "arguments" : {
-        "confirm" : true
+        "confirm" : true,
+        "template" : "empty"
       },
       "outcome" : "ok",
       "phase" : "setup",
       "step" : 1,
       "tool" : "scene.new"
-    },
-    {
-      "arguments" : {
-        "depth" : 0
-      },
-      "outcome" : "ok",
-      "phase" : "setup",
-      "step" : 2,
-      "tool" : "scene.hierarchy"
-    },
-    {
-      "arguments" : {
-        "entities" : [
-          "f3a5d217f506bc300a1cdd4f6ac6acf8",
-          "db3dd55fb2e4cad1186c875da82de2d8",
-          "abd3573052c0f57a69515da24d1a5798",
-          "62182e54c4f8adfc541ca83b17189b30",
-          "59b65d60f1370ddc3a79eb48492df5e0",
-          "266d83c282ad15aaa85170ec820ab04d"
-        ]
-      },
-      "outcome" : "ok",
-      "phase" : "setup",
-      "step" : 3,
-      "tool" : "entity.delete"
     },
     {
       "arguments" : {
@@ -111,21 +92,18 @@
     },
     {
       "arguments" : {
-        "material" : {
-          "roughness" : 0.8,
-          "shading" : "pbr",
-          "texture" : "asset:f99ab69a1e69408769b8bb9e8f110845#texture"
-        },
-        "name" : "Crate"
-      },
-      "outcome" : "ok",
-      "phase" : "transcript",
-      "step" : 2,
-      "tool" : "asset.newMaterial"
-    },
-    {
-      "arguments" : {
         "calls" : [
+          {
+            "arguments" : {
+              "material" : {
+                "roughness" : 0.8,
+                "shading" : "pbr",
+                "texture" : "asset:e12e98e68fe5207e6ef73a4dce91522e#texture"
+              },
+              "name" : "Crate"
+            },
+            "command" : "asset.newMaterial"
+          },
           {
             "arguments" : {
               "name" : "Floor",
@@ -176,15 +154,7 @@
           },
           {
             "arguments" : {
-              "asset" : "asset:08ef82df1a7fe34b3b3689c7c68e6e75",
-              "entity" : "$1.entity",
-              "kind" : "material"
-            },
-            "command" : "asset.assign"
-          },
-          {
-            "arguments" : {
-              "asset" : "asset:08ef82df1a7fe34b3b3689c7c68e6e75",
+              "asset" : "asset:{$0.asset}",
               "entity" : "$2.entity",
               "kind" : "material"
             },
@@ -192,8 +162,16 @@
           },
           {
             "arguments" : {
-              "asset" : "asset:08ef82df1a7fe34b3b3689c7c68e6e75",
+              "asset" : "asset:{$0.asset}",
               "entity" : "$3.entity",
+              "kind" : "material"
+            },
+            "command" : "asset.assign"
+          },
+          {
+            "arguments" : {
+              "asset" : "asset:{$0.asset}",
+              "entity" : "$4.entity",
               "kind" : "material"
             },
             "command" : "asset.assign"
@@ -202,9 +180,9 @@
             "arguments" : {
               "name" : "Sun",
               "position" : [
-                0,
-                5,
-                0
+                3,
+                6,
+                4
               ],
               "template" : "empty"
             },
@@ -213,9 +191,20 @@
           {
             "arguments" : {
               "component" : "DirectionalLight",
-              "entity" : "$7.entity"
+              "entity" : "$8.entity"
             },
             "command" : "component.add"
+          },
+          {
+            "arguments" : {
+              "entity" : "$8.entity",
+              "target" : [
+                0,
+                0,
+                0
+              ]
+            },
+            "command" : "transform.lookAt"
           },
           {
             "arguments" : {
@@ -232,29 +221,27 @@
           {
             "arguments" : {
               "component" : "Camera",
-              "entity" : "$9.entity"
+              "entity" : "$11.entity"
             },
             "command" : "component.add"
           },
           {
             "arguments" : {
-              "entity" : "$9.entity",
-              "path" : "Transform.rotation",
-              "value" : [
-                -0.199,
+              "entity" : "$11.entity",
+              "target" : [
                 0,
-                0,
-                0.98
+                0.5,
+                0
               ]
             },
-            "command" : "component.setField"
+            "command" : "transform.lookAt"
           }
         ],
         "label" : "Build the level"
       },
       "outcome" : "ok",
       "phase" : "transcript",
-      "step" : 3,
+      "step" : 2,
       "tool" : "edit.batch"
     },
     {
@@ -263,13 +250,13 @@
       },
       "outcome" : "ok",
       "phase" : "transcript",
-      "step" : 4,
+      "step" : 3,
       "tool" : "diagnostics.get"
     },
     {
       "outcome" : "skipped (needs a window)",
       "phase" : "transcript",
-      "step" : 5,
+      "step" : 4,
       "tool" : "view.screenshot"
     }
   ]

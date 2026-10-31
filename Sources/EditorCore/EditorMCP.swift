@@ -221,7 +221,13 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
         var description = info.doc
         if info.isUndoable { description += " Undoable (one step; edit.undo reverts it)." }
         var input = Self.objectSchema(schema(for: types.arguments))
-        if info.isDestructive {
+        if info.isDestructive, let only = info.confirmsOnlyWhen {
+            description += " Destructive only \(only): then pass confirm: true."
+            input["properties"]?["confirm"] = [
+                "type": "boolean", "const": true,
+                "description": .string("Required only \(only): that can lose work that undo can't bring back."),
+            ]
+        } else if info.isDestructive {
             description += " Destructive: pass confirm: true."
             input["properties"]?["confirm"] = [
                 "type": "boolean", "const": true,
@@ -269,7 +275,20 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
         if all.contains(AISettingsCommand.id), !(id == AISettingsCommand.id && (arguments.objectValue ?? [:]).isEmpty) {
             return refuse("AI settings can only be changed in the editor (the Activity panel or the prefs file), not over MCP")
         }
-        let destructive = all.filter { session.commands.info($0)?.isDestructive == true }
+        // The calls that can lose work: for a batch, each call's own arguments decide.
+        let previousRoots = session.fileAccessRoots
+        session.fileAccessRoots = sandboxRoots
+        var calls: [(CommandID, JSON)] = [(id, arguments)]
+        if name == EditBatchCommand.id.rawValue {
+            calls += (arguments["calls"]?.arrayValue ?? []).compactMap { call in
+                call["command"]?.stringValue.map { (CommandID($0), call["arguments"] ?? [:]) }
+            }
+        }
+        let destructive = calls.filter { call in
+            session.commands.info(call.0)?.isDestructive == true
+                && session.commands.needsConfirmation(call.0, json: try? call.1.data())
+        }.map(\.0)
+        session.fileAccessRoots = previousRoots
         if !destructive.isEmpty, arguments["confirm"]?.boolValue != true {
             let names = destructive.map(\.rawValue).joined(separator: ", ")
             return refuse("\(names) can lose work that undo can't bring back: call again with confirm: true once you're sure")
@@ -591,12 +610,12 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
             "description": "An entity id: 32 lowercase hex digits (see the editor://scene resource).",
         ], sample: EntityID(high: 0, low: 1))
         generator.override(AssetID.self, schema: [
-            "type": "string", "pattern": "^[0-9a-fA-F-]{32,36}$",
-            "description": "An asset id: 32 hex digits (see the editor://assets resource).",
+            "type": "string", "pattern": "^(asset:)?[0-9a-fA-F-]{32,36}$",
+            "description": "An asset id: 32 hex digits, with or without the \"asset:\" prefix (see the editor://assets resource).",
         ], sample: AssetID(high: 0, low: 1))
         generator.override(AssetReference.self, schema: [
-            "type": "string", "pattern": "^asset:[0-9a-fA-F-]{32,36}(#.+)?$",
-            "description": "An asset: \"asset:<id>\" for a file, \"asset:<id>#<object>\" for one object in it (see editor://assets).",
+            "type": "string", "pattern": "^(asset:)?[0-9a-fA-F-]{32,36}(#.+)?$",
+            "description": "An asset: \"asset:<id>\" (a bare id works too) for a file, \"asset:<id>#<object>\" for one object in it (see editor://assets).",
         ], sample: AssetReference(AssetID(high: 0, low: 1)))
         generator.override(JSONValue.self, schema: ["description": "Any JSON value."], sample: .null)
         generator.override(JSON.self, schema: ["description": "Any JSON value."], sample: .null)
@@ -605,6 +624,13 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
         generator.override(Vec4.self, schema: Self.floats(4, "[x, y, z, w] (colors: linear [r, g, b, a])"), sample: .zero)
         generator.override(Quat.self, schema: Self.floats(4, "A rotation quaternion [x, y, z, w]; [0, 0, 0, 1] is none."),
                            sample: .identity)
+        generator.override(LookTarget.self, schema: [
+            "oneOf": [
+                ["type": "string", "pattern": "^[0-9a-f]{32}$", "description": "An entity id: aim at its world position."],
+                Self.floats(3, "A world point [x, y, z]."),
+            ],
+            "description": "What to aim at: an entity id or a world point [x, y, z].",
+        ], sample: .point(.zero))
 
         // MaterialAsset reads its enums as strings and accepts a legacy key: state the cases.
         var material = generator.schema(for: MaterialAsset.self)
@@ -621,6 +647,8 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
             material["properties"] = .object(properties)
         }
         generator.override(MaterialAsset.self, schema: material, sample: MaterialAsset())
+        // material.set's `material` is a partial one: the same fields, any of them.
+        generator.override(MaterialPatch.self, schema: material, sample: MaterialPatch(MaterialAsset()))
         return generator
     }
 

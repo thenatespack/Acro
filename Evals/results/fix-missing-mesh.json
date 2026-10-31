@@ -46,7 +46,7 @@
     },
     {
       "arguments" : {
-        "entity" : "2776babbe0082087652466393be299ce",
+        "entity" : "1ef7ef3f66b6aac2a53b53bb69fee054",
         "path" : "MeshRenderer.mesh",
         "value" : "barrel_v2"
       },
@@ -66,7 +66,7 @@
     },
     {
       "arguments" : {
-        "entity" : "2776babbe0082087652466393be299ce"
+        "entity" : "1ef7ef3f66b6aac2a53b53bb69fee054"
       },
       "outcome" : "ok",
       "phase" : "transcript",
@@ -84,7 +84,7 @@
     },
     {
       "arguments" : {
-        "entity" : "2776babbe0082087652466393be299ce",
+        "entity" : "1ef7ef3f66b6aac2a53b53bb69fee054",
         "path" : "MeshRenderer.mesh",
         "value" : "cube"
       },

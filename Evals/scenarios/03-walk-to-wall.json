@@ -18,14 +18,10 @@
     {"tool": "entity.get", "arguments": {"entity": "@0.entities.0.id"}, "note": "it has KeyboardMover: W walks forward (-Z), and a dynamic RigidBody, so walls stop it"},
     {"tool": "play.start", "arguments": {"paused": true}},
     {"tool": "input.inject", "arguments": {"steps": [{"key": "w", "duration": 6}]}},
-    {"tool": "play.step", "arguments": {"frames": 60}},
-    {"tool": "entity.get", "arguments": {"entity": "@0.entities.0.id"}},
-    {"tool": "play.step", "arguments": {"frames": 60}},
-    {"tool": "entity.get", "arguments": {"entity": "@0.entities.0.id"}},
-    {"tool": "play.step", "arguments": {"frames": 60}},
+    {"tool": "play.step", "arguments": {"until": {"entity": "@0.entities.0.id", "stopped": true}, "maxFrames": 600}, "expect": {"reason": "stopped"}, "note": "runs until the Player's position stops changing (reason \"stopped\") or 600 frames pass"},
     {"tool": "entity.get", "arguments": {"entity": "@0.entities.0.id"}, "note": "z stopped changing near the wall's face: it hit the wall"},
     {"tool": "input.clear", "arguments": {}},
-    {"tool": "scene.raycast", "arguments": {"origin": "@9.world.position", "direction": [0, 0, -1], "maxDistance": 2}, "note": "what is in front: the Wall"},
+    {"tool": "scene.raycast", "arguments": {"origin": "@5.world.position", "direction": [0, 0, -1], "maxDistance": 2}, "note": "what is in front: the Wall"},
     {"tool": "view.screenshot", "arguments": {"source": "game", "maxSize": 800}, "requires": "window"}
   ],
   "checks": [

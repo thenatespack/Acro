@@ -143,13 +143,27 @@ extension EditorSession {
     /// working directory, or against the sandbox root while `fileAccessRoots` is set. Nil
     /// (logged as an error) when the path is outside the sandbox.
     public func fileURL(forPath path: String, _ action: String) -> URL? {
+        let url = resolvedFileURL(forPath: path)
+        return checkFileAccess(url, action) ? url : nil
+    }
+
+    /// `fileURL(forPath:_:)` without the sandbox check or the log entry.
+    func resolvedFileURL(forPath path: String) -> URL {
         let trimmed = path.trimmingCharacters(in: .whitespaces)
         var url = Self.url(forPath: trimmed)
         if let root = fileAccessRoots?.first {
             let expanded = (trimmed as NSString).expandingTildeInPath
             if !expanded.hasPrefix("/") { url = root.appendingPathComponent(expanded).standardizedFileURL }
         }
-        return checkFileAccess(url, action) ? url : nil
+        return url
+    }
+
+    /// Whether saving the scene to `path` would overwrite a file that isn't the scene's own.
+    func savingOverOtherFile(at path: String) -> Bool {
+        guard !path.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
+        let url = resolvedFileURL(forPath: path)
+        if let own = document.url, Self.resolved(own) == Self.resolved(url) { return false }
+        return FileManager.default.fileExists(atPath: url.path)
     }
 
     /// Whether `url` may be touched now (inside `fileAccessRoots`, symbolic links resolved);

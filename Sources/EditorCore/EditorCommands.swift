@@ -1,4 +1,5 @@
 import Engine
+import EngineMCP
 import Foundation
 
 // The built-in editor commands (see EditorCommand.swift). Each one is a thin, typed front for an
@@ -23,7 +24,7 @@ public enum BuiltinCommands {
         SelectionSetCommand.self, SelectionClearCommand.self, SelectionGetCommand.self,
         SceneHierarchyCommand.self, EntityFindCommand.self, EntityGetCommand.self,
         EntityCreateCommand.self, EntityDuplicateCommand.self, EntityDeleteCommand.self, EntityRenameCommand.self,
-        EntityReparentCommand.self, TransformSetCommand.self,
+        EntityReparentCommand.self, TransformSetCommand.self, TransformLookAtCommand.self,
         ComponentTypesCommand.self, ComponentAddCommand.self, ComponentRemoveCommand.self, ComponentSetFieldCommand.self,
         AssetImportCommand.self, AssetNewFolderCommand.self, AssetNewMaterialCommand.self, AssetRenameCommand.self,
         AssetMoveCommand.self, AssetDeleteCommand.self, AssetExtractMaterialsCommand.self, AssetApplySettingsCommand.self,
@@ -65,15 +66,36 @@ public struct EntitiesResult: Codable, Equatable, Sendable {
 // MARK: Scene
 
 public enum SceneNewCommand: EditorCommand {
+    public struct Arguments: Codable, Equatable, Sendable {
+        /// "starter" (default): a camera, a sun, a floor and a few primitives. "empty": no entities at all.
+        public var template: String?
+        public init(template: String? = nil) { self.template = template }
+    }
+
     public static let id: CommandID = "scene.new"
     public static let title = "New Scene"
-    public static let doc = "Replaces the open scene with the starter scene. Clears the undo history; unsaved changes are lost. Not while playing."
+    public static let doc = "Replaces the open scene with a new one: the starter scene (default) or, with `template: \"empty\"`, a scene with no entities. Clears the undo history; unsaved changes are lost. Not while playing."
     public static let isDestructive = true
     public static func isAvailable(in session: EditorSession) -> Bool { !session.isPlaying }
-    public static func run(_ arguments: NoArguments, in session: EditorSession) throws -> NoResult {
-        try session.commands.check(session.newDocument(), title)
+    public static func run(_ arguments: Arguments, in session: EditorSession) throws -> NoResult {
+        switch arguments.template ?? "starter" {
+        case "starter": try session.commands.check(session.newDocument(), title)
+        case "empty": try session.commands.check(session.newDocument(empty: true), title)
+        default: throw CommandError.failed("Unknown scene template '\(arguments.template ?? "")': use \"starter\" or \"empty\"")
+        }
         return NoResult()
     }
+}
+
+extension EditorSession {
+    /// New Scene (the starter scene) for the UI.
+    @discardableResult
+    public func run(_ command: SceneNewCommand.Type) -> NoResult? { run(command, .init()) }
+}
+
+extension CommandRegistry {
+    @discardableResult
+    public func run(_ command: SceneNewCommand.Type) throws -> NoResult { try run(command, .init()) }
 }
 
 public enum SceneOpenCommand: EditorCommand {
@@ -106,6 +128,10 @@ public enum SceneSaveCommand: EditorCommand {
     public static let title = "Save Scene"
     public static let doc = "Saves the scene to its file, or to `path` when it has never been saved. Not while playing."
     public static let isDestructive = true
+    public static let confirmsOnlyWhen: String? = "when `path` names an existing file that isn't the scene's own (saving to the scene's own file or to a new file needs no confirm)"
+    public static func needsConfirmation(_ arguments: Arguments, in session: EditorSession) -> Bool {
+        session.document.url == nil && session.savingOverOtherFile(at: arguments.path ?? "")
+    }
     public static let isIdempotent = true
     public static func isAvailable(in session: EditorSession) -> Bool { !session.isPlaying }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> PathResult {
@@ -124,6 +150,10 @@ public enum SceneSaveAsCommand: EditorCommand {
     public static let title = "Save Scene As"
     public static let doc = "Saves the scene to `path`, which becomes its file. Not while playing."
     public static let isDestructive = true
+    public static let confirmsOnlyWhen: String? = "when `path` is an existing file that isn't the scene's own (a new file or the scene's own file needs no confirm)"
+    public static func needsConfirmation(_ arguments: Arguments, in session: EditorSession) -> Bool {
+        session.savingOverOtherFile(at: arguments.path)
+    }
     public static let isIdempotent = true
     public static func isAvailable(in session: EditorSession) -> Bool { !session.isPlaying }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> PathResult {
@@ -588,7 +618,7 @@ public enum ComponentSetFieldCommand: EditorCommand {
         /// (or ".r", ".g", ".b", ".a") after a vector or quaternion set one element.
         public var path: String
         /// The value as JSON: a bool, number or string (also an enum case name), [x, y, z(, w)]
-        /// for vectors and quaternions, an entity id string, or null for a nil optional.
+        /// for vectors and quaternions (a rotation can also be {"eulerDegrees": [x, y, z]}, see transform.lookAt to aim), an entity id string, or null for a nil optional.
         public var value: JSONValue
         /// What undo restores (default: the value before the command). A gesture that already
         /// applied its value live passes where it started.
@@ -624,7 +654,7 @@ public enum ComponentSetFieldCommand: EditorCommand {
 
     public static let id: CommandID = "component.setField"
     public static let title = "Set Field"
-    public static let doc = "Sets one field of a component by reflection path (what the inspector edits): `component` \"Transform\" with `path` \"position\", or just `path` \"Transform.position.x\" (a trailing .x/.y/.z/.w sets one element of a vector). With `space` \"world\", Transform's position, rotation and scale are given in world space."
+    public static let doc = "Sets one field of a component by reflection path (what the inspector edits): `component` \"Transform\" with `path` \"position\", or just `path` \"Transform.position.x\" (a trailing .x/.y/.z/.w sets one element of a vector). A rotation (a quaternion field) is [x, y, z, w] or {\"eulerDegrees\": [x, y, z]} (Z roll, then X pitch, then Y yaw). With `space` \"world\", Transform's position, rotation and scale are given in world space."
     public static let isIdempotent = true
     public static let isUndoable = true
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> NoResult {
@@ -998,41 +1028,114 @@ public enum AssetAssignCommand: EditorCommand {
     }
 }
 
+/// The material fields `material.set` changes: a JSON object holding any of `MaterialAsset`'s
+/// keys. (A typed `MaterialAsset` converts to every key: a complete material.)
+public struct MaterialPatch: Codable, Equatable, Sendable {
+    public var fields: [String: JSON]
+
+    public init(fields: [String: JSON]) { self.fields = fields }
+
+    /// Every field of `material`.
+    public init(_ material: MaterialAsset) {
+        let object = (try? JSONEncoder().encode(material)).flatMap { try? JSON(data: $0) }
+        fields = object?.objectValue ?? [:]
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let json = try decoder.singleValueContainer().decode(JSON.self)
+        guard let object = json.objectValue else {
+            throw DecodingError.typeMismatch([String: JSON].self, .init(codingPath: decoder.codingPath,
+                                                                       debugDescription: "the material is an object of fields"))
+        }
+        fields = object
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(JSON.object(fields))
+    }
+
+    /// The names of the fields a patch may hold (every key a material is written with, and the legacy `isTransparent`).
+    static let knownKeys: Set<String> = {
+        var full = MaterialAsset()
+        let texture = AssetReference(AssetID(high: 0, low: 1))
+        full.texture = texture
+        full.metallicRoughnessTexture = texture
+        full.normalTexture = texture
+        full.occlusionTexture = texture
+        full.emissiveTexture = texture
+        return Set(MaterialPatch(full).fields.keys).union(["isTransparent"])
+    }()
+
+    /// `base` with this patch's fields replaced (`null` clears a texture).
+    func applied(to base: MaterialAsset) throws -> MaterialAsset {
+        let unknown = fields.keys.filter { !Self.knownKeys.contains($0) }.sorted()
+        if let first = unknown.first {
+            throw CommandError.failed("Unknown material field '\(first)'; the fields are \(Self.knownKeys.sorted().joined(separator: ", "))")
+        }
+        var merged = MaterialPatch(base).fields
+        for (key, value) in fields { merged[key] = value }
+        do {
+            return try JSONDecoder().decode(MaterialAsset.self, from: JSON.object(merged).data())
+        } catch {
+            throw CommandError.failed("Bad material value: \(error)")
+        }
+    }
+}
+
 public enum MaterialSetCommand: EditorCommand {
     public struct Arguments: Codable, Equatable, Sendable {
         /// A .material file.
         public var asset: AssetID
-        public var material: MaterialAsset
+        /// The fields to change; fields left out keep their current values (see `reset`).
+        public var material: MaterialPatch
+        /// Start from the default material instead of the current one, so fields left out go
+        /// back to their defaults.
+        public var reset: Bool?
         /// What undo restores (default: the file's material before the command).
         public var previous: MaterialAsset?
         public var label: String?
         /// Write without recording an undo step (a live preview during a drag).
         public var transient: Bool?
-        public init(asset: AssetID, material: MaterialAsset, previous: MaterialAsset? = nil, label: String? = nil,
-                    transient: Bool? = nil) {
+        public init(asset: AssetID, material: MaterialPatch, reset: Bool? = nil, previous: MaterialAsset? = nil,
+                    label: String? = nil, transient: Bool? = nil) {
             self.asset = asset
             self.material = material
+            self.reset = reset
             self.previous = previous
             self.label = label
             self.transient = transient
+        }
+
+        /// A complete material (replaces the file's).
+        public init(asset: AssetID, material: MaterialAsset, previous: MaterialAsset? = nil, label: String? = nil,
+                    transient: Bool? = nil) {
+            self.init(asset: asset, material: MaterialPatch(material), reset: true, previous: previous, label: label,
+                      transient: transient)
         }
     }
 
     public static let id: CommandID = "material.set"
     public static let title = "Edit Material"
-    public static let doc = "Writes `material` to the .material file and reimports it (the viewport updates)."
+    public static let doc = "Changes the .material file's fields and reimports it (the viewport updates). Fields left out in `material` keep their current values (`null` clears a texture); `reset: true` starts from the default material instead. A model's own materials are read-only: asset.extractMaterials makes editable .material files."
     public static let isIdempotent = true
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> NoResult {
         guard session.isMaterialFile(arguments.asset) else {
-            throw CommandError.failed("\(arguments.asset.description.prefix(8)) isn't a .material file")
+            let id = arguments.asset.description
+            let path = session.assets?.path(of: arguments.asset).map { " (\($0))" } ?? ""
+            throw CommandError.failed("\(id.prefix(8))\(path) isn't a .material file, so its materials are read-only. "
+                                      + "To edit a model's materials, run asset.extractMaterials {asset: \"\(id)\"}, which writes "
+                                      + "editable .material files and points the scene at them, then material.set one of those.")
         }
+        let base = arguments.reset == true ? MaterialAsset() : session.assets?.material(AssetReference(arguments.asset)) ?? MaterialAsset()
+        let material = try arguments.material.applied(to: base)
         if arguments.transient == true {
-            try session.commands.check(session.previewMaterial(arguments.material, of: arguments.asset), title)
+            try session.commands.check(session.previewMaterial(material, of: arguments.asset), title)
         } else {
-            try session.commands.check(session.setMaterial(arguments.material, of: arguments.asset, from: arguments.previous,
+            try session.commands.check(session.setMaterial(material, of: arguments.asset, from: arguments.previous,
                                                            label: arguments.label ?? "Edit Material"), title)
         }
         return NoResult()
@@ -1134,6 +1237,14 @@ extension FieldValue {
             case (4, _): self = .vec4(Vec4(v[0], v[1], v[2], v[3]))
             default: throw mismatch
             }
+        case (.object(let members), .quat?):
+            // {"eulerDegrees": [x, y, z]}: see Quat.euler(degrees:).
+            guard members.count == 1, case .array(let items)? = members["eulerDegrees"] else {
+                throw SceneError.typeMismatch(path: "value", expected: "a quaternion [x, y, z, w] or {\"eulerDegrees\": [x, y, z]}")
+            }
+            let v = try numbers(items)
+            guard v.count == 3 else { throw mismatch }
+            self = .quat(Quat.euler(degrees: Vec3(v[0], v[1], v[2])))
         case (.object, _): throw mismatch
         }
     }

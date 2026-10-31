@@ -67,7 +67,7 @@
     {
       "arguments" : {
         "component" : "Collider",
-        "entity" : "0902457eab67a70ec14cf394f84c6159"
+        "entity" : "f410bc721b0b8b411610e949ff084a54"
       },
       "outcome" : "ok",
       "phase" : "setup",
@@ -77,7 +77,7 @@
     {
       "arguments" : {
         "component" : "RigidBody",
-        "entity" : "0902457eab67a70ec14cf394f84c6159"
+        "entity" : "f410bc721b0b8b411610e949ff084a54"
       },
       "outcome" : "ok",
       "phase" : "setup",
@@ -87,7 +87,7 @@
     {
       "arguments" : {
         "component" : "KeyboardMover",
-        "entity" : "0902457eab67a70ec14cf394f84c6159"
+        "entity" : "f410bc721b0b8b411610e949ff084a54"
       },
       "outcome" : "ok",
       "phase" : "setup",
@@ -111,7 +111,7 @@
     },
     {
       "arguments" : {
-        "entity" : "d0bc2aa9ab1b62d484149145463ee706",
+        "entity" : "96e5b3fcdf4713755dd04c1546471099",
         "path" : "Transform.scale",
         "value" : [
           8,
@@ -127,7 +127,7 @@
     {
       "arguments" : {
         "component" : "Collider",
-        "entity" : "d0bc2aa9ab1b62d484149145463ee706"
+        "entity" : "96e5b3fcdf4713755dd04c1546471099"
       },
       "outcome" : "ok",
       "phase" : "setup",
@@ -146,7 +146,7 @@
     },
     {
       "arguments" : {
-        "entity" : "0902457eab67a70ec14cf394f84c6159"
+        "entity" : "f410bc721b0b8b411610e949ff084a54"
       },
       "outcome" : "ok",
       "phase" : "transcript",
@@ -178,7 +178,11 @@
     },
     {
       "arguments" : {
-        "frames" : 60
+        "maxFrames" : 600,
+        "until" : {
+          "entity" : "f410bc721b0b8b411610e949ff084a54",
+          "stopped" : true
+        }
       },
       "outcome" : "ok",
       "phase" : "transcript",
@@ -187,7 +191,7 @@
     },
     {
       "arguments" : {
-        "entity" : "0902457eab67a70ec14cf394f84c6159"
+        "entity" : "f410bc721b0b8b411610e949ff084a54"
       },
       "outcome" : "ok",
       "phase" : "transcript",
@@ -196,47 +200,11 @@
     },
     {
       "arguments" : {
-        "frames" : 60
-      },
-      "outcome" : "ok",
-      "phase" : "transcript",
-      "step" : 6,
-      "tool" : "play.step"
-    },
-    {
-      "arguments" : {
-        "entity" : "0902457eab67a70ec14cf394f84c6159"
-      },
-      "outcome" : "ok",
-      "phase" : "transcript",
-      "step" : 7,
-      "tool" : "entity.get"
-    },
-    {
-      "arguments" : {
-        "frames" : 60
-      },
-      "outcome" : "ok",
-      "phase" : "transcript",
-      "step" : 8,
-      "tool" : "play.step"
-    },
-    {
-      "arguments" : {
-        "entity" : "0902457eab67a70ec14cf394f84c6159"
-      },
-      "outcome" : "ok",
-      "phase" : "transcript",
-      "step" : 9,
-      "tool" : "entity.get"
-    },
-    {
-      "arguments" : {
 
       },
       "outcome" : "ok",
       "phase" : "transcript",
-      "step" : 10,
+      "step" : 6,
       "tool" : "input.clear"
     },
     {
@@ -248,20 +216,20 @@
         ],
         "maxDistance" : 2,
         "origin" : [
-          -0.0123565085,
-          0.4989619,
-          -0.2525398
+          -0.03339702,
+          0.49888575,
+          -0.25060943
         ]
       },
       "outcome" : "ok",
       "phase" : "transcript",
-      "step" : 11,
+      "step" : 7,
       "tool" : "scene.raycast"
     },
     {
       "outcome" : "skipped (needs a window)",
       "phase" : "transcript",
-      "step" : 12,
+      "step" : 8,
       "tool" : "view.screenshot"
     }
   ]

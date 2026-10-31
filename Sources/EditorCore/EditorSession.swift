@@ -190,10 +190,10 @@ public final class EditorSession {
     // MARK: Document
 
     @discardableResult
-    public func newDocument() -> Bool {
+    public func newDocument(empty: Bool = false) -> Bool {
         guard !refuseWhilePlaying("New") else { return false }
         onWillReplaceWorld?()
-        document.newDocument()
+        document.newDocument(empty: empty)
         log.info("New scene")
         changed()
         return true
@@ -454,6 +454,22 @@ public final class EditorSession {
         for _ in 0..<max(frames, 0) { advanceGame(dt: dt) }
         changed()
         return true
+    }
+
+    /// Like `step`, but stops early: after each frame `stop` says whether to. Returns the frames
+    /// run (nil when not playing).
+    public func step(maxFrames: Int, dt: Double? = nil, stopAfterFrame stop: () -> Bool) -> Int? {
+        guard isPlaying else { return nil }
+        isPaused = true
+        let dt = dt ?? world.fixedTimestep
+        var run = 0
+        while run < max(maxFrames, 0) {
+            advanceGame(dt: dt)
+            run += 1
+            if stop() { break }
+        }
+        changed()
+        return run
     }
 
     /// Real input to hand the game in its next frame (the app forwards the keyboard and the

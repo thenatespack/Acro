@@ -31,37 +31,13 @@
     },
     {
       "arguments" : {
-        "confirm" : true
+        "confirm" : true,
+        "template" : "empty"
       },
       "outcome" : "ok",
       "phase" : "setup",
       "step" : 1,
       "tool" : "scene.new"
-    },
-    {
-      "arguments" : {
-        "depth" : 0
-      },
-      "outcome" : "ok",
-      "phase" : "setup",
-      "step" : 2,
-      "tool" : "scene.hierarchy"
-    },
-    {
-      "arguments" : {
-        "entities" : [
-          "f3a5d217f506bc300a1cdd4f6ac6acf8",
-          "db3dd55fb2e4cad1186c875da82de2d8",
-          "abd3573052c0f57a69515da24d1a5798",
-          "62182e54c4f8adfc541ca83b17189b30",
-          "59b65d60f1370ddc3a79eb48492df5e0",
-          "266d83c282ad15aaa85170ec820ab04d"
-        ]
-      },
-      "outcome" : "ok",
-      "phase" : "setup",
-      "step" : 3,
-      "tool" : "entity.delete"
     },
     {
       "arguments" : {
@@ -85,7 +61,7 @@
     },
     {
       "arguments" : {
-        "asset" : "b87a03d6ff89dbed6b26fe7b47a10551"
+        "asset" : "0c83c8e79c62a221d31abf47532f305c"
       },
       "outcome" : "ok",
       "phase" : "transcript",
@@ -94,16 +70,7 @@
     },
     {
       "arguments" : {
-        "asset" : "asset:bf9cd998acacd8f28207c5de761211ac"
-      },
-      "outcome" : "ok",
-      "phase" : "transcript",
-      "step" : 3,
-      "tool" : "material.get"
-    },
-    {
-      "arguments" : {
-        "asset" : "bf9cd998acacd8f28207c5de761211ac",
+        "asset" : "a24841350b5a47910447344faaa0ac8f",
         "material" : {
           "baseColor" : [
             0.8,
@@ -112,18 +79,17 @@
             1
           ],
           "metallic" : 1,
-          "roughness" : 0.3,
-          "shading" : "pbr"
+          "roughness" : 0.3
         }
       },
       "outcome" : "ok",
       "phase" : "transcript",
-      "step" : 4,
+      "step" : 3,
       "tool" : "material.set"
     },
     {
       "arguments" : {
-        "asset" : "asset:b87a03d6ff89dbed6b26fe7b47a10551",
+        "asset" : "0c83c8e79c62a221d31abf47532f305c",
         "position" : [
           0,
           0.5,
@@ -132,17 +98,16 @@
       },
       "outcome" : "ok",
       "phase" : "transcript",
-      "step" : 5,
+      "step" : 4,
       "tool" : "asset.instantiate"
     },
     {
       "arguments" : {
-        "confirm" : true,
         "path" : "box.json"
       },
       "outcome" : "ok",
       "phase" : "transcript",
-      "step" : 6,
+      "step" : 5,
       "tool" : "scene.saveAs"
     }
   ]

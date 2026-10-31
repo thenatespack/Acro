@@ -13,7 +13,8 @@ Reproducible scenarios for AI agents driving the editor over MCP. Each spec in `
 
 Inside `setup` and `transcript` arguments, `"@<n>.<path>"` is part of step n's result (`"@0.entities.0.id"`,
 `"@2.entities.*.id"` for every element) and `"{@<n>.<path>}"` interpolates into a string
-(`"asset:{@1.asset.id}"`). `"$<n>.<path>"` stays as is: that is `edit.batch`'s own reference syntax.
+(`"asset:{@1.asset.id}"`). `"$<n>.<path>"` and `"{$<n>.<path>}"` stay as they are: that is `edit.batch`'s own reference syntax. A transcript step
+can also state what its result must hold, `"expect": {"reason": "stopped"}`.
 
 ## Running
 

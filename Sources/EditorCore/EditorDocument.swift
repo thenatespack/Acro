@@ -33,11 +33,11 @@ public final class EditorDocument {
 
     // MARK: New / Open / Save
 
-    /// Replaces the contents with the starter scene. The new document is clean (nothing to
+    /// Replaces the contents with the starter scene (or nothing, when `empty`). The new document is clean (nothing to
     /// save until it is edited) and has no file yet.
-    public func newDocument() {
+    public func newDocument(empty: Bool = false) {
         clearWorld()
-        StarterScene.build(in: world)
+        if !empty { StarterScene.build(in: world) }
         url = nil
         finishReload()
     }

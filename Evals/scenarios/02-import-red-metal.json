@@ -4,18 +4,15 @@
   "fixtures": [{"copy": "Tests/EngineTests/Resources/glTF/Box.glb", "to": "Box.glb"}],
   "setup": [
     {"tool": "project.new", "arguments": {"path": "."}},
-    {"tool": "scene.new", "arguments": {"confirm": true}},
-    {"tool": "scene.hierarchy", "arguments": {"depth": 0}},
-    {"tool": "entity.delete", "arguments": {"entities": "@2.entities.*.id"}, "note": "start from an empty scene"}
+    {"tool": "scene.new", "arguments": {"template": "empty", "confirm": true}}
   ],
   "transcript": [
     {"tool": "asset.import", "arguments": {"sources": ["Box.glb"]}, "note": "answers once the background import is done"},
     {"tool": "asset.get", "arguments": {"path": "Box.glb"}},
-    {"tool": "asset.extractMaterials", "arguments": {"asset": "@1.asset.id"}, "note": "imported materials are read-only; extracting makes editable .material files the model then uses"},
-    {"tool": "material.get", "arguments": {"asset": "asset:{@2.materials.0}"}},
-    {"tool": "material.set", "arguments": {"asset": "@2.materials.0", "material": {"shading": "pbr", "baseColor": [0.8, 0.04, 0.03, 1], "metallic": 1, "roughness": 0.3}}},
-    {"tool": "asset.instantiate", "arguments": {"asset": "asset:{@1.asset.id}", "position": [0, 0.5, 0]}},
-    {"tool": "scene.saveAs", "arguments": {"path": "box.json", "confirm": true}}
+    {"tool": "asset.extractMaterials", "arguments": {"asset": "@1.asset.id"}, "note": "imported materials are read-only (material.set on one says so); extracting makes editable .material files the model then uses"},
+    {"tool": "material.set", "arguments": {"asset": "@2.materials.0", "material": {"baseColor": [0.8, 0.04, 0.03, 1], "metallic": 1, "roughness": 0.3}}, "note": "a merge: the other fields keep what the model had; ids and asset: references are interchangeable"},
+    {"tool": "asset.instantiate", "arguments": {"asset": "@1.asset.id", "position": [0, 0.5, 0]}},
+    {"tool": "scene.saveAs", "arguments": {"path": "box.json"}, "note": "a new file: no confirm needed"}
   ],
   "checks": [
     {"kind": "material", "description": "every renderer of the model uses a red metal material", "find": {"component": "MeshRenderer"},

@@ -57,7 +57,8 @@ public struct AssetID: Hashable, Comparable, Sendable, Codable, CustomStringConv
 
     public init(from decoder: any Decoder) throws {
         let string = try decoder.singleValueContainer().decode(String.self)
-        guard let id = AssetID(string) else {
+        // Also reads a whole-file reference ("asset:<id>"), so tools take either form.
+        guard let id = AssetID(string) ?? AssetReference(string).flatMap({ $0.subAsset == nil ? $0.asset : nil }) else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Bad asset id '\(string)'"))
         }
         self = id
@@ -116,7 +117,8 @@ public struct AssetReference: Hashable, Comparable, Sendable, Codable, CustomStr
 
     public init(from decoder: any Decoder) throws {
         let string = try decoder.singleValueContainer().decode(String.self)
-        guard let reference = AssetReference(string) else {
+        // Also reads a bare id as the whole file, so tools take either form.
+        guard let reference = AssetReference(string) ?? AssetID(string).map({ AssetReference($0) }) else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Bad asset reference '\(string)'"))
         }
         self = reference

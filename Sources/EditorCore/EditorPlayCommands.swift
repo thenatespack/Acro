@@ -33,6 +33,9 @@ public struct PlayStateResult: Codable, Equatable, Sendable {
     public var gameCamera: Bool
     /// Whether the play session simulates physics (the scene has colliders).
     public var physics: Bool
+    /// Set by play.step: the frames it ran, and why it stopped ("frames", "stopped", "maxFrames" or "entity removed").
+    public var stepped: Int?
+    public var reason: String?
 }
 
 extension EditorSession {
@@ -64,29 +67,88 @@ public enum PlayPauseCommand: EditorCommand {
     }
 }
 
+/// `play.step`'s condition: stop once an entity has stopped moving.
+public struct PlayStepCondition: Codable, Equatable, Sendable {
+    /// The entity to watch.
+    public var entity: EntityID
+    /// Stop when the entity's world position has changed by less than `epsilon` over the last
+    /// `window` frames. (Only `stopped: true` is supported.)
+    public var stopped: Bool
+    /// World units (default 0.001).
+    public var epsilon: Double?
+    /// Frames to compare over (default 10, at least 1): the entity must also have run that many frames.
+    public var window: Int?
+    public init(entity: EntityID, stopped: Bool = true, epsilon: Double? = nil, window: Int? = nil) {
+        self.entity = entity
+        self.stopped = stopped
+        self.epsilon = epsilon
+        self.window = window
+    }
+}
+
 public enum PlayStepCommand: EditorCommand {
     public struct Arguments: Codable, Equatable, Sendable {
-        /// Frames to run (default 1, at most 10000).
+        /// Frames to run (default 1, at most 10000). Not with `until`: use `maxFrames`.
         public var frames: Int?
         /// Seconds per frame (default the world's fixed step, 1/60).
         public var dt: Double?
-        public init(frames: Int? = nil, dt: Double? = nil) {
+        /// Run until this holds, at most `maxFrames` frames.
+        public var until: PlayStepCondition?
+        /// With `until`: the most frames to run (default 600, at most 10000).
+        public var maxFrames: Int?
+        public init(frames: Int? = nil, dt: Double? = nil, until: PlayStepCondition? = nil, maxFrames: Int? = nil) {
             self.frames = frames
             self.dt = dt
+            self.until = until
+            self.maxFrames = maxFrames
         }
     }
 
     public static let id: CommandID = .step
     public static let title = "Step"
-    public static let doc = "Pauses play mode and runs `frames` game frames now (default 1), each `dt` seconds (default 1/60), with the input scheduled for them. Deterministic: the same scene, input and steps give the same result."
+    public static let doc = "Pauses play mode and runs `frames` game frames now (default 1), each `dt` seconds (default 1/60), with the input scheduled for them. Deterministic: the same scene, input and steps give the same result. With `until` {entity, stopped: true, epsilon?, window?} it runs frames (at most `maxFrames`, default 600) until the entity's world position moved less than `epsilon` (default 0.001) over the last `window` frames (default 10), i.e. it came to rest. Returns the play state with `stepped` (frames run) and `reason`: \"frames\" (ran them all), \"stopped\" (the condition held) or \"maxFrames\" (it never did: the entity is still moving)."
     public static func isAvailable(in session: EditorSession) -> Bool { session.isPlaying }
     public static func unavailableReason(in session: EditorSession) -> String? { notPlaying }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> PlayStateResult {
-        let frames = arguments.frames ?? 1
-        guard (0...10_000).contains(frames) else { throw CommandError.failed("`frames` must be between 0 and 10000") }
         if let dt = arguments.dt, !(dt > 0 && dt <= 1) { throw CommandError.failed("`dt` must be in (0, 1] seconds") }
-        session.step(frames: frames, dt: arguments.dt)
-        return session.playStateResult
+        guard let condition = arguments.until else {
+            if arguments.maxFrames != nil { throw CommandError.failed("`maxFrames` goes with `until`; use `frames`") }
+            let frames = arguments.frames ?? 1
+            guard (0...10_000).contains(frames) else { throw CommandError.failed("`frames` must be between 0 and 10000") }
+            session.step(frames: frames, dt: arguments.dt)
+            var state = session.playStateResult
+            (state.stepped, state.reason) = (frames, "frames")
+            return state
+        }
+        if arguments.frames != nil { throw CommandError.failed("Give `maxFrames` with `until`, not `frames`") }
+        guard condition.stopped else { throw CommandError.failed("`until` needs `stopped: true`") }
+        let maxFrames = arguments.maxFrames ?? 600
+        guard (0...10_000).contains(maxFrames) else { throw CommandError.failed("`maxFrames` must be between 0 and 10000") }
+        let window = max(condition.window ?? 10, 1)
+        let epsilon = Float(condition.epsilon ?? 0.001)
+        let world = session.world
+        _ = try world.require(condition.entity)
+        func position() -> Vec3? {
+            world.entity(for: condition.entity).map { Transform(matrix: world.worldMatrix(of: $0)).position }
+        }
+        var history = [position() ?? Vec3.zero]
+        var reason = "maxFrames"
+        let stepped = session.step(maxFrames: maxFrames, dt: arguments.dt) {
+            guard let now = position() else {
+                reason = "entity removed"
+                return true
+            }
+            history.append(now)
+            guard history.count > window else { return false }
+            if length(now - history[history.count - 1 - window]) < epsilon {
+                reason = "stopped"
+                return true
+            }
+            return false
+        }
+        var state = session.playStateResult
+        (state.stepped, state.reason) = (stepped ?? 0, reason)
+        return state
     }
 }
 

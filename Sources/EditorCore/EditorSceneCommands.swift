@@ -280,7 +280,7 @@ public struct BatchCall: Codable, Equatable, Sendable {
     public var command: CommandID
     /// Its arguments. A string "$<n>.<path>" anywhere in them is replaced by that part of
     /// call n's result ("$0.entity", "$1.entities.0"), so later calls can use what earlier
-    /// ones created.
+    /// ones created, and "{$<n>.<path>}" inside a longer string is interpolated ("asset:{$2.asset}").
     public var arguments: JSON?
     public init(command: CommandID, arguments: JSON? = nil) {
         self.command = command
@@ -306,7 +306,7 @@ public enum EditBatchCommand: EditorCommand {
 
     public static let id: CommandID = "edit.batch"
     public static let title = "Batch"
-    public static let doc = "Runs `calls` (each {command, arguments}) in order as ONE undo step named `label`. If a call fails, everything the batch did is undone, the selection is restored, and the error names the call. A string \"$<n>.<path>\" in arguments is replaced by part of call n's result (\"$0.entity\" is the entity call 0 created). File operations and screenshots aren't rolled back or can't be batched."
+    public static let doc = "Runs `calls` (each {command, arguments}) in order as ONE undo step named `label`. If a call fails, everything the batch did is undone, the selection is restored, and the error names the call. A string \"$<n>.<path>\" in arguments is replaced by part of call n's result (\"$0.entity\" is the entity call 0 created); \"{$<n>.<path>}\" inside a longer string interpolates it (\"asset:{$2.asset}\"). File operations and screenshots aren't rolled back or can't be batched."
     public static let isUndoable = true
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
         let undo = session.undo
@@ -332,30 +332,48 @@ public enum EditBatchCommand: EditorCommand {
         return Result(results: results)
     }
 
-    /// `json` with "$n.path" strings replaced from `results`.
+    /// `json` with "$n.path" strings replaced from `results`, and "{$n.path}" inside longer
+    /// strings interpolated ("asset:{$2.asset}").
     static func substitute(_ json: JSON, results: [JSON]) throws -> JSON {
         switch json {
         case .string(let text) where text.hasPrefix("$"):
-            var parts = text.dropFirst().split(separator: ".", omittingEmptySubsequences: false).map(String.init)
-            guard let index = Int(parts.removeFirst()) else { return json }
-            guard results.indices.contains(index) else {
-                throw CommandError.failed("\(text) refers to call \(index), which hasn't run yet")
-            }
-            var value = results[index]
-            for part in parts {
-                if let i = Int(part), let items = value.arrayValue, items.indices.contains(i) {
-                    value = items[i]
-                } else if let member = value[part] {
-                    value = member
-                } else {
-                    throw CommandError.failed("\(text): call \(index)'s result has no '\(part)'")
-                }
-            }
+            guard let value = try lookup(text, results: results) else { return json }
             return value
+        case .string(var text) where text.contains("{$"):
+            var from = text.startIndex
+            while let open = text.range(of: "{$", range: from..<text.endIndex),
+                  let close = text[open.upperBound...].firstIndex(of: "}") {
+                let reference = String(text[text.index(after: open.lowerBound)..<close])
+                guard let value = try lookup(reference, results: results) else { from = open.upperBound; continue }
+                let inserted = value.stringValue ?? value.text
+                text.replaceSubrange(open.lowerBound...close, with: inserted)
+                from = text.index(open.lowerBound, offsetBy: inserted.count)
+            }
+            return .string(text)
         case .array(let items): return .array(try items.map { try substitute($0, results: results) })
         case .object(let members): return .object(try members.mapValues { try substitute($0, results: results) })
         default: return json
         }
+    }
+
+    /// The part of `results` that "$n.path" names; nil when it isn't a reference ("$5 off").
+    private static func lookup(_ text: String, results: [JSON]) throws -> JSON? {
+        var parts = text.dropFirst().split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+        guard let index = Int(parts.removeFirst()) else { return nil }
+        guard results.indices.contains(index) else {
+            throw CommandError.failed("\(text) refers to call \(index), which hasn't run yet")
+        }
+        var value = results[index]
+        for part in parts {
+            if let i = Int(part), let items = value.arrayValue, items.indices.contains(i) {
+                value = items[i]
+            } else if let member = value[part] {
+                value = member
+            } else {
+                throw CommandError.failed("\(text): call \(index)'s result has no '\(part)'")
+            }
+        }
+        return value
     }
 }
 

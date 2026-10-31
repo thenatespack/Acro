@@ -88,6 +88,12 @@ public protocol EditorCommand {
     /// Whether it can lose work that undo can't bring back: deletes or overwrites files, or
     /// replaces an unsaved scene. Default false (MCP's `destructiveHint`).
     static var isDestructive: Bool { get }
+    /// For a destructive command that only loses work in some runs ("saving over a file other
+    /// than the scene's own"): when `confirm: true` is needed, as the tool documents it. Nil
+    /// (default): every run of a destructive command needs it, and the schema requires it.
+    static var confirmsOnlyWhen: String? { get }
+    /// Whether this run with `arguments` needs `confirm: true` (MCP). Default `isDestructive`.
+    static func needsConfirmation(_ arguments: Arguments, in session: EditorSession) -> Bool
     /// Whether running it again with the same arguments changes nothing more. Default false
     /// (MCP's `idempotentHint`).
     static var isIdempotent: Bool { get }
@@ -108,6 +114,8 @@ extension EditorCommand {
     public static var isUndoable: Bool { false }
     public static var isReadOnly: Bool { false }
     public static var isDestructive: Bool { false }
+    public static var confirmsOnlyWhen: String? { nil }
+    public static func needsConfirmation(_ arguments: Arguments, in session: EditorSession) -> Bool { isDestructive }
     public static var isIdempotent: Bool { false }
     public static func isAvailable(in session: EditorSession) -> Bool { true }
     public static func isAvailable(_ arguments: Arguments, in session: EditorSession) -> Bool { isAvailable(in: session) }
@@ -207,6 +215,8 @@ public struct CommandInfo: Equatable, Sendable, Codable {
     public var isUndoable: Bool
     public var isReadOnly: Bool
     public var isDestructive: Bool
+    /// Set when only some runs of a destructive command need `confirm: true`: which ones.
+    public var confirmsOnlyWhen: String?
     public var isIdempotent: Bool
     /// Whether it finishes after a frame or more (`EditorDeferredCommand`).
     public var isDeferred: Bool
@@ -259,6 +269,7 @@ public final class CommandRegistry {
         var resultType: any Codable.Type
         var isAvailable: @MainActor (EditorSession) -> Bool
         var unavailableReason: @MainActor (EditorSession) -> String?
+        var needsConfirmation: @MainActor (Data, EditorSession) -> Bool
         var runJSON: @MainActor (Data, EditorSession) throws -> Data
         var startJSON: @MainActor (Data) throws -> CommandFuture<Data>
     }
@@ -278,12 +289,17 @@ public final class CommandRegistry {
     public func register<C: EditorCommand>(_ command: C.Type) {
         let deferred = C.self as? any EditorDeferredCommand.Type
         let info = CommandInfo(id: C.id, title: C.title, doc: C.doc, isUndoable: C.isUndoable, isReadOnly: C.isReadOnly,
-                               isDestructive: C.isDestructive, isIdempotent: C.isIdempotent, isDeferred: deferred != nil,
+                               isDestructive: C.isDestructive, confirmsOnlyWhen: C.confirmsOnlyWhen, isIdempotent: C.isIdempotent, isDeferred: deferred != nil,
                                argumentsType: String(describing: C.Arguments.self), resultType: String(describing: C.Result.self))
         revision += 1
         entries[C.id] = Entry(info: info, argumentsType: C.Arguments.self, resultType: C.Result.self,
                               isAvailable: { C.isAvailable(in: $0) }, unavailableReason: { C.unavailableReason(in: $0) },
-                              runJSON: { [unowned self] data, _ in
+                              needsConfirmation: { data, session in
+            guard let arguments = try? JSONDecoder().decode(C.Arguments.self, from: data.isEmpty ? Data("{}".utf8) : data) else {
+                return C.isDestructive
+            }
+            return C.needsConfirmation(arguments, in: session)
+        }, runJSON: { [unowned self] data, _ in
             try Self.encode(run(C.self, decode(C.self, data)))
         }, startJSON: { [unowned self] data in
             if let deferred { return try startDeferred(deferred, data) }
@@ -332,6 +348,12 @@ public final class CommandRegistry {
     /// Why the command `id` can't run now (see `EditorCommand.unavailableReason(in:)`).
     public func unavailableReason(_ id: CommandID) -> String? {
         entries[id]?.unavailableReason(session)
+    }
+
+    /// Whether a call of the command `id` with JSON `arguments` needs `confirm: true` (arguments
+    /// that don't decode count as destructive when the command is).
+    public func needsConfirmation(_ id: CommandID, json arguments: Data? = nil) -> Bool {
+        entries[id]?.needsConfirmation(arguments ?? Data(), session) ?? false
     }
 
     /// The command's `Arguments` and `Result` types (for deriving schemas).
