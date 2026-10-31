@@ -30,4 +30,7 @@ public enum RenderQuality: String, Sendable, CaseIterable {
         case .ultra: 2
         }
     }
+
+    /// Whether post-processing bloom runs (`PostProcessSettings.bloom`); off on low.
+    public var bloom: Bool { self != .low }
 }

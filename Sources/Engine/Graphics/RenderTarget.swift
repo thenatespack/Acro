@@ -32,11 +32,17 @@ public struct RenderTargetSizing: Sendable, Equatable {
 }
 
 extension RenderTargetDescriptor {
-    /// Throws unless both sizes are in `1...maxSize`.
+    /// Throws unless both sizes are in `1...maxSize` and the format, depth and sample count
+    /// are a supported combination.
     func validate(maxSize: Int) throws {
         guard (1...maxSize).contains(width), (1...maxSize).contains(height) else {
             throw GraphicsError("Render target size \(width)x\(height) is outside 1...\(maxSize)")
         }
+        guard format == .rgba8Srgb || format == .rgba16Float else {
+            throw GraphicsError("Render targets are .rgba8Srgb or .rgba16Float, not \(format)")
+        }
+        if !depth && multisampled { throw GraphicsError("Color-only render targets are single-sample") }
+        if depth && format != .rgba8Srgb { throw GraphicsError("Only .rgba8Srgb render targets can have depth") }
     }
 }
 

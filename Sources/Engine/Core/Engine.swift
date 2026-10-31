@@ -129,6 +129,21 @@ public final class Engine {
     public let quality: RenderQuality
     /// Depth the screen pass clears to: 1 for standard depth, 0 for reversed-Z.
     public var clearDepth: Float = 1
+    /// Post-processing for the scene (exposure, bloom, tonemapping; see `PostProcessSettings`).
+    /// nil (the default) renders the scene straight into the sRGB target as before. Otherwise
+    /// the scene pass renders linear HDR into an RGBA16F image and `PostProcessor` turns it into
+    /// the displayed image before the upscaler and the window pass. `SceneRenderer.prepare` sets
+    /// it from the world's `PostProcess` component every frame. Switching it on or off takes
+    /// effect at the next frame (the scene pass's format is chosen when a frame begins), and
+    /// `quality.bloom` false turns bloom off.
+    public var postProcess: PostProcessSettings? {
+        didSet {
+            // Turning auto exposure on (or post-processing back on) converges at once instead of adapting.
+            if postProcess?.autoExposure == true && oldValue?.autoExposure != true { postProcessor?.resetExposure() }
+        }
+    }
+    /// Runs `postProcess` (created at startup; nil if its shaders failed to load).
+    public private(set) var postProcessor: PostProcessor?
     /// Size the scene renders at. Changes take effect next frame; a size larger than
     /// `device.maxTextureSize`, or too big for the MSAA memory budget at the current sample
     /// count, is rejected (printed) and the previous value kept.
@@ -199,6 +214,7 @@ public final class Engine {
     /// scene switches; the engine does it itself when the render or window size, or the upscaler, changes.
     public func resetTemporalHistory() {
         historyResetRequested = true
+        postProcessor?.resetExposure()
     }
 
     private var historyResetRequested = true
@@ -402,6 +418,11 @@ public final class Engine {
         } catch {
             print("Debug overlay unavailable: \(error)")
         }
+        do {
+            postProcessor = try PostProcessor(device: device)
+        } catch {
+            print("Post-processing unavailable: \(error)")
+        }
 
         let clock = ContinuousClock()
         let start = clock.now
@@ -456,6 +477,8 @@ public final class Engine {
             let renderSize = renderResolution.size(window: framebufferSize)
             let temporalInputs = nextTemporalInputs(renderSize: renderSize, window: framebufferSize)
             device.temporalInputs = temporalInputs
+            let hdrFrame = postProcess != nil && postProcessor != nil
+            device.hdrScene = hdrFrame
             if try device.beginFrame(framebufferSize: framebufferSize, renderSize: renderSize) {
                 countingPass.resetCounts()
                 let renderStart = clock.now
@@ -463,10 +486,14 @@ public final class Engine {
                 // Starting the screen pass can block until the window has an image to draw into
                 // (when it renders straight to the window); that wait isn't recording time.
                 let screenPassStart = clock.now
-                let pass = device.beginScreenPass(clearColor: clearColor, clearDepth: clearDepth)
+                // An sRGB target stores the clear color as an 8-bit code; clearing to one exactly
+                // keeps every backend and pass layout on the same code (see `snappedToSRGB8`).
+                let pass = device.beginScreenPass(
+                    clearColor: hdrFrame ? clearColor : PostProcessMath.snappedToSRGB8(clearColor), clearDepth: clearDepth)
                 let windowWait = clock.now - screenPassStart
                 countingPass.inner = pass
                 game.render(engine: self, pass: countingPass)
+                if hdrFrame { renderPostProcessing(dt: Float(dt)) }
                 stats.renderTime = Self.seconds(clock.now - renderStart - windowWait)
                 stats.drawCalls = countingPass.drawCalls
                 stats.triangles = countingPass.triangles
@@ -522,6 +549,18 @@ public final class Engine {
                 Thread.sleep(forTimeInterval: 1.0 / 60.0)
             }
         }
+    }
+
+    /// Ends the HDR scene pass, then runs `postProcess` into the scene image the window pass shows.
+    private func renderPostProcessing(dt: Float) {
+        device.endPass()
+        guard let postProcessor, let scene = device.sceneHDRTexture else { preconditionFailure("No HDR scene image to post-process") }
+        var settings = postProcess ?? .passthrough
+        if !quality.bloom { settings.bloom = false }
+        let inputs = postProcessor.render(scene: scene, settings: settings, dt: dt)
+        let output = device.beginSceneOutputPass(label: "tonemap")
+        postProcessor.drawOutput(into: output, scene: scene, settings: settings, inputs: inputs)
+        device.endPass()
     }
 
     /// This frame's temporal-upscaler inputs. Resets the history when asked to, and when the

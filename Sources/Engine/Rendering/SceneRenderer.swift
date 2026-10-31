@@ -370,12 +370,14 @@ public final class SceneRenderer {
 
     /// Gathers the world's renderable entities, culls and batches them, and computes the
     /// frame's uniforms (jittered with `engine.jittered` when a temporal upscaler is active).
-    /// Sets `engine.clearColor` and `engine.clearDepth` from the camera. Without a camera,
-    /// nothing is drawn this frame.
+    /// Sets `engine.clearColor` and `engine.clearDepth` from the camera, and
+    /// `engine.postProcess` from the world's `PostProcess` component (nil without one). Without
+    /// a camera, nothing is drawn this frame.
     public func prepare(world: World, engine: Engine) {
         let start = ContinuousClock.now
         defer { stats.prepareTime = Self.seconds(since: start) }
         gather(world)
+        engine.postProcess = PostProcessSettings.find(in: world)
 
         guard let (_, camera, cameraWorld) = RenderPrep.findCamera(in: world, preferred: self.camera) else {
             uniforms = nil
