@@ -312,6 +312,15 @@ extension ImportedMaterial {
     /// Not mapped: normal, occlusion, metallic-roughness and emissive textures, the emissive
     /// color, texture offset/rotation, `TEXCOORD_1`.
     public func engineMaterial(baseColorTexture texture: GPUTexture? = nil, sampler: ImportedSampler? = nil) -> Material {
+        var material = materialAsset(sampler: sampler).material(texture: texture)
+        material.sampler = (sampler ?? ImportedSampler()).descriptor
+        return material
+    }
+
+    /// The same mapping as `engineMaterial`, as data for the asset database: the base color
+    /// texture is an `AssetReference`, and the sampler keeps only its mag filter
+    /// (`MaterialAsset` has one filter for both).
+    public func materialAsset(baseColorTexture texture: AssetReference? = nil, sampler: ImportedSampler? = nil) -> MaterialAsset {
         var color = baseColorFactor
         if alphaMode != .blend { color.w = 1 }
         let roughness = min(max(roughnessFactor, 0.03), 1)
@@ -323,9 +332,10 @@ extension ImportedMaterial {
         let shininess = min(max(2 / (alpha * alpha) - 2, 2), 256)
         var uvScale = Vec2(1, 1)
         if let transform = baseColorTexture?.transform, transform.isScaleOnly { uvScale = transform.scale }
-        return Material(
+        let sampler = (sampler ?? ImportedSampler()).descriptor
+        return MaterialAsset(
             baseColor: color, texture: texture,
-            sampler: (sampler ?? ImportedSampler()).descriptor,
+            filter: sampler.magFilter, mipFilter: sampler.mipFilter, addressMode: sampler.addressMode,
             uvScale: uvScale, emissive: unlit ? 1 : 0, specular: specular, shininess: shininess,
             doubleSided: doubleSided, isTransparent: alphaMode == .blend)
     }
