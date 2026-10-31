@@ -7,10 +7,14 @@ import AppKit
 /// a path in the UI instead.
 @MainActor
 enum FilePicker {
-    /// Whether `chooseFiles` can show a native dialog on this platform.
+    /// Set while an AI client drives the UI, and without a window: no modal dialog may open,
+    /// so callers ask for a path in the UI instead.
+    static var isSuppressed = false
+
+    /// Whether `chooseFiles` can show a native dialog on this platform now.
     static var isAvailable: Bool {
         #if os(macOS)
-        true
+        !isSuppressed
         #else
         false
         #endif

@@ -89,7 +89,7 @@ extension EditorSession {
     /// Creates "New Folder" (or "New Folder 2"…) in `folder`. Returns its path.
     @discardableResult
     public func createAssetFolder(in folder: String, name: String = "New Folder") -> String? {
-        guard let assets = requireAssets("New Folder") else { return nil }
+        guard let assets = requireAssets("New Folder"), checkAssetPaths([folder, name], "New Folder") else { return nil }
         let path = assets.uniquePath(Self.join(folder, name))
         do {
             try assets.createFolder(path)
@@ -105,7 +105,7 @@ extension EditorSession {
     @discardableResult
     public func createMaterialAsset(in folder: String, name: String = "New Material",
                                     material: MaterialAsset = MaterialAsset()) -> AssetID? {
-        guard let assets = requireAssets("New Material") else { return nil }
+        guard let assets = requireAssets("New Material"), checkAssetPaths([folder, name], "New Material") else { return nil }
         let path = assets.uniquePath(Self.join(folder, name + ".material"))
         do {
             let id = try assets.createMaterial(material, at: path)
@@ -122,7 +122,7 @@ extension EditorSession {
     /// any source can't be imported.
     @discardableResult
     public func importAssets(_ urls: [URL], into folder: String) -> [String] {
-        guard let assets = requireAssets("Import"), !urls.isEmpty else { return [] }
+        guard let assets = requireAssets("Import"), !urls.isEmpty, checkAssetPaths([folder], "Import") else { return [] }
         do {
             let paths = try assets.importFiles(urls, into: folder)
             log.info(paths.count == 1 ? "Imported \(paths[0])" : "Imported \(paths.count) files into Assets/\(folder)")
@@ -156,7 +156,7 @@ extension EditorSession {
     }
 
     private func moveAsset(at path: String, to newPath: String, verb: String) -> String? {
-        guard let assets = requireAssets(verb) else { return nil }
+        guard let assets = requireAssets(verb), checkAssetPaths([path, newPath], verb) else { return nil }
         guard newPath != path else { return path }
         do {
             try assets.move(path, to: newPath)
@@ -171,7 +171,7 @@ extension EditorSession {
     /// Deletes the file (with its sidecar) or folder at `path`. Not undoable: ask first.
     @discardableResult
     public func deleteAsset(at path: String) -> Bool {
-        guard let assets = requireAssets("Delete") else { return false }
+        guard let assets = requireAssets("Delete"), checkAssetPaths([path], "Delete") else { return false }
         do {
             try assets.delete(path)
             log.info("Deleted \(path)")

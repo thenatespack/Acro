@@ -171,6 +171,25 @@ public final class TreeView: RowListView {
 
     public override var rowCount: Int { rows.count }
 
+    public override var accessibilityRole: UIAccessibilityRole { .tree }
+    public override var rowAccessibilityRole: UIAccessibilityRole { .treeItem }
+    public override func rowAccessibilityLabel(_ row: Int) -> String? { rows[row].node.title }
+    public override func rowAccessibilityValue(_ row: Int) -> String? {
+        rows[row].node.hasChildren ? (rows[row].node.isExpanded ? "expanded" : "collapsed") : nil
+    }
+
+    /// The rows, then a "toggle:<title>" item for each disclosure triangle.
+    public override var accessibilityItems: [UIAccessibilityItem] {
+        super.accessibilityItems + rows.indices.compactMap { row in
+            let node = rows[row].node
+            guard node.hasChildren else { return nil }
+            return UIAccessibilityItem(key: "toggle:\(node.title)", role: .button,
+                                       label: "\(node.isExpanded ? "Collapse" : "Expand") \(node.title)",
+                                       value: node.isExpanded ? "expanded" : "collapsed",
+                                       frame: disclosureRect(row: row, in: rowRect(row)))
+        }
+    }
+
     /// Rows currently visible (expanded ancestors), in order.
     public var visibleNodes: [TreeNode] { rows.map(\.node) }
 

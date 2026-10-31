@@ -220,6 +220,7 @@ private enum GreetCommand: EditorCommand {
         let client = Client()
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("MCPToolSchemaTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
+        client.mcp.workspaceRoot = FileManager.default.temporaryDirectory  // AI clients only touch files in it
         _ = client.connection.output.take()
         let result = client.tool("project.new", ["path": .string(folder.path)])
         #expect(result["isError"] == false)

@@ -99,6 +99,8 @@ public final class SplitView: Widget {
         addChildren(panes)
     }
 
+    public override var accessibilityRole: UIAccessibilityRole { .splitView }
+
     /// Sets the fractions (normalized) without calling `onResize`.
     public func setFractions(_ values: [Float]) {
         let normalized = SplitLayout.normalized(values, count: panes.count)

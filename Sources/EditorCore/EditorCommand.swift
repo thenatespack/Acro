@@ -236,10 +236,13 @@ public protocol EditorHost: AnyObject {
     var frameStats: EditorStatsSnapshot? { get }
     /// Starts rendering `request` and returns its future (finished at the end of the frame that
     /// renders it), or nil when this host can't take screenshots.
+    /// Whether it renders (screenshots are possible); false for a UI without a GPU (headless).
+    var canRender: Bool { get }
     func capture(_ request: ScreenshotRequest) -> CommandFuture<Image>?
 }
 
 extension EditorHost {
+    public var canRender: Bool { true }
     public func frame(_ entities: [Entity]) {}
     public var viewportView: (view: SceneView, width: Int, height: Int)? { nil }
     public var pickMeshes: (any PickMeshSource)? { nil }

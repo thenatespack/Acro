@@ -33,7 +33,7 @@ public enum BuiltinCommands {
         PrefabCreateCommand.self, PrefabOverridesCommand.self, PrefabApplyCommand.self, PrefabRevertCommand.self,
         PrefabUnpackCommand.self,
         LogReadCommand.self, StatsGetCommand.self, DiagnosticsGetCommand.self,
-    ]
+    ] + EditorUICommands.all + EditorSafetyCommands.all
 }
 
 extension CommandID {
@@ -767,7 +767,7 @@ public enum AssetImportCommand: EditorCommand {
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
-        let urls = arguments.sources.map { EditorSession.url(forPath: $0) }
+        let urls = try arguments.sources.map { try session.commands.require(session.fileURL(forPath: $0, title), title) }
         let paths = session.importAssets(urls, into: arguments.folder ?? "")
         try session.commands.check(!paths.isEmpty, title)
         return Result(paths: paths)

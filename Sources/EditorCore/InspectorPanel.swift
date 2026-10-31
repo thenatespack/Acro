@@ -142,6 +142,10 @@ public final class InspectorPanel {
         }
         scroll.style.grow = 1
         scroll.style.shrink = 1
+        nameField.command = EntityRenameCommand.id.rawValue
+        addButton.command = ComponentAddCommand.id.rawValue
+        grid.command = ComponentSetFieldCommand.id.rawValue
+        grid.itemCommands = ["remove": ComponentRemoveCommand.id.rawValue]
 
         nameField.style.grow = 1
         nameField.style.width = 0
@@ -271,6 +275,7 @@ public final class InspectorPanel {
             session.run(AssetSelectCommand.self, .init(asset: info.link.prefab))
         }
         select.tooltip = "Select the prefab asset in the Assets panel"
+        select.command = AssetSelectCommand.id.rawValue
         prefabView.addChild(HStack(spacing: 6, [title, select]))
 
         if info.isRoot {
@@ -293,6 +298,9 @@ public final class InspectorPanel {
                 session.run(PrefabUnpackCommand.self, .init(entity: rootID))
             }
             unpack.tooltip = "Unlink this instance from the prefab"
+            apply.command = PrefabApplyCommand.id.rawValue
+            revert.command = PrefabRevertCommand.id.rawValue
+            unpack.command = PrefabUnpackCommand.id.rawValue
             prefabView.addChild(HStack(spacing: 6, [summary, apply, revert, unpack]))
         }
         for (component, fields) in info.overriddenComponents {
@@ -310,6 +318,8 @@ public final class InspectorPanel {
             }
             apply.isEnabled = info.canApply
             apply.tooltip = info.canApply ? "Write \(component) into the prefab" : "A model's prefab can't be changed"
+            apply.command = PrefabApplyCommand.id.rawValue
+            revert.command = PrefabRevertCommand.id.rawValue
             prefabView.addChild(HStack(spacing: 6, [label, revert, apply]))
         }
     }
@@ -329,6 +339,7 @@ public final class InspectorPanel {
             return
         }
         let menu = PopupMenu(items: names, anchor: addButton)
+        menu.command = ComponentAddCommand.id.rawValue
         menu.onSelect = { [unowned self] index in session.run(ComponentAddCommand.self, .init(entity: id, component: names[index])) }
         context.presentOverlay(menu)
     }

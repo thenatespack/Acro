@@ -2,18 +2,22 @@ import Engine
 import Foundation
 
 /// Per-user editor settings that persist between launches: the dock layout, the last scene and
-/// the last project (pre-filled in the project path field, not opened automatically).
+/// the last project (pre-filled in the project path field, not opened automatically) and the
+/// AI settings (read-only mode, confirmations, the HTTP server).
 public struct EditorPrefs: Codable, Equatable, Sendable {
     public static let currentVersion = 1
     public var version = EditorPrefs.currentVersion
     public var layout: DockLayout?
     public var lastScenePath: String?
     public var lastProjectPath: String?
+    /// What AI clients may do (nil: the defaults); see `AISettings`.
+    public var ai: AISettings?
 
-    public init(layout: DockLayout? = nil, lastScenePath: String? = nil, lastProjectPath: String? = nil) {
+    public init(layout: DockLayout? = nil, lastScenePath: String? = nil, lastProjectPath: String? = nil, ai: AISettings? = nil) {
         self.layout = layout
         self.lastScenePath = lastScenePath
         self.lastProjectPath = lastProjectPath
+        self.ai = ai
     }
 }
 
@@ -66,19 +70,35 @@ public enum EditorLayout {
     public static let console = "console"
     public static let stats = "stats"
     public static let assets = "assets"
-    public static let panelIDs = [viewport, hierarchy, inspector, console, stats, assets]
+    public static let activity = "activity"
+    public static let panelIDs = [viewport, hierarchy, inspector, console, stats, assets, activity]
 
     /// Hierarchy left, inspector right, the viewport in the middle above an Assets / Console /
-    /// Stats tab group.
+    /// Activity / Stats tab group.
     public static let defaultLayout = DockLayout(
         root: .split(axis: .horizontal, fractions: [0.19, 0.57, 0.24], children: [
             .tabs(panels: [hierarchy], active: hierarchy),
             .split(axis: .vertical, fractions: [0.64, 0.36], children: [
                 .tabs(panels: [viewport], active: viewport),
-                .tabs(panels: [assets, console, stats], active: assets),
+                .tabs(panels: [assets, console, activity, stats], active: assets),
             ]),
             .tabs(panels: [inspector], active: inspector),
         ]))
+
+    /// The selected panel of the tab group showing `id`, if it is docked.
+    public static func activePanel(in layout: DockLayout, groupOf id: String) -> String? {
+        func visit(_ node: DockLayout.Node) -> String?? {
+            switch node {
+            case .split(_, _, let children):
+                for child in children { if let found = visit(child) { return found } }
+                return nil
+            case .tabs(let panels, let active):
+                return panels.contains(id) ? .some(active) : nil
+            }
+        }
+        if let found = layout.root.flatMap(visit) { return found }
+        return layout.floating.first { $0.panels.contains(id) }?.active
+    }
 
     /// The layout to start with: the stored one if it still shows the viewport, else the default.
     public static func initialLayout(stored: DockLayout?) -> DockLayout {

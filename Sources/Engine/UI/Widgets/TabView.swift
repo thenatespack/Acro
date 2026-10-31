@@ -81,6 +81,23 @@ public final class TabView: Widget {
     public override var acceptsFocus: Bool { !tabs.isEmpty }
     public override var showsFocusRing: Bool { false }
 
+    public override var accessibilityRole: UIAccessibilityRole { .tabGroup }
+    public override var accessibilityValue: String? { selectedTab?.title }
+
+    /// A "tab:<id>" item per tab, and "close:<id>" for its close button.
+    public override var accessibilityItems: [UIAccessibilityItem] {
+        let rects = tabRects
+        var items: [UIAccessibilityItem] = []
+        for (index, tab) in tabs.enumerated() where index < rects.count {
+            items.append(UIAccessibilityItem(key: "tab:\(tab.id)", role: .tab, label: tab.title, frame: rects[index],
+                                             isSelected: index == selectedIndex, tooltip: tab.tooltip))
+            if let close = closeButtonRect(index) {
+                items.append(UIAccessibilityItem(key: "close:\(tab.id)", role: .button, label: "Close \(tab.title)", frame: close))
+            }
+        }
+        return items
+    }
+
     public var selectedTab: DockPanel? { selectedIndex.map { tabs[$0] } }
 
     public func index(of id: String) -> Int? { tabs.firstIndex { $0.id == id } }

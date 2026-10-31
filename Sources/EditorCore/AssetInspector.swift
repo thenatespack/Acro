@@ -261,6 +261,8 @@ public final class AssetInspectorView {
         view = VStack(spacing: 6, name: "assetInspector")
         applyButton.tooltip = "Write the settings to the sidecar and reimport"
         revertButton.tooltip = "Discard the changes to the settings"
+        applyButton.command = AssetApplySettingsCommand.id.rawValue
+        revertButton.command = AssetApplySettingsCommand.id.rawValue
         applyButton.action = { [unowned self] in settingsEditor?.apply(); updateButtons() }
         revertButton.action = { [unowned self] in settingsEditor?.revert(); settingsGrid?.refresh(); updateButtons() }
         let scroll = ScrollView(content, name: "assetScroll")
@@ -319,6 +321,7 @@ public final class AssetInspectorView {
                     }
                     updateButtons()
                 }
+                grid.command = AssetApplySettingsCommand.id.rawValue
                 settingsGrid = grid
                 content.addChildren([grid, HStack(spacing: 6, [Spacer(), revertButton, applyButton])])
             }
@@ -330,6 +333,7 @@ public final class AssetInspectorView {
                     session.run(AssetExtractMaterialsCommand.self, .init(asset: id))
                     shownRevision = -1
                 }
+                extract.command = AssetExtractMaterialsCommand.id.rawValue
                 extract.tooltip = "Write the model's materials to .material files you can edit, and use them for this model"
                 content.addChild(extract)
             }
@@ -362,6 +366,7 @@ public final class AssetInspectorView {
             return session.assets?.displayName(of: reference) ?? value
         }
         grid.onFieldEdit = { [unowned editor] edit in editor.handle(edit) }
+        grid.command = MaterialSetCommand.id.rawValue
         materialGrid = grid
         if !editor.isEditable {
             grid.isEnabled = false

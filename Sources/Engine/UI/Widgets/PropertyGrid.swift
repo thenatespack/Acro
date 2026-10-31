@@ -340,6 +340,8 @@ public final class PropertyGrid: Stack {
         let name = "\(b.component).\(field.path)"
         let (editor, fillsWidth) = makeEditor(field, binding: b, name: name, readOnly: readOnly)
         let label = FieldLabel(Self.title(of: field), tooltip: field.hints.tooltip)
+        // The field's title names its editor for introspection ("Position", then "Position X").
+        editor.accessibilityLabel = label.text
         label.style.width = max(40, labelWidth - Float(depth) * indentWidth)
         if fillsWidth {
             editor.style.grow = 1
@@ -631,6 +633,15 @@ final class GridHeader: Widget {
         Vec2(80, isComponent ? 26 : 22)
     }
 
+    override var accessibilityRole: UIAccessibilityRole { .header }
+    override var accessibilityText: String? { title }
+    override var accessibilityValue: String? { isCollapsed ? "collapsed" : "expanded" }
+    /// A component's remove button ("remove:<title>").
+    override var accessibilityItems: [UIAccessibilityItem] {
+        guard isComponent, showsRemove else { return [] }
+        return [UIAccessibilityItem(key: "remove:\(title)", role: .button, label: "Remove \(title)", frame: removeRect)]
+    }
+
     private var removeRect: UIRect { UIRect(x: frame.maxX - 26, y: frame.y, width: 26, height: frame.height) }
 
     /// Where the title goes: after the disclosure triangle, before the remove button.
@@ -703,6 +714,9 @@ final class FieldLabel: Widget {
         self.tooltip = tooltip
         isHitTestable = false
     }
+
+    override var accessibilityRole: UIAccessibilityRole { .label }
+    override var accessibilityText: String? { text }
 
     private var isTruncated: Bool { truncatedText(text, size: theme.fontSize, width: frame.width) != nil }
 

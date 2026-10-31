@@ -184,6 +184,8 @@ public final class ScrollView: Widget {
         addChild(content)
     }
 
+    public override var accessibilityRole: UIAccessibilityRole { .scrollView }
+
     /// Distance scrolled from the top, in points.
     public var offset: Float { scroll.offset }
     /// Distance scrolled from the left, in points.

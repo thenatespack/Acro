@@ -113,6 +113,19 @@ public final class EditorSession {
     /// What `view.pick` and `scene.raycast` test against: the host's renderer, else `cpuPickMeshes`.
     public var pickMeshes: any PickMeshSource { host?.pickMeshes ?? cpuPickMeshes }
 
+    /// Every call AI clients made, for the Activity panel (see EditorSafety.swift).
+    public let activity = EditorActivityLog()
+    /// What AI clients may do (read-only, confirmations, HTTP); persisted in the prefs by the app.
+    public var aiSettings = AISettings() {
+        didSet { if aiSettings != oldValue { onAISettingsChange?(); changed() } }
+    }
+    /// Called after `aiSettings` changed.
+    public var onAISettingsChange: (() -> Void)?
+    /// While set, file paths given to actions must lie inside one of these folders (the MCP
+    /// server sets the project folder around each call); relative paths resolve against the
+    /// first. Nil: anywhere, relative to the working directory.
+    public var fileAccessRoots: [URL]?
+
     private var playSnapshot: WorldSnapshot?
 
     /// Play mode is paused: the world doesn't update and scheduled input waits (`setPaused`, `step`).
@@ -189,7 +202,7 @@ public final class EditorSession {
     @discardableResult
     public func open(path: String) -> Bool {
         guard !refuseWhilePlaying("Open") else { return false }
-        let url = Self.url(forPath: path)
+        guard let url = fileURL(forPath: path, "Open") else { return false }
         onWillReplaceWorld?()
         do {
             try document.open(url)
@@ -209,6 +222,7 @@ public final class EditorSession {
             return save(as: fallbackPath)
         }
         guard !refuseWhilePlaying("Save") else { return false }
+        if let url = document.url, !checkFileAccess(url, "Save") { return false }
         refreshPrefabOverrides()
         do {
             try document.save()
@@ -224,7 +238,7 @@ public final class EditorSession {
     @discardableResult
     public func save(as path: String) -> Bool {
         guard !refuseWhilePlaying("Save As") else { return false }
-        let url = Self.url(forPath: path)
+        guard let url = fileURL(forPath: path, "Save As") else { return false }
         refreshPrefabOverrides()
         do {
             try document.save(to: url)
@@ -249,7 +263,7 @@ public final class EditorSession {
     /// imports what changed. The scene stays open.
     @discardableResult
     public func openProject(path: String) -> Bool {
-        let url = Self.url(forPath: path)
+        guard let url = fileURL(forPath: path, "Open Project") else { return false }
         do {
             setProject(try Project.open(at: url), verb: "Opened")
             return true
@@ -262,7 +276,7 @@ public final class EditorSession {
     /// Creates a project at `path` (a new or existing folder without a project) and opens it.
     @discardableResult
     public func newProject(path: String) -> Bool {
-        let url = Self.url(forPath: path)
+        guard let url = fileURL(forPath: path, "New Project") else { return false }
         do {
             setProject(try Project.create(at: url), verb: "Created")
             return true

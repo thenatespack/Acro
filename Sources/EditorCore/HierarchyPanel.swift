@@ -57,6 +57,13 @@ public final class HierarchyPanel {
         createButton.tooltip = "Create a new entity at the viewport camera's pivot, or a prefab from the selection"
         duplicateButton.tooltip = shortcuts.tooltip("Duplicate the selection", for: .duplicate)
         deleteButton.tooltip = shortcuts.tooltip("Delete the selection", for: .delete)
+        createButton.command = EntityCreateCommand.id.rawValue
+        duplicateButton.command = EntityDuplicateCommand.id.rawValue
+        deleteButton.command = EntityDeleteCommand.id.rawValue
+        // Rows select (rename: F2 or a double click, entity.rename; drag: entity.reparent);
+        // the triangles only show or hide children.
+        tree.itemCommands = ["row": SelectionSetCommand.id.rawValue, "toggle": SceneHierarchyCommand.id.rawValue]
+        tree.command = EntityRenameCommand.id.rawValue  // its rename field
         let buttons = HStack(spacing: 6, [createButton, duplicateButton, deleteButton])
         deleteButton.action = { [unowned self] in
             if let onDelete { onDelete() } else { session.run(EntityDeleteCommand.self, .init()) }
@@ -157,31 +164,40 @@ public final class HierarchyPanel {
     }
 
     /// The prefab actions for the primary selection (none without a project or a selection).
-    private func prefabMenuItems() -> [(String, () -> Void)] {
+    private func prefabMenuItems() -> [(String, CommandID, () -> Void)] {
         guard session.commands.isAvailable(PrefabCreateCommand.id), let entity = session.selection.primaryEntity(in: session.world),
               let id = session.world.id(of: entity) else { return [] }
-        var items: [(String, () -> Void)] = [
-            ("Create Prefab", { [unowned session] in session.run(PrefabCreateCommand.self, .init(entity: id)) }),
+        var items: [(String, CommandID, () -> Void)] = [
+            ("Create Prefab", PrefabCreateCommand.id, { [unowned session] in session.run(PrefabCreateCommand.self, .init(entity: id)) }),
         ]
         if let link = session.world.prefabLink(of: entity) {
-            items.append(("Select Prefab Asset", { [unowned session] in session.run(AssetSelectCommand.self, .init(asset: link.prefab)) }))
+            items.append(("Select Prefab Asset", AssetSelectCommand.id, { [unowned session] in
+                session.run(AssetSelectCommand.self, .init(asset: link.prefab))
+            }))
             if session.isPrefabFile(link.prefab.asset) {
-                items.append(("Apply All to Prefab", { [unowned session] in session.run(PrefabApplyCommand.self, .init(entity: id)) }))
+                items.append(("Apply All to Prefab", PrefabApplyCommand.id, { [unowned session] in
+                    session.run(PrefabApplyCommand.self, .init(entity: id))
+                }))
             }
-            items.append(("Revert All", { [unowned session] in session.run(PrefabRevertCommand.self, .init(entity: id)) }))
-            items.append(("Unpack Prefab", { [unowned session] in session.run(PrefabUnpackCommand.self, .init(entity: id)) }))
+            items.append(("Revert All", PrefabRevertCommand.id, { [unowned session] in session.run(PrefabRevertCommand.self, .init(entity: id)) }))
+            items.append(("Unpack Prefab", PrefabUnpackCommand.id, { [unowned session] in
+                session.run(PrefabUnpackCommand.self, .init(entity: id))
+            }))
         }
         return items
     }
 
     private func showCreateMenu() {
         guard let context = view.context else { return }
-        var items: [(String, () -> Void)] = EntityTemplate.allCases.map { template in
-            (template.title, { [unowned self] in session.run(EntityCreateCommand.self, .init(template: template, position: spawnPosition())) })
+        var items: [(String, CommandID, () -> Void)] = EntityTemplate.allCases.map { template in
+            (template.title, EntityCreateCommand.id, { [unowned self] in
+                session.run(EntityCreateCommand.self, .init(template: template, position: spawnPosition()))
+            })
         }
         items += prefabMenuItems()
         let menu = PopupMenu(items: items.map(\.0), anchor: createButton)
-        menu.onSelect = { index in items[index].1() }
+        menu.itemCommandIDs = items.map { $0.1.rawValue }
+        menu.onSelect = { index in items[index].2() }
         context.presentOverlay(menu)
     }
 }

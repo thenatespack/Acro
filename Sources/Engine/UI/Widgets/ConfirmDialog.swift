@@ -33,6 +33,9 @@ public final class ConfirmDialog: Widget {
         cancelButton.action = { [unowned self] in resolve(confirmed: false) }
     }
 
+    public override var accessibilityRole: UIAccessibilityRole { .dialog }
+    public override var accessibilityText: String? { (card.children.first as? Label)?.text }
+
     /// Shows the dialog over everything in `context` and focuses the confirm button.
     public func present(in context: UIContext) {
         context.presentOverlay(self)

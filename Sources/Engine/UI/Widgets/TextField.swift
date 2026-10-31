@@ -212,6 +212,10 @@ public final class TextField: Widget {
     }
 
     public override var acceptsFocus: Bool { true }
+    public override var accessibilityRole: UIAccessibilityRole { .textField }
+    /// The placeholder names the field; the text is its value.
+    public override var accessibilityText: String? { placeholder.isEmpty ? nil : placeholder }
+    public override var accessibilityValue: String? { text }
     public override var wantsTextInput: Bool { true }
     public override var showsFocusRing: Bool { false }
 

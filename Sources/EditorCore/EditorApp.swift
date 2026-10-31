@@ -28,11 +28,14 @@ public struct EditorOptions: Sendable {
         public var http = false
         /// The HTTP port (the next free one if it is taken).
         public var port: UInt16 = 7333
+        /// Expose only read-only tools (`--mcp-read-only`; also an AI setting in the Activity panel).
+        public var readOnly = false
 
-        public init(stdio: Bool = false, http: Bool = false, port: UInt16 = 7333) {
+        public init(stdio: Bool = false, http: Bool = false, port: UInt16 = 7333, readOnly: Bool = false) {
             self.stdio = stdio
             self.http = http
             self.port = port
+            self.readOnly = readOnly
         }
     }
 
@@ -87,18 +90,20 @@ public final class EditorApp: Game, EditorHost {
     /// Watches the open project's `Assets/` folder.
     private var assetWatcher: FileWatcher?
 
-    private let dock = DockSpace()
-    private var hierarchy: HierarchyPanel!
-    private var inspector: InspectorPanel!
-    private var console: ConsolePanel!
+    let dock = DockSpace()
+    private(set) var hierarchy: HierarchyPanel!
+    private(set) var inspector: InspectorPanel!
+    private(set) var console: ConsolePanel!
+    private(set) var activity: ActivityPanel!
+    private(set) var statusBar: StatusBar!
     /// The Assets panel (browser) and its thumbnails.
     public private(set) var assetBrowser: AssetBrowserPanel!
     private var thumbnails: AssetThumbnails?
     /// An asset being dragged from the browser, and where the pointer is.
     private var assetDrag: (entry: AssetBrowserEntry, position: Vec2)?
     private let stats = StatsPanel()
-    private let viewportWidget = ViewportWidget()
-    private var toolbar: Toolbar!
+    let viewportWidget = ViewportWidget()
+    private(set) var toolbar: Toolbar!
 
     private var shownAssetKeys: [AssetReference] = []
     private weak var shownAssets: AssetDatabase?
@@ -106,7 +111,7 @@ public final class EditorApp: Game, EditorHost {
     private var prefsDirty = false
     private var captureRequested = false
     /// The MCP server, when a transport is on (`EditorOptions.mcp`).
-    public private(set) var mcp: EditorMCP?
+    public internal(set) var mcp: EditorMCP?
 
     private weak var engine: Engine?
     /// Screenshots asked for (`capture`) and not rendered yet.
@@ -160,8 +165,36 @@ public final class EditorApp: Game, EditorHost {
         } catch {
             print("Editor: asset thumbnails unavailable: \(error)")
         }
-        viewport.tools = [transformTool]
         engine.clearColor = Vec4(0.02, 0.022, 0.03, 1)
+        finishSetup()
+    }
+
+    /// Builds the panels and opens the scene without a window or GPU (`--headless`, tests), so
+    /// the UI can be inspected and driven (`ui.snapshot`, `ui.click`…) as if it were on screen
+    /// at `size` points. Run frames with `updateWithoutWindow(dt:)`.
+    public func setupWithoutWindow(size: Vec2 = Vec2(1440, 900), scale: Float = 1) {
+        FilePicker.isSuppressed = true  // no modal dialogs without a window
+        transformTool = TransformTool(meshes: session.cpuPickMeshes)
+        finishSetup()
+        ui.setViewport(size: size, scale: scale)
+        ui.layoutIfNeeded()
+        syncPanels()
+    }
+
+    /// One frame without a window: what `update` does apart from rendering and real input.
+    public func updateWithoutWindow(dt: Float) {
+        session.log.time += Double(dt)
+        if let mcp {
+            mcp.pump()
+        }
+        session.assets?.pump()
+        session.tick(dt: Double(dt))
+        syncPanels()
+    }
+
+    /// The part of setup that needs no GPU: the UI, the prefs, the project and the scene.
+    private func finishSetup() {
+        viewport.tools = [transformTool]
 
         var theme = UITheme.dark()
         if options.deterministic { theme.caretBlinkPeriod = 0 }
@@ -175,9 +208,13 @@ public final class EditorApp: Game, EditorHost {
                 session.log.warning("Ignoring unreadable editor prefs at \(url.path): \(error)")
             }
         }
+        var ai = prefs.ai ?? AISettings()
+        if options.mcp.readOnly { ai.readOnly = true }
+        session.aiSettings = ai
         buildUI()
 
         session.onWillReplaceWorld = { [unowned self] in inspector.recorder.finishGesture() }
+        session.onAISettingsChange = { [unowned self] in aiSettingsChanged() }
         session.onChange = { [unowned self] in toolbar.refresh() }
         session.onAssetsChange = { [unowned self] in assetsChanged() }
         if let path = options.projectPath, session.run(ProjectOpenCommand.self, .init(path: path)) != nil {
@@ -204,7 +241,7 @@ public final class EditorApp: Game, EditorHost {
         }
         if let path = options.selectAssetPath { assetBrowser.model.reveal(path) }
         session.log.info("Editor ready. Right-drag flies the camera, Alt-drag or middle-drag orbits, the wheel zooms.")
-        if options.mcp.http, let mcp {
+        if options.mcp.http, session.aiSettings.httpEnabled, let mcp {
             do {
                 try mcp.startHTTP(port: options.mcp.port)
             } catch {
@@ -212,6 +249,31 @@ public final class EditorApp: Game, EditorHost {
             }
         }
         toolbar.refresh()
+    }
+
+    /// The AI settings changed (the Activity panel): persist them, start or stop the HTTP server.
+    private func aiSettingsChanged() {
+        prefs.ai = session.aiSettings
+        prefsDirty = true
+        guard !options.deterministic else { return }
+        if session.aiSettings.httpEnabled {
+            let server = mcp ?? {
+                let created = EditorMCP(session: session)
+                created.fallbackConfigURL = options.prefsURL?.deletingLastPathComponent().appendingPathComponent("mcp.json")
+                mcp = created
+                return created
+            }()
+            if server.http == nil {
+                do {
+                    try server.startHTTP(port: options.mcp.port)
+                } catch {
+                    session.log.warning("MCP HTTP server unavailable: \(error)")
+                }
+            }
+        } else if let http = mcp?.http {
+            mcp?.stopHTTP()
+            session.log.info("MCP HTTP server on \(http.url) stopped")
+        }
     }
 
     private func buildUI() {
@@ -226,6 +288,8 @@ public final class EditorApp: Game, EditorHost {
         inspector.assetChoices = makeAssetChoices()
         console = ConsolePanel(log: session.log)
         console.showsTime = !options.deterministic
+        console.onClear = { [unowned self] in session.run(LogClearCommand.self) }
+        activity = ActivityPanel(session: session)
         assetBrowser = AssetBrowserPanel(session: session)
         assetBrowser.grid.thumbnail = { [unowned self] entry in
             guard let reference = entry.thumbnail, let kind = entry.thumbnailKind else { return nil }
@@ -242,12 +306,23 @@ public final class EditorApp: Game, EditorHost {
         dock.addPanel(DockPanel(id: EditorLayout.console, title: "Console", content: console.view))
         dock.addPanel(DockPanel(id: EditorLayout.stats, title: "Stats", content: stats.view))
         dock.addPanel(DockPanel(id: EditorLayout.assets, title: "Assets", content: assetBrowser.view, minSize: Vec2(240, 120)))
+        dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
         // Layouts saved before the Assets panel existed get it next to the console.
         if !dock.isOpen(EditorLayout.assets) {
             dock.dock(EditorLayout.assets, at: dock.isOpen(EditorLayout.console) ? .tab(with: EditorLayout.console, index: 0)
                                                                                    : .edge(.bottom))
         }
+        // And the Activity panel after the console (without selecting it).
+        if !dock.isOpen(EditorLayout.activity) {
+            let selected = EditorLayout.activePanel(in: dock.layout, groupOf: EditorLayout.console)
+            dock.dock(EditorLayout.activity, at: dock.isOpen(EditorLayout.console) ? .tab(with: EditorLayout.console)
+                                                                                     : .edge(.bottom))
+            if let selected { dock.focusPanel(selected) }
+        }
+        // Parity and introspection: what the dock's tabs and close buttons run.
+        dock.itemCommands = ["tab": PanelFocusCommand.id.rawValue, "close": PanelCloseCommand.id.rawValue]
+        viewportWidget.command = ViewPickCommand.id.rawValue
         dock.style.grow = 1
         dock.padding = EdgeInsets(top: 0, left: 4, bottom: 4, right: 4)
         dock.background = ui.theme.fieldBackground
@@ -257,7 +332,8 @@ public final class EditorApp: Game, EditorHost {
         }
 
         toolbar = Toolbar(app: self)
-        let column = VStack(name: "editorRoot", [toolbar.view, dock])
+        statusBar = StatusBar(app: self)
+        let column = VStack(name: "editorRoot", [toolbar.view, dock, statusBar.view])
         column.isHitTestable = false
         ui.root.addChild(column)
     }
@@ -265,15 +341,21 @@ public final class EditorApp: Game, EditorHost {
     /// Dropdown options: the renderer's code-registered keys, then the project's assets.
     private func makeAssetChoices() -> AssetChoices {
         AssetChoices(
-            meshes: { [unowned self] in sceneRenderer.prep.meshes.keys.filter { AssetReference($0) == nil } },
-            materials: { [unowned self] in sceneRenderer.prep.materials.keys.filter { AssetReference($0) == nil } },
+            // Without a renderer (headless) the built-in meshes and the starter scene's material.
+            meshes: { [unowned self] in
+                sceneRenderer.map { $0.prep.meshes.keys.filter { AssetReference($0) == nil } }
+                    ?? [MeshHandle.cube.key, MeshHandle.sphere.key, MeshHandle.plane.key]
+            },
+            materials: { [unowned self] in
+                sceneRenderer.map { $0.prep.materials.keys.filter { AssetReference($0) == nil } } ?? [StarterScene.checkerMaterial.key]
+            },
             assets: { [unowned self] in session.assets })
     }
 
     /// A project was opened or its assets changed: resolve handles through it, refresh the
     /// inspector's dropdowns and watch its `Assets/` folder.
     private func assetsChanged() {
-        sceneRenderer.assets = session.assets
+        sceneRenderer?.assets = session.assets
         thumbnails?.assets = session.assets
         meshBoundsCache.removeAll()
         // Rebuilding the dropdowns resets the inspector's grid, so only when the choices changed
@@ -358,10 +440,7 @@ public final class EditorApp: Game, EditorHost {
         updateViewport(engine: engine, dt: dt, keyboardFree: !focus.textEditing)
         session.tick(dt: Double(dt))
 
-        hierarchy.sync()
-        assetBrowser.sync()
-        inspector.refresh()
-        console.refresh()
+        syncPanels()
         thumbnails?.prepare()
         updateCaptures()
         var snapshot = EditorStatsSnapshot()
@@ -424,6 +503,7 @@ public final class EditorApp: Game, EditorHost {
         let message = (hasChildren ? (doomed.count == 1 ? "Its children are deleted with it. " : "Their children are deleted with them. ") : "")
             + "You can undo this with \(shortcuts.shortcutText(for: .undo))."
         let dialog = ConfirmDialog(title: title, message: message, confirmTitle: "Delete", name: "deleteEntitiesDialog")
+        dialog.command = EntityDeleteCommand.id.rawValue
         dialog.onConfirm = { [unowned self] in session.run(EntityDeleteCommand.self, .init()) }
         dialog.present(in: ui)
     }
@@ -598,7 +678,7 @@ public final class EditorApp: Game, EditorHost {
 
     private func meshBounds(_ handle: MeshHandle) -> Bounds? {
         if let cached = meshBoundsCache[handle.key] { return cached }
-        let bounds = sceneRenderer.mesh(handle)?.bounds ?? builtinMeshBounds(handle)
+        let bounds = sceneRenderer?.mesh(handle)?.bounds ?? builtinMeshBounds(handle)
         if let bounds { meshBoundsCache[handle.key] = bounds }
         return bounds
     }
@@ -757,6 +837,7 @@ extension EditorApp {
     }
 
     public var pickMeshes: (any PickMeshSource)? { sceneRenderer }
+    public var canRender: Bool { engine != nil }
 
     public var frameStats: EditorStatsSnapshot? { lastStats }
 
@@ -953,6 +1034,10 @@ struct SequentialIDs {
 /// colored frame. Not hit-testable, and its panel passes the pointer through, so clicks and
 /// drags in it reach the viewport controller instead of the UI.
 final class ViewportWidget: Widget {
+    override var accessibilityRole: UIAccessibilityRole { .viewport }
+    override var accessibilityText: String? { "Scene viewport" }
+    override var accessibilityValue: String? { caption }
+
     var texture: GPUTexture?
     var caption = "" { didSet { if caption != oldValue { setNeedsDisplay() } } }
     var isPlaying = false
@@ -1050,6 +1135,14 @@ final class Toolbar {
         for (tool, button) in toolButtons { button.tooltip = "\(tool.title) tool" }
         commandButtons = [(SceneNewCommand.id, newButton), (SceneOpenCommand.id, openButton), (SceneSaveCommand.id, saveButton),
                           (SceneSaveAsCommand.id, saveAsButton), (LayoutResetCommand.id, resetButton)]
+        // What each control runs, for introspection (`ui.snapshot`) and the parity test.
+        let tagged: [(Widget, CommandID)] = commandButtons.map { ($0.1, $0.0) } + [
+            (undoButton, EditUndoCommand.id), (redoButton, EditRedoCommand.id), (playButton, PlayToggleCommand.id),
+            (pauseButton, PlayPauseCommand.id), (stepButton, PlayStepCommand.id), (gameViewButton, ViewGameCameraCommand.id),
+            (timeScale, PlaySetTimeScaleCommand.id), (path, SceneOpenCommand.id), (projectPath, ProjectOpenCommand.id),
+            (openProjectButton, ProjectOpenCommand.id), (newProjectButton, ProjectNewCommand.id),
+        ] + toolButtons.map { ($0.1, ToolSetCommand.id) }
+        for (widget, id) in tagged { widget.command = id.rawValue }
         view = HStack(spacing: 6, padding: EdgeInsets(horizontal: 8, vertical: 5), name: "toolbar")
         view.background = (app.ui?.theme ?? UITheme()).panelBackground
         view.addChildren([

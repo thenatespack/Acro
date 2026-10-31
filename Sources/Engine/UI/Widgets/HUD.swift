@@ -105,6 +105,10 @@ public final class ProgressBar: Widget {
         isHitTestable = false
     }
 
+    public override var accessibilityRole: UIAccessibilityRole { .progressBar }
+    public override var accessibilityText: String? { text }
+    public override var accessibilityValue: String? { String(format: "%.3f", value) }
+
     private func valueChanged(from old: Float) {
         if value > trailValue || !showsTrail {
             trailValue = value
@@ -204,6 +208,9 @@ public final class IconLabel: Widget {
         super.init(name: name)
         isHitTestable = false
     }
+
+    public override var accessibilityRole: UIAccessibilityRole { .label }
+    public override var accessibilityText: String? { text }
 
     private func size(_ theme: UITheme) -> Float { fontSize ?? theme.style(for: self).fontSize ?? theme.fontSize }
 

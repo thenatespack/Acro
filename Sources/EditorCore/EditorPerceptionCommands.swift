@@ -238,7 +238,7 @@ public enum ViewScreenshotCommand: EditorDeferredCommand {
     public static let doc = "Returns a PNG of `source`: \"viewport\" (default; what the user sees, from the editor camera), \"game\" (the scene's Camera, or `camera`), \"camera\" (from `eye` looking at `target`, `fov` degrees, without moving the user's view), \"window\", \"panel\" (`panel`) or \"thumbnail\" (`asset`). `grid`, `gizmos` and `outline` toggle the viewport overlays; `maxSize` scales it down. Finishes after the next frame renders. Needs the editor window."
     public static let isReadOnly = true
     public static let isIdempotent = true
-    public static func isAvailable(in session: EditorSession) -> Bool { session.host != nil }
+    public static func isAvailable(in session: EditorSession) -> Bool { session.host?.canRender == true }
     public static func unavailableReason(in session: EditorSession) -> String? {
         "screenshots need the editor window and GPU (the editor is running headless)"
     }

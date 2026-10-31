@@ -40,6 +40,15 @@ import Foundation
 // The tool list is announced as changed when commands are registered or a project opens or
 // closes.
 //
+// ## Safety (see EditorSafety.swift)
+//
+// Each call runs with the undo label prefix "AI: " (its steps say who made them) and file
+// access confined to the project folder (`sandboxRoots`), and is recorded in the activity log
+// with its arguments and outcome. Destructive tools take a required `confirm: true` (and, with
+// `AISettings.askBeforeDestructive`, the user's OK in a dialog); in read-only mode only
+// read-only tools are listed. `ai.settings` can't change the settings over MCP. Paths in
+// arguments that climb out with ".." are refused before anything runs.
+//
 // ## Threading
 //
 // Transports post to the server's inbox from their threads; `pump()`, which the app calls once
@@ -66,7 +75,15 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
     private struct ToolsKey: Equatable {
         var revision: Int
         var project: String?
+        var readOnly: Bool
     }
+
+    /// Where AI clients may touch files without a project open (the folder the editor started
+    /// in); with a project, its folder.
+    public var workspaceRoot = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+
+    /// The folders file paths in calls are confined to (see EditorSafety.swift).
+    public var sandboxRoots: [URL] { [session.project?.root ?? workspaceRoot] }
 
     /// The name `initialize` reports.
     public static let serverName = "swift-engine"
@@ -127,6 +144,12 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
         http?.stop()
     }
 
+    /// Stops the HTTP server (the AI settings turned it off); `startHTTP` starts it again.
+    public func stopHTTP() {
+        http?.stop()
+        http = nil
+    }
+
     /// Where `mcp.json` is written: the open project's `Library/`, and the prefs folder.
     var configURLs: [URL] {
         var urls: [URL] = []
@@ -153,7 +176,8 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
     /// Notices what changed (commands, the project, subscribed resources) and handles queued
     /// requests. Call it once per frame on the main actor.
     public func pump() {
-        let key = ToolsKey(revision: session.commands.revision, project: session.project?.root.path)
+        let key = ToolsKey(revision: session.commands.revision, project: session.project?.root.path,
+                           readOnly: session.aiSettings.readOnly)
         if key != toolsKey {
             let first = toolsKey == nil
             toolsKey = key
@@ -184,7 +208,8 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
 
     public var tools: [MCPTool] {
         if let cachedTools { return cachedTools }
-        let tools = session.commands.all.compactMap(tool(for:))
+        let readOnly = session.aiSettings.readOnly
+        let tools = session.commands.all.filter { !readOnly || $0.isReadOnly }.compactMap(tool(for:))
         cachedTools = tools
         return tools
     }
@@ -195,8 +220,17 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
         guard MCPTool.isValidName(name), let types = session.commands.types(of: info.id) else { return nil }
         var description = info.doc
         if info.isUndoable { description += " Undoable (one step; edit.undo reverts it)." }
+        var input = Self.objectSchema(schema(for: types.arguments))
+        if info.isDestructive {
+            description += " Destructive: pass confirm: true."
+            input["properties"]?["confirm"] = [
+                "type": "boolean", "const": true,
+                "description": "Must be true: this tool can lose work that undo can't bring back.",
+            ]
+            input["required"] = .array((input["required"]?.arrayValue ?? []) + ["confirm"])
+        }
         return MCPTool(name: name, title: info.title, description: description,
-                       inputSchema: Self.objectSchema(schema(for: types.arguments)),
+                       inputSchema: input,
                        outputSchema: Self.objectSchema(schema(for: types.result)),
                        annotations: MCPToolAnnotations(title: info.title, readOnlyHint: info.isReadOnly,
                                                        destructiveHint: info.isDestructive,
@@ -215,8 +249,106 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
 
     public func callTool(_ name: String, arguments: JSON, context: MCPCallContext) -> MCPToolOutcome {
         let id = CommandID(name)
+        let info = session.commands.info(id)
+        let title = info?.title ?? name
+        let client = server.clientName(of: context.session)
+        let activity = session.activity
+        let argumentText = arguments.text
+        func refuse(_ message: String) -> MCPToolOutcome {
+            activity.record(tool: name, arguments: argumentText, outcome: .refused, summary: message, time: session.log.time,
+                            client: client)
+            session.log.warning("MCP: \(message)")
+            return .result(.error(message))
+        }
+
+        // What the settings and the arguments allow, before anything runs.
+        let all = [id] + Self.nestedCommands(name, arguments)
+        if session.aiSettings.readOnly, let blocked = all.first(where: { session.commands.info($0)?.isReadOnly != true }) {
+            return refuse("\(blocked) isn't allowed: the editor is in read-only mode for AI clients (only read-only tools run)")
+        }
+        if all.contains(AISettingsCommand.id), !(id == AISettingsCommand.id && (arguments.objectValue ?? [:]).isEmpty) {
+            return refuse("AI settings can only be changed in the editor (the Activity panel or the prefs file), not over MCP")
+        }
+        let destructive = all.filter { session.commands.info($0)?.isDestructive == true }
+        if !destructive.isEmpty, arguments["confirm"]?.boolValue != true {
+            let names = destructive.map(\.rawValue).joined(separator: ", ")
+            return refuse("\(names) can lose work that undo can't bring back: call again with confirm: true once you're sure")
+        }
+        if let path = Self.escapingPath(in: arguments) {
+            return refuse("'\(path)' climbs out of the project with '..'; use paths inside the project folder")
+        }
+        var arguments = arguments
+        arguments["confirm"] = Optional<JSON>.none
+
+        let entry = activity.record(tool: name, arguments: argumentText, outcome: .running, summary: "", time: session.log.time,
+                                    client: client)
+        if !destructive.isEmpty, session.aiSettings.askBeforeDestructive {
+            let what = destructive.compactMap { session.commands.info($0)?.title }.joined(separator: ", ")
+            guard let answer = (session.host as? EditorApp)?.askToAllowAICall(
+                title: "Allow an AI client to run \(what)?",
+                message: "\(client ?? "An MCP client") wants to run \(name) \(EditorActivityLog.shorten(argumentText, limit: 200)). "
+                    + "It can lose work that undo can't bring back.") else {
+                activity.finish(entry, outcome: .refused, summary: "No editor window to ask in", undoLabel: nil, undoDepth: nil)
+                return .result(.error("\(name) needs the user's OK (Ask before destructive is on), but there is no editor window to ask in"))
+            }
+            var running: (@MainActor (MCPCallContext) -> MCPToolResult?)?
+            return .pending { [weak self] context in
+                if let running { return running(context) }
+                guard let outcome = answer.outcome else {
+                    if context.isCancelled {
+                        activity.finish(entry, outcome: .refused, summary: "Cancelled while waiting for the user", undoLabel: nil,
+                                        undoDepth: nil)
+                        return .error("\(name) was cancelled")
+                    }
+                    return nil
+                }
+                guard let self, case .success(true) = outcome else {
+                    activity.finish(entry, outcome: .refused, summary: "The user didn't allow it", undoLabel: nil, undoDepth: nil)
+                    return .error("The user didn't allow \(name)")
+                }
+                switch run(id, title: title, arguments: arguments, entry: entry) {
+                case .result(let result): return result
+                case .pending(let poll):
+                    running = poll
+                    return poll(context)
+                }
+            }
+        }
+        return run(id, title: title, arguments: arguments, entry: entry)
+    }
+
+    /// Runs a call that passed the checks, with the "AI: " undo prefix and the sandbox, and
+    /// records how it ended in activity entry `entry`.
+    private func run(_ id: CommandID, title: String, arguments: JSON, entry: Int) -> MCPToolOutcome {
+        let undo = session.undo
+        let before = (depth: undo.undoDepth, label: undo.undoLabel, changes: undo.changeCount)
+        let previousPrefix = undo.labelPrefix, previousRoots = session.fileAccessRoots
+        undo.labelPrefix = EditorSession.aiUndoPrefix
+        session.fileAccessRoots = sandboxRoots
+        let outcome = start(id, title: title, arguments: arguments)
+        undo.labelPrefix = previousPrefix
+        session.fileAccessRoots = previousRoots
+        // The step this call recorded, if any (undo and redo record none).
+        let made = ![EditUndoCommand.id, EditRedoCommand.id, ActivityRevertCommand.id].contains(id)
+            && undo.changeCount != before.changes && undo.undoLabel?.hasPrefix(EditorSession.aiUndoPrefix) == true
+            && (undo.undoDepth != before.depth || undo.undoLabel != before.label)
+        let step: (label: String?, depth: Int?) = made ? (undo.undoLabel, undo.undoDepth) : (nil, nil)
+        let activity = session.activity
+        func finish(_ result: MCPToolResult) -> MCPToolResult {
+            activity.finish(entry, outcome: result.isError ? .error : .ok, summary: result.text.joined(separator: "\n"),
+                            undoLabel: step.label, undoDepth: step.depth)
+            return result
+        }
+        switch outcome {
+        case .result(let result): return .result(finish(result))
+        case .pending(let poll):
+            return .pending { context in poll(context).map(finish) }
+        }
+    }
+
+    /// Runs the command and turns its outcome into a tool result.
+    private func start(_ id: CommandID, title: String, arguments: JSON) -> MCPToolOutcome {
         let commands = session.commands
-        let title = commands.info(id)?.title ?? name
         let mark = session.log.nextSequence
         let pendingBefore = session.assets?.pendingLoadCount ?? 0
         let future: CommandFuture<Data>
@@ -265,6 +397,30 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
             if ContinuousClock.now > deadline { return finished("Still importing \(left) asset(s) in the background.") }
             total = max(total, left)
             context.progress(Double(total - left), total: Double(total), message: "Importing \(left) asset(s)…")
+            return nil
+        }
+    }
+
+    /// The commands an `edit.batch` call runs, so the checks see what is inside it.
+    static func nestedCommands(_ name: String, _ arguments: JSON) -> [CommandID] {
+        guard name == EditBatchCommand.id.rawValue else { return [] }
+        return (arguments["calls"]?.arrayValue ?? []).compactMap { $0["command"]?.stringValue }.map { CommandID($0) }
+    }
+
+    /// The first path-like argument (the value of a path, folder, source or name key, at any
+    /// depth) with a ".." component.
+    static func escapingPath(in json: JSON, key: String? = nil) -> String? {
+        let pathKeys: Set<String> = ["path", "paths", "folder", "sources", "source", "file", "name", "root"]
+        switch json {
+        case .string(let text):
+            guard let key, pathKeys.contains(key) else { return nil }
+            let parts = text.split(whereSeparator: { $0 == "/" || $0 == "\\" })
+            return parts.contains("..") ? text : nil
+        case .array(let items):
+            return items.lazy.compactMap { escapingPath(in: $0, key: key) }.first
+        case .object(let members):
+            return members.sorted { $0.key < $1.key }.lazy.compactMap { escapingPath(in: $0.value, key: $0.key) }.first
+        default:
             return nil
         }
     }

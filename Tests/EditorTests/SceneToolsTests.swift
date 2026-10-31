@@ -170,7 +170,7 @@ import Testing
         client.tool("entity.delete", ["entities": [mcpCopy]])
 
         #expect(try sceneWithoutIDs(ui.world) == sceneWithoutIDs(mcp.world))
-        #expect(ui.undo.undoHistory == mcp.undo.undoHistory)
+        #expect(ui.undo.undoHistory.map { "AI: " + $0 } == mcp.undo.undoHistory)  // the same steps, labeled as the AI's
         #expect(ui.undo.undoDepth == 9)
 
         // Undo takes both back to the starter scene exactly; redo brings the edits back exactly.
@@ -261,7 +261,7 @@ import Testing
         // One element, the component in the path.
         client.tool("component.setField", ["entity": .string(arm.description), "path": "Transform.position.y", "value": 2])
         #expect(session.world.get(Transform.self, for: entity)?.position == Vec3(1.1, 2, 0))
-        #expect(session.undo.undoLabel == "Edit position")
+        #expect(session.undo.undoLabel == "AI: Edit position")  // steps an MCP client made say so
 
         // World space under a rotated, scaled parent.
         let spinner = session.world.entity(for: id("Spinner", session))!
@@ -307,7 +307,7 @@ import Testing
         let leg = try #require(result["results"]?[1]?["entity"]?.stringValue)
         #expect(result["results"]?[3]?["entities"]?[0]?["path"] == "Top/Leg")
         #expect(session.undo.undoDepth == depth + 1)
-        #expect(session.undo.undoLabel == "Build a table")
+        #expect(session.undo.undoLabel == "AI: Build a table")
         #expect(session.world.get(Transform.self, for: session.world.entity(for: EntityID(leg)!)!)?.scale == Vec3(0.1, 1, 0.1))
         let after = try session.world.save()
         client.tool("edit.undo")
@@ -351,7 +351,7 @@ import Testing
         client.tool("component.setField", ["entity": cube, "path": "Transform.position.x", "value": 3])
         #expect(client.failingTool("edit.undo").contains("a batch is open"))
         #expect(client.tool("edit.endBatch") == ["label": "Arrange", "recorded": true])
-        #expect(session.undo.undoDepth == depth + 1 && session.undo.undoLabel == "Arrange")
+        #expect(session.undo.undoDepth == depth + 1 && session.undo.undoLabel == "AI: Arrange")
         client.tool("edit.undo")
         #expect(try session.world.save() == before)
 
