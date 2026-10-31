@@ -18,7 +18,9 @@ struct Mover: Component, Codable, Sendable {
 /// pushes crates, lights up a glass trigger zone, and a table and a chair (compound colliders
 /// made from child entities) fall and settle. The camera follows with some smoothing.
 ///
-/// **G** shows the physics debug view, **R** resets. The character is a kinematic body on its
+/// **G** shows the physics debug view, **R** resets. **F5** quick saves the character and the
+/// crates (positions, in `saves/quick.save.json` in the user data folder, see `SaveGames`) and
+/// **F9** quick loads them; the title shows the result for a few seconds. The character is a kinematic body on its
 /// own layer that only collides with the trigger zone's layer (the controller does its own
 /// sweeps), and is drawn interpolated between fixed steps. Under ENGINE_SCREENSHOT the engine
 /// feeds the game no input, so until the first real input the character follows a scripted
@@ -45,6 +47,19 @@ final class CharacterScene: DemoScene {
     private var userActive = false
     private var keysHeld = false
     private var debugMode = false
+    private var crates: [Entity] = []
+    private var now: Float = 0
+    private var message: (text: String, until: Float)?
+    private let saves = SaveGames(app: "SwiftGameEngineDemo")
+    /// Screenshot runs never touch the real user's saves (`ENGINE_USER_DATA_DIR` opts back in).
+    private let savesEnabled = ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT"] == nil || UserData.isOverridden
+
+    /// What a quick save keeps: the character's spot and heading, and where each crate is.
+    private struct QuickSave: Codable {
+        var hero: Vec3
+        var yaw: Float
+        var crates: [Vec3]
+    }
     private static let sky = Vec3(0.62, 0.72, 0.86)
     private static let start = Vec3(-5.5, 0, 0)
     private static let layerCharacter: UInt32 = 2
@@ -85,6 +100,7 @@ final class CharacterScene: DemoScene {
         physics.interpolatesPoses = true
         world.addPhysics(physics)
         inZone = false
+        crates = []
         frame = 0
         userActive = false
         yaw = 0
@@ -137,7 +153,8 @@ final class CharacterScene: DemoScene {
     private func buildCrates() {
         let spots = [Vec3(-5.2, 0.4, -3), Vec3(-4.3, 0.4, -3), Vec3(-3.4, 0.4, -3.1), Vec3(-4.75, 1.2, -3)]
         for (k, p) in spots.enumerated() {
-            box("Crate", at: p, size: Vec3(repeating: 0.8), tint: hsv(0.58 + Float(k) * 0.05, 0.6, 0.9), motion: .dynamic, friction: 0.4, density: 90)
+            crates.append(box("Crate", at: p, size: Vec3(repeating: 0.8), tint: hsv(0.58 + Float(k) * 0.05, 0.6, 0.9),
+                              motion: .dynamic, friction: 0.4, density: 90))
         }
     }
 
@@ -230,7 +247,52 @@ final class CharacterScene: DemoScene {
     var status: String {
         let c = world.get(CharacterController.self, for: hero)
         let state = c.map { $0.isGrounded ? "grounded" : ($0.isSliding ? "sliding" : "airborne") } ?? ""
-        return "\(state), zone \(inZone ? "occupied" : "empty"), WASD move [F] jump [Shift] run [G] debug [R] reset"
+        let base = "\(state), zone \(inZone ? "occupied" : "empty"), WASD move [F] jump [Shift] run [G] debug [R] reset [F5/F9] quick save/load"
+        return message.map { "\($0.text), \(base)" } ?? base
+    }
+
+    /// F5: writes the character and crate positions to the "quick" slot.
+    private func quickSave() {
+        guard savesEnabled else { return show("Saving is off in screenshot runs") }
+        let state = QuickSave(
+            hero: world.get(Transform.self, for: hero)?.position ?? Self.start, yaw: yaw,
+            crates: crates.map { world.get(Transform.self, for: $0)?.position ?? .zero })
+        do {
+            try saves.save(slot: "quick", state: state, sceneName: Self.name, playtime: Double(now))
+            show("Quick saved")
+        } catch {
+            show("Quick save failed: \(error)")
+        }
+    }
+
+    /// F9: puts the character and crates back where the "quick" slot has them.
+    private func quickLoad() {
+        guard savesEnabled else { return show("Loading is off in screenshot runs") }
+        do {
+            let state = try saves.load(slot: "quick").state(QuickSave.self)
+            guard state.crates.count == crates.count else { return show("Quick save doesn't match this scene") }
+            // Teleport by editing the transforms (the physics sync moves the bodies), and stop
+            // everything so nothing carries momentum from before the load.
+            world.modify(Transform.self, for: hero) { $0.position = state.hero }
+            world.modify(CharacterController.self, for: hero) { $0.verticalVelocity = 0; $0.moveVelocity = .zero }
+            for (crate, position) in zip(crates, state.crates) {
+                world.modify(Transform.self, for: crate) { $0.position = position }
+                world.modify(RigidBody.self, for: crate) { $0.linearVelocity = .zero; $0.angularVelocity = .zero }
+            }
+            yaw = state.yaw
+            focus = state.hero
+            userActive = true
+            show("Quick loaded")
+        } catch SaveError.notFound {
+            show("No quick save yet (F5)")
+        } catch {
+            show("Quick load failed: \(error)")
+        }
+    }
+
+    private func show(_ text: String) {
+        message = (text, now + 3)
+        print("Character: \(text)")
     }
 
     func camera(orbitEye: Vec3, target: Vec3) -> ViewCamera {
@@ -241,7 +303,11 @@ final class CharacterScene: DemoScene {
 
     func update(input: Input, dt: Float, time: Float) {
         actions.update(input)
+        now = time
+        if let message, now >= message.until { self.message = nil }
         if input.wasPressed(.r) { build() }
+        if input.wasPressed(.f5) { quickSave() }
+        if input.wasPressed(.f9) { quickLoad() }
         if input.wasPressed(.g) { debugMode.toggle() }
         let move = actions.vector("move")
         let jump = actions.wasPressed("jump")

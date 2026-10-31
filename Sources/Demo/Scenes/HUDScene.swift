@@ -1,6 +1,16 @@
 import Engine
 import Foundation
 
+/// The options the menu persists (see `SettingsStore`): missing keys keep these defaults.
+struct HUDSettings: Settings {
+    var theme = "Game"
+    var uiScale: Float = 1
+    var quality = 2
+    var volume: Float = 0.7
+    var invertLook = false
+    var subtitles = true
+}
+
 /// A game HUD and menus over a 3D scene, in the "game" theme: health / stamina bars with a
 /// damage trail, an ammo counter, a minimap panel and objective text pinned to the corners of
 /// the safe area; floating name tags and health bars over the units (world-space widgets that
@@ -15,6 +25,9 @@ import Foundation
 /// keyboard only while the menu or a dialog is open, so the demo's own keys (scene switching,
 /// Esc to quit) work while playing. Screenshot runs (or
 /// `HUD_MENU=1`; `HUD_MENU=0` turns it off) start with the menu open on its options screen, so it is covered.
+/// The options (theme, UI scale, quality, volume, toggles) are kept in `settings.json` in the
+/// user data folder and restored at start. Screenshot runs use the defaults and write nothing,
+/// unless `ENGINE_USER_DATA_DIR` points at a scratch folder.
 final class HUDScene: DemoScene {
     static let name = "hud"
     static let summary = "game HUD and menus: themes, gamepad/keyboard navigation, menu stack, world-space labels, UI on a 3D screen"
@@ -44,6 +57,8 @@ final class HUDScene: DemoScene {
     private let panelStatus = Label("Door locked", role: .secondary, name: "panelStatus")
     private let actions: InputActions
     private var closedMenuThisFrame = false
+    private var settings = HUDSettings()
+    private let settingsStore: SettingsStore<HUDSettings>?
 
     private struct Unit {
         var entity: Entity
@@ -58,12 +73,20 @@ final class HUDScene: DemoScene {
     init(renderer: Renderer) throws {
         sceneRenderer = try SceneRenderer(device: renderer.device, quality: renderer.quality)
         var theme = UITheme.game()
-        if ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT"] != nil { theme.caretBlinkPeriod = 0 }
+        let screenshotRun = ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT"] != nil
+        // Screenshot runs stay deterministic: never the real user's settings.
+        settingsStore = screenshotRun && !UserData.isOverridden ? nil : SettingsStore(app: "SwiftGameEngineDemo")
+        let saved = settingsStore?.load() ?? HUDSettings()
+        if let preset = UITheme.presets.first(where: { $0.name == saved.theme }) { theme = preset }
+        if screenshotRun { theme.caretBlinkPeriod = 0 }
+        settings = saved
         ui = UIContext(theme: theme)
+        ui.uiScale = [1, 1.25, 1.5].contains(saved.uiScale) ? saved.uiScale : 1
         ui.directionalNavigation = true
         ui.navigationWraps = true
         ui.gamepadNavigation = UINavigationInput()
-        panel = try WorldUIPanel(device: renderer.device, size: Vec2(360, 240), pixelsPerPoint: 2, theme: .dark(), label: "terminal")
+        panel = try WorldUIPanel(device: renderer.device, size: Vec2(360, 240), pixelsPerPoint: 2,
+                                 theme: theme.name == "Game" ? .dark() : theme, label: "terminal")
         panel.clearColor = Vec4(0.012, 0.016, 0.026, 1)
 
         var bindings = InputBindings()
@@ -222,23 +245,44 @@ final class HUDScene: DemoScene {
         let screen = MenuScreen(title: "Options", width: 520, name: "optionsScreen")
         let themes = UITheme.presets.map(\.name)
         let theme = OptionSelector("Theme", options: themes, selectedIndex: themes.firstIndex(of: ui.theme.name) ?? 0,
-                                   name: "theme") { [unowned self] index in applyTheme(UITheme.presets[index]) }
+                                   name: "theme") { [unowned self] index in
+            applyTheme(UITheme.presets[index])
+            settings.theme = UITheme.presets[index].name
+            persistSettings()
+        }
         let scales: [Float] = [1, 1.25, 1.5]
         let scale = OptionSelector("UI scale", options: scales.map { "\(Int($0 * 100))%" },
                                    selectedIndex: scales.firstIndex(of: ui.uiScale) ?? 0, name: "uiScale") { [unowned self] in
             ui.uiScale = scales[$0]
+            settings.uiScale = scales[$0]
+            persistSettings()
         }
-        let quality = OptionSelector("Quality", options: ["Low", "Medium", "High", "Ultra"], selectedIndex: 2, name: "quality")
+        let quality = OptionSelector("Quality", options: ["Low", "Medium", "High", "Ultra"], selectedIndex: settings.quality,
+                                     name: "quality") { [unowned self] in
+            settings.quality = $0
+            persistSettings()
+        }
         let volumeTitle = Label("Volume", name: "volumeTitle")
         volumeTitle.style.width = 140
-        let volume = Slider(value: 0.7, name: "volume")
+        let volume = Slider(value: settings.volume, name: "volume") { [unowned self] in
+            settings.volume = $0
+            persistSettings()
+        }
         volume.style.grow = 1
-        let invert = Checkbox("Invert look", kind: .toggleSwitch, name: "invert")
-        let subtitles = Checkbox("Subtitles", isOn: true, kind: .toggleSwitch, name: "subtitles")
+        let invert = Checkbox("Invert look", isOn: settings.invertLook, kind: .toggleSwitch, name: "invert") { [unowned self] in
+            settings.invertLook = $0
+            persistSettings()
+        }
+        let subtitles = Checkbox("Subtitles", isOn: settings.subtitles, kind: .toggleSwitch, name: "subtitles") { [unowned self] in
+            settings.subtitles = $0
+            persistSettings()
+        }
         let reset = Button("Reset to defaults", name: "reset") { [unowned self] in
             confirm("Reset all options?", "Theme, scale and audio go back to their defaults.", "Reset") { [unowned self] in
                 ui.uiScale = 1
                 applyTheme(.game())
+                settings = HUDSettings()
+                persistSettings()
                 menu.pop(animated: false)
                 menu.push(optionsScreen(), animated: false)
             }
@@ -298,6 +342,13 @@ final class HUDScene: DemoScene {
         dialog.onCancel = { [unowned self] in if let previous { ui.focus(previous, visible: true) } }
         dialog.present(in: ui)
         ui.focus(dialog.confirmButton, visible: true)
+    }
+
+    /// Writes the options; a failure (read-only disk) only costs the persistence.
+    private func persistSettings() {
+        guard let settingsStore else { return }
+        settingsStore.values = settings
+        do { try settingsStore.save() } catch { print("HUD: couldn't save settings: \(error)") }
     }
 
     private func applyTheme(_ theme: UITheme) {
