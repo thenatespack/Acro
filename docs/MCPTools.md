@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Editor › AI control). 93 tools.
+named by its id (see README › Editor › AI control). 94 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -19,7 +19,7 @@ optional arguments.
 | `diagnostics` | [`diagnostics.get`](#diagnosticsget) |
 | `edit` | [`edit.batch`](#editbatch), [`edit.beginBatch`](#editbeginbatch), [`edit.endBatch`](#editendbatch), [`edit.redo`](#editredo), [`edit.undo`](#editundo) |
 | `entity` | [`entity.create`](#entitycreate), [`entity.delete`](#entitydelete), [`entity.duplicate`](#entityduplicate), [`entity.find`](#entityfind), [`entity.get`](#entityget), [`entity.rename`](#entityrename), [`entity.reparent`](#entityreparent) |
-| `game` | [`game.info`](#gameinfo), [`game.load`](#gameload), [`game.reload`](#gamereload), [`game.unload`](#gameunload) |
+| `game` | [`game.build`](#gamebuild), [`game.info`](#gameinfo), [`game.load`](#gameload), [`game.reload`](#gamereload), [`game.unload`](#gameunload) |
 | `input` | [`input.clear`](#inputclear), [`input.inject`](#inputinject), [`input.state`](#inputstate) |
 | `layout` | [`layout.reset`](#layoutreset) |
 | `log` | [`log.clear`](#logclear), [`log.read`](#logread) |
@@ -561,6 +561,30 @@ Arguments:
 - `parent?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
 
 ## game
+
+### `game.build`
+
+**Build Game** · _deferred_
+
+Exports the project as a standalone game: cooks every asset reachable from the scenes into one pack (textures block-compressed for the target GPU family, no source files), builds the game module and Engine in release and links them into one executable, and lays out a runnable app (macOS: <output>/<Name>.app; Linux: <output>/<Name>/ with run.sh). Runs in the background (the first build compiles Engine in release, minutes; later ones seconds); progress and errors go to the console. Returns the output path, the pack's contents and sizes, and timings. `cookOnly` writes just the pack. The output folder is replaced.
+
+Arguments:
+
+- `cookOnly?`: boolean
+- `output?`: string
+- `scenes?`: [string]
+- `textureFamily?`: "bc" \| "astc"
+- `textures?`: "compress" \| "asImported"
+
+Result:
+
+- `buildSeconds?`: number
+- `cook`: {assetCount: integer, fileBytes: integer, files: integer, fromCookCache: integer, fromLibrary: integer, imported: [string], manifestPath?: string, meshBytes: integer, packBytes: integer, packPath: string, scenes: [string], seconds: number, textureBytes: integer, warnings: [string]}
+- `executablePath?`: string
+- `outputPath`: string
+- `packPath`: string
+- `summary`: string
+- `totalSeconds`: number
 
 ### `game.info`
 

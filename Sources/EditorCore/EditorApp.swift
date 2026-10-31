@@ -1090,6 +1090,8 @@ final class Toolbar {
     private let gameViewButton: Button
     /// Reload Game Code; shown when the editor has game code (`--game`, Project.json).
     private let reloadGameButton: Button
+    /// Build Game; shown when a project is open.
+    private let buildGameButton: Button
     private let timeScale: Dropdown
     /// The time scales the toolbar offers.
     static let timeScales: [Double] = [0.1, 0.25, 0.5, 1, 2, 4]
@@ -1109,6 +1111,7 @@ final class Toolbar {
         stepButton = Button("Step", name: "step") { session.run(PlayStepCommand.self, .init()) }
         gameViewButton = Button("Game", name: "gameView") { session.run(ViewGameCameraCommand.self, .init()) }
         reloadGameButton = Button("Reload Game", name: "reloadGame") { _ = try? session.commands.start(GameReloadCommand.self, .init()) }
+        buildGameButton = Button("Build Game", name: "buildGame") { _ = try? session.commands.start(GameBuildCommand.self, .init()) }
         timeScale = Dropdown(options: Self.timeScales.map(Self.timeScaleTitle), selectedIndex: Self.timeScales.firstIndex(of: 1) ?? 0,
                              name: "timeScale") { index in
             session.run(PlaySetTimeScaleCommand.self, .init(scale: Self.timeScales[index]))
@@ -1150,7 +1153,7 @@ final class Toolbar {
         let tagged: [(Widget, CommandID)] = commandButtons.map { ($0.1, $0.0) } + [
             (undoButton, EditUndoCommand.id), (redoButton, EditRedoCommand.id), (playButton, PlayToggleCommand.id),
             (pauseButton, PlayPauseCommand.id), (stepButton, PlayStepCommand.id), (gameViewButton, ViewGameCameraCommand.id),
-            (reloadGameButton, GameReloadCommand.id),
+            (reloadGameButton, GameReloadCommand.id), (buildGameButton, GameBuildCommand.id),
             (timeScale, PlaySetTimeScaleCommand.id), (path, SceneOpenCommand.id), (projectPath, ProjectOpenCommand.id),
             (openProjectButton, ProjectOpenCommand.id), (newProjectButton, ProjectNewCommand.id),
         ] + toolButtons.map { ($0.1, ToolSetCommand.id) }
@@ -1167,7 +1170,7 @@ final class Toolbar {
             Separator(.vertical),
         ] + toolButtons.map(\.1) + [
             Separator(.vertical),
-            projectPath, openProjectButton, newProjectButton,
+            projectPath, openProjectButton, newProjectButton, buildGameButton,
             Spacer(),
             titleLabel,
             resetButton,
@@ -1200,6 +1203,13 @@ final class Toolbar {
         let reloadTip = game.lastError.map { "Rebuild and reload the game code, keeping the scene. Last error: \($0)" }
             ?? "Rebuild and reload the game code (\(game.loaded?.module.name ?? "not loaded")), keeping the scene"
         if reloadGameButton.tooltip != reloadTip { reloadGameButton.tooltip = reloadTip }
+        let export = session.gameExport
+        if buildGameButton.isHidden == (session.project != nil) { buildGameButton.isHidden = session.project == nil }
+        set(buildGameButton, title: export.isBusy ? "Building…" : "Build Game", enabled: session.commands.isAvailable(GameBuildCommand.self))
+        let buildTip = export.lastError.map { "Export the game (cook the assets, build a standalone app). Last error: \($0)" }
+            ?? export.lastResult.map { "Export the game again (last: \($0.outputPath))" }
+            ?? "Export the game: cook the scenes' assets into a pack and build a standalone app into Build/"
+        if buildGameButton.tooltip != buildTip { buildGameButton.tooltip = buildTip }
         for (tool, button) in toolButtons {
             let role: Button.Role = tool == session.tool ? .primary : .normal
             if button.role != role { button.role = role }

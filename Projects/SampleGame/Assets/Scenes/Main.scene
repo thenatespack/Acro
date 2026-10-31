@@ -1,0 +1,240 @@
+{
+  "entities" : [
+    {
+      "components" : {
+        "Camera" : {
+          "clearColor" : [0.55, 0.62, 0.74, 1],
+          "far" : 500,
+          "fovY" : 1.0471975,
+          "isActive" : true,
+          "near" : 0.1,
+          "reversedZ" : false
+        },
+        "Name" : {
+          "value" : "Main Camera"
+        },
+        "Transform" : {
+          "position" : [0, 2.4, 6.2],
+          "rotation" : [-0.11081292, 0, 0, 0.9938413],
+          "scale" : [1, 1, 1]
+        }
+      },
+      "id" : 0,
+      "uid" : "665e3d55a61ed4051c60499346695f9f"
+    },
+    {
+      "components" : {
+        "DirectionalLight" : {
+          "cascadeBlend" : 0.1,
+          "cascadeSplitLambda" : 0.75,
+          "castsShadows" : true,
+          "color" : [1, 1, 1],
+          "intensity" : 1.3,
+          "shadowBias" : 0.0005,
+          "shadowDistance" : 60,
+          "shadowExtent" : 10,
+          "shadowNormalOffset" : 1
+        },
+        "Name" : {
+          "value" : "Sun"
+        },
+        "Transform" : {
+          "position" : [-4, 6, 3],
+          "rotation" : [-0.3793761, -0.4049919, -0.18968806, 0.8099838],
+          "scale" : [1, 1, 1]
+        }
+      },
+      "id" : 1,
+      "uid" : "8941d932d3c15ded567242fac1b83ba2"
+    },
+    {
+      "components" : {
+        "Name" : {
+          "value" : "Environment"
+        },
+        "SceneEnvironment" : {
+          "ambientIntensity" : 0.3,
+          "environmentIntensity" : 1,
+          "environmentRotation" : 0,
+          "fogColor" : [0.62, 0.7, 0.82],
+          "fogDensity" : 0,
+          "groundColor" : [0.12, 0.1, 0.09],
+          "imageBasedLighting" : true,
+          "proceduralSky" : {
+            "groundColor" : [0.13, 0.12, 0.11],
+            "horizonColor" : [0.55, 0.62, 0.74],
+            "sunGlow" : 0.5,
+            "sunIntensity" : 40,
+            "sunSize" : 0.012,
+            "zenithColor" : [0.12, 0.26, 0.62]
+          },
+          "sky" : "color",
+          "skyColor" : [0.55, 0.65, 0.85]
+        },
+        "Transform" : {
+          "position" : [0, 0, 0],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [1, 1, 1]
+        }
+      },
+      "id" : 2,
+      "uid" : "78eb3bc1963159cd635107f5bb8c1052"
+    },
+    {
+      "components" : {
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "isVisible" : true,
+          "material" : "asset:5ea5de6f184631e9f41e23d0f713cf2b#material",
+          "mesh" : "plane",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [1, 1, 1]
+        },
+        "Name" : {
+          "value" : "Floor"
+        },
+        "Transform" : {
+          "position" : [0, 0, 0],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [12, 1, 12]
+        }
+      },
+      "id" : 3,
+      "uid" : "070792d804af5774850f63df0a414442"
+    },
+    {
+      "components" : {
+        "Bobber" : {
+          "amplitude" : 0.15,
+          "phase" : 0,
+          "speed" : 2
+        },
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "isVisible" : true,
+          "material" : "asset:a8eac78acf57dfb5d766accfbf74c622#material/BoomBox_Mat",
+          "mesh" : "asset:a8eac78acf57dfb5d766accfbf74c622#mesh/BoomBox",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [1, 1, 1]
+        },
+        "Name" : {
+          "value" : "BoomBox"
+        },
+        "PrefabInstance" : {
+          "entities" : {
+            "59153c4bffc0b59e7de3bd1628034058" : {
+              "$ref" : "cb622303c13f3b893bb5a37ffb43ba35"
+            }
+          },
+          "overrides" : [
+            {
+              "component" : "Bobber",
+              "entity" : "59153c4bffc0b59e7de3bd1628034058",
+              "kind" : "addedComponent",
+              "value" : {
+                "amplitude" : 0.15,
+                "phase" : 0,
+                "speed" : 2
+              }
+            }
+          ],
+          "prefab" : "asset:a8eac78acf57dfb5d766accfbf74c622"
+        },
+        "Transform" : {
+          "position" : [0, 1.1, 0],
+          "rotation" : [0, 1, 0, 0],
+          "scale" : [60, 60, 60]
+        }
+      },
+      "id" : 4,
+      "uid" : "cb622303c13f3b893bb5a37ffb43ba35"
+    },
+    {
+      "components" : {
+        "Bobber" : {
+          "amplitude" : 0.5,
+          "phase" : 0,
+          "speed" : 2
+        },
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "isVisible" : true,
+          "material" : "asset:490953ec4cc876c0e12e146c9e9bc49c#material",
+          "mesh" : "cube",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [1, 1, 1]
+        },
+        "Name" : {
+          "value" : "Prop 1"
+        },
+        "Transform" : {
+          "position" : [-2.2, 0.6, -0.5],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [0.8, 0.8, 0.8]
+        }
+      },
+      "id" : 5,
+      "uid" : "f042a2bd002670f7e8bc52511f6b7e32"
+    },
+    {
+      "components" : {
+        "Bobber" : {
+          "amplitude" : 0.5,
+          "phase" : 1.5,
+          "speed" : 2
+        },
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "isVisible" : true,
+          "material" : "asset:490953ec4cc876c0e12e146c9e9bc49c#material",
+          "mesh" : "sphere",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [1, 1, 1]
+        },
+        "Name" : {
+          "value" : "Prop 2"
+        },
+        "Transform" : {
+          "position" : [2.2, 0.6, -0.5],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [0.8, 0.8, 0.8]
+        }
+      },
+      "id" : 6,
+      "uid" : "6381af5e190fcc88c84163be504840db"
+    },
+    {
+      "components" : {
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "isVisible" : true,
+          "material" : "default",
+          "mesh" : "sphere",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [1, 1, 1]
+        },
+        "Name" : {
+          "value" : "Orbiter"
+        },
+        "Orbiter" : {
+          "radius" : 1.6,
+          "speed" : 1
+        },
+        "Transform" : {
+          "position" : [1.6, 2.3, 0],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [0.35, 0.35, 0.35]
+        }
+      },
+      "id" : 7,
+      "uid" : "119cbe94557081759d91b5bfaca2ba51"
+    }
+  ],
+  "format" : "SwiftGameEngine.Scene",
+  "version" : 2
+}

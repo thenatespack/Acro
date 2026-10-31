@@ -9,6 +9,7 @@ let usage = """
     Usage: Editor [scene.json] [--project <folder>] [--game <target | module.dylib>] [--game-watch] [--backend metal|vulkan]
                   [--mcp] [--headless] [--mcp-port <port>] [--mcp-http | --no-mcp-http] [--mcp-read-only]
            Editor --mcp-tool-docs
+           Editor --cook <project> [...] | --build-game <project> [...]   (see Editor --cook --help)
 
     Opens the scene file, or starts with a new scene; --project opens a project (Project.json,
     Assets/, Library/) and imports its assets. Environment: EDITOR_PREFS=<file> moves the
@@ -39,6 +40,11 @@ var mcpReadOnly = false
 var game: GameModuleSettings?
 var gameWatch = false
 var arguments = Array(CommandLine.arguments.dropFirst())
+
+// Cooking and exporting run without a window (EditorPackagingCLI).
+if EditorPackagingCLI.handles(arguments) {
+    exit(MainActor.assumeIsolated { EditorPackagingCLI.run(arguments) })
+}
 
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data((message + "\n").utf8))

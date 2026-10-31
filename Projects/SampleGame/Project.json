@@ -1,0 +1,14 @@
+{
+  "build" : {
+    "scenes" : [
+      "Scenes/Main.scene"
+    ]
+  },
+  "format" : "SwiftGameEngine.Project",
+  "game" : {
+    "package" : "../..",
+    "target" : "SampleGame"
+  },
+  "name" : "SampleGame",
+  "version" : 1
+}
