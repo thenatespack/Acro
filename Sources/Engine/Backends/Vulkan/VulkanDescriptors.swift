@@ -43,6 +43,8 @@ final class VulkanSampler: GPUSampler {
 /// this is a list of free-able pools that grows on demand: an allocation tries the pool that
 /// last had room, then the others (freed sets leave holes), and only when every pool is out of
 /// memory (or too fragmented) adds a new one. `free` returns a set to the pool it came from.
+/// A pool also counts as full once it holds `setsPerPool` live sets: drivers aren't required to
+/// fail past a pool's limits (lavapipe keeps allocating), so the count, not the driver, decides.
 /// Allocation is rare (a new ring chunk or texture), so the search costs nothing per frame,
 /// and the device never runs out however many chunks a heavy frame needs (the `crowd` scene
 /// once exhausted a single fixed pool). Thread-safe: textures may be made off the main thread.
@@ -53,6 +55,8 @@ final class VulkanDescriptorPools: @unchecked Sendable {
     private var pools: [VkDescriptorPool] = []
     /// The pool each live set came from.
     private var owners: [VkDescriptorSet: VkDescriptorPool] = [:]
+    /// Live sets per pool, parallel to `pools`.
+    private var liveCounts: [Int] = []
     /// The pool the last allocation came from (tried first).
     private var current = 0
     private var reportedGrowth = false
@@ -70,14 +74,17 @@ final class VulkanDescriptorPools: @unchecked Sendable {
         try lock.withLock {
             for attempt in 0..<pools.count {
                 let index = (current + attempt) % pools.count
+                guard liveCounts[index] < setsPerPool else { continue }
                 if let set = try tryAllocate(layout: layout, from: pools[index]) {
                     current = index
                     owners[set] = pools[index]
+                    liveCounts[index] += 1
                     return set
                 }
             }
             let pool = try makePool()
             pools.append(pool)
+            liveCounts.append(0)
             current = pools.count - 1
             if pools.count > 1 && !reportedGrowth {
                 reportedGrowth = true
@@ -88,6 +95,7 @@ final class VulkanDescriptorPools: @unchecked Sendable {
                 throw GraphicsError("vkAllocateDescriptorSets failed in a new, empty descriptor pool")
             }
             owners[set] = pool
+            liveCounts[current] += 1
             return set
         }
     }
@@ -96,6 +104,7 @@ final class VulkanDescriptorPools: @unchecked Sendable {
     func free(_ set: VkDescriptorSet) {
         lock.withLock {
             guard let pool = owners.removeValue(forKey: set) else { return }
+            if let index = pools.firstIndex(of: pool) { liveCounts[index] -= 1 }
             var set: VkDescriptorSet? = set
             vkFreeDescriptorSets(device, pool, 1, &set)
         }
@@ -105,6 +114,7 @@ final class VulkanDescriptorPools: @unchecked Sendable {
         lock.withLock {
             for pool in pools { vkDestroyDescriptorPool(device, pool, nil) }
             pools.removeAll()
+            liveCounts.removeAll()
             owners.removeAll()
         }
     }
@@ -156,6 +166,8 @@ final class VulkanDescriptorArena {
     private var pools: [VkDescriptorPool] = []
     /// Pool new sets come from; earlier ones are full.
     private var current = 0
+    /// Sets taken from `current` (a pool is full at `setsPerPool`, whatever the driver allows).
+    private var usedInCurrent = 0
 
     private let setsPerPool: Int
 
@@ -171,10 +183,15 @@ final class VulkanDescriptorArena {
     func reset() {
         for pool in pools { vkResetDescriptorPool(device, pool, 0) }
         current = 0
+        usedInCurrent = 0
     }
 
     func allocate() throws -> VkDescriptorSet {
         while true {
+            if usedInCurrent == setsPerPool {
+                current += 1
+                usedInCurrent = 0
+            }
             if current == pools.count { pools.append(try makePool()) }
             var layout: VkDescriptorSetLayout? = layout
             var info = VkDescriptorSetAllocateInfo()
@@ -186,12 +203,16 @@ final class VulkanDescriptorArena {
                 info.pSetLayouts = layouts
                 return vkAllocateDescriptorSets(device, &info, &set)
             }
-            if result == VK_SUCCESS { return set! }
+            if result == VK_SUCCESS {
+                usedInCurrent += 1
+                return set!
+            }
             // A full pool moves on to the next one (adding it on demand).
             guard result == VK_ERROR_OUT_OF_POOL_MEMORY || result == VK_ERROR_FRAGMENTED_POOL else {
                 throw VulkanError(call: "vkAllocateDescriptorSets", result: result)
             }
             current += 1
+            usedInCurrent = 0
         }
     }
 
