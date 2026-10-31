@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Editor › AI control). 88 tools.
+named by its id (see README › Editor › AI control). 92 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -19,6 +19,7 @@ optional arguments.
 | `diagnostics` | [`diagnostics.get`](#diagnosticsget) |
 | `edit` | [`edit.batch`](#editbatch), [`edit.beginBatch`](#editbeginbatch), [`edit.endBatch`](#editendbatch), [`edit.redo`](#editredo), [`edit.undo`](#editundo) |
 | `entity` | [`entity.create`](#entitycreate), [`entity.delete`](#entitydelete), [`entity.duplicate`](#entityduplicate), [`entity.find`](#entityfind), [`entity.get`](#entityget), [`entity.rename`](#entityrename), [`entity.reparent`](#entityreparent) |
+| `game` | [`game.info`](#gameinfo), [`game.load`](#gameload), [`game.reload`](#gamereload), [`game.unload`](#gameunload) |
 | `input` | [`input.clear`](#inputclear), [`input.inject`](#inputinject), [`input.state`](#inputstate) |
 | `layout` | [`layout.reset`](#layoutreset) |
 | `log` | [`log.clear`](#logclear), [`log.read`](#logread) |
@@ -558,6 +559,101 @@ Arguments:
 - `entities`: [entity id]
 - `index?`: integer
 - `parent?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+
+## game
+
+### `game.info`
+
+**Game Code Info** · _read-only_, _idempotent_
+
+The game module: where it comes from, whether it is loaded, its components and systems, whether a rebuild is running, the last error and the last reload's report (timings, restored and dropped components), and components the scene holds as JSON because their type isn't loaded.
+
+Arguments: none.
+
+Result:
+
+- `busy`: boolean
+- `components`: [string]
+- `configured`: boolean
+- `lastError?`: string
+- `lastReport?`: {added: [string], buildSeconds?: number, built: boolean, components: [string], failed: object, linkSeconds?: number, loadSeconds: number, module: string, playing: boolean, removed: object, resetFields: object, restored: integer, swapSeconds: number, systems: [string], totalSeconds: number, warnings: [string]}
+- `library?`: string
+- `loaded`: boolean
+- `module?`: string
+- `settings?`: {buildCommand?: [string], library?: string, package?: string, target?: string, watch?: boolean}
+- `summary?`: string
+- `systems`: [string]
+- `unresolved`: object
+
+### `game.load`
+
+**Load Game Code** · _deferred_
+
+Loads game code: a SwiftPM `target` (built, then its objects linked into a module) or a prebuilt `library`. Its components become addable and its systems run in play mode; scene components of its types are restored. Replaces the module loaded before, like game.reload.
+
+Arguments:
+
+- `build?`: boolean
+- `library?`: string
+- `package?`: string
+- `target?`: string
+- `watch?`: boolean
+
+Result:
+
+- `added`: [string]
+- `buildSeconds?`: number
+- `built`: boolean
+- `components`: [string]
+- `failed`: object
+- `linkSeconds?`: number
+- `loadSeconds`: number
+- `module`: string
+- `playing`: boolean
+- `removed`: object
+- `resetFields`: object
+- `restored`: integer
+- `swapSeconds`: number
+- `systems`: [string]
+- `totalSeconds`: number
+- `warnings`: [string]
+
+### `game.reload`
+
+**Reload Game Code** · _deferred_
+
+Rebuilds the game module (`swift build --target <game>`, or its build command) in the background, then swaps it in with the scene kept: game components are serialized, the old code unloaded, the new types registered and the components restored (new fields get defaults, removed fields are dropped, components whose type is gone stay as JSON); play mode goes on with the new systems. Build errors go to the console and the old code keeps running. Returns what changed and the build, link, load and swap times. Clears the undo history.
+
+Arguments:
+
+- `build?`: boolean
+
+Result:
+
+- `added`: [string]
+- `buildSeconds?`: number
+- `built`: boolean
+- `components`: [string]
+- `failed`: object
+- `linkSeconds?`: number
+- `loadSeconds`: number
+- `module`: string
+- `playing`: boolean
+- `removed`: object
+- `resetFields`: object
+- `restored`: integer
+- `swapSeconds`: number
+- `systems`: [string]
+- `totalSeconds`: number
+- `warnings`: [string]
+
+### `game.unload`
+
+**Unload Game Code**
+
+Unloads the game module: its systems stop, its components stay in the scene as JSON (saved unchanged) until game code with those types is loaded again. Clears the undo history.
+
+Arguments: none.
 
 ## input
 
