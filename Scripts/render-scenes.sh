@@ -53,7 +53,7 @@ for scene in ${SCENES:-$("$demo" --list)}; do
             status=1
             continue
         fi
-        if grep -q "Validation Error" "$log"; then
+        if grep -qE "Validation Error|\[Vulkan\] Validation error" "$log"; then
             echo "FAIL  $scene ($backend): validation errors, see $log"
             status=1
         fi
