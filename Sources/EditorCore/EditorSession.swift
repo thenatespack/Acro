@@ -65,6 +65,13 @@ public final class EditorSession {
     /// Called before play / stop / reload, to end in-progress edits (an inspector drag's undo group).
     public var onWillReplaceWorld: (() -> Void)?
 
+    /// The open project's asset database (nil without a project). Its meshes and materials
+    /// show in the inspector's dropdowns, and `MeshRenderer`s can reference them.
+    public private(set) var assets: AssetDatabase?
+    public var project: Project? { assets?.project }
+    /// Called after a project was opened or created, or its assets changed.
+    public var onAssetsChange: (() -> Void)?
+
     private var playSnapshot: WorldSnapshot?
 
     public var world: World { document.world }
@@ -151,6 +158,61 @@ public final class EditorSession {
     public static func url(forPath path: String) -> URL {
         let expanded = (path.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
         return URL(fileURLWithPath: expanded).standardizedFileURL
+    }
+
+    // MARK: Project
+
+    /// Opens the project at `path` (its folder or its `Project.json`), scans its assets and
+    /// imports what changed. The scene stays open.
+    @discardableResult
+    public func openProject(path: String) -> Bool {
+        let url = Self.url(forPath: path)
+        do {
+            setProject(try Project.open(at: url), verb: "Opened")
+            return true
+        } catch {
+            log.error("Couldn't open the project at \(url.path): \(error)")
+            return false
+        }
+    }
+
+    /// Creates a project at `path` (a new or existing folder without a project) and opens it.
+    @discardableResult
+    public func newProject(path: String) -> Bool {
+        let url = Self.url(forPath: path)
+        do {
+            setProject(try Project.create(at: url), verb: "Created")
+            return true
+        } catch {
+            log.error("Couldn't create a project at \(url.path): \(error)")
+            return false
+        }
+    }
+
+    /// Feeds file changes under `Assets/` (from a `FileWatcher`) to the database.
+    public func assetsChanged(_ changes: [FileChange]) {
+        guard let assets, !changes.isEmpty else { return }
+        logReport(assets.reimport(changed: changes), prefix: "Assets changed")
+    }
+
+    private func setProject(_ project: Project, verb: String) {
+        let database = AssetDatabase(project: project)
+        let report = database.refresh()
+        assets = database
+        log.info("\(verb) project \(project.name) (\(database.records.count) assets: \(report.summary))")
+        logReport(report, prefix: nil)
+        database.onChange = { [unowned self] _ in onAssetsChange?() }
+        onAssetsChange?()
+        changed()
+    }
+
+    private func logReport(_ report: AssetScanReport, prefix: String?) {
+        if let prefix, report.hasChanges || !report.errors.isEmpty { log.info("\(prefix): \(report.summary)") }
+        for (path, message) in report.errors { log.error("\(path): \(message)") }
+        for warning in report.warnings { log.warning(warning) }
+        for (path, old, new) in report.reassigned {
+            log.warning("\(path) had the same asset id as another file (\(old.description.prefix(8))); it now has \(new.description.prefix(8))")
+        }
     }
 
     // MARK: Undo
