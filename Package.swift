@@ -87,11 +87,12 @@ let zlibTarget: Target = .systemLibrary(
 #endif
 
 // The block-compression encoders (CTextureCodec) are optimized in debug builds too: unoptimized,
-// astc-encoder's SIMD wrappers are many times slower. That needs unsafeFlags, which SwiftPM
+// astc-encoder's SIMD wrappers are many times slower (an uncached debug cook of SampleGame: 17 s
+// instead of 2.8 s), and debug editors and tests encode. That needs unsafeFlags, which SwiftPM
 // refuses in packages used as versioned dependencies, so they are only added when this package
-// is built from a checkout of its own (not from another package's .build/checkouts or Xcode's
-// SourcePackages).
-let isDependencyCheckout = ["/.build/checkouts/", "/SourcePackages/checkouts/"].contains { Context.packageDirectory.contains($0) }
+// is not such a checkout. SwiftPM (.build/checkouts, or <--scratch-path>/checkouts) and Xcode
+// (SourcePackages/checkouts) put dependencies in a folder named "checkouts". See README "Building".
+let isDependencyCheckout = URL(fileURLWithPath: Context.packageDirectory).deletingLastPathComponent().lastPathComponent == "checkouts"
 let textureCodecCFlags: [CSetting] = isDependencyCheckout ? [] : [.unsafeFlags(["-O2"], .when(configuration: .debug))]
 let textureCodecCXXFlags: [CXXSetting] = isDependencyCheckout ? [] : [.unsafeFlags(["-O2"], .when(configuration: .debug))]
 
