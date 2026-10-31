@@ -44,6 +44,8 @@ public final class NumberField: Widget {
     /// A short label drawn at the left inside the box (an axis letter), in `prefixColor`.
     public var prefix: String? { didSet { setNeedsDisplay() } }
     public var prefixColor: UIColor? { didSet { setNeedsDisplay() } }
+    /// Colors the prefix with the theme's `axisColors[prefixAxis]` when `prefixColor` is nil.
+    public var prefixAxis: Int? { didSet { setNeedsDisplay() } }
     /// Minimum width when measured (points).
     public var preferredWidth: Float = 64 { didSet { setNeedsLayout() } }
 
@@ -334,7 +336,8 @@ public final class NumberField: Widget {
         var content = frame.inset(by: EdgeInsets(horizontal: 6, vertical: 0))
         let size = theme.fontSize
         if let prefix, !prefix.isEmpty {
-            let color = (prefixColor ?? theme.secondaryTextColor).withAlpha(enabled ? 1 : 0.5)
+            let axisColor = prefixAxis.flatMap { theme.axisColors.isEmpty ? nil : theme.axisColors[$0 % theme.axisColors.count] }
+            let color = (prefixColor ?? axisColor ?? theme.secondaryTextColor).withAlpha(enabled ? 1 : 0.5)
             let bar = UIRect(x: frame.x + 1, y: frame.y + 3, width: 2, height: max(0, frame.height - 6))
             list.fillRect(bar, color: color, radii: UICornerRadii(1))
             let layout = prefixCache.get(prefix, font: theme.font, size: theme.smallFontSize)
@@ -343,11 +346,49 @@ public final class NumberField: Widget {
             let used = 7 + layout.width + 2 - 6
             content = UIRect(x: content.x + used, y: content.y, width: max(0, content.width - used), height: content.height)
         }
-        let layout = layoutCache.get(text, font: theme.font, size: size)
+        let shown = fittedText(width: content.width, size: size)
+        let layout = layoutCache.get(shown, font: theme.font, size: size)
         let color = !enabled ? theme.disabledTextColor : isScrubbing ? .white : theme.textColor
         list.withClip(UIRect(x: frame.x + 1, y: frame.y, width: frame.width - 2, height: frame.height)) {
-            drawLine(layout, font: theme.font, in: content, alignment: layout.width > content.width ? .left : .center,
-                     color: color, list: list)
+            if overflows(layout, width: content.width) {
+                drawEllipsized(shown, layout: layout, size: size, in: content, color: color, list: list)
+            } else {
+                drawLine(layout, font: theme.font, in: content, alignment: .center, color: color, list: list)
+            }
         }
+    }
+
+    /// Where the number goes: inside the box, right of the prefix.
+    private var textRect: UIRect {
+        var content = frame.inset(by: EdgeInsets(horizontal: 6, vertical: 0))
+        if let prefix, !prefix.isEmpty {
+            let used = 7 + cachedLayout(prefix, size: theme.smallFontSize).width + 2 - 6
+            content = UIRect(x: content.x + used, y: content.y, width: max(0, content.width - used), height: content.height)
+        }
+        return content
+    }
+
+    /// The text to draw in `width`: the value at its precision, else rounded to fewer decimals
+    /// until it fits ("1.000" → "1.00" → "1.0" → "1"); what still doesn't fit is ellipsized.
+    private func fittedText(width: Float, size: Float) -> String {
+        guard !isInteger, overflows(cachedLayout(text, size: size), width: width) else { return text }
+        var decimals = effectivePrecision
+        while decimals > 0 {
+            decimals -= 1
+            var s = String(format: "%.\(decimals)f", value)
+            if s.hasPrefix("-"), !s.contains(where: { $0 != "-" && $0 != "0" && $0 != "." }) { s.removeFirst() }
+            if !overflows(cachedLayout(s, size: size), width: width) { return s }
+        }
+        return text
+    }
+
+    /// Whether the value is shown shorter than `text` (fewer decimals or ellipsized).
+    public var isTextShortened: Bool {
+        !isTyping && overflows(cachedLayout(text, size: theme.fontSize), width: textRect.width)
+    }
+
+    /// An explicit `tooltip`, else the full value while the box shows it shortened.
+    public override func tooltip(at point: Vec2) -> String? {
+        tooltip ?? (isTextShortened ? text : nil)
     }
 }

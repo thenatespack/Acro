@@ -21,7 +21,8 @@ import Testing
     #expect(t.name == "Dark")
     #expect(t.fontSize == 13 && t.smallFontSize == 11 && t.headingFontSize == 17)
     #expect(t.textColor == UIColor(hex: 0xe6e9ef) && t.panelBackground == UIColor(hex: 0x1b202b))
-    #expect(t.accent == UIColor(hex: 0x3478f6) && t.focusRing == UIColor(hex: 0x6aa1ff, alpha: 0.9))
+    // The accent was 0x3478f6 until white text on it had to reach 4.5:1 (docs/EditorUIReview.md).
+    #expect(t.accent == UIColor(hex: 0x2a66dc) && t.focusRing == UIColor(hex: 0x6aa1ff, alpha: 0.9))
     #expect(t.controlHeight == 26 && t.controlPaddingX == 10 && t.spacing == 6 && t.panelPadding == 12)
     // The constants the widgets used to hard-code, now theme metrics.
     #expect(t.cornerRadius == 5)

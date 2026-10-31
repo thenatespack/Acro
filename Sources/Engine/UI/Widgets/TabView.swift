@@ -73,6 +73,8 @@ public final class TabView: Widget {
 
     public init(tabs: [DockPanel] = [], selectedIndex: Int = 0, name: String = "") {
         super.init(name: name)
+        // A panel's content never paints over its neighbors when it is wider than the panel.
+        clipsContent = true
         for tab in tabs { addTab(tab, select: false) }
         if !self.tabs.isEmpty { self.selectedIndex = min(max(selectedIndex, 0), self.tabs.count - 1) }
         updateVisibility()

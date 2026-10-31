@@ -21,7 +21,12 @@ public struct UITheme {
     public var textColor = UIColor(hex: 0xe6e9ef)
     public var secondaryTextColor = UIColor(hex: 0x98a1b3)
     public var disabledTextColor = UIColor(hex: 0x5c6475)
-    public var placeholderColor = UIColor(hex: 0x6b7385)
+    public var placeholderColor = UIColor(hex: 0x7e879a)
+    /// Warning and error text (log lines, validation messages) on panels and fields.
+    public var warningTextColor = UIColor(hex: 0xe8b04a)
+    public var errorTextColor = UIColor(hex: 0xf07167)
+    /// X, Y, Z, W: the prefixes of vector fields (`VectorField`).
+    public var axisColors = [UIColor(hex: 0xe5484d), UIColor(hex: 0x46b86a), UIColor(hex: 0x4f8cff), UIColor(hex: 0x9aa1b2)]
 
     // Surfaces
     public var panelBackground = UIColor(hex: 0x1b202b)
@@ -38,9 +43,10 @@ public struct UITheme {
     public var controlPressed = UIColor(hex: 0x222834)
     public var controlBorder = UIColor(hex: 0x3a4357)
     public var fieldBackground = UIColor(hex: 0x141821)
-    public var accent = UIColor(hex: 0x3478f6)
-    public var accentHover = UIColor(hex: 0x4a88f8)
-    public var accentPressed = UIColor(hex: 0x2a64d4)
+    // White `accentText` on the accent stays above 4.5:1 (WCAG AA) at rest, hovered and pressed.
+    public var accent = UIColor(hex: 0x2a66dc)
+    public var accentHover = UIColor(hex: 0x2f6fe6)
+    public var accentPressed = UIColor(hex: 0x2458c2)
     public var accentText = UIColor.white
     public var trackBackground = UIColor(hex: 0x394155)
     public var thumb = UIColor(hex: 0xf2f4f8)
@@ -146,7 +152,10 @@ public struct UITheme {
         t.textColor = UIColor(hex: 0x1d2330)
         t.secondaryTextColor = UIColor(hex: 0x5a6375)
         t.disabledTextColor = UIColor(hex: 0xa3aab8)
-        t.placeholderColor = UIColor(hex: 0x8b93a3)
+        t.placeholderColor = UIColor(hex: 0x687083)
+        t.warningTextColor = UIColor(hex: 0x8a5a00)
+        t.errorTextColor = UIColor(hex: 0xb42318)
+        t.axisColors = [UIColor(hex: 0xc8323a), UIColor(hex: 0x1f7a44), UIColor(hex: 0x2563eb), UIColor(hex: 0x6b7385)]
         t.panelBackground = UIColor(hex: 0xf3f4f7)
         t.panelBorder = UIColor(hex: 0xd5d9e1)
         t.popupBackground = UIColor(hex: 0xffffff)
@@ -159,7 +168,7 @@ public struct UITheme {
         t.controlBorder = UIColor(hex: 0xc3c9d4)
         t.fieldBackground = UIColor(hex: 0xffffff)
         t.accent = UIColor(hex: 0x2563eb)
-        t.accentHover = UIColor(hex: 0x3b74f0)
+        t.accentHover = UIColor(hex: 0x316cec)  // white text 4.7:1 (0x3b74f0 was 4.25)
         t.accentPressed = UIColor(hex: 0x1d4fc4)
         t.trackBackground = UIColor(hex: 0xd3d8e1)
         t.thumb = UIColor(hex: 0xffffff)
@@ -189,6 +198,8 @@ public struct UITheme {
         t.secondaryTextColor = UIColor(hex: 0xe0e0e0)
         t.disabledTextColor = UIColor(hex: 0x8c8c8c)
         t.placeholderColor = UIColor(hex: 0xb0b0b0)
+        t.warningTextColor = UIColor(hex: 0xffd600)
+        t.errorTextColor = UIColor(hex: 0xff6b6b)
         t.panelBackground = .black
         t.panelBorder = .white
         t.popupBackground = .black
@@ -211,7 +222,8 @@ public struct UITheme {
         t.caret = .white
         t.rowHover = UIColor(hex: 0xffffff, alpha: 0.15)
         t.rowSelected = UIColor(hex: 0xffd600, alpha: 0.35)
-        t.rowSelectedFocused = UIColor(hex: 0xffd600, alpha: 0.55)
+        // White text keeps 6:1 on it (at 0.55 it was 4.46).
+        t.rowSelectedFocused = UIColor(hex: 0xffd600, alpha: 0.45)
         t.scrollbarThumb = UIColor(hex: 0xffffff, alpha: 0.6)
         t.scrollbarThumbActive = .white
         t.tooltipBackground = .black
@@ -240,6 +252,7 @@ public struct UITheme {
         t.textColor = UIColor(hex: 0xf4f1ea)
         t.secondaryTextColor = UIColor(hex: 0xb9b2a4)
         t.disabledTextColor = UIColor(hex: 0x6f6a60)
+        t.placeholderColor = UIColor(hex: 0x8f897c)
         t.panelBackground = UIColor(hex: 0x12141a, alpha: 0.82)
         t.panelBorder = UIColor(hex: 0xffffff, alpha: 0.14)
         t.popupBackground = UIColor(hex: 0x1a1d25, alpha: 0.96)
@@ -268,6 +281,9 @@ public struct UITheme {
         t.popupCornerRadius = 10
         t.dialogCornerRadius = 14
         t.checkboxSize = 22
+        // List, tree and menu rows fit the 18-pt text.
+        t.rowHeight = 30
+        t.treeIndent = 20
         t.switchSize = Vec2(44, 26)
         t.sliderTrackHeight = 6
         t.sliderThumbSize = 20
@@ -326,5 +342,26 @@ public struct UIWidgetStyle: Sendable, Equatable {
         self.fontSize = fontSize
         self.height = height
         self.paddingX = paddingX
+    }
+}
+
+extension UIColor {
+    /// WCAG relative luminance of the (sRGB) color, ignoring alpha.
+    public var relativeLuminance: Float {
+        func linear(_ c: Float) -> Float { c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4) }
+        return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+    }
+
+    /// This color with its alpha blended over an opaque `background` (in sRGB, as the UI draws).
+    public func composited(over background: UIColor) -> UIColor {
+        UIColor(background.r + (r - background.r) * a, background.g + (g - background.g) * a,
+                background.b + (b - background.b) * a, 1)
+    }
+
+    /// The WCAG contrast ratio (1…21) between this color and `other`, both taken as opaque.
+    /// AA asks 4.5 for body text, 3 for large text and UI glyphs.
+    public func contrastRatio(with other: UIColor) -> Float {
+        let (x, y) = (relativeLuminance, other.relativeLuminance)
+        return (max(x, y) + 0.05) / (min(x, y) + 0.05)
     }
 }

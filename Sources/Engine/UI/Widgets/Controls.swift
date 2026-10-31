@@ -144,6 +144,9 @@ public final class Label: Widget {
     public override var accessibilityRole: UIAccessibilityRole { .label }
     public override var accessibilityText: String? { text }
 
+    /// The text size it draws at (points): `fontSize`, the style's, else its role's.
+    var effectiveFontSize: Float { size }
+
     private var size: Float {
         if let fontSize { return fontSize }
         let theme = theme
@@ -300,8 +303,31 @@ public final class Button: Widget {
         if role == .normal { list.strokeRect(frame, color: border, width: style.borderWidth ?? theme.borderWidth, radii: radii) }
         let color = !enabled ? theme.disabledTextColor
             : role == .primary ? theme.accentText : style.textColor ?? theme.textColor
-        let layout = cache.get(title, font: theme.font, size: style.fontSize ?? theme.fontSize)
-        drawLine(layout, font: theme.font, in: frame, alignment: .center, color: color, list: list)
+        let size = style.fontSize ?? theme.fontSize
+        let layout = cache.get(title, font: theme.font, size: size)
+        if overflows(layout, width: titleRect.width) {
+            drawEllipsized(title, layout: layout, size: size, in: titleRect, color: color, list: list)
+        } else {
+            drawLine(layout, font: theme.font, in: frame, alignment: .center, color: color, list: list)
+        }
+    }
+
+    /// Where the title goes: the frame less the horizontal padding. A longer title ends in "…".
+    private var titleRect: UIRect {
+        let paddingX = theme.style(for: self).paddingX ?? theme.controlPaddingX
+        let inset = min(paddingX, max(0, frame.width / 2 - 2))
+        return UIRect(x: frame.x + inset, y: frame.y, width: max(0, frame.width - 2 * inset), height: frame.height)
+    }
+
+    /// Whether the title is cut off (ellipsized) at the current width.
+    public var titleIsTruncated: Bool {
+        let theme = theme
+        return truncatedText(title, size: theme.style(for: self).fontSize ?? theme.fontSize, width: titleRect.width) != nil
+    }
+
+    /// An explicit `tooltip`, else the full title while it is truncated.
+    public override func tooltip(at point: Vec2) -> String? {
+        tooltip ?? (titleIsTruncated ? title : nil)
     }
 }
 

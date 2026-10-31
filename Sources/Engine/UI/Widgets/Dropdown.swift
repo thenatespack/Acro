@@ -3,10 +3,13 @@ import Foundation
 /// A list of choices shown as an overlay (above every other widget), anchored below a widget
 /// (above it when there is no room). Hover or Up/Down highlight, click or Enter picks, a press
 /// outside or Esc closes it. Used by `Dropdown`; usable alone as a context menu
-/// (`UIContext.presentOverlay`).
+/// (`UIContext.presentOverlay`). A menu taller than the window is cut to fit and scrolls (the
+/// wheel, and the highlight moved with the keys stays in view).
 public final class PopupMenu: Widget {
     public var items: [String] { didSet { setNeedsLayout() } }
-    public var highlightedIndex: Int? { didSet { setNeedsDisplay() } }
+    public var highlightedIndex: Int? { didSet { setNeedsDisplay(); revealHighlight() } }
+    /// How far the items are scrolled up (points), when the menu is cut to fit the window.
+    public private(set) var scrollOffset: Float = 0
     /// The item that gets a check mark.
     public var checkedIndex: Int?
     /// The widget the menu hangs from (its frame is re-read on every layout, so it follows scrolling).
@@ -25,6 +28,16 @@ public final class PopupMenu: Widget {
         self.anchor = anchor
         super.init(name: name)
         padding = EdgeInsets(4)
+        clipsContent = true  // items scrolled out of a cut-short menu are off screen
+    }
+
+    public override func scrollToReveal(_ rect: UIRect) -> Bool {
+        let content = contentRect
+        guard maxScroll > 0, rect.y < content.y || rect.maxY > content.maxY else { return false }
+        scrollOffset += rect.y < content.y ? rect.y - content.y : rect.maxY - content.maxY
+        scrollOffset = min(max(scrollOffset, 0), maxScroll)
+        setNeedsDisplay()
+        return true
     }
 
     private var rowHeight: Float { theme.rowHeight + 2 }
@@ -41,9 +54,40 @@ public final class PopupMenu: Widget {
         let anchor = self.anchor?.frame ?? anchorRect ?? UIRect(x: viewport.center.x, y: viewport.center.y, width: 0, height: 0)
         let width = max(size.x, anchor.width)
         var y = anchor.maxY + 2
-        if y + size.y > viewport.maxY, anchor.y - 2 - size.y >= viewport.y { y = anchor.y - 2 - size.y }
+        var height = size.y
+        if y + height > viewport.maxY {
+            if anchor.y - 2 - height >= viewport.y {
+                y = anchor.y - 2 - height
+            } else {
+                // Fits neither below nor above: use the taller side and scroll.
+                let below = viewport.maxY - 4 - y, above = anchor.y - 2 - (viewport.y + 4)
+                height = max(rowHeight + padding.vertical, min(height, max(below, above)))
+                y = below >= above ? y : anchor.y - 2 - height
+            }
+        }
         let x = min(max(anchor.x, viewport.x), max(viewport.x, viewport.maxX - width))
-        return UIRect(x: x, y: y, width: width, height: size.y)
+        return UIRect(x: x, y: y, width: width, height: height)
+    }
+
+    /// Items' total height beyond what shows.
+    private var maxScroll: Float { max(0, rowHeight * Float(items.count) - contentRect.height) }
+
+    public override func layoutChildren() {
+        super.layoutChildren()
+        scrollOffset = min(max(scrollOffset, 0), maxScroll)
+    }
+
+    private func rowRect(_ i: Int) -> UIRect {
+        let content = contentRect
+        return UIRect(x: content.x, y: content.y + Float(i) * rowHeight - scrollOffset, width: content.width, height: rowHeight)
+    }
+
+    private func revealHighlight() {
+        guard let i = highlightedIndex, maxScroll > 0 else { return }
+        let row = rowRect(i), content = contentRect
+        if row.y < content.y { scrollOffset -= content.y - row.y }
+        if row.maxY > content.maxY { scrollOffset += row.maxY - content.maxY }
+        scrollOffset = min(max(scrollOffset, 0), maxScroll)
     }
 
     public override func overlayDismissed() { onDismiss?() }
@@ -51,10 +95,9 @@ public final class PopupMenu: Widget {
     public override var accessibilityRole: UIAccessibilityRole { .menu }
 
     public override var accessibilityItems: [UIAccessibilityItem] {
-        let content = contentRect
         return items.enumerated().map { i, item in
             UIAccessibilityItem(key: "item:\(item)", role: .menuItem, label: item,
-                                frame: UIRect(x: content.x, y: content.y + Float(i) * rowHeight, width: content.width, height: rowHeight),
+                                frame: rowRect(i),
                                 isSelected: i == checkedIndex,
                                 command: itemCommandIDs.indices.contains(i) ? itemCommandIDs[i] ?? effectiveCommand : effectiveCommand)
         }
@@ -64,7 +107,7 @@ public final class PopupMenu: Widget {
     public func item(at point: Vec2) -> Int? {
         let content = contentRect
         guard content.contains(point) else { return nil }
-        let index = Int(((point.y - content.y) / rowHeight).rounded(.down))
+        let index = Int(((point.y - content.y + scrollOffset) / rowHeight).rounded(.down))
         return index >= 0 && index < items.count ? index : nil
     }
 
@@ -93,7 +136,9 @@ public final class PopupMenu: Widget {
         case .pointerUp(let e):
             if let index = item(at: e.position) { choose(index) }
             return true
-        case .scroll:
+        case .scroll(let delta, _):
+            scrollOffset = min(max(scrollOffset - delta.y * rowHeight * 3, 0), maxScroll)
+            setNeedsDisplay()
             return true
         case .key(let e):
             switch e.key {
@@ -122,8 +167,11 @@ public final class PopupMenu: Widget {
         list.fillRect(frame, color: theme.popupBackground, radii: radii)
         list.strokeRect(frame, color: theme.popupBorder, width: theme.borderWidth, radii: radii)
         let content = contentRect
+        list.pushClip(content)
+        defer { list.popClip() }
         for (i, item) in items.enumerated() {
-            let row = UIRect(x: content.x, y: content.y + Float(i) * rowHeight, width: content.width, height: rowHeight)
+            let row = rowRect(i)
+            guard row.maxY > content.y, row.y < content.maxY else { continue }
             let highlighted = i == highlightedIndex
             if highlighted { list.fillRect(row, color: theme.accent, radii: UICornerRadii(theme.cornerRadius - 1)) }
             if i == checkedIndex {

@@ -581,6 +581,16 @@ public final class DockSpace: Widget {
         onLayoutChange?(layout)
     }
 
+    /// The docked panels' size; floating windows float over the dock and don't add to it (a tall
+    /// panel floating used to make the dock as tall as the panel's content).
+    public override func measureContent(width: Float?) -> Vec2 {
+        var size = Vec2.zero
+        for child in children where !(child is DockFloatingWindow) && !child.isHidden {
+            size = pointwiseMax(size, child.measure(width: width))
+        }
+        return size
+    }
+
     public override func layoutChildren() {
         let content = contentRect
         for child in children {
