@@ -99,4 +99,5 @@ extension DemoScene {
     CharacterScene.self,
     SkinningScene.self,
     ParticlesScene.self,
+    Physics2DScene.self,
 ]
