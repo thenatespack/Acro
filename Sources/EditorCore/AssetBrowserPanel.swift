@@ -317,11 +317,13 @@ public final class AssetBrowserPanel {
         delete.tooltip = "Delete the selected file or folder"
         viewToggle.tooltip = "Switch between thumbnails and a list"
         search.style.width = 140
+        search.style.minWidth = 70
+        search.style.shrink = 1
         search.tooltip = "Filter the whole project by name"
         breadcrumb.style.grow = 1
         breadcrumb.style.shrink = 1
         breadcrumb.style.width = 0
-        breadcrumb.style.minWidth = 90
+        breadcrumb.style.minWidth = 60
         let toolbar = HStack(spacing: 6, name: "assetToolbar", [breadcrumb, search, newFolder, newMaterial, rename, delete, viewToggle])
 
         let renameOK = Button("Rename", role: .primary, name: "renameOK")
