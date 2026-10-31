@@ -32,7 +32,7 @@ public enum BuiltinCommands {
         AssetListCommand.self, AssetGetCommand.self, AssetReimportCommand.self, AssetWaitForImportsCommand.self,
         AssetSelectCommand.self, MaterialGetCommand.self,
         PrefabCreateCommand.self, PrefabOverridesCommand.self, PrefabApplyCommand.self, PrefabRevertCommand.self,
-        PrefabUnpackCommand.self,
+        PrefabUnpackCommand.self, PrefabCreateVariantCommand.self,
         LogReadCommand.self, StatsGetCommand.self, DiagnosticsGetCommand.self,
     ] + EditorUICommands.all + EditorSafetyCommands.all + EditorGameModuleCommands.all + EditorBuildCommands.all
       + EditorRecoveryCommands.all

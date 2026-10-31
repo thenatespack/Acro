@@ -307,6 +307,8 @@ public struct PrefabOverrideEntry: Codable, Equatable, Sendable {
     /// The prefab entity's id in the prefab.
     public var prefabEntity: String
     public var component: String?
+    /// The field's path (`field`, `removedElement`): array elements by index ("points.2") or by key
+    /// ("slots.@a.count"). For `addedEntity` the added child's id (`entity` is its parent).
     public var path: String?
     /// The instance's value (prefab-relative: references to the prefab's entities are `{"$prefabEntity": id}`).
     public var value: JSONValue?
@@ -372,11 +374,13 @@ public enum PrefabOverridesCommand: EditorCommand {
         public var added: [EntityID]
         /// The prefab is a .prefab file (prefab.apply can write it); a model's prefab is read-only.
         public var canApply: Bool
+        /// When the instance's prefab is a variant: the prefab it is based on.
+        public var base: AssetReference?
     }
 
     public static let id: CommandID = "prefab.overrides"
     public static let title = "Prefab Overrides"
-    public static let doc = "The prefab instance an entity belongs to: its prefab, root, overrides (changed fields, added and removed components, removed entities) and added children, and whether prefab.apply can write the prefab."
+    public static let doc = "The prefab instance an entity belongs to: its prefab (and its base, for a variant), root, overrides (changed fields and array elements, added and removed components, added children, removed prefab entities) and added children, and whether prefab.apply can write the prefab."
     public static let isReadOnly = true
     public static let isIdempotent = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
@@ -399,7 +403,7 @@ public enum PrefabOverridesCommand: EditorCommand {
                                     value: override.value)
             },
             added: session.world.prefabAddedEntities(of: link.root).compactMap { session.world.id(of: $0.entity) },
-            canApply: session.isPrefabFile(link.prefab.asset))
+            canApply: session.isPrefabFile(link.prefab.asset), base: assets.prefab(link.prefab)?.variant?.base)
     }
 }
 
@@ -433,11 +437,31 @@ public enum PrefabApplyCommand: EditorCommand {
     }
 }
 
+/// Arguments of `prefab.revert`: an entity of an instance, and what to put back.
+public struct PrefabRevertArguments: Codable, Equatable, Sendable {
+    /// An entity of the instance (default: the primary selection).
+    public var entity: EntityID?
+    /// One component of that entity; nil: the whole instance.
+    public var component: String?
+    /// With `component`: one overridden field or array element (a path from prefab.overrides, such as
+    /// "scale" or "slots.@a.count"); nil: the whole component.
+    public var path: String?
+    /// One added child (its entity id) or removed child (its prefab-local id, `prefabEntity` of the
+    /// override) to put back; with it `component` and `path` are ignored.
+    public var child: String?
+    public init(entity: EntityID? = nil, component: String? = nil, path: String? = nil, child: String? = nil) {
+        self.entity = entity
+        self.component = component
+        self.path = path
+        self.child = child
+    }
+}
+
 public enum PrefabRevertCommand: EditorCommand {
-    public typealias Arguments = PrefabComponentArguments
+    public typealias Arguments = PrefabRevertArguments
     public static let id: CommandID = "prefab.revert"
     public static let title = "Revert to Prefab"
-    public static let doc = "Puts an instance back to its prefab: one component of one entity (added, removed or changed), or with no component the whole instance (every override goes, added children are deleted). One undo step."
+    public static let doc = "Puts an instance back to its prefab: one component of one entity (added, removed or changed), with `path` one overridden field or array element of it, with `child` one added child (deleted) or removed child (restored), or with none of them the whole instance (every override goes, added children are deleted). One undo step."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) && !session.isPlaying }
     public static func unavailableReason(in session: EditorSession) -> String? {
@@ -446,8 +470,55 @@ public enum PrefabRevertCommand: EditorCommand {
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> NoResult {
         let id = try arguments.entity ?? session.commands.require(
             session.selection.primaryEntity(in: session.world).flatMap { session.world.id(of: $0) }, title)
-        try session.commands.check(session.revertToPrefab(id, component: arguments.component), title)
+        try session.commands.check(session.revertToPrefab(id, component: arguments.component, path: arguments.path, child: arguments.child), title)
         return NoResult()
+    }
+}
+
+public enum PrefabCreateVariantCommand: EditorCommand {
+    public struct Arguments: Codable, Equatable, Sendable {
+        /// The prefab to base the variant on (a .prefab file, a model's prefab or another variant).
+        public var asset: AssetReference?
+        /// Or an entity of an instance (default, without `asset`: the primary selection): the variant is
+        /// its prefab plus the instance's overrides, added children and removals, and the instance becomes
+        /// an instance of the variant.
+        public var entity: EntityID?
+        /// Where the .prefab file goes, relative to `Assets/` (default `Assets/`).
+        public var folder: String?
+        /// The file's name (default: "<base> Variant"; " 2"… when taken).
+        public var name: String?
+        public init(asset: AssetReference? = nil, entity: EntityID? = nil, folder: String? = nil, name: String? = nil) {
+            self.asset = asset
+            self.entity = entity
+            self.folder = folder
+            self.name = name
+        }
+    }
+
+    public struct Result: Codable, Equatable, Sendable {
+        public var prefab: AssetReference
+        /// The file, relative to `Assets/`.
+        public var path: String
+    }
+
+    public static let id: CommandID = "prefab.createVariant"
+    public static let title = "Create Prefab Variant"
+    public static let doc = "Creates a variant: a new .prefab based on another prefab (`asset`) or on an instance's prefab (`entity`, taking the instance's overrides, added children and removals into the variant and linking the instance to it; one undo step, the file stays). Changes to the base flow into the variant and its instances unless the variant overrides them. Variants of variants work; cycles are rejected. Returns the new prefab."
+    public static let isUndoable = true
+    public static func isAvailable(in session: EditorSession) -> Bool {
+        hasProject(session) && !session.isPlaying
+    }
+    public static func unavailableReason(in session: EditorSession) -> String? {
+        !hasProject(session) ? noProjectReason : EditorError.playing.description
+    }
+    public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
+        var entity = arguments.entity
+        if arguments.asset == nil && entity == nil {
+            entity = try session.commands.require(session.selection.primaryEntity(in: session.world).flatMap { session.world.id(of: $0) }, title)
+        }
+        let reference = try session.commands.require(
+            session.createPrefabVariant(of: arguments.asset, from: arguments.asset == nil ? entity : nil, in: arguments.folder ?? "", name: arguments.name), title)
+        return Result(prefab: reference, path: session.assets?.path(of: reference.asset) ?? "")
     }
 }
 

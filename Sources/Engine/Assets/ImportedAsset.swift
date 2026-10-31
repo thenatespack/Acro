@@ -425,6 +425,9 @@ public struct PrefabAsset: Equatable, Sendable, Codable {
     public var roots: [PrefabNode]
     /// A `.prefab` file's entities as scene-file data; when set, `roots` is empty.
     public var scene: Data?
+    /// A variant: another prefab plus this one's overrides (`roots` is empty and `scene` nil);
+    /// see `PrefabVariant`.
+    public var variant: PrefabVariant?
 
     public init(roots: [PrefabNode]) {
         self.roots = roots
@@ -437,12 +440,20 @@ public struct PrefabAsset: Equatable, Sendable, Codable {
         self.scene = scene
     }
 
-    private enum CodingKeys: String, CodingKey { case roots, scene }
+    /// A prefab based on another prefab (a `.prefab` variant file).
+    public init(variant: PrefabVariant) {
+        roots = []
+        scene = nil
+        self.variant = variant
+    }
+
+    private enum CodingKeys: String, CodingKey { case roots, scene, variant }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         roots = try c.decodeIfPresent([PrefabNode].self, forKey: .roots) ?? []
         scene = try c.decodeIfPresent(String.self, forKey: .scene).map { Data($0.utf8) }
+        variant = try c.decodeIfPresent(PrefabVariant.self, forKey: .variant)
     }
 
     /// The scene, when there is one, as text (it is JSON), so cached imports stay readable.
@@ -450,6 +461,7 @@ public struct PrefabAsset: Equatable, Sendable, Codable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(roots, forKey: .roots)
         try c.encodeIfPresent(scene.map { String(decoding: $0, as: UTF8.self) }, forKey: .scene)
+        try c.encodeIfPresent(variant, forKey: .variant)
     }
 }
 

@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Editor › AI control). 97 tools.
+named by its id (see README › Editor › AI control). 98 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -26,7 +26,7 @@ optional arguments.
 | `material` | [`material.get`](#materialget), [`material.set`](#materialset) |
 | `panel` | [`panel.close`](#panelclose), [`panel.dock`](#paneldock), [`panel.focus`](#panelfocus), [`panel.list`](#panellist), [`panel.open`](#panelopen) |
 | `play` | [`play.pause`](#playpause), [`play.setTimeScale`](#playsettimescale), [`play.start`](#playstart), [`play.state`](#playstate), [`play.step`](#playstep), [`play.stop`](#playstop), [`play.toggle`](#playtoggle) |
-| `prefab` | [`prefab.apply`](#prefabapply), [`prefab.create`](#prefabcreate), [`prefab.overrides`](#prefaboverrides), [`prefab.revert`](#prefabrevert), [`prefab.unpack`](#prefabunpack) |
+| `prefab` | [`prefab.apply`](#prefabapply), [`prefab.create`](#prefabcreate), [`prefab.createVariant`](#prefabcreatevariant), [`prefab.overrides`](#prefaboverrides), [`prefab.revert`](#prefabrevert), [`prefab.unpack`](#prefabunpack) |
 | `project` | [`project.close`](#projectclose), [`project.new`](#projectnew), [`project.open`](#projectopen) |
 | `scene` | [`scene.discardRecovery`](#scenediscardrecovery), [`scene.hierarchy`](#scenehierarchy), [`scene.listRecovery`](#scenelistrecovery), [`scene.new`](#scenenew), [`scene.open`](#sceneopen), [`scene.raycast`](#sceneraycast), [`scene.recover`](#scenerecover), [`scene.save`](#scenesave), [`scene.saveAs`](#scenesaveas) |
 | `selection` | [`selection.clear`](#selectionclear), [`selection.get`](#selectionget), [`selection.set`](#selectionset) |
@@ -1057,11 +1057,29 @@ Result:
 - `path`: string
 - `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 
+### `prefab.createVariant`
+
+**Create Prefab Variant** · _undoable_
+
+Creates a variant: a new .prefab based on another prefab (`asset`) or on an instance's prefab (`entity`, taking the instance's overrides, added children and removals into the variant and linking the instance to it; one undo step, the file stays). Changes to the base flow into the variant and its instances unless the variant overrides them. Variants of variants work; cycles are rejected. Returns the new prefab. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `entity?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `folder?`: string
+- `name?`: string
+
+Result:
+
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+
 ### `prefab.overrides`
 
 **Prefab Overrides** · _read-only_, _idempotent_
 
-The prefab instance an entity belongs to: its prefab, root, overrides (changed fields, added and removed components, removed entities) and added children, and whether prefab.apply can write the prefab.
+The prefab instance an entity belongs to: its prefab (and its base, for a variant), root, overrides (changed fields and array elements, added and removed components, added children, removed prefab entities) and added children, and whether prefab.apply can write the prefab.
 
 Arguments:
 
@@ -1070,8 +1088,9 @@ Arguments:
 Result:
 
 - `added`: [entity id]
+- `base?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `canApply`: boolean
-- `overrides`: [{component?: string, entity?: entity id, kind: "field" \| "addedComponent" \| "removedComponent" \| "removedEntity", path?: string, prefabEntity: string, value?: any}]
+- `overrides`: [{component?: string, entity?: entity id, kind: "field" \| "addedComponent" \| "removedComponent" \| "removedEntity" \| "addedEntity" \| "removedElement", path?: string, prefabEntity: string, value?: any}]
 - `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `prefabEntity?`: string
 - `root`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
@@ -1080,12 +1099,14 @@ Result:
 
 **Revert to Prefab** · _undoable_
 
-Puts an instance back to its prefab: one component of one entity (added, removed or changed), or with no component the whole instance (every override goes, added children are deleted). One undo step. Undoable (one step; edit.undo reverts it).
+Puts an instance back to its prefab: one component of one entity (added, removed or changed), with `path` one overridden field or array element of it, with `child` one added child (deleted) or removed child (restored), or with none of them the whole instance (every override goes, added children are deleted). One undo step. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
+- `child?`: string
 - `component?`: string
 - `entity?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `path?`: string
 
 ### `prefab.unpack`
 

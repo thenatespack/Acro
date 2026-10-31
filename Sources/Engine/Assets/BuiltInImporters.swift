@@ -181,6 +181,12 @@ public struct PrefabFileImporter: AssetImporter {
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         let data = try context.data()
+        if let variant = try PrefabVariant(fileData: data) {
+            var asset = ImportedAsset()
+            asset.add("prefab", name: ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension,
+                      .prefab(PrefabAsset(variant: variant)))
+            return asset
+        }
         // Only the header is checked here: components need the registry (main actor).
         struct Header: Decodable {
             var format: String

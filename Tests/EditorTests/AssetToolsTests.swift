@@ -183,6 +183,86 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(throws: (any Error).self) { try call(session, "prefab.overrides", ["entity": second.description]) }
     }
 
+    @Test func prefabVariantsAndPerItemRevert() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        try call(session, "project.new", ["path": folder.path])
+        let crate = try #require(session.create(.cube, name: "Crate"))
+        let lid = try #require(session.create(.cube, at: Vec3(0, 1, 0), name: "Lid", parent: crate))
+        let base = try #require(AssetReference(try call(session, "prefab.create", ["entity": crate.description])["prefab"] as? String ?? ""))
+        func lidOf(_ root: EntityID) -> EntityID? {
+            let world = session.world
+            return world.entity(for: root).flatMap { world.children(of: $0).first { world.get(Name.self, for: $0)?.value == "Lid" } }
+                .flatMap { world.id(of: $0) }
+        }
+        func transform(_ id: EntityID?) -> Transform? { id.flatMap { session.world.entity(for: $0) }.flatMap { session.world.get(Transform.self, for: $0) } }
+
+        // A variant of the prefab, and an instance of it.
+        let created = try call(session, "prefab.createVariant", ["asset": base.description, "name": "Big"])
+        #expect(created["path"] as? String == "Big.prefab")
+        let variant = try #require(AssetReference(created["prefab"] as? String ?? ""))
+        #expect(session.assets?.prefab(variant)?.variant?.base == base)
+        let big = try #require(session.instantiate(.asset(variant.asset), at: Vec3(5, 0, 0)).first)
+        let bigLid = try #require(lidOf(big))
+        #expect(try call(session, "prefab.overrides", ["entity": big.description])["base"] as? String == base.description)
+        #expect(session.prefabInfo(of: big)?.base == base)
+
+        // An override applied to the variant: its instances get it, the base's don't.
+        try call(session, "component.setField", ["entity": bigLid.description, "path": "Transform.scale", "value": [3, 3, 3]])
+        try call(session, "prefab.apply", ["entity": bigLid.description, "component": "Transform"])
+        #expect(session.assets?.prefab(variant)?.variant?.overrides.isEmpty == false)
+        #expect(transform(lid)?.scale == Vec3(1, 1, 1))
+        let big2 = try #require(session.instantiate(.asset(variant.asset), at: Vec3(9, 0, 0)).first)
+        let big2Lid = try #require(lidOf(big2))
+        #expect(transform(big2Lid)?.scale == Vec3(3, 3, 3))
+        #expect((try call(session, "prefab.overrides", ["entity": big2Lid.description])["overrides"] as? [Any])?.isEmpty == true)
+
+        // The base changes: the variant follows except where it overrides.
+        try call(session, "component.setField", ["entity": lid.description, "path": "Transform.position", "value": [0, 2, 0]])
+        try call(session, "prefab.apply", ["entity": lid.description, "component": "Transform"])
+        #expect(transform(big2Lid)?.position == Vec3(0, 2, 0) && transform(big2Lid)?.scale == Vec3(3, 3, 3))
+        #expect(transform(bigLid)?.position == Vec3(0, 2, 0))
+
+        // Per-item revert: two fields overridden, one put back.
+        try call(session, "component.setField", ["entity": big2Lid.description, "path": "Transform.position", "value": [0, 5, 0]])
+        try call(session, "component.setField", ["entity": big2Lid.description, "path": "Transform.scale", "value": [4, 4, 4]])
+        #expect(session.prefabInfo(of: big2Lid)?.items.map(\.field) == ["position", "scale"])
+        try call(session, "prefab.revert", ["entity": big2Lid.description, "component": "Transform", "path": "position"])
+        #expect(transform(big2Lid)?.position == Vec3(0, 2, 0) && transform(big2Lid)?.scale == Vec3(4, 4, 4))
+        try call(session, "edit.undo")
+        #expect(transform(big2Lid)?.position == Vec3(0, 5, 0))
+        try call(session, "edit.redo")
+
+        // An added child is an override that can be reverted alone; a removed one too.
+        let extra = try #require(session.create(.sphere, name: "Extra", parent: big2))
+        let overrides = try call(session, "prefab.overrides", ["entity": big2.description])["overrides"] as? [[String: Any]] ?? []
+        #expect(overrides.contains { $0["kind"] as? String == "addedEntity" && $0["path"] as? String == extra.description })
+        #expect(session.prefabInfo(of: big2)?.items.contains { $0.isAddedChild && $0.child == extra.description } == true)
+        try call(session, "prefab.revert", ["entity": big2.description, "child": extra.description])
+        #expect(session.world.entity(for: extra) == nil)
+        #expect(transform(big2Lid)?.scale == Vec3(4, 4, 4))   // the other overrides stay
+        try call(session, "edit.undo")
+        #expect(session.world.entity(for: extra) != nil)
+        let lidEntity = try #require(session.world.entity(for: big2Lid))
+        session.world.despawn(lidEntity)
+        let removed = (try call(session, "prefab.overrides", ["entity": big2.description])["overrides"] as? [[String: Any]] ?? [])
+            .first { $0["kind"] as? String == "removedEntity" }
+        let removedID = try #require(removed?["prefabEntity"] as? String)
+        try call(session, "prefab.revert", ["entity": big2.description, "child": removedID])
+        #expect(lidOf(big2) != nil)
+
+        // A variant from an instance takes its overrides and added child; the instance becomes an instance of it.
+        let bigger = try call(session, "prefab.createVariant", ["entity": big2.description, "name": "Bigger"])
+        let biggerRef = try #require(AssetReference(bigger["prefab"] as? String ?? ""))
+        #expect(session.assets?.prefab(biggerRef)?.variant?.base == variant)
+        #expect(session.prefabInfo(of: big2)?.link.prefab == biggerRef && session.prefabInfo(of: big2)?.overrides.isEmpty == true)
+        let again = try #require(session.instantiate(.asset(biggerRef.asset), at: Vec3(13, 0, 0)).first)
+        let names = session.world.entity(for: again).map { session.world.children(of: $0).compactMap { session.world.get(Name.self, for: $0)?.value } } ?? []
+        #expect(Set(names) == ["Lid", "Extra"])
+        #expect(transform(lidOf(again))?.scale == Vec3(3, 3, 3))   // the restored lid is the variant's again
+    }
+
     @Test func closeProject() throws {
         let folder = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: folder) }

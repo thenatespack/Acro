@@ -32,12 +32,18 @@ import Foundation
 //
 // The overrides are what the instance changed relative to the prefab, found by comparing the
 // two (`World.prefabOverrides(of:template:)`):
-// - `field`: a component field differs (by reflection path, with the instance's value; a whole
-//   array when its length differs);
+// - `field`: a component field differs (by reflection path, with the instance's value). Arrays
+//   merge per element: same length, element by element ("points.2"); other lengths, by a stable
+//   key when every element is an object with a unique `id` (else `name`) string ("points.@a"),
+//   else by index. An element the instance added is a `field` override naming a missing
+//   index / key (it is appended), one it removed a `removedElement` override;
 // - `addedComponent` / `removedComponent`: a component only the instance has / lacks;
-// - `removedEntity`: a prefab entity was deleted from the instance.
-// Children added under an instance's entities aren't overrides: they are kept as they are
-// (reattached to the same prefab entity) whenever the instance is rebuilt.
+// - `removedEntity`: a prefab entity (a "removed child": the topmost of a removed subtree) was
+//   deleted from the instance;
+// - `addedEntity`: a child subtree added under one of the prefab's entities (`entity` is the
+//   parent, `path` the added child's own id, `index` its sibling position, `value` its scene
+//   data when asked for): the live entities stay as they are whenever the instance is rebuilt,
+//   the data lets a rebuild (or a variant) spawn it again.
 // Entity references inside values are stored relative to the prefab
 // (`{"$prefabEntity": id}`, `{"$prefabRef": id}`) so they map to the right entity of any copy.
 // The root's `Transform` is the instance's own placement and is never an override, and the
@@ -50,11 +56,23 @@ import Foundation
 //
 // ## Rebuilding
 //
-// `World.syncPrefabInstance(_:template:previous:)` replaces an instance with a fresh copy of the
-// template: entities that existed keep their `EntityID`s (references, selection and undo steps
-// that name them still work), the root keeps its parent, sibling position and `Transform`,
-// overrides are applied on top (ones that no longer fit, such as a field the component lost, are
-// dropped) and added children are reattached. Entity handles into the instance go stale.
+// `World.syncPrefabInstance(_:template:previous:)` brings an instance up to date with the
+// template in place: an entity whose prefab entity still exists stays alive (same `Entity`
+// handle and `EntityID`) and only the components that differ are replaced; prefab entities that
+// are new are spawned, ones that are gone despawned, hierarchy positions fixed. The root keeps
+// its parent, sibling position and `Transform`; overrides are applied on top (ones that no
+// longer fit, such as a field the component lost, are dropped) and added children stay.
+// Handles go stale only for entities the prefab removed (or the instance's own undo steps that
+// replace a whole subtree: Revert).
+//
+// ## Variants
+//
+// A `.prefab` file may be a variant (`PrefabVariant`, written by `AssetDatabase.createPrefabVariant`):
+// a base prefab plus its own overrides, no scene data. Its template is the base's template (its own
+// variant chain resolved the same way) with the overrides applied, so the template's prefab-local ids
+// are the base's, plus the ids of entities the variant added. Instances of a variant are ordinary
+// instances of that template; changing the base flows into the variant and its instances except where
+// they override. A chain that returns to a prefab already in it throws `PrefabError.cycle`.
 //
 // ## Nested prefabs
 //
@@ -62,7 +80,7 @@ import Foundation
 // instances). Building a template syncs those nested instances with their own prefabs first,
 // so editing the inner prefab updates the outer prefab's instances too. Cycles are cut after
 // eight levels. Making a prefab from an instance root unlinks that root (the new prefab is a
-// copy); prefab variants aren't supported.
+// copy); a variant is the way to base a prefab on another.
 
 /// The link from a prefab instance's root to its prefab; see the notes at the top of
 /// PrefabInstance.swift.
@@ -95,6 +113,10 @@ public struct PrefabInstance: Component, Equatable, Sendable {
 public struct PrefabOverride: Codable, Equatable, Sendable, CustomStringConvertible {
     public enum Kind: String, Codable, Sendable, CaseIterable {
         case field, addedComponent, removedComponent, removedEntity
+        /// A child subtree added under `entity`; `path` is its id.
+        case addedEntity
+        /// An array element the instance removed (`path` names it: index or `@key`).
+        case removedElement
     }
 
     public var kind: Kind
@@ -106,13 +128,17 @@ public struct PrefabOverride: Codable, Equatable, Sendable, CustomStringConverti
     public var path: String?
     /// The instance's value (`field`) or component (`addedComponent`), prefab-relative.
     public var value: JSONValue?
+    /// `addedEntity`: the child's position among its siblings.
+    public var index: Int?
 
-    public init(kind: Kind, entity: String, component: String? = nil, path: String? = nil, value: JSONValue? = nil) {
+    public init(kind: Kind, entity: String, component: String? = nil, path: String? = nil, value: JSONValue? = nil,
+                index: Int? = nil) {
         self.kind = kind
         self.entity = entity
         self.component = component
         self.path = path
         self.value = value
+        self.index = index
     }
 
     public var description: String {
@@ -121,6 +147,8 @@ public struct PrefabOverride: Codable, Equatable, Sendable, CustomStringConverti
         case .addedComponent: "+\(component ?? "?")"
         case .removedComponent: "-\(component ?? "?")"
         case .removedEntity: "-entity \(entity.prefix(8))"
+        case .addedEntity: "+child \((path ?? "").prefix(8))"
+        case .removedElement: "-\(component ?? "?").\(path ?? "")"
         }
     }
 }
@@ -136,6 +164,10 @@ public enum PrefabError: Error, Equatable, CustomStringConvertible {
     case readOnly(String)
     /// The prefab's scene data doesn't load.
     case unreadable(String)
+    /// A variant's chain of bases returns to a prefab already in it (or is absurdly deep).
+    case cycle(AssetReference)
+    /// A variant's base isn't available.
+    case missingBase(AssetReference)
 
     public var description: String {
         switch self {
@@ -144,6 +176,8 @@ public enum PrefabError: Error, Equatable, CustomStringConvertible {
         case .noSuchPrefabEntity(let id): "The prefab has no entity \(id.prefix(8))"
         case .readOnly(let what): "\(what) can't be edited: only .prefab files can (create a prefab from the instance)"
         case .unreadable(let message): "The prefab doesn't load: \(message)"
+        case .cycle(let reference): "The prefab variants form a cycle through \(reference)"
+        case .missingBase(let reference): "The variant's base prefab \(reference) isn't available"
         }
     }
 }
@@ -183,14 +217,23 @@ extension PrefabAsset {
     /// Throws `PrefabError.notOneRoot` unless the prefab has exactly one root.
     @MainActor
     public func template(prefabs: (AssetReference) -> PrefabAsset?) throws -> PrefabTemplate {
-        try template(prefabs: prefabs, depth: 0)
+        try template(prefabs: prefabs, depth: 0, chain: [])
     }
 
+    /// `chain`: the bases of the variants being resolved (to spot a cycle).
     @MainActor
-    func template(prefabs: (AssetReference) -> PrefabAsset?, depth: Int) throws -> PrefabTemplate {
+    func template(prefabs: (AssetReference) -> PrefabAsset?, depth: Int, chain: [AssetReference]) throws -> PrefabTemplate {
         let world = World()
         let roots: [Entity]
-        if let scene {
+        var nested = Set<AssetID>()
+        if let variant {
+            guard !chain.contains(variant.base), depth < 16 else { throw PrefabError.cycle(variant.base) }
+            guard let base = prefabs(variant.base) else { throw PrefabError.missingBase(variant.base) }
+            let baseTemplate = try base.template(prefabs: prefabs, depth: depth + 1, chain: chain + [variant.base])
+            do { roots = try world.load(baseTemplate.data, ids: .keepUnique) } catch { throw PrefabError.unreadable("\(error)") }
+            nested.insert(variant.base.asset)
+            nested.formUnion(baseTemplate.nestedPrefabs)
+        } else if let scene {
             do { roots = try world.load(scene, ids: .keepUnique) } catch { throw PrefabError.unreadable("\(error)") }
         } else {
             roots = world.instantiate(self)
@@ -201,12 +244,13 @@ extension PrefabAsset {
         // The root is the prefab itself, not an instance of another one.
         world.remove(PrefabInstance.self, from: root)
 
+        if let variant { world.applyVariantOverrides(variant.overrides, under: root) }
+
         // Nested instances, outermost first; each sync replaces that instance's subtree.
-        var nested = Set<AssetID>()
         if depth < 8 {
             for entity in world.independentPrefabInstances(under: root) where entity != root {
                 guard let link = world.get(PrefabInstance.self, for: entity), let inner = prefabs(link.prefab),
-                      let innerTemplate = try? inner.template(prefabs: prefabs, depth: depth + 1) else { continue }
+                      let innerTemplate = try? inner.template(prefabs: prefabs, depth: depth + 1, chain: chain) else { continue }
                 _ = try? world.syncPrefabInstance(entity, template: innerTemplate, previous: nil)
                 nested.insert(link.prefab.asset)
                 nested.formUnion(innerTemplate.nestedPrefabs)
@@ -325,15 +369,30 @@ extension World {
     }
 
     /// The overrides of the instance at `root` relative to `template` (the prefab as the
-    /// instance was built from it), optionally only those of the prefab entity `local`.
-    public func prefabOverrides(of root: Entity, template: PrefabTemplate, only local: String? = nil) -> [PrefabOverride] {
+    /// instance was built from it), optionally only those of the prefab entity `local`. With
+    /// `includeAddedData` the `addedEntity` overrides carry the added subtrees' scene data (for
+    /// variants; the instance holds the live entities, so stored overrides leave it out).
+    public func prefabOverrides(of root: Entity, template: PrefabTemplate, only local: String? = nil,
+                                includeAddedData: Bool = false) -> [PrefabOverride] {
         guard let link = get(PrefabInstance.self, for: root) else { return [] }
+        return prefabOverrides(of: root, link: link, template: template, only: local, includeAddedData: includeAddedData)
+    }
+
+    /// As above, with `link` standing in for the instance's own (its `entities` may cover only
+    /// part of the instance: what a variant's base knows about).
+    public func prefabOverrides(of root: Entity, link: PrefabInstance, template: PrefabTemplate, only local: String? = nil,
+                         includeAddedData: Bool = false) -> [PrefabOverride] {
         let space = PrefabSpace(instance: self, link: link)
         let templateSpace = PrefabSpace(template: template)
         var result: [PrefabOverride] = []
         for source in template.order {
-            guard let sourceLocal = template.localID(of: source), local == nil || local == sourceLocal,
-                  let ref = link.entities[sourceLocal] else { continue }
+            guard let sourceLocal = template.localID(of: source), let ref = link.entities[sourceLocal] else { continue }
+            // Only the topmost entity of a removed subtree is a "removed child".
+            if let parent = template.world.parent(of: source).flatMap(template.localID(of:)), let parentRef = link.entities[parent],
+               resolve(parentRef) == nil {
+                continue
+            }
+            guard local == nil || local == sourceLocal else { continue }
             guard let entity = resolve(ref) else {
                 result.append(PrefabOverride(kind: .removedEntity, entity: sourceLocal))
                 continue
@@ -346,10 +405,15 @@ extension World {
                 case (let prefab?, let instance?):
                     guard let a = try? templateSpace.normalized(JSONValue.encoding(prefab)),
                           let b = try? space.normalized(JSONValue.encoding(instance)) else { continue }
-                    var changes: [(String, JSONValue)] = []
+                    var changes: [PrefabChange] = []
                     Self.diff(a, b, path: [], into: &changes)
-                    for (path, value) in changes {
-                        result.append(PrefabOverride(kind: .field, entity: sourceLocal, component: name, path: path, value: value))
+                    for change in changes {
+                        switch change {
+                        case .set(let path, let value):
+                            result.append(PrefabOverride(kind: .field, entity: sourceLocal, component: name, path: path, value: value))
+                        case .removeElement(let path):
+                            result.append(PrefabOverride(kind: .removedElement, entity: sourceLocal, component: name, path: path))
+                        }
                     }
                 case (nil, let instance?):
                     let value = (try? space.normalized(JSONValue.encoding(instance))) ?? .null
@@ -361,6 +425,16 @@ extension World {
                 }
             }
         }
+        for (child, parent) in prefabAddedEntities(of: root, link: link) where local == nil || local == parent {
+            guard let childID = ensureID(of: child) else { continue }
+            var value: JSONValue?
+            if includeAddedData {
+                ensureIDs(inSubtreeOf: child)
+                value = (try? save([child])).flatMap { try? PrefabRawJSON.parse($0) }.map(space.normalized)
+            }
+            result.append(PrefabOverride(kind: .addedEntity, entity: parent, path: childID.description, value: value,
+                                         index: siblingIndex(of: child)))
+        }
         return result
     }
 
@@ -368,6 +442,10 @@ extension World {
     /// entities that aren't the prefab's, with the prefab entity they hang under.
     public func prefabAddedEntities(of root: Entity) -> [(entity: Entity, parent: String)] {
         guard let link = get(PrefabInstance.self, for: root) else { return [] }
+        return prefabAddedEntities(of: root, link: link)
+    }
+
+    func prefabAddedEntities(of root: Entity, link: PrefabInstance) -> [(entity: Entity, parent: String)] {
         var mapped: [Entity: String] = [:]
         for (local, ref) in link.entities { if let entity = resolve(ref) { mapped[entity] = local } }
         var result: [(Entity, String)] = []
@@ -381,24 +459,20 @@ extension World {
         return result
     }
 
-    /// Rebuilds the instance at `root` from `template` (see "Rebuilding" at the top of the file)
-    /// and returns its new root. The overrides are `overrides`, else those found against
-    /// `previous` (the template the instance was built from), else the stored ones. With
-    /// `keepsAddedEntities` false, children added to the instance are deleted.
+    /// Brings the instance at `root` up to date with `template` in place (see "Rebuilding" at the
+    /// top of the file) and returns its root (the same entity). The overrides are `given`, else
+    /// those found against `previous` (the template the instance was built from), else the stored
+    /// ones. With `keepsAddedEntities` false, children added to the instance are deleted.
     @discardableResult
     public func syncPrefabInstance(_ root: Entity, template: PrefabTemplate, previous: PrefabTemplate?,
                                    overrides given: [PrefabOverride]? = nil, keepsAddedEntities: Bool = true) throws -> Entity {
         precondition(!isIterating, "syncPrefabInstance can't run inside a query")
         guard let link = get(PrefabInstance.self, for: root) else { throw PrefabError.notAnInstance }
         let overrides = given ?? previous.map { prefabOverrides(of: root, template: $0) } ?? link.overrides
-        let parent = parent(of: root)
-        let index = siblingIndex(of: root)
-        let rootTransform = get(Transform.self, for: root)
-        let backup = try save([root])
 
         // Children added to the instance wait outside it.
         var added: [(entity: Entity, parent: String, index: Int)] = []
-        for (entity, local) in prefabAddedEntities(of: root) {
+        for (entity, local) in prefabAddedEntities(of: root, link: link) {
             added.append((entity, local, siblingIndex(of: entity) ?? 0))
             setParent(entity, to: nil)
         }
@@ -406,41 +480,120 @@ extension World {
             for item in added { despawn(item.entity) }
             added = []
         }
-        var ids: [EntityID: EntityID] = [:]
-        for (local, ref) in link.entities { if let localID = EntityID(local), let id = ref.id { ids[localID] = id } }
-        despawn(root)
-        let newRoot: Entity
-        do {
-            newRoot = try load(template.data, under: parent, ids: .mapping(ids))[0]
-        } catch {
-            // Put the old instance back as it was.
-            let restored = try load(backup, under: parent, ids: .keepUnique)
-            for item in added {
-                if let host = EntityID(item.parent).flatMap({ ids[$0] }).flatMap(entity(for:)) { setParent(item.entity, to: host, at: item.index) }
-            }
-            if let index { setParent(restored[0], to: parent, at: index) }
-            throw error
+        func topAncestor(_ entity: Entity) -> Entity {
+            var top = entity
+            while let parent = parent(of: top) { top = parent }
+            return top
         }
-        if let index { setParent(newRoot, to: parent, at: index) }
-        if let rootTransform { add(rootTransform, to: newRoot) }
 
-        var entities: [String: EntityRef] = [:]
+        // 1. A live entity for each prefab entity: the instance's, one the prefab now owns (an
+        // added child that was applied), or a new one.
         var byLocal: [String: Entity] = [:]
-        for (source, copy) in zip(template.order, subtreeOrder(newRoot)) {
+        var used = Set<Entity>()
+        var adopted = Set<Entity>()
+        for source in template.order {
             guard let local = template.localID(of: source) else { continue }
-            entities[local] = ref(to: copy)
-            byLocal[local] = copy
+            var entity: Entity?
+            if source == template.root {
+                entity = root
+            } else if let existing = link.entities[local].flatMap(resolve), !used.contains(existing) {
+                entity = existing
+            } else if let id = EntityID(local), let candidate = self.entity(for: id), !used.contains(candidate),
+                      candidate != root {
+                let top = topAncestor(candidate)
+                if top == root || added.contains(where: { $0.entity == top }) {
+                    entity = candidate
+                    adopted.insert(top)
+                }
+            }
+            let live = entity ?? spawn()
+            ensureID(of: live)
+            used.insert(live)
+            byLocal[local] = live
         }
+        added.removeAll { adopted.contains($0.entity) }
+
+        // 2. Hierarchy.
+        var nextIndex: [String: Int] = [:]
+        for source in template.order {
+            guard source != template.root, let local = template.localID(of: source), let entity = byLocal[local],
+                  let parentLocal = template.world.parent(of: source).flatMap({ template.localID(of: $0) }),
+                  let host = byLocal[parentLocal] else { continue }
+            let position = nextIndex[parentLocal, default: 0]
+            nextIndex[parentLocal] = position + 1
+            if parent(of: entity) != host || siblingIndex(of: entity) != position { setParent(entity, to: host, at: position) }
+        }
+        // Entities the prefab no longer has go (what was added below them is kept, above).
+        for (local, ref) in link.entities where byLocal[local] == nil {
+            if let entity = resolve(ref), entity != root { despawn(entity) }
+        }
+
+        // 3. Components that differ.
         let space = PrefabSpace(instance: self, entities: byLocal)
-        let applied = overrides.filter { apply($0, space: space, entities: byLocal) }
+        let templateSpace = PrefabSpace(template: template)
+        for source in template.order {
+            guard let local = template.localID(of: source), let entity = byLocal[local] else { continue }
+            let isRoot = source == template.root
+            let mine = Self.overridableComponents(of: entity, in: self, isRoot: isRoot)
+            let theirs = Self.overridableComponents(of: source, in: template.world, isRoot: isRoot)
+            for (name, component) in theirs {
+                guard let json = try? JSONValue.encoding(component) else { continue }
+                let wanted = space.denormalized(templateSpace.normalized(json))
+                if let existing = mine[name], let current = try? JSONValue.encoding(existing), current == wanted { continue }
+                if let decoded = try? Self.decodeComponent(type(of: component), from: wanted) { add(decoded, to: entity) }
+            }
+            for (name, component) in mine where theirs[name] == nil { Self.removeComponent(type(of: component), from: entity, in: self) }
+            // An instance nested in the prefab keeps its link (the root's is this instance's own).
+            if !isRoot {
+                if let inner = template.world.get(PrefabInstance.self, for: source), let json = try? JSONValue.encoding(inner),
+                   let decoded = try? space.denormalized(templateSpace.normalized(json)).decode(PrefabInstance.self) {
+                    if get(PrefabInstance.self, for: entity) != decoded { add(decoded, to: entity) }
+                } else if has(PrefabInstance.self, for: entity) {
+                    remove(PrefabInstance.self, from: entity)
+                }
+            }
+        }
+
+        // 4. Overrides on top.
+        var entities: [String: EntityRef] = [:]
+        for (local, entity) in byLocal { entities[local] = ref(to: entity) }
+        let applied = applyOverrides(overrides, space: space, entities: byLocal)
         for item in added {
-            let host = byLocal[item.parent].flatMap { isAlive($0) ? $0 : nil } ?? newRoot
+            let host = byLocal[item.parent].flatMap { isAlive($0) ? $0 : nil } ?? root
             setParent(item.entity, to: host, at: item.index)
         }
-        add(PrefabInstance(prefab: link.prefab, entities: entities, overrides: applied), to: newRoot)
+        add(PrefabInstance(prefab: link.prefab, entities: entities, overrides: applied), to: root)
         propagateTransforms()
-        return newRoot
+        return root
     }
+
+    private static func removeComponent(_ type: any Component.Type, from entity: Entity, in world: World) {
+        func remove<C: Component>(_: C.Type) { world.remove(C.self, from: entity) }
+        remove(type)
+    }
+
+    /// Applies `overrides` to the entities (prefab-local id → entity) of an instance or variant
+    /// template; returns the ones that still fit (the rest are dropped).
+    func applyOverrides(_ overrides: [PrefabOverride], space: PrefabSpace, entities: [String: Entity]) -> [PrefabOverride] {
+        func rank(_ override: PrefabOverride) -> Int {
+            switch override.kind {
+            case .addedEntity: 1
+            case .removedElement: 2
+            default: 0
+            }
+        }
+        let ordered = overrides.enumerated().sorted { a, b in
+            let (x, y) = (rank(a.element), rank(b.element))
+            if x != y { return x < y }
+            // Removing elements by index goes from the end, so the other indexes stay valid.
+            if x == 2, let i = a.element.path.flatMap(Self.lastIndex), let j = b.element.path.flatMap(Self.lastIndex), i != j { return i > j }
+            return a.offset < b.offset
+        }
+        let kept = Set(ordered.filter { apply($0.element, space: space, entities: entities) }.map(\.offset))
+        return overrides.enumerated().filter { kept.contains($0.offset) }.map(\.element)
+    }
+
+    private static func lastIndex(_ path: String) -> Int? { path.split(separator: ".").last.flatMap { Int($0) } }
 
     /// Applies one override to the rebuilt instance; false when it no longer fits (dropped).
     private func apply(_ override: PrefabOverride, space: PrefabSpace, entities: [String: Entity]) -> Bool {
@@ -459,13 +612,24 @@ extension World {
                   let component = try? Self.decodeComponent(type, from: space.denormalized(value)) else { return false }
             add(component, to: entity)
             return true
-        case .field:
-            guard let name = override.component, let value = override.value, var json = component(named: name, of: entity)
+        case .field, .removedElement:
+            guard let name = override.component, var json = component(named: name, of: entity)
                 .flatMap({ try? JSONValue.encoding($0) }) else { return false }
             let keys = override.path.map { $0.isEmpty ? [] : $0.split(separator: ".", omittingEmptySubsequences: false).map(String.init) } ?? []
-            guard json.replace(at: keys[...], with: space.denormalized(value)), let type = ComponentRegistry.type(named: name),
-                  let component = try? Self.decodeComponent(type, from: json) else { return false }
+            if override.kind == .removedElement {
+                guard !keys.isEmpty, json.prefabRemoveElement(at: keys[...]) else { return false }
+            } else {
+                guard let value = override.value, json.prefabSet(at: keys[...], to: space.denormalized(value)) else { return false }
+            }
+            guard let type = ComponentRegistry.type(named: name), let component = try? Self.decodeComponent(type, from: json) else { return false }
             add(component, to: entity)
+            return true
+        case .addedEntity:
+            guard let text = override.path, let id = EntityID(text) else { return false }
+            if let existing = self.entity(for: id), isAlive(existing) { return true }
+            guard let value = override.value, let data = try? JSONEncoder().encode(space.denormalized(value)),
+                  let loaded = try? load(data, under: entity, ids: .keepUnique), let top = loaded.first else { return false }
+            if let index = override.index { setParent(top, to: entity, at: index) }
             return true
         }
     }
@@ -539,25 +703,154 @@ extension World {
         return result
     }
 
-    /// The paths (and `b`'s values) where `a` and `b` differ: objects key by key, arrays of the
-    /// same length element by element, anything else as a whole.
-    static func diff(_ a: JSONValue, _ b: JSONValue, path: [String], into changes: inout [(String, JSONValue)]) {
+    /// What differs between a prefab component and an instance's, by path: objects key by key,
+    /// arrays of the same length element by element, arrays of other lengths by a stable key
+    /// (`id` or `name`, when every element has a unique one and the shared elements keep their
+    /// order) or by index, anything else as a whole.
+    static func diff(_ a: JSONValue, _ b: JSONValue, path: [String], into changes: inout [PrefabChange]) {
         guard a != b else { return }
         switch (a, b) {
         case (.object(let x), .object(let y)) where !PrefabSpace.isReference(a) && !PrefabSpace.isReference(b):
             for key in Set(x.keys).union(y.keys).sorted() {
                 diff(x[key] ?? .null, y[key] ?? .null, path: path + [key], into: &changes)
             }
-        case (.array(let x), .array(let y)) where x.count == y.count:
-            for i in x.indices { diff(x[i], y[i], path: path + [String(i)], into: &changes) }
+        case (.array(let x), .array(let y)):
+            let kx = x.map(JSONValue.elementKey), ky = y.map(JSONValue.elementKey)
+            let common = Set(kx).intersection(ky)
+            if !kx.contains(nil), !ky.contains(nil), Set(kx).count == kx.count, Set(ky).count == ky.count,
+               kx.filter({ common.contains($0) }) == ky.filter({ common.contains($0) }) {
+                for (key, element) in zip(ky, y) {
+                    let segment = JSONValue.elementSegment(key!)
+                    if let i = kx.firstIndex(of: key) {
+                        diff(x[i], element, path: path + [segment], into: &changes)
+                    } else {
+                        changes.append(.set((path + [segment]).joined(separator: "."), element))
+                    }
+                }
+                for key in kx where !ky.contains(key) {
+                    changes.append(.removeElement((path + [JSONValue.elementSegment(key!)]).joined(separator: ".")))
+                }
+            } else {
+                let n = min(x.count, y.count)
+                for i in 0..<n { diff(x[i], y[i], path: path + [String(i)], into: &changes) }
+                for i in n..<y.count { changes.append(.set((path + [String(i)]).joined(separator: "."), y[i])) }
+                for i in n..<x.count { changes.append(.removeElement((path + [String(i)]).joined(separator: "."))) }
+            }
         default:
-            changes.append((path.joined(separator: "."), b))
+            changes.append(.set(path.joined(separator: "."), b))
         }
     }
 
     static func decodeComponent(_ type: any Component.Type, from json: JSONValue) throws -> any Component {
         func decode<C: Component>(_: C.Type) throws -> any Component { try json.decode(C.self) }
         return try decode(type)
+    }
+}
+
+/// One difference `World.diff` found: a value to set, or an array element to remove.
+enum PrefabChange {
+    case set(String, JSONValue)
+    case removeElement(String)
+}
+
+extension JSONValue {
+    /// The stable key of an array element: its `id`, else its `name` (strings), if it is an object.
+    static func elementKey(_ value: JSONValue) -> String? {
+        guard case .object(let members) = value else { return nil }
+        if case .string(let key)? = members["id"] { return key }
+        if case .string(let key)? = members["name"] { return key }
+        return nil
+    }
+
+    /// A path segment naming an array element by its key: `@` and the key with `%` and `.` escaped.
+    static func elementSegment(_ key: String) -> String {
+        "@" + key.replacingOccurrences(of: "%", with: "%25").replacingOccurrences(of: ".", with: "%2E")
+    }
+
+    /// The index in `array` a path segment names: a number, or `@key`.
+    static func elementIndex(_ segment: String, in array: [JSONValue]) -> Int? {
+        if segment.hasPrefix("@") {
+            let key = segment.dropFirst().replacingOccurrences(of: "%2E", with: ".").replacingOccurrences(of: "%25", with: "%")
+            return array.firstIndex { elementKey($0) == key }
+        }
+        return Int(segment)
+    }
+
+    /// Like `replace(at:with:)`, also understanding `@key` segments, and appending when the last
+    /// segment names an element past the end (an index equal to the count) or a key not in the
+    /// array (an element the instance added).
+    mutating func prefabSet(at keys: ArraySlice<String>, to value: JSONValue) -> Bool {
+        guard let key = keys.first else {
+            self = value
+            return true
+        }
+        switch self {
+        case .object(var object):
+            var child = object[key] ?? .null
+            guard child.prefabSet(at: keys.dropFirst(), to: value) else { return false }
+            object[key] = child
+            self = .object(object)
+            return true
+        case .array(var array):
+            if let i = Self.elementIndex(key, in: array), array.indices.contains(i) {
+                guard array[i].prefabSet(at: keys.dropFirst(), to: value) else { return false }
+            } else if keys.count == 1, key.hasPrefix("@") || Int(key) == array.count {
+                array.append(value)
+            } else {
+                return false
+            }
+            self = .array(array)
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Removes the array element `keys` names.
+    mutating func prefabRemoveElement(at keys: ArraySlice<String>) -> Bool {
+        guard let key = keys.first else { return false }
+        switch self {
+        case .object(var object):
+            guard var child = object[key], child.prefabRemoveElement(at: keys.dropFirst()) else { return false }
+            object[key] = child
+            self = .object(object)
+            return true
+        case .array(var array):
+            guard let i = Self.elementIndex(key, in: array), array.indices.contains(i) else { return false }
+            if keys.count == 1 {
+                array.remove(at: i)
+            } else {
+                guard array[i].prefabRemoveElement(at: keys.dropFirst()) else { return false }
+            }
+            self = .array(array)
+            return true
+        default:
+            return false
+        }
+    }
+}
+
+/// Reads JSON without recognising `{"$entity": n}` as an entity handle (scene-file data kept as
+/// plain values inside overrides).
+struct PrefabRawJSON: Decodable {
+    var value: JSONValue
+
+    static func parse(_ data: Data) throws -> JSONValue {
+        try JSONDecoder().decode(PrefabRawJSON.self, from: data).value
+    }
+
+    init(from decoder: any Decoder) throws {
+        let single = try decoder.singleValueContainer()
+        if single.decodeNil() { value = .null; return }
+        if let v = try? single.decode(Bool.self) { value = .bool(v); return }
+        if let v = try? single.decode(Int64.self) { value = .int(v); return }
+        if let v = try? single.decode(Double.self) { value = .double(v); return }
+        if let v = try? single.decode(String.self) { value = .string(v); return }
+        if let v = try? single.decode([PrefabRawJSON].self) { value = .array(v.map(\.value)); return }
+        let keyed = try decoder.container(keyedBy: JSONKey.self)
+        var object: [String: JSONValue] = [:]
+        for key in keyed.allKeys { object[key.stringValue] = try keyed.decode(PrefabRawJSON.self, forKey: key).value }
+        value = .object(object)
     }
 }
 

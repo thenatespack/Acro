@@ -269,7 +269,8 @@ public final class InspectorPanel {
         prefabView.isHidden = info == nil
         guard let info, let id, let assets = session.assets else { return }
 
-        let title = Label("Prefab: " + assets.displayName(of: info.link.prefab), role: .caption, name: "prefabName")
+        let title = Label("Prefab: " + assets.displayName(of: info.link.prefab)
+                          + (info.base.map { " (variant of \(assets.displayName(of: $0)))" } ?? ""), role: .caption, name: "prefabName")
         title.style.grow = 1
         title.style.shrink = 1
         title.style.width = 0
@@ -308,12 +309,13 @@ public final class InspectorPanel {
             row.wraps = true
             prefabView.addChild(row)
         }
+        // What this entity overrides, each with its own Revert; everything else is inherited.
         for (component, fields) in info.overriddenComponents {
             let label = Label("\(component): \(fields.joined(separator: ", "))", role: .secondary, name: "override.\(component)")
             label.style.grow = 1
             label.style.shrink = 1
             label.style.width = 0
-            label.tooltip = "Overridden: \(component) " + fields.joined(separator: ", ")
+            label.tooltip = "Overridden: \(component) " + fields.joined(separator: ", ") + " (the rest is inherited)"
             let revert = Button("Revert", name: "revert.\(component)") { [unowned session] in
                 session.run(PrefabRevertCommand.self, .init(entity: id, component: component))
             }
@@ -328,6 +330,34 @@ public final class InspectorPanel {
             let row = HStack(spacing: 6, [label, revert, apply])
             row.wraps = true
             prefabView.addChild(row)
+            // One row per overridden field or array element when there are several.
+            let fieldItems = info.items.filter { $0.component == component && $0.path != nil }
+            guard fieldItems.count > 1 || fieldItems.contains(where: { $0.field.contains("@") || $0.field.contains(" (removed)") }) else { continue }
+            for item in fieldItems {
+                let itemLabel = Label("  " + item.field, role: .caption, name: "override.\(component).\(item.field)")
+                itemLabel.style.grow = 1
+                itemLabel.style.shrink = 1
+                itemLabel.style.width = 0
+                let itemRevert = Button("Revert", name: "revert.\(component).\(item.field)") { [unowned session] in
+                    session.run(PrefabRevertCommand.self, .init(entity: id, component: component, path: item.path))
+                }
+                itemRevert.tooltip = "Put \(component) \(item.field) back to the prefab's"
+                itemRevert.command = PrefabRevertCommand.id.rawValue
+                prefabView.addChild(HStack(spacing: 6, [itemLabel, itemRevert]))
+            }
+        }
+        for item in info.items where item.component == nil {
+            guard let child = item.child else { continue }
+            let label = Label((item.isAddedChild ? "Added child: " : "Removed child: ") + item.field, role: .secondary, name: "child.\(child)")
+            label.style.grow = 1
+            label.style.shrink = 1
+            label.style.width = 0
+            let revert = Button("Revert", name: "revertChild.\(child)") { [unowned session] in
+                session.run(PrefabRevertCommand.self, .init(entity: id, child: child))
+            }
+            revert.tooltip = item.isAddedChild ? "Delete the child added to this instance" : "Bring the removed child back"
+            revert.command = PrefabRevertCommand.id.rawValue
+            prefabView.addChild(HStack(spacing: 6, [label, revert]))
         }
     }
 

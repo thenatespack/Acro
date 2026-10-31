@@ -18,6 +18,17 @@ private struct Aim: Component, Equatable {
     var handle = Entity.invalid
 }
 
+private struct Slot: Codable, Equatable {
+    var name = ""
+    var count = 0
+}
+
+private struct Loadout: Component, Equatable {
+    static let componentName = "Test.PrefabLoadout"
+    var slots: [Slot] = []
+    var tags: [Int] = []
+}
+
 private func temporaryFolder() throws -> URL {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("PrefabTests-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -26,7 +37,7 @@ private func temporaryFolder() throws -> URL {
 
 @MainActor
 @Suite struct PrefabTests {
-    init() { ComponentRegistry.register(Health.self, Aim.self) }
+    init() { ComponentRegistry.register(Health.self, Aim.self, Loadout.self) }
 
     /// A "Turret" root with a "Gun" child (aiming at a "Muzzle" grandchild) and a "Base" child.
     private func turretData() throws -> Data {
@@ -110,6 +121,7 @@ private func temporaryFolder() throws -> URL {
         let overrides = world.prefabOverrides(of: root, template: template)
         #expect(Set(overrides.map(\.description)) == [
             "Transform.position.1", "Test.PrefabAim.target", "Test.PrefabAim.handle", "-MeshRenderer", "+Test.PrefabHealth", "-entity " + String(template.localID(of: template.order[2])!.prefix(8)),
+            "+child " + String(world.id(of: extra)!.description.prefix(8)),
         ])
         #expect(world.prefabAddedEntities(of: root).map(\.entity) == [extra])
 
@@ -124,9 +136,11 @@ private func temporaryFolder() throws -> URL {
         edited.setParent(light, to: prefabRoot)
         let newTemplate = try PrefabAsset(scene: edited.save([prefabRoot])).template(prefabs: { _ in nil })
 
+        let oldRoot = root
         root = try world.syncPrefabInstance(root, template: newTemplate, previous: template)
         let newGun = try #require(child(world, root, "Gun"))
-        #expect(world.id(of: newGun) == gunID)
+        #expect(root == oldRoot && newGun == gun && newGun != Entity.invalid)   // rebuilt in place: handles stay valid
+        #expect(world.isAlive(base) && world.id(of: newGun) == gunID)
         #expect(world.get(Transform.self, for: root)?.position == Vec3(9, 9, 9))
         #expect(world.get(Transform.self, for: newGun)?.position == Vec3(2, 3, 0))  // the prefab's x, the instance's y
         #expect(world.resolve(world.get(Aim.self, for: newGun)!.target) == other)
@@ -138,7 +152,7 @@ private func temporaryFolder() throws -> URL {
         #expect(world.get(Transform.self, for: newBase)?.scale == Vec3(2, 2, 2))
         #expect(world.get(Health.self, for: root)?.regen == 3)
         #expect(child(world, root, "Light") != nil)
-        #expect(world.get(PrefabInstance.self, for: root)?.overrides.count == 6)
+        #expect(world.get(PrefabInstance.self, for: root)?.overrides.count == 7)
         #expect(world.get(PrefabInstance.self, for: root)?.entities.count == 5)
 
         // The untouched instance takes everything.
@@ -146,7 +160,7 @@ private func temporaryFolder() throws -> URL {
         #expect(world.get(Transform.self, for: child(world, plainRoot, "Gun")!)?.position == Vec3(2, 1, 0))
         #expect(world.prefabOverrides(of: plainRoot, template: newTemplate).isEmpty)
         // Overrides against the new template are the same changes.
-        #expect(world.prefabOverrides(of: root, template: newTemplate).count == 6)
+        #expect(world.prefabOverrides(of: root, template: newTemplate).count == 7)
     }
 
     @Test func storedOverridesSurviveSaveAndLoad() throws {
@@ -281,6 +295,239 @@ private func temporaryFolder() throws -> URL {
         let preview = World()
         let copy = preview.instantiate(try #require(database.prefab(reference)))
         #expect(copy.count == 1 && preview.entityCount == 4 && preview.get(PrefabInstance.self, for: copy[0]) == nil)
+    }
+
+    // MARK: Arrays, children, handles
+
+    @Test func arrayOverridesMergePerElement() throws {
+        let authoring = World()
+        authoring.assignsEntityIDs = true
+        let top = authoring.spawn(Transform(), Name("Crate"),
+                                  Loadout(slots: [Slot(name: "a", count: 1), Slot(name: "b", count: 2), Slot(name: "c", count: 3)],
+                                          tags: [1, 2, 3]))
+        let template = try PrefabAsset(scene: authoring.prefabData(from: top, rootTransform: Transform()).data).template(prefabs: { _ in nil })
+        let world = World()
+        world.assignsEntityIDs = true
+        let root = try world.instantiatePrefab(template, reference: AssetReference(AssetID(high: 9, low: 9)))
+        // Edit a slot, drop one, add one; append a tag.
+        world.modify(Loadout.self, for: root) {
+            $0.slots[0].count = 10
+            $0.slots.remove(at: 1)
+            $0.slots.append(Slot(name: "d", count: 4))
+            $0.tags.append(4)
+        }
+        let overrides = world.prefabOverrides(of: root, template: template)
+        #expect(Set(overrides.map(\.description)) == [
+            "Test.PrefabLoadout.slots.@a.count", "-Test.PrefabLoadout.slots.@b", "Test.PrefabLoadout.slots.@d", "Test.PrefabLoadout.tags.3",
+        ])
+        #expect(overrides.contains { $0.kind == .removedElement && $0.path == "slots.@b" })
+
+        // The prefab changes other elements: slot c's count, the first tag, slot b's count (removed here).
+        let edited = World()
+        edited.assignsEntityIDs = true
+        let editedRoot = try edited.load(template.data)[0]
+        edited.modify(Loadout.self, for: editedRoot) {
+            $0.slots[2].count = 30
+            $0.slots[1].count = 20
+            $0.tags[0] = 9
+        }
+        let newTemplate = try PrefabAsset(scene: edited.save([editedRoot])).template(prefabs: { _ in nil })
+        try world.syncPrefabInstance(root, template: newTemplate, previous: template)
+        let loadout = try #require(world.get(Loadout.self, for: root))
+        #expect(loadout.slots == [Slot(name: "a", count: 10), Slot(name: "c", count: 30), Slot(name: "d", count: 4)])
+        #expect(loadout.tags == [9, 2, 3, 4])
+        #expect(world.prefabOverrides(of: root, template: newTemplate).count == 4)
+
+        // Unkeyed arrays that got shorter: the removed tail is an override per element.
+        world.modify(Loadout.self, for: root) { $0.tags = [9] }
+        let shorter = world.prefabOverrides(of: root, template: newTemplate).filter { $0.path?.hasPrefix("tags") == true }
+        #expect(shorter.map(\.kind) == [.removedElement, .removedElement])
+        #expect(shorter.map { $0.path ?? "" } == ["tags.1", "tags.2"])
+        try world.syncPrefabInstance(root, template: newTemplate, previous: newTemplate)
+        #expect(world.get(Loadout.self, for: root)?.tags == [9])
+    }
+
+    @Test func addedAndRemovedChildrenAreOverrides() throws {
+        let template = try PrefabAsset(scene: turretData()).template(prefabs: { _ in nil })
+        let world = World()
+        world.assignsEntityIDs = true
+        let root = try world.instantiatePrefab(template, reference: AssetReference(AssetID(high: 8, low: 8)))
+        let gun = try #require(child(world, root, "Gun"))
+        let muzzle = try #require(child(world, gun, "Muzzle"))
+        let gunLocal = try #require(world.get(PrefabInstance.self, for: root)?.localID(of: world.id(of: gun)!))
+        let antenna = world.spawn(Transform(position: Vec3(0, 2, 0)), Name("Antenna"), Health(value: 3))
+        world.setParent(antenna, to: gun)
+        let antennaTip = world.spawn(Transform(), Name("Tip"))
+        world.setParent(antennaTip, to: antenna)
+        world.despawn(muzzle)
+        world.despawn(child(world, root, "Base")!)
+
+        let overrides = world.prefabOverrides(of: root, template: template)
+        let added = try #require(overrides.first { $0.kind == .addedEntity })
+        #expect(added.entity == gunLocal && added.path == world.id(of: antenna)?.description && added.value == nil)
+        #expect(overrides.filter { $0.kind == .removedEntity }.count == 2)
+        // With data the override can spawn the child again (variants need that).
+        let withData = world.prefabOverrides(of: root, template: template, includeAddedData: true)
+        #expect(withData.first { $0.kind == .addedEntity }?.value != nil)
+
+        // The prefab changes (the gun moves): the instance follows, children come and go as tracked, handles stay.
+        let edited = World()
+        let editedRoot = try edited.load(template.data)[0]
+        edited.modify(Transform.self, for: child(edited, editedRoot, "Gun")!) { $0.position.x = 4 }
+        let newTemplate = try PrefabAsset(scene: edited.save([editedRoot])).template(prefabs: { _ in nil })
+        try world.syncPrefabInstance(root, template: newTemplate, previous: template)
+        #expect(child(world, root, "Gun") == gun && world.isAlive(antenna) && world.isAlive(antennaTip))
+        #expect(world.parent(of: antenna) == gun && child(world, root, "Base") == nil && child(world, gun, "Muzzle") == nil)
+        #expect(world.get(Transform.self, for: gun)?.position.x == 4)
+        let stored = world.get(PrefabInstance.self, for: root)!.overrides
+        #expect(stored.contains { $0.kind == .addedEntity } && stored.filter { $0.kind == .removedEntity }.count == 2)
+
+        // A rebuild from stored overrides only (scene opened) spawns a child that went missing, from the data.
+        world.despawn(antenna)
+        try world.syncPrefabInstance(root, template: newTemplate, previous: nil, overrides: withData)
+        let again = try #require(child(world, gun, "Antenna"))
+        #expect(world.id(of: again) == added.path.flatMap(EntityID.init) && child(world, again, "Tip") != nil)
+        #expect(world.get(Health.self, for: again)?.value == 3)
+
+        // Reverting the whole instance: no overrides, the added child goes, the removed ones come back.
+        try world.syncPrefabInstance(root, template: newTemplate, previous: nil, overrides: [], keepsAddedEntities: false)
+        #expect(child(world, gun, "Antenna") == nil && child(world, gun, "Muzzle") != nil && child(world, root, "Base") != nil)
+        #expect(world.prefabOverrides(of: root, template: newTemplate).isEmpty)
+    }
+
+    @Test func rebuildingKeepsEntityHandlesWherePrefabNodesRemain() throws {
+        let template = try PrefabAsset(scene: turretData()).template(prefabs: { _ in nil })
+        let world = World()
+        world.assignsEntityIDs = true
+        let root = try world.instantiatePrefab(template, reference: AssetReference(AssetID(high: 6, low: 6)))
+        let before = world.subtreeOrder(root)
+        // A prefab edit that removes "Base", adds "Light" before "Gun" and reparents nothing else.
+        let edited = World()
+        let editedRoot = try edited.load(template.data)[0]
+        edited.despawn(child(edited, editedRoot, "Base")!)
+        let light = edited.spawn(Transform(), Name("Light"))
+        edited.setParent(light, to: editedRoot, at: 0)
+        let newTemplate = try PrefabAsset(scene: edited.save([editedRoot])).template(prefabs: { _ in nil })
+        try world.syncPrefabInstance(root, template: newTemplate, previous: template)
+        let names = world.children(of: root).compactMap { world.get(Name.self, for: $0)?.value }
+        #expect(names == ["Light", "Gun"])
+        #expect(world.isAlive(before[1]) && world.isAlive(before[2]) && !world.isAlive(before[3]))   // Gun, Muzzle stay; Base goes
+        let gun = try #require(child(world, root, "Gun"))
+        #expect(gun == before[1] && world.get(Aim.self, for: gun)?.handle == before[2])
+    }
+
+    // MARK: Variants
+
+    private func firstLocal(_ template: PrefabTemplate, named name: String) -> String? {
+        template.order.first { template.world.get(Name.self, for: $0)?.value == name }.flatMap(template.localID(of:))
+    }
+
+    @Test func variantsLayerOverridesOnABaseAndFollowIt() throws {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let database = AssetDatabase(project: try Project.create(at: folder))
+        let baseID = try database.createPrefab(try turretData(), at: "Turret.prefab")
+        let base = AssetReference(baseID)
+        let sync = PrefabSync()
+        let baseTemplate = try #require(sync.template(for: base, in: database))
+        let gunLocal = try #require(firstLocal(baseTemplate, named: "Gun"))
+
+        // The variant: a stronger turret with a longer gun.
+        let variantID = try database.createPrefabVariant(of: base, overrides: [
+            PrefabOverride(kind: .field, entity: baseTemplate.localID(of: baseTemplate.root)!, component: Health.componentName, path: "value", value: .int(500)),
+            PrefabOverride(kind: .field, entity: gunLocal, component: "Transform", path: "position.1", value: .double(4)),
+        ], at: "Heavy.prefab")
+        let variant = AssetReference(variantID)
+        #expect(database.record(variantID)?.importer == "prefab")
+        #expect(database.prefab(variant)?.variant?.base == base)
+        let variantTemplate = try #require(sync.template(for: variant, in: database))
+        #expect(variantTemplate.nestedPrefabs == [baseID])
+        #expect(variantTemplate.order.compactMap(variantTemplate.localID(of:)) == baseTemplate.order.compactMap(baseTemplate.localID(of:)))
+        #expect(variantTemplate.world.get(Health.self, for: variantTemplate.root)?.value == 500)
+
+        // A variant of the variant.
+        let heavierID = try database.createPrefabVariant(of: variant, overrides: [
+            PrefabOverride(kind: .field, entity: baseTemplate.localID(of: baseTemplate.root)!, component: Health.componentName, path: "regen", value: .int(9)),
+        ], at: "Heavier.prefab")
+        let heavier = AssetReference(heavierID)
+        let heavierTemplate = try #require(sync.template(for: heavier, in: database))
+        let h = try #require(heavierTemplate.world.get(Health.self, for: heavierTemplate.root))
+        #expect(h.value == 500 && h.regen == 9)
+        #expect(heavierTemplate.nestedPrefabs == [baseID, variantID])
+
+        // Instances of the variants, one with an override of its own.
+        let world = World()
+        world.assignsEntityIDs = true
+        let a = try world.instantiatePrefab(variantTemplate, reference: variant)
+        let b = try world.instantiatePrefab(heavierTemplate, reference: heavier)
+        let c = try world.instantiatePrefab(baseTemplate, reference: base)
+        world.modify(Health.self, for: b) { $0.value = 1 }       // overrides the variant's value
+        sync.didBuild(variant, from: variantTemplate)
+        sync.didBuild(heavier, from: heavierTemplate)
+        sync.didBuild(base, from: baseTemplate)
+        #expect(world.get(Transform.self, for: child(world, a, "Gun")!)?.position.y == 4)
+        #expect(world.prefabOverrides(of: a, template: variantTemplate).isEmpty)
+        #expect(world.prefabOverrides(of: b, template: heavierTemplate).map(\.description) == ["Test.PrefabHealth.value"])
+
+        // The base changes: its regen and the gun's x flow into the variants and instances; overrides win.
+        let file = World()
+        let fileRoot = try file.load(database.fileData(of: baseID))[0]
+        file.modify(Health.self, for: fileRoot) { $0.value = 150; $0.regen = 2 }
+        file.modify(Transform.self, for: child(file, fileRoot, "Gun")!) { $0.position.x = 6 }
+        try database.writePrefab(file.save([fileRoot]), to: baseID)
+        let rebuilt = sync.sync(world, database: database)
+        #expect(rebuilt.count == 3)
+        #expect(world.get(Health.self, for: a)?.value == 500 && world.get(Health.self, for: a)?.regen == 2)      // value overridden by the variant
+        #expect(world.get(Health.self, for: b)?.value == 1 && world.get(Health.self, for: b)?.regen == 9)       // instance, variant
+        #expect(world.get(Health.self, for: c)?.value == 150)                                                    // the base itself
+        for root in [a, b, c] {
+            let gun = try #require(child(world, root, "Gun"))
+            #expect(world.get(Transform.self, for: gun)?.position.x == 6)
+        }
+        #expect(world.get(Transform.self, for: child(world, a, "Gun")!)?.position.y == 4)
+    }
+
+    @Test func variantsCanAddAndRemoveChildren() throws {
+        let baseAsset = PrefabAsset(scene: try turretData())
+        let baseTemplate = try baseAsset.template(prefabs: { _ in nil })
+        let baseRef = AssetReference(AssetID(high: 4, low: 4))
+        // Author the variant the way an editor does: edit an instance, take its overrides against the base.
+        let world = World()
+        world.assignsEntityIDs = true
+        let root = try world.instantiatePrefab(baseTemplate, reference: baseRef)
+        let gun = try #require(child(world, root, "Gun"))
+        let radar = world.spawn(Transform(position: Vec3(0, 3, 0)), Name("Radar"), Health(value: 12))
+        world.setParent(radar, to: gun)
+        world.despawn(child(world, root, "Base")!)
+        let overrides = world.prefabOverrides(of: root, template: baseTemplate, includeAddedData: true)
+        let variant = PrefabAsset(variant: PrefabVariant(base: baseRef, overrides: overrides))
+        let template = try variant.template(prefabs: { $0 == baseRef ? baseAsset : nil })
+        let vg = try #require(child(template.world, template.root, "Gun"))
+        #expect(child(template.world, template.root, "Base") == nil)
+        let vRadar = try #require(child(template.world, vg, "Radar"))
+        #expect(template.world.get(Health.self, for: vRadar)?.value == 12)
+        #expect(template.world.id(of: vRadar) == world.id(of: radar))
+        // Instances of it get the radar with a new id and the removal.
+        let instance = try world.instantiatePrefab(template, reference: AssetReference(AssetID(high: 5, low: 5)))
+        #expect(child(world, child(world, instance, "Gun")!, "Radar") != nil && child(world, instance, "Base") == nil)
+        #expect(world.prefabOverrides(of: instance, template: template).isEmpty)
+        // The file format round-trips.
+        let data = try variant.variant!.fileData()
+        #expect(try PrefabVariant(fileData: data) == variant.variant)
+        #expect(try PrefabVariant(fileData: turretData()) == nil)
+    }
+
+    @Test func variantCyclesAreRejected() throws {
+        let a = AssetReference(AssetID(high: 1, low: 10))
+        let b = AssetReference(AssetID(high: 1, low: 11))
+        let assets: [AssetReference: PrefabAsset] = [
+            a: PrefabAsset(variant: PrefabVariant(base: b)),
+            b: PrefabAsset(variant: PrefabVariant(base: a)),
+        ]
+        #expect(throws: PrefabError.self) { try assets[a]!.template(prefabs: { assets[$0] }) }
+        let selfish = PrefabAsset(variant: PrefabVariant(base: a))
+        #expect(throws: PrefabError.self) { try selfish.template(prefabs: { $0 == a ? selfish : nil }) }
+        #expect(throws: PrefabError.missingBase(a)) { try selfish.template(prefabs: { _ in nil }) }
     }
 
     @Test func skinsSurviveTheMeshCache() throws {
