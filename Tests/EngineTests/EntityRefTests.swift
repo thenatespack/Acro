@@ -6,7 +6,7 @@ import Testing
 // file twice, snapshots and reflection.
 
 private struct Follow: Component, Equatable {
-    static let componentName = "Test.Follow"
+    static let componentName = "Test.RefFollow"
     var target = EntityRef()
     var others: [EntityRef] = []
     var optional: EntityRef?
