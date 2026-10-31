@@ -143,7 +143,8 @@ public struct MaterialTraits: Equatable, Sendable {
 /// Assets by key, with dense integer ids for fast per-frame lookups. Keys are registered
 /// once; registering a key again replaces its value and keeps its id.
 public struct AssetRegistry<Value> {
-    public private(set) var keys: [String] = []
+    /// The registered keys, in id order.
+    public var keys: [String] { ids.sorted { $0.value < $1.value }.map(\.key) }
     public private(set) var values: [Value] = []
     private var ids: [String: Int] = [:]
     /// One-entry cache: consecutive lookups usually ask for the same key.
@@ -162,9 +163,15 @@ public struct AssetRegistry<Value> {
         }
         let id = values.count
         ids[key] = id
-        keys.append(key)
         values.append(value)
         return id
+    }
+
+    /// Forgets `key`: lookups fail from now on. Its id (and value) stay allocated, so ids already
+    /// handed out stay valid; registering the key again gets a new id.
+    public mutating func remove(_ key: String) {
+        ids[key] = nil
+        last = nil
     }
 
     /// The id of `key`, or nil if it isn't registered.

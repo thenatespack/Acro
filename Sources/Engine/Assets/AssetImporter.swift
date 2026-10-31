@@ -36,6 +36,8 @@ import Foundation
 // - Sub-asset ids must be stable across reimports (see `SubAssetID`, `SubAssetNamer`).
 // - References between objects of the same file use `context.reference(_:)`; to other files,
 //   `context.asset(atRelativePath:)` (e.g. a glTF's external texture next to it).
+// - Other files the import reads (a glTF's `.bin`) go through `context.readDependency(relativePath:)`,
+//   which records them: the asset is reimported when one of them changes, not only its source.
 // - Extra derived files (anything worth caching beyond the returned objects) can go in
 //   `context.artifactsDirectory`, which is emptied before every import.
 
@@ -80,6 +82,8 @@ public struct ImportContext: Sendable {
     public var warnings: [String] = []
     /// Every asset in the project at the time of the import, by path relative to `Assets/`.
     let assetsByPath: [String: AssetID]
+    /// The files `readDependency` read. Shared by copies of the context.
+    let dependencyLog = DependencyLog()
 
     public init(assetID: AssetID, sourceURL: URL, assetPath: String, artifactsDirectory: URL,
                 assetsByPath: [String: AssetID] = [:]) {
@@ -110,8 +114,60 @@ public struct ImportContext: Sendable {
         return assetsByPath[parts.joined(separator: "/")]
     }
 
+    /// The bytes of another file, by a path relative to this file's folder ("model.bin",
+    /// "../shared/a.bin"), recording it as a dependency: the asset is reimported when the file
+    /// changes or disappears. Safe to call from closures (it doesn't mutate the context).
+    public func readDependency(relativePath path: String) throws -> Data {
+        let url = sourceURL.deletingLastPathComponent().appendingPathComponent(path)
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            // Remember that it was missing, so adding it later reimports.
+            dependencyLog.record(LibraryIndex.Dependency(path: normalizedPath(relativeTo: path), hash: "", size: -1, modified: 0))
+            throw error
+        }
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        dependencyLog.record(LibraryIndex.Dependency(
+            path: normalizedPath(relativeTo: path), hash: ContentHash.hex(data),
+            size: Int64(values?.fileSize ?? data.count),
+            modified: values?.contentModificationDate?.timeIntervalSinceReferenceDate ?? 0))
+        return data
+    }
+
+    /// `path` (relative to this file's folder) as a path relative to `Assets/`.
+    private func normalizedPath(relativeTo path: String) -> String {
+        var parts = assetPath.split(separator: "/").dropLast().map(String.init)
+        for part in path.split(separator: "/") {
+            switch part {
+            case ".", "": continue
+            case "..": if !parts.isEmpty { parts.removeLast() }
+            default: parts.append(String(part))
+            }
+        }
+        return parts.joined(separator: "/")
+    }
+
     /// Records a problem that didn't stop the import.
     public mutating func warn(_ message: String) { warnings.append(message) }
+}
+
+/// The dependencies one import recorded (thread-safe: importers may read from closures).
+final class DependencyLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [String: LibraryIndex.Dependency] = [:]
+
+    func record(_ dependency: LibraryIndex.Dependency) {
+        lock.lock()
+        entries[dependency.path] = dependency
+        lock.unlock()
+    }
+
+    var all: [LibraryIndex.Dependency] {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries.values.sorted { $0.path < $1.path }
+    }
 }
 
 /// Importers by name and file extension. `AssetDatabase` copies `standard` when it is

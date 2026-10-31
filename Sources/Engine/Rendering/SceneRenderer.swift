@@ -130,12 +130,32 @@ public final class SceneRenderer {
     public var assets: AssetDatabase? {
         didSet { failedAssetKeys.removeAll(); seenAssetRevision = -1 }
     }
-    /// Turns an imported texture into a GPU texture (RGBA8 in `texture.format`, with a mip chain
-    /// when `generatesMipmaps`). Replace it to upload other formats.
+    /// Turns an imported texture into a GPU texture (RGBA8 in `texture.format`, or `.rgba16Float`
+    /// for HDR images, with a mip chain when `generatesMipmaps`). Replace it to upload other formats.
     public var textureUploader: (TextureAsset, RenderDevice) throws -> GPUTexture = { texture, device in
-        try device.makeTexture(pixels: texture.image.pixels, width: texture.image.width, height: texture.image.height,
-                               format: texture.format, generateMipmaps: texture.generatesMipmaps)
+        switch texture.pixels {
+        case .rgba8(let image):
+            try device.makeTexture(image: image, srgb: texture.isSRGB, generateMipmaps: texture.generatesMipmaps)
+        case .rgbaFloat(let image):
+            try device.makeTexture(image: image, generateMipmaps: texture.generatesMipmaps)
+        }
     }
+    /// How many bytes of asset meshes and textures `gather` uploads per frame before it leaves the
+    /// rest for the next frames (so a big import doesn't hitch). At least one upload is made per
+    /// frame. Ignored when `blocksOnAssetLoading` is set.
+    public var assetUploadBudget = 32 << 20
+    /// Wait for background imports and upload everything at once, instead of drawing
+    /// placeholders and spreading uploads over frames. On by default when `ENGINE_SCREENSHOT` is
+    /// set, so screenshots show fully loaded assets (and match across backends).
+    public var blocksOnAssetLoading = ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT"] != nil
+    /// Bytes uploaded since the last `syncAssets` (this frame).
+    var assetUploadedBytes = 0
+    /// Something is still loading or was deferred by the budget: `syncAssets` runs again next frame.
+    var assetsNeedRetry = false
+    /// Texture references already reported as missing.
+    var reportedTextures: Set<String> = []
+    /// Replaces the buffers of a mesh whose asset was deleted.
+    var vanishedMesh: GPUMesh?
     /// Asset keys registered from `assets`, with the asset revision they were uploaded at.
     var assetKeys: [String: Int] = [:]
     /// Uploaded asset textures by reference text, with their revision.
@@ -279,18 +299,30 @@ public final class SceneRenderer {
         return MaterialHandle(key)
     }
 
+    /// Stops drawing `key`'s mesh and releases its GPU buffers (the id stays allocated).
+    func unregisterMesh(key: String) {
+        guard let id = prep.meshes.id(of: key) else { return }
+        prep.meshes.remove(key)
+        if vanishedMesh == nil {
+            vanishedMesh = try? GPUMesh(vertexBuffer: device.makeBuffer([MeshVertex(position: .zero, normal: .zero)], usage: .vertex),
+                                        indexBuffer: device.makeBuffer([UInt32(0)], usage: .index), indexCount: 0, bounds: Bounds(center: .zero, halfExtent: .zero))
+        }
+        if let vanishedMesh { meshes[id] = vanishedMesh }
+        geometries[id] = MeshGeometry(vertices: [], indices: [])
+    }
+
     /// The GPU mesh registered under `handle`'s key (an asset handle is resolved and uploaded first).
     public func mesh(_ handle: MeshHandle) -> GPUMesh? {
-        resolveAsset(handle.key, kind: .mesh)
+        resolveAsset(handle.key, kind: .mesh, ignoringBudget: true)
         return prep.meshes.contains(handle.key) ? meshes[prep.meshes.id(of: handle.key)!] : nil
     }
     /// The vertices and indices registered under `handle`'s key (kept on the CPU for picking).
     public func geometry(_ handle: MeshHandle) -> MeshGeometry? {
-        resolveAsset(handle.key, kind: .mesh)
+        resolveAsset(handle.key, kind: .mesh, ignoringBudget: true)
         return prep.meshes.contains(handle.key) ? geometries[prep.meshes.id(of: handle.key)!] : nil
     }
     public func material(_ handle: MaterialHandle) -> Material? {
-        resolveAsset(handle.key, kind: .material)
+        resolveAsset(handle.key, kind: .material, ignoringBudget: true)
         return prep.materials.contains(handle.key) ? materials[prep.materials.id(of: handle.key)!].material : nil
     }
 

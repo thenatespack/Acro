@@ -192,16 +192,27 @@ public final class EditorSession {
     /// Feeds file changes under `Assets/` (from a `FileWatcher`) to the database.
     public func assetsChanged(_ changes: [FileChange]) {
         guard let assets, !changes.isEmpty else { return }
-        logReport(assets.reimport(changed: changes), prefix: "Assets changed")
+        // Errors and warnings are logged by the database's `onChange`, as each report arrives.
+        let report = assets.reimportAsync(changed: changes)
+        if report.hasChanges { log.info("Assets changed: \(report.summary)") }
+        if assets.isLoading { log.info("Importing \(assets.pendingLoadCount) assets in the background") }
     }
 
     private func setProject(_ project: Project, verb: String) {
         let database = AssetDatabase(project: project)
-        let report = database.refresh()
+        // Imports run in the background (the viewport draws placeholders until they finish);
+        // `ENGINE_SCREENSHOT` runs wait so the picture is complete.
+        let report = database.refreshAsync()
         assets = database
         log.info("\(verb) project \(project.name) (\(database.records.count) assets: \(report.summary))")
+        if database.isLoading { log.info("Importing \(database.pendingLoadCount) assets in the background") }
         logReport(report, prefix: nil)
-        database.onChange = { [unowned self] _ in onAssetsChange?() }
+        database.onChange = { [unowned self, unowned database] report in
+            logReport(report, prefix: nil)
+            if report.hasChanges && !database.isLoading && report.imported.count > 0 { log.info("Assets ready: \(report.summary)") }
+            onAssetsChange?()
+        }
+        if ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT"] != nil { database.waitForAll() }
         onAssetsChange?()
         changed()
     }
