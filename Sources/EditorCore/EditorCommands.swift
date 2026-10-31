@@ -17,7 +17,7 @@ public enum BuiltinCommands {
         PlayStartCommand.self, PlayStopCommand.self, PlayToggleCommand.self, PlayPauseCommand.self, PlayStepCommand.self,
         PlaySetTimeScaleCommand.self, PlayStateCommand.self, ViewGameCameraCommand.self,
         InputInjectCommand.self, InputClearCommand.self, InputStateCommand.self,
-        ToolSetCommand.self,
+        ToolSetCommand.self, ToolSnappingCommand.self,
         ProjectOpenCommand.self, ProjectNewCommand.self, ProjectCloseCommand.self,
         LayoutResetCommand.self, ViewFrameSelectionCommand.self,
         ViewScreenshotCommand.self, ViewPickCommand.self, SceneRaycastCommand.self,
@@ -257,6 +257,26 @@ public enum ToolSetCommand: EditorCommand {
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> NoResult {
         session.tool = arguments.tool
         return NoResult()
+    }
+}
+
+public enum ToolSnappingCommand: EditorCommand {
+    public struct Arguments: Codable, Equatable, Sendable {
+        /// On or off; omitted toggles it.
+        public var enabled: Bool?
+        public init(enabled: Bool? = nil) { self.enabled = enabled }
+    }
+
+    public struct Result: Codable, Equatable, Sendable {
+        public var enabled: Bool
+    }
+
+    public static let id: CommandID = "tool.snapping"
+    public static let title = "Snapping"
+    public static let doc = "Turns gizmo snapping on or off (`enabled`; omitted toggles it): drags move in 0.5-unit steps, rotate by 15° and scale by 0.1. Holding Cmd (Ctrl elsewhere) during a drag inverts it."
+    public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
+        session.snapping = arguments.enabled ?? !session.snapping
+        return Result(enabled: session.snapping)
     }
 }
 

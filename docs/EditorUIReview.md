@@ -65,7 +65,7 @@ fails WCAG AA; **low** = cosmetic or polish. "Fixed" ones are fixed in this chan
 | 24 | Hit targets | all | Tab close buttons and tree disclosure triangles are 16 pt, checkboxes 16 pt: above the audit's 12-pt floor but under WCAG 2.2's 24x24 target size. | medium | | Needs a decision |
 | 25 | Disabled controls | Dark, Light, Game | Disabled text 2.2–2.7:1 (exempt from WCAG, but hard to read: Undo, Redo, Pause, Step at rest). | low | | Needs a decision |
 | 26 | Selected rows | Dark | Secondary text on a focused selected row 2.75:1. | low | | Needs a decision |
-| 27 | Toolbar density | all | Wrapping keeps everything reachable but the toolbar takes 2 rows at 1280 and 3 at 800 (68–100 pt). | low | | Needs a decision (menus / overflow / icons) |
+| 27 | Toolbar density | all | Wrapping keeps everything reachable but the toolbar takes 2 rows at 1280 and 3 at 800 (68–100 pt). | low | | Decided in #659: icon-only toolbar buttons (titles kept as labels, tooltips), one row at 1280 and 800; wraps narrower or with Build / Reload Game shown |
 | 28 | Inspector name field | long names | Shows the end of a long name (caret at the end) rather than the start. | low | | Needs a decision |
 | 29 | Game theme in the editor | Game | Disabled buttons are light gray with light text; the Game preset isn't designed for tool UI. | low | | Needs a decision (offer it in the editor or not) |
 | 30 | Viewport caption | all | The "Perspective · Move" badge sits over scene labels (e.g. "Sun"). | low | | Not fixed (cosmetic) |
@@ -122,8 +122,11 @@ Counts: 6 high, 15 medium (2 of them need a decision), 13 low. Fixed: 22 (all hi
    24 pt (WCAG 2.2 AA), or accept 16 pt as desktop-tool density.
 3. **Disabled and secondary-on-selection contrast** (#25, #26): raise disabled text toward 3:1,
    or keep the dim look; pick a secondary color for selected rows.
-4. **Toolbar structure** (#27): a File menu and an overflow menu, or icon buttons, instead of
-   22 labeled controls in a wrapping strip.
+4. **Toolbar structure** (#27): decided in #659 (editor icons): every toolbar button is
+   icon-only with its title as accessibility label and tooltip, in one row of groups separated
+   by rules; one row at 1280 and 800 points (the path fields and the document title give way),
+   wrapping only narrower, in the Game theme or zoomed. The hierarchy and asset button bars are
+   icon-only too, which helps #33.
 5. **Name field scroll position** (#28): show the start of a long name when not editing.
 6. **Theme choice in the editor** (#29): whether Game (and Light / High Contrast) should be
    offered in a settings UI; today they are prefs / environment only.

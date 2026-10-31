@@ -368,6 +368,7 @@ public final class EditorApp: Game, EditorHost {
         dock.addPanel(DockPanel(id: EditorLayout.stats, title: "Stats", content: stats.view))
         dock.addPanel(DockPanel(id: EditorLayout.assets, title: "Assets", content: assetBrowser.view, minSize: Vec2(240, 120)))
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
+        for (id, icon) in EditorIcons.panelIconNames { dock.panel(id)?.icon = EditorIcons.named(icon) }
         // The gaps between panels: the dock builds its splits before it is in the context, so
         // without this they would take the default (dark) theme's field color in every theme.
         if ui.theme.name != UITheme.dark().name { dock.gapColor = ui.theme.fieldBackground }
@@ -387,6 +388,11 @@ public final class EditorApp: Game, EditorHost {
         // Parity and introspection: what the dock's tabs and close buttons run.
         dock.itemCommands = ["tab": PanelFocusCommand.id.rawValue, "close": PanelCloseCommand.id.rawValue]
         viewportWidget.command = ViewPickCommand.id.rawValue
+        viewportWidget.selectionState = { [unowned self] entity in
+            let world = session.world
+            if session.selection.primaryEntity(in: world) == entity { return .primary }
+            return session.selection.entities(in: world).contains(entity) ? .selected : .none
+        }
         dock.style.grow = 1
         dock.padding = EdgeInsets(top: 0, left: 4, bottom: 4, right: 4)
         dock.background = ui.theme.fieldBackground
@@ -568,6 +574,7 @@ public final class EditorApp: Game, EditorHost {
         resizeTarget(scale: ui.scale)
         buildGizmos()
         viewportWidget.texture = target.texture
+        viewportWidget.billboards = transformTool.billboards
         viewportWidget.caption = playCaption()
         viewportWidget.isPlaying = session.isPlaying
         ui.draw(into: engine.ui)
@@ -783,7 +790,7 @@ public final class EditorApp: Game, EditorHost {
         ViewportToolContext(
             world: session.world, selection: session.selection, undo: session.undo, view: view, viewportRect: viewport.rect,
             pixelScale: ui.scale, toolMode: session.tool, isPlaying: session.isPlaying,
-            meshBounds: { [unowned self] handle in meshBounds(handle) }, commands: session.commands)
+            meshBounds: { [unowned self] handle in meshBounds(handle) }, commands: session.commands, snapping: session.snapping)
     }
 
     private func meshBounds(_ handle: MeshHandle) -> Bounds? {
@@ -801,7 +808,13 @@ public final class EditorApp: Game, EditorHost {
         // The game view shows what the game camera sees, nothing of the editor's.
         fillGizmos(gizmos, context: context, grid: !gameViewActive, gizmos: !gameViewActive)
         toolDraw.removeAll()
-        guard !gameViewActive else { return }
+        guard !gameViewActive else {
+            transformTool.billboards.update([], view: ViewportProjection(view, size: context.viewportSize), occluders: nil,
+                                            world: session.world)
+            return
+        }
+        transformTool.updateBillboards(view: ViewportProjection(view, size: context.viewportSize, pixelScale: context.pixelScale),
+                                       world: session.world)
         for tool in viewport.tools { tool.draw(into: toolDraw, context: context) }
     }
 
@@ -817,6 +830,12 @@ public final class EditorApp: Game, EditorHost {
         }
         guard gizmos else { return }
         let labelSize = 12 * ui.scale
+        // Names go just above the billboard (a constant distance on screen), else 0.45 units up.
+        let projection = ViewportProjection(context.view, size: context.viewportSize, pixelScale: context.pixelScale)
+        func labelPosition(_ position: Vec3) -> Vec3 {
+            let up = projection.worldUnitsPerPoint(at: position).map { $0 * (transformTool.billboards.size / 2 + 12) } ?? 0.45
+            return position + Vec3(0, up, 0)
+        }
 
         world.query(Camera.self) { entity, camera in
             let matrix = world.get(GlobalTransform.self, for: entity)?.matrix ?? world.worldMatrix(of: entity)
@@ -824,14 +843,14 @@ public final class EditorApp: Game, EditorHost {
             let white = Vec4(0.92, 0.92, 0.95, 1)
             draw.frustum(viewProjection: viewProjection, color: white, farFraction: min(1.5 / camera.far, 1),
                          style: DebugDraw.Style(width: 1.5))
-            draw.text(session.displayName(of: entity), at: matrix.translation + Vec3(0, 0.45, 0), color: white, size: labelSize)
+            draw.text(session.displayName(of: entity), at: labelPosition(matrix.translation), color: white, size: labelSize)
         }
         world.query(DirectionalLight.self) { entity, light in
             let matrix = world.get(GlobalTransform.self, for: entity)?.matrix ?? world.worldMatrix(of: entity)
             let start = matrix.translation, yellow = Vec4(1, 0.85, 0.3, 1)
             draw.arrow(from: start, to: start + light.travelDirection(world: matrix) * 1.5, color: yellow, headSize: 0.35,
                        style: DebugDraw.Style(width: 2))
-            draw.text(session.displayName(of: entity), at: start + Vec3(0, 0.45, 0), color: yellow, size: labelSize)
+            draw.text(session.displayName(of: entity), at: labelPosition(start), color: yellow, size: labelSize)
         }
 
         for entity in session.selection.entities(in: world) where context.worldBounds(of: entity) == nil {
@@ -1151,6 +1170,10 @@ final class ViewportWidget: Widget {
     var texture: GPUTexture?
     var caption = "" { didSet { if caption != oldValue { setNeedsDisplay() } } }
     var isPlaying = false
+    /// The icons of cameras, lights and other entities without a mesh, over the image.
+    var billboards: ViewportBillboards?
+    /// How an entity is selected, for its billboard.
+    var selectionState: (Entity) -> ViewportBillboards.SelectionState = { _ in .none }
 
     init() {
         super.init(name: "viewport")
@@ -1162,6 +1185,9 @@ final class ViewportWidget: Widget {
             list.drawImage(texture, in: frame)
         } else {
             list.fillRect(frame, color: theme.fieldBackground)
+        }
+        if let billboards, !billboards.placed.isEmpty {
+            list.withClip(frame) { billboards.draw(into: list, origin: Vec2(frame.x, frame.y), selection: selectionState) }
         }
     }
 
@@ -1177,7 +1203,12 @@ final class ViewportWidget: Widget {
 }
 
 /// The strip above the dock: file actions with a path field, undo / redo (titled with what
-/// they would undo), play / stop, the transform-tool selector, the document title and layout reset.
+/// they would undo), play / stop, the transform-tool selector and snapping, the project, the
+/// document title and layout reset.
+///
+/// Every button is icon-only: its title stays its accessibility label (`ui.snapshot`, `ui.click
+/// {label}`) and its tooltip says what it does, with the shortcut. That keeps the toolbar one row
+/// down to about 800 points (the path fields and the title give way first); narrower, it wraps.
 @MainActor
 final class Toolbar {
     let view: HStack
@@ -1198,6 +1229,7 @@ final class Toolbar {
     /// The time scales the toolbar offers.
     static let timeScales: [Double] = [0.1, 0.25, 0.5, 1, 2, 4]
     private let toolButtons: [(EditorTool, Button)]
+    private let snapButton: Button
     private let resetButton: Button
     /// Buttons enabled by their command's availability.
     private var commandButtons: [(CommandID, Button)] = []
@@ -1223,6 +1255,7 @@ final class Toolbar {
         toolButtons = EditorTool.allCases.map { tool in
             (tool, Button(tool.title, name: tool.rawValue) { session.run(ToolSetCommand.self, .init(tool: tool)) })
         }
+        snapButton = Button("Snap", name: "snapping") { session.run(ToolSnappingCommand.self, .init()) }
         path.style.width = 220
         // The path fields give way first when the window is narrow.
         path.style.shrink = 1
@@ -1248,6 +1281,19 @@ final class Toolbar {
         path.tooltip = "Scene file path, used by Open, Save and Save As"
         resetButton.tooltip = "Restore the default panel layout"
         for (tool, button) in toolButtons { button.tooltip = "\(tool.title) tool" }
+        snapButton.tooltip = "Snap gizmo drags to 0.5 units, 15° and 0.1 scale steps (hold \(KeyModifiers.shortcut == .command ? "⌘" : "Ctrl") to invert)"
+        // Icon-only buttons: the titles stay their accessibility labels and default tooltips.
+        let icons: [(Button, String)] = [
+            (newButton, "file-plus"), (openButton, "folder-open"), (saveButton, "save"), (saveAsButton, "save-all"),
+            (undoButton, "undo-2"), (redoButton, "redo-2"), (playButton, "play"), (pauseButton, "pause"),
+            (stepButton, "step-forward"), (gameViewButton, "gamepad-2"), (reloadGameButton, "refresh-cw"),
+            (buildGameButton, "hammer"), (snapButton, "magnet"), (openProjectButton, "folder-input"),
+            (newProjectButton, "folder-plus"), (resetButton, "layout-dashboard"),
+        ] + toolButtons.map { ($0.1, EditorIcons.tool($0.0).name) }
+        for (button, icon) in icons {
+            button.icon = EditorIcons.named(icon)
+            button.showsTitle = false
+        }
         commandButtons = [(SceneNewCommand.id, newButton), (SceneOpenCommand.id, openButton), (SceneSaveCommand.id, saveButton),
                           (SceneSaveAsCommand.id, saveAsButton), (LayoutResetCommand.id, resetButton)]
         // What each control runs, for introspection (`ui.snapshot`) and the parity test.
@@ -1257,13 +1303,12 @@ final class Toolbar {
             (reloadGameButton, GameReloadCommand.id), (buildGameButton, GameBuildCommand.id),
             (timeScale, PlaySetTimeScaleCommand.id), (path, SceneOpenCommand.id), (projectPath, ProjectOpenCommand.id),
             (openProjectButton, ProjectOpenCommand.id), (newProjectButton, ProjectNewCommand.id),
+            (snapButton, ToolSnappingCommand.id),
         ] + toolButtons.map { ($0.1, ToolSetCommand.id) }
         for (widget, id) in tagged { widget.command = id.rawValue }
-        // Undo / redo titles name the step ("Undo AI: Set Transform.position on Crate…"): they stop
-        // at 220 pt and end in "…" (the tooltip has the whole title) instead of pushing the rest
-        // away. They don't shrink below that (the row wraps first), so the step stays readable.
-        for button in [undoButton, redoButton] { button.style.maxWidth = 220 }
-        view = HStack(spacing: 6, padding: EdgeInsets(horizontal: 8, vertical: 5), name: "toolbar")
+        // Undo / redo titles name the step ("Undo AI: Set Transform.position on Crate…"); the
+        // buttons show the icon and the tooltip the whole title.
+        view = HStack(spacing: 4, padding: EdgeInsets(horizontal: 8, vertical: 5), name: "toolbar")
         // Rows that don't fit the window wrap onto a second (third…) row instead of running off the edge.
         view.wraps = true
         view.background = (app.ui?.theme ?? UITheme()).panelBackground
@@ -1273,6 +1318,9 @@ final class Toolbar {
             rule.style.height = 18
             return rule
         }
+        // The document title gives way (ending in "…", whole in its tooltip) before the row wraps.
+        titleLabel.style.shrink = 1
+        titleLabel.style.minWidth = 0
         view.addChildren([
             newButton, openButton, saveButton, saveAsButton,
             path,
@@ -1282,6 +1330,7 @@ final class Toolbar {
             playButton, pauseButton, stepButton, timeScale, gameViewButton, reloadGameButton,
             separator(),
         ] + toolButtons.map(\.1) + [
+            snapButton,
             separator(),
             projectPath, openProjectButton, newProjectButton, buildGameButton,
             Spacer(),
@@ -1299,6 +1348,12 @@ final class Toolbar {
         set(redoButton, title: undo.redoTitle, enabled: session.commands.isAvailable(EditRedoCommand.self))
         for (id, button) in commandButtons { set(button, title: button.title, enabled: session.commands.isAvailable(id)) }
         set(playButton, title: session.isPlaying ? "Stop" : "Play", enabled: true)
+        setIcon(playButton, session.isPlaying ? "square" : "play")
+        setIcon(pauseButton, session.isPaused ? "play" : "pause")
+        setIcon(reloadGameButton, session.gameModule.isBusy ? "loader" : "refresh-cw")
+        setIcon(buildGameButton, session.gameExport.isBusy ? "loader" : "hammer")
+        let snapRole: Button.Role = session.snapping ? .primary : .normal
+        if snapButton.role != snapRole { snapButton.role = snapRole }
         undoButton.tooltip = shortcuts.tooltip(undo.undoTitle, for: .undo)
         redoButton.tooltip = shortcuts.tooltip(undo.redoTitle, for: .redo)
         playButton.tooltip = shortcuts.tooltip(session.isPlaying ? "Stop and restore the scene" : "Play the scene", for: .togglePlay)
@@ -1334,6 +1389,10 @@ final class Toolbar {
     /// "0.5×", "1×", "2×".
     static func timeScaleTitle(_ scale: Double) -> String {
         (scale == scale.rounded() ? String(Int(scale)) : String(scale)) + "×"
+    }
+
+    private func setIcon(_ button: Button, _ name: String) {
+        if button.icon?.name != name { button.icon = EditorIcons.named(name) }
     }
 
     private func set(_ button: Button, title: String, enabled: Bool) {

@@ -152,8 +152,8 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
     }
 
     @Test func auditCatchesBrokenLayouts() throws {
-        // The toolbar as it was (one row): its right end runs off an 800-point window.
-        let app = layoutApp(Vec2(800, 600))
+        // A toolbar that doesn't wrap: its right end runs off a 700-point window.
+        let app = layoutApp(Vec2(700, 600))
         app.toolbar.view.wraps = false
         let kinds = Set(app.ui.layoutAudit().map(\.kind))
         #expect(kinds.contains(.outsideWindow))
@@ -195,7 +195,7 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
         #expect(layoutApp(Vec2(1280, 720), uiScale: 0.3).preferredUIScale == EditorApp.uiScaleRange.lowerBound)
     }
 
-    @Test func longUndoTitleEndsInAnEllipsisWithTheWholeTitleAsTooltip() throws {
+    @Test func longUndoTitleIsTheLabelAndTooltipOfTheIconButton() throws {
         let app = layoutApp(Vec2(1280, 720))
         let client = LayoutClient(app)
         let entity = client.call("entity.create", ["template": "cube"])["entity"] ?? nil
@@ -203,9 +203,11 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
                                            "label": .string("Move " + longName)])
         app.syncPanels()
         let undo = try #require(app.ui.root.descendant(named: "undo") as? Button)
-        #expect(undo.title.hasPrefix("Undo AI: Move") && undo.titleIsTruncated)
-        #expect(undo.frame.width <= 220)
+        // The toolbar's buttons are icon-only (#659): the whole title is the label and the tooltip.
+        #expect(undo.title.hasPrefix("Undo AI: Move") && !undo.showsTitle && !undo.titleIsTruncated)
+        #expect(undo.frame.width <= 40)
         #expect(undo.tooltip(at: undo.frame.center)?.contains(longName) == true)
+        #expect(app.ui.accessibilityElement(path: "editorRoot/toolbar/undo")?.label == undo.title)
         // Everything after it in the toolbar is still in the window.
         expectClean(app, "long undo title")
     }

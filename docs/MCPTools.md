@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Editor › AI control). 97 tools.
+named by its id (see README › Editor › AI control). 98 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -31,7 +31,7 @@ optional arguments.
 | `scene` | [`scene.discardRecovery`](#scenediscardrecovery), [`scene.hierarchy`](#scenehierarchy), [`scene.listRecovery`](#scenelistrecovery), [`scene.new`](#scenenew), [`scene.open`](#sceneopen), [`scene.raycast`](#sceneraycast), [`scene.recover`](#scenerecover), [`scene.save`](#scenesave), [`scene.saveAs`](#scenesaveas) |
 | `selection` | [`selection.clear`](#selectionclear), [`selection.get`](#selectionget), [`selection.set`](#selectionset) |
 | `stats` | [`stats.get`](#statsget) |
-| `tool` | [`tool.set`](#toolset) |
+| `tool` | [`tool.set`](#toolset), [`tool.snapping`](#toolsnapping) |
 | `transform` | [`transform.lookAt`](#transformlookat), [`transform.set`](#transformset) |
 | `ui` | [`ui.click`](#uiclick), [`ui.drag`](#uidrag), [`ui.find`](#uifind), [`ui.hover`](#uihover), [`ui.key`](#uikey), [`ui.scroll`](#uiscroll), [`ui.snapshot`](#uisnapshot), [`ui.type`](#uitype) |
 | `view` | [`view.frameSelection`](#viewframeselection), [`view.gameCamera`](#viewgamecamera), [`view.pick`](#viewpick), [`view.screenshot`](#viewscreenshot) |
@@ -1362,6 +1362,20 @@ Picks the viewport gizmo: `tool` is "move", "rotate" or "scale".
 Arguments:
 
 - `tool`: "move" \| "rotate" \| "scale"
+
+### `tool.snapping`
+
+**Snapping**
+
+Turns gizmo snapping on or off (`enabled`; omitted toggles it): drags move in 0.5-unit steps, rotate by 15° and scale by 0.1. Holding Cmd (Ctrl elsewhere) during a drag inverts it.
+
+Arguments:
+
+- `enabled?`: boolean
+
+Result:
+
+- `enabled`: boolean
 
 ## transform
 

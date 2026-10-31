@@ -37,6 +37,10 @@ public final class HierarchyPanel {
         var id: EntityID
         var depth: Int
         var title: String
+        /// The icon of the entity's main component (`EditorIcons.entityIcon`).
+        var icon: VectorIcon? = nil
+        /// A prefab instance's root: its icon takes the accent color.
+        var isPrefab = false
     }
 
     public init(session: EditorSession) {
@@ -64,6 +68,11 @@ public final class HierarchyPanel {
         // the triangles only show or hide children.
         tree.itemCommands = ["row": SelectionSetCommand.id.rawValue, "toggle": SceneHierarchyCommand.id.rawValue]
         tree.command = EntityRenameCommand.id.rawValue  // its rename field
+        // Icon-only: the titles stay their labels, the tooltips say what they do.
+        for (button, icon) in [(createButton!, "plus"), (duplicateButton!, "copy"), (deleteButton!, "trash-2")] {
+            button.icon = EditorIcons.named(icon)
+            button.showsTitle = false
+        }
         let buttons = HStack(spacing: 6, [createButton, duplicateButton, deleteButton])
         buttons.wraps = true  // a narrow panel puts them on two rows instead of cutting Delete off
         deleteButton.action = { [unowned self] in
@@ -101,18 +110,22 @@ public final class HierarchyPanel {
         }
 
         guard force || (!tree.isDragging && tree.renamingNode == nil) else { return }
-        let structure = Self.structure(of: session.world, name: session.displayName(of:))
+        let world = session.world
+        let structure = Self.structure(of: world, name: session.displayName(of:), icon: { EditorIcons.entityKind($0, in: world) })
         guard force || structure != shownStructure else { return }
         shownStructure = structure
         rebuild(structure)
     }
 
     /// The world's tree as depth-first rows.
-    static func structure(of world: World, name: (Entity) -> String) -> [Row] {
+    static func structure(of world: World, name: (Entity) -> String,
+                          icon: ((Entity) -> (kind: EditorIcons.EntityKind, component: String?))? = nil) -> [Row] {
         var rows: [Row] = []
         func visit(_ entity: Entity, _ depth: Int) {
             guard let id = world.ensureID(of: entity) else { return }
-            rows.append(Row(id: id, depth: depth, title: name(entity)))
+            let main = icon?(entity)
+            rows.append(Row(id: id, depth: depth, title: name(entity), icon: main.map { EditorIcons.entityIcon(kind: $0.kind, component: $0.component) },
+                            isPrefab: main?.kind == .prefab))
             for child in world.children(of: entity) { visit(child, depth + 1) }
         }
         for root in world.roots { visit(root, 0) }
@@ -129,6 +142,8 @@ public final class HierarchyPanel {
             let node = nodes[row.id] ?? TreeNode(row.title, isExpanded: true, userData: row.id)
             nodes[row.id] = node
             node.title = row.title
+            node.icon = row.icon
+            node.iconColor = row.isPrefab ? EditorIcons.prefabColor(theme: tree.theme) : nil
             stack.removeLast(stack.count - row.depth)
             if let parent = stack.last { parent.addChild(node) } else { roots.append(node) }
             stack.append(node)
@@ -188,6 +203,18 @@ public final class HierarchyPanel {
         return items
     }
 
+    /// The Create menu's prefab actions, by the command they run.
+    static func prefabMenuIcon(_ command: CommandID) -> VectorIcon? {
+        switch command {
+        case PrefabCreateCommand.id: EditorIcons.named("package-plus")
+        case AssetSelectCommand.id: EditorIcons.named("package-open")
+        case PrefabApplyCommand.id: EditorIcons.named("package-check")
+        case PrefabRevertCommand.id: EditorIcons.named("rotate-ccw")
+        case PrefabUnpackCommand.id: EditorIcons.named("unlink")
+        default: nil
+        }
+    }
+
     private func showCreateMenu() {
         guard let context = view.context else { return }
         var items: [(String, CommandID, () -> Void)] = EntityTemplate.allCases.map { template in
@@ -195,9 +222,11 @@ public final class HierarchyPanel {
                 session.run(EntityCreateCommand.self, .init(template: template, position: spawnPosition()))
             })
         }
+        let templateIcons = EntityTemplate.allCases.map { Optional(EditorIcons.template($0)) }
         items += prefabMenuItems()
         let menu = PopupMenu(items: items.map(\.0), anchor: createButton)
         menu.itemCommandIDs = items.map { $0.1.rawValue }
+        menu.itemIcons = templateIcons + items.dropFirst(templateIcons.count).map { Self.prefabMenuIcon($0.1) }
         menu.onSelect = { index in items[index].2() }
         context.presentOverlay(menu)
     }
