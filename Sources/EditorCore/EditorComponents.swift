@@ -95,6 +95,18 @@ public enum EditorComponentCatalog {
         register(KeyboardMover.self) { KeyboardMover() }
     }
 
+    /// Makes the component type registered as `name` addable, created by `make` (game modules,
+    /// whose types are only known as `any Component.Type`). Register the type first.
+    public static func register(named name: String, make: @escaping () -> any Component) {
+        factories[name] = make
+    }
+
+    /// Makes the named components unaddable again (a game module was unloaded). Doesn't
+    /// unregister them from `ComponentRegistry`.
+    public static func unregister(_ names: some Sequence<String>) {
+        for name in names { factories[name] = nil }
+    }
+
     /// A new default value of the component registered as `name`, or nil if it has no factory.
     public static func makeDefault(named name: String) -> (any Component)? {
         factories[name]?()

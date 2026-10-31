@@ -126,10 +126,12 @@ public final class EditorSession {
     /// first. Nil: anywhere, relative to the working directory.
     public var fileAccessRoots: [URL]?
 
-    private var playSnapshot: WorldSnapshot?
+    var playSnapshot: WorldSnapshot?
 
     /// Play mode is paused: the world doesn't update and scheduled input waits (`setPaused`, `step`).
     public private(set) var isPaused = false
+    /// The game code (EditorGameModule.swift): loaded from a library, reloaded with the scene kept.
+    public private(set) lazy var gameModule = EditorGameModule(session: self)
     /// Multiplies play mode's dt (0 to 100; 1 is real time). Steps ignore it.
     public var timeScale: Double = 1 {
         didSet {
@@ -180,6 +182,7 @@ public final class EditorSession {
     /// Advances the world one frame: its systems in play mode (dt times `timeScale`; nothing
     /// while paused), only transforms while editing.
     public func tick(dt: Double) {
+        gameModule.poll()
         if isPlaying && !isPaused {
             advanceGame(dt: dt * timeScale)
         } else {
@@ -335,6 +338,7 @@ public final class EditorSession {
             onAssetsChange?()
         }
         if ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT"] != nil { database.waitForAll() }
+        gameModule.projectOpened(project)
         syncPrefabs(force: true)
         onAssetsChange?()
         changed()
@@ -510,6 +514,7 @@ public final class EditorSession {
         }
         if world.count(of: SpriteAnimator.self) > 0 { world.addSpriteAnimationSystem(name: Self.spriteSystem) }
         tweens = TweenSystem()
+        gameModule.addSystems()
     }
 
     private func removePlaySystems() {
@@ -523,6 +528,7 @@ public final class EditorSession {
         }
         world.removeSystem(named: Self.spriteSystem)
         tweens = nil
+        gameModule.removeSystems()
     }
 
     private static let spriteSystem = "editor.spriteAnimation"

@@ -95,6 +95,11 @@ let isDependencyCheckout = ["/.build/checkouts/", "/SourcePackages/checkouts/"].
 let textureCodecCFlags: [CSetting] = isDependencyCheckout ? [] : [.unsafeFlags(["-O2"], .when(configuration: .debug))]
 let textureCodecCXXFlags: [CXXSetting] = isDependencyCheckout ? [] : [.unsafeFlags(["-O2"], .when(configuration: .debug))]
 
+// Game modules (Sources/Engine/GameModule) resolve Engine's symbols against the host process
+// when loaded, so hosts export them: executables do on macOS; on Linux they need
+// --export-dynamic. unsafeFlags, so only in a checkout of this package (see above).
+let exportsSymbols: [LinkerSetting] = isDependencyCheckout ? [] : [.unsafeFlags(["-Xlinker", "--export-dynamic"], .when(platforms: [.linux]))]
+
 let package = Package(
     name: "SwiftGameEngine",
     platforms: [.macOS(.v14)],
@@ -103,6 +108,7 @@ let package = Package(
         .library(name: "EngineMCP", targets: ["EngineMCP"]),
         .executable(name: "Demo", targets: ["Demo"]),
         .executable(name: "Editor", targets: ["Editor"]),
+        .executable(name: "GameRunner", targets: ["GameRunner"]),
     ],
     targets: vulkanTargets + [
         zlibTarget,
@@ -146,11 +152,19 @@ let package = Package(
         // The in-engine editor: all logic in EditorCore (unit-tested by EditorTests), and a
         // thin executable that runs it (`swift run Editor [scene.json]`).
         .target(name: "EditorCore", dependencies: ["Engine", "EngineMCP"], linkerSettings: windowsLinkerSettings),
-        .executableTarget(name: "Editor", dependencies: ["EditorCore", "Engine"], linkerSettings: windowsLinkerSettings),
+        .executableTarget(name: "Editor", dependencies: ["EditorCore", "Engine"], linkerSettings: windowsLinkerSettings + exportsSymbols),
+        // A game as a game module: built as a target (not a product: a `.dynamic` product would
+        // link its own copy of Engine) and linked into a shared library by GameModuleBuilder,
+        // which the editor (`--game SampleGame`) and GameRunner load. See README "Game modules".
+        .target(name: "SampleGame", dependencies: ["Engine"]),
+        // Runs a game module standalone: `swift run GameRunner SampleGame [scene.json]`.
+        .executableTarget(name: "GameRunner", dependencies: ["Engine"], linkerSettings: windowsLinkerSettings + exportsSymbols),
+        // A changed version of SampleGame for GameModuleTests' reload test (linked like it).
+        .target(name: "GameModuleTestFixture", dependencies: ["Engine"], path: "Tests/GameModuleTestFixture"),
         // ENGINE_VULKAN lets GPU tests (ComputeTests) run on the Vulkan backend too.
         .testTarget(name: "EngineTests", dependencies: ["Engine", "CZlib"], resources: [.copy("Resources")],
                     swiftSettings: vulkanEnabled ? [.define("ENGINE_VULKAN")] : []),
-        .testTarget(name: "EditorTests", dependencies: ["EditorCore", "Engine", "EngineMCP"]),
+        .testTarget(name: "EditorTests", dependencies: ["EditorCore", "Engine", "EngineMCP"], linkerSettings: exportsSymbols),
         .testTarget(name: "EngineMCPTests", dependencies: ["EngineMCP"]),
     ]
 )

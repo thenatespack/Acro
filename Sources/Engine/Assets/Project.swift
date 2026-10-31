@@ -50,16 +50,23 @@ public struct ProjectSettings: Equatable, Sendable, Codable {
 
     /// Display name (the folder's name when created).
     public var name: String
+    /// The project's game code, which the editor loads and hot-reloads (`"game": {"target":
+    /// "MyGame", "package": ".."}`; see `GameModuleSettings`). nil: none.
+    public var game: GameModuleSettings?
 
-    public init(name: String) { self.name = name }
+    public init(name: String, game: GameModuleSettings? = nil) {
+        self.name = name
+        self.game = game
+    }
 
-    private enum CodingKeys: String, CodingKey { case format, version, name }
+    private enum CodingKeys: String, CodingKey { case format, version, name, game }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 1
         guard version <= Self.currentVersion else { throw AssetError.unsupportedProjectVersion(version) }
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        game = try c.decodeIfPresent(GameModuleSettings.self, forKey: .game)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -67,6 +74,7 @@ public struct ProjectSettings: Equatable, Sendable, Codable {
         try c.encode(Self.format, forKey: .format)
         try c.encode(Self.currentVersion, forKey: .version)
         try c.encode(name, forKey: .name)
+        try c.encodeIfPresent(game, forKey: .game)
     }
 }
 

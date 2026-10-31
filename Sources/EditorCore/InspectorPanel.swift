@@ -67,6 +67,9 @@ public struct AssetChoices {
 
     private static var textureFieldCache: [String: Set<String>] = [:]
 
+    /// Forgets what was learned about component types (game code was reloaded).
+    static func resetCaches() { textureFieldCache = [:] }
+
     /// Whether `path` of `component` is a `TextureHandle` (its dropdown starts with "None").
     public static func isTextureField(component: String, path: String) -> Bool {
         textureFields(of: component).contains(path)

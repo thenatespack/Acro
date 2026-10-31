@@ -6,13 +6,18 @@ import Foundation
 // Everything lives in EditorCore; this only reads the command line and runs it.
 
 let usage = """
-    Usage: Editor [scene.json] [--project <folder>] [--backend metal|vulkan]
+    Usage: Editor [scene.json] [--project <folder>] [--game <target | module.dylib>] [--game-watch] [--backend metal|vulkan]
                   [--mcp] [--headless] [--mcp-port <port>] [--mcp-http | --no-mcp-http] [--mcp-read-only]
            Editor --mcp-tool-docs
 
     Opens the scene file, or starts with a new scene; --project opens a project (Project.json,
     Assets/, Library/) and imports its assets. Environment: EDITOR_PREFS=<file> moves the
     prefs file (dock layout, last scene); ENGINE_SCREENSHOT=<png> renders a deterministic frame and quits.
+
+    Game code: --game SampleGame builds that SwiftPM target (in the package at or above the working
+    directory) and loads it as a game module: its components in Add Component, its systems in play
+    mode, Reload Game Code to rebuild and reload it with the scene kept; --game-watch reloads when its
+    sources change. --game <path>.dylib loads a prebuilt module. Overrides the project's "game" setting.
 
     MCP (AI clients drive the editor; see README): the editor serves Streamable HTTP on
     127.0.0.1:7333 (--mcp-port, EDITOR_MCP_PORT; the next free port if taken) with a bearer token
@@ -31,6 +36,8 @@ var headless = false
 var mcpHTTP: Bool?
 var mcpPort: UInt16?
 var mcpReadOnly = false
+var game: GameModuleSettings?
+var gameWatch = false
 var arguments = Array(CommandLine.arguments.dropFirst())
 
 func fail(_ message: String) -> Never {
@@ -51,6 +58,12 @@ while !arguments.isEmpty {
         guard let path = arguments.first else { fail("--project needs a folder") }
         arguments.removeFirst()
         projectPath = path
+    case "--game":
+        guard let value = arguments.first else { fail("--game needs a target name or a module path") }
+        arguments.removeFirst()
+        game = GameModuleSettings(argument: value)
+    case "--game-watch":
+        gameWatch = true
     case "--mcp":
         mcpStdio = true
     case "--headless":
@@ -83,6 +96,8 @@ options.mcp.stdio = mcpStdio
 options.mcp.http = mcpHTTP ?? (mcpStdio ? false : options.mcp.http)
 if let mcpPort { options.mcp.port = mcpPort }
 options.mcp.readOnly = mcpReadOnly
+if gameWatch { game?.watch = true }
+options.game = game
 
 if headless {
     exit(EditorHeadless.run(options: options))

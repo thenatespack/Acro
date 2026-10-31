@@ -19,6 +19,8 @@ public struct EditorOptions: Sendable {
     public var selectAssetPath: String?
     /// The MCP server's transports (see EditorMCP.swift).
     public var mcp = MCPOptions()
+    /// Game code to load (`--game`), over the project's `"game"` setting (EditorGameModule.swift).
+    public var game: GameModuleSettings?
 
     /// Which MCP transports to start.
     public struct MCPOptions: Sendable {
@@ -217,6 +219,12 @@ public final class EditorApp: Game, EditorHost {
         session.onAISettingsChange = { [unowned self] in aiSettingsChanged() }
         session.onChange = { [unowned self] in toolbar.refresh() }
         session.onAssetsChange = { [unowned self] in assetsChanged() }
+        // Game code before the scene, so the scene's game components load typed.
+        if let game = options.game {
+            session.gameModule.commandLineSettings = game
+            session.gameModule.configure(game, base: URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true))
+            _ = try? session.commands.start(GameReloadCommand.self, .init(build: !(game.library != nil && game.buildCommand == nil)))
+        }
         if let path = options.projectPath, session.run(ProjectOpenCommand.self, .init(path: path)) != nil {
             toolbar.projectPath.text = path
         } else if !options.deterministic, let path = prefs.lastProjectPath {
@@ -1080,6 +1088,8 @@ final class Toolbar {
     private let pauseButton: Button
     private let stepButton: Button
     private let gameViewButton: Button
+    /// Reload Game Code; shown when the editor has game code (`--game`, Project.json).
+    private let reloadGameButton: Button
     private let timeScale: Dropdown
     /// The time scales the toolbar offers.
     static let timeScales: [Double] = [0.1, 0.25, 0.5, 1, 2, 4]
@@ -1098,6 +1108,7 @@ final class Toolbar {
         pauseButton = Button("Pause", name: "pause") { session.run(PlayPauseCommand.self, .init()) }
         stepButton = Button("Step", name: "step") { session.run(PlayStepCommand.self, .init()) }
         gameViewButton = Button("Game", name: "gameView") { session.run(ViewGameCameraCommand.self, .init()) }
+        reloadGameButton = Button("Reload Game", name: "reloadGame") { _ = try? session.commands.start(GameReloadCommand.self, .init()) }
         timeScale = Dropdown(options: Self.timeScales.map(Self.timeScaleTitle), selectedIndex: Self.timeScales.firstIndex(of: 1) ?? 0,
                              name: "timeScale") { index in
             session.run(PlaySetTimeScaleCommand.self, .init(scale: Self.timeScales[index]))
@@ -1139,6 +1150,7 @@ final class Toolbar {
         let tagged: [(Widget, CommandID)] = commandButtons.map { ($0.1, $0.0) } + [
             (undoButton, EditUndoCommand.id), (redoButton, EditRedoCommand.id), (playButton, PlayToggleCommand.id),
             (pauseButton, PlayPauseCommand.id), (stepButton, PlayStepCommand.id), (gameViewButton, ViewGameCameraCommand.id),
+            (reloadGameButton, GameReloadCommand.id),
             (timeScale, PlaySetTimeScaleCommand.id), (path, SceneOpenCommand.id), (projectPath, ProjectOpenCommand.id),
             (openProjectButton, ProjectOpenCommand.id), (newProjectButton, ProjectNewCommand.id),
         ] + toolButtons.map { ($0.1, ToolSetCommand.id) }
@@ -1151,7 +1163,7 @@ final class Toolbar {
             Separator(.vertical),
             undoButton, redoButton,
             Separator(.vertical),
-            playButton, pauseButton, stepButton, timeScale, gameViewButton,
+            playButton, pauseButton, stepButton, timeScale, gameViewButton, reloadGameButton,
             Separator(.vertical),
         ] + toolButtons.map(\.1) + [
             Separator(.vertical),
@@ -1182,6 +1194,12 @@ final class Toolbar {
         let gameRole: Button.Role = session.showsGameCamera ? .primary : .normal
         if gameViewButton.role != gameRole { gameViewButton.role = gameRole }
         if let index = Self.timeScales.firstIndex(of: session.timeScale), timeScale.selectedIndex != index { timeScale.select(index) }
+        let game = session.gameModule
+        if reloadGameButton.isHidden == game.isConfigured { reloadGameButton.isHidden = !game.isConfigured }
+        set(reloadGameButton, title: game.isBusy ? "Building…" : "Reload Game", enabled: session.commands.isAvailable(GameReloadCommand.self))
+        let reloadTip = game.lastError.map { "Rebuild and reload the game code, keeping the scene. Last error: \($0)" }
+            ?? "Rebuild and reload the game code (\(game.loaded?.module.name ?? "not loaded")), keeping the scene"
+        if reloadGameButton.tooltip != reloadTip { reloadGameButton.tooltip = reloadTip }
         for (tool, button) in toolButtons {
             let role: Button.Role = tool == session.tool ? .primary : .normal
             if button.role != role { button.role = role }
