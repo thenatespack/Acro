@@ -126,6 +126,10 @@ public final class DebugDrawRenderer {
             let extent = text.measure(label.text, size: label.size)
             // Snapped to whole pixels so glyphs stay sharp.
             let origin = Vec2((pixel.x - extent.x / 2).rounded(), (pixel.y - extent.y / 2).rounded())
+            if let shadow = label.shadow {
+                let offset = max(1, (label.size / 12).rounded())
+                text.draw(label.text, at: origin + Vec2(offset, offset), size: label.size, color: shadow)
+            }
             text.draw(label.text, at: origin, size: label.size, color: label.color)
         }
         do {

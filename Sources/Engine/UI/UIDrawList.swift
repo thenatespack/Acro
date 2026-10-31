@@ -32,6 +32,10 @@ public struct UIColor: Sendable, Equatable {
 
     public func withAlpha(_ alpha: Float) -> UIColor { UIColor(r, g, b, alpha) }
 
+    /// This color with its alpha multiplied by `factor` (a translucent theme color stays as
+    /// translucent relative to itself; `withAlpha` would replace it).
+    public func fading(_ factor: Float) -> UIColor { UIColor(r, g, b, a * factor) }
+
     /// Component-wise blend in sRGB space (`t` = 0 gives `self`, 1 gives `other`).
     public func mixed(with other: UIColor, _ t: Float) -> UIColor {
         UIColor(r + (other.r - r) * t, g + (other.g - g) * t, b + (other.b - b) * t, a + (other.a - a) * t)

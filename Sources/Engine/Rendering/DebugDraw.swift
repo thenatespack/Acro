@@ -44,6 +44,8 @@ public final class DebugDraw {
         public var color: Vec4
         /// Em size in pixels.
         public var size: Float
+        /// A drop shadow drawn first, a pixel or two down and right (labels over bright scenes).
+        public var shadow: Vec4? = nil
     }
 
     /// Segments per depth mode, in the order added (the GPU instance data).
@@ -209,9 +211,11 @@ public final class DebugDraw {
         boxEdges(corners, color: color, style: style, duration: duration)
     }
 
-    /// A text label centered on `position`, `size` pixels high, drawn on top of everything.
-    public func text(_ text: String, at position: Vec3, color: Vec4 = Vec4(1, 1, 1, 1), size: Float = 14, duration: Float = 0) {
-        labels.append(Label(text: text, position: position, color: color, size: size))
+    /// A text label centered on `position`, `size` pixels high, drawn on top of everything; with
+    /// `shadow`, over a drop shadow of that color so it reads on bright and dark backgrounds.
+    public func text(_ text: String, at position: Vec3, color: Vec4 = Vec4(1, 1, 1, 1), size: Float = 14, duration: Float = 0,
+                     shadow: Vec4? = nil) {
+        labels.append(Label(text: text, position: position, color: color, size: size, shadow: shadow))
         labelLife.append(max(duration, 0))
     }
 

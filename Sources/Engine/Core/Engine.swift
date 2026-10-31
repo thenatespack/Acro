@@ -7,6 +7,15 @@ public struct EngineConfig: Sendable {
     /// Keep the window at `width` x `height` even when that is larger than the screen (macOS,
     /// Metal only; it hangs off the bottom right). Otherwise it is shrunk to fit, as usual.
     public var allowsWindowLargerThanScreen = false
+    /// The smallest size (points) the user can resize the window to (`NSWindow.contentMinSize`,
+    /// `glfwSetWindowSizeLimits`); nil leaves it to the OS. A smaller `width` x `height` opens
+    /// at this size (`openingWindowSize`).
+    public var minimumWindowSize: (width: Int, height: Int)?
+    /// The size the window opens at: `width` x `height`, at least `minimumWindowSize`.
+    public var openingWindowSize: (width: Int, height: Int) {
+        guard let minimum = minimumWindowSize else { return (width, height) }
+        return (max(width, minimum.width), max(height, minimum.height))
+    }
     /// nil picks the `ENGINE_BACKEND` environment variable, then the platform default.
     public var backend: GraphicsBackend?
     public var clearColor: Vec4
@@ -449,9 +458,10 @@ public final class Engine {
         switch backend {
         case .metal:
             #if canImport(Metal) && canImport(AppKit)
+            let size = config.openingWindowSize
             let appKitWindow = AppKitWindow(
-                title: config.title, width: config.width, height: config.height,
-                allowsLargerThanScreen: config.allowsWindowLargerThanScreen
+                title: config.title, width: size.width, height: size.height,
+                allowsLargerThanScreen: config.allowsWindowLargerThanScreen, minimumSize: config.minimumWindowSize
             )
             window = appKitWindow
             device = try MetalRenderDevice(layer: appKitWindow.metalLayer, sampleCount: sampleCount)
@@ -460,7 +470,9 @@ public final class Engine {
             #endif
         case .vulkan:
             #if ENGINE_VULKAN
-            let glfwWindow = try GLFWWindow(title: config.title, width: config.width, height: config.height)
+            let size = config.openingWindowSize
+            let glfwWindow = try GLFWWindow(title: config.title, width: size.width, height: size.height,
+                                            minimumSize: config.minimumWindowSize)
             window = glfwWindow
             device = try VulkanRenderDevice(window: glfwWindow, applicationName: config.title, sampleCount: sampleCount)
             #else

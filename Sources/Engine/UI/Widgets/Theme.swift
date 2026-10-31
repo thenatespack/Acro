@@ -20,7 +20,9 @@ public struct UITheme {
     public var headingFontSize: Float = 17
     public var textColor = UIColor(hex: 0xe6e9ef)
     public var secondaryTextColor = UIColor(hex: 0x98a1b3)
-    public var disabledTextColor = UIColor(hex: 0x5c6475)
+    /// Disabled text and icons: dimmer than secondary text but at least 3:1 on every surface
+    /// (WCAG exempts inactive controls; under 3:1 they were hard to read at all).
+    public var disabledTextColor = UIColor(hex: 0x767f92)
     public var placeholderColor = UIColor(hex: 0x7e879a)
     /// Warning and error text (log lines, validation messages) on panels and fields.
     public var warningTextColor = UIColor(hex: 0xe8b04a)
@@ -93,8 +95,12 @@ public struct UITheme {
     /// Edge of `VectorIcon`s in buttons, labels, rows, tabs and menus.
     public var iconSize: Float = 16
     public var checkmarkWidth: Float = 2
-    public var rowHeight: Float = 22
+    /// List, tree and menu rows; at least `minimumHitSize`, so a row's disclosure triangle can be.
+    public var rowHeight: Float = 24
     public var treeIndent: Float = 16
+    /// The smallest pointer target (points) small controls get, whatever their glyph's size:
+    /// tab close buttons, disclosure triangles and checkboxes (WCAG 2.2's 24x24 minimum).
+    public var minimumHitSize: Float = 24
     public var checkboxSize: Float = 16
     public var switchSize = Vec2(30, 18)
     public var sliderTrackHeight: Float = 4
@@ -153,7 +159,7 @@ public struct UITheme {
         t.name = "Light"
         t.textColor = UIColor(hex: 0x1d2330)
         t.secondaryTextColor = UIColor(hex: 0x5a6375)
-        t.disabledTextColor = UIColor(hex: 0xa3aab8)
+        t.disabledTextColor = UIColor(hex: 0x848b99)
         t.placeholderColor = UIColor(hex: 0x687083)
         t.warningTextColor = UIColor(hex: 0x8a5a00)
         t.errorTextColor = UIColor(hex: 0xb42318)

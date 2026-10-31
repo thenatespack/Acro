@@ -82,6 +82,9 @@ public final class SplitView: Widget {
     public var dividerHitSlop: Float = 3
     /// The divider's color; nil leaves the gap clear (the split view's `background` shows). Accent while hovered or dragged.
     public var dividerColor: UIColor? { didSet { setNeedsDisplay() } }
+    /// Without a `dividerColor`, paints the divider in the current theme's field background
+    /// (follows theme changes; a `DockSpace`'s gaps).
+    public var dividerUsesThemeColor = false { didSet { setNeedsDisplay() } }
     /// Called with the new fractions when the user drags a divider or double-clicks one.
     public var onResize: (([Float]) -> Void)?
 
@@ -251,7 +254,7 @@ public final class SplitView: Widget {
         let hovered = context.flatMap { $0.hoveredWidget === self ? divider(at: $0.pointerPosition) : nil }
         for i in 0..<(panes.count - 1) {
             let active = drag?.divider == i || (drag == nil && hovered == i)
-            let color = active ? theme.accent : (dividerColor ?? .clear)
+            let color = active ? theme.accent : (dividerColor ?? (dividerUsesThemeColor ? theme.fieldBackground : .clear))
             if color.a > 0 { list.fillRect(dividerRect(i), color: color) }
         }
     }

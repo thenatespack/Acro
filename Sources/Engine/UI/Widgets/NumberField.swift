@@ -329,7 +329,7 @@ public final class NumberField: Widget {
         let enabled = isEffectivelyEnabled
         let active = isScrubbing || isFocused
         let radii = UICornerRadii(theme.cornerRadius)
-        list.fillRect(frame, color: enabled ? theme.fieldBackground : theme.fieldBackground.withAlpha(0.5), radii: radii)
+        list.fillRect(frame, color: enabled ? theme.fieldBackground : theme.fieldBackground.fading(0.5), radii: radii)
         list.strokeRect(frame, color: active ? theme.accent : (isHovered && enabled) ? theme.controlBorder.mixed(with: .white, 0.15)
                         : theme.controlBorder, width: active ? theme.borderWidth + 0.5 : theme.borderWidth, radii: radii)
         guard !isTyping else { return }
@@ -370,21 +370,56 @@ public final class NumberField: Widget {
 
     /// The text to draw in `width`: the value at its precision, else rounded to fewer decimals
     /// until it fits ("1.000" → "1.00" → "1.0" → "1"); what still doesn't fit is ellipsized.
+    /// At most `decimalsLimit` (a `VectorField`'s shared precision) decimals, then fewer until it fits.
     private func fittedText(width: Float, size: Float) -> String {
-        guard !isInteger, overflows(cachedLayout(text, size: size), width: width) else { return text }
+        guard !isInteger else { return text }
+        let limit = decimalsLimit?() ?? Int.max
         var decimals = effectivePrecision
+        if limit >= decimals {
+            guard overflows(cachedLayout(text, size: size), width: width) else { return text }
+        } else {
+            decimals = max(limit, 0) + 1
+        }
         while decimals > 0 {
             decimals -= 1
-            var s = String(format: "%.\(decimals)f", value)
-            if s.hasPrefix("-"), !s.contains(where: { $0 != "-" && $0 != "0" && $0 != "." }) { s.removeFirst() }
+            let s = Self.format(value, decimals: decimals)
             if !overflows(cachedLayout(s, size: size), width: width) { return s }
         }
         return text
     }
 
+    /// `v` with `decimals` decimals, without a sign on zero ("-0.0" → "0.0").
+    private static func format(_ v: Double, decimals: Int) -> String {
+        var s = String(format: "%.\(decimals)f", v)
+        if s.hasPrefix("-"), !s.contains(where: { $0 != "-" && $0 != "0" && $0 != "." }) { s.removeFirst() }
+        return s
+    }
+
+    /// Caps the decimals shown while idle (the value may still drop more to fit). `VectorField`
+    /// sets it so every component of a vector shows the same number of decimals.
+    public var decimalsLimit: (() -> Int?)? { didSet { setNeedsDisplay() } }
+
+    /// The most decimals (up to `effectivePrecision`) the value fits with in the box now; 0 for integers.
+    public var decimalsThatFit: Int {
+        guard !isInteger else { return 0 }
+        let size = theme.fontSize, width = textRect.width
+        var decimals = effectivePrecision
+        while decimals > 0, overflows(cachedLayout(Self.format(value, decimals: decimals), size: size), width: width) {
+            decimals -= 1
+        }
+        return decimals
+    }
+
+    /// What the box shows while idle at its current width (`text` with fewer decimals when
+    /// narrow or when its `VectorField` shows fewer); `text` while typing.
+    public var shownText: String {
+        isTyping ? text : fittedText(width: textRect.width, size: theme.fontSize)
+    }
+
     /// Whether the value is shown shorter than `text` (fewer decimals or ellipsized).
     public var isTextShortened: Bool {
-        !isTyping && overflows(cachedLayout(text, size: theme.fontSize), width: textRect.width)
+        !isTyping && (overflows(cachedLayout(text, size: theme.fontSize), width: textRect.width)
+            || fittedText(width: textRect.width, size: theme.fontSize) != text)
     }
 
     /// An explicit `tooltip`, else the full value while the box shows it shortened.

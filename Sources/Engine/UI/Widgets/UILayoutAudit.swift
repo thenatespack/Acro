@@ -11,9 +11,9 @@ import Foundation
 // for issue in ui.layoutAudit() { print(issue) }   // "overlap: editorRoot/toolbar/undo ∩ …"
 // ```
 //
-// Content inside a `ScrollView`, list or tree is exempt from the containment checks (it scrolls
-// into view), as are the parts a widget draws itself (tabs, rows, menu items), which their widget
-// clips and scrolls. Sizes are compared in points at the context's `uiScale`.
+// Content inside a `ScrollView`, list or tree, or a panel whose content overflows (it scrolls),
+// is exempt from the containment checks (it scrolls into view), as are the parts a widget draws
+// itself (tabs, rows, menu items), which their widget clips and scrolls. Sizes are compared in points at the context's `uiScale`.
 
 /// One problem `UIContext.layoutAudit` found.
 public struct UILayoutIssue: Sendable, Equatable, CustomStringConvertible {
@@ -68,7 +68,9 @@ public struct UILayoutAuditOptions: Sendable {
 
 extension Widget {
     /// Whether this widget scrolls what it contains (children or drawn items) into view.
-    var scrollsContent: Bool { self is ScrollView || self is RowListView }
+    var scrollsContent: Bool {
+        self is ScrollView || self is RowListView || ((self as? TabView)?.contentOverflow ?? 0) > 0
+    }
 }
 
 extension UIContext {

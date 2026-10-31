@@ -18,7 +18,7 @@ final class GLFWWindow: PlatformWindow, VulkanSurfaceProvider {
     private let gamepads = makePlatformGamepadSource()
 
     /// `visible` false creates a hidden window (GPU tests that need a Vulkan surface).
-    init(title: String, width: Int, height: Int, visible: Bool = true) throws {
+    init(title: String, width: Int, height: Int, visible: Bool = true, minimumSize: (width: Int, height: Int)? = nil) throws {
         #if os(macOS)
         // Hand GLFW the loader we link against so it doesn't need to dlopen one itself.
         glfwInitVulkanLoader(vkGetInstanceProcAddr)
@@ -37,6 +37,10 @@ final class GLFWWindow: PlatformWindow, VulkanSurfaceProvider {
         }
         self.handle = handle
         currentTitle = title
+        if let minimumSize {
+            // Screen coordinates (points on macOS), like the size the window was created with.
+            glfwSetWindowSizeLimits(handle, Int32(minimumSize.width), Int32(minimumSize.height), GLFW_DONT_CARE, GLFW_DONT_CARE)
+        }
         installTextCallbacks()
     }
 

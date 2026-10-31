@@ -43,6 +43,9 @@ public final class VectorField: Stack {
         }
         super.init(.horizontal, spacing: 4, alignment: .stretch, name: name, children: fields)
         for field in fields {
+            // One precision for the whole vector: the fewest decimals any component fits with
+            // ("X 1.0  Y 2.0", not "X 1.00  Y 2.0").
+            field.decimalsLimit = { [weak self] in self?.sharedDecimals }
             field.onEditBegan = { [weak self] _ in
                 guard let self, self.gestureStart == nil else { return }
                 self.gestureStart = self.values
@@ -61,6 +64,11 @@ public final class VectorField: Stack {
     }
 
     public var values: [Double] { fields.map(\.value) }
+
+    /// The decimals every component shows while idle: the fewest any of them fits with.
+    public var sharedDecimals: Int? {
+        fields.filter { !$0.isInteger }.map(\.decimalsThatFit).min()
+    }
 
     /// Whether a component is being dragged or typed into.
     public var isInteracting: Bool { fields.contains { $0.isInteracting } }

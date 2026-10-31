@@ -12,6 +12,10 @@ public final class PopupMenu: Widget {
     public private(set) var scrollOffset: Float = 0
     /// The item that gets a check mark.
     public var checkedIndex: Int?
+    /// More items with a check mark (a menu of several choices: a theme and a zoom).
+    public var checkedIndices: Set<Int> = [] { didSet { setNeedsDisplay() } }
+
+    private func isChecked(_ i: Int) -> Bool { i == checkedIndex || checkedIndices.contains(i) }
     /// The widget the menu hangs from (its frame is re-read on every layout, so it follows scrolling).
     public weak var anchor: Widget?
     /// The rectangle to hang from when there is no anchor widget (window points).
@@ -104,7 +108,7 @@ public final class PopupMenu: Widget {
         return items.enumerated().map { i, item in
             UIAccessibilityItem(key: "item:\(item)", role: .menuItem, label: item,
                                 frame: rowRect(i),
-                                isSelected: i == checkedIndex,
+                                isSelected: isChecked(i),
                                 command: itemCommandIDs.indices.contains(i) ? itemCommandIDs[i] ?? effectiveCommand : effectiveCommand)
         }
     }
@@ -180,7 +184,7 @@ public final class PopupMenu: Widget {
             guard row.maxY > content.y, row.y < content.maxY else { continue }
             let highlighted = i == highlightedIndex
             if highlighted { list.fillRect(row, color: theme.accent, radii: UICornerRadii(theme.cornerRadius - 1)) }
-            if i == checkedIndex {
+            if isChecked(i) {
                 let c = Vec2(row.x + 9, row.center.y)
                 let color = highlighted ? theme.accentText : theme.textColor
                 list.drawLine(from: c + Vec2(-3.5, 0), to: c + Vec2(-1, 2.5), width: theme.iconStrokeWidth, color: color, cap: .round)
@@ -300,7 +304,7 @@ public final class Dropdown: Widget {
 
     public override func draw(_ list: UIDrawList, theme: UITheme) {
         let enabled = isEffectivelyEnabled
-        let fill = !enabled ? theme.controlBackground.withAlpha(0.5)
+        let fill = !enabled ? theme.controlBackground.fading(0.5)
             : (isPressed || isOpen) ? theme.controlPressed : isHovered ? theme.controlHover : theme.controlBackground
         let radii = UICornerRadii(theme.cornerRadius)
         list.fillRect(frame, color: fill, radii: radii)

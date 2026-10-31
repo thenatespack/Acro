@@ -338,7 +338,7 @@ public final class OptionSelector: Widget {
         let m = metrics(theme)
         let style = m.style
         let background = style.background ?? theme.controlBackground
-        let fill = !enabled ? background.withAlpha(0.5)
+        let fill = !enabled ? background.fading(0.5)
             : isPressed ? style.pressedBackground ?? theme.controlPressed
             : isHovered || isFocused ? style.hoverBackground ?? theme.controlHover : background
         let radii = UICornerRadii(style.cornerRadius ?? theme.cornerRadius)
