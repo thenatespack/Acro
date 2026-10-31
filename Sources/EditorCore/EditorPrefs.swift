@@ -1,16 +1,19 @@
 import Engine
 import Foundation
 
-/// Per-user editor settings that persist between launches: the dock layout and the last scene.
+/// Per-user editor settings that persist between launches: the dock layout, the last scene and
+/// the last project (pre-filled in the project path field, not opened automatically).
 public struct EditorPrefs: Codable, Equatable, Sendable {
     public static let currentVersion = 1
     public var version = EditorPrefs.currentVersion
     public var layout: DockLayout?
     public var lastScenePath: String?
+    public var lastProjectPath: String?
 
-    public init(layout: DockLayout? = nil, lastScenePath: String? = nil) {
+    public init(layout: DockLayout? = nil, lastScenePath: String? = nil, lastProjectPath: String? = nil) {
         self.layout = layout
         self.lastScenePath = lastScenePath
+        self.lastProjectPath = lastProjectPath
     }
 }
 

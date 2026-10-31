@@ -2,18 +2,20 @@ import EditorCore
 import Engine
 import Foundation
 
-// The in-engine editor: `swift run -c release Editor [path/to/scene.json] [--backend metal|vulkan]`.
+// The in-engine editor: `swift run -c release Editor [path/to/scene.json] [--project <folder>] [--backend metal|vulkan]`.
 // Everything lives in EditorCore; this only reads the command line and runs it.
 
 let usage = """
-    Usage: Editor [scene.json] [--backend metal|vulkan]
+    Usage: Editor [scene.json] [--project <folder>] [--backend metal|vulkan]
 
-    Opens the scene file, or starts with a new scene. Environment: EDITOR_PREFS=<file> moves the
+    Opens the scene file, or starts with a new scene; --project opens a project (Project.json,
+    Assets/, Library/) and imports its assets. Environment: EDITOR_PREFS=<file> moves the
     prefs file (dock layout, last scene); ENGINE_SCREENSHOT=<png> renders a deterministic frame and quits.
     """
 
 var config = EngineConfig(title: "Editor", width: 1440, height: 900, showDebugOverlay: false)
 var scenePath: String?
+var projectPath: String?
 var arguments = Array(CommandLine.arguments.dropFirst())
 while !arguments.isEmpty {
     let argument = arguments.removeFirst()
@@ -25,6 +27,13 @@ while !arguments.isEmpty {
         }
         arguments.removeFirst()
         config.backend = backend
+    case "--project":
+        guard let path = arguments.first else {
+            print("--project needs a folder")
+            exit(1)
+        }
+        arguments.removeFirst()
+        projectPath = path
     case "--help", "-h":
         print(usage)
         exit(0)
@@ -39,7 +48,7 @@ while !arguments.isEmpty {
 
 do {
     let engine = try Engine(config: config)
-    let app = EditorApp(options: .fromEnvironment(scenePath: scenePath))
+    let app = EditorApp(options: .fromEnvironment(scenePath: scenePath, projectPath: projectPath))
     try engine.run(app)
     app.savePrefs()
 } catch {

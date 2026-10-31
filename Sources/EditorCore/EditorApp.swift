@@ -5,6 +5,8 @@ import Foundation
 public struct EditorOptions: Sendable {
     /// A scene file to open; nil starts with the starter scene.
     public var scenePath: String?
+    /// A project folder to open (`--project`); nil starts without a project.
+    public var projectPath: String?
     /// Deterministic start for `ENGINE_SCREENSHOT` runs: default layout (prefs neither read nor
     /// written), sequential entity ids, the starter scene with an entity selected, a fixed
     /// camera and no caret blinking, so screenshots match across runs and backends.
@@ -12,16 +14,17 @@ public struct EditorOptions: Sendable {
     /// Where the dock layout is persisted; nil doesn't persist it.
     public var prefsURL: URL?
 
-    public init(scenePath: String? = nil, deterministic: Bool = false, prefsURL: URL? = nil) {
+    public init(scenePath: String? = nil, projectPath: String? = nil, deterministic: Bool = false, prefsURL: URL? = nil) {
         self.scenePath = scenePath
+        self.projectPath = projectPath
         self.deterministic = deterministic
         self.prefsURL = prefsURL
     }
 
     /// From the environment: deterministic with `ENGINE_SCREENSHOT`, prefs at `EditorPrefsStore.defaultURL`.
-    public static func fromEnvironment(scenePath: String?) -> EditorOptions {
+    public static func fromEnvironment(scenePath: String?, projectPath: String? = nil) -> EditorOptions {
         let deterministic = ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT"] != nil
-        return EditorOptions(scenePath: scenePath, deterministic: deterministic,
+        return EditorOptions(scenePath: scenePath, projectPath: projectPath, deterministic: deterministic,
                              prefsURL: deterministic ? nil : EditorPrefsStore.defaultURL())
     }
 }
@@ -50,6 +53,8 @@ public final class EditorApp: Game {
     public private(set) var transformTool: TransformTool!
     private var currentView: SceneView?
     private var meshBoundsCache: [String: Bounds] = [:]
+    /// Watches the open project's `Assets/` folder.
+    private var assetWatcher: FileWatcher?
 
     private let dock = DockSpace()
     private var hierarchy: HierarchyPanel!
@@ -102,6 +107,12 @@ public final class EditorApp: Game {
 
         session.onWillReplaceWorld = { [unowned self] in inspector.recorder.finishGesture() }
         session.onChange = { [unowned self] in toolbar.refresh() }
+        session.onAssetsChange = { [unowned self] in assetsChanged() }
+        if let path = options.projectPath, session.openProject(path: path) {
+            toolbar.projectPath.text = path
+        } else if !options.deterministic, let path = prefs.lastProjectPath {
+            toolbar.projectPath.text = path
+        }
         if let path = options.scenePath {
             if !session.open(path: path) { session.newDocument() }
             toolbar.path.text = path
@@ -127,9 +138,7 @@ public final class EditorApp: Game {
             return p
         }
         inspector = InspectorPanel(session: session)
-        inspector.assetChoices = AssetChoices(
-            meshes: { [unowned self] in sceneRenderer.prep.meshes.keys },
-            materials: { [unowned self] in sceneRenderer.prep.materials.keys })
+        inspector.assetChoices = makeAssetChoices()
         console = ConsolePanel(log: session.log)
         console.showsTime = !options.deterministic
 
@@ -154,6 +163,41 @@ public final class EditorApp: Game {
         let column = VStack(name: "editorRoot", [toolbar.view, dock])
         column.isHitTestable = false
         ui.root.addChild(column)
+    }
+
+    /// Dropdown options: the renderer's code-registered keys, then the project's assets.
+    private func makeAssetChoices() -> AssetChoices {
+        AssetChoices(
+            meshes: { [unowned self] in sceneRenderer.prep.meshes.keys.filter { AssetReference($0) == nil } },
+            materials: { [unowned self] in sceneRenderer.prep.materials.keys.filter { AssetReference($0) == nil } },
+            assets: { [unowned self] in session.assets })
+    }
+
+    /// A project was opened or its assets changed: resolve handles through it, refresh the
+    /// inspector's dropdowns and watch its `Assets/` folder.
+    private func assetsChanged() {
+        sceneRenderer.assets = session.assets
+        meshBoundsCache.removeAll()
+        inspector.assetChoices = makeAssetChoices()
+        guard let project = session.project else { return }
+        if assetWatcher?.directory != project.assetsURL {
+            assetWatcher?.stop()
+            let watcher = FileWatcher(directory: project.assetsURL)
+            watcher.start(interval: 1) { [weak self] changes in self?.session.assetsChanged(changes) }
+            assetWatcher = watcher
+        }
+        if prefs.lastProjectPath != project.root.path {
+            prefs.lastProjectPath = project.root.path
+            prefsDirty = true
+        }
+    }
+
+    func openProject() {
+        if session.openProject(path: toolbar.projectPath.text) { toolbar.projectPath.text = session.project?.root.path ?? "" }
+    }
+
+    func newProject() {
+        if session.newProject(path: toolbar.projectPath.text) { toolbar.projectPath.text = session.project?.root.path ?? "" }
     }
 
     /// Writes the prefs file (layout, last scene) if prefs are persisted. The host calls it on exit too.
@@ -218,7 +262,8 @@ public final class EditorApp: Game {
         ui.draw(into: engine.ui)
 
         input.cursor = cursorShape(for: ui.desiredCursor)
-        let title = "\(session.document.title) — Editor" + (session.isPlaying ? " [Playing]" : "")
+        let project = session.project.map { " — \($0.name)" } ?? ""
+        let title = "\(session.document.title)\(project) — Editor" + (session.isPlaying ? " [Playing]" : "")
         if engine.title != title { engine.title = title }
         if prefsDirty && !MouseButton.allCases.contains(where: input.isDown) { savePrefs() }
     }
@@ -448,6 +493,7 @@ final class ViewportWidget: Widget {
 final class Toolbar {
     let view: HStack
     let path = TextField(placeholder: "path/to/scene.json", name: "scenePath")
+    let projectPath = TextField(placeholder: "path/to/project", name: "projectPath")
     private unowned let app: EditorApp
     private let undoButton: Button
     private let redoButton: Button
@@ -470,6 +516,12 @@ final class Toolbar {
         let saveButton = Button("Save", name: "save") { [unowned app] in app.save() }
         let saveAsButton = Button("Save As", name: "saveAs") { [unowned app] in app.saveAs() }
         resetButton = Button("Reset Layout", name: "resetLayout") { [unowned app] in app.resetLayout() }
+        let openProjectButton = Button("Open Project", name: "openProject") { [unowned app] in app.openProject() }
+        let newProjectButton = Button("New Project", name: "newProject") { [unowned app] in app.newProject() }
+        openProjectButton.tooltip = "Open the project folder at the project path and import its assets"
+        newProjectButton.tooltip = "Create a project (Project.json, Assets/, Library/) at the project path"
+        projectPath.tooltip = "Project folder, used by Open Project and New Project"
+        projectPath.style.width = 160
         newButton.tooltip = "Start a new scene"
         openButton.tooltip = "Open the scene file at the path"
         saveButton.tooltip = shortcuts.tooltip("Save the scene", for: .save)
@@ -488,6 +540,8 @@ final class Toolbar {
             playButton,
             Separator(.vertical),
         ] + toolButtons.map(\.1) + [
+            Separator(.vertical),
+            projectPath, openProjectButton, newProjectButton,
             Spacer(),
             titleLabel,
             resetButton,

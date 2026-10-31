@@ -90,6 +90,11 @@ public final class PropertyGrid: Stack {
     /// `MeshRenderer.mesh`). A current value missing from the list is added so it stays visible.
     /// Asked when a section is built; assign it again if the options change.
     public var stringChoices: ((_ componentName: String, _ path: String) -> [String]?)? { didSet { rebuild(); refresh() } }
+    /// What a `stringChoices` dropdown shows for a value (e.g. "rock.obj › Rock" for an asset
+    /// reference); nil shows the values themselves. The field still stores the value.
+    public var stringChoiceTitle: ((_ componentName: String, _ path: String, _ value: String) -> String)? {
+        didSet { rebuild(); refresh() }
+    }
     /// Components to show by name (nil: all that are shown by default).
     public var componentFilter: ((String) -> Bool)? { didSet { rebuild(); refresh() } }
     /// Also show components whose type opts out of serialization.
@@ -120,6 +125,12 @@ public final class PropertyGrid: Stack {
             self.body = body
             root = VStack(spacing: 0, name: "section.\(name)", [header, body])
         }
+    }
+
+    /// The values of a `stringChoices` dropdown (its options are their titles).
+    @MainActor private final class ChoiceValues {
+        var values: [String]
+        init(_ values: [String]) { self.values = values }
     }
 
     @MainActor private final class Binding {
@@ -397,16 +408,23 @@ public final class PropertyGrid: Stack {
             if case .string(let s)? = field.value { initial = s }
             if var options = stringChoices?(b.component, b.path) {
                 if !options.contains(initial) { options.append(initial) }
-                let dropdown = Dropdown(options: options, selectedIndex: options.firstIndex(of: initial) ?? 0, name: name)
-                dropdown.onChange = { [weak self, weak b, weak dropdown] i in
-                    if let self, let b, let options = dropdown?.options, options.indices.contains(i) {
-                        self.atomicEdit(b, .string(options[i]))
+                let component = b.component, path = b.path
+                let title: (String) -> String = stringChoiceTitle.map { f in { f(component, path, $0) } } ?? { $0 }
+                // The values behind the dropdown's titles, index for index.
+                let values = ChoiceValues(options)
+                let dropdown = Dropdown(options: options.map(title), selectedIndex: options.firstIndex(of: initial) ?? 0, name: name)
+                dropdown.onChange = { [weak self, weak b] i in
+                    if let self, let b, values.values.indices.contains(i) {
+                        self.atomicEdit(b, .string(values.values[i]))
                     }
                 }
                 b.update = { [weak dropdown] f in
                     guard case .string(let s)? = f.value, let dropdown else { return }
-                    if !dropdown.options.contains(s) { dropdown.options.append(s) }
-                    if let i = dropdown.options.firstIndex(of: s) { dropdown.select(i) }
+                    if !values.values.contains(s) {
+                        values.values.append(s)
+                        dropdown.options.append(title(s))
+                    }
+                    if let i = values.values.firstIndex(of: s) { dropdown.select(i) }
                 }
                 return (dropdown, true)
             }

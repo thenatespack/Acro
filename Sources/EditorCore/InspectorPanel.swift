@@ -7,15 +7,38 @@ import Foundation
 /// (`RemoveComponentCommand`) and "Add Component" (`AddComponentCommand` with the catalog's
 /// default value). With several entities selected it shows the primary one only.
 /// Dropdown options for asset-key fields in the inspector: `MeshRenderer.mesh` lists the
-/// registered meshes and `MeshRenderer.material` the registered materials.
+/// registered meshes and `MeshRenderer.material` the registered materials (with a project open,
+/// its assets too, as `asset:` keys shown by `title`).
 @MainActor
 public struct AssetChoices {
     public var meshes: () -> [String]
     public var materials: () -> [String]
+    /// What the dropdown shows for a key (the key itself by default).
+    public var title: (String) -> String
 
-    public init(meshes: @escaping () -> [String], materials: @escaping () -> [String]) {
+    public init(meshes: @escaping () -> [String], materials: @escaping () -> [String],
+                title: @escaping (String) -> String = { $0 }) {
         self.meshes = meshes
         self.materials = materials
+        self.title = title
+    }
+
+    /// The registered keys, followed by every mesh / material of `assets` (titled by path and
+    /// object name, e.g. "Models/rock.obj › Rock").
+    public init(meshes: @escaping () -> [String], materials: @escaping () -> [String], assets: @escaping () -> AssetDatabase?) {
+        self.init(
+            meshes: { meshes() + Self.assetKeys(assets(), .mesh, excluding: meshes()) },
+            materials: { materials() + Self.assetKeys(assets(), .material, excluding: materials()) },
+            title: { key in
+                guard let reference = AssetReference(key), let assets = assets() else { return key }
+                return assets.displayName(of: reference)
+            })
+    }
+
+    private static func assetKeys(_ assets: AssetDatabase?, _ kind: AssetKind, excluding registered: [String]) -> [String] {
+        guard let assets else { return [] }
+        let skip = Set(registered)
+        return assets.references(of: kind).map(\.description).filter { !skip.contains($0) }
     }
 
     /// The options for a field, or nil when it isn't an asset key (it stays a text field).
@@ -37,7 +60,10 @@ public final class InspectorPanel {
     public let view: VStack
     /// Turns asset-key fields into dropdowns of the registered keys (see `AssetChoices`).
     public var assetChoices: AssetChoices? {
-        didSet { grid.stringChoices = assetChoices.map { choices in { choices.options(component: $0, path: $1) } } }
+        didSet {
+            grid.stringChoiceTitle = assetChoices.map { choices in { _, _, value in choices.title(value) } }
+            grid.stringChoices = assetChoices.map { choices in { choices.options(component: $0, path: $1) } }
+        }
     }
 
     private let nameField = TextField(placeholder: "Name", name: "entityName")
