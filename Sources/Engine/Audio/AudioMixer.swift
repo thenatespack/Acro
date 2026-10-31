@@ -1,3 +1,5 @@
+import Foundation
+
 // The audio-thread half of the engine's mixer. `AudioSystem` (game thread) owns it and talks to
 // it only through a lock-free command queue; the mixer reports back through atomic words.
 //
@@ -24,6 +26,13 @@
 // bus. Buses are processed children first: each applies its smoothed volume (0 when muted),
 // ducking and pause gains, measures its peak and sums into its parent. The master bus is
 // clamped to [-1, 1] into the output. Every gain change ramps linearly, so nothing clicks.
+//
+// Effects (see AudioEffects.swift): a voice is rendered into a scratch buffer, then runs
+// through its spatial filter (distance and head-shadow low-pass) and its own filter, and is
+// added to its bus and, scaled by its send level, to a send bus. A bus mixes its voices,
+// children and sends, runs its effect chain (filters, reverb), then applies its gains. A send
+// to a bus that was already processed this block is heard one block (5 ms) late. Reverb delay
+// lines belong to the game thread, which keeps them alive until the device stops.
 
 /// Where a voice's frames come from.
 struct VoiceSource {
@@ -46,11 +55,34 @@ struct VoiceStart {
     var pitch: Float
     var loop: Bool
     var fadeIn: Double
+    /// Set for a spatial voice: the gains and cutoffs to start at (so it doesn't ramp in from full volume).
+    var spatial: SpatialStart?
+}
+
+struct SpatialStart {
+    var gainL: Float
+    var gainR: Float
+    var cutoffL: Float
+    var cutoffR: Float
+}
+
+/// A filter or reverb for a voice or a bus effect slot.
+enum EffectSpec {
+    case none
+    case filter(type: AudioFilterType, cutoff: Float, q: Float)
+    case reverb(roomSize: Float, damping: Float, width: Float, wet: Float, dry: Float, memory: ReverbRef)
 }
 
 enum AudioCommand {
     case start(slot: Int, generation: UInt64, VoiceStart)
     case setVoice(slot: Int, generation: UInt64, volume: Float, pan: Float, pitch: Float)
+    /// A spatial voice's per-frame update: final gains (volume, attenuation and pan), pitch with Doppler, cutoffs.
+    case setVoiceSpatial(slot: Int, generation: UInt64, gainL: Float, gainR: Float, pitch: Float, cutoffL: Float, cutoffR: Float)
+    case setVoiceFilter(slot: Int, generation: UInt64, EffectSpec)
+    /// `bus` -1 removes the send.
+    case setVoiceSend(slot: Int, generation: UInt64, bus: Int, level: Float)
+    case setBusEffect(bus: Int, slot: Int, EffectSpec)
+    case setBusSend(bus: Int, target: Int, level: Float)
     case pauseVoice(slot: Int, generation: UInt64, paused: Bool, fade: Double)
     case stopVoice(slot: Int, generation: UInt64, fade: Double)
     case setBus(index: Int, parent: Int, volume: Float, muted: Bool, paused: Bool)
@@ -94,6 +126,9 @@ private struct VoiceState {
     var loop = false
     var step = 1.0
     var pitch: Float = 1
+    /// Spatial voices glide `step` toward this once per block (Doppler changes without zipper).
+    var stepTarget = 1.0
+    var smoothStep = false
     // Read window: the output interpolates between `a` and `b` at `frac`.
     var primed = false
     var aL: Float = 0, aR: Float = 0, bL: Float = 0, bR: Float = 0
@@ -111,6 +146,23 @@ private struct VoiceState {
     var fade = Ramp(1)
     var stopping = false
     var paused = false
+    var spatialFilter = StereoFilter()
+    var filter = StereoFilter()
+    var sendBus = -1
+    var sendLevel = Ramp(0)
+}
+
+/// One slot of a bus's effect chain.
+private struct EffectState {
+    enum Kind { case none, filter, reverb }
+    var kind = Kind.none
+    var filter = StereoFilter()
+    var reverb: ReverbRef?
+    var feedback: Float = 0.84
+    var damping: Float = 0.2
+    var width: Float = 1
+    var wet = Ramp(1)
+    var dry = Ramp(0)
 }
 
 private struct BusState {
@@ -124,6 +176,8 @@ private struct BusState {
     var duckGain: Float = 1
     var duckAttack = 0.0
     var duckRelease = 0.0
+    var sendTarget = -1
+    var sendLevel = Ramp(0)
     // Per block.
     var activeVoices = 0
     var effectivelyPaused = false
@@ -134,6 +188,10 @@ final class AudioMixer: @unchecked Sendable {
     static let blockSize = 256
     /// How long volume, pan and bus volume changes take.
     static let smoothingSeconds = 0.01
+    /// Spatial gains glide a little longer: they are retargeted once per game frame.
+    static let spatialSmoothingSeconds = 0.02
+    /// Effect slots per bus.
+    static let effectsPerBus = 4
 
     let sampleRate: Double
     let maxVoices: Int
@@ -152,6 +210,13 @@ final class AudioMixer: @unchecked Sendable {
     private let buses: UnsafeMutablePointer<BusState>
     /// `maxBuses` interleaved stereo buffers of `blockSize` frames.
     private let busBuffers: UnsafeMutablePointer<Float>
+    /// Per bus, the sends waiting to be mixed into it (consumed and cleared when the bus is processed).
+    private let sendBuffers: UnsafeMutablePointer<Float>
+    /// One voice's stereo block before filtering.
+    private let voiceScratch: UnsafeMutablePointer<Float>
+    private let effects: UnsafeMutablePointer<EffectState>
+    /// Per block: how far spatial voices glide toward their target pitch.
+    private var stepGlide = 0.0
 
     init(sampleRate: Double, maxVoices: Int, maxBuses: Int) {
         self.sampleRate = sampleRate
@@ -167,12 +232,21 @@ final class AudioMixer: @unchecked Sendable {
         buses[0].used = true  // master
         busBuffers = .allocate(capacity: maxBuses * Self.blockSize * 2)
         busBuffers.initialize(repeating: 0, count: maxBuses * Self.blockSize * 2)
+        sendBuffers = .allocate(capacity: maxBuses * Self.blockSize * 2)
+        sendBuffers.initialize(repeating: 0, count: maxBuses * Self.blockSize * 2)
+        voiceScratch = .allocate(capacity: Self.blockSize * 2)
+        voiceScratch.initialize(repeating: 0, count: Self.blockSize * 2)
+        effects = .allocate(capacity: maxBuses * Self.effectsPerBus)
+        effects.initialize(repeating: EffectState(), count: maxBuses * Self.effectsPerBus)
     }
 
     deinit {
         voices.deallocate()
         buses.deallocate()
         busBuffers.deallocate()
+        sendBuffers.deallocate()
+        voiceScratch.deallocate()
+        effects.deallocate()
         finished.free()
         positions.free()
         peaks.free()
@@ -203,10 +277,18 @@ final class AudioMixer: @unchecked Sendable {
             voice.loop = start.loop
             voice.pitch = start.pitch
             voice.step = start.source.sampleRate / sampleRate * Double(start.pitch)
+            voice.stepTarget = voice.step
             if let stream = start.source.stream { voice.streamRead = stream.read }
             let (l, r) = Self.panGains(volume: start.volume, pan: start.pan)
             voice.gainL = Ramp(l)
             voice.gainR = Ramp(r)
+            if let spatial = start.spatial {
+                voice.gainL = Ramp(spatial.gainL)
+                voice.gainR = Ramp(spatial.gainR)
+                voice.smoothStep = true
+                voice.spatialFilter.set(type: .lowPass, cutoffL: spatial.cutoffL, cutoffR: spatial.cutoffR, q: 0.7071,
+                                        immediate: true)
+            }
             if start.fadeIn > 0 {
                 voice.fade = Ramp(0)
                 voice.fade.set(1, seconds: start.fadeIn, sampleRate: sampleRate)
@@ -219,6 +301,38 @@ final class AudioMixer: @unchecked Sendable {
             voices[slot].gainR.set(r, seconds: Self.smoothingSeconds, sampleRate: sampleRate)
             voices[slot].pitch = pitch
             voices[slot].step = voices[slot].source.sampleRate / sampleRate * Double(pitch)
+            voices[slot].stepTarget = voices[slot].step
+            voices[slot].smoothStep = false
+        case .setVoiceSpatial(let slot, let generation, let gainL, let gainR, let pitch, let cutoffL, let cutoffR):
+            guard voices[slot].active, voices[slot].generation == generation else { return }
+            voices[slot].gainL.set(gainL, seconds: Self.spatialSmoothingSeconds, sampleRate: sampleRate)
+            voices[slot].gainR.set(gainR, seconds: Self.spatialSmoothingSeconds, sampleRate: sampleRate)
+            voices[slot].pitch = pitch
+            voices[slot].stepTarget = voices[slot].source.sampleRate / sampleRate * Double(pitch)
+            voices[slot].smoothStep = true
+            voices[slot].spatialFilter.set(type: .lowPass, cutoffL: cutoffL, cutoffR: cutoffR, q: 0.7071, immediate: false)
+        case .setVoiceFilter(let slot, let generation, let spec):
+            guard voices[slot].active, voices[slot].generation == generation else { return }
+            if case .filter(let type, let cutoff, let q) = spec {
+                voices[slot].filter.set(type: type, cutoffL: cutoff, cutoffR: cutoff, q: q, immediate: false)
+            } else {
+                voices[slot].filter.reset()
+            }
+        case .setVoiceSend(let slot, let generation, let bus, let level):
+            guard voices[slot].active, voices[slot].generation == generation else { return }
+            if bus != voices[slot].sendBus {
+                voices[slot].sendBus = bus
+                voices[slot].sendLevel = Ramp(0)
+            }
+            voices[slot].sendLevel.set(bus >= 0 ? max(level, 0) : 0, seconds: Self.smoothingSeconds, sampleRate: sampleRate)
+        case .setBusEffect(let bus, let slot, let spec):
+            applyEffect(spec, to: bus * Self.effectsPerBus + slot)
+        case .setBusSend(let bus, let target, let level):
+            if target != buses[bus].sendTarget {
+                buses[bus].sendTarget = target
+                buses[bus].sendLevel = Ramp(0)
+            }
+            buses[bus].sendLevel.set(target >= 0 ? max(level, 0) : 0, seconds: Self.smoothingSeconds, sampleRate: sampleRate)
         case .pauseVoice(let slot, let generation, let paused, let fade):
             guard voices[slot].active, voices[slot].generation == generation, !voices[slot].stopping else { return }
             voices[slot].paused = paused
@@ -250,6 +364,31 @@ final class AudioMixer: @unchecked Sendable {
             buses[bus].duckGain = min(max(gain, 0), 1)
             buses[bus].duckAttack = attack
             buses[bus].duckRelease = release
+        }
+    }
+
+    private func applyEffect(_ spec: EffectSpec, to index: Int) {
+        switch spec {
+        case .none:
+            effects[index] = EffectState()
+        case .filter(let type, let cutoff, let q):
+            if effects[index].kind != .filter { effects[index] = EffectState() }
+            effects[index].kind = .filter
+            effects[index].filter.set(type: type, cutoffL: cutoff, cutoffR: cutoff, q: q, immediate: false)
+        case .reverb(let roomSize, let damping, let width, let wet, let dry, let memory):
+            if effects[index].kind != .reverb || effects[index].reverb?.delay != memory.delay {
+                memory.clear()
+                effects[index] = EffectState()
+                effects[index].kind = .reverb
+                effects[index].reverb = memory
+                effects[index].wet = Ramp(max(wet, 0))
+                effects[index].dry = Ramp(max(dry, 0))
+            }
+            effects[index].feedback = ReverbRef.feedback(roomSize: roomSize)
+            effects[index].damping = min(max(damping, 0), 1) * 0.4
+            effects[index].width = min(max(width, 0), 1)
+            effects[index].wet.set(max(wet, 0), seconds: Self.smoothingSeconds, sampleRate: sampleRate)
+            effects[index].dry.set(max(dry, 0), seconds: Self.smoothingSeconds, sampleRate: sampleRate)
         }
     }
 
@@ -301,17 +440,36 @@ final class AudioMixer: @unchecked Sendable {
         }
 
         busBuffers.update(repeating: 0, count: busCount * Self.blockSize * 2)
+        stepGlide = 1 - exp(-Double(frames) / (sampleRate * 0.03))
 
         for v in 0..<maxVoices where voices[v].active {
             let bus = voices[v].bus
             // A paused bus holds its voices once its fade-out is done.
             if buses[bus].effectivelyPaused && buses[bus].effectivePause == 0 { continue }
-            renderVoice(v, into: busBuffers + bus * Self.blockSize * 2, frames: frames)
+            renderVoice(v, busCount: busCount, frames: frames)
         }
 
         // Buses, children first (a child always has a higher index than its parent).
         for i in stride(from: busCount - 1, through: 0, by: -1) where buses[i].used {
             let buffer = busBuffers + i * Self.blockSize * 2
+            // Sends that arrived for this bus (from voices, and from buses processed before it).
+            let incoming = sendBuffers + i * Self.blockSize * 2
+            for k in 0..<frames * 2 { buffer[k] += incoming[k] }
+            incoming.update(repeating: 0, count: Self.blockSize * 2)
+            for e in 0..<Self.effectsPerBus {
+                let index = i * Self.effectsPerBus + e
+                switch effects[index].kind {
+                case .none: break
+                case .filter:
+                    effects[index].filter.run(buffer, frames: frames, sampleRate: sampleRate)
+                case .reverb:
+                    var state = effects[index]
+                    state.reverb?.process(buffer, frames: frames, feedback: state.feedback, damping: state.damping,
+                                          width: state.width, wet: &state.wet, dry: &state.dry)
+                    effects[index].wet = state.wet
+                    effects[index].dry = state.dry
+                }
+            }
             var peak: Float = 0
             for k in 0..<frames {
                 let gain = buses[i].volume.next() * buses[i].duck.next() * buses[i].pause.next()
@@ -323,6 +481,16 @@ final class AudioMixer: @unchecked Sendable {
             }
             peaks.maxFloat(i, peak)
             if i == 0 { break }
+            let target = buses[i].sendTarget
+            if target >= 0, target < busCount, target != i, buses[target].used,
+               !(buses[i].sendLevel.isSettled && buses[i].sendLevel.value == 0) {
+                let destination = sendBuffers + target * Self.blockSize * 2
+                for k in 0..<frames {
+                    let level = buses[i].sendLevel.next()
+                    destination[2 * k] += buffer[2 * k] * level
+                    destination[2 * k + 1] += buffer[2 * k + 1] * level
+                }
+            }
             let parent = buses[i].parent >= 0 && buses[buses[i].parent].used ? buses[i].parent : 0
             let destination = busBuffers + parent * Self.blockSize * 2
             for k in 0..<frames * 2 { destination[k] += buffer[k] }
@@ -374,8 +542,38 @@ final class AudioMixer: @unchecked Sendable {
         return .frame
     }
 
-    private func renderVoice(_ slot: Int, into buffer: UnsafeMutablePointer<Float>, frames: Int) {
+    /// Renders a voice into the scratch buffer, filters it, and adds it to its bus and send bus.
+    private func renderVoice(_ slot: Int, busCount: Int, frames: Int) {
+        let scratch = voiceScratch
+        scratch.update(repeating: 0, count: frames * 2)
+        renderVoiceSource(slot, into: scratch, frames: frames)
+        if voices[slot].spatialFilter.active {
+            voices[slot].spatialFilter.run(scratch, frames: frames, sampleRate: sampleRate)
+        }
+        if voices[slot].filter.active {
+            voices[slot].filter.run(scratch, frames: frames, sampleRate: sampleRate)
+        }
+        let destination = busBuffers + voices[slot].bus * Self.blockSize * 2
+        for k in 0..<frames * 2 { destination[k] += scratch[k] }
+        let sendBus = voices[slot].sendBus
+        var send = voices[slot].sendLevel
+        if sendBus >= 0, sendBus < busCount, buses[sendBus].used, !(send.isSettled && send.value == 0) {
+            let target = sendBuffers + sendBus * Self.blockSize * 2
+            for k in 0..<frames {
+                let level = send.next()
+                target[2 * k] += scratch[2 * k] * level
+                target[2 * k + 1] += scratch[2 * k + 1] * level
+            }
+            voices[slot].sendLevel = send
+        }
+    }
+
+    private func renderVoiceSource(_ slot: Int, into buffer: UnsafeMutablePointer<Float>, frames: Int) {
         var voice = voices[slot]
+        if voice.smoothStep && voice.step != voice.stepTarget {
+            voice.step += (voice.stepTarget - voice.step) * stepGlide
+            if abs(voice.step - voice.stepTarget) < voice.stepTarget * 1e-5 { voice.step = voice.stepTarget }
+        }
         defer {
             if let stream = voice.source.stream { stream.publishRead(voice.streamRead) }
             positions.store(slot, voice.consumed)

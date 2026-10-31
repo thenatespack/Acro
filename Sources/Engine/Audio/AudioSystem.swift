@@ -11,12 +11,23 @@ import Foundation
 /// engine.audio.duck(engine.audio.music, while: engine.audio.voice)     // music dips under dialogue
 /// engine.audio.music.volume = 0.5
 /// music.stop(fade: 1)
+///
+/// engine.audio.listener.position = cameraPosition                      // 3D: where the ears are
+/// let step = engine.audio.play(shot, at: Vec3(4, 0, -2))               // attenuated, panned, Doppler
+/// let reverb = engine.audio.addBus("reverb")                           // effects: a reverb send bus
+/// reverb.effects = [.reverb(AudioReverb(roomSize: 0.8))]
+/// engine.audio.sfx.send(to: reverb, level: 0.3)
+/// step.filter = AudioFilter(.lowPass, cutoff: 1200)                    // a voice effect
 /// ```
 ///
 /// Use it from one thread (the game's main thread). Calls only queue commands for the audio
 /// thread, so they take effect within one device buffer (a few milliseconds), smoothed so
 /// nothing clicks. `update(dt:)` (the engine calls it every frame) tops up streams, frees
 /// voices that ended, and with an offline device renders the elapsed time.
+///
+/// Spatial voices (`play(_:at:)`, `Voice.worldPosition`) are recomputed from `listener` and their
+/// emitter data on every change and once per `update`; the ECS `AudioListener` / `AudioEmitter`
+/// components do that from transforms (`World.addSpatialAudio`).
 public final class AudioSystem {
     public let device: AudioDevice
     /// The device's rate; everything is converted to it.
@@ -47,6 +58,16 @@ public final class AudioSystem {
     private var levels: [Float]
     private var offlineFrameDebt = 0.0
     private var isShutDown = false
+    private var sounds: [String: SoundBuffer] = [:]
+    /// Reverb delay lines per (bus, effect slot). Kept until the system is freed, because the audio thread holds pointers.
+    private var reverbMemory: [Int: ReverbMemory] = [:]
+    private var derivedListenerVelocity = Vec3.zero
+    private var previousListenerPosition: Vec3?
+
+    /// Where the ears are for spatial voices.
+    public var listener = AudioListenerState() {
+        didSet { if listener != oldValue { refreshSpatial() } }
+    }
 
     private struct BusInfo {
         var name: String
@@ -55,6 +76,9 @@ public final class AudioSystem {
         var muted = false
         var paused = false
         var ducking: Ducking?
+        var effects: [AudioEffect] = []
+        var sendTarget = -1
+        var sendLevel: Float = 0
     }
 
     /// A bus's ducking: lowered to `gain` while `trigger` has playing voices.
@@ -78,6 +102,22 @@ public final class AudioSystem {
         var stopping = false
         var loop = false
         var name = ""
+        var filter: AudioFilter?
+        var sendBus = -1
+        var sendLevel: Float = 0
+        // Spatial voices (nil settings: plain volume and pan).
+        var spatial: SpatialSettings?
+        var emitterPosition = Vec3.zero
+        var emitterVelocity: Vec3?
+        var emitterDirection: Vec3?
+        var derivedVelocity = Vec3.zero
+        var previousPosition: Vec3?
+        var sent: SpatialSend?
+    }
+
+    /// What was last sent for a spatial voice, to skip commands that change nothing.
+    fileprivate struct SpatialSend: Equatable {
+        var gainL: Float, gainR: Float, pitch: Float, cutoffL: Float, cutoffR: Float
     }
 
     /// Starts `device`. Throws if it can't start.
@@ -171,6 +211,34 @@ public final class AudioSystem {
     fileprivate func busMuted(_ index: Int) -> Bool { busInfo[index].muted }
     fileprivate func busPaused(_ index: Int) -> Bool { busInfo[index].paused }
     fileprivate func busLevel(_ index: Int) -> Float { levels[index] }
+    fileprivate func busEffects(_ index: Int) -> [AudioEffect] { busInfo[index].effects }
+    fileprivate func busSend(_ index: Int) -> (target: Int, level: Float) { (busInfo[index].sendTarget, busInfo[index].sendLevel) }
+
+    fileprivate func setBusEffects(_ index: Int, _ effects: [AudioEffect]) {
+        let list = Array(effects.prefix(AudioMixer.effectsPerBus))
+        busInfo[index].effects = list
+        for slot in 0..<AudioMixer.effectsPerBus {
+            send(.setBusEffect(bus: index, slot: slot, slot < list.count ? effectSpec(list[slot], key: index * AudioMixer.effectsPerBus + slot) : .none))
+        }
+    }
+
+    private func effectSpec(_ effect: AudioEffect, key: Int) -> EffectSpec {
+        switch effect {
+        case .filter(let f):
+            return .filter(type: f.type, cutoff: f.cutoff, q: f.q)
+        case .reverb(let r):
+            let memory = reverbMemory[key] ?? ReverbMemory(sampleRate: sampleRate)
+            reverbMemory[key] = memory
+            return .reverb(roomSize: r.roomSize, damping: r.damping, width: r.width, wet: r.wet, dry: r.dry, memory: memory.ref)
+        }
+    }
+
+    fileprivate func setBusSend(_ index: Int, to target: AudioBus?, level: Float) {
+        precondition(target?.index != index, "A bus can't send to itself")
+        busInfo[index].sendTarget = target?.index ?? -1
+        busInfo[index].sendLevel = max(level, 0)
+        send(.setBusSend(bus: index, target: busInfo[index].sendTarget, level: busInfo[index].sendLevel))
+    }
     fileprivate func setBus(_ index: Int, volume: Float? = nil, muted: Bool? = nil, paused: Bool? = nil) {
         if let volume { busInfo[index].volume = max(volume, 0) }
         if let muted { busInfo[index].muted = muted }
@@ -200,6 +268,27 @@ public final class AudioSystem {
                      name: sound.name) { $0.sound = sound }
     }
 
+    /// Plays `sound` as a 3D voice at `position`: attenuated by distance, panned and low-passed
+    /// by its direction relative to `listener`, and pitch-shifted by Doppler as it or the listener
+    /// moves. Move it with `Voice.worldPosition`. Mono sounds work best (a stereo one is balanced,
+    /// not spread). `settings` sets the distance model, cone and Doppler.
+    @discardableResult
+    public func play(_ sound: SoundBuffer, at position: Vec3, settings: SpatialSettings = SpatialSettings(),
+                     on bus: AudioBus? = nil, volume: Float = 1, pitch: Float = 1, loop: Bool = false,
+                     loopRange: Range<Int>? = nil, fadeIn: Double = 0) -> Voice {
+        let range = (loopRange ?? 0..<sound.frameCount).clamped(to: 0..<sound.frameCount)
+        let source = VoiceSource(samples: UnsafePointer(sound.storage), frameCount: sound.frameCount,
+                                 channels: sound.channelCount, sampleRate: sound.sampleRate,
+                                 loopStart: range.lowerBound, loopEnd: range.upperBound, stream: nil)
+        return start(source, bus: bus ?? sfx, volume: volume, pitch: pitch, pan: 0, loop: loop, fadeIn: fadeIn,
+                     spatial: (settings, position), name: sound.name) { $0.sound = sound }
+    }
+
+    /// Makes `sound` findable by `name` (`sound(named:)`), which is how `AudioEmitter` components refer to sounds.
+    public func register(_ sound: SoundBuffer, as name: String) { sounds[name] = sound }
+
+    public func sound(named name: String) -> SoundBuffer? { sounds[name] }
+
     /// Streams `decoder` on `bus` (music by default): about `streamBufferSeconds` are decoded
     /// ahead, topped up by `update`. Looping rewinds the decoder at its end, seamlessly.
     @discardableResult
@@ -225,7 +314,8 @@ public final class AudioSystem {
     }
 
     private func start(_ source: VoiceSource, bus: AudioBus, volume: Float, pitch: Float, pan: Float, loop: Bool,
-                       fadeIn: Double, name: String, retain: (inout Slot) -> Void) -> Voice {
+                       fadeIn: Double, spatial: (settings: SpatialSettings, position: Vec3)? = nil, name: String,
+                       retain: (inout Slot) -> Void) -> Voice {
         reclaimFinishedVoices()
         guard !isShutDown, let slot = freeSlots.popLast() else {
             if !isShutDown { print("AudioSystem: all \(maxVoices) voices busy; '\(name)' not played") }
@@ -237,10 +327,22 @@ public final class AudioSystem {
         var info = Slot(generation: generation, inUse: true, bus: bus.index, volume: max(volume, 0), pan: pan,
                         pitch: pitch, loop: loop, name: name)
         retain(&info)
+        var startPitch = pitch
+        var spatialStart: SpatialStart?
+        if let spatial {
+            info.spatial = spatial.settings
+            info.emitterPosition = spatial.position
+            info.previousPosition = spatial.position
+            let result = spatialResult(info)
+            startPitch = Self.clampPitch(pitch * result.pitch)
+            spatialStart = SpatialStart(gainL: result.gainL, gainR: result.gainR, cutoffL: result.cutoffL, cutoffR: result.cutoffR)
+            info.sent = SpatialSend(gainL: result.gainL, gainR: result.gainR, pitch: startPitch, cutoffL: result.cutoffL,
+                                    cutoffR: result.cutoffR)
+        }
         slots[slot] = info
         send(.start(slot: slot, generation: generation,
-                    VoiceStart(source: source, bus: bus.index, volume: info.volume, pan: pan, pitch: pitch, loop: loop,
-                               fadeIn: fadeIn)))
+                    VoiceStart(source: source, bus: bus.index, volume: info.volume, pan: pan, pitch: startPitch, loop: loop,
+                               fadeIn: fadeIn, spatial: spatialStart)))
         return Voice(system: self, slot: slot, generation: generation)
     }
 
@@ -292,7 +394,77 @@ public final class AudioSystem {
         if let pan { slots[slot].pan = min(max(pan, -1), 1) }
         if let pitch { slots[slot].pitch = Self.clampPitch(pitch) }
         let s = slots[slot]
-        send(.setVoice(slot: slot, generation: s.generation, volume: s.volume, pan: s.pan, pitch: s.pitch))
+        if s.spatial != nil {
+            sendSpatial(slot)
+        } else {
+            send(.setVoice(slot: slot, generation: s.generation, volume: s.volume, pan: s.pan, pitch: s.pitch))
+        }
+    }
+
+    // MARK: - Spatial and effects (used by `Voice`)
+
+    private func spatialResult(_ s: Slot) -> SpatialResult {
+        SpatialAudio.compute(listener: listener, listenerVelocity: listener.velocity ?? derivedListenerVelocity,
+                             position: s.emitterPosition, velocity: s.emitterVelocity ?? s.derivedVelocity,
+                             direction: s.emitterDirection, settings: s.spatial ?? SpatialSettings(), volume: s.volume)
+    }
+
+    /// Recomputes a spatial voice and queues the result if it changed.
+    private func sendSpatial(_ slot: Int) {
+        guard slots[slot].inUse, slots[slot].spatial != nil else { return }
+        let result = spatialResult(slots[slot])
+        let pitch = Self.clampPitch(slots[slot].pitch * result.pitch)
+        let sent = SpatialSend(gainL: result.gainL, gainR: result.gainR, pitch: pitch, cutoffL: result.cutoffL,
+                               cutoffR: result.cutoffR)
+        guard sent != slots[slot].sent else { return }
+        slots[slot].sent = sent
+        send(.setVoiceSpatial(slot: slot, generation: slots[slot].generation, gainL: sent.gainL, gainR: sent.gainR,
+                              pitch: sent.pitch, cutoffL: sent.cutoffL, cutoffR: sent.cutoffR))
+    }
+
+    private func refreshSpatial() {
+        for i in slots.indices where slots[i].inUse && slots[i].spatial != nil { sendSpatial(i) }
+    }
+
+    fileprivate func setSpatial(_ voice: Voice, _ settings: SpatialSettings?) {
+        guard let slot = slotIfCurrent(voice) else { return }
+        if let settings {
+            guard settings != slots[slot].spatial else { return }
+            slots[slot].spatial = settings
+            sendSpatial(slot)
+        } else if slots[slot].spatial != nil {
+            // Back to plain volume and pan, with the spatial low-pass opened.
+            slots[slot].spatial = nil
+            slots[slot].sent = nil
+            let s = slots[slot]
+            let (l, r) = AudioMixer.panGains(volume: s.volume, pan: s.pan)
+            send(.setVoiceSpatial(slot: slot, generation: s.generation, gainL: l, gainR: r, pitch: s.pitch,
+                                  cutoffL: StereoFilter.openCutoff, cutoffR: StereoFilter.openCutoff))
+            send(.setVoice(slot: slot, generation: s.generation, volume: s.volume, pan: s.pan, pitch: s.pitch))
+        }
+    }
+
+    fileprivate func setEmitter(_ voice: Voice, position: Vec3? = nil, velocity: Vec3?? = nil, direction: Vec3?? = nil) {
+        guard let slot = slotIfCurrent(voice) else { return }
+        if slots[slot].spatial == nil { slots[slot].spatial = SpatialSettings() }
+        if let position { slots[slot].emitterPosition = position }
+        if let velocity { slots[slot].emitterVelocity = velocity }
+        if let direction { slots[slot].emitterDirection = direction }
+        sendSpatial(slot)
+    }
+
+    fileprivate func setFilter(_ voice: Voice, _ filter: AudioFilter?) {
+        guard let slot = slotIfCurrent(voice), slots[slot].filter != filter else { return }
+        slots[slot].filter = filter
+        let spec: EffectSpec = filter.map { .filter(type: $0.type, cutoff: $0.cutoff, q: $0.q) } ?? .none
+        send(.setVoiceFilter(slot: slot, generation: voice.generation, spec))
+    }
+
+    fileprivate func setSend(_ voice: Voice, to bus: AudioBus?, level: Float) {
+        guard let slot = slotIfCurrent(voice) else { return }
+        slots[slot].sendBus = bus?.index ?? -1
+        slots[slot].sendLevel = max(level, 0)
+        send(.setVoiceSend(slot: slot, generation: voice.generation, bus: slots[slot].sendBus, level: slots[slot].sendLevel))
     }
 
     fileprivate func pause(_ voice: Voice, _ paused: Bool, fade: Double) {
@@ -331,6 +503,7 @@ public final class AudioSystem {
     /// voices progress and end just as they would on a real device.
     public func update(dt: Double) {
         guard !isShutDown else { return }
+        updateSpatial(dt: dt)
         flush()
         reclaimFinishedVoices()
         for i in slots.indices where slots[i].inUse { slots[i].stream?.fill() }
@@ -342,6 +515,25 @@ public final class AudioSystem {
             reclaimFinishedVoices()
         }
         for i in busInfo.indices { levels[i] = mixer.peaks.exchangeFloat(i, 0) }
+    }
+
+    /// Derives velocities from movement since the last call, then recomputes every spatial voice.
+    private func updateSpatial(dt: Double) {
+        if dt > 0, let previous = previousListenerPosition {
+            derivedListenerVelocity = (listener.position - previous) / Float(dt)
+        } else {
+            derivedListenerVelocity = .zero
+        }
+        previousListenerPosition = listener.position
+        for i in slots.indices where slots[i].inUse && slots[i].spatial != nil {
+            if dt > 0, let previous = slots[i].previousPosition {
+                slots[i].derivedVelocity = (slots[i].emitterPosition - previous) / Float(dt)
+            } else {
+                slots[i].derivedVelocity = .zero
+            }
+            slots[i].previousPosition = slots[i].emitterPosition
+            sendSpatial(i)
+        }
     }
 
     /// Renders `frames` frames with an offline device and returns them (interleaved stereo),
@@ -455,6 +647,48 @@ public struct Voice: Hashable {
         nonmutating set { system?.setVoice(self, pan: newValue) }
     }
 
+    /// A filter on this voice (after its spatial low-pass); nil for none. Cutoff changes glide.
+    public var filter: AudioFilter? {
+        get { system?.info(self)?.filter }
+        nonmutating set { system?.setFilter(self, newValue) }
+    }
+
+    /// Where the voice is for 3D audio (nil for a plain voice). Setting it makes the voice spatial
+    /// (default `spatial` settings); setting nil makes it plain again.
+    public var worldPosition: Vec3? {
+        get { system?.info(self).flatMap { $0.spatial != nil ? $0.emitterPosition : nil } }
+        nonmutating set {
+            if let newValue { system?.setEmitter(self, position: newValue) } else { system?.setSpatial(self, nil) }
+        }
+    }
+
+    /// Meters per second, for Doppler. nil (the default) derives it from how `worldPosition` changes between updates.
+    public var worldVelocity: Vec3? {
+        get { system?.info(self)?.emitterVelocity }
+        nonmutating set { system?.setEmitter(self, velocity: .some(newValue)) }
+    }
+
+    /// The way the sound points, for the cone. nil for omnidirectional.
+    public var worldDirection: Vec3? {
+        get { system?.info(self)?.emitterDirection }
+        nonmutating set { system?.setEmitter(self, direction: .some(newValue)) }
+    }
+
+    /// Distance model, cone and Doppler of a spatial voice (nil for a plain voice).
+    public var spatial: SpatialSettings? {
+        get { system?.info(self)?.spatial }
+        nonmutating set { system?.setSpatial(self, newValue) }
+    }
+
+    /// Sends the voice's signal (after its volume, pan and filters) to `bus` at `level`, in addition to its own bus.
+    /// Typically a bus with a reverb. nil removes the send.
+    public func setSend(to bus: AudioBus?, level: Float) { system?.setSend(self, to: bus, level: level) }
+    public var sendBus: AudioBus? {
+        guard let system, let info = system.info(self), info.sendBus >= 0 else { return nil }
+        return AudioBus(system: system, index: info.sendBus)
+    }
+    public var sendLevel: Float { system?.info(self)?.sendLevel ?? 0 }
+
     /// Fades out over `fade` seconds, then ends.
     public func stop(fade: Double = AudioSystem.defaultFade) { system?.stop(self, fade: fade) }
     /// Fades out over `fade` seconds and holds the position.
@@ -494,6 +728,22 @@ public struct AudioBus: Hashable {
         get { system.busPaused(index) }
         nonmutating set { system.setBus(index, paused: newValue) }
     }
+
+    /// Up to `AudioMixer.effectsPerBus` (4) effects run in order on the bus's mix, before its volume.
+    /// A reverb here is usually a send target (`wet` 1, `dry` 0). Cutoff and mix changes glide.
+    public var effects: [AudioEffect] {
+        get { system.busEffects(index) }
+        nonmutating set { system.setBusEffects(index, newValue) }
+    }
+
+    /// Sends this bus's output (after effects and volume) to `target` at `level`, in addition to its parent.
+    /// Any bus but itself works; a target processed earlier in the block hears it one block (5 ms) late.
+    public func send(to target: AudioBus?, level: Float) { system.setBusSend(index, to: target, level: level) }
+    public var sendTarget: AudioBus? {
+        let target = system.busSend(index).target
+        return target >= 0 ? AudioBus(system: system, index: target) : nil
+    }
+    public var sendLevel: Float { system.busSend(index).level }
 
     /// Peak output level (after volume, mute and ducking; 1 = full scale) over what was mixed
     /// between the last two `update` calls.
