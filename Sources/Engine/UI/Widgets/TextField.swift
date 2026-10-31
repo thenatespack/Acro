@@ -392,7 +392,9 @@ public final class TextField: Widget {
         list.pushClip(UIRect(x: content.x - 1, y: frame.y, width: content.width + 2, height: frame.height))
         if d.text.isEmpty && !placeholder.isEmpty && d.composition == nil {
             let layout = placeholderCache.get(placeholder, font: theme.font, size: size)
-            list.drawText(layout, font: theme.font, at: Vec2(content.x, textY), color: theme.placeholderColor)
+            // Ellipsized like the text when the field is narrower ("path/to/pro…", not "path/to/proje").
+            drawEllipsized(placeholder, layout: layout, size: size, in: UIRect(x: content.x, y: frame.y, width: content.width,
+                                                                                height: frame.height), color: theme.placeholderColor, list: list)
         }
         // Selection behind the text.
         if focused, d.composition == nil, buffer.hasSelection {

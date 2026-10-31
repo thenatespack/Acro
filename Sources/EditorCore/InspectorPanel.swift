@@ -139,7 +139,9 @@ public final class InspectorPanel {
 
         grid.appliesEditsToWorld = false
         grid.componentFilter = { $0 != Name.componentName && $0 != PrefabInstance.componentName }
-        grid.labelWidth = 104
+        // Room for "Receives Shadows" and the like (it was cut at 104); rows with wide editors
+        // shrink the label column first in a narrow inspector.
+        grid.labelWidth = 120
         grid.padding = EdgeInsets(top: 0, left: 0, bottom: 0, right: 8)
         grid.entityName = { [unowned session] entity in session.displayName(of: entity) }
         grid.onFieldEdit = { [unowned self] edit in recorder.handle(edit) }

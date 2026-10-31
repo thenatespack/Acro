@@ -331,6 +331,23 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
         #expect(add.frame.maxY <= group.contentArea.maxY + 0.5 && add.frame.y >= group.contentArea.y)
     }
 
+    /// Selecting the entity that is already selected while an asset is in the inspector shows
+    /// the entity again (the review's prefab-variant state kept showing the asset).
+    @Test func reselectingTheSelectedEntityLeavesTheAssetInspector() throws {
+        let app = layoutApp(Vec2(1280, 720))
+        let session = app.session
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("EditorLayoutTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try #require(session.run(ProjectNewCommand.self, .init(path: folder.path)) != nil)
+        let material = try #require(session.run(AssetNewMaterialCommand.self, .init(name: "EditorLayoutTests Red")))
+        let cube = try #require(session.run(EntityCreateCommand.self, .init(template: .cube)))
+        session.run(SelectionSetCommand.self, .init(entities: [cube.entity]))
+        try #require(session.run(AssetSelectCommand.self, .init(asset: AssetReference(material.asset))) != nil)
+        #expect(session.inspectedAsset != nil)
+        session.run(SelectionSetCommand.self, .init(entities: [cube.entity]))
+        #expect(session.inspectedAsset == nil)
+    }
+
     /// The viewport's caption sits in its tab bar, where it can't cover scene labels (#30);
     /// it falls back to the badge only when the bar has no room.
     @Test func viewportCaptionIsInTheTabBar() throws {

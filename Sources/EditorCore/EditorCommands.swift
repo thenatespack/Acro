@@ -412,6 +412,9 @@ public enum SelectionSetCommand: EditorCommand {
             throw UndoError.entityNotFound(id)
         }
         session.selection.set(arguments.entities, primary: arguments.primary)
+        // Selecting the entity that already was selected (clicking its row again while an asset
+        // is in the inspector) changes nothing in the selection, but shows the entity again.
+        if !arguments.entities.isEmpty { session.inspectedAsset = nil }
         return NoResult()
     }
 }
