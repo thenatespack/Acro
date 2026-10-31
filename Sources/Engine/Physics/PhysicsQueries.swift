@@ -45,16 +45,8 @@ extension PhysicsWorld {
             guard accepts(i, filter), let target = bodies[i].shape else { return true }
             let targetPose = bodies[i].shapePose
             var hit: (fraction: Float, point: Vec3, normal: Vec3, triangle: Int?)?
-            if case .mesh(let mesh) = target.kind {
-                mesh.forEachTriangle(overlapping: Narrowphase.localBounds(swept, in: targetPose)) { t in
-                    let (a, b, c) = mesh.triangle(t)
-                    let tri = WorldConvex.triangle(targetPose.transform(a), targetPose.transform(b), targetPose.transform(c))
-                    if let h = castConvex(moving, translation: translation, against: tri), hit == nil || h.fraction < hit!.fraction {
-                        hit = (h.fraction, h.point, h.normal, t)
-                    }
-                }
-            } else if let h = castConvex(moving, translation: translation, against: WorldConvex(target, targetPose)!) {
-                hit = (h.fraction, h.point, h.normal, nil)
+            castAgainst(target, targetPose, moving, translation, swept) { h in
+                if hit == nil || h.fraction < hit!.fraction { hit = h }
             }
             if let hit {
                 let candidate = RaycastHit(body: id(i), entity: bodies[i].entity, point: hit.point, normal: hit.normal,
@@ -66,6 +58,25 @@ extension PhysicsWorld {
             return true
         }
         return best
+    }
+
+    /// Casts `moving` against `target` (a compound's parts one by one), reporting each hit.
+    private func castAgainst(_ target: Shape, _ targetPose: Pose, _ moving: WorldConvex, _ translation: Vec3, _ swept: AABB,
+                             _ found: ((fraction: Float, point: Vec3, normal: Vec3, triangle: Int?)) -> Void) {
+        switch target.kind {
+        case .compound(let parts):
+            for part in parts { castAgainst(part.shape, targetPose * part.pose, moving, translation, swept, found) }
+        case .mesh(let mesh):
+            mesh.forEachTriangle(overlapping: Narrowphase.localBounds(swept, in: targetPose)) { t in
+                let (a, b, c) = mesh.triangle(t)
+                let tri = WorldConvex.triangle(targetPose.transform(a), targetPose.transform(b), targetPose.transform(c))
+                if let h = castConvex(moving, translation: translation, against: tri) { found((h.fraction, h.point, h.normal, t)) }
+            }
+        default:
+            if let h = castConvex(moving, translation: translation, against: WorldConvex(target, targetPose)!) {
+                found((h.fraction, h.point, h.normal, nil))
+            }
+        }
     }
 
     /// `shapeCast` with a sphere.
@@ -114,7 +125,7 @@ extension PhysicsWorld {
 
     // MARK: - Internals
 
-    private func accepts(_ i: Int, _ filter: QueryFilter) -> Bool {
+    func accepts(_ i: Int, _ filter: QueryFilter) -> Bool {
         let b = bodies[i]
         guard b.isAlive, b.shape != nil, b.layer & filter.mask != 0 else { return false }
         if b.isTrigger && !filter.includeTriggers { return false }
@@ -126,20 +137,32 @@ extension PhysicsWorld {
         let pose = bodies[i].shapePose
         // In the shape's local space.
         let o = pose.inverseTransform(ray.origin), d = pose.rotation.conjugate * ray.direction
-        var result: (t: Float, normal: Vec3, triangle: Int?)?
-        switch shape.kind {
-        case .sphere:
-            result = Self.raySphere(o, d, .zero, shape.radius).map { ($0.t, $0.normal, nil) }
-        case .capsule(let h):
-            result = Self.rayCapsule(o, d, Vec3(0, -h, 0), Vec3(0, h, 0), shape.radius).map { ($0.t, $0.normal, nil) }
-        case .polyhedron(let p):
-            result = Self.rayPolyhedron(o, d, p, maxT: maxDistance).map { ($0.t, $0.normal, nil) }
-        case .mesh(let mesh):
-            result = mesh.raycast(origin: o, direction: d, maxT: maxDistance).map { ($0.t, $0.normal, $0.triangle) }
-        }
-        guard let r = result, r.t <= maxDistance else { return nil }
+        guard let r = Self.raycastLocal(shape, o, d, maxT: maxDistance), r.t <= maxDistance else { return nil }
         return RaycastHit(body: id(i), entity: bodies[i].entity, point: ray.point(at: r.t), normal: pose.rotation * r.normal,
                           distance: r.t, triangle: r.triangle)
+    }
+
+    /// Ray (unit `d`) against `shape` in its own space; a compound's nearest part.
+    private static func raycastLocal(_ shape: Shape, _ o: Vec3, _ d: Vec3, maxT: Float) -> (t: Float, normal: Vec3, triangle: Int?)? {
+        switch shape.kind {
+        case .sphere:
+            return raySphere(o, d, .zero, shape.radius).map { ($0.t, $0.normal, nil) }
+        case .capsule(let h):
+            return rayCapsule(o, d, Vec3(0, -h, 0), Vec3(0, h, 0), shape.radius).map { ($0.t, $0.normal, nil) }
+        case .polyhedron(let p):
+            return rayPolyhedron(o, d, p, maxT: maxT).map { ($0.t, $0.normal, nil) }
+        case .mesh(let mesh):
+            return mesh.raycast(origin: o, direction: d, maxT: maxT).map { ($0.t, $0.normal, $0.triangle) }
+        case .compound(let parts):
+            var best: (t: Float, normal: Vec3, triangle: Int?)?
+            for part in parts {
+                let po = part.pose.inverseTransform(o), pd = part.pose.rotation.conjugate * d
+                if let hit = raycastLocal(part.shape, po, pd, maxT: best?.t ?? maxT), best == nil || hit.t < best!.t {
+                    best = (hit.t, part.pose.rotation * hit.normal, nil)
+                }
+            }
+            return best
+        }
     }
 
     /// Ray (unit `d`) against a sphere; an origin inside hits at 0 facing back along the ray.

@@ -96,4 +96,5 @@ extension DemoScene {
     SkyScene.self,
     PhysicsScene.self,
     Audio3DScene.self,
+    CharacterScene.self,
 ]

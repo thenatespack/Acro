@@ -95,6 +95,10 @@ extension PhysicsWorld {
                     draw.polyline(points, color: color, style: style)
                 }
             }
+        case .compound(let parts):
+            for part in parts {
+                drawShape(part.shape, pose * part.pose, color: color, style: style, into: draw, maxMeshTriangles: maxMeshTriangles)
+            }
         case .polyhedron(let p):
             for e in p.edges { draw.line(pose.transform(p.vertices[e.a]), pose.transform(p.vertices[e.b]), color: color, style: style) }
         case .mesh(let mesh):

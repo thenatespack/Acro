@@ -18,9 +18,35 @@ public enum ColliderShape: Codable, Equatable, Sendable {
     /// A triangle mesh (counter-clockwise front faces, though collisions are two-sided). Only
     /// static and kinematic bodies may use it; on a dynamic body it acts as kinematic.
     case triangleMesh(vertices: [Vec3], indices: [UInt32])
+    /// Several shapes rigidly joined (a table from a top and four legs). Mass, center of mass
+    /// and inertia are combined from the parts; nested compounds are flattened and meshes are
+    /// left out. As a moving shape in `shapeCast` a compound isn't supported (it can be the target).
+    case compound(parts: [CompoundPart])
 
     /// A box with half extents `h`.
     public static func box(_ h: Vec3) -> ColliderShape { .box(halfExtents: h) }
+}
+
+/// One shape of a `.compound`, placed in the compound's frame.
+public struct CompoundPart: Codable, Equatable, Sendable {
+    public var shape: ColliderShape
+    /// The part's position and rotation in the compound's frame (the position isn't scaled by
+    /// the entity's scale, like `Collider.offset`; the shape is).
+    public var offset: Vec3
+    public var rotation: Quat
+    /// Scales the part's shape (a part made from a scaled child entity).
+    public var scale: Vec3
+    /// kg/m³ for this part's mass; nil uses the body's density.
+    public var density: Float?
+
+    public init(_ shape: ColliderShape, offset: Vec3 = .zero, rotation: Quat = .identity, scale: Vec3 = .one,
+                density: Float? = nil) {
+        self.shape = shape
+        self.offset = offset
+        self.rotation = rotation
+        self.scale = scale
+        self.density = density
+    }
 }
 
 /// Mass, center of mass and inertia tensor (about the center of mass, in the shape's frame).
@@ -227,6 +253,15 @@ final class Shape: @unchecked Sendable {
         case capsule(halfHeight: Float)
         case polyhedron(ConvexPolyhedron)
         case mesh(TriangleMesh)
+        /// Convex parts (never meshes or compounds) with their poses in the shape's frame.
+        case compound([Part])
+    }
+
+    /// A baked part of a compound.
+    struct Part {
+        let shape: Shape
+        let pose: Pose
+        let density: Float?
     }
 
     let kind: Kind
@@ -277,8 +312,32 @@ final class Shape: @unchecked Sendable {
             kind = .mesh(mesh)
             radius = 0
             localBounds = mesh.bounds
+        case .compound(let parts):
+            var baked: [Part] = []
+            Self.flatten(parts, Pose(), scale, into: &baked)
+            if baked.isEmpty {
+                kind = .sphere
+                radius = 0.01
+                localBounds = AABB(min: Vec3(repeating: -0.01), max: Vec3(repeating: 0.01))
+            } else {
+                kind = .compound(baked)
+                radius = 0
+                localBounds = baked.dropFirst().reduce(baked[0].shape.bounds(at: baked[0].pose)) { $0.union($1.shape.bounds(at: $1.pose)) }
+            }
         }
         boxHalfExtents = boxHalf
+    }
+
+    /// Bakes `parts` at `scale` (their shapes only), nested compounds placed through `base`.
+    private static func flatten(_ parts: [CompoundPart], _ base: Pose, _ scale: Vec3, into baked: inout [Part]) {
+        for part in parts {
+            let pose = base * Pose(position: part.offset, rotation: part.rotation.normalized)
+            switch part.shape {
+            case .triangleMesh: continue
+            case .compound(let inner): flatten(inner, pose, part.scale * scale, into: &baked)
+            default: baked.append(Part(shape: Shape(part.shape, scale: part.scale * scale), pose: pose, density: part.density))
+            }
+        }
     }
 
     /// The core of a convex shape in local space: the points whose hull, grown by `radius`, is
@@ -288,7 +347,7 @@ final class Shape: @unchecked Sendable {
         case .sphere: [.zero]
         case .capsule(let h): [Vec3(0, -h, 0), Vec3(0, h, 0)]
         case .polyhedron(let p): p.vertices
-        case .mesh: []
+        case .mesh, .compound: []
         }
     }
 
@@ -300,6 +359,10 @@ final class Shape: @unchecked Sendable {
             let axis = pose.rotation * Vec3(0, h, 0)
             let a = pose.position - axis, b = pose.position + axis
             return AABB(min: pointwiseMin(a, b) - Vec3(repeating: radius), max: pointwiseMax(a, b) + Vec3(repeating: radius))
+        case .compound(let parts):
+            return parts.dropFirst().reduce(parts[0].shape.bounds(at: pose * parts[0].pose)) {
+                $0.union($1.shape.bounds(at: pose * $1.pose))
+            }
         case .polyhedron, .mesh:
             // The local box rotated: |R| * half extent around the rotated center.
             let m = Mat3(pose.rotation)
@@ -331,6 +394,23 @@ final class Shape: @unchecked Sendable {
             return p.massProperties(density: density)
         case .mesh:
             return MassProperties(mass: 0, inertia: .zero)
+        case .compound(let parts):
+            // Sum the parts' masses; the inertia about the combined center is each part's
+            // (rotated) plus the parallel-axis term.
+            let props = parts.map { ($0, $0.shape.massProperties(density: $0.density ?? density)) }
+            let mass = props.reduce(0) { $0 + $1.1.mass }
+            guard mass > 0 else { return MassProperties(mass: 0, inertia: .zero) }
+            let centers = props.map { $0.0.pose.transform($0.1.center) }
+            var center = Vec3.zero
+            for (k, p) in props.enumerated() { center += centers[k] * p.1.mass }
+            center /= mass
+            var inertia = Mat3.zero
+            for (k, p) in props.enumerated() {
+                let r = Mat3(p.0.pose.rotation), d = centers[k] - center
+                inertia = inertia + r * p.1.inertia * r.transpose
+                    + (Mat3.identity * dot(d, d) - Mat3.outer(d, d)) * p.1.mass
+            }
+            return MassProperties(mass: mass, center: center, inertia: inertia)
         }
     }
 }

@@ -277,6 +277,11 @@ extension PhysicsWorld {
         for i in bodies.indices where bodies[i].isAlive && bodies[i].motion != .static {
             bodies[i].force = .zero
             bodies[i].torque = .zero
+            if bodies[i].motion == .kinematic {
+                // What `velocity(of:at:)` reports until the next step: how far the body moved.
+                bodies[i].carryLinear = bodies[i].kinematicTarget == nil ? .zero : bodies[i].linearVelocity
+                bodies[i].carryAngular = bodies[i].kinematicTarget == nil ? .zero : bodies[i].angularVelocity
+            }
             if bodies[i].motion == .kinematic, let target = bodies[i].kinematicTarget {
                 bodies[i].pose = target
                 bodies[i].kinematicTarget = nil

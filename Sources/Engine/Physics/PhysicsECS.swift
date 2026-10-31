@@ -1,11 +1,18 @@
 // Drives a PhysicsWorld from a World's components. Each fixed step:
-// 1. ECS -> physics: bodies for new `Collider`s, removed for despawned entities or removed
+// 1. ECS -> physics: bodies for new `Collider`s (child colliders under a `RigidBody` entity
+//    become parts of its compound shape), removed for despawned entities or removed
 //    colliders; edited colliders and rigid bodies applied; a `Transform` the game changed
 //    teleports a dynamic or static body and moves a kinematic one (with velocity, so it
 //    pushes); `Joint`s created once both bodies exist, recreated when edited.
 // 2. `physics.step(dt)`.
 // 3. physics -> ECS: dynamic bodies write their pose into `Transform` (relative to the parent
 //    for children) and their velocities into `RigidBody`, only when they changed.
+// Interpolation: a body drawn between steps (`RigidBody.interpolation`, or the world's
+// `interpolatesPoses`) gets a `Transform` between its last two poses by `time.alpha`, written
+// by the "physics.interpolate" system in `.update`. "physics.restore" puts the exact
+// `Transform` back before the next fixed step (first in `.fixedUpdate`, so game systems and
+// the sync see exact values); a `Transform` the game changed meanwhile is kept and applied.
+// The simulation never reads the interpolated poses.
 // The sync walks components in the world's storage order and bodies in slot order, so it is
 // as deterministic as the world itself.
 
@@ -13,10 +20,18 @@ extension World {
     /// Simulates `physics` from this world's `Collider`, `RigidBody` and `Joint` components:
     /// adds a `.fixedUpdate` system "physics" that syncs, steps by the fixed timestep and
     /// writes results back, and an `.update` system "physics.events" (first in its stage).
+    /// "character" (just before it) moves `CharacterController`s. "physics.restore" (first in `.fixedUpdate`) and "physics.interpolate" (`.update`, after
+    /// the events) draw interpolated bodies between steps.
     /// `physics.events` then holds the events of the current frame's fixed steps; read them
     /// in `.update` / `.lateUpdate` systems or after `world.update`, or set `physics.onEvent`.
     public func addPhysics(_ physics: PhysicsWorld) {
         PhysicsWorld.registerComponents()
+        addSystem("physics.restore", stage: .fixedUpdate, before: systemNames(in: .fixedUpdate).first) { _ in
+            physics.restoreExactTransforms(in: self)
+        }
+        addSystem("character", stage: .fixedUpdate) { world in
+            physics.updateCharacters(in: world, dt: world.time.delta)
+        }
         addSystem("physics", stage: .fixedUpdate) { world in
             if world.time.fixedStepsThisFrame == 1 { physics.clearEvents() }
             physics.syncFromWorld(world, dt: world.time.delta)
@@ -26,6 +41,9 @@ extension World {
         addSystem("physics.events", stage: .update, before: systemNames(in: .update).first) { world in
             // A frame without fixed steps has no events (don't report the last frame's twice).
             if world.time.fixedStepsThisFrame == 0 { physics.clearEvents() }
+        }
+        addSystem("physics.interpolate", stage: .update, after: "physics.events") { world in
+            physics.applyInterpolation(in: world)
         }
     }
 }
@@ -52,14 +70,36 @@ extension PhysicsWorld {
 
     /// ECS -> physics (step 1 above). `addPhysics` calls this; call it yourself for a custom loop.
     public func syncFromWorld(_ world: World, dt: Float) {
-        for i in bodies.indices.dropFirst() where bodies[i].isAlive {
-            guard let e = bodies[i].entity else { continue }
-            if !world.isAlive(e) || !world.has(Collider.self, for: e) || bodyForEntity[e] != i { removeBody(at: i) }
-        }
-
+        // Which entities get a body: every collider that isn't a part of another body, and
+        // the `RigidBody` entities that have only child colliders.
         var colliders: [(Entity, Collider)] = []
         world.query(Collider.self) { e, c in colliders.append((e, c)) }
-        for (e, collider) in colliders {
+        var members: [Entity: [(part: CompoundPart, collider: Collider)]] = [:]
+        var compoundRoots: [Entity] = []
+        var joined: Set<Entity> = []
+        for (e, c) in colliders where !c.isTrigger && !world.has(RigidBody.self, for: e) {
+            guard let root = compoundRoot(of: e, in: world) else { continue }
+            joined.insert(e)
+            if members[root] == nil { compoundRoots.append(root) }
+            members[root, default: []].append((compoundPart(of: e, c, under: root, in: world), c))
+        }
+        var plan: [(Entity, Collider)] = []
+        var planned: Set<Entity> = []
+        for (e, c) in colliders where !joined.contains(e) {
+            plan.append((e, effectiveCollider(c, members[e])))
+            planned.insert(e)
+        }
+        for root in compoundRoots where !planned.contains(root) {
+            plan.append((root, effectiveCollider(nil, members[root])))
+            planned.insert(root)
+        }
+
+        for i in bodies.indices.dropFirst() where bodies[i].isAlive {
+            guard let e = bodies[i].entity else { continue }
+            if !world.isAlive(e) || !planned.contains(e) || bodyForEntity[e] != i { removeBody(at: i) }
+        }
+
+        for (e, collider) in plan {
             let transform = world.get(Transform.self, for: e) ?? Transform()
             let rigidBody = world.get(RigidBody.self, for: e)
             let (pose, scale) = worldPose(of: e, transform, in: world)
@@ -146,19 +186,107 @@ extension PhysicsWorld {
                 world.add(rb, to: e)
                 bodies[i].sync.rigidBody = rb
             }
-            guard var transform = world.get(Transform.self, for: e) else { continue }
-            if let parent = world.parent(of: e), world.has(Transform.self, for: parent) {
-                let parentWorld = Transform(matrix: world.worldMatrix(of: parent))
-                let p = parentWorld.rotation.conjugate * (body.pose.position - parentWorld.position)
-                transform.position = p / parentWorld.scale
-                transform.rotation = (parentWorld.rotation.conjugate * body.pose.rotation).normalized
-            } else {
-                transform.position = body.pose.position
-                transform.rotation = body.pose.rotation
-            }
-            if transform != world.get(Transform.self, for: e) { world.add(transform, to: e) }
+            guard let current = world.get(Transform.self, for: e) else { continue }
+            let transform = localTransform(for: body.pose, base: current, entity: e, in: world)
+            if transform != current { world.add(transform, to: e) }
             bodies[i].sync.transform = transform
         }
+    }
+
+    /// `base` (for its scale) placed at the world pose `pose`, as the entity's local `Transform`.
+    private func localTransform(for pose: Pose, base: Transform, entity e: Entity, in world: World) -> Transform {
+        var transform = base
+        if let parent = world.parent(of: e), world.has(Transform.self, for: parent) {
+            let parentWorld = Transform(matrix: world.worldMatrix(of: parent))
+            let p = parentWorld.rotation.conjugate * (pose.position - parentWorld.position)
+            transform.position = p / parentWorld.scale
+            transform.rotation = (parentWorld.rotation.conjugate * pose.rotation).normalized
+        } else {
+            transform.position = pose.position
+            transform.rotation = pose.rotation
+        }
+        return transform
+    }
+
+    // MARK: - Interpolation
+
+    /// Writes interpolated `Transform`s (by `world.time.alpha`) for the bodies that want them.
+    /// `addPhysics` calls this in `.update`; call it yourself for a custom loop.
+    public func applyInterpolation(in world: World) {
+        let alpha = world.time.alpha
+        for i in bodies.indices.dropFirst() where bodies[i].isAlive && bodies[i].motion != .static {
+            guard let e = bodies[i].entity, world.isAlive(e), let base = bodies[i].sync.transform,
+                  let current = world.get(Transform.self, for: e) else { continue }
+            let mode = bodies[i].sync.rigidBody?.interpolation ?? .inherit
+            guard mode == .on || (mode == .inherit && interpolatesPoses) else {
+                if bodies[i].smoothed != nil { restoreExactTransform(i, in: world) }
+                continue
+            }
+            // The game moved it since: that edit wins and is applied by the next sync.
+            if current != base && current != bodies[i].smoothed {
+                bodies[i].smoothed = nil
+                continue
+            }
+            let shown = localTransform(for: interpolated(i, alpha), base: base, entity: e, in: world)
+            if shown != current { world.add(shown, to: e) }
+            bodies[i].smoothed = shown == base ? nil : shown
+        }
+    }
+
+    /// Puts the exact simulated `Transform` back on every body drawn interpolated (done before
+    /// each fixed step; call it before saving a scene or reading exact poses from `Transform`s).
+    public func restoreExactTransforms(in world: World) {
+        for i in bodies.indices.dropFirst() where bodies[i].isAlive && bodies[i].smoothed != nil {
+            restoreExactTransform(i, in: world)
+        }
+    }
+
+    private func restoreExactTransform(_ i: Int, in world: World) {
+        if let e = bodies[i].entity, world.isAlive(e), let base = bodies[i].sync.transform,
+           world.get(Transform.self, for: e) == bodies[i].smoothed {
+            world.add(base, to: e)
+        }
+        bodies[i].smoothed = nil
+    }
+
+    // MARK: - Compound colliders
+
+    /// The nearest ancestor with a `RigidBody`, which the collider on `e` joins as a part.
+    private func compoundRoot(of e: Entity, in world: World) -> Entity? {
+        var current = world.parent(of: e)
+        while let c = current {
+            if world.has(RigidBody.self, for: c) { return c }
+            current = world.parent(of: c)
+        }
+        return nil
+    }
+
+    /// The collider on `e` as a part of `root`'s body: placed by the `Transforms` between them
+    /// (the chain below `root`, so it is exact and independent of where the body is) and the
+    /// collider's own offset; `root`'s world scale is baked into the shapes later.
+    private func compoundPart(of e: Entity, _ c: Collider, under root: Entity, in world: World) -> CompoundPart {
+        var chain = Mat4.identity
+        var current = e
+        while current != root, let parent = world.parent(of: current) {
+            chain = (world.get(Transform.self, for: current) ?? Transform()).matrix * chain
+            current = parent
+        }
+        let relative = Transform(matrix: chain)
+        let rootScale = worldPose(of: root, world.get(Transform.self, for: root) ?? Transform(), in: world).1
+        return CompoundPart(c.shape, offset: relative.position * rootScale + relative.rotation * c.offset,
+                            rotation: (relative.rotation * c.rotation).normalized, scale: relative.scale, density: c.density)
+    }
+
+    /// `own` (the body entity's collider, if any) with the child colliders `members` joined into
+    /// one compound; `own` alone when there are none.
+    private func effectiveCollider(_ own: Collider?, _ members: [(part: CompoundPart, collider: Collider)]?) -> Collider {
+        guard let members, !members.isEmpty else { return own! }
+        var parts: [CompoundPart] = []
+        if let own { parts.append(CompoundPart(own.shape, offset: own.offset, rotation: own.rotation, density: own.density)) }
+        parts += members.map(\.part)
+        let base = own ?? members[0].collider
+        return Collider(.compound(parts: parts), friction: base.friction, restitution: base.restitution, density: base.density,
+                        isTrigger: own?.isTrigger ?? false, layer: base.layer, mask: base.mask)
     }
 
     /// The entity's world position and rotation, and its world scale.

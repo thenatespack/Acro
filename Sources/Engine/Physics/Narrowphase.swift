@@ -8,7 +8,8 @@
 //   pairs, then the incident face clipped against the reference face (up to four points) or
 //   one point for an edge-edge contact;
 // - triangle meshes: each triangle near the other shape as a flat polyhedron, the points
-//   reduced to four.
+//   reduced to four;
+// - compounds: each part against the other shape, the points reduced to four.
 
 /// One contact point, in world space. `normal` points from shape A to shape B.
 struct ContactPoint {
@@ -46,7 +47,7 @@ struct WorldConvex {
         case .polyhedron(let p):
             let world = p.transformed(by: pose)
             self.init(points: world.vertices, radius: 0, poly: world)
-        case .mesh:
+        case .mesh, .compound:
             return nil
         }
     }
@@ -60,6 +61,15 @@ enum Narrowphase {
     /// Points closer than `margin` count (speculative contacts); a pair further apart gives none.
     static func collide(_ a: Shape, _ poseA: Pose, _ b: Shape, _ poseB: Pose, margin: Float) -> [ContactPoint] {
         switch (a.kind, b.kind) {
+        case (.compound(let parts), _):
+            // Each part against the other shape; the union reduced to a four point manifold.
+            var points: [ContactPoint] = []
+            for part in parts { points += collide(part.shape, poseA * part.pose, b, poseB, margin: margin) }
+            return reduce(points)
+        case (_, .compound(let parts)):
+            var points: [ContactPoint] = []
+            for part in parts { points += collide(a, poseA, part.shape, poseB * part.pose, margin: margin) }
+            return reduce(points)
         case (.mesh, .mesh):
             return []
         case (.mesh(let mesh), _):

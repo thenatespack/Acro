@@ -1,6 +1,16 @@
 // ECS components for physics. An entity with a `Collider` gets a body: static without a
-// `RigidBody`, else as the `RigidBody` says. A `Joint` connects the entity's body to another
-// entity's body (or to the world). All three serialize with scenes.
+// `RigidBody`, else as the `RigidBody` says. Child entities with a `Collider` and no
+// `RigidBody` under a `RigidBody` entity join its body as parts of a compound shape. A
+// `Joint` connects the entity's body to another entity's body (or to the world). All of them
+// serialize with scenes.
+
+/// Whether an entity's displayed `Transform` is interpolated between fixed steps.
+public enum PoseInterpolation: String, Codable, Sendable, CaseIterable {
+    /// Follow `PhysicsWorld.interpolatesPoses`.
+    case inherit
+    case on
+    case off
+}
 
 /// Makes an entity's collider move: dynamic (simulated) or kinematic (moved by its
 /// `Transform`). Without one, a `Collider` is static.
@@ -11,7 +21,8 @@ public struct RigidBody: Component, Codable, Equatable, Sendable {
          "angularVelocity": FieldHints(tooltip: "rad/s, world space; written back by the simulation"),
          "linearDamping": FieldHints(range: 0...100, step: 0.01), "angularDamping": FieldHints(range: 0...100, step: 0.01),
          "gravityScale": FieldHints(range: -10...10, step: 0.1),
-         "startsAsleep": FieldHints(tooltip: "Created asleep (a stack built at rest) until something touches it")]
+         "startsAsleep": FieldHints(tooltip: "Created asleep (a stack built at rest) until something touches it"),
+         "interpolation": FieldHints(tooltip: "Smooth the displayed Transform between fixed steps (the simulation stays exact)")]
     }
 
     public var motion: MotionType
@@ -22,10 +33,11 @@ public struct RigidBody: Component, Codable, Equatable, Sendable {
     public var gravityScale: Float
     public var allowSleep: Bool
     public var startsAsleep: Bool
+    public var interpolation: PoseInterpolation
 
     public init(_ motion: MotionType = .dynamic, linearVelocity: Vec3 = .zero, angularVelocity: Vec3 = .zero,
                 linearDamping: Float = 0.05, angularDamping: Float = 0.1, gravityScale: Float = 1, allowSleep: Bool = true,
-                startsAsleep: Bool = false) {
+                startsAsleep: Bool = false, interpolation: PoseInterpolation = .inherit) {
         self.motion = motion
         self.linearVelocity = linearVelocity
         self.angularVelocity = angularVelocity
@@ -34,10 +46,29 @@ public struct RigidBody: Component, Codable, Equatable, Sendable {
         self.gravityScale = gravityScale
         self.allowSleep = allowSleep
         self.startsAsleep = startsAsleep
+        self.interpolation = interpolation
+    }
+
+    // Scenes saved before `interpolation` existed don't have the key.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        motion = try c.decode(MotionType.self, forKey: .motion)
+        linearVelocity = try c.decode(Vec3.self, forKey: .linearVelocity)
+        angularVelocity = try c.decode(Vec3.self, forKey: .angularVelocity)
+        linearDamping = try c.decode(Float.self, forKey: .linearDamping)
+        angularDamping = try c.decode(Float.self, forKey: .angularDamping)
+        gravityScale = try c.decode(Float.self, forKey: .gravityScale)
+        allowSleep = try c.decode(Bool.self, forKey: .allowSleep)
+        startsAsleep = try c.decode(Bool.self, forKey: .startsAsleep)
+        interpolation = try c.decodeIfPresent(PoseInterpolation.self, forKey: .interpolation) ?? .inherit
     }
 }
 
-/// An entity's collision shape (scaled by the entity's world scale) and surface.
+/// An entity's collision shape (scaled by the entity's world scale) and surface. Under a
+/// `RigidBody` entity (and without a `RigidBody` of its own), it is a part of that body's
+/// compound shape instead: placed by the entity's `Transform` relative to the body, with its
+/// own `density`; `friction`, `restitution`, `layer` and `mask` come from the body entity's
+/// collider (or the first part when it has none), and trigger colliders stay separate.
 public struct Collider: Component, Codable, Equatable, Sendable {
     public static let componentName = "Collider"
     public static var fieldHints: [String: FieldHints] {
@@ -116,6 +147,6 @@ extension PhysicsWorld {
     /// Registers the physics components with `ComponentRegistry` (done by `addPhysics`, and
     /// needed before loading scene files that use them into a world that hasn't seen them).
     public static func registerComponents() {
-        ComponentRegistry.register(RigidBody.self, Collider.self, Joint.self)
+        ComponentRegistry.register(RigidBody.self, Collider.self, Joint.self, CharacterController.self)
     }
 }
