@@ -4,6 +4,9 @@ public struct EngineConfig: Sendable {
     public var title: String
     public var width: Int
     public var height: Int
+    /// Keep the window at `width` x `height` even when that is larger than the screen (macOS,
+    /// Metal only; it hangs off the bottom right). Otherwise it is shrunk to fit, as usual.
+    public var allowsWindowLargerThanScreen = false
     /// nil picks the `ENGINE_BACKEND` environment variable, then the platform default.
     public var backend: GraphicsBackend?
     public var clearColor: Vec4
@@ -345,7 +348,10 @@ public final class Engine {
         switch backend {
         case .metal:
             #if canImport(Metal) && canImport(AppKit)
-            let appKitWindow = AppKitWindow(title: config.title, width: config.width, height: config.height)
+            let appKitWindow = AppKitWindow(
+                title: config.title, width: config.width, height: config.height,
+                allowsLargerThanScreen: config.allowsWindowLargerThanScreen
+            )
             window = appKitWindow
             device = try MetalRenderDevice(layer: appKitWindow.metalLayer, sampleCount: sampleCount)
             #else

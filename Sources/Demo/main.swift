@@ -211,6 +211,7 @@ while i < arguments.count {
         guard parts.count == 2, parts[0] > 0, parts[1] > 0 else { fail("--window takes <width>x<height> in points") }
         config.width = parts[0]
         config.height = parts[1]
+        config.allowsWindowLargerThanScreen = true
     case "--backend":
         let name = value()
         guard let backend = GraphicsBackend(rawValue: name) else {

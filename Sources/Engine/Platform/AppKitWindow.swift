@@ -2,12 +2,15 @@
 import AppKit
 import QuartzCore
 
-/// Keeps a window that is larger than its screen at the requested size (AppKit would shrink
-/// it to fit), so `--window 1920x1080` really gives a 4K drawable on a smaller display. The
-/// title bar stays at the top of the screen. Windows that fit are constrained as usual.
+/// With `allowsLargerThanScreen`, keeps a window that is larger than its screen at the requested
+/// size (AppKit would shrink it to fit), so `--window 1920x1080` really gives a 4K drawable on a
+/// smaller display. The title bar stays at the top of the screen. Otherwise, and for windows that
+/// fit, it is constrained as usual.
 private final class GameWindow: NSWindow {
+    var allowsLargerThanScreen = false
+
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
-        guard let visible = (screen ?? self.screen ?? NSScreen.main)?.visibleFrame,
+        guard allowsLargerThanScreen, let visible = (screen ?? self.screen ?? NSScreen.main)?.visibleFrame,
               frameRect.width > visible.width || frameRect.height > visible.height
         else { return super.constrainFrameRect(frameRect, to: screen) }
         return NSRect(x: visible.minX, y: visible.maxY - frameRect.height, width: frameRect.width, height: frameRect.height)
@@ -28,16 +31,18 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
     private var cursorHidden = false
     private let gamepads = makePlatformGamepadSource()
 
-    init(title: String, width: Int, height: Int) {
+    init(title: String, width: Int, height: Int, allowsLargerThanScreen: Bool = false) {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
 
-        window = GameWindow(
+        let gameWindow = GameWindow(
             contentRect: NSRect(x: 0, y: 0, width: width, height: height),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
+        gameWindow.allowsLargerThanScreen = allowsLargerThanScreen
+        window = gameWindow
         view = GameView(frame: window.contentLayoutRect)
         super.init()
 
