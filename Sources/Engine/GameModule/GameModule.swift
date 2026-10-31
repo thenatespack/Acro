@@ -35,6 +35,31 @@ import Foundation
 // product's whole target closure statically, Engine included, and a package can't depend on
 // its own products to get a shared `libEngine`. See README "Game modules".
 //
+// ## Versions
+//
+// The major version is in the entry point's name (`_v1`) and is what `register` returns; a
+// host refuses another one. Minor versions add optional parts a module may use, and old
+// modules keep loading: `register` records the minor version the module was compiled
+// against (`GameModule.abiMinorVersion`, 0 for modules from before minor versions).
+// 1.1 added the reload hooks (`willUnload` / `didLoad`, below).
+//
+// ## State across reloads
+//
+// Each load maps a fresh copy of the library, so the module's statics (singletons, caches,
+// counters) start over. ECS state survives on its own (components are serialized and
+// restored); for the rest, hand it from the old code to the new as Codable data:
+//
+// ```swift
+// game.willUnload { Stats.shared }                       // any Encodable; JSON in between
+// game.didLoad(Stats.self) { saved in Stats.shared = saved ?? Stats() }
+// ```
+//
+// The host calls the old module's `willUnload` before taking it out and the new module's
+// `didLoad` after its types are registered, with the decoded state (nil on the first load,
+// when the previous version saved nothing, or when the data doesn't decode as the new type:
+// keep the type's decoding tolerant with optionals or `decodeIfPresent`). An unload keeps the
+// state for the next load.
+//
 // Consequences: a module must be built from the same Engine sources, in the same
 // configuration, as the host that loads it (Engine is not built for library evolution, so
 // struct layouts are baked into the module). The loader rejects a module that carries its
@@ -49,6 +74,9 @@ public enum GameModuleABI {
     /// What `GameModule.register` returns; checked by the loader. Inlinable, so a module
     /// returns the version it was compiled against, not the host's.
     @inlinable public static var version: Int32 { 1 }
+    /// Optional additions within the major version (see "Versions" above); recorded in
+    /// `GameModule.abiMinorVersion` by `register`, compiled into the module like `version`.
+    @inlinable public static var minorVersion: Int32 { 1 }
     /// A symbol only Engine defines; a module that defines it too carries its own Engine.
     public static let engineMarker = "swift_game_engine_host_marker"
 }
@@ -77,8 +105,32 @@ public final class GameModule {
     public private(set) var systems: [GameSystem] = []
     /// The game for standalone runs (`GameRunner`); nil runs the module's systems on a scene.
     public var makeGame: (@MainActor () -> any Game)?
+    /// The ABI minor version the module was built against (set by `register`; 0: older).
+    public var abiMinorVersion: Int32 = 0
+    /// Returns the state to hand to the next version of the module, as JSON (see "State
+    /// across reloads" above). Set with `willUnload(_:)`.
+    public private(set) var saveState: (@MainActor () throws -> Data)?
+    /// Takes the previous version's state (nil: none). Set with `didLoad(_:_:)`.
+    public private(set) var restoreState: (@MainActor (Data?) -> Void)?
 
     public init() {}
+
+    /// Before this module is reloaded or unloaded: `save` returns state (statics, caches) for
+    /// the next version, encoded as JSON (ABI 1.1).
+    public func willUnload<State: Encodable>(_ save: @escaping @MainActor () -> State) {
+        saveState = {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .sortedKeys
+            return try encoder.encode(save())
+        }
+    }
+
+    /// After this module was loaded and its types registered: `restore` gets what the previous
+    /// version's `willUnload` saved, decoded as `State`, or nil (first load, nothing saved, or
+    /// it doesn't decode) (ABI 1.1).
+    public func didLoad<State: Decodable>(_ type: State.Type, _ restore: @escaping @MainActor (State?) -> Void) {
+        restoreState = { data in restore(data.flatMap { try? JSONDecoder().decode(State.self, from: $0) }) }
+    }
 
     /// Registers a component type, created with `make` by the editor's Add Component. Give it
     /// a stable `componentName`: saved scenes and hot reload refer to it by name.
@@ -100,7 +152,9 @@ public final class GameModule {
     public nonisolated static func register(_ raw: UnsafeMutableRawPointer, _ body: @MainActor (GameModule) -> Void) -> Int32 {
         let address = UInt(bitPattern: raw)
         MainActor.assumeIsolated {
-            body(Unmanaged<GameModule>.fromOpaque(UnsafeRawPointer(bitPattern: address)!).takeUnretainedValue())
+            let module = Unmanaged<GameModule>.fromOpaque(UnsafeRawPointer(bitPattern: address)!).takeUnretainedValue()
+            module.abiMinorVersion = GameModuleABI.minorVersion
+            body(module)
         }
         return GameModuleABI.version
     }

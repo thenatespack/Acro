@@ -162,6 +162,9 @@ let package = Package(
         .executableTarget(name: "GameRunner", dependencies: ["Engine"], linkerSettings: windowsLinkerSettings + exportsSymbols),
         // A changed version of SampleGame for GameModuleTests' reload test (linked like it).
         .target(name: "GameModuleTestFixture", dependencies: ["Engine"], path: "Tests/GameModuleTestFixture"),
+        // A game made of two targets for GameModuleReloadTests: the game target and a library target it uses.
+        .target(name: "GameModuleTestLibrary", dependencies: ["Engine"], path: "Tests/GameModuleTestLibrary"),
+        .target(name: "GameModuleTestMultiTarget", dependencies: ["Engine", "GameModuleTestLibrary"], path: "Tests/GameModuleTestMultiTarget"),
         // ENGINE_VULKAN lets GPU tests (ComputeTests) run on the Vulkan backend too.
         .testTarget(name: "EngineTests", dependencies: ["Engine", "CZlib"], resources: [.copy("Resources")],
                     swiftSettings: vulkanEnabled ? [.define("ENGINE_VULKAN")] : []),

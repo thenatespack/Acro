@@ -70,19 +70,110 @@ public struct SetFieldCommand: UndoCommand {
     }
 }
 
+/// A component value an undo command holds: the value itself, or, after its type was taken
+/// out for a reload (`detach`), its JSON under the component's name until a type with that
+/// name is registered again (`resolve`). See "Reloading component types" in UndoStack.swift.
+@MainActor public struct HeldComponent {
+    /// The component's name (`componentName`).
+    public let name: String
+    private var storage: Storage
+
+    private enum Storage {
+        case value(any Component)
+        case json(JSONValue)
+    }
+
+    public init(_ component: any Component) {
+        name = type(of: component).componentName
+        storage = .value(component)
+    }
+
+    init(name: String, json: JSONValue) {
+        self.name = name
+        storage = .json(json)
+    }
+
+    /// The value; nil while it is held as JSON.
+    public var value: (any Component)? {
+        if case .value(let component) = storage { component } else { nil }
+    }
+
+    /// Whether it is held as JSON.
+    public var isDetached: Bool { value == nil }
+
+    /// Encodes the value as JSON if its name is in `names`.
+    public mutating func detach(ifNamedIn names: Set<String>) throws {
+        guard names.contains(name), case .value(let component) = storage else { return }
+        storage = .json(try JSONValue.encoding(component))
+    }
+
+    /// Decodes the JSON with the type registered under the name, over `defaults(name)` (see
+    /// `World.resolveUnresolvedComponents(defaults:)`). Returns whether it is a value now.
+    public mutating func resolve(defaults: (String) -> (any Component)?) -> Bool {
+        guard case .json(let json) = storage, let type = ComponentRegistry.type(named: name) else { return false }
+        let base = defaults(name).flatMap { try? JSONValue.encoding($0) }
+        guard case .success(let (component, _)) = World.decodeTolerantly(type, raw: json, base: base) else { return false }
+        storage = .value(component)
+        return true
+    }
+
+    /// Puts it on `entity`: the value, or the JSON as an unresolved component (replacing any
+    /// component with the name either way).
+    public func add(to entity: Entity, in world: World) {
+        switch storage {
+        case .value(let component):
+            world.add(component, to: entity)
+        case .json(let json):
+            world.removeComponent(named: name, from: entity)
+            var unresolved = world.get(UnresolvedComponents.self, for: entity)?.components ?? [:]
+            unresolved[name] = json
+            world.add(UnresolvedComponents(components: unresolved), to: entity)
+        }
+    }
+}
+
+extension World {
+    /// `entity`'s component named `name` as an undo command keeps it: typed, or the raw JSON of
+    /// an unresolved one.
+    func heldComponent(named name: String, of entity: Entity) -> HeldComponent? {
+        if let component = component(named: name, of: entity) { return HeldComponent(component) }
+        if let json = get(UnresolvedComponents.self, for: entity)?.components[name] { return HeldComponent(name: name, json: json) }
+        return nil
+    }
+
+    /// Removes `entity`'s component named `name`, typed or unresolved.
+    func removeComponent(named name: String, from entity: Entity) {
+        if let store = storeOrder.first(where: { $0.componentType.componentName == name && ObjectIdentifier($0.componentType) != ObjectIdentifier(UnresolvedComponents.self) }) {
+            remove(store.componentType, from: entity)
+        }
+        if var unresolved = get(UnresolvedComponents.self, for: entity), unresolved.components[name] != nil {
+            unresolved.components[name] = nil
+            if unresolved.components.isEmpty {
+                remove(UnresolvedComponents.self, from: entity)
+            } else {
+                add(unresolved, to: entity)
+            }
+        }
+    }
+}
+
 /// Replaces a whole component the entity has.
 public struct SetComponentCommand: UndoCommand {
     public var label: String
     public let id: EntityID
     public let componentName: String
-    public private(set) var oldComponent: any Component
-    public private(set) var newComponent: any Component
+    private var old: HeldComponent
+    private var new: HeldComponent
+
+    /// The values (nil while held as JSON across a reload).
+    public var oldComponent: (any Component)? { old.value }
+    public var newComponent: (any Component)? { new.value }
 
     public init(id: EntityID, old: any Component, new: any Component, label: String? = nil) {
         self.id = id
         componentName = type(of: new).componentName
-        oldComponent = old
-        newComponent = new
+        self.old = HeldComponent(old)
+        self.new = HeldComponent(new)
         self.label = label ?? "Edit \(componentName)"
     }
 
@@ -94,17 +185,26 @@ public struct SetComponentCommand: UndoCommand {
     }
 
     public mutating func perform(in world: World) throws {
-        world.add(newComponent, to: try world.resolve(id))
+        new.add(to: try world.resolve(id), in: world)
     }
 
     public mutating func revert(in world: World) throws {
-        world.add(oldComponent, to: try world.resolve(id))
+        old.add(to: try world.resolve(id), in: world)
     }
 
     public mutating func merge(_ next: any UndoCommand) -> Bool {
         guard let next = next as? SetComponentCommand, next.id == id, next.componentName == componentName else { return false }
-        newComponent = next.newComponent
+        new = next.new
         return true
+    }
+
+    public mutating func detachComponents(named names: Set<String>) throws {
+        try old.detach(ifNamedIn: names)
+        try new.detach(ifNamedIn: names)
+    }
+
+    public mutating func resolveDetachedComponents(defaults: (String) -> (any Component)?) -> Int {
+        (old.resolve(defaults: defaults) ? 1 : 0) + (new.resolve(defaults: defaults) ? 1 : 0)
     }
 }
 
@@ -113,13 +213,17 @@ public struct SetComponentCommand: UndoCommand {
 public struct AddComponentCommand: UndoCommand {
     public var label: String
     public let id: EntityID
-    public let component: any Component
+    private var added: HeldComponent
     /// What the entity had before, captured the first time the command runs.
-    private var replaced: (any Component)?
+    private var replaced: HeldComponent?
+
+    /// The component it adds (nil while held as JSON across a reload).
+    public var component: (any Component)? { added.value }
+    public var componentName: String { added.name }
 
     public init(id: EntityID, component: any Component, label: String? = nil) {
         self.id = id
-        self.component = component
+        added = HeldComponent(component)
         self.label = label ?? "Add \(type(of: component).componentName)"
     }
 
@@ -129,14 +233,22 @@ public struct AddComponentCommand: UndoCommand {
 
     public mutating func perform(in world: World) throws {
         let entity = try world.resolve(id)
-        replaced = world.component(named: type(of: component).componentName, of: entity)
-        world.add(component, to: entity)
+        replaced = world.heldComponent(named: added.name, of: entity)
+        added.add(to: entity, in: world)
     }
 
     public mutating func revert(in world: World) throws {
         let entity = try world.resolve(id)
-        let componentType = type(of: component)
-        if let replaced { world.add(replaced, to: entity) } else { world.remove(componentType, from: entity) }
+        if let replaced { replaced.add(to: entity, in: world) } else { world.removeComponent(named: added.name, from: entity) }
+    }
+
+    public mutating func detachComponents(named names: Set<String>) throws {
+        try added.detach(ifNamedIn: names)
+        try replaced?.detach(ifNamedIn: names)
+    }
+
+    public mutating func resolveDetachedComponents(defaults: (String) -> (any Component)?) -> Int {
+        (added.resolve(defaults: defaults) ? 1 : 0) + (replaced?.resolve(defaults: defaults) == true ? 1 : 0)
     }
 }
 
@@ -144,12 +256,14 @@ public struct AddComponentCommand: UndoCommand {
 public struct RemoveComponentCommand: UndoCommand {
     public var label: String
     public let id: EntityID
-    public let componentType: any Component.Type
-    private var removed: (any Component)?
+    /// The name of the component type it removes (by name, so it survives the type being
+    /// replaced by a reload).
+    public let componentName: String
+    private var removed: HeldComponent?
 
     public init(id: EntityID, componentType: any Component.Type, label: String? = nil) {
         self.id = id
-        self.componentType = componentType
+        componentName = componentType.componentName
         self.label = label ?? "Remove \(componentType.componentName)"
     }
 
@@ -159,16 +273,24 @@ public struct RemoveComponentCommand: UndoCommand {
 
     public mutating func perform(in world: World) throws {
         let entity = try world.resolve(id)
-        guard let current = world.component(named: componentType.componentName, of: entity) else {
-            throw UndoError.componentNotFound(componentType.componentName)
+        guard let current = world.heldComponent(named: componentName, of: entity) else {
+            throw UndoError.componentNotFound(componentName)
         }
         removed = current
-        world.remove(componentType, from: entity)
+        world.removeComponent(named: componentName, from: entity)
     }
 
     public mutating func revert(in world: World) throws {
         guard let removed else { return }
-        world.add(removed, to: try world.resolve(id))
+        removed.add(to: try world.resolve(id), in: world)
+    }
+
+    public mutating func detachComponents(named names: Set<String>) throws {
+        try removed?.detach(ifNamedIn: names)
+    }
+
+    public mutating func resolveDetachedComponents(defaults: (String) -> (any Component)?) -> Int {
+        removed?.resolve(defaults: defaults) == true ? 1 : 0
     }
 }
 

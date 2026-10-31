@@ -114,7 +114,7 @@ do {
     let app = EditorApp(options: options)
     let engine = try Engine(config: config)
     try engine.run(app)
-    app.savePrefs()
+    app.shutdown(quitReason: engine.quitReason)
 } catch {
     fail("Fatal: \(error)")
 }

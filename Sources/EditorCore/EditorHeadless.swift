@@ -37,6 +37,7 @@ public enum EditorHeadless {
         }
         mcp.pump()  // What arrived just before the client closed its end.
         mcp.stop()
+        app.shutdown(quitReason: "the MCP stdio client disconnected")
         return 0
     }
 }

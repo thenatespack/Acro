@@ -62,6 +62,9 @@ public final class LoadedGameModule {
     public let loadedURL: URL
     /// When it was loaded.
     public let loadedAt = Date()
+    /// How many "Class X is implemented in both" warnings the Objective-C runtime printed while
+    /// mapping it (filtered out; see `GameModuleLoader.load`).
+    public internal(set) var duplicateClassWarnings = 0
     let handle: UnsafeMutableRawPointer
 
     init(module: GameModule, sourceURL: URL, loadedURL: URL, handle: UnsafeMutableRawPointer) {
@@ -91,7 +94,8 @@ public enum GameModuleLoader {
         guard FileManager.default.fileExists(atPath: url.path) else { throw GameModuleError.notFound(url.path) }
         let loadedURL = copy ? try makeCopy(of: url) : url
         // RTLD_LOCAL: two versions of a module may define the same symbols.
-        guard let handle = dlopen(loadedURL.path, RTLD_NOW | RTLD_LOCAL) else {
+        let (opened, duplicates) = filteringDuplicateClassWarnings { dlopen(loadedURL.path, RTLD_NOW | RTLD_LOCAL) }
+        guard let handle = opened else {
             throw GameModuleError.loadFailed(dlerror().map { String(cString: $0) } ?? "dlopen failed")
         }
         // A copy of Engine inside the module would define the marker at another address.
@@ -107,9 +111,58 @@ public enum GameModuleLoader {
         let version = withExtendedLifetime(module) { entry(Unmanaged.passUnretained(module).toOpaque()) }
         guard version == GameModuleABI.version else { throw GameModuleError.versionMismatch(version) }
         if module.name.isEmpty { module.name = url.deletingPathExtension().lastPathComponent }
-        return LoadedGameModule(module: module, sourceURL: url, loadedURL: loadedURL, handle: handle)
+        let loaded = LoadedGameModule(module: module, sourceURL: url, loadedURL: loadedURL, handle: handle)
+        loaded.duplicateClassWarnings = duplicates
+        return loaded
         #else
         throw GameModuleError.unsupported
+        #endif
+    }
+
+    /// Runs `body` (a `dlopen`) with standard error going to a temporary file, then passes on
+    /// what was printed except the Objective-C runtime's "Class X is implemented in both A
+    /// and B" lines, returning how many it dropped.
+    ///
+    /// Every Swift class on Darwin, not only NSObject subclasses, is registered with the
+    /// Objective-C runtime under its mangled name, so mapping a second copy of a module
+    /// (a reload) re-registers the same names and the runtime warns once per class. Here that
+    /// is expected and harmless: Swift code finds types through metadata pointers, not class
+    /// names, and the old copy is never called again. The only way to avoid the registration
+    /// is a different module name per build, which SwiftPM-built objects can't have. Lines
+    /// from other threads in that window are passed on after it, in order.
+    static func filteringDuplicateClassWarnings<T>(_ body: () -> T) -> (T, Int) {
+        #if canImport(Darwin)
+        var template = Array((NSTemporaryDirectory() + "game-module-stderr-XXXXXX").utf8CString)
+        let file = template.withUnsafeMutableBufferPointer { mkstemp($0.baseAddress!) }
+        guard file >= 0 else { return (body(), 0) }
+        let path = String(cString: template)
+        unlink(path)
+        fflush(stderr)
+        let saved = dup(2)
+        dup2(file, 2)
+        let result = body()
+        fflush(stderr)
+        dup2(saved, 2)
+        close(saved)
+        lseek(file, 0, SEEK_SET)
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 16 * 1024)
+        while true {
+            let count = buffer.withUnsafeMutableBytes { read(file, $0.baseAddress, $0.count) }
+            if count <= 0 { break }
+            data.append(contentsOf: buffer[0..<count])
+        }
+        close(file)
+        var dropped = 0
+        let kept = String(decoding: data, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: false).filter { line in
+            let duplicate = line.hasPrefix("objc[") && line.contains(" is implemented in both ")
+            if duplicate { dropped += 1 }
+            return !duplicate
+        }.joined(separator: "\n")
+        if !kept.isEmpty { FileHandle.standardError.write(Data(kept.utf8)) }
+        return (result, dropped)
+        #else
+        return (body(), 0)
         #endif
     }
 

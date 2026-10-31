@@ -25,11 +25,13 @@ public enum GameReloadCommand: EditorDeferredCommand {
     public static let id: CommandID = .reloadGame
     public static let title = "Reload Game Code"
     public static let doc = """
-        Rebuilds the game module (`swift build --target <game>`, or its build command) in the background, then swaps it in \
-        with the scene kept: game components are serialized, the old code unloaded, the new types registered and the \
-        components restored (new fields get defaults, removed fields are dropped, components whose type is gone stay as \
-        JSON); play mode goes on with the new systems. Build errors go to the console and the old code keeps running. \
-        Returns what changed and the build, link, load and swap times. Clears the undo history.
+        Rebuilds the game module in the background (one direct `swiftc` call for the game target once a build plan is \
+        cached, else `swift build --target <game>`, or its build command), then swaps it in with the scene kept: game \
+        components (scene, play snapshot, undo history) are serialized, the old code's willUnload state saved, the new \
+        types registered and the components restored (new fields get defaults, removed fields are dropped, components \
+        whose type is gone stay as JSON), the new code's didLoad given the state; play mode goes on with the new \
+        systems. Build errors go to the console and the old code keeps running. Returns what changed, how it was built \
+        and the build, link, load and swap times. Keeps the undo history.
         """
     public static func isAvailable(in session: EditorSession) -> Bool {
         session.gameModule.isConfigured && !session.gameModule.isBusy && session.batch == nil
@@ -111,7 +113,7 @@ public enum GameLoadCommand: EditorDeferredCommand {
 public enum GameUnloadCommand: EditorCommand {
     public static let id: CommandID = "game.unload"
     public static let title = "Unload Game Code"
-    public static let doc = "Unloads the game module: its systems stop, its components stay in the scene as JSON (saved unchanged) until game code with those types is loaded again. Clears the undo history."
+    public static let doc = "Unloads the game module: its systems stop, its components stay in the scene (and the undo history) as JSON (saved unchanged) until game code with those types is loaded again; its willUnload state is kept for the next load."
     public static func isAvailable(in session: EditorSession) -> Bool {
         session.gameModule.loaded != nil && !session.gameModule.isBusy && session.batch == nil
     }

@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Editor › AI control). 94 tools.
+named by its id (see README › Editor › AI control). 97 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -28,7 +28,7 @@ optional arguments.
 | `play` | [`play.pause`](#playpause), [`play.setTimeScale`](#playsettimescale), [`play.start`](#playstart), [`play.state`](#playstate), [`play.step`](#playstep), [`play.stop`](#playstop), [`play.toggle`](#playtoggle) |
 | `prefab` | [`prefab.apply`](#prefabapply), [`prefab.create`](#prefabcreate), [`prefab.overrides`](#prefaboverrides), [`prefab.revert`](#prefabrevert), [`prefab.unpack`](#prefabunpack) |
 | `project` | [`project.close`](#projectclose), [`project.new`](#projectnew), [`project.open`](#projectopen) |
-| `scene` | [`scene.hierarchy`](#scenehierarchy), [`scene.new`](#scenenew), [`scene.open`](#sceneopen), [`scene.raycast`](#sceneraycast), [`scene.save`](#scenesave), [`scene.saveAs`](#scenesaveas) |
+| `scene` | [`scene.discardRecovery`](#scenediscardrecovery), [`scene.hierarchy`](#scenehierarchy), [`scene.listRecovery`](#scenelistrecovery), [`scene.new`](#scenenew), [`scene.open`](#sceneopen), [`scene.raycast`](#sceneraycast), [`scene.recover`](#scenerecover), [`scene.save`](#scenesave), [`scene.saveAs`](#scenesaveas) |
 | `selection` | [`selection.clear`](#selectionclear), [`selection.get`](#selectionget), [`selection.set`](#selectionset) |
 | `stats` | [`stats.get`](#statsget) |
 | `tool` | [`tool.set`](#toolset) |
@@ -600,7 +600,7 @@ Result:
 - `components`: [string]
 - `configured`: boolean
 - `lastError?`: string
-- `lastReport?`: {added: [string], buildSeconds?: number, built: boolean, components: [string], failed: object, linkSeconds?: number, loadSeconds: number, module: string, playing: boolean, removed: object, resetFields: object, restored: integer, swapSeconds: number, systems: [string], totalSeconds: number, warnings: [string]}
+- `lastReport?`: {added: [string], buildMode?: string, buildSeconds?: number, built: boolean, carriedStateBytes?: integer, components: [string], failed: object, fastBuildSkipped?: string, libraryTargets?: [string], linkSeconds?: number, loadSeconds: number, module: string, playing: boolean, removed: object, resetFields: object, restored: integer, swapSeconds: number, systems: [string], totalSeconds: number, undoValuesRestored?: integer, warnings: [string]}
 - `library?`: string
 - `loaded`: boolean
 - `module?`: string
@@ -626,10 +626,14 @@ Arguments:
 Result:
 
 - `added`: [string]
+- `buildMode?`: string
 - `buildSeconds?`: number
 - `built`: boolean
+- `carriedStateBytes?`: integer
 - `components`: [string]
 - `failed`: object
+- `fastBuildSkipped?`: string
+- `libraryTargets?`: [string]
 - `linkSeconds?`: number
 - `loadSeconds`: number
 - `module`: string
@@ -640,13 +644,14 @@ Result:
 - `swapSeconds`: number
 - `systems`: [string]
 - `totalSeconds`: number
+- `undoValuesRestored?`: integer
 - `warnings`: [string]
 
 ### `game.reload`
 
 **Reload Game Code** · _deferred_
 
-Rebuilds the game module (`swift build --target <game>`, or its build command) in the background, then swaps it in with the scene kept: game components are serialized, the old code unloaded, the new types registered and the components restored (new fields get defaults, removed fields are dropped, components whose type is gone stay as JSON); play mode goes on with the new systems. Build errors go to the console and the old code keeps running. Returns what changed and the build, link, load and swap times. Clears the undo history.
+Rebuilds the game module in the background (one direct `swiftc` call for the game target once a build plan is cached, else `swift build --target <game>`, or its build command), then swaps it in with the scene kept: game components (scene, play snapshot, undo history) are serialized, the old code's willUnload state saved, the new types registered and the components restored (new fields get defaults, removed fields are dropped, components whose type is gone stay as JSON), the new code's didLoad given the state; play mode goes on with the new systems. Build errors go to the console and the old code keeps running. Returns what changed, how it was built and the build, link, load and swap times. Keeps the undo history.
 
 Arguments:
 
@@ -655,10 +660,14 @@ Arguments:
 Result:
 
 - `added`: [string]
+- `buildMode?`: string
 - `buildSeconds?`: number
 - `built`: boolean
+- `carriedStateBytes?`: integer
 - `components`: [string]
 - `failed`: object
+- `fastBuildSkipped?`: string
+- `libraryTargets?`: [string]
 - `linkSeconds?`: number
 - `loadSeconds`: number
 - `module`: string
@@ -669,13 +678,14 @@ Result:
 - `swapSeconds`: number
 - `systems`: [string]
 - `totalSeconds`: number
+- `undoValuesRestored?`: integer
 - `warnings`: [string]
 
 ### `game.unload`
 
 **Unload Game Code**
 
-Unloads the game module: its systems stop, its components stay in the scene as JSON (saved unchanged) until game code with those types is loaded again. Clears the undo history.
+Unloads the game module: its systems stop, its components stay in the scene (and the undo history) as JSON (saved unchanged) until game code with those types is loaded again; its willUnload state is kept for the next load.
 
 Arguments: none.
 
@@ -1127,6 +1137,23 @@ Result:
 
 ## scene
 
+### `scene.discardRecovery`
+
+**Discard Recoverable Work** · _destructive_, _idempotent_
+
+Deletes the work a crashed or closed session left behind (`id`, default every session in scene.listRecovery). Destructive: pass confirm: true.
+
+Arguments:
+
+- `confirm`: true — Must be true: this tool can lose work that undo can't bring back.
+- `id?`: string
+
+Result:
+
+- `enabled`: boolean
+- `folder?`: string
+- `sessions`: [{date: number, entities: integer, gameModule?: string, hasPlayState: boolean, id: string, reason: string, sceneName: string, scenePath?: string, unsaved: boolean}]
+
 ### `scene.hierarchy`
 
 **Hierarchy** · _read-only_, _idempotent_
@@ -1141,6 +1168,20 @@ Arguments:
 Result:
 
 - `entities`: [{children: [object], components: [string], id: entity id, more?: integer, name: string}]
+
+### `scene.listRecovery`
+
+**List Recoverable Work** · _read-only_, _idempotent_
+
+Work that earlier editor sessions left behind because they crashed (game code included) or were closed with unsaved changes: per session the scene, why it ended, whether it had unsaved changes and a play state. Open one with scene.recover, delete with scene.discardRecovery.
+
+Arguments: none.
+
+Result:
+
+- `enabled`: boolean
+- `folder?`: string
+- `sessions`: [{date: number, entities: integer, gameModule?: string, hasPlayState: boolean, id: string, reason: string, sceneName: string, scenePath?: string, unsaved: boolean}]
 
 ### `scene.new`
 
@@ -1190,6 +1231,30 @@ Result:
 - `normal?`: number[3] — [x, y, z]
 - `origin`: number[3] — [x, y, z]
 - `point?`: number[3] — [x, y, z]
+
+### `scene.recover`
+
+**Recover Unsaved Work** · _destructive_
+
+Opens the work a crashed or closed session left behind (scene.listRecovery) as the document: unsaved, saving to the scene's original file; `playState` opens the play world at the crash instead, as a new scene. Replaces the open scene and clears the undo history. Not while playing. Destructive: pass confirm: true.
+
+Arguments:
+
+- `confirm`: true — Must be true: this tool can lose work that undo can't bring back.
+- `id?`: string
+- `playState?`: boolean
+
+Result:
+
+- `date`: number
+- `entities`: integer
+- `gameModule?`: string
+- `hasPlayState`: boolean
+- `id`: string
+- `reason`: string
+- `sceneName`: string
+- `scenePath?`: string
+- `unsaved`: boolean
 
 ### `scene.save`
 

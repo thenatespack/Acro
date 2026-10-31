@@ -47,6 +47,29 @@ public struct Orbiter: Component, Equatable, Sendable {
     }
 }
 
+/// State outside the ECS, which a reload would otherwise reset (each load is a fresh copy of
+/// the library, statics included): handed from the old code to the new by the reload hooks.
+struct SampleGameStats: Codable {
+    /// Frames the bob system has run, over every reload.
+    var frames = 0
+    /// Reloads it has survived.
+    var reloads = 0
+
+    init() {}
+
+    /// Tolerant: the previous version may have saved fewer (or other) fields.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        frames = try container.decodeIfPresent(Int.self, forKey: .frames) ?? 0
+        reloads = try container.decodeIfPresent(Int.self, forKey: .reloads) ?? 0
+    }
+}
+
+@MainActor
+enum SampleGameState {
+    static var stats = SampleGameStats()
+}
+
 /// The module's entry point (`GameModuleABI.entryPoint`).
 @_cdecl("swift_game_engine_module_v1")
 public func registerSampleGame(_ module: UnsafeMutableRawPointer) -> Int32 {
@@ -55,9 +78,20 @@ public func registerSampleGame(_ module: UnsafeMutableRawPointer) -> Int32 {
         game.summary = "Bobbing and orbiting props"
         game.component(Bobber.self) { Bobber() }
         game.component(Orbiter.self) { Orbiter() }
-        game.system("sample.bob") { world, _ in SampleGameSystems.bob(world) }
+        game.system("sample.bob") { world, _ in
+            SampleGameState.stats.frames += 1
+            SampleGameSystems.bob(world)
+        }
         game.system("sample.orbit") { world, _ in SampleGameSystems.orbit(world) }
         game.makeGame = { SampleGameApp() }
+        // Carry the stats across reloads.
+        game.willUnload { SampleGameState.stats }
+        game.didLoad(SampleGameStats.self) { [unowned game] saved in
+            guard var stats = saved else { return }
+            stats.reloads += 1
+            SampleGameState.stats = stats
+            game.summary = "Bobbing and orbiting props (\(stats.frames) frames, \(stats.reloads) reloads)"
+        }
     }
 }
 

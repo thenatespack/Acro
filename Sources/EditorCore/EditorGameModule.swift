@@ -6,8 +6,9 @@ import Foundation
 //
 // Where it comes from: `--game <target | module.dylib>` or the open project's `Project.json`
 // (`"game": {"target": "MyGame", "package": ".."}`), `--game` winning. A target is built with
-// `swift build --target` and its objects linked into a module (`GameModuleBuilder`); a library
-// is loaded as it is (after its `buildCommand`, if any).
+// `swift build --target` (after the first build, usually one direct `swiftc` call instead: see
+// GameModuleFastBuild.swift) and its objects, with its library targets', linked into a module
+// (`GameModuleBuilder`); a library is loaded as it is (after its `buildCommand`, if any).
 //
 // Loading registers the module's components with `ComponentRegistry` and the Add Component
 // catalog and turns any of the scene's `UnresolvedComponents` with those names into real
@@ -17,18 +18,20 @@ import Foundation
 // 1. Build (in the background; the editor keeps running) and link the new module, then load it
 //    under a unique name. A failure stops here: the old module keeps running, the build's errors
 //    go to the console.
-// 2. Take the old module out: its systems leave the world, and every component of its types,
-//    in the live world and (while playing) in the play-mode snapshot, is serialized through the
-//    registry into `UnresolvedComponents` JSON (`World.detachComponents(named:)`); its types
-//    are unregistered. Entities, handles, ids, hierarchy, other components and the play state
-//    stay as they are.
+// 2. Take the old module out: its `willUnload` hook saves its non-ECS state; its systems leave
+//    the world, and every component of its types, in the live world, (while playing) in the
+//    play-mode snapshot and in the undo history, is serialized through the registry into JSON
+//    (`World.detachComponents(named:)`, `UndoStack.detachComponents(named:)`); its types are
+//    unregistered. Entities, handles, ids, hierarchy, other components and the play state stay
+//    as they are.
 // 3. Register the new module's types and decode the JSON back
-//    (`World.resolveUnresolvedComponents(defaults:)`): fields that are new take the default
-//    component's values, removed fields are dropped, a field whose type changed is reset.
-//    Components whose type is gone stay JSON (saved unchanged, shown in the inspector) and are
-//    reported. While playing, the new systems are added and the game goes on.
-// 4. The undo history is cleared (its steps hold values of the old types); unsaved changes
-//    stay unsaved.
+//    (`World.resolveUnresolvedComponents(defaults:)`, `UndoStack.resolveDetachedComponents`):
+//    fields that are new take the default component's values, removed fields are dropped, a
+//    field whose type changed is reset. Components whose type is gone stay JSON (saved
+//    unchanged, shown in the inspector) and are reported. The new module's `didLoad` gets the
+//    saved state. While playing, the new systems are added and the game goes on.
+// 4. The undo history is kept: its steps now hold values of the new types (or JSON for types
+//    that are gone; undoing those puts the JSON back as unresolved components).
 //
 // The old library stays mapped but unused (see `LoadedGameModule`).
 
@@ -60,6 +63,17 @@ public struct GameReloadReport: Codable, Equatable, Sendable {
     public var totalSeconds: Double
     /// Whether the game was playing (it kept playing).
     public var playing: Bool
+    /// How it was built: "swiftc" (one direct compile and link of the game target) or
+    /// "swift build" (then a link); nil when not built.
+    public var buildMode: String?
+    /// Why a build didn't take the direct `swiftc` path (no plan yet, Package.swift changed…).
+    public var fastBuildSkipped: String?
+    /// Library targets linked into the module with the game target.
+    public var libraryTargets: [String]?
+    /// Bytes of state the old module's `willUnload` handed to the new one's `didLoad` (nil: none).
+    public var carriedStateBytes: Int?
+    /// Component values in undo steps converted to the new types (the history is kept).
+    public var undoValuesRestored: Int?
 }
 
 /// The game module the editor has loaded, and its reloading (see the notes above).
@@ -85,7 +99,9 @@ public final class EditorGameModule {
     private var registeredNames: [String] = []
     private var systemsInWorld = false
     private var job: ReloadJob?
-    private var watcher: FileWatcher?
+    private var watchers: [FileWatcher] = []
+    /// What the last module's `willUnload` saved, for the next module's `didLoad`.
+    private var carriedState: Data?
     private var watchReloadPending = false
     private lazy var context = GameContext(input: session.gameInput) { [unowned self] message in session.log.info(message) }
 
@@ -104,16 +120,25 @@ public final class EditorGameModule {
     public func configure(_ settings: GameModuleSettings?, base: URL) {
         self.settings = settings
         baseURL = base
-        watcher?.stop()
-        watcher = nil
+        for watcher in watchers { watcher.stop() }
+        watchers = []
         if settings?.watch == true, let target = settings?.target, let package = try? packageURL() {
-            let sources = package.appendingPathComponent("Sources", isDirectory: true).appendingPathComponent(target, isDirectory: true)
-            let watcher = FileWatcher(directory: sources)
-            watcher.startCollecting(interval: 0.5)
-            self.watcher = watcher
-            session.log.info("Game: watching \(sources.path) for changes")
+            // The game target now; its library targets once a build has found them.
+            watch([package.appendingPathComponent("Sources", isDirectory: true).appendingPathComponent(target, isDirectory: true)])
         }
         onChange?()
+    }
+
+    /// Watches `folders` too (with `watch` set).
+    private func watch(_ folders: [URL]) {
+        guard settings?.watch == true else { return }
+        let watched = Set(watchers.map { $0.directory.standardizedFileURL.path })
+        for folder in folders where !watched.contains(folder.standardizedFileURL.path) {
+            let watcher = FileWatcher(directory: folder)
+            watcher.startCollecting(interval: 0.5)
+            watchers.append(watcher)
+            session.log.info("Game: watching \(folder.path) for changes")
+        }
     }
 
     /// A project was opened: load its game, unless `--game` named one.
@@ -148,21 +173,36 @@ public final class EditorGameModule {
         let start = Date()
         let future = CommandFuture<GameReloadReport>()
         if let target = settings.target {
-            let builder = GameModuleBuilder(packageURL: try packageURL(), target: target, buildCommand: settings.buildCommand)
+            var builder = GameModuleBuilder(packageURL: try packageURL(), target: target, buildCommand: settings.buildCommand)
             let output = try GameModuleLoader.uniqueCopyURL(for: URL(fileURLWithPath: "\(target).\(GameModuleLoader.libraryExtension)"))
             if build {
-                session.log.info("Game: building \(target) (\(builder.command.joined(separator: " ")))")
+                session.log.info("Game: building \(target)")
+                let builder = builder
                 startJob(future: future, start: start, output: output) { job in
-                    job.build = builder.build()
-                    guard job.build?.succeeded == true else { return }
-                    if builder.engineChangedSinceHostBuilt() { job.error = GameModuleError.engineChanged.description; return }
-                    do { job.link = try builder.link(to: output) } catch { job.error = "\(error)" }
+                    let result = builder.buildModule(to: output)
+                    job.build = result.build
+                    job.link = result.link
+                    job.mode = result.mode
+                    job.fastBuildSkipped = result.fallbackReason
+                    job.libraryTargets = (try? builder.describeTargets())?.libraryTargets
+                    job.folders = (try? builder.describeTargets())?.folders.values.sorted()
+                    if let error = result.error {
+                        if case .buildFailed = error { return }  // reported from `build`
+                        job.error = error.description
+                        return
+                    }
+                    if builder.engineChangedSinceHostBuilt() { job.error = GameModuleError.engineChanged.description }
                 }
                 return future
             }
             let link: GameModuleBuilder.StepResult
+            let targets = try? builder.describeTargets()
+            builder.libraryTargets = targets?.libraryTargets ?? []
             do { link = try builder.link(to: output) } catch { throw fail(error) }
-            finish(future, outcome: .init(output: output, link: link), start: start)
+            let outcome = ReloadJob.Outcome(output: output, link: link)
+            outcome.libraryTargets = targets?.libraryTargets
+            outcome.folders = targets?.folders.values.sorted()
+            finish(future, outcome: outcome, start: start)
             return future
         }
         guard let library = settings.library else { throw CommandError.failed("The game setting names neither a target nor a library") }
@@ -183,9 +223,10 @@ public final class EditorGameModule {
     public func unload() throws {
         guard job == nil else { throw CommandError.failed("The game is being rebuilt") }
         if let loaded {
+            session.onWillReplaceWorld?()
+            carriedState = saveState(of: loaded) ?? carriedState
             try detach(loaded)
             self.loaded = nil
-            clearUndoHistory()
             session.log.info("Game: unloaded \(loaded.module.name)")
         }
         configure(nil, base: baseURL)
@@ -199,7 +240,7 @@ public final class EditorGameModule {
             finish(job.future, outcome: job.outcome, start: job.start)
             onChange?()
         }
-        if let watcher, !watcher.takeChanges().isEmpty { watchReloadPending = true }
+        if watchers.contains(where: { !$0.takeChanges().isEmpty }) { watchReloadPending = true }
         if watchReloadPending, job == nil, session.batch == nil {
             watchReloadPending = false
             session.log.info("Game: sources changed, reloading")
@@ -239,6 +280,10 @@ public final class EditorGameModule {
             report.linkSeconds = outcome.link?.seconds
             report.loadSeconds = loadSeconds
             report.totalSeconds = Date().timeIntervalSince(start)
+            report.buildMode = outcome.build == nil ? nil : outcome.mode == .swiftc ? "swiftc" : "swift build"
+            report.fastBuildSkipped = outcome.fastBuildSkipped
+            report.libraryTargets = outcome.libraryTargets
+            if let folders = outcome.folders { watch(folders.map { URL(fileURLWithPath: $0, isDirectory: true) }) }
             lastReport = report
             lastError = nil
             log(report)
@@ -282,10 +327,17 @@ public final class EditorGameModule {
 
     private func log(_ report: GameReloadReport) {
         var parts = ["\(report.components.count) components", "\(report.systems.count) systems"]
-        if let build = report.buildSeconds { parts.append(String(format: "build %.2f s", build)) }
+        if let libraries = report.libraryTargets, !libraries.isEmpty { parts.append("with \(libraries.joined(separator: ", "))") }
+        if let build = report.buildSeconds { parts.append(String(format: "%@ %.2f s", report.buildMode ?? "build", build)) }
         if let link = report.linkSeconds { parts.append(String(format: "link %.2f s", link)) }
-        parts.append(String(format: "load %.0f ms, swap %.0f ms", report.loadSeconds * 1000, report.swapSeconds * 1000))
+        parts.append(String(format: "load %.0f ms, swap %.0f ms, total %.2f s", report.loadSeconds * 1000, report.swapSeconds * 1000,
+                            report.totalSeconds))
         session.log.info("Game: loaded \(report.module) (\(parts.joined(separator: ", ")))")
+        if let reason = report.fastBuildSkipped, report.built {
+            let lines = reason.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            let detail = lines.count > 1 ? " " + (lines.dropFirst().first { $0.contains("error") } ?? lines[1]) : ""
+            session.log.info("Game: built with swift build: \(lines.first ?? "")\(detail)")
+        }
         for (name, count) in report.removed.sorted(by: { $0.key < $1.key }) {
             session.log.warning("Game: component \(name) no longer exists; \(count) entit\(count == 1 ? "y keeps" : "ies keep") its data as JSON")
         }
@@ -304,9 +356,15 @@ public final class EditorGameModule {
     private func swap(to new: LoadedGameModule) throws -> GameReloadReport {
         let start = Date()
         session.onWillReplaceWorld?()
+        // New code is about to run: unsaved work goes to disk first.
+        session.recovery?.checkpoint()
+        defer { session.recovery?.invalidate() }
         let old = loaded
         let oldNames = Set(registeredNames)
-        if let old { try detach(old) }
+        if let old {
+            carriedState = saveState(of: old) ?? carriedState
+            try detach(old)
+        }
 
         var warnings: [String] = []
         var names: [String] = []
@@ -334,8 +392,14 @@ public final class EditorGameModule {
             resolve.resetFields.merge(report.resetFields) { $0.union($1) }
             resolve.failures.merge(report.failures) { first, _ in first }
         }
+        let undoRestored = session.undo.resolveDetachedComponents(defaults: defaults)
+        // Non-ECS state from the previous version (statics, caches), after the types are back.
+        let state = carriedState
+        if let restore = new.module.restoreState {
+            restore(state)
+            carriedState = nil
+        }
         if session.isPlaying { addSystems() }
-        if old != nil { clearUndoHistory() }
 
         let unresolved = session.world.unresolvedComponentCounts()
         let removed = oldNames.subtracting(names).reduce(into: [String: Int]()) { $0[$1] = unresolved[$1] ?? 0 }
@@ -346,7 +410,20 @@ public final class EditorGameModule {
             added: names.filter { !oldNames.contains($0) }, removed: removed, restored: resolve.resolved,
             resetFields: resolve.resetFields.mapValues { $0.sorted() }, failed: resolve.failures, warnings: warnings,
             built: false, buildSeconds: nil, linkSeconds: nil, loadSeconds: 0, swapSeconds: Date().timeIntervalSince(start),
-            totalSeconds: 0, playing: session.isPlaying)
+            totalSeconds: 0, playing: session.isPlaying,
+            carriedStateBytes: new.module.restoreState != nil ? state?.count : nil,
+            undoValuesRestored: old != nil ? undoRestored : nil)
+    }
+
+    /// The module's `willUnload` state, or nil (none, or it failed: logged).
+    private func saveState(of module: LoadedGameModule) -> Data? {
+        guard let save = module.module.saveState else { return nil }
+        do {
+            return try save()
+        } catch {
+            session.log.warning("Game: \(module.module.name)'s willUnload state didn't encode: \(error)")
+            return nil
+        }
     }
 
     /// Removes `module`'s systems and moves its components into JSON everywhere; unregisters
@@ -366,6 +443,12 @@ public final class EditorGameModule {
             try? session.transformPlaySnapshot { $0.resolveUnresolvedComponents(defaults: { EditorComponentCatalog.makeDefault(named: $0) }) }
             throw CommandError.failed("Couldn't serialize the scene's game components: \(error)")
         }
+        // The history's values of those types go to JSON too; one that doesn't encode costs the history.
+        do {
+            try session.undo.detachComponents(named: names)
+        } catch {
+            clearUndoHistory(because: "a step's \(names.sorted().joined(separator: ", ")) value didn't encode: \(error)")
+        }
         if systemsInWorld {
             module.module.removeSystems(from: world)
             systemsInWorld = false
@@ -375,12 +458,12 @@ public final class EditorGameModule {
         registeredNames = []
     }
 
-    private func clearUndoHistory() {
+    private func clearUndoHistory(because reason: String) {
         let undo = session.undo
         let dirty = undo.isDirty
         undo.clear()
         if dirty { undo.markUnsaved() }
-        session.log.info("Game: undo history cleared (its steps may hold values of the old game code)")
+        session.log.warning("Game: undo history cleared (\(reason))")
     }
 
     // MARK: Play mode
@@ -388,6 +471,7 @@ public final class EditorGameModule {
     /// Play started: the module's systems join the world.
     func addSystems() {
         guard let loaded, !systemsInWorld else { return }
+        session.recovery?.checkpoint()
         for warning in loaded.module.addSystems(to: session.world, context: context) { session.log.warning("Game: \(warning)") }
         systemsInWorld = true
     }
@@ -420,6 +504,11 @@ private final class ReloadJob: @unchecked Sendable {
         var build: GameModuleBuilder.StepResult?
         var link: GameModuleBuilder.StepResult?
         var error: String?
+        var mode: GameModuleBuildOutcome.Mode = .swiftBuild
+        var fastBuildSkipped: String?
+        var libraryTargets: [String]?
+        /// The game's targets' source folders (for `watch`).
+        var folders: [String]?
 
         init(output: URL, link: GameModuleBuilder.StepResult? = nil, copy: Bool = false) {
             self.output = output

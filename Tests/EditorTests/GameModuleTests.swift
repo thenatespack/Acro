@@ -162,7 +162,11 @@ private let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathCompon
         #expect(world.get(UnresolvedComponents.self, for: sphere) == nil)
         #expect((world.fields(of: "Orbiter", for: sphere) ?? []).first { $0.name == "radius" }?.value == .float(3))
         #expect((world.fields(of: "Bobber", for: cube) ?? []).first { $0.name == "amplitude" }?.value == .float(0.5))
-        #expect(!session.undo.canUndo)
+        // The history survived both reloads: undoing the two Adds removes today's types.
+        #expect(session.undo.undoDepth == 2)
+        #expect((try? session.undo.undo()) == true && (try? session.undo.undo()) == true)
+        #expect(world.component(named: "Bobber", of: cube) == nil && world.component(named: "Orbiter", of: sphere) == nil)
+        #expect(world.get(UnresolvedComponents.self, for: sphere) == nil)
     }
 
     @Test func failedLoadKeepsTheOldModule() throws {

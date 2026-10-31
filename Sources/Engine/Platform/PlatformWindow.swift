@@ -4,6 +4,9 @@
 @MainActor
 protocol PlatformWindow: AnyObject {
     var shouldClose: Bool { get }
+    /// Why `shouldClose` became true ("the window's close button was clicked"), for the
+    /// line the engine logs when it quits.
+    var closeReason: String? { get }
     var title: String { get set }
     /// Drawable size in pixels (accounts for HiDPI scaling).
     var framebufferSize: (width: Int, height: Int) { get }
@@ -15,6 +18,7 @@ protocol PlatformWindow: AnyObject {
     /// Shows `cursor` over the window, and hides and locks it (relative mouse mode) while
     /// `captured`. Called every frame; implementations only touch the OS when something changed.
     func applyCursor(_ cursor: CursorShape, captured: Bool)
-    func requestClose()
+    /// Asks the main loop to end; `reason` is logged when it does.
+    func requestClose(reason: String)
     func destroy()
 }

@@ -20,11 +20,12 @@ private final class GameWindow: NSWindow {
 /// Native macOS window whose content view is backed by a `CAMetalLayer`.
 /// Events are pumped manually each frame (no `NSApp.run()`), like a classic game loop.
 @MainActor
-final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
+final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate, NSApplicationDelegate {
     let metalLayer = CAMetalLayer()
     private let window: NSWindow
     private let view: GameView
     private(set) var shouldClose = false
+    private(set) var closeReason: String?
     private var lastTextInputRect = TextInputRect.zero
     /// The capture state last applied, and whether we hid the cursor (`NSCursor.hide` calls nest).
     private var captured = false
@@ -60,6 +61,9 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
         window.makeKeyAndOrderFront(nil)
 
         installMenu(appName: title)
+        // Without a delegate, AppKit's terminate (the Dock's Quit, logout, a quit Apple Event)
+        // calls exit(0) on the spot, skipping the engine's shutdown; this routes it through the loop.
+        app.delegate = self
         app.finishLaunching()
         app.activate()
     }
@@ -197,7 +201,12 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
         }
     }
 
-    func requestClose() {
+    func requestClose(reason: String) {
+        close(reason)
+    }
+
+    private func close(_ reason: String) {
+        if !shouldClose { closeReason = reason }
         shouldClose = true
     }
 
@@ -208,12 +217,17 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        shouldClose = true
+        close("the window's close button was clicked")
         return false  // The engine closes the window after shutting the renderer down.
     }
 
     @objc private func quitFromMenu(_ sender: Any?) {
-        shouldClose = true
+        close("Quit in the app menu (Cmd-Q)")
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        close("the system asked the app to quit (the Dock's Quit, logout, or a quit Apple Event)")
+        return .terminateCancel  // The main loop ends and shuts down normally.
     }
 
     private func installMenu(appName: String) {

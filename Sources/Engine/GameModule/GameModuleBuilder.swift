@@ -10,6 +10,15 @@ import Foundation
 ///    SwiftPM's swift-build backend leaves one prelinked `<Target>.o` in the bin folder; the
 ///    native backend a `<Target>.build/` folder of objects. Both are handled.
 ///
+/// A game can be several targets: the game target and library targets it depends on (directly
+/// or not) that the host doesn't contain, i.e. everything outside Engine and its dependencies.
+/// `libraryTargets` names them (`describeTargets()` finds them with `swift package describe`)
+/// and `link(to:)` links their objects into the module too. Rebuilding after a change in one
+/// of them is still one `swift build --target <game>`, which recompiles only what changed.
+///
+/// `buildModule(to:)` (GameModuleFastBuild.swift) wraps both steps and, after the first build,
+/// recompiles the game target with one direct `swiftc` call instead (no SwiftPM planning).
+///
 /// The configuration must be the host's (`currentConfiguration`), and so must Engine:
 /// `engineChangedSinceHostBuilt()` is true when Engine's build products are newer than the
 /// running executable, i.e. a game built now would be compiled against another Engine.
@@ -24,6 +33,8 @@ public struct GameModuleBuilder: Sendable {
     public var configuration: String
     /// Replaces `swift build --target …` when set; run in the package folder.
     public var buildCommand: [String]?
+    /// Library targets of the game linked into the module with `target` (see above).
+    public var libraryTargets: [String] = []
 
     public init(packageURL: URL, target: String, configuration: String = GameModuleBuilder.currentConfiguration,
                 buildCommand: [String]? = nil) {
@@ -66,8 +77,13 @@ public struct GameModuleBuilder: Sendable {
         Self.run(command, in: packageURL)
     }
 
-    /// The target's compiled objects.
+    /// The compiled objects of the game target and its library targets.
     public func objectFiles() throws -> [URL] {
+        try ([target] + libraryTargets).flatMap { try objectFiles(of: $0) }
+    }
+
+    /// One target's compiled objects.
+    public func objectFiles(of target: String) throws -> [URL] {
         let bin = binURL
         let prelinked = bin.appendingPathComponent("\(target).o")
         if FileManager.default.fileExists(atPath: prelinked.path) { return [prelinked] }
@@ -89,9 +105,17 @@ public struct GameModuleBuilder: Sendable {
         #else
         arguments += ["-target", "x86_64-apple-macosx14.0"]
         #endif
-        arguments += ["-Xlinker", "-undefined", "-Xlinker", "dynamic_lookup"]
         #endif
-        return arguments
+        return arguments + Self.undefinedSymbolFlags
+    }
+
+    /// Linker flags that leave Engine's symbols to the host (none needed on Linux).
+    static var undefinedSymbolFlags: [String] {
+        #if os(macOS)
+        ["-Xlinker", "-undefined", "-Xlinker", "dynamic_lookup"]
+        #else
+        []
+        #endif
     }
 
     /// Links the target's objects into a game module at `output`. Blocks.
@@ -126,7 +150,7 @@ public struct GameModuleBuilder: Sendable {
         }
     }
 
-    private static func modificationDate(_ url: URL) -> Date? {
+    static func modificationDate(_ url: URL) -> Date? {
         (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
     }
 

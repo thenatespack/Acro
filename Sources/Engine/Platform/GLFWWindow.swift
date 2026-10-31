@@ -145,8 +145,15 @@ final class GLFWWindow: PlatformWindow, VulkanSurfaceProvider {
         return cursor
     }
 
-    func requestClose() {
+    func requestClose(reason: String) {
+        if !shouldClose { requestedCloseReason = reason }
         glfwSetWindowShouldClose(handle, GLFW_TRUE)
+    }
+
+    private var requestedCloseReason: String?
+
+    var closeReason: String? {
+        shouldClose ? requestedCloseReason ?? "the window was closed (its close button, or the window system)" : nil
     }
 
     func destroy() {

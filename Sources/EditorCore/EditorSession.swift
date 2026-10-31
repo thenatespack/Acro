@@ -134,6 +134,9 @@ public final class EditorSession {
     public private(set) lazy var gameModule = EditorGameModule(session: self)
     /// Build Game (EditorBuildGame.swift): cooking and exporting in the background.
     public private(set) lazy var gameExport = EditorGameExport(session: self)
+    /// Keeps unsaved work recoverable after a crash (EditorRecovery.swift); set by the app when
+    /// it has a prefs folder.
+    public var recovery: EditorRecovery?
     /// Multiplies play mode's dt (0 to 100; 1 is real time). Steps ignore it.
     public var timeScale: Double = 1 {
         didSet {

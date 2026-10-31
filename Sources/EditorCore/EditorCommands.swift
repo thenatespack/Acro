@@ -35,6 +35,7 @@ public enum BuiltinCommands {
         PrefabUnpackCommand.self,
         LogReadCommand.self, StatsGetCommand.self, DiagnosticsGetCommand.self,
     ] + EditorUICommands.all + EditorSafetyCommands.all + EditorGameModuleCommands.all + EditorBuildCommands.all
+      + EditorRecoveryCommands.all
 }
 
 extension CommandID {

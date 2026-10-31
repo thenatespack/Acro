@@ -55,6 +55,19 @@ public final class EditorDocument {
         finishReload()
     }
 
+    /// Replaces the contents with recovered scene data (EditorRecovery.swift): the document
+    /// then has `url` as its file (nil: never saved) and unsaved changes. Throws, leaving the
+    /// document untouched, if the data isn't a valid scene.
+    public func recover(_ data: Data, url: URL?) throws {
+        let scratch = World()
+        _ = try scratch.load(data)
+        clearWorld()
+        _ = try world.load(data)
+        self.url = url
+        finishReload()
+        undo.markUnsaved()
+    }
+
     /// Saves to the document's file. Throws `EditorError.noFile` for a never-saved document.
     public func save() throws {
         guard let url else { throw EditorError.noFile }
