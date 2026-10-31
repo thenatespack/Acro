@@ -149,7 +149,7 @@ private func temporaryDirectory() -> URL {
         let session = makeSession()
         let cube = id("Red Cube", session)
         #expect(!session.commands.isAvailable("entity.duplicate") && !session.commands.isAvailable("entity.delete"))
-        #expect(throws: CommandError.unavailable("entity.duplicate", reason: nil)) { try run(session, "entity.duplicate") }
+        #expect(throws: CommandError.unavailable("entity.duplicate", reason: "nothing is selected (run selection.set first)")) { try run(session, "entity.duplicate") }
 
         try run(session, "selection.set", #"{"entities": ["\#(cube)"]}"#)
         #expect(session.selection.ids == [cube])

@@ -16,7 +16,7 @@ import Foundation
 // A command is a type conforming to `EditorCommand`: a stable `id` ("scene.save"), a title and a
 // doc string, a Codable `Arguments` and `Result`, `isAvailable(in:)` (what enables a button or
 // menu item) and `run`. Commands act on an `EditorSession` only, never on widgets, so they run
-// headless: tests and a future remote transport call them exactly as the toolbar does. Undoable
+// headless: tests and the MCP server (EditorMCP.swift) call them exactly as the toolbar does. Undoable
 // commands make their edits through the session's `UndoStack` as one step, so undo / redo take
 // back what a command did. Asking the user (a confirmation dialog, a file picker) stays in the
 // UI: it asks, then runs the command with the answer as arguments.
@@ -74,15 +74,33 @@ public protocol EditorCommand {
     static var doc: String { get }
     /// Whether a run is recorded as one undo step.
     static var isUndoable: Bool { get }
+    /// Whether it only reads (changes neither the document, the project nor the editor's state).
+    /// Default false. Remote callers (MCP's `readOnlyHint`) may run read-only commands without asking.
+    static var isReadOnly: Bool { get }
+    /// Whether it can lose work that undo can't bring back: deletes or overwrites files, or
+    /// replaces an unsaved scene. Default false (MCP's `destructiveHint`).
+    static var isDestructive: Bool { get }
+    /// Whether running it again with the same arguments changes nothing more. Default false
+    /// (MCP's `idempotentHint`).
+    static var isIdempotent: Bool { get }
     /// Whether it can run now (enables its button or menu item). `run` checks it first.
     static func isAvailable(in session: EditorSession) -> Bool
+    /// Why it can't run now, when `isAvailable` is false ("nothing is selected"). The default
+    /// names play mode when playing, else nil.
+    static func unavailableReason(in session: EditorSession) -> String?
     /// Does it. Throws, after logging, when it can't (the arguments name something missing).
     static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result
 }
 
 extension EditorCommand {
     public static var isUndoable: Bool { false }
+    public static var isReadOnly: Bool { false }
+    public static var isDestructive: Bool { false }
+    public static var isIdempotent: Bool { false }
     public static func isAvailable(in session: EditorSession) -> Bool { true }
+    public static func unavailableReason(in session: EditorSession) -> String? {
+        session.isPlaying ? EditorError.playing.description : nil
+    }
 }
 
 public enum CommandError: Error, Equatable, CustomStringConvertible {
@@ -111,6 +129,9 @@ public struct CommandInfo: Equatable, Sendable, Codable {
     public var title: String
     public var doc: String
     public var isUndoable: Bool
+    public var isReadOnly: Bool
+    public var isDestructive: Bool
+    public var isIdempotent: Bool
     /// The Swift names of the `Arguments` and `Result` types.
     public var argumentsType: String
     public var resultType: String
@@ -131,7 +152,10 @@ public protocol EditorHost: AnyObject {
 public final class CommandRegistry {
     private struct Entry {
         var info: CommandInfo
+        var argumentsType: any Codable.Type
+        var resultType: any Codable.Type
         var isAvailable: @MainActor (EditorSession) -> Bool
+        var unavailableReason: @MainActor (EditorSession) -> String?
         var runJSON: @MainActor (Data, EditorSession) throws -> Data
     }
 
@@ -139,6 +163,8 @@ public final class CommandRegistry {
     private var entries: [CommandID: Entry] = [:]
     /// The log's next sequence number when each running command started (innermost last).
     private var logMarks: [Int] = []
+    /// Increases whenever a command is registered (for transports that list them).
+    public private(set) var revision = 0
 
     public init(session: EditorSession) {
         self.session = session
@@ -146,9 +172,13 @@ public final class CommandRegistry {
 
     /// Adds `command` (replacing one with the same id).
     public func register<C: EditorCommand>(_ command: C.Type) {
-        let info = CommandInfo(id: C.id, title: C.title, doc: C.doc, isUndoable: C.isUndoable,
+        let info = CommandInfo(id: C.id, title: C.title, doc: C.doc, isUndoable: C.isUndoable, isReadOnly: C.isReadOnly,
+                               isDestructive: C.isDestructive, isIdempotent: C.isIdempotent,
                                argumentsType: String(describing: C.Arguments.self), resultType: String(describing: C.Result.self))
-        entries[C.id] = Entry(info: info, isAvailable: { C.isAvailable(in: $0) }, runJSON: { [unowned self] data, _ in
+        revision += 1
+        entries[C.id] = Entry(info: info, argumentsType: C.Arguments.self, resultType: C.Result.self,
+                              isAvailable: { C.isAvailable(in: $0) }, unavailableReason: { C.unavailableReason(in: $0) },
+                              runJSON: { [unowned self] data, _ in
             let arguments: C.Arguments
             do {
                 arguments = try JSONDecoder().decode(C.Arguments.self, from: data.isEmpty ? Data("{}".utf8) : data)
@@ -182,13 +212,23 @@ public final class CommandRegistry {
 
     public func isAvailable<C: EditorCommand>(_ command: C.Type) -> Bool { C.isAvailable(in: session) }
 
+    /// Why the command `id` can't run now (see `EditorCommand.unavailableReason(in:)`).
+    public func unavailableReason(_ id: CommandID) -> String? {
+        entries[id]?.unavailableReason(session)
+    }
+
+    /// The command's `Arguments` and `Result` types (for deriving schemas).
+    public func types(of id: CommandID) -> (arguments: any Codable.Type, result: any Codable.Type)? {
+        entries[id].map { ($0.argumentsType, $0.resultType) }
+    }
+
     /// Runs `command` with `arguments`: checks availability, runs it and logs a failure the
     /// command didn't log itself. Throws `CommandError`s or the command's error.
     @discardableResult
     public func run<C: EditorCommand>(_ command: C.Type, _ arguments: C.Arguments) throws -> C.Result {
         let mark = session.log.nextSequence
         guard C.isAvailable(in: session) else {
-            let failure = CommandError.unavailable(C.id, reason: session.isPlaying ? EditorError.playing.description : nil)
+            let failure = CommandError.unavailable(C.id, reason: C.unavailableReason(in: session))
             session.log.warning("\(C.title): \(failure)")
             throw failure
         }
