@@ -48,6 +48,21 @@
 // `isRecording = true`. The stack is then exactly as it was, and every command still
 // resolves, because snapshots keep `EntityID`s. After loading or creating a scene, call
 // `clear()`: the old commands describe a different world.
+//
+// ## Reloading component types
+//
+// Game code can be reloaded (GameModule.swift): its component types are replaced by new
+// types with the same names. The world's components are moved through JSON for that
+// (`World.detachComponents(named:)`), and so is the history: `detachComponents(named:)`
+// turns every value of those types held by a step (`SetComponentCommand`, `AddComponentCommand`,
+// `RemoveComponentCommand`, through `HeldComponent`) into JSON, and once the new types are
+// registered `resolveDetachedComponents(defaults:)` decodes them back, tolerating changed
+// types like the world does (new fields defaulted, removed ones dropped, retyped ones reset).
+// Values whose type is gone stay JSON; undoing or redoing such a step puts the JSON on the
+// entity as an unresolved component, as a scene file would. Commands that name components
+// (`SetFieldCommand`) or hold scene data (`SpawnCommand`, `DespawnCommand`,
+// `ReplaceSubtreeCommand`) need nothing. A `ClosureCommand` that captured component values
+// can't be converted: don't capture game component values in one.
 
 /// A reversible edit. Commands are values; `perform` may capture state the first time it
 /// runs (a despawn records what it removes) and is called again to redo.
@@ -61,10 +76,21 @@
     /// Absorbs `next`, a command that has just been performed and follows this one inside a
     /// group, and returns true; or returns false to stay separate.
     mutating func merge(_ next: any UndoCommand) -> Bool
+    /// Component types named `names` are about to be replaced (a game module reload): turn
+    /// the values of those types the command holds into JSON (`HeldComponent.detach`).
+    /// Commands that hold no component values (the default) do nothing. See "Reloading
+    /// component types" above.
+    mutating func detachComponents(named names: Set<String>) throws
+    /// Types are registered again: decode the JSON held by `detachComponents` with them
+    /// (`defaults` gives each name's default value, for tolerant decoding). Returns how many
+    /// values came back. Default: 0.
+    mutating func resolveDetachedComponents(defaults: (String) -> (any Component)?) -> Int
 }
 
 extension UndoCommand {
     public mutating func merge(_ next: any UndoCommand) -> Bool { false }
+    public mutating func detachComponents(named names: Set<String>) throws {}
+    public mutating func resolveDetachedComponents(defaults: (String) -> (any Component)?) -> Int { 0 }
 }
 
 public enum UndoError: Error, Equatable, CustomStringConvertible {
@@ -106,6 +132,14 @@ public struct GroupCommand: UndoCommand {
 
     public mutating func revert(in world: World) throws {
         for i in commands.indices.reversed() { try commands[i].revert(in: world) }
+    }
+
+    public mutating func detachComponents(named names: Set<String>) throws {
+        for i in commands.indices { try commands[i].detachComponents(named: names) }
+    }
+
+    public mutating func resolveDetachedComponents(defaults: (String) -> (any Component)?) -> Int {
+        commands.indices.reduce(0) { $0 + commands[$1].resolveDetachedComponents(defaults: defaults) }
     }
 
     /// Appends an already performed command, merging it into the last one if it can.
@@ -249,6 +283,31 @@ public struct GroupCommand: UndoCommand {
         undoSteps.append(step)
         changed()
         return true
+    }
+
+    // MARK: Reloading component types
+
+    /// Turns the component values of the types named `names` held by every step (undo, redo
+    /// and open groups) into JSON, before those types are replaced (see "Reloading component
+    /// types" above). Throws if one doesn't encode; steps converted before stay converted
+    /// (they still work), so the caller may `clear()` instead.
+    public func detachComponents(named names: Set<String>) throws {
+        guard !names.isEmpty else { return }
+        for i in undoSteps.indices { try undoSteps[i].detachComponents(named: names) }
+        for i in redoSteps.indices { try redoSteps[i].detachComponents(named: names) }
+        for i in groups.indices { try groups[i].detachComponents(named: names) }
+    }
+
+    /// Decodes the JSON held since `detachComponents(named:)` with the types now registered
+    /// under those names (`defaults(name)` a default value of each, for tolerant decoding).
+    /// Returns how many values came back; the others stay JSON.
+    @discardableResult
+    public func resolveDetachedComponents(defaults: (String) -> (any Component)?) -> Int {
+        var count = 0
+        for i in undoSteps.indices { count += undoSteps[i].resolveDetachedComponents(defaults: defaults) }
+        for i in redoSteps.indices { count += redoSteps[i].resolveDetachedComponents(defaults: defaults) }
+        for i in groups.indices { count += groups[i].resolveDetachedComponents(defaults: defaults) }
+        return count
     }
 
     // MARK: Dirty state

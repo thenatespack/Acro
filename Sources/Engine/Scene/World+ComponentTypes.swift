@@ -109,7 +109,7 @@ extension World {
     /// Decodes `raw` as `type`, over `base` (the default's JSON): `raw`'s fields win, and a
     /// field that fails to decode falls back to `base`'s, a few times over. Returns the
     /// component and the dotted paths of the fields that fell back.
-    private static func decodeTolerantly(_ type: any Component.Type, raw: JSONValue, base: JSONValue?)
+    static func decodeTolerantly(_ type: any Component.Type, raw: JSONValue, base: JSONValue?)
         -> Result<(any Component, Set<String>), any Error> {
         guard let base else { return Result { (try decodeComponent(type, from: raw), []) } }
         var overlay = raw

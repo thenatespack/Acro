@@ -22,11 +22,21 @@ public struct GameModuleTestsPulser: Component, Equatable, Sendable {
     public init() {}
 }
 
+/// SampleGame's stats as v2 sees them (the same JSON; `frames` only).
+struct SampleGameV2Stats: Codable {
+    var frames: Int
+}
+
 @_cdecl("swift_game_engine_module_v1")
 public func registerSampleGameV2(_ module: UnsafeMutableRawPointer) -> Int32 {
     GameModule.register(module) { game in
         game.name = "SampleGame"
         game.summary = "Version 2"
+        // The state v1 handed over, shown in the summary so a test can see it arrived.
+        game.didLoad(SampleGameV2Stats.self) { [unowned game] saved in
+            game.summary = "Version 2 (carried \(saved.map { String($0.frames) } ?? "nothing"))"
+        }
+        game.willUnload { SampleGameV2Stats(frames: -1) }
         game.component(Bobber.self) { Bobber() }
         game.component(GameModuleTestsPulser.self) { GameModuleTestsPulser() }
         // Lifts every bobber to origin + height, so a test can tell the new code runs.
