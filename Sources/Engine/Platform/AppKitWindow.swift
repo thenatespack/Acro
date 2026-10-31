@@ -14,6 +14,7 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
     /// The capture state last applied, and whether we hid the cursor (`NSCursor.hide` calls nest).
     private var captured = false
     private var cursorHidden = false
+    private let gamepads = makePlatformGamepadSource()
 
     init(title: String, width: Int, height: Int) {
         let app = NSApplication.shared
@@ -103,6 +104,7 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate {
 
         if !window.isKeyWindow { input.releaseAll() }
         input.setWindowFocused(window.isKeyWindow && NSApp.isActive)
+        input.updateGamepads(gamepads?.snapshots() ?? [])
         metalLayer.contentsScale = window.backingScaleFactor
     }
 

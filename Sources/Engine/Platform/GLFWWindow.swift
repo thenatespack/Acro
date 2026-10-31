@@ -15,6 +15,7 @@ final class GLFWWindow: PlatformWindow {
     private var appliedCursor: CursorShape = .arrow
     private var cursors: [CursorShape: OpaquePointer] = [:]
     private var lastCapturedPosition: Vec2?
+    private let gamepads = makePlatformGamepadSource()
 
     init(title: String, width: Int, height: Int) throws {
         #if os(macOS)
@@ -99,6 +100,7 @@ final class GLFWWindow: PlatformWindow {
             input.mousePosition = position
         }
         input.setWindowFocused(glfwGetWindowAttrib(handle, GLFW_FOCUSED) == GLFW_TRUE)
+        input.updateGamepads(gamepads?.snapshots() ?? [])
     }
 
     func applyCursor(_ cursor: CursorShape, captured: Bool) {

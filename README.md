@@ -243,6 +243,20 @@ While text input is active, character, editing and navigation keys are not repor
 
 On macOS the window view is an NSTextInputClient, so dead keys (option+e, e), the press-and-hold accent popup and input methods such as Japanese/Chinese/Korean work, and the candidate window appears at the caret rectangle. On the GLFW (Vulkan) window, committed text comes from GLFW's char callback, but GLFW 3.4 has no preedit API: `composition` stays nil, an input method's text only appears once committed, and the candidate window can't be positioned. In the Demo, F2 toggles a debug mode that echoes typed text, the composition and key events in the window title (Esc exits).
 
+### Gamepads and action maps
+`input.gamepads` lists the connected pads (`input.gamepad` is the first; `input.gamepadEvents` has this frame's connects and disconnects). A `Gamepad` has the standard layout: face buttons `south / east / west / north`, shoulders, stick clicks, d-pad, `start / back / guide`, with `isDown` / `wasPressed` / `wasReleased` like keys, plus `leftStick` / `rightStick` (x right, y up, length at most 1), `leftTrigger` / `rightTrigger` (0 to 1) and `value(_ axis)`. Sticks have a radial deadzone (`leftStickDeadzone`, `rightStickDeadzone`, default 0.15; the length is rescaled so it still reaches 1) and triggers a linear one (`triggerDeadzone`); the `raw...` properties are what the device reported. Pads are polled once per frame with the rest of the input, so reads agree within a frame. On macOS the GameController framework is used (for both the AppKit and the GLFW window); on Linux and Windows, GLFW's gamepad API (`glfwGetGamepadState`, its built-in mappings). With ENGINE_SCREENSHOT the game sees no pads.
+
+`InputActions` maps names to inputs so game code never mentions a key: button actions (`isPressed` / `wasPressed` / `wasReleased` / analog `value`), 1D axes (`value`, -1 to 1) and 2D axes (`vector`, normalized). Each action has any number of bindings (keys, mouse buttons, gamepad buttons and axes, a stick, composites such as WASD, or a negative / positive pair); the strongest wins. Gamepad bindings read all connected pads. Call `actions.update(engine.input)` once per frame.
+
+```swift
+var map = InputBindings()
+map.buttons.append(.init("jump", [.key(.space), .gamepadButton(.south)]))
+map.vectors.append(.init("move", [.composite(up: .key(.w), down: .key(.s), left: .key(.a), right: .key(.d)), .stick(stick: .left)]))
+let actions = InputActions(bindings: map)
+```
+
+Rebinding: `actions.listen(for: .button("jump", slot: 0))` waits for the next key, mouse button, gamepad button or axis past `listenThreshold` and assigns it (Esc cancels, `onRebind` fires); whatever is held when listening starts is ignored. `rebind(_:to:)` assigns directly. `InputBindings` is Codable: `json()` / `InputBindings(json:)` save and load the player's bindings, with sources written as strings like `"key.w"`, `"pad.south"`, `"axis.leftTrigger+"`. Not wired to the editor.
+
 ### Mouse capture and cursors
 `input.cursor` sets the cursor shape over the window (`.arrow`, `.iBeam`, `.pointingHand`, `.resizeHorizontal`, `.resizeVertical`, `.crosshair`, `.notAllowed`, `.hidden`). It resets to `.arrow` every frame, so set it every frame while it should differ. `input.isMouseCaptured = true` asks for relative mouse mode: the cursor is hidden and locked, and `mouseDelta` reports raw motion in points that isn't stopped by the screen edges. The request is ignored while the window lacks focus. Capture ends when the window loses focus or Esc is pressed (that press isn't reported; see `escapeReleasesCapture`), and the game has to ask again. On macOS this uses `CGAssociateMouseAndMouseCursorPosition` and `NSCursor`; on GLFW it uses `GLFW_CURSOR_DISABLED` with raw mouse motion where supported, and `notAllowed` needs GLFW 3.4. Screenshot runs leave the cursor alone. `UIContext.desiredCursor` (from the docking widgets) isn't wired to `input.cursor` yet.
 
@@ -425,6 +439,7 @@ swift run -c release Demo --scene shadows --quality ultra --resolution 4k   # --
 | 17 | `images` | Decoded PNG/HDR textures: mip chains receding to the horizon, sRGB vs linear upload of the same bytes, an `.rgba16Float` HDR cube, a texture updated in place every frame | M toggles the floor's mipmaps |
 | 18 | `gltf` | glTF 2.0 import (Khronos OrientationTest: arrows must point into their targets), or any file via `DEMO_GLTF=<path>` | |
 | 19 | `pbr` | PBR materials: spheres from dielectric to metal (bottom to top) and smooth to rough (left to right), a normal-mapped brick slab, an emissive panel, an alpha-masked plant (cutout shadow too), the Khronos BoomBox (CC0; all five texture maps, textures downscaled) | |
+| 20 | `input` | Action maps (`InputActions`): a cube moved by a normalized 2D axis (WASD / arrows / left stick), gamepad visualizer, runtime rebinding. Fixed camera, so WASD / arrows don't orbit here | WASD/arrows/left stick move; J/K or right stick X spin; Shift/LB/RT boost; F/A flash; C select a binding, R rebind it (Esc cancels), B defaults |
 
 Everywhere: **1–9** and **0** (scene 10) switch scenes, **]** / **[** next / previous scene, **F2** toggles a text-input test mode (echoes typing in the window title), **Tab / Shift-Tab** cycle the render resolution (native, quality, performance, 144p … 16k), **U** cycles the upscaler (temporal ones only without MSAA), **V** toggles vsync, **Space** pauses animation, arrows/WASD or left-drag orbit, **Q/E** zoom, **Esc** quits. The window title shows the scene, its state, the render size, the quality and the backend.
 

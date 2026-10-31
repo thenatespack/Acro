@@ -1,4 +1,4 @@
-public enum Key: Hashable, Sendable, CaseIterable {
+public enum Key: String, Hashable, Sendable, CaseIterable, Codable {
     case a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z
     case num0, num1, num2, num3, num4, num5, num6, num7, num8, num9
     case space, enter, escape, tab, backspace, grave, leftBracket, rightBracket
@@ -8,7 +8,7 @@ public enum Key: Hashable, Sendable, CaseIterable {
     case leftShift, rightShift, leftControl, rightControl, leftAlt, rightAlt, leftSuper, rightSuper
 }
 
-public enum MouseButton: Hashable, Sendable, CaseIterable {
+public enum MouseButton: String, Hashable, Sendable, CaseIterable, Codable {
     case left, right, middle
 }
 
@@ -158,6 +158,16 @@ public final class Input {
         textEvents.compactMap { if case .key(let e) = $0 { e } else { nil } }
     }
 
+    // MARK: Gamepads
+
+    /// The connected gamepads, in the order they connected (see `Gamepad`). Updated once per
+    /// frame with the rest of the input, so every read within a frame agrees.
+    public private(set) var gamepads: [Gamepad] = []
+    /// This frame's gamepad connections and disconnections.
+    public private(set) var gamepadEvents: [GamepadEvent] = []
+    /// The first connected gamepad, the usual single-player choice.
+    public var gamepad: Gamepad? { gamepads.first }
+
     /// Modifier keys currently held.
     public var modifiers: KeyModifiers {
         var m: KeyModifiers = []
@@ -240,6 +250,28 @@ public final class Input {
         scrollDelta = .zero
         buttonsPressed.removeAll(keepingCapacity: true)
         buttonsReleased.removeAll(keepingCapacity: true)
+        gamepadEvents.removeAll(keepingCapacity: true)
+        for pad in gamepads { pad.beginFrame() }
+    }
+
+    /// Platforms report the state of every connected gamepad once per frame. Pads are matched by
+    /// `id`: new ones connect, missing ones disconnect, the rest get their edges derived.
+    func updateGamepads(_ snapshots: [GamepadSnapshot]) {
+        for pad in gamepads where !snapshots.contains(where: { $0.id == pad.id }) {
+            pad.disconnect()
+            gamepadEvents.append(.disconnected(pad))
+        }
+        gamepads.removeAll { !$0.isConnected }
+        for snapshot in snapshots {
+            if let pad = gamepads.first(where: { $0.id == snapshot.id }) {
+                pad.apply(snapshot)
+            } else {
+                let pad = Gamepad(id: snapshot.id, name: snapshot.name)
+                pad.apply(snapshot)
+                gamepads.append(pad)
+                gamepadEvents.append(.connected(pad))
+            }
+        }
     }
 
     func endEvents() {
