@@ -655,7 +655,7 @@ Everywhere: **1–9** and **0** (scene 10) switch scenes, **]** / **[** next / p
 
 The full roadmap (ECS, assets, physics, audio, UI, in-engine editor) lives on the project task board. Physics limits are listed under **Physics**, skeletal animation limits under **Skeletal animation**.
 
-- Static buffers are immutable after creation (use `setVertexData` / `setUniformData` for dynamic data); textures can be patched with `updateTexture`. Creating either on Vulkan blocks on the upload.
+- Creating a static buffer or texture on Vulkan blocks on the upload (edit them later with `updateBuffer` / `updateTexture`; use `setVertexData` / `setUniformData` for per-frame data).
 - Textures are 2D RGBA8 or RGBA16F only: no compressed formats (BC7/ASTC), cube maps or arrays (environments are equirectangular). Storage textures are `.rgba16Float` / `.rgba8Unorm` only (no single-channel or integer formats yet, which FSR 3 will need), with one mip level.
 - Compute: no indirect dispatch, no async compute queue (passes run on the graphics queue in recording order), no subgroup operations; Vulkan barriers are global rather than per resource. Synchronization validation (`validate_sync`) didn't report a hazard even with a barrier deliberately removed on MoltenVK, so the barriers are checked by the `ComputeTests` (compute → indirect draw → compute in one frame on both backends) rather than by the layer.
 - Particles: sorted (`.alpha`) emitters hold at most 2048 particles; no soft depth fade (the scene pass can't sample its own depth), no lighting or shadows on particles, no texture atlases or flipbooks, no collision beyond a ground plane, no sub-emitters. Sorting uses the `prepare` camera, also for other `renderView` views.
