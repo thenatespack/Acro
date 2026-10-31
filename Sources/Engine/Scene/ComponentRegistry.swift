@@ -43,6 +43,14 @@ public enum ComponentRegistry {
         if byName[name] == nil { byName[name] = type }
     }
 
+    /// Forgets the types registered under `names`, so other types can take the names: for
+    /// unloading game code (`World.detachComponents(named:)` first moves their data out of
+    /// every world). Returns the names that were registered.
+    @discardableResult
+    public static func unregister(_ names: some Sequence<String>) -> [String] {
+        names.filter { byName.removeValue(forKey: $0) != nil }
+    }
+
     /// The type registered as `name`, if any.
     public static func type(named name: String) -> (any Component.Type)? {
         byName[name]
