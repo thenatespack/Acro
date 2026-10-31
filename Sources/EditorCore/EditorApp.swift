@@ -1211,13 +1211,10 @@ final class Toolbar {
             (openProjectButton, ProjectOpenCommand.id), (newProjectButton, ProjectNewCommand.id),
         ] + toolButtons.map { ($0.1, ToolSetCommand.id) }
         for (widget, id) in tagged { widget.command = id.rawValue }
-        // Undo / redo titles name the step ("Undo AI: Set Transform.position on Crate…"): they
-        // give way and end in "…" (the tooltip has the whole title) instead of pushing the rest away.
-        for button in [undoButton, redoButton] {
-            button.style.maxWidth = 220
-            button.style.shrink = 1
-            button.style.minWidth = 56
-        }
+        // Undo / redo titles name the step ("Undo AI: Set Transform.position on Crate…"): they stop
+        // at 220 pt and end in "…" (the tooltip has the whole title) instead of pushing the rest
+        // away. They don't shrink below that (the row wraps first), so the step stays readable.
+        for button in [undoButton, redoButton] { button.style.maxWidth = 220 }
         view = HStack(spacing: 6, padding: EdgeInsets(horizontal: 8, vertical: 5), name: "toolbar")
         // Rows that don't fit the window wrap onto a second (third…) row instead of running off the edge.
         view.wraps = true

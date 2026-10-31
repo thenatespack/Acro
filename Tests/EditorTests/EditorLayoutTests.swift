@@ -139,10 +139,13 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
         checkBusyStates(layoutApp(Vec2(800, 1400)), "800x1400")
     }
 
-    @Test func everyThemeLaysOut() {
+    @Test func everyThemeLaysOut() throws {
         for theme in UITheme.presets {
             let app = layoutApp(Vec2(1280, 720), theme: theme.name)
             #expect(app.ui.theme.name == theme.name)
+            // The dividers between panels are the theme's (they were the dark theme's in every theme).
+            let split = try #require(app.dock.descendant(named: "dockSplit") as? SplitView)
+            #expect(split.dividerColor == theme.fieldBackground)
             checkBusyStates(app, theme.name)
             expectClean(layoutApp(Vec2(800, 600), theme: theme.name), "\(theme.name) 800x600")
         }

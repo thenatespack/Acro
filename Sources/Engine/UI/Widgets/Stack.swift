@@ -74,10 +74,11 @@ public enum UILayout {
 open class Stack: Widget {
     public var axis: Axis { didSet { if axis != oldValue { setNeedsLayout() } } }
     public var spacing: Float { didSet { if spacing != oldValue { setNeedsLayout() } } }
-    /// Horizontal stacks only: children that don't fit at their natural width start a new row
-    /// (`spacing` apart), each row laid out as a stack of its own (grow / shrink / justify per
-    /// row). Separators that would start or end a row are left out of it. The stack's measured
-    /// height counts every row, so a parent that knows the width gives it room.
+    /// Horizontal stacks only: children that don't fit start a new row (`spacing` apart), each
+    /// row laid out as a stack of its own (grow / shrink / justify per row). A child counts at its
+    /// natural width, or at its `minWidth` when it can shrink, so shrinking comes before wrapping.
+    /// Separators that would start or end a row are left out of it. The stack's measured height
+    /// counts every row, so a parent that knows the width gives it room.
     public var wraps = false { didSet { if wraps != oldValue { setNeedsLayout() } } }
     public var alignment: CrossAlignment { didSet { if alignment != oldValue { setNeedsLayout() } } }
     public var justify: MainAlignment = .start { didSet { if justify != oldValue { setNeedsLayout() } } }
@@ -129,13 +130,14 @@ open class Stack: Widget {
         }
     }
 
-    /// `items` split into rows that fit `width` at their natural widths (at least one item per
-    /// row), without separators at the start or end of a row.
+    /// `items` split into rows that fit `width` (at least one item per row), each item at its
+    /// natural width or, if it shrinks, its minimum; no separators at the start or end of a row.
     func wrappedRows(_ items: [Widget], width: Float) -> [[Widget]] {
         var rows: [[Widget]] = [[]]
         var used: Float = 0
         for child in items {
-            let w = max(child.measure(width: nil).x, child.style.minWidth)
+            let natural = max(child.measure(width: nil).x, child.style.minWidth)
+            let w = child.style.shrink > 0 ? min(natural, child.style.minWidth) : natural
             if !rows[rows.count - 1].isEmpty, used + spacing + w > width + 0.5 {
                 rows.append([])
                 used = 0
