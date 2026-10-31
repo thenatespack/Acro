@@ -27,6 +27,11 @@ public struct ImportedModel: Sendable {
     public var sceneIndex: Int?
     /// Root nodes of the selected scene, in file order.
     public var roots: [Int] = []
+    /// Every skin (joints and inverse bind matrices), indexed like the file's skins.
+    public var skins: [ImportedSkin] = []
+    /// Every animation, as clips whose channel targets are node indices (see
+    /// `registerAnimations(in:keyPrefix:)` and `animationTargets(of:)`).
+    public var animations: [AnimationClip] = []
     /// Things that were skipped or approximated (unsupported primitive modes, ignored
     /// extensions, …). Unreadable data throws instead.
     public var warnings: [String] = []
@@ -66,7 +71,8 @@ public struct ImportedPrimitive: Sendable {
     /// Positions, normals (generated when the file has none), `TEXCOORD_0` (zero when missing)
     /// and the file's tangents (only together with its normals, as glTF requires; otherwise
     /// zero, and `SceneRenderer.registerMesh` generates them), as an indexed triangle list with
-    /// counter-clockwise front faces.
+    /// counter-clockwise front faces. `JOINTS_0` / `WEIGHTS_0` are in `geometry.skin`
+    /// (weights normalized to sum to 1).
     public var geometry: MeshGeometry
     /// `TANGENT`: xyz is the tangent, w (±1) the bitangent sign. nil when the file has none.
     public var tangents: [Vec4]?
@@ -90,6 +96,25 @@ public struct ImportedPrimitive: Sendable {
     }
 }
 
+/// A skeleton binding: the nodes acting as joints and, for each, the inverse of its world
+/// matrix in the bind pose (taking mesh vertices into the joint's space).
+public struct ImportedSkin: Sendable {
+    public var name: String?
+    /// Node indices; a vertex's `SkinInfluence.joints` index this list.
+    public var joints: [Int]
+    /// One per joint (identity when the file has none).
+    public var inverseBindMatrices: [Mat4]
+    /// The skeleton's root node, if the file names one.
+    public var skeleton: Int?
+
+    public init(name: String?, joints: [Int], inverseBindMatrices: [Mat4], skeleton: Int? = nil) {
+        self.name = name
+        self.joints = joints
+        self.inverseBindMatrices = inverseBindMatrices
+        self.skeleton = skeleton
+    }
+}
+
 /// A node of the scene tree: a local transform, an optional mesh and children.
 public struct ImportedNode: Sendable {
     public var name: String?
@@ -97,15 +122,20 @@ public struct ImportedNode: Sendable {
     public var transform: Transform
     /// Index into `ImportedModel.meshes`.
     public var mesh: Int?
+    /// Index into `ImportedModel.skins` that poses this node's (skinned) mesh. glTF ignores the
+    /// node's own transform for skinned meshes; the engine draws them at the node's transform
+    /// with joint matrices made relative to it, which is the same.
+    public var skin: Int?
     /// Indices into `ImportedModel.nodes`.
     public var children: [Int]
     /// Index of the parent node, nil for roots.
     public var parent: Int?
 
-    public init(name: String?, transform: Transform, mesh: Int? = nil, children: [Int] = [], parent: Int? = nil) {
+    public init(name: String?, transform: Transform, mesh: Int? = nil, skin: Int? = nil, children: [Int] = [], parent: Int? = nil) {
         self.name = name
         self.transform = transform
         self.mesh = mesh
+        self.skin = skin
         self.children = children
         self.parent = parent
     }

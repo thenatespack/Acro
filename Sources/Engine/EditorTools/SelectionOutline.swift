@@ -72,6 +72,8 @@ public enum SelectionOutline {
         public var doubleSided: Bool
         /// Selected batches: the primary entity's.
         public var primary: Bool
+        /// The skinned item's `RenderItem.skin` (one instance, drawn posed), else -1.
+        public var skin: Int = -1
     }
 
     /// The mask pass's draws for one view: occluders (opaque, unselected, in the frustum, only
@@ -91,12 +93,21 @@ public enum SelectionOutline {
                              doubleSided: (Int) -> Bool) -> Draws {
         var occluders: [Int: [MeshInstance]] = [:], occluderOrder: [Int] = []  // key: mesh * 2 + double-sided
         var selected: [Int: [MeshInstance]] = [:], selectedOrder: [Int] = []  // key: mesh * 2 + primary
+        // Skinned items are drawn one at a time with their joint matrices, after the others.
+        var skinnedOccluders: [(item: RenderItem, doubleSided: Bool)] = [], skinnedSelected: [(item: RenderItem, primary: Bool)] = []
         var draws = Draws()
         for item in items {
             let isPrimary = outlined[item.entity]
             if isPrimary == nil && (!occlusion || item.transparent) { continue }
             guard frustum.intersects(center: item.bounds.center, halfExtent: item.bounds.halfExtent) else { continue }
-            if let isPrimary {
+            if item.skin >= 0 {
+                if let isPrimary {
+                    skinnedSelected.append((item, isPrimary))
+                    draws.selectedBounds.append(item.bounds)
+                } else {
+                    skinnedOccluders.append((item, doubleSided(item.material)))
+                }
+            } else if let isPrimary {
                 let key = item.mesh * 2 + (isPrimary ? 1 : 0)
                 if selected[key] == nil { selectedOrder.append(key) }
                 selected[key, default: []].append(item.instance)
@@ -113,6 +124,11 @@ public enum SelectionOutline {
                                          doubleSided: key & 1 == 1, primary: false))
             draws.instances += instances
         }
+        for (item, doubleSided) in skinnedOccluders {
+            draws.occluders.append(Batch(mesh: item.mesh, first: draws.instances.count, count: 1, doubleSided: doubleSided,
+                                         primary: false, skin: item.skin))
+            draws.instances.append(item.instance)
+        }
         // Secondary before primary: where they overlap, the primary's flag is written last.
         for primary in [false, true] {
             for key in selectedOrder where (key & 1 == 1) == primary {
@@ -120,6 +136,11 @@ public enum SelectionOutline {
                 draws.selected.append(Batch(mesh: key >> 1, first: draws.instances.count, count: instances.count,
                                             doubleSided: true, primary: primary))
                 draws.instances += instances
+            }
+            for (item, isPrimary) in skinnedSelected where isPrimary == primary {
+                draws.selected.append(Batch(mesh: item.mesh, first: draws.instances.count, count: 1, doubleSided: true,
+                                            primary: primary, skin: item.skin))
+                draws.instances.append(item.instance)
             }
         }
         return draws
@@ -203,6 +224,8 @@ public final class SelectionOutlineRenderer {
     public private(set) var lastDraws = SelectionOutline.Draws()
 
     private let maskShader: ShaderSource
+    /// outline_mask_skinned.vert with the same fragment shader, loaded with the first skinned draw.
+    private var skinnedMaskShader: ShaderSource?
     private let compositeShader: ShaderSource
     private var pipelines: [PipelineKey: RenderPipeline] = [:]
     private let sampler: GPUSampler
@@ -210,10 +233,17 @@ public final class SelectionOutlineRenderer {
     private var pending: (scissor: ScissorRect, width: Float, radius: Int)?
 
     private enum PipelineKey: Hashable {
-        case occluder(doubleSided: Bool, reversedZ: Bool)
-        case selected
-        case visible(reversedZ: Bool)
+        case occluder(doubleSided: Bool, reversedZ: Bool, skinned: Bool)
+        case selected(skinned: Bool)
+        case visible(reversedZ: Bool, skinned: Bool)
         case composite
+
+        var skinned: Bool {
+            switch self {
+            case .occluder(_, _, let skinned), .selected(let skinned), .visible(_, let skinned): return skinned
+            case .composite: return false
+            }
+        }
     }
 
     /// Must match `PushConstants` in outline_mask.vert / .frag.
@@ -235,6 +265,10 @@ public final class SelectionOutlineRenderer {
         stride: MemoryLayout<MeshVertex>.stride,
         attributes: [VertexAttribute(location: 0, format: .float3, offset: MemoryLayout<MeshVertex>.offset(of: \.position)!)])
     /// Only the model matrix (locations 3–6) of `MeshInstance`.
+    /// The position and the skinning attributes of `SkinnedMeshVertex`.
+    static let skinnedVertexLayout = VertexLayout(
+        stride: MemoryLayout<SkinnedMeshVertex>.stride,
+        attributes: SkinnedMeshVertex.layout.attributes.filter { [0, 14, 15].contains($0.location) })
     static let instanceLayout = VertexLayout(
         stride: MemoryLayout<MeshInstance>.stride,
         attributes: (0..<4).map { VertexAttribute(location: 3 + $0, format: .float4, offset: $0 * MemoryLayout<Vec4>.stride) })
@@ -285,27 +319,30 @@ public final class SelectionOutlineRenderer {
             let mesh = { (batch: SelectionOutline.Batch) in meshes[batch.mesh] }
             for batch in draws.occluders {
                 drawMask(pass, batch, mesh: mesh(batch), instances: instances, viewProj: viewProj,
-                         key: .occluder(doubleSided: batch.doubleSided, reversedZ: view.reversedZ), color: .zero)
+                         key: .occluder(doubleSided: batch.doubleSided, reversedZ: view.reversedZ, skinned: batch.skin >= 0),
+                         color: .zero, sceneRenderer: sceneRenderer)
             }
             // Without the occlusion test every selected texel counts as visible.
             for batch in draws.selected {
-                drawMask(pass, batch, mesh: mesh(batch), instances: instances, viewProj: viewProj, key: .selected,
-                         color: Vec4(1, occlusion ? 0 : 1, batch.primary ? 1 : 0, 1))
+                drawMask(pass, batch, mesh: mesh(batch), instances: instances, viewProj: viewProj, key: .selected(skinned: batch.skin >= 0),
+                         color: Vec4(1, occlusion ? 0 : 1, batch.primary ? 1 : 0, 1), sceneRenderer: sceneRenderer)
             }
             guard occlusion else { return }
             for batch in draws.selected {
                 drawMask(pass, batch, mesh: mesh(batch), instances: instances, viewProj: viewProj,
-                         key: .visible(reversedZ: view.reversedZ), color: Vec4(1, 1, batch.primary ? 1 : 0, 1))
+                         key: .visible(reversedZ: view.reversedZ, skinned: batch.skin >= 0), color: Vec4(1, 1, batch.primary ? 1 : 0, 1),
+                         sceneRenderer: sceneRenderer)
             }
         }
         pending = (scissor, width, radius)
     }
 
     private func drawMask(_ pass: RenderPass, _ batch: SelectionOutline.Batch, mesh: GPUMesh?, instances: TransientBuffer,
-                          viewProj: Mat4, key: PipelineKey, color: Vec4) {
-        guard let mesh, let pipeline = pipeline(key) else { return }
+                          viewProj: Mat4, key: PipelineKey, color: Vec4, sceneRenderer: SceneRenderer) {
+        guard let mesh, mesh.isSkinned == key.skinned, let pipeline = pipeline(key) else { return }
         pass.setPipeline(pipeline)
         pass.setPushConstants(MaskConstants(viewProj: viewProj, color: color))
+        if batch.skin >= 0 { sceneRenderer.bindSkin(batch.skin, material: nil, in: pass) }
         pass.setVertexBuffer(mesh.vertexBuffer)
         pass.setIndexBuffer(mesh.indexBuffer, type: .uint32)
         pass.setVertexBuffer(instances.buffer, offset: instances.offset + batch.first * MemoryLayout<MeshInstance>.stride, index: 1)
@@ -349,20 +386,31 @@ public final class SelectionOutlineRenderer {
             descriptor.depthTest = false
             descriptor.depthWrite = false
             descriptor.alphaBlending = true
+        } else if key.skinned {
+            if skinnedMaskShader == nil {
+                do {
+                    skinnedMaskShader = try ShaderSource.load(vertex: "outline_mask_skinned", fragment: "outline_mask", bundle: .module)
+                } catch {
+                    print("SelectionOutlineRenderer: skinned mask shader unavailable: \(error)")
+                    return nil
+                }
+            }
+            descriptor = PipelineDescriptor(shader: skinnedMaskShader!, vertexLayout: Self.skinnedVertexLayout,
+                                            instanceLayout: Self.instanceLayout)
         } else {
             descriptor = PipelineDescriptor(shader: maskShader, vertexLayout: Self.vertexLayout, instanceLayout: Self.instanceLayout)
         }
         descriptor.cullMode = .none
         descriptor.writesMotionVectors = false
         switch key {
-        case .occluder(let doubleSided, let reversedZ):
+        case .occluder(let doubleSided, let reversedZ, _):
             descriptor.cullMode = doubleSided ? .none : .back
             descriptor.colorWrites = false
             descriptor.depthCompare = reversedZ ? .greater : .less
         case .selected:
             descriptor.depthTest = false
             descriptor.depthWrite = false
-        case .visible(let reversedZ):
+        case .visible(let reversedZ, _):
             descriptor.depthWrite = false
             descriptor.depthCompare = reversedZ ? .greaterEqual : .lessEqual
         case .composite:
