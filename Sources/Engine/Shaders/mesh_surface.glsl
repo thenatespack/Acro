@@ -12,6 +12,13 @@
 //   hemisphere light as irradiance for diffuse, and for specular the hemisphere seen along the
 //   reflection vector (blurred toward the irradiance with roughness) times Karis' analytic
 //   split-sum DFG approximation, so metals aren't black away from the sun. No cubemap IBL.
+//
+// Point and spot lights (clustered forward, see `LightClusters`): the fragment finds its
+// cluster from gl_FragCoord (screen tile) and its view depth (logarithmic slice), then loops
+// over that cluster's lights. Each adds the same direct BRDF as the sun (per shading model),
+// with radiance color x intensity / d² windowed smoothly to zero at the light's range
+// (Karis 2013: saturate(1 - (d/range)^4)²) and, for spots, saturate(cos x scale + offset)²
+// between the outer and inner cone. No shadows. Without lights the loop is skipped entirely.
 
 // Must match `SceneRenderer.FrameUniforms`.
 layout(set = 0, binding = 0, std140) uniform Frame {
@@ -26,6 +33,9 @@ layout(set = 0, binding = 0, std140) uniform Frame {
     vec4 skyColor;
     vec4 groundColor;
     vec4 shadowParams;
+    vec4 viewDepth;      // view depth of a world position: dot(viewDepth.xyz, p) + viewDepth.w
+    vec4 clusterScale;   // xy: tiles per pixel, z: slice scale, w: slice bias (slice = log2(depth) * z + w)
+    vec4 clusterGrid;    // xyz: tiles x, tiles y, slices; w: 1 when there are point/spot lights
 } frame;
 
 // Must match `SceneRenderer.MaterialUniforms` (uniform buffer 2).
@@ -38,6 +48,23 @@ layout(set = 2, binding = 2, std140) uniform MaterialData {
     vec4 emissive;   // rgb: emissive color x strength (linear), w: 1 PBR, 0 Blinn-Phong
     vec4 flags;      // x: alpha cutoff (mask), y: 1 when there is a normal map
 } material;
+
+// Point and spot lights, must match `LightClusters.GPUData` (uniform buffers 3-7).
+layout(set = 2, binding = 3, std140) uniform LightPositions {
+    vec4 data[1024];  // xyz: world position, w: 1 / range²
+} lightPositions;
+layout(set = 2, binding = 4, std140) uniform LightColors {
+    vec4 data[1024];  // rgb: color x intensity, w: spot scale (0: point light)
+} lightColors;
+layout(set = 2, binding = 5, std140) uniform LightDirections {
+    vec4 data[1024];  // xyz: spot direction (travel), w: spot offset (1: point light)
+} lightDirections;
+layout(set = 2, binding = 6, std140) uniform LightCells {
+    uvec4 data[1024];  // a word per cluster, 4 per uvec4: first index | count << 16
+} lightCells;
+layout(set = 2, binding = 7, std140) uniform LightIndices {
+    uvec4 data[1024];  // 10-bit light indices, 3 per word (bits 0, 10, 20), 4 words per uvec4
+} lightIndices;
 
 layout(set = 1, binding = 0) uniform sampler2DShadow shadowMap;
 // Textures 1-5 share sampler 1. Missing ones are a 1x1 white texture.
@@ -143,6 +170,35 @@ vec2 environmentBRDF(float NoV, float roughness) {
     return vec2(-1.04, 1.04) * a004 + r.zw;
 }
 
+// The radiance arriving from point / spot light `i`, and the unit direction toward it in `l`.
+vec3 punctualRadiance(uint i, out vec3 l) {
+    vec4 position = lightPositions.data[i];
+    vec3 toLight = position.xyz - vWorldPos;
+    float d2 = dot(toLight, toLight);
+    float x = d2 * position.w;  // (d / range)²
+    float window = clamp(1.0 - x * x, 0.0, 1.0);
+    l = toLight * inversesqrt(max(d2, 1e-8));
+    vec4 color = lightColors.data[i];
+    vec4 direction = lightDirections.data[i];
+    float cone = clamp(dot(-l, direction.xyz) * color.w + direction.w, 0.0, 1.0);
+    return color.rgb * (window * window * cone * cone / max(d2, 1e-4));
+}
+
+// This fragment's cluster: first light index (x) and count (y).
+uvec2 clusterLights() {
+    float depth = dot(frame.viewDepth.xyz, vWorldPos) + frame.viewDepth.w;
+    vec2 tile = clamp(floor(gl_FragCoord.xy * frame.clusterScale.xy), vec2(0.0), frame.clusterGrid.xy - 1.0);
+    float slice = clamp(floor(log2(max(depth, 1e-6)) * frame.clusterScale.z + frame.clusterScale.w), 0.0, frame.clusterGrid.z - 1.0);
+    uint cluster = uint((slice * frame.clusterGrid.y + tile.y) * frame.clusterGrid.x + tile.x);
+    uint cell = lightCells.data[cluster >> 2][cluster & 3u];
+    return uvec2(cell & 0xFFFFu, cell >> 16);
+}
+
+uint lightIndex(uint i) {
+    uint word = i / 3u;
+    return (lightIndices.data[word >> 2][word & 3u] >> ((i - word * 3u) * 10u)) & 0x3FFu;
+}
+
 void main() {
     vec2 uv = vec2(dot(material.uvRow0.xy, vUV) + material.uvRow0.z, dot(material.uvRow1.xy, vUV) + material.uvRow1.z);
     vec4 texel = texture(sampler2D(baseColorMap, materialSampler), uv);
@@ -189,6 +245,17 @@ void main() {
         vec3 specular = pow(max(dot(n, h), 0.0), material.params.w) * material.params.z * step(0.0, ndotl) * light;
         vec3 ambient = hemisphere(n) * ao;
         color = albedo * (ambient + diffuse * shadow) + specular * shadow;
+        if (frame.clusterGrid.w > 0.5) {
+            uvec2 cell = clusterLights();
+            for (uint i = cell.x; i < cell.x + cell.y; i++) {
+                vec3 pl;
+                vec3 radiance = punctualRadiance(lightIndex(i), pl);
+                float pndotl = dot(n, pl);
+                vec3 ph = normalize(pl + v);
+                color += albedo * max(pndotl, 0.0) * radiance
+                    + pow(max(dot(n, ph), 0.0), material.params.w) * material.params.z * step(0.0, pndotl) * radiance;
+            }
+        }
     } else {
         vec4 mr = texture(sampler2D(metallicRoughnessMap, materialSampler), uv);
         float metallic = clamp(material.surface.x * mr.b, 0.0, 1.0);
@@ -211,6 +278,19 @@ void main() {
         vec3 reflected = mix(hemisphere(reflect(-v, n)), irradiance, roughness);
         vec3 ambient = ((vec3(1.0) - specularAmbient) * diffuseColor * irradiance + specularAmbient * reflected) * ao;
         color = direct + ambient;
+        if (frame.clusterGrid.w > 0.5) {
+            uvec2 cell = clusterLights();
+            for (uint i = cell.x; i < cell.x + cell.y; i++) {
+                vec3 pl;
+                vec3 radiance = punctualRadiance(lightIndex(i), pl);
+                vec3 ph = normalize(pl + v);
+                float pNoL = clamp(dot(n, pl), 0.0, 1.0);
+                float pNoH = clamp(dot(n, ph), 0.0, 1.0);
+                vec3 pF = fresnelSchlick(f0, clamp(dot(v, ph), 0.0, 1.0));
+                vec3 pSpecular = distributionGGX(pNoH, a) * visibilitySmithGGXCorrelated(NoV, pNoL, a) * pF * PI;
+                color += ((vec3(1.0) - pF) * diffuseColor + pSpecular) * pNoL * radiance;
+            }
+        }
     }
     color = mix(color, albedo, material.params.y);
     color += material.emissive.rgb * texture(sampler2D(emissiveMap, materialSampler), uv).rgb;

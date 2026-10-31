@@ -139,6 +139,62 @@ public struct DirectionalLight: Component, Codable, Equatable, Sendable {
     }
 }
 
+/// A light bulb: shines equally in every direction from its entity's world position (rotation
+/// and scale are ignored).
+///
+/// Physically based falloff: the light reaching a surface is `color × intensity / d²` (so at
+/// 1 unit it matches a `DirectionalLight` of the same intensity), smoothly windowed to zero at
+/// `range`, beyond which the light has no effect and costs nothing. `SceneRenderer` bins point
+/// and spot lights into a clustered view-space grid (see `LightClusters` for the limits).
+public struct PointLight: Component, Codable, Equatable, Sendable {
+    public static let componentName = "PointLight"
+    public static var fieldHints: [String: FieldHints] {
+        ["color": FieldHints(color: true), "intensity": FieldHints(range: 0...1000, step: 0.1),
+         "range": FieldHints(range: 0.01...1000, step: 0.1, tooltip: "Distance at which the light fades out completely")]
+    }
+    /// Linear RGB.
+    public var color: Vec3
+    public var intensity: Float
+    /// World-space distance beyond which the light contributes nothing.
+    public var range: Float
+
+    public init(color: Vec3 = Vec3(1, 1, 1), intensity: Float = 5, range: Float = 10) {
+        self.color = color
+        self.intensity = intensity
+        self.range = range
+    }
+}
+
+/// A cone of light from its entity's world position along the entity's forward axis (local -Z
+/// of the `GlobalTransform`, the camera / directional-light convention), with the falloff of a
+/// `PointLight`. Full intensity inside `innerConeAngle`, fading smoothly to zero at
+/// `outerConeAngle` (half-angles from the axis in radians, as in glTF `KHR_lights_punctual`;
+/// the outer angle is clamped below 90°).
+public struct SpotLight: Component, Codable, Equatable, Sendable {
+    public static let componentName = "SpotLight"
+    public static var fieldHints: [String: FieldHints] {
+        ["color": FieldHints(color: true), "intensity": FieldHints(range: 0...1000, step: 0.1),
+         "range": FieldHints(range: 0.01...1000, step: 0.1, tooltip: "Distance at which the light fades out completely"),
+         "innerConeAngle": FieldHints(range: 0...1.57, step: 0.01, tooltip: "Half-angle of full intensity, radians"),
+         "outerConeAngle": FieldHints(range: 0...1.57, step: 0.01, tooltip: "Half-angle where the light reaches zero, radians")]
+    }
+    /// Linear RGB.
+    public var color: Vec3
+    public var intensity: Float
+    public var range: Float
+    public var innerConeAngle: Float
+    public var outerConeAngle: Float
+
+    public init(color: Vec3 = Vec3(1, 1, 1), intensity: Float = 10, range: Float = 15,
+                innerConeAngle: Float = 0.35, outerConeAngle: Float = 0.5) {
+        self.color = color
+        self.intensity = intensity
+        self.range = range
+        self.innerConeAngle = innerConeAngle
+        self.outerConeAngle = outerConeAngle
+    }
+}
+
 /// Ambient light and fog for the whole scene. The first entity (by index) that has one
 /// is used; without one, `SceneRenderer` uses these defaults.
 public struct SceneEnvironment: Component, Codable, Equatable, Sendable {

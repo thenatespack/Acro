@@ -49,12 +49,14 @@ public struct SceneView: Sendable {
 /// Timing and counts of the last frame `SceneRenderer` prepared.
 public struct SceneRenderStats: Sendable {
     public var list = RenderListStats()
+    /// Point and spot lights of the last view prepared (`LightClusters`).
+    public var lights = LightClusters.Stats()
     /// CPU seconds spent gathering, culling and batching (`prepare`).
     public var prepareTime: Double = 0
 }
 
 /// Draws a `World`'s entities: a forward renderer with one shadow-casting directional light,
-/// hemisphere ambient, exponential fog, instancing, frustum and shadow-caster culling, a
+/// clustered point and spot lights, hemisphere ambient, exponential fog, instancing, frustum and shadow-caster culling, a
 /// back-to-front sorted transparent pass and motion vectors for temporal upscalers.
 ///
 /// Opt-in, driven by the game:
@@ -83,7 +85,8 @@ public struct SceneRenderStats: Sendable {
 /// screen pass; `renderView` takes its own, so each view can show different gizmos.
 ///
 /// What gets drawn comes from components: the active `Camera`, the first `DirectionalLight`,
-/// the first `SceneEnvironment` and every entity with a `MeshRenderer` and a
+/// every `PointLight` and `SpotLight` (binned per view by `LightClusters`), the first
+/// `SceneEnvironment` and every entity with a `MeshRenderer` and a
 /// `GlobalTransform`. Meshes and materials are registered under string keys; the built-in
 /// meshes `MeshHandle.cube`, `.plane`, `.sphere` and `MaterialHandle.default` (Blinn-Phong, the pre-PBR look) exist from the start.
 @MainActor
@@ -171,6 +174,14 @@ public final class SceneRenderer {
     /// Shadow casters in the light's frustum (`beginViews`), and each view's batches.
     private var shadowList = RenderList()
     private var viewList = RenderList()
+    /// This frame's point and spot lights (`gather`), binned for the `prepare` camera and for
+    /// each `renderView`, and the uniform data they're uploaded from.
+    private var punctualLights: [PunctualLight] = []
+    public private(set) var clusters = LightClusters()
+    private var viewClusters = LightClusters()
+    private var lightData = LightClusters.GPUData()
+    /// Bound as the light buffers when there are no point or spot lights (16 KiB of zeros).
+    private let emptyLightBuffer: GPUBuffer
 
     /// The light as `prepare` / `beginViews` set it up.
     private struct LightSetup {
@@ -187,7 +198,8 @@ public final class SceneRenderer {
         var environment: SceneEnvironment
     }
 
-    /// Must match `Frame` in mesh.vert / mesh.frag (std140: only mat4 and vec4).
+    /// Must match `Frame` in mesh_surface.glsl (std140: only mat4 and vec4); mesh.vert and the
+    /// shadow shaders declare a prefix of it.
     struct FrameUniforms: BitwiseCopyable {
         var viewProj: Mat4
         var lightViewProj: Mat4
@@ -200,6 +212,20 @@ public final class SceneRenderer {
         var skyColor: Vec4
         var groundColor: Vec4
         var shadowParams: Vec4
+        /// Clustered lights: view depth row, tile / slice scale, grid size and whether any lights exist.
+        var viewDepth = Vec4.zero
+        var clusterScale = Vec4.zero
+        var clusterGrid = Vec4.zero
+
+        /// Points the shader's cluster lookup at `clusters`, binned for `view` and a target of `size` pixels.
+        mutating func setClusters(_ clusters: LightClusters, view: Mat4, size: (width: Int, height: Int)) {
+            guard !clusters.isEmpty else { return }
+            viewDepth = -Vec4(view.c0.z, view.c1.z, view.c2.z, view.c3.z)
+            clusterScale = Vec4(Float(LightClusters.tilesX) / Float(max(size.width, 1)),
+                                Float(LightClusters.tilesY) / Float(max(size.height, 1)),
+                                clusters.sliceScale, -log2f(clusters.near) * clusters.sliceScale)
+            clusterGrid = Vec4(Float(LightClusters.tilesX), Float(LightClusters.tilesY), Float(LightClusters.slices), 1)
+        }
     }
 
     /// Must match `MaterialData` in mesh_surface.glsl (uniform buffer 2).
@@ -259,6 +285,7 @@ public final class SceneRenderer {
         shadowMap = try device.makeTexture(
             TextureDescriptor(width: quality.shadowMapSize, height: quality.shadowMapSize, format: .depth32Float))
         whiteTexture = try device.makeTexture(pixels: [255, 255, 255, 255], width: 1, height: 1, format: .rgba8Unorm)
+        emptyLightBuffer = try device.makeBuffer([Vec4](repeating: .zero, count: LightClusters.GPUData.entries), usage: .uniform)
 
         try registerMesh(.cube(), key: MeshHandle.cube.key)
         try registerMesh(.plane(), key: MeshHandle.plane.key)
@@ -354,6 +381,7 @@ public final class SceneRenderer {
             uniforms = nil
             debugView = nil
             stats.list = RenderListStats()
+            stats.lights = LightClusters.Stats()
             return
         }
         reversedZ = camera.reversedZ
@@ -362,7 +390,8 @@ public final class SceneRenderer {
 
         let view = Camera.viewMatrix(world: cameraWorld)
         let viewProj = camera.projection(aspect: engine.aspectRatio) * view
-        let jittered = engine.jittered(camera.projection(aspect: engine.aspectRatio)) * view
+        let jitteredProjection = engine.jittered(camera.projection(aspect: engine.aspectRatio))
+        let jittered = jitteredProjection * view
         let eye = Vec3(cameraWorld.c3.x, cameraWorld.c3.y, cameraWorld.c3.z)
         let forward = -Vec3(view.c0.z, view.c1.z, view.c2.z)
 
@@ -378,6 +407,11 @@ public final class SceneRenderer {
         uniforms = makeUniforms(viewProj: jittered, current: viewProj, previous: previous, eye: eye, light: light,
                                 environment: environment)
         let size = engine.renderSize
+        // Binned with the projection the pass rasterizes with, so tiles match gl_FragCoord.
+        clusters.build(lights: punctualLights, view: view, projection: jitteredProjection)
+        clusters.write(to: &lightData)
+        stats.lights = clusters.stats
+        uniforms!.setClusters(clusters, view: view, size: size)
         debugView = DebugView(viewProjection: jittered, cameraPosition: eye, viewportSize: size, reversedZ: camera.reversedZ,
                               projectionScale: camera.projection(aspect: engine.aspectRatio).c1.y)
     }
@@ -388,6 +422,7 @@ public final class SceneRenderer {
         // Upload assets entities started using, then gather again so they draw this frame
         // (only on frames where something new resolved).
         if resolveMissingAssets() { prep.gather(world: world) }
+        PunctualLight.gather(in: world, into: &punctualLights)
         for key in prep.missingKeys where !reportedMissing.contains(key) && !prep.meshes.contains(key) && !prep.materials.contains(key)
             && (assets == nil || AssetReference(key) == nil || failedAssetKeys.contains(key)) {
             reportedMissing.insert(key)
@@ -482,7 +517,9 @@ public final class SceneRenderer {
     /// back to front, then `debugDraw`.
     public func draw(_ pass: RenderPass) {
         guard let uniforms else { return }
-        if let uploaded { draw(pass, list: list, uniforms: uniforms, instances: uploaded, reversedZ: reversedZ) }
+        if let uploaded {
+            draw(pass, list: list, uniforms: uniforms, instances: uploaded, reversedZ: reversedZ, lights: clusters.isEmpty ? nil : lightData)
+        }
         if let debugDraw, let debugView { drawDebug(debugDraw, in: pass, view: debugView) }
     }
 
@@ -535,11 +572,16 @@ public final class SceneRenderer {
         viewList.build(items: prep.items, view: Frustum(viewProjection: viewProj), cameraPosition: eye, shadows: nil)
         stats.list = viewList.stats
         let instances = viewList.instances.isEmpty ? nil : frame.upload(viewList.instances)
-        let uniforms = makeUniforms(viewProj: viewProj, current: viewProj, previous: viewProj, eye: eye, light: views.light,
+        var uniforms = makeUniforms(viewProj: viewProj, current: viewProj, previous: viewProj, eye: eye, light: views.light,
                                     environment: views.environment)
+        viewClusters.build(lights: punctualLights, view: view.view, projection: view.projection)
+        if !viewClusters.isEmpty { viewClusters.write(to: &lightData) }
+        stats.lights = viewClusters.stats
+        uniforms.setClusters(viewClusters, view: view.view, size: (target.width, target.height))
+        let lights = viewClusters.isEmpty ? nil : lightData
         frame.renderPass(into: target, clearColor: view.clearColor, clearDepth: view.reversedZ ? 0 : 1) { pass in
             if let instances {
-                draw(pass, list: viewList, uniforms: uniforms, instances: instances, reversedZ: view.reversedZ)
+                draw(pass, list: viewList, uniforms: uniforms, instances: instances, reversedZ: view.reversedZ, lights: lights)
             }
             if let debugDraw {
                 drawDebug(debugDraw, in: pass, view: DebugView(
@@ -597,6 +639,21 @@ public final class SceneRenderer {
         return shadowMaskPipeline
     }
 
+    /// Binds the point / spot light buffers 3-7 (copied into the frame's transient memory), or
+    /// zeros when there are none (the shader skips the lights then, but Vulkan wants every
+    /// declared binding valid).
+    private func bindLights(_ lights: LightClusters.GPUData?, in pass: RenderPass) {
+        guard let lights else {
+            for index in 3...7 { pass.setUniformBuffer(emptyLightBuffer, index: index, stage: .fragment) }
+            return
+        }
+        lights.positions.withUnsafeBytes { pass.setUniformData($0, index: 3, stage: .fragment) }
+        lights.colors.withUnsafeBytes { pass.setUniformData($0, index: 4, stage: .fragment) }
+        lights.directions.withUnsafeBytes { pass.setUniformData($0, index: 5, stage: .fragment) }
+        lights.cells.withUnsafeBytes { pass.setUniformData($0, index: 6, stage: .fragment) }
+        lights.indices.withUnsafeBytes { pass.setUniformData($0, index: 7, stage: .fragment) }
+    }
+
     /// Binds a material's uniforms (buffer 2), textures 1-5 and sampler 1.
     private func bindMaterial(_ index: Int, in pass: RenderPass) {
         let (material, sampler) = materials[index]
@@ -611,9 +668,10 @@ public final class SceneRenderer {
 
     /// Opaque batches, then transparent ones back to front.
     private func draw(_ pass: RenderPass, list: RenderList, uniforms: FrameUniforms, instances uploaded: TransientBuffer,
-                      reversedZ: Bool) {
+                      reversedZ: Bool, lights: LightClusters.GPUData?) {
         pass.setUniforms(uniforms)
         pass.setTexture(shadowMap)
+        bindLights(lights, in: pass)
         var current: (pipeline: PipelineKey, material: Int)?
         for (batches, blending) in [(list.opaque, false), (list.transparent, true)] {
             for batch in batches {
