@@ -461,7 +461,8 @@ public let storageBufferOffsetAlignment = 256
     /// `index`, like `setVertexData`. For small data that changes every frame or draw.
     func setUniformData(_ bytes: UnsafeRawBufferPointer, index: Int, stage: ShaderStage)
     /// Binds a color texture (`.rgba8Unorm` / `.rgba8Srgb`) as texture `index` (`textureIndices`).
-    /// Pair it with `setSampler` at the same index.
+    /// Pair it with `setSampler` at the same index. A `.depth32Float` texture (rendered by an
+    /// earlier depth pass) binds too, as a plain `texture2D` read with `texelFetch` (depth in .r).
     func setTexture(_ texture: GPUTexture, index: Int, stage: ShaderStage)
     /// Binds a sampler as sampler `index` (`textureIndices`).
     func setSampler(_ sampler: GPUSampler, index: Int, stage: ShaderStage)

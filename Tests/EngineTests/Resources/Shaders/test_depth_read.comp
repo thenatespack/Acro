@@ -1,0 +1,19 @@
+#version 450
+// ComputeTests: copies a depth texture an earlier depth pass rendered (texture 1, texelFetch)
+// into a buffer, one float per texel.
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 2, binding = 9) uniform texture2D depthTexture;
+layout(set = 2, binding = 17) uniform sampler depthSampler;
+layout(set = 2, binding = 24, std430) writeonly buffer Values { float values[]; };
+
+layout(push_constant) uniform Push {
+    uint width;
+    uint height;
+} push;
+
+void main() {
+    uvec2 p = gl_GlobalInvocationID.xy;
+    if (p.x >= push.width || p.y >= push.height) return;
+    values[p.y * push.width + p.x] = texelFetch(sampler2D(depthTexture, depthSampler), ivec2(p), 0).r;
+}

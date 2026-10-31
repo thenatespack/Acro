@@ -1462,7 +1462,6 @@ final class MetalRenderPass: RenderPass {
     func setTexture(_ texture: GPUTexture, index: Int, stage: ShaderStage) {
         precondition(textureIndices.contains(index), "Texture index \(index) is outside \(textureIndices)")
         let texture = texture as! MetalTexture
-        precondition(!texture.format.isDepth, "Depth textures are bound with setTexture(_:)")
         if stage.contains(.vertex) { encoder.setVertexTexture(texture.texture, index: index) }
         if stage.contains(.fragment) { encoder.setFragmentTexture(texture.texture, index: index) }
     }
@@ -1618,6 +1617,15 @@ final class MetalComputePass: ComputePass {
         guard groups.count > 0 else { return }
         let size = pipeline.workgroupSize
         encoder.dispatchThreadgroups(MTLSize(width: groups.x, height: groups.y, depth: groups.z),
+                                     threadsPerThreadgroup: MTLSize(width: size.x, height: size.y, depth: size.z))
+    }
+
+    /// Hazard tracking orders the argument read after the dispatches that wrote them.
+    func dispatchIndirect(buffer: GPUBuffer, offset: Int) {
+        guard let pipeline else { preconditionFailure("dispatch without a compute pipeline") }
+        validateDispatchIndirect(buffer, offset: offset)
+        let size = pipeline.workgroupSize
+        encoder.dispatchThreadgroups(indirectBuffer: (buffer as! MetalBuffer).buffer, indirectBufferOffset: offset,
                                      threadsPerThreadgroup: MTLSize(width: size.x, height: size.y, depth: size.z))
     }
 }

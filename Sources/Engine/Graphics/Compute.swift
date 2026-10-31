@@ -77,7 +77,8 @@ public struct ComputePipelineDescriptor: Sendable {
     func setStorageBuffer(_ buffer: GPUBuffer, offset: Int, index: Int)
     /// Binds a storage texture (`TextureDescriptor.storage`) as storage texture `index`.
     func setStorageTexture(_ texture: GPUTexture, index: Int)
-    /// Binds a color texture for sampling or `texelFetch` (texture `index` in `textureIndices`).
+    /// Binds a color texture for sampling or `texelFetch` (texture `index` in `textureIndices`),
+    /// or a `.depth32Float` texture an earlier depth pass rendered (`texelFetch`, depth in .r).
     func setTexture(_ texture: GPUTexture, index: Int)
     func setSampler(_ sampler: GPUSampler, index: Int)
     /// Binds `buffer` (`.uniform` or `.storage` usage) as uniform buffer `index` (`uniformBufferIndices`).
@@ -89,6 +90,25 @@ public struct ComputePipelineDescriptor: Sendable {
     func setPushConstants(_ bytes: UnsafeRawBufferPointer)
     /// Runs `groups` workgroups of the pipeline's `workgroupSize`.
     func dispatch(groups: ComputeSize)
+    /// Runs as many workgroups as `buffer` holds at `offset` (`DispatchIndirectArguments`: x, y, z
+    /// as three UInt32s; any of them 0 runs nothing), read when the dispatch executes, so earlier
+    /// dispatches of this pass (or earlier passes) can compute it. `buffer` needs `.storage`
+    /// usage and `offset` must be a multiple of 4.
+    func dispatchIndirect(buffer: GPUBuffer, offset: Int)
+}
+
+/// What `ComputePass.dispatchIndirect(buffer:offset:)` reads: workgroup counts per axis
+/// (`VkDispatchIndirectCommand` and `MTLDispatchThreadgroupsIndirectArguments` alike).
+public struct DispatchIndirectArguments: Sendable, Equatable, BitwiseCopyable {
+    public var groupsX: UInt32
+    public var groupsY: UInt32
+    public var groupsZ: UInt32
+
+    public init(groupsX: UInt32, groupsY: UInt32 = 1, groupsZ: UInt32 = 1) {
+        self.groupsX = groupsX
+        self.groupsY = groupsY
+        self.groupsZ = groupsZ
+    }
 }
 
 extension ComputePass {
@@ -137,6 +157,12 @@ extension ShaderSource {
     precondition(storageBufferIndices.contains(index), "Storage buffer index \(index) is outside \(storageBufferIndices)")
     precondition(offset % storageBufferOffsetAlignment == 0 && offset >= 0 && offset < buffer.length,
                  "Storage buffer offset must be inside the buffer and a multiple of \(storageBufferOffsetAlignment)")
+}
+
+/// Checks an indirect dispatch's argument range (`dispatchIndirect(buffer:offset:)`).
+@MainActor func validateDispatchIndirect(_ buffer: GPUBuffer, offset: Int) {
+    precondition(offset >= 0 && offset % 4 == 0 && offset + MemoryLayout<DispatchIndirectArguments>.size <= buffer.length,
+                 "Indirect dispatch arguments at offset \(offset) must be 4-byte aligned and inside the buffer's \(buffer.length) bytes")
 }
 
 /// Checks a readback range (`readBack(_:offset:length:completion:)`).

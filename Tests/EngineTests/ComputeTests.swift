@@ -118,6 +118,77 @@ import QuartzCore
         }
     }
 
+    /// One dispatch writes the workgroup count of the next (`dispatchIndirect`), in the same
+    /// pass and in a later one; a zero count runs nothing.
+    @Test func indirectDispatchesRunTheGroupsAnEarlierDispatchWrote() throws {
+        try TestDevices.forEachBackend { device, frames in
+            let arguments = try device.makeComputePipeline(shader: shader(compute: "test_dispatch_args"))
+            let fill = try device.makeComputePipeline(shader: shader(compute: "test_fill"))
+            let values = try device.makeBuffer(length: 1000 * 4, usage: .storage)
+            // Arguments at offset 16: any 4-byte-aligned offset works.
+            let args = try device.makeBuffer(length: 16 + MemoryLayout<DispatchIndirectArguments>.size, usage: .storage)
+            var result: [UInt32] = [], written: DispatchIndirectArguments?
+            try frames.run { frame in
+                frame.computePass(label: "indirect") { pass in
+                    pass.setStorageBuffer(values, index: 0)
+                    pass.setStorageBuffer(args, offset: 0, index: 1)
+                    pass.setPipeline(arguments)
+                    pass.setPushConstants(SIMD4<UInt32>(0, 0, 0, 0))  // 0 groups: the fill below must not run
+                    pass.dispatch(groups: ComputeSize(1))
+                    pass.setPipeline(fill)
+                    pass.setPushConstants(SIMD4<UInt32>(1000, 5, 5, 0))
+                    pass.dispatchIndirect(buffer: args, offset: 0)
+                    pass.setPipeline(arguments)
+                    pass.setPushConstants(SIMD4<UInt32>(700, 0, 0, 0))  // 11 groups of 64: values 0..<704
+                    pass.dispatch(groups: ComputeSize(1))
+                    pass.setPipeline(fill)
+                    pass.setPushConstants(SIMD4<UInt32>(1000, 3, 1, 0))
+                    pass.dispatchIndirect(buffer: args, offset: 0)
+                }
+                frame.computePass(label: "indirect later") { pass in
+                    pass.setPipeline(fill)
+                    pass.setStorageBuffer(values, index: 0)
+                    pass.setPushConstants(SIMD4<UInt32>(1000, 2, 0, 1))  // doubles what the last pass wrote
+                    pass.dispatchIndirect(buffer: args, offset: 0)
+                }
+                frame.readBack(values) { bytes in result = bytes.withUnsafeBytes { Array($0.bindMemory(to: UInt32.self)) } }
+                frame.readBack(args) { bytes in written = bytes.withUnsafeBytes { $0.loadUnaligned(as: DispatchIndirectArguments.self) } }
+            }
+            #expect(written == DispatchIndirectArguments(groupsX: 11), "\(device.backend)")
+            #expect(result == (0..<UInt32(1000)).map { $0 < 704 ? ($0 * 3 + 1) * 2 : 0 }, "\(device.backend)")
+        }
+    }
+
+    /// A depth texture rendered by a depth pass is read by a later compute pass (`setTexture`
+    /// with a `.depth32Float` texture), and a second depth pass after it doesn't disturb it.
+    @Test func computeReadsADepthPassTexture() throws {
+        try TestDevices.forEachBackend { device, frames in
+            let read = try device.makeComputePipeline(shader: shader(compute: "test_depth_read"))
+            let depth = try device.makeTexture(TextureDescriptor(width: 12, height: 10, format: .depth32Float))
+            let sampler = try device.makeSampler(SamplerDescriptor(filter: .nearest, mipFilter: .none, addressMode: .clampToEdge))
+            let buffers = try (0..<2).map { _ in try device.makeBuffer(length: 12 * 10 * 4, usage: .storage) }
+            var results: [[Float]] = [[], []]
+            try frames.run { frame in
+                for (i, clear) in [Float(0.25), 0.75].enumerated() {
+                    frame.depthPass(into: depth, clearDepth: clear) { _ in }
+                    frame.computePass(label: "depth read") { pass in
+                        pass.setPipeline(read)
+                        pass.setTexture(depth, index: 1)
+                        pass.setSampler(sampler, index: 1)
+                        pass.setStorageBuffer(buffers[i], index: 0)
+                        pass.setPushConstants(SIMD2<UInt32>(12, 10))
+                        pass.dispatch(threads: ComputeSize(12, 10), of: read)
+                    }
+                }
+                for i in 0..<2 {
+                    frame.readBack(buffers[i]) { bytes in results[i] = bytes.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) } }
+                }
+            }
+            #expect(results[0] == [Float](repeating: 0.25, count: 120), "\(device.backend)")
+            #expect(results[1] == [Float](repeating: 0.75, count: 120), "\(device.backend)")
+        }
+    }
+
     @Test func workgroupSizeIsReadFromSPIRV() throws {
         #expect(try shader(compute: "test_fill").spirvCompute.flatMap(ShaderSource.workgroupSize(spirv:)) == ComputeSize(64))
         #expect(ShaderSource.workgroupSize(spirv: [1, 2, 3, 4]) == nil)

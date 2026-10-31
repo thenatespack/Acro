@@ -1,0 +1,16 @@
+#version 450
+// ComputeTests: writes indirect dispatch arguments for `count` threads of a 64-wide kernel
+// (args[0..2] = ceil(count / 64), 1, 1), so the next dispatch's size comes from the GPU.
+layout(local_size_x = 1) in;
+
+layout(set = 2, binding = 25, std430) buffer Arguments { uint args[]; };
+
+layout(push_constant) uniform Push {
+    uint count;
+} push;
+
+void main() {
+    args[0] = (push.count + 63u) / 64u;
+    args[1] = 1u;
+    args[2] = 1u;
+}
