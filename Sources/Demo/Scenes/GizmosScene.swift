@@ -9,6 +9,9 @@ import Foundation
 /// animates, so screenshots are deterministic. Compare window screenshots
 /// (`ENGINE_SCREENSHOT_SOURCE=window`) when rendering offscreen: the views are UI.
 ///
+/// Entities without a mesh (the sun, a camera) show as icon billboards in the big view
+/// (`ViewportBillboards`: screen-size, faded behind geometry, clickable through the picker).
+///
 /// Keys / mouse in the big view: click selects (shift-click adds or removes), drag a handle to
 /// edit, W / E / R translate / rotate / scale, X toggles world / local space, C toggles the
 /// pivot (selection center / primary), hold Cmd (Ctrl elsewhere) to snap, Esc cancels a drag,
@@ -24,6 +27,7 @@ final class GizmosScene: DemoScene {
     private let debugRenderer: DebugDrawRenderer
     private var selection = EditorSelection()
     private var views: [Viewport] = []
+    private let billboards = ViewportBillboards()
 
     // The big view's orbit camera.
     private var yaw: Float = 0.62
@@ -63,6 +67,7 @@ final class GizmosScene: DemoScene {
     init(renderer: Renderer) throws {
         sceneRenderer = try SceneRenderer(device: renderer.device, quality: renderer.quality)
         picker = ScenePicker(meshes: sceneRenderer)
+        picker.billboards = billboards
         undo = UndoStack(world: world)
         debugRenderer = try DebugDrawRenderer(device: renderer.device)
         world.assignsEntityIDs = true
@@ -92,8 +97,11 @@ final class GizmosScene: DemoScene {
 
     private func buildWorld() {
         _ = world.spawn(Name("Environment"), SceneEnvironment(fogColor: Self.fogColor, fogDensity: 0.004))
-        _ = world.spawn(Name("Sun"), Transform(rotation: .lookRotation(forward: -Vec3(0.5, 0.75, 0.35))),
+        // Placed above the scene for its billboard (a directional light's position doesn't light anything).
+        _ = world.spawn(Name("Sun"), Transform(position: Vec3(-3.5, 3.6, -3), rotation: .lookRotation(forward: -Vec3(0.5, 0.75, 0.35))),
                         DirectionalLight(intensity: 1.3, shadowExtent: 12, shadowCenter: Vec3(0, 0, 0)))
+        // A camera that isn't the view's: only its billboard shows.
+        _ = world.spawn(Name("Camera"), Transform(position: Vec3(5.4, 2.4, -3.4)), Camera())
         let floor = world.spawn(Name("Floor"), Transform(position: Vec3(0, -0.5, 0), scale: Vec3(24, 1, 24)),
                                 MeshRenderer(mesh: .cube, material: MaterialHandle("floor"), castsShadows: false))
         world.add(Unpickable(), to: floor)
@@ -223,6 +231,20 @@ final class GizmosScene: DemoScene {
             view.projection = ViewportProjection(sceneViews[i], size: Vec2(layout[i].width, layout[i].height), pixelScale: scale)
         }
         showcaseHover()
+        if let projection = views.first?.projection {
+            var items: [ViewportBillboard] = []
+            world.query(GlobalTransform.self) { entity, transform in
+                guard !world.has(MeshRenderer.self, for: entity) else { return }
+                if world.has(Camera.self, for: entity), let icon = VectorIcon.named("video") {
+                    items.append(ViewportBillboard(entity: entity, position: Vec3(transform.matrix.c3.x, transform.matrix.c3.y, transform.matrix.c3.z), icon: icon,
+                                                   color: UIColor(hex: 0xe8ecf4)))
+                } else if world.has(DirectionalLight.self, for: entity), let icon = VectorIcon.named("sun") {
+                    items.append(ViewportBillboard(entity: entity, position: Vec3(transform.matrix.c3.x, transform.matrix.c3.y, transform.matrix.c3.z), icon: icon,
+                                                   color: UIColor(hex: 0xffd34d)))
+                }
+            }
+            billboards.update(items, view: projection, occluders: picker, world: world)
+        }
 
         sceneRenderer.beginViews(world: world, frame: frame, shadowFocus: sceneViews[0])
         let selected = selection.entities(in: world), primary = selection.primaryEntity(in: world)
@@ -290,6 +312,14 @@ final class GizmosScene: DemoScene {
             }
             ui.drawText(title, at: Vec2(rect.x + 8, rect.y - 19), size: 13, color: Self.text)
             ui.drawImage(view.target.texture, in: rect)
+            if i == 0 {
+                let selected = Set(selection.entities(in: world)), primary = selection.primaryEntity(in: world)
+                ui.withClip(rect) {
+                    billboards.draw(into: ui, origin: Vec2(rect.x, rect.y)) { entity in
+                        entity == primary ? .primary : selected.contains(entity) ? .selected : .none
+                    }
+                }
+            }
         }
         guard let main = layout.first else { return }
         let help = "Click selects, shift-click adds · drag handles · W/E/R move/rotate/scale · X space · C pivot · "

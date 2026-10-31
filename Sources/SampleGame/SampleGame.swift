@@ -76,8 +76,9 @@ public func registerSampleGame(_ module: UnsafeMutableRawPointer) -> Int32 {
     GameModule.register(module) { game in
         game.name = "SampleGame"
         game.summary = "Bobbing and orbiting props"
-        game.component(Bobber.self) { Bobber() }
-        game.component(Orbiter.self) { Orbiter() }
+        // Editor icons: SVG markup on a 24x24 box, or a built-in (Lucide) icon's name.
+        game.component(Bobber.self, icon: #"<path d="M12 3v18"/><path d="m8 7 4-4 4 4"/><path d="m8 17 4 4 4-4"/>"#) { Bobber() }
+        game.component(Orbiter.self, icon: "orbit") { Orbiter() }
         game.system("sample.bob") { world, _ in
             SampleGameState.stats.frames += 1
             SampleGameSystems.bob(world)

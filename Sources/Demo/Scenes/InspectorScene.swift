@@ -143,8 +143,17 @@ final class InspectorScene: DemoScene {
     private func node(for entity: Entity) -> TreeNode {
         let name = world.get(Named.self, for: entity)?.name ?? "Entity"
         let children = world.children(of: entity).map(node(for:))
-        return TreeNode(name, children: children, userData: entity)
+        let node = TreeNode(name, children: children, userData: entity)
+        // Icons (VectorIcon, built-in Lucide names) by what the entity is.
+        let icon = world.has(Camera.self, for: entity) ? "video" : world.has(DirectionalLight.self, for: entity) ? "sun"
+            : world.has(MeshRenderer.self, for: entity) ? "box" : children.isEmpty ? "circle-dashed" : "layers"
+        node.icon = VectorIcon.named(icon)
+        return node
     }
+
+    /// Section header icons by component name.
+    private static let componentIcons = ["Transform": "move-3d", "Camera": "video", "DirectionalLight": "sun", "MeshRenderer": "box",
+                                         "Named": "tag"]
 
     // MARK: UI
 
@@ -169,6 +178,7 @@ final class InspectorScene: DemoScene {
         for title in ["Scene", "Player", "Weapon", "Level", "Props"] { find(root, title)?.isExpanded = true }
 
         tree.roots = [root]
+        grid.componentIcon = { VectorIcon.named(Self.componentIcons[$0] ?? "puzzle") }
         tree.allowsMultipleSelection = true
         tree.allowsRename = true
         tree.allowsDragAndDrop = true

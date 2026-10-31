@@ -22,6 +22,12 @@ public final class PopupMenu: Widget {
     /// The command each item runs, by index (introspection; see UIAccessibility.swift). Items
     /// without one report the menu's `command` (a dropdown's menu gets the dropdown's).
     public var itemCommandIDs: [String?] = []
+    /// An icon per item, by index (nil or missing: none). When any item has one, every title
+    /// moves right to line up after an icon column.
+    public var itemIcons: [VectorIcon?] = [] { didSet { setNeedsLayout() } }
+
+    /// The icon column's width (icon and gap), 0 when no item has an icon.
+    private var iconColumn: Float { itemIcons.contains { $0 != nil } ? theme.iconSize + 6 : 0 }
 
     public init(items: [String], anchor: Widget? = nil, name: String = "menu") {
         self.items = items
@@ -46,7 +52,7 @@ public final class PopupMenu: Widget {
         let theme = theme
         var widest: Float = 0
         for item in items { widest = max(widest, cachedLayout(item, size: theme.fontSize).width) }
-        return Vec2((widest * scale).rounded(.up) / scale + 2 * theme.controlPaddingX + 16, rowHeight * Float(items.count))
+        return Vec2((widest * scale).rounded(.up) / scale + 2 * theme.controlPaddingX + 16 + iconColumn, rowHeight * Float(items.count))
     }
 
     public override func overlayFrame(in viewport: UIRect) -> UIRect {
@@ -180,8 +186,14 @@ public final class PopupMenu: Widget {
                 list.drawLine(from: c + Vec2(-3.5, 0), to: c + Vec2(-1, 2.5), width: theme.iconStrokeWidth, color: color, cap: .round)
                 list.drawLine(from: c + Vec2(-1, 2.5), to: c + Vec2(4, -3), width: theme.iconStrokeWidth, color: color, cap: .round)
             }
+            let column = iconColumn
+            if column > 0, itemIcons.indices.contains(i), let icon = itemIcons[i] {
+                let edge = theme.iconSize
+                list.drawIcon(icon, in: UIRect(x: row.x + 18, y: row.center.y - edge / 2, width: edge, height: edge),
+                              color: highlighted ? theme.accentText : theme.secondaryTextColor)
+            }
             let layout = cachedLayout(item, size: theme.fontSize)
-            let textRect = UIRect(x: row.x + 18, y: row.y, width: row.width - 18, height: row.height)
+            let textRect = UIRect(x: row.x + 18 + column, y: row.y, width: row.width - 18 - column, height: row.height)
             drawLine(layout, font: theme.font, in: textRect, color: highlighted ? theme.accentText : theme.textColor, list: list)
         }
     }

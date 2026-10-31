@@ -81,6 +81,10 @@ public final class ScenePicker {
     public var filter: ((Entity) -> Bool)?
     /// Ignore triangles facing away from the ray (as the renderer culls single-sided ones).
     public var cullsBackFaces = false
+    /// Screen-space icons (`ViewportBillboards`) that `pick(at:in:world:)` tests along with the
+    /// meshes: a visible billboard under the point wins; one behind geometry (drawn faded) only
+    /// when no mesh under the point is nearer. They must be laid out for the same view.
+    public var billboards: ViewportBillboards?
     public private(set) var stats = PickStats()
 
     private struct Candidate {
@@ -97,7 +101,12 @@ public final class ScenePicker {
 
     /// The closest entity under `point` (viewport points) in `view`.
     public func pick(at point: Vec2, in view: ViewportProjection, world: World) -> PickHit? {
-        pick(view.ray(through: point), in: world)
+        let ray = view.ray(through: point)
+        let meshHit = pick(ray, in: world)
+        guard let billboard = billboards?.hit(at: point), world.isAlive(billboard.entity), isPickable(billboard.entity, in: world)
+        else { return meshHit }
+        if let meshHit, billboard.isOccluded, meshHit.distance < billboard.distance { return meshHit }
+        return hit(for: billboard, ray: ray)
     }
 
     /// The closest entity hit by `ray`.

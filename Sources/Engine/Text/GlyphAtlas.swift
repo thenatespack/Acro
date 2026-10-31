@@ -97,6 +97,19 @@ public final class GlyphAtlas {
         guard let bitmap = font.sdf(of: glyph, emPixels: Self.sdfSize, padding: Self.padding, onEdge: Self.onEdgeValue)
         else { return nil }
         let w = bitmap.width, h = bitmap.height
+        guard let (index, x, y) = place(width: w, height: h, values: bitmap.pixels) else { return nil }
+        let size = Float(pageSize)
+        return GlyphInfo(
+            page: index,
+            uvMin: Vec2(Float(x) / size, Float(y) / size),
+            uvMax: Vec2(Float(x + w) / size, Float(y + h) / size),
+            offset: Vec2(Float(bitmap.xOffset), Float(bitmap.yOffset)) / Self.sdfSize,
+            extent: Vec2(Float(w), Float(h)) / Self.sdfSize)
+    }
+
+    /// Copies a `width` x `height` single-channel bitmap into a page (all four channels), and
+    /// returns where it went; nil when it doesn't fit an empty page.
+    private func place(width w: Int, height h: Int, values: [UInt8]) -> (page: Int, x: Int, y: Int)? {
         var placement: (page: Int, x: Int, y: Int)?
         for (index, page) in pages.enumerated() {
             if let origin = page.packer.pack(width: w + 1, height: h + 1) {
@@ -114,7 +127,7 @@ public final class GlyphAtlas {
         let page = pages[index]
         for row in 0..<h {
             for column in 0..<w {
-                let value = bitmap.pixels[row * w + column]
+                let value = values[row * w + column]
                 let i = ((y + row) * pageSize + x + column) * 4
                 page.pixels[i] = value
                 page.pixels[i + 1] = value
@@ -123,13 +136,36 @@ public final class GlyphAtlas {
             }
         }
         page.markDirty(x: x, y: y, width: w, height: h)
-        let size = Float(pageSize)
-        return GlyphInfo(
-            page: index,
-            uvMin: Vec2(Float(x) / size, Float(y) / size),
-            uvMax: Vec2(Float(x + w) / size, Float(y + h) / size),
-            offset: Vec2(Float(bitmap.xOffset), Float(bitmap.yOffset)) / Self.sdfSize,
-            extent: Vec2(Float(w), Float(h)) / Self.sdfSize)
+        return (index, x, y)
+    }
+
+    // MARK: Icons
+
+    private struct IconKey: Hashable {
+        var icon: VectorIcon
+        var pixels: Int
+    }
+
+    private var icons: [IconKey: GlyphInfo?] = [:]
+
+    /// Number of icon bitmaps in the atlas (one per icon and pixel size drawn).
+    public var iconCount: Int { icons.values.reduce(0) { $0 + ($1 == nil ? 0 : 1) } }
+
+    /// The atlas entry of `icon` rasterized at exactly `pixels` x `pixels` (a coverage mask,
+    /// for `.mask` quads drawn at that pixel size), rasterizing it first if needed. `offset` is
+    /// zero and `extent` the size in pixels. nil when it doesn't fit a page.
+    public func info(for icon: VectorIcon, pixels: Int) -> GlyphInfo? {
+        let key = IconKey(icon: icon, pixels: pixels)
+        if let cached = icons[key] { return cached }
+        var info: GlyphInfo?
+        if pixels > 0, pixels < pageSize, let (index, x, y) = place(width: pixels, height: pixels, values: icon.rasterize(pixels: pixels)) {
+            let size = Float(pageSize)
+            info = GlyphInfo(page: index, uvMin: Vec2(Float(x) / size, Float(y) / size),
+                             uvMax: Vec2(Float(x + pixels) / size, Float(y + pixels) / size),
+                             offset: .zero, extent: Vec2(Float(pixels), Float(pixels)))
+        }
+        icons[key] = info
+        return info
     }
 
     /// Creates the texture of every new page and writes the changed rectangle of every page that
