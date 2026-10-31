@@ -29,7 +29,8 @@
 // edits to the same field (a slider scrub, a drag) become a single `SetFieldCommand` that
 // keeps the first old value and the last new value. Outside a group nothing is merged,
 // because without an end the stack can't know when a scrub is over. An empty group records
-// nothing. `undo` / `redo` are refused while a group is open.
+// nothing. `undo` / `redo` are refused while a group is open. `cancelGroup` ends a group by
+// reverting what it did instead (a transaction that failed midway).
 //
 // ## Dirty state
 //
@@ -190,8 +191,20 @@ public struct GroupCommand: UndoCommand {
         return try body()
     }
 
+    /// Ends the innermost group by taking back everything performed in it (in reverse order),
+    /// recording nothing: a transaction that failed midway. Does nothing if no group is open.
+    /// Rethrows a revert failure (the group is gone either way).
+    public func cancelGroup() throws {
+        guard var group = groups.popLast() else { return }
+        guard !group.commands.isEmpty else { return }
+        defer { changed() }
+        try group.revert(in: world)
+    }
+
     /// Whether a group is open.
     public var isGrouping: Bool { !groups.isEmpty }
+    /// How many groups are open (nested).
+    public var groupDepth: Int { groups.count }
 
     // MARK: Undo and redo
 

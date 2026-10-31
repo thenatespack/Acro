@@ -224,6 +224,15 @@ import Testing
         #expect(h.client.output.take().map { $0["id"] } == [1, 2])
     }
 
+    @Test func imagesFollowTheTextAsImageContent() {
+        let png = Data([0x89, 0x50, 0x4E, 0x47])
+        let result = MCPToolResult(text: ["A picture."], images: [MCPImageContent(data: png)], structuredContent: ["width": 1])
+        #expect(result.json(protocolVersion: MCPProtocol.latest)["content"] == [
+            ["type": "text", "text": "A picture."],
+            ["type": "image", "data": .string(png.base64EncodedString()), "mimeType": "image/png"],
+        ])
+    }
+
     @Test func toolNames() {
         #expect(MCPTool.isValidName("entity.create"))
         #expect(MCPTool.isValidName("a_b-c.D9"))

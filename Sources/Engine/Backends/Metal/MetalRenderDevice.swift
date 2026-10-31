@@ -138,6 +138,8 @@ final class MetalRenderDevice: RenderDevice {
     let maxTextureSize: Int
     var captureNextFrame = false
     var captureWindow = false
+    /// `readBack` requests of the current frame.
+    private var targetReadbacks: [(target: MetalRenderTarget, completion: @MainActor (Image) -> Void)] = []
     var vsync: Bool {
         get { layer.displaySyncEnabled }
         set { layer.displaySyncEnabled = newValue }
@@ -1103,6 +1105,22 @@ final class MetalRenderDevice: RenderDevice {
             }
         }
 
+        var targetCopies: [(buffer: MTLBuffer, width: Int, height: Int, completion: @MainActor (Image) -> Void)] = []
+        for (target, completion) in targetReadbacks {
+            let texture = target.resolved.texture
+            let bytesPerRow = texture.width * 4
+            guard let buffer = device.makeBuffer(length: bytesPerRow * texture.height, options: .storageModeShared),
+                  let blit = frame.commandBuffer.makeBlitCommandEncoder() else { continue }
+            blit.copy(
+                from: texture, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                sourceSize: MTLSize(width: texture.width, height: texture.height, depth: 1),
+                to: buffer, destinationOffset: 0, destinationBytesPerRow: bytesPerRow,
+                destinationBytesPerImage: bytesPerRow * texture.height)
+            blit.endEncoding()
+            targetCopies.append((buffer, texture.width, texture.height, completion))
+        }
+        targetReadbacks.removeAll()
+
         resolvePassTimes(of: frame.commandBuffer, slot: frame.slot)
         if let drawable = frame.drawable { frame.commandBuffer.present(drawable) }
         let semaphore = frameSemaphore
@@ -1113,10 +1131,21 @@ final class MetalRenderDevice: RenderDevice {
             semaphore.signal()
         }
 
+        if !targetCopies.isEmpty {
+            frame.commandBuffer.waitUntilCompleted()
+            for copy in targetCopies {
+                let bytes = UnsafeRawBufferPointer(start: copy.buffer.contents(), count: copy.buffer.length)
+                copy.completion(Image(width: copy.width, height: copy.height, bgra: bytes, bytesPerRow: copy.width * 4))
+            }
+        }
         guard let readback else { return nil }
         frame.commandBuffer.waitUntilCompleted()
         let bytes = UnsafeRawBufferPointer(start: readback.buffer.contents(), count: readback.buffer.length)
         return Image(width: readback.width, height: readback.height, bgra: bytes, bytesPerRow: readback.width * 4)
+    }
+
+    func readBack(_ target: GPURenderTarget, completion: @escaping @MainActor (Image) -> Void) {
+        targetReadbacks.append((target as! MetalRenderTarget, completion))
     }
 
     func waitIdle() {

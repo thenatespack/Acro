@@ -12,18 +12,21 @@ import Foundation
 public enum BuiltinCommands {
     public static let all: [any EditorCommand.Type] = [
         SceneNewCommand.self, SceneOpenCommand.self, SceneSaveCommand.self, SceneSaveAsCommand.self,
-        EditUndoCommand.self, EditRedoCommand.self,
+        EditUndoCommand.self, EditRedoCommand.self, EditBatchCommand.self, EditBeginBatchCommand.self, EditEndBatchCommand.self,
         PlayStartCommand.self, PlayStopCommand.self, PlayToggleCommand.self,
         ToolSetCommand.self,
         ProjectOpenCommand.self, ProjectNewCommand.self,
         LayoutResetCommand.self, ViewFrameSelectionCommand.self,
-        SelectionSetCommand.self, SelectionClearCommand.self,
+        ViewScreenshotCommand.self, ViewPickCommand.self, SceneRaycastCommand.self,
+        SelectionSetCommand.self, SelectionClearCommand.self, SelectionGetCommand.self,
+        SceneHierarchyCommand.self, EntityFindCommand.self, EntityGetCommand.self,
         EntityCreateCommand.self, EntityDuplicateCommand.self, EntityDeleteCommand.self, EntityRenameCommand.self,
         EntityReparentCommand.self, TransformSetCommand.self,
-        ComponentAddCommand.self, ComponentRemoveCommand.self, ComponentSetFieldCommand.self,
+        ComponentTypesCommand.self, ComponentAddCommand.self, ComponentRemoveCommand.self, ComponentSetFieldCommand.self,
         AssetImportCommand.self, AssetNewFolderCommand.self, AssetNewMaterialCommand.self, AssetRenameCommand.self,
         AssetMoveCommand.self, AssetDeleteCommand.self, AssetExtractMaterialsCommand.self, AssetApplySettingsCommand.self,
         AssetInstantiateCommand.self, AssetAssignCommand.self, MaterialSetCommand.self,
+        LogReadCommand.self, StatsGetCommand.self, DiagnosticsGetCommand.self,
     ]
 }
 
@@ -127,7 +130,7 @@ public enum EditUndoCommand: EditorCommand {
     public static let title = "Undo"
     public static let doc = "Undoes the last recorded step (a whole command, gizmo drag or inspector gesture)."
     public static func isAvailable(in session: EditorSession) -> Bool { session.undo.canUndo }
-    public static func unavailableReason(in session: EditorSession) -> String? { "nothing to undo" }
+    public static func unavailableReason(in session: EditorSession) -> String? { undoBlockedReason(session) ?? "nothing to undo" }
     public static func run(_ arguments: NoArguments, in session: EditorSession) throws -> NoResult {
         try session.commands.check(session.performUndo(), title)
         return NoResult()
@@ -139,11 +142,19 @@ public enum EditRedoCommand: EditorCommand {
     public static let title = "Redo"
     public static let doc = "Redoes the last undone step."
     public static func isAvailable(in session: EditorSession) -> Bool { session.undo.canRedo }
-    public static func unavailableReason(in session: EditorSession) -> String? { "nothing to redo" }
+    public static func unavailableReason(in session: EditorSession) -> String? { undoBlockedReason(session) ?? "nothing to redo" }
     public static func run(_ arguments: NoArguments, in session: EditorSession) throws -> NoResult {
         try session.commands.check(session.performRedo(), title)
         return NoResult()
     }
+}
+
+/// Why undo and redo are off apart from an empty history: a batch or a drag is open, or play mode.
+@MainActor
+private func undoBlockedReason(_ session: EditorSession) -> String? {
+    if session.batch != nil { return "a batch is open (edit.endBatch ends it)" }
+    if session.undo.isGrouping { return "an edit is in progress in the editor (a drag)" }
+    return session.isPlaying ? EditorError.playing.description : nil
 }
 
 // MARK: Play mode
@@ -254,18 +265,31 @@ public enum LayoutResetCommand: EditorCommand {
 }
 
 public enum ViewFrameSelectionCommand: EditorCommand {
+    public struct Arguments: Codable, Equatable, Sendable {
+        /// Frame these instead of the selection (which stays as it is).
+        public var entities: [EntityID]?
+        public init(entities: [EntityID]? = nil) { self.entities = entities }
+    }
+
     public static let id: CommandID = .focusSelection
     public static let title = "Frame Selection"
-    public static let doc = "Moves the viewport camera to frame the selected entities. Needs the editor window."
+    public static let doc = "Moves the viewport camera to frame the selected entities, or `entities` (without selecting them). Needs the editor window."
     public static let isIdempotent = true
     public static func isAvailable(in session: EditorSession) -> Bool {
         session.host != nil && !session.selection.entities(in: session.world).isEmpty
     }
+    public static func isAvailable(_ arguments: Arguments, in session: EditorSession) -> Bool {
+        arguments.entities != nil ? session.host != nil : isAvailable(in: session)
+    }
     public static func unavailableReason(in session: EditorSession) -> String? {
         session.host == nil ? noWindowReason : noSelectionReason
     }
-    public static func run(_ arguments: NoArguments, in session: EditorSession) throws -> NoResult {
-        session.host?.frameSelection()
+    public static func run(_ arguments: Arguments, in session: EditorSession) throws -> NoResult {
+        if let ids = arguments.entities {
+            session.host?.frame(try ids.map { try session.world.require($0) })
+        } else {
+            session.host?.frameSelection()
+        }
         return NoResult()
     }
 }
@@ -313,11 +337,17 @@ public enum EntityCreateCommand: EditorCommand {
     public struct Arguments: Codable, Equatable, Sendable {
         /// "empty", "cube", "sphere" or "plane".
         public var template: EntityTemplate
-        /// World position (default: the origin).
+        /// Position (in `parent`'s space with a parent; default: the origin).
         public var position: Vec3?
-        public init(template: EntityTemplate, position: Vec3? = nil) {
+        /// Default: the template's title, numbered when taken ("Cube 2").
+        public var name: String?
+        /// Create it as this entity's last child (default: a root).
+        public var parent: EntityID?
+        public init(template: EntityTemplate, position: Vec3? = nil, name: String? = nil, parent: EntityID? = nil) {
             self.template = template
             self.position = position
+            self.name = name
+            self.parent = parent
         }
     }
 
@@ -327,22 +357,42 @@ public enum EntityCreateCommand: EditorCommand {
 
     public static let id: CommandID = "entity.create"
     public static let title = "Create Entity"
-    public static let doc = "Creates a root entity from `template` at `position` ([x, y, z]), named after it (\"Cube 2\" when taken), and selects it."
+    public static let doc = "Creates an entity from `template` at `position` ([x, y, z]), named `name` (default: after the template, \"Cube 2\" when taken), as a root or under `parent`, and selects it."
     public static let isUndoable = true
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
-        Result(entity: try session.commands.require(session.create(arguments.template, at: arguments.position ?? .zero), title))
+        if let parent = arguments.parent { _ = try session.world.require(parent) }
+        return Result(entity: try session.commands.require(session.create(arguments.template, at: arguments.position ?? .zero,
+                                                                          name: arguments.name, parent: arguments.parent), title))
+    }
+}
+
+/// Arguments of commands that act on the selection unless given entities.
+public struct EntitiesArguments: Codable, Equatable, Sendable {
+    /// Act on these instead of the selection.
+    public var entities: [EntityID]?
+    public init(entities: [EntityID]? = nil) { self.entities = entities }
+
+    /// The entities named, or the selection's top-level ones; throws for a missing one.
+    @MainActor func resolve(in session: EditorSession) throws -> [Entity] {
+        guard let entities else { return session.selection.topLevelEntities(in: session.world) }
+        return try entities.map { try session.world.require($0) }
     }
 }
 
 public enum EntityDuplicateCommand: EditorCommand {
+    public typealias Arguments = EntitiesArguments
     public static let id: CommandID = .duplicate
     public static let title = "Duplicate"
-    public static let doc = "Duplicates the selected entities with their children next to the originals and selects the copies. Returns the copies."
+    public static let doc = "Duplicates the selected entities (or `entities`) with their children next to the originals and selects the copies. Returns the copies."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { !session.selection.entities(in: session.world).isEmpty }
+    public static func isAvailable(_ arguments: Arguments, in session: EditorSession) -> Bool {
+        arguments.entities != nil || isAvailable(in: session)
+    }
     public static func unavailableReason(in session: EditorSession) -> String? { noSelectionReason }
-    public static func run(_ arguments: NoArguments, in session: EditorSession) throws -> EntitiesResult {
-        let copies = session.duplicateSelection()
+    public static func run(_ arguments: Arguments, in session: EditorSession) throws -> EntitiesResult {
+        let originals = try arguments.resolve(in: session)
+        let copies = session.duplicate(originals)
         try session.commands.check(!copies.isEmpty, title)
         return EntitiesResult(entities: copies)
     }
@@ -354,14 +404,19 @@ public enum EntityDeleteCommand: EditorCommand {
         public var count: Int
     }
 
+    public typealias Arguments = EntitiesArguments
     public static let id: CommandID = .delete
     public static let title = "Delete"
-    public static let doc = "Deletes the selected entities with their children. The editor asks for confirmation before running it; the command itself doesn't."
+    public static let doc = "Deletes the selected entities (or `entities`) with their children. The editor asks for confirmation before running it; the command itself doesn't."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { !session.selection.entities(in: session.world).isEmpty }
+    public static func isAvailable(_ arguments: Arguments, in session: EditorSession) -> Bool {
+        arguments.entities != nil || isAvailable(in: session)
+    }
     public static func unavailableReason(in session: EditorSession) -> String? { noSelectionReason }
-    public static func run(_ arguments: NoArguments, in session: EditorSession) throws -> Result {
-        let count = session.deleteSelection()
+    public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
+        let doomed = try arguments.resolve(in: session)
+        let count = session.delete(doomed)
         try session.commands.check(count > 0, title)
         return Result(count: count)
     }
@@ -512,8 +567,10 @@ public enum ComponentRemoveCommand: EditorCommand {
 public enum ComponentSetFieldCommand: EditorCommand {
     public struct Arguments: Codable, Equatable, Sendable {
         public var entity: EntityID
-        public var component: String
-        /// A reflection path: "position", "stats.health", "points.2".
+        /// The component; nil when `path` starts with it ("Transform.position.x").
+        public var component: String?
+        /// A reflection path: "position", "stats.health", "points.2"; ".x", ".y", ".z", ".w"
+        /// (or ".r", ".g", ".b", ".a") after a vector or quaternion set one element.
         public var path: String
         /// The value as JSON: a bool, number or string (also an enum case name), [x, y, z(, w)]
         /// for vectors and quaternions, an entity id string, or null for a nil optional.
@@ -526,9 +583,12 @@ public enum ComponentSetFieldCommand: EditorCommand {
         /// Apply without recording an undo step (a live preview during a drag, which ends with
         /// a recorded set).
         public var transient: Bool?
+        /// "local" (default) or "world": for Transform's position, rotation and scale (or their
+        /// elements), `value` is in world space and the local transform is set to match.
+        public var space: TransformSpace?
 
-        public init(entity: EntityID, component: String, path: String, value: JSONValue, previous: JSONValue? = nil,
-                    label: String? = nil, transient: Bool? = nil) {
+        public init(entity: EntityID, component: String?, path: String, value: JSONValue, previous: JSONValue? = nil,
+                    label: String? = nil, transient: Bool? = nil, space: TransformSpace? = nil) {
             self.entity = entity
             self.component = component
             self.path = path
@@ -536,6 +596,7 @@ public enum ComponentSetFieldCommand: EditorCommand {
             self.previous = previous
             self.label = label
             self.transient = transient
+            self.space = space
         }
 
         /// From reflected values (the inspector's `PropertyEdit`).
@@ -548,27 +609,113 @@ public enum ComponentSetFieldCommand: EditorCommand {
 
     public static let id: CommandID = "component.setField"
     public static let title = "Set Field"
-    public static let doc = "Sets one field of a component by reflection path (what the inspector edits)."
+    public static let doc = "Sets one field of a component by reflection path (what the inspector edits): `component` \"Transform\" with `path` \"position\", or just `path` \"Transform.position.x\" (a trailing .x/.y/.z/.w sets one element of a vector). With `space` \"world\", Transform's position, rotation and scale are given in world space."
     public static let isIdempotent = true
     public static let isUndoable = true
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> NoResult {
         let world = session.world
         let entity = try world.require(arguments.entity)
-        guard let component = world.component(named: arguments.component, of: entity) else {
-            throw SceneError.noSuchComponent(arguments.component)
+        var componentName = arguments.component ?? ""
+        var path = arguments.path
+        if arguments.component == nil {
+            let parts = path.split(separator: ".", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else {
+                throw CommandError.failed("Give `component`, or start `path` with the component (\"Transform.position\")")
+            }
+            (componentName, path) = (parts[0], parts[1])
         }
-        guard let field = component.field(at: arguments.path) else { throw SceneError.noSuchField(arguments.path) }
-        let value = try FieldValue(json: arguments.value, kind: field.kind, in: world)
+        guard let component = world.component(named: componentName, of: entity) else {
+            throw SceneError.noSuchComponent(componentName)
+        }
+        if arguments.space == .world {
+            return try setWorld(path, value: arguments.value, of: entity, arguments, in: session)
+        }
+        // A whole field, or one element of a vector field.
+        var value: FieldValue, old: FieldValue
+        if let field = component.field(at: path) {
+            value = try FieldValue(json: arguments.value, kind: field.kind, in: world)
+            old = try arguments.previous.map { try FieldValue(json: $0, kind: field.kind, in: world) } ?? field.value ?? .null
+        } else if let (vectorPath, element) = Self.elementPath(path), let field = component.field(at: vectorPath),
+                  let vector = field.value, vector.element(element) != nil {
+            path = vectorPath
+            value = try vector.replacing(element, with: Self.number(arguments.value))
+            old = try arguments.previous.map { try vector.replacing(element, with: Self.number($0)) } ?? vector
+        } else {
+            throw SceneError.noSuchField(path)
+        }
         if arguments.transient == true {
-            try world.setField(arguments.path, of: arguments.component, for: entity, to: value)
+            try world.setField(path, of: componentName, for: entity, to: value)
             return NoResult()
         }
-        let old = try arguments.previous.map { try FieldValue(json: $0, kind: field.kind, in: world) } ?? field.value ?? .null
-        try session.commands.check(session.perform(SetFieldCommand(id: arguments.entity, component: arguments.component,
-                                                                   path: arguments.path, old: old, new: value,
+        try session.commands.check(session.perform(SetFieldCommand(id: arguments.entity, component: componentName,
+                                                                   path: path, old: old, new: value,
                                                                    label: arguments.label)), title)
         return NoResult()
     }
+
+    /// "position.x" → ("position", 0).
+    static func elementPath(_ path: String) -> (String, Int)? {
+        guard let dot = path.lastIndex(of: ".") else { return nil }
+        let names: [String: Int] = ["x": 0, "y": 1, "z": 2, "w": 3, "r": 0, "g": 1, "b": 2, "a": 3]
+        guard let index = names[String(path[path.index(after: dot)...])] else { return nil }
+        return (String(path[..<dot]), index)
+    }
+
+    static func number(_ json: JSONValue) throws -> Float {
+        switch json {
+        case .int(let i): return Float(i)
+        case .double(let d): return Float(d)
+        default: throw SceneError.typeMismatch(path: "value", expected: "a number")
+        }
+    }
+
+    /// Sets Transform's `path` (position, rotation or scale, or an element) in world space:
+    /// the new local transform is the one that puts the entity there under its parent.
+    private static func setWorld(_ path: String, value json: JSONValue, of entity: Entity, _ arguments: Arguments,
+                                 in session: EditorSession) throws -> NoResult {
+        let world = session.world
+        let local = world.get(Transform.self, for: entity) ?? Transform()
+        let parentMatrix = world.parent(of: entity).map { world.worldMatrix(of: $0) } ?? .identity
+        let parent = Transform(matrix: parentMatrix)
+        let current = Transform(matrix: parentMatrix * local.matrix)
+        let (field, element) = elementPath(path) ?? (path, -1)
+        let currentValue: FieldValue
+        switch field {
+        case "position": currentValue = .vec3(current.position)
+        case "rotation": currentValue = .quat(current.rotation)
+        case "scale": currentValue = .vec3(current.scale)
+        default: throw CommandError.failed("World space applies to Transform position, rotation and scale, not '\(path)'")
+        }
+        let kind: FieldKind = field == "rotation" ? .quat : .vec3
+        let value = element >= 0 ? try currentValue.replacing(element, with: number(json))
+                                 : try FieldValue(json: json, kind: kind, in: world)
+        var updated = local
+        switch value {
+        case .vec3(let v) where field == "position":
+            let p = parentMatrix.inverse * Vec4(v, 1)
+            updated.position = Vec3(p.x, p.y, p.z)
+        case .vec3(let v) where field == "scale":
+            updated.scale = v / Vec3(parent.scale.x == 0 ? 1 : parent.scale.x, parent.scale.y == 0 ? 1 : parent.scale.y,
+                                     parent.scale.z == 0 ? 1 : parent.scale.z)
+        case .quat(let q):
+            updated.rotation = (parent.rotation.inverse * q).normalized
+        default:
+            throw SceneError.typeMismatch(path: "value", expected: kind.description)
+        }
+        guard let id = world.id(of: entity) else { throw CommandError.failed("The entity has no id") }
+        if arguments.transient == true {
+            world.add(updated, to: entity)
+            return NoResult()
+        }
+        let label = arguments.label ?? "Edit \(field)"
+        try session.commands.check(session.perform(SetComponentCommand(id: id, old: local, new: updated, label: label)), title)
+        return NoResult()
+    }
+}
+
+/// Which space `component.setField` reads a Transform value in.
+public enum TransformSpace: String, Codable, CaseIterable, Sendable {
+    case local, world
 }
 
 // MARK: Assets
@@ -891,6 +1038,32 @@ extension AssetItem {
 }
 
 extension FieldValue {
+    /// Element `index` of a vector or quaternion (x, y, z, w), or nil.
+    func element(_ index: Int) -> Float? {
+        switch self {
+        case .vec2(let v) where index < 2: v[index]
+        case .vec3(let v) where index < 3: v[index]
+        case .vec4(let v) where index < 4: v[index]
+        case .quat(let q) where index < 4: q.vector[index]
+        default: nil
+        }
+    }
+
+    /// This vector or quaternion with element `index` set to `value`.
+    func replacing(_ index: Int, with value: Float) throws -> FieldValue {
+        guard element(index) != nil else { throw SceneError.typeMismatch(path: "value", expected: "a vector element") }
+        switch self {
+        case .vec2(var v): v[index] = value; return .vec2(v)
+        case .vec3(var v): v[index] = value; return .vec3(v)
+        case .vec4(var v): v[index] = value; return .vec4(v)
+        case .quat(let q):
+            var v = q.vector
+            v[index] = value
+            return .quat(Quat(vector: v))
+        default: return self
+        }
+    }
+
     /// As JSON for command arguments: vectors and quaternions as arrays, entities by id, enum
     /// cases by name.
     @MainActor public func json(in world: World) -> JSONValue {
