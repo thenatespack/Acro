@@ -1,7 +1,7 @@
-# Networking and multiplayer (card 624)
+# Networking and multiplayer (cards 624, 662)
 
-Research notes, a recommendation and a phased plan, plus the prototype that backs the measurements
-(`Sources/Engine/Net`, `Tests/EngineTests/NetworkingTests.swift`, the `net` demo scene).
+Research notes, a recommendation and a phased plan, plus the implementation that backs the measurements
+(`Sources/Engine/Net`; `NetworkingTests`, `NetConnectionTests`, `NetPredictionTests`; the `net` and `netcharacter` demo scenes).
 
 ## What the engine's games need
 
@@ -130,7 +130,7 @@ All of the models above want **unreliable datagrams** for state plus a little re
 
 Recommendation: keep the engine's `NetTransport` protocol (unreliable datagrams, polled), ship
 **plain UDP first** (done in the prototype, ~130 lines over POSIX sockets; Winsock is a small `#if`),
-add a reliable-message channel and a connection handshake on top, then add an **encrypted transport**
+add a reliable-message channel and a connection handshake on top (done, card 662), then add an **encrypted transport**
 behind the same protocol when anything ships over the internet: MsQuic datagrams or
 GameNetworkingSockets, decided by whether Steam relays are wanted.
 
@@ -141,8 +141,9 @@ The prototype's approach, which scales to the target sizes:
 - Entities opt in with a `Replicated` component listing component names; identity is the
   entity's `EntityID` (already persistent, 128-bit, unique across worlds), so client entities get
   the server's ids and `world.entity(for:)` is the lookup.
-- The server captures, per tick, each replicated component **encoded to bytes**: `Transform` as 40
-  raw bytes, other components through `Codable` as sorted-key JSON (decoded on the client through
+- The server captures, per tick, each replicated component **encoded to bytes**: `Transform`
+  quantized (below) or exact, types conforming to `NetCustomEncoding` their own way, other
+  components through `Codable` with `NetBinaryEncoder` (decoded on the client through
   `ComponentRegistry`). Comparing bytes is the whole change detection.
 - **Delta against the last acked state**: the server keeps 64 ticks of history; each client acks
   the newest tick it has; the next snapshot is a delta against that (only changed components, new
@@ -150,15 +151,46 @@ The prototype's approach, which scales to the target sizes:
   acked anything recent gets a full snapshot.
 - Fragmentation into 1200-byte datagrams; a lost fragment loses that snapshot only.
 
-Measured (`snapshotDeltaSize`): 200 entities with Transform + a small Codable component: full
-snapshot 18,342 bytes, delta with 10 moved 629 bytes, nothing changed 21 bytes (header only).
-The `net` scene's 14 always-moving entities cost ~870 bytes per snapshot (~210 kbit/s at 30 Hz).
+The prototype measured (`snapshotDeltaSize`, 200 entities with Transform + a small Codable
+component): full snapshot 18,342 bytes, delta with 10 moved 629 bytes, nothing changed 21 bytes;
+the `net` scene's 14 always-moving entities ~870 bytes per snapshot (~210 kbit/s at 30 Hz).
 
-Next steps for size, in order of payoff: quantize Transforms (position to 1 mm in a 16-bit range
-per sector, smallest-three quaternion in 32 bits, scale omitted when one) for ~10 bytes instead of
-40; a compact binary `Encoder` for Codable components instead of JSON (field-wise deltas become
-possible); per-entity priority and a bandwidth budget (send far / slow entities less often);
-zlib over large full snapshots (CZlib is already linked).
+Snapshot efficiency (card 662, phase 3), what is implemented:
+
+- **Quantized Transform** (`NetTransformEncoding.quantized`, the default): position in 1/1024 m
+  steps as zigzag varints, rotation smallest-three in 32 bits, scale omitted when one (one float
+  when uniform): 12-14 bytes within 500 m (`quantizedTransformPrecision`: error at most 0.83 mm and
+  0.19 degrees). In a delta it is sent as **field deltas** against the client's baseline (a mask,
+  the changed axes as small varints, the rotation if it changed): 2-8 bytes for a moving, turning
+  entity. `.exact` (41 bytes) for what a client predicts.
+- **Entity references** are gaps between indices in the baseline's sorted ids (one byte, not 16);
+  a component header is one varint (name index and kind).
+- **`NetBinaryEncoder` / `NetBinaryDecoder`**: tagged binary Codable (varints, raw floats, sorted
+  keys, self-describing so custom `init(from:)`s work); malformed input throws. Keys are still
+  spelled out, so small structs only shrink ~20% (a 16-field record 259 B vs 326 B of JSON); hot
+  types get a hand-written `NetCustomEncoding` (`CharacterController`: 91 B vs ~330 B).
+- **zlib** (`NetServer.compression`: `.fullSnapshots` by default, or `.all`), used only when smaller.
+- **Priority and budget**: `NetServer.bandwidthLimit` (snapshot payload bytes per second per
+  client); each snapshot carries the changed entities with the highest accumulated
+  `Replicated.priority` that fit, the rest wait and gain priority. The server tracks what each
+  client actually has (per-client sent states) so deltas stay correct.
+
+Measured (`NetworkingTests`, macOS arm64; bytes the server sends one client including packet and
+fragment headers, 30 Hz, 300 entities each with a rotated Transform and a small component):
+
+| Case | kbit/s |
+|---|---|
+| Nothing moving (keep-alive cost: empty deltas, headers) | 11.5 |
+| 30 of 300 moving and turning | 92 |
+| All 300 moving and turning, no budget | 804 |
+| The same with zlib on every snapshot | 367 |
+| All 300 moving, `bandwidthLimit` 30,000 B/s, zlib | 244 (175 entities per snapshot: each updated at least every 57 ms) |
+
+The 200-entity full snapshot is now 10,333 bytes (4,819 with zlib, vs 18,342), 10 moved 99 bytes
+(vs 629), nothing changed 19. A join of 300 entities is ~35 KB over the first second and a half.
+So the 256 kbit/s target holds for a few hundred entities with a typical fraction moving, and when
+everything moves the budget keeps it under the target by updating each entity at ~18 Hz instead
+of 30. The `net` scene's 14 movers are ~236 bytes per snapshot (~57 kbit/s, was ~210).
 
 ## Security basics
 
@@ -168,8 +200,12 @@ zlib over large full snapshots (CZlib is already linked).
   are dropped, never crash (the prototype's `ByteReader` throws; `snapshotRoundTripAndMalformedInput`
   feeds every truncation). Fuzz the decoders.
 - **No amplification**: a server must not answer an unauthenticated datagram with more bytes than
-  it received (reflection DDoS). Connection setup should use a challenge / cookie before the server
-  allocates state or sends snapshots (the prototype's `hello` doesn't yet).
+  it received (reflection DDoS). Done (phase 1): connection requests are padded to 64 bytes, the
+  server answers with a 20-byte challenge whose token is a keyed hash of the address, salt and a
+  10 s time bucket, and allocates a slot only when the token comes back from that address
+  (`handshakeRejectsBadTokensAndDoesNotAmplify`). The hash is SplitMix-style, not cryptographic:
+  it proves the address, not the client's identity. The UDP transport itself still adds a table
+  entry per sending address.
 - **Encryption and authentication**: per-session keys from a matchmaker (connect tokens, as in
   yojimbo / netcode.io) or QUIC's TLS; without it, anyone on the path can read and spoof packets.
 - **Rate limits** per address for connection attempts; cap the number of clients.
@@ -186,14 +222,14 @@ determinism requirement), gives late join and reconnect for free, and the same c
 listen server, a dedicated server and LAN play. Lockstep / rollback stays an option for
 single-platform, few-entity games, after the determinism work listed above.
 
-## The prototype (Sources/Engine/Net)
+## The implementation (Sources/Engine/Net)
 
 - `NetTransport` (unreliable datagrams, polled), `LoopbackNetwork` / `LoopbackTransport`
   (in-process, deterministic latency, jitter, loss and duplication on a caller-driven clock),
   `UDPTransport` (non-blocking IPv4 POSIX sockets; macOS and Linux).
 - `Replicated` component, `NetWorldState`, `NetSnapshot` (delta + wire format), `NetComponentCoder`.
 - `NetServer`: snapshot capture at `sendInterval` (30 Hz), 64-tick history, per-client acked
-  baseline, fragmentation. `NetClient`: hello until the first snapshot, reassembly, baseline
+  baseline, fragmentation. `NetClient`: handshake, reassembly, baseline
   rebuild, acks, render clock `interpolationDelay` behind the newest snapshot (steered gently, no
   extrapolation), Transform interpolation (lerp / slerp), spawn / despawn / component add and
   remove by `EntityID`, deterministic apply order.
@@ -205,22 +241,60 @@ single-platform, few-entity games, after the determinism work listed above.
   of the true speed); delta sizes; wire format round trip and every truncation rejected;
   fragmented 300-entity snapshots under loss; UDP on localhost; the determinism fingerprint.
 
-Not in the prototype: inputs and prediction, reliable messages / RPCs, connection handshake,
-timeouts and disconnects, encryption, hierarchy (only root entities; Transforms replicate as local),
+Card 662 (phases 1-3) added:
+
+- **Connection layer** (`NetConnection.swift`): the handshake above, `NetClientID`s (1, 2, ... never
+  reused), `maxClients` (denied: `serverFull`), keep-alives after `keepAliveInterval` (0.1 s) of
+  silence, `timeout` / `connectTimeout`, `disconnect()` on either side (sent three times), events
+  (`pollEvents`: connected, disconnected with a reason, messages). Every connected packet has a
+  16-bit sequence, an ack of the newest packet received plus a 32-bit field of the ones before it
+  and how long the ack was held, the reliable channel's cumulative ack, and due reliable messages:
+  acks ride on snapshots and input packets. Reliable messages (`send(message:)`, up to 1000 bytes)
+  are numbered, resent every 1.25 RTT until acked, delivered once and in order. `connectionStats`:
+  smoothed RTT (ack hold time subtracted), loss over the last 128 packets whose fate is known,
+  packets / bytes. Measured (`rttAndLossEstimates`): 60 ms each way + 10% loss reads as RTT 133 ms
+  (the 30 Hz / 60 Hz packet cadence adds a little) and loss 9.4% on both sides; 300 messages each
+  way with sizes 3-302 B arrive once and in order under 20% loss, 40 ms jitter and 10% duplication.
+- **Inputs and prediction** (`NetPrediction.swift`): `NetClient.sendInput(bytes)` numbers inputs
+  and resends the newest `inputsPerPacket` (16) unacked ones in every packet; `NetServer.takeInputs`
+  hands them out in order (gaps skipped) for the game's fixed tick; each snapshot carries the newest
+  input applied. `NetCharacterInput` (move velocity + jump, 5 bytes, 1 mm/s),
+  `PhysicsWorld.applyCharacterInput` on the server, `NetCharacterPrediction` on the client (replicate
+  the character with `Replicated(components: [Transform, CharacterController], transform: .exact)`):
+  predict with `PhysicsWorld.predictCharacter` (the controller step without pushes or the kinematic
+  move, additive to `CharacterController`), and on each new snapshot rewind to its state, drop the
+  applied inputs and replay the rest; a correction is blended out of the display over 0.1 s.
+  Measured (`NetPredictionTests`): two players at 100 ms each way + 20 ms jitter + 5% loss walking
+  over stairs and jumping: about 320 reconciliations each, ~14 inputs replayed per
+  reconciliation, **zero corrections, error exactly 0** (same static collision world on both
+  sides, bit-identical step), the prediction running up to 1.0 m ahead of the server's current
+  position (the latency it hides). A server-side 1.5 m knock-back the client can't predict is
+  corrected on the next snapshot (error 1.5 m) and blended out; with 30% loss client-to-server
+  every input still arrives, in order.
+- **Snapshot efficiency**: see "Serialization" above.
+- Demo: `netcharacter` (scene 37), two players with predicted characters over the link above.
+
+Not done yet: encryption, hierarchy (only root entities; Transforms replicate as local),
 `Entity` references inside replicated components (handles are per world; use `EntityID`),
-interest management, quantization, bandwidth budgets, clock sync beyond the interpolation clock.
+interest management (priority exists, distance-based priority is up to the game), clock sync
+beyond the interpolation clock, prediction of anything but a `CharacterController` (and of a
+character on moving platforms or blocked by other players: those show up as corrections; the
+replicated controller doesn't carry `groundBody`), lag compensation. The server applies a
+client's inputs only as they arrive (up to `max` per tick), so a client that stops sending stops
+moving: fine for co-op, a speed / freeze exploit to bound in versus games.
 
 ## Phased plan (suggested cards)
 
-1. **Net: connection layer** - challenge / response handshake, client ids, timeouts and disconnect,
-   keep-alives, a reliable ordered message channel (acks piggybacked on snapshots / inputs), RTT and
-   loss estimates. Tests on `LoopbackNetwork`.
-2. **Net: inputs and client prediction** - an input-command stream (redundantly sent: last N
-   inputs per packet), server applies per tick; the client predicts its own character with the same
-   systems and reconciles on snapshots (needs a re-runnable character step on the fixed timestep).
-   Demo: `character` with two players over a laggy loopback.
-3. **Net: snapshot efficiency** - quantized Transform, binary Codable encoder, per-entity priority
-   and a byte budget, zlib for full snapshots; measure against the 256 kbit/s target with 300 entities.
+1. **Net: connection layer** - **done (card 662)**: challenge / response handshake, client ids,
+   timeouts and disconnect, keep-alives, a reliable ordered message channel (acks piggybacked on
+   snapshots / inputs), RTT and loss estimates. Tests on `LoopbackNetwork` and UDP.
+2. **Net: inputs and client prediction** - **done (card 662)**: input commands (last 16 unacked per
+   packet), server applies per fixed tick, `NetCharacterPrediction` reconciles on snapshots (zero
+   corrections with the same collision world, 100 ms + jitter + 5% loss). Demo: `netcharacter`.
+3. **Net: snapshot efficiency** - **done (card 662)**: quantized Transform with field deltas, binary
+   Codable encoder, compact entity references, per-entity priority and a byte budget, zlib. 300
+   entities: 92 kbit/s with 30 moving; all moving 804 kbit/s raw, 367 with zlib, 244 under a
+   30,000 B/s budget (each entity updated every 57 ms or sooner).
 4. **Net: hierarchy and references** - replicate parents (by `EntityID`) and `EntityRef` fields,
    scene-entities matched by id instead of spawned (both sides load the same scene).
 5. **Net: Windows sockets and an encrypted transport** - Winsock in `UDPTransport`; MsQuic datagrams
