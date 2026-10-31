@@ -276,7 +276,9 @@ final class AssetGridView: Widget {
 
 /// The dockable Assets panel: the project's folders on the left (a tree), the selected folder's
 /// files on the right as a grid of thumbnails (or a list), with a breadcrumb, a search field
-/// and New Folder / New Material / Rename / Delete (with confirmation). Models expand to show
+/// and Import… / New Folder / New Material / Rename / Delete (with confirmation). Import copies
+/// files or folders from anywhere on disk into the current folder (a native dialog on macOS, a
+/// path field elsewhere). Models expand to show
 /// their meshes, materials, textures and prefab. Selecting an item shows it in the inspector;
 /// cells can be dragged onto the viewport, the hierarchy or an inspector field
 /// (`onDrag`, handled by the host), or onto a folder in the tree to move them.
@@ -293,6 +295,9 @@ public final class AssetBrowserPanel {
     private let renameBar: HStack
     private let confirmBar: HStack
     private let confirmLabel = Label("", role: .body, name: "deleteQuestion")
+    /// Path entry for Import… where there's no native file dialog.
+    let importField = TextField(placeholder: "Path to a file or folder", name: "assetImportPath")
+    private let importBar: HStack
     private let viewToggle: Button
     private let noProject = Label("Open or create a project to see its assets", role: .secondary, name: "noProject")
     private let content: Widget
@@ -306,11 +311,14 @@ public final class AssetBrowserPanel {
 
     public init(session: EditorSession) {
         model = AssetBrowserModel(session: session)
+        let importButton = Button("Import…", name: "importAsset")
         let newFolder = Button("New Folder", name: "newFolder")
         let newMaterial = Button("New Material", name: "newMaterial")
         let rename = Button("Rename", name: "renameAsset")
         let delete = Button("Delete", name: "deleteAsset")
         viewToggle = Button("List", name: "assetViewMode")
+        importButton.tooltip = EditorShortcuts().tooltip(
+            "Copy files or folders from your computer into the current folder and import them", for: .importAsset)
         newFolder.tooltip = "Create a folder in the current folder"
         newMaterial.tooltip = "Create a .material file in the current folder"
         rename.tooltip = "Rename the selected file or folder (its id is kept)"
@@ -324,7 +332,7 @@ public final class AssetBrowserPanel {
         breadcrumb.style.shrink = 1
         breadcrumb.style.width = 0
         breadcrumb.style.minWidth = 60
-        let toolbar = HStack(spacing: 6, name: "assetToolbar", [breadcrumb, search, newFolder, newMaterial, rename, delete, viewToggle])
+        let toolbar = HStack(spacing: 6, name: "assetToolbar", [breadcrumb, search, importButton, newFolder, newMaterial, rename, delete, viewToggle])
 
         let renameOK = Button("Rename", role: .primary, name: "renameOK")
         let renameCancel = Button("Cancel", name: "renameCancel")
@@ -332,6 +340,12 @@ public final class AssetBrowserPanel {
         renameField.style.width = 0
         renameBar = HStack(spacing: 6, name: "renameBar", [Label("Rename to", role: .secondary), renameField, renameCancel, renameOK])
         renameBar.isHidden = true
+        let importOK = Button("Import", role: .primary, name: "importOK")
+        let importCancel = Button("Cancel", name: "importCancel")
+        importField.style.grow = 1
+        importField.style.width = 0
+        importBar = HStack(spacing: 6, name: "importBar", [Label("Import", role: .secondary), importField, importCancel, importOK])
+        importBar.isHidden = true
         let deleteOK = Button("Delete", role: .primary, name: "deleteOK")
         let deleteCancel = Button("Cancel", name: "deleteCancel")
         confirmLabel.style.grow = 1
@@ -344,7 +358,7 @@ public final class AssetBrowserPanel {
         gridScroll.style.grow = 1
         gridScroll.style.shrink = 1
         let right = VStack(spacing: 6, padding: EdgeInsets(top: 0, left: 6, bottom: 0, right: 0), name: "assetContents",
-                           [toolbar, renameBar, confirmBar, gridScroll])
+                           [toolbar, importBar, renameBar, confirmBar, gridScroll])
         folderTree.background = .clear
         folderTree.allowsDragAndDrop = false
         let split = SplitView(.horizontal, panes: [folderTree, right], fractions: [0.22, 0.78], minSizes: [100, 200], name: "assetSplit")
@@ -354,6 +368,10 @@ public final class AssetBrowserPanel {
         let root = VStack(spacing: 6, padding: EdgeInsets(6), name: "assetsPanel", [split, noProject])
         view = root
 
+        importButton.action = { [unowned self] in beginImport() }
+        importOK.action = { [unowned self] in commitImport() }
+        importCancel.action = { [unowned self] in importBar.isHidden = true }
+        importField.onSubmit = { [unowned self] _ in commitImport() }
         newFolder.action = { [unowned self] in model.newFolder(); sync() }
         newMaterial.action = { [unowned self] in model.newMaterial(); sync() }
         rename.action = { [unowned self] in beginRename() }
@@ -444,8 +462,34 @@ public final class AssetBrowserPanel {
         return true
     }
 
+    /// Import…: the native file dialog where there is one, else the path field.
+    func beginImport() {
+        guard model.session.assets != nil else { return }
+        renameBar.isHidden = true
+        confirmBar.isHidden = true
+        if FilePicker.isAvailable {
+            guard let urls = FilePicker.chooseFiles(title: "Import into Assets/\(model.folder)", prompt: "Import") else { return }
+            if !model.importFiles(urls).isEmpty { sync() }
+        } else {
+            importBar.isHidden = false
+            view.context?.focus(importField)
+        }
+    }
+
+    private func commitImport() {
+        let text = importField.text.trimmingCharacters(in: .whitespaces)
+        guard !importBar.isHidden, !text.isEmpty else { return }
+        let url = URL(fileURLWithPath: (text as NSString).expandingTildeInPath)
+        if !model.importFiles([url]).isEmpty {
+            importBar.isHidden = true
+            importField.text = ""
+            sync()
+        }
+    }
+
     func beginRename() {
         guard let path = model.selectedPath else { return }
+        importBar.isHidden = true
         confirmBar.isHidden = true
         renameBar.isHidden = false
         let name = String(path.split(separator: "/").last ?? "")
@@ -470,6 +514,7 @@ public final class AssetBrowserPanel {
     private func showContextMenu(for entry: AssetBrowserEntry?, at position: Vec2) {
         guard let context = view.context else { return }
         var items: [(String, () -> Void)] = [
+            ("Import…", { [unowned self] in beginImport() }),
             ("New Folder", { [unowned self] in model.newFolder(); sync() }),
             ("New Material", { [unowned self] in model.newMaterial(); sync() }),
         ]

@@ -2,7 +2,7 @@ import Engine
 
 /// What a keyboard shortcut asks the editor to do.
 public enum EditorAction: Equatable, Sendable {
-    case undo, redo, save, duplicate, delete, focusSelection, clearSelection, togglePlay
+    case undo, redo, save, duplicate, delete, focusSelection, clearSelection, togglePlay, importAsset
 }
 
 /// Maps key presses to editor actions:
@@ -14,6 +14,7 @@ public enum EditorAction: Equatable, Sendable {
 /// | Cmd/Ctrl+S | save |
 /// | Cmd/Ctrl+D | duplicate selection |
 /// | Cmd/Ctrl+P | play / stop |
+/// | Shift+Cmd/Ctrl+I | import files into the current assets folder |
 /// | Delete or Backspace (also with Cmd/Ctrl) | delete selection |
 /// | F | frame the selection in the viewport |
 /// | Esc | clear the selection |
@@ -43,6 +44,7 @@ public struct EditorShortcuts: Sendable {
         case .s where shortcut && !shift: action = .save
         case .d where shortcut && !shift: action = .duplicate
         case .p where shortcut && !shift: action = .togglePlay
+        case .i where shortcut && shift: action = .importAsset
         case .delete, .backspace: action = plain || mods == shortcutModifier ? .delete : nil
         case .f where plain: action = .focusSelection
         case .escape where plain: action = .clearSelection
@@ -62,6 +64,7 @@ public struct EditorShortcuts: Sendable {
         case .save: KeyEvent(key: .s, modifiers: shortcutModifier)
         case .duplicate: KeyEvent(key: .d, modifiers: shortcutModifier)
         case .togglePlay: KeyEvent(key: .p, modifiers: shortcutModifier)
+        case .importAsset: KeyEvent(key: .i, modifiers: [shortcutModifier, .shift])
         case .delete: KeyEvent(key: .delete)
         case .focusSelection: KeyEvent(key: .f)
         case .clearSelection: KeyEvent(key: .escape)

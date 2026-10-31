@@ -324,6 +324,7 @@ public final class EditorApp: Game {
             // Esc first cancels a gizmo drag, then clears the selection.
             if transformTool?.cancelDrag(world: session.world) != true { session.selection.clear() }
         case .togglePlay: session.togglePlay()
+        case .importAsset: assetBrowser.beginImport()
         }
     }
 

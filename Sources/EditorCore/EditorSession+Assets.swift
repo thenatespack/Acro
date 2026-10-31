@@ -117,6 +117,22 @@ extension EditorSession {
         }
     }
 
+    /// Copies files or folders from anywhere on disk into `folder` and imports them in the
+    /// background (`AssetDatabase.importFiles`). Returns the new paths; nothing is copied if
+    /// any source can't be imported.
+    @discardableResult
+    public func importAssets(_ urls: [URL], into folder: String) -> [String] {
+        guard let assets = requireAssets("Import"), !urls.isEmpty else { return [] }
+        do {
+            let paths = try assets.importFiles(urls, into: folder)
+            log.info(paths.count == 1 ? "Imported \(paths[0])" : "Imported \(paths.count) files into Assets/\(folder)")
+            return paths
+        } catch {
+            log.error("Import failed: \(error)")
+            return []
+        }
+    }
+
     /// Renames the file or folder at `path` to `newName` in the same folder, keeping the
     /// extension when `newName` has none. Returns the new path.
     @discardableResult

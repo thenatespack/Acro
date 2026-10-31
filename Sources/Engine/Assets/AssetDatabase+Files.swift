@@ -18,6 +18,8 @@ public enum AssetFileError: Error, Equatable, CustomStringConvertible {
     case invalidPath(String)
     /// A folder can't move into itself or its own subfolders.
     case intoItself(String)
+    /// A file to import isn't there.
+    case missingSource(String)
 
     public var description: String {
         switch self {
@@ -25,6 +27,7 @@ public enum AssetFileError: Error, Equatable, CustomStringConvertible {
         case .exists(let path): "Assets/\(path) already exists"
         case .invalidPath(let path): "'\(path)' isn't a valid path inside Assets/"
         case .intoItself(let path): "Can't move \(path) into itself"
+        case .missingSource(let path): "No file at \(path)"
         }
     }
 }
@@ -56,16 +59,20 @@ extension AssetDatabase {
 
     /// `path` if nothing is there, else `path` with " 2", " 3"… before its extension
     /// ("New Material 2.material").
-    public func uniquePath(_ path: String) -> String {
+    public func uniquePath(_ path: String) -> String { uniquePath(path, excluding: []) }
+
+    /// `uniquePath`, also skipping the paths in `taken` (claimed but not created yet).
+    func uniquePath(_ path: String, excluding taken: Set<String>) -> String {
         let fm = FileManager.default
-        guard fm.fileExists(atPath: project.url(forAssetPath: path).path) else { return path }
+        func free(_ path: String) -> Bool { !taken.contains(path) && !fm.fileExists(atPath: project.url(forAssetPath: path).path) }
+        guard !free(path) else { return path }
         let ns = path as NSString
         let ext = ns.pathExtension
         let stem = ext.isEmpty ? path : ns.deletingPathExtension
         var n = 2
         while true {
             let candidate = "\(stem) \(n)" + (ext.isEmpty ? "" : ".\(ext)")
-            if !fm.fileExists(atPath: project.url(forAssetPath: candidate).path) { return candidate }
+            if free(candidate) { return candidate }
             n += 1
         }
     }
@@ -125,6 +132,87 @@ extension AssetDatabase {
         if !folder, fm.fileExists(atPath: sidecar.path) { try fm.removeItem(at: sidecar) }
         return refresh()
     }
+
+    // MARK: Importing outside files
+
+    /// Copies files or folders from outside the project into `folder` (relative to `Assets/`, ""
+    /// for `Assets/` itself, created if missing) and scans with `refreshAsync`, so the copies get
+    /// sidecars and import in the background. Returns each source's new path, in order.
+    ///
+    /// - A taken name gets " 2", " 3"… (`uniquePath`).
+    /// - A `.gltf` brings the external buffers and images it references (relative URIs that stay
+    ///   inside its folder) to the same relative paths, so the copy still loads. A file already
+    ///   there with the same bytes is shared; one with different bytes throws `.exists`.
+    /// - Sidecars next to the sources aren't copied: copies get fresh ids and default settings.
+    /// - A source already inside `Assets/` isn't copied; its current path is returned.
+    @discardableResult
+    public func importFiles(_ sources: [URL], into folder: String = "") throws -> [String] {
+        let fm = FileManager.default
+        let folder = folder.isEmpty ? "" : try Self.validated(folder)
+        let assetsRoot = project.assetsURL.standardizedFileURL.resolvingSymlinksInPath().path + "/"
+        // Check everything before copying anything.
+        var plan: [(source: URL, path: String?, dependencies: [(source: URL, path: String)])] = []
+        var claimed = Set<String>()
+        for source in sources.map({ $0.standardizedFileURL.resolvingSymlinksInPath() }) {
+            guard fm.fileExists(atPath: source.path) else { throw AssetFileError.missingSource(source.path) }
+            if source.path.hasPrefix(assetsRoot) {
+                plan.append((source, project.assetPath(for: source), []))
+                continue
+            }
+            guard !source.lastPathComponent.hasPrefix("."), source.pathExtension != AssetSidecar.fileExtension else {
+                throw AssetFileError.invalidPath(source.lastPathComponent)
+            }
+            let path = uniquePath(Self.join(folder, source.lastPathComponent), excluding: claimed)
+            claimed.insert(path)
+            var dependencies: [(URL, String)] = []
+            if source.pathExtension.lowercased() == "gltf" {
+                for uri in Self.gltfExternalURIs(source) {
+                    let dependency = source.deletingLastPathComponent().appendingPathComponent(uri)
+                    guard fm.fileExists(atPath: dependency.path) else { continue }  // the import reports it
+                    let target = Self.join(Self.parentPath(of: path), uri)
+                    let existing = project.url(forAssetPath: target)
+                    if fm.fileExists(atPath: existing.path) {
+                        if fm.contentsEqual(atPath: existing.path, andPath: dependency.path) { continue }
+                        throw AssetFileError.exists(target)
+                    }
+                    dependencies.append((dependency, target))
+                }
+            }
+            plan.append((source, path, dependencies))
+        }
+        for entry in plan {
+            guard let path = entry.path, !entry.source.path.hasPrefix(assetsRoot) else { continue }
+            for (source, target) in [(entry.source, path)] + entry.dependencies {
+                let destination = project.url(forAssetPath: target)
+                try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+                if !fm.fileExists(atPath: destination.path) { try fm.copyItem(at: source, to: destination) }
+            }
+        }
+        _ = refreshAsync()
+        return plan.compactMap(\.path)
+    }
+
+    /// The relative, non-`data:` buffer and image URIs of a `.gltf` file (percent-decoded), minus
+    /// any that would leave its folder.
+    static func gltfExternalURIs(_ url: URL) -> [String] {
+        struct URIs: Decodable {
+            struct Item: Decodable { var uri: String? }
+            var buffers: [Item]?
+            var images: [Item]?
+        }
+        guard let data = try? Data(contentsOf: url), let json = try? JSONDecoder().decode(URIs.self, from: data) else { return [] }
+        let uris = ((json.buffers ?? []) + (json.images ?? [])).compactMap(\.uri)
+        var seen = Set<String>()
+        return uris.compactMap { uri in
+            guard !uri.hasPrefix("data:"), !uri.contains("://"), !uri.hasPrefix("/") else { return nil }
+            let path = uri.removingPercentEncoding ?? uri
+            guard !path.split(separator: "/").contains(where: { $0 == ".." || $0 == "." }), seen.insert(path).inserted else { return nil }
+            return path
+        }
+    }
+
+    private static func join(_ folder: String, _ name: String) -> String { folder.isEmpty ? name : folder + "/" + name }
+    private static func parentPath(of path: String) -> String { (path as NSString).deletingLastPathComponent }
 
     // MARK: Materials
 

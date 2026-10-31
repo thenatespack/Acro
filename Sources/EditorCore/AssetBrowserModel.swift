@@ -194,6 +194,21 @@ public final class AssetBrowserModel {
         return id
     }
 
+    /// Copies files or folders from outside the project into the current folder, imports them
+    /// and selects the first one. Returns the new paths.
+    @discardableResult
+    public func importFiles(_ urls: [URL]) -> [String] {
+        let paths = session.importAssets(urls, into: targetFolder)
+        guard let first = paths.first, let assets = session.assets else { return paths }
+        invalidate()
+        if assets.isFolder(first) {
+            select(.folder(first))
+        } else if let id = assets.id(forPath: first) {
+            select(.asset(id))
+        }
+        return paths
+    }
+
     /// The path a rename or delete acts on: the selected folder or file (not a sub-asset).
     public var selectedPath: String? {
         switch selection {
