@@ -9,7 +9,9 @@ import Foundation
 // - an entity whose material is still loading (or whose texture is) draws with a neutral gray
 //   placeholder material, replaced when the real one is ready.
 // Finished imports are applied in `syncAssets` (`AssetDatabase.pump`) and uploaded under the
-// per-frame `assetUploadBudget`. With `blocksOnAssetLoading` (the default under
+// per-frame `assetUploadBudget`. A texture's mip chain (or an HDR image's half floats) is built
+// by a background job first (`PreparedTextureLevels`), so the frame only makes the GPU texture,
+// which doesn't wait for the GPU on either backend. With `blocksOnAssetLoading` (the default under
 // `ENGINE_SCREENSHOT`) the frame waits for the imports and uploads everything, so nothing
 // placeholder-ish is ever drawn.
 //
@@ -111,6 +113,9 @@ extension SceneRenderer {
         if revisionChanged {
             failedAssetKeys.removeAll()
             assetTextures = assetTextures.filter { key, entry in
+                AssetReference(key).map { assets.revision(of: $0.asset) == entry.revision } ?? false
+            }
+            preparingTextures = preparingTextures.filter { key, entry in
                 AssetReference(key).map { assets.revision(of: $0.asset) == entry.revision } ?? false
             }
         }
@@ -238,9 +243,94 @@ extension SceneRenderer {
             }
             return nil
         }
-        guard reserveUpload(texture.gpuByteCount, ignoringBudget) else { return nil }
-        let gpu = try textureUploader(texture, device)
-        assetTextures[key] = (gpu, assets.revision(of: reference.asset))
+        let revision = assets.revision(of: reference.asset)
+        let gpu: GPUTexture
+        if usesDefaultTextureUploader && PreparedTextureLevels.isWorthPreparing(texture) {
+            guard let (levels, format) = preparedLevels(of: texture, key: key, revision: revision) else {
+                assetsNeedRetry = true  // its job is still running
+                return nil
+            }
+            guard reserveUpload(texture.gpuByteCount, ignoringBudget) else { return nil }
+            preparingTextures[key] = nil
+            gpu = try Profiler.scope("asset texture upload") { try device.makeTexture(levels: levels, format: format) }
+        } else {
+            guard reserveUpload(texture.gpuByteCount, ignoringBudget) else { return nil }
+            gpu = try Profiler.scope("asset texture upload") { try textureUploader(texture, device) }
+        }
+        assetTextures[key] = (gpu, revision)
         return gpu
+    }
+
+    /// The levels of `texture` once its job has built them (started on the first call; waited
+    /// for when `blocksOnAssetLoading`).
+    private func preparedLevels(of texture: TextureAsset, key: String, revision: Int) -> ([TextureMipLevel], TextureFormat)? {
+        let entry: PreparedTextureLevels
+        if let preparing = preparingTextures[key], preparing.revision == revision {
+            entry = preparing
+        } else {
+            entry = PreparedTextureLevels(texture, revision: revision)
+            preparingTextures[key] = entry
+        }
+        if blocksOnAssetLoading { entry.wait() }
+        return entry.result
+    }
+}
+
+/// The GPU-ready levels of an imported texture, built by a background job (`JobSystem.shared`):
+/// what the default `SceneRenderer.textureUploader` would build on the render thread (the same
+/// levels, so the texture is identical).
+final class PreparedTextureLevels: @unchecked Sendable {
+    let revision: Int
+    let format: TextureFormat
+    private let jobs: JobSystem
+    private let lock = NSLock()
+    private var levels: [TextureMipLevel]?
+    private var job: JobHandle?
+
+    /// Whether building `texture`'s levels is CPU work worth moving off the render thread (a mip
+    /// chain or a float conversion; not a plain copy or compressed levels). Malformed images
+    /// aren't: the uploader reports them.
+    static func isWorthPreparing(_ texture: TextureAsset) -> Bool {
+        switch texture.pixels {
+        case .rgba8(let image):
+            texture.generatesMipmaps && image.width > 0 && image.height > 0 && image.pixels.count == image.width * image.height * 4
+        case .rgbaFloat(let image):
+            image.width > 0 && image.height > 0 && image.pixels.count == image.width * image.height * 4
+        case .compressed:
+            false
+        }
+    }
+
+    init(_ texture: TextureAsset, revision: Int, jobs: JobSystem = .shared) {
+        self.revision = revision
+        self.jobs = jobs
+        switch texture.pixels {
+        case .rgba8: format = texture.isSRGB ? .rgba8Srgb : .rgba8Unorm
+        case .rgbaFloat: format = .rgba16Float
+        case .compressed(let format, _): self.format = format
+        }
+        job = jobs.schedule("texture levels", priority: .background) { [self] in
+            let built: [TextureMipLevel]
+            switch texture.pixels {
+            case .rgba8(let image):
+                built = MipChain.generate(pixels: image.pixels, width: image.width, height: image.height, srgb: texture.isSRGB)
+            case .rgbaFloat(let image):
+                built = MipChain.generateFloat(pixels: image.pixels, width: image.width, height: image.height,
+                                               generateMipmaps: texture.generatesMipmaps)
+            case .compressed(_, let levels):
+                built = levels
+            }
+            lock.withLock { levels = built }
+        }
+    }
+
+    /// The levels, once built.
+    var result: ([TextureMipLevel], TextureFormat)? {
+        lock.withLock { levels.map { ($0, format) } }
+    }
+
+    /// Returns once the levels are built (helping with background jobs meanwhile).
+    func wait() {
+        if let job { jobs.wait(job) }
     }
 }

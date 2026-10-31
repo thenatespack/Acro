@@ -165,6 +165,9 @@ public final class SceneRenderer {
     /// Turns an imported texture into a GPU texture (RGBA8 in `texture.format`, or `.rgba16Float`
     /// for HDR images, with a mip chain when `generatesMipmaps`; compressed ones as they are, or
     /// decoded to RGBA8 on a GPU without their format). Replace it to upload other formats.
+    /// With the default, mip chains (and HDR images' half-float conversion) are built on job
+    /// workers first and only the GPU texture is made on the render thread; a replacement runs
+    /// entirely on the render thread.
     public var textureUploader: (TextureAsset, RenderDevice) throws -> GPUTexture = { texture, device in
         switch texture.pixels {
         case .rgba8(let image):
@@ -174,7 +177,13 @@ public final class SceneRenderer {
         case .compressed(let format, let levels):
             try device.makeTexture(compressedLevels: levels, format: format)
         }
+    } {
+        didSet { usesDefaultTextureUploader = false }
     }
+    /// `textureUploader` hasn't been replaced, so texture levels can be built on job workers.
+    var usesDefaultTextureUploader = true
+    /// Asset textures whose levels are being built on a job worker, by reference text.
+    var preparingTextures: [String: PreparedTextureLevels] = [:]
     /// How many bytes of asset meshes and textures `gather` uploads per frame before it leaves the
     /// rest for the next frames (so a big import doesn't hitch). At least one upload is made per
     /// frame. Ignored when `blocksOnAssetLoading` is set.
