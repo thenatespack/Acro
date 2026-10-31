@@ -262,6 +262,8 @@ final class VulkanRenderDevice: RenderDevice {
     let maxTextureSize: Int
     var captureNextFrame = false
     var captureWindow = false
+    /// `readBack` requests of the current frame.
+    private var targetReadbacks: [(target: VulkanRenderTarget, completion: @MainActor (Image) -> Void)] = []
     var vsync = true {
         didSet { if vsync != oldValue { needsSwapchainRebuild = true } }
     }
@@ -649,7 +651,8 @@ final class VulkanRenderDevice: RenderDevice {
         let renderPass = targetSamples == samples ? offscreenRenderPass : singleSampleTargetPass!
         let resolved = try createImage(
             extent: extent, format: surfaceFormat.format, samples: VK_SAMPLE_COUNT_1_BIT,
-            usage: vkFlags(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_USAGE_SAMPLED_BIT),
+            // Transfer source for `readBack`.
+            usage: vkFlags(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_USAGE_TRANSFER_SRC_BIT),
             aspect: vkFlags(VK_IMAGE_ASPECT_COLOR_BIT))
         // Wrapped right away so a failure below still frees it.
         let texture = VulkanTexture(
@@ -1426,6 +1429,18 @@ final class VulkanRenderDevice: RenderDevice {
                 layout: VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, stage: vkFlags(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT),
                 access: vkFlags(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)), swapchain.extent)
         }
+        // Render targets end their passes shader-readable (and may have been sampled since).
+        var targetCopies: [(buffer: VulkanBuffer, extent: VkExtent2D, completion: @MainActor (Image) -> Void)] = []
+        for (target, completion) in targetReadbacks {
+            let extent = VkExtent2D(width: UInt32(target.width), height: UInt32(target.height))
+            let buffer = try createHostBuffer(length: target.width * target.height * 4, usage: vkFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT))
+            _ = try recordReadback(
+                cmd: cmd, image: target.resolved.image, extent: extent, layout: VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                stage: vkFlags(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT),
+                access: vkFlags(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT), into: buffer)
+            targetCopies.append((buffer, extent, completion))
+        }
+        targetReadbacks.removeAll()
         if let timestampPool {
             vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, timestampBase + 1)
             frames[frameIndex].timestampsWritten = true
@@ -1460,11 +1475,12 @@ final class VulkanRenderDevice: RenderDevice {
         deletionQueue.setCurrentSerial(frameSerial)
 
         var image: Image?
-        if let readback {
+        if readback != nil || !targetCopies.isEmpty {
             var fence: VkFence? = frame.inFlight
             try vkCheck(vkWaitForFences(device, 1, &fence, VkBool32(VK_TRUE), UInt64.max), "vkWaitForFences")
-            image = try readImage(from: readback.buffer, extent: readback.extent)
         }
+        if let readback { image = try readImage(from: readback.buffer, extent: readback.extent) }
+        for copy in targetCopies { copy.completion(try readImage(from: copy.buffer, extent: copy.extent)) }
 
         var swapchainHandle: VkSwapchainKHR? = swapchain.handle
         var index = imageIndex
@@ -1490,6 +1506,10 @@ final class VulkanRenderDevice: RenderDevice {
 
         frameIndex = (frameIndex + 1) % maxFramesInFlight
         return image
+    }
+
+    func readBack(_ target: GPURenderTarget, completion: @escaping @MainActor (Image) -> Void) {
+        targetReadbacks.append((target as! VulkanRenderTarget, completion))
     }
 
     func waitIdle() {
@@ -2461,14 +2481,16 @@ final class VulkanRenderDevice: RenderDevice {
 
     /// Copies `image` (currently in `layout`, last used at `stage` with `access`) into the
     /// readback buffer and returns it to `layout`.
+    /// Copies `image` into `destination`, or into the shared `readbackBuffer` (grown as needed).
     private func recordReadback(cmd: VkCommandBuffer, image: VkImage, extent: VkExtent2D, layout: VkImageLayout,
-                                stage: VkPipelineStageFlags, access: VkAccessFlags) throws -> VulkanBuffer {
+                                stage: VkPipelineStageFlags, access: VkAccessFlags,
+                                into destination: VulkanBuffer? = nil) throws -> VulkanBuffer {
         let length = Int(extent.width * extent.height * 4)
-        if readbackBuffer.map({ $0.length < length }) ?? true {
+        if destination == nil, readbackBuffer.map({ $0.length < length }) ?? true {
             // The old buffer (if any) goes through the deletion queue.
             readbackBuffer = try createHostBuffer(length: length, usage: vkFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT))
         }
-        let readback = readbackBuffer!
+        let readback = destination ?? readbackBuffer!
         let colorRange = VkImageSubresourceRange(
             aspectMask: vkFlags(VK_IMAGE_ASPECT_COLOR_BIT), baseMipLevel: 0, levelCount: 1, baseArrayLayer: 0, layerCount: 1)
 

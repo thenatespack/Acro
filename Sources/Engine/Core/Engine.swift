@@ -121,6 +121,13 @@ public final class Frame {
         body(counter)
         device.endPass()
     }
+
+    /// Reads `target` back once this frame's passes ran (call it after rendering into it):
+    /// `completion` gets its pixels (RGBA8, top row first) when the frame ends, after the CPU
+    /// waited for the GPU to finish the frame. For screenshots and tests.
+    public func readBack(_ target: RenderTarget, completion: @escaping @MainActor (Image) -> Void) {
+        device.readBack(target.gpu, completion: completion)
+    }
 }
 
 @MainActor
@@ -270,6 +277,8 @@ public final class Engine {
     private let ignoredInput = Input()
     private var fpsWindow = (frames: 0, elapsed: 0.0)
     private var pendingScreenshots: [URL] = []
+    /// `captureFrame` requests: called with the next captured frame (nil if it couldn't be read back).
+    private var pendingCaptures: [@MainActor (Image?) -> Void] = []
     /// Set via ENGINE_SCREENSHOT=<path.png>: capture after ENGINE_SCREENSHOT_FRAME frames (default 60), then quit.
     private var automatedScreenshot: (url: URL, frame: Int)?
     /// Per-frame sums during an automated screenshot, printed as averages when it's saved.
@@ -477,7 +486,10 @@ public final class Engine {
             if let shot = automatedScreenshot, frameCount == shot.frame {
                 pendingScreenshots.append(shot.url)
             }
-            device.captureNextFrame = !pendingScreenshots.isEmpty
+            // Captures asked for until now get this frame (later ones the next).
+            let captures = pendingCaptures
+            pendingCaptures.removeAll()
+            device.captureNextFrame = !pendingScreenshots.isEmpty || !captures.isEmpty
 
             let framebufferSize = window.framebufferSize
             let renderSize = renderResolution.size(window: framebufferSize)
@@ -537,7 +549,9 @@ public final class Engine {
                         renderSize: renderSize, upscaler: upscaler, vsync: device.vsync, contentScale: window.contentScale,
                         backend: device.backend, deviceName: device.deviceName)
                 }
-                if let image = try device.endFrame() {
+                let captured = try device.endFrame()
+                for capture in captures { capture(captured) }
+                if let image = captured {
                     for url in pendingScreenshots { try image.writePNG(to: url) }
                     pendingScreenshots.removeAll()
                     if let shot = automatedScreenshot, frameCount >= shot.frame {
@@ -551,6 +565,7 @@ public final class Engine {
             } else {
                 // Minimized or no drawable: don't spin the CPU. A reset that wasn't delivered stays pending.
                 if temporalInputs.resetHistory { historyResetRequested = true }
+                pendingCaptures.insert(contentsOf: captures, at: 0)
                 if automatedScreenshot != nil { screenshotTotals.skipped += 1 }
                 Thread.sleep(forTimeInterval: 1.0 / 60.0)
             }
@@ -588,6 +603,13 @@ public final class Engine {
     /// Saves the next rendered frame as a PNG.
     public func saveScreenshot(to url: URL) {
         pendingScreenshots.append(url)
+    }
+
+    /// Reads the next rendered frame back, as `saveScreenshot` would save it (the window, UI
+    /// included, when there is no render size), and calls `completion` with it at the end of
+    /// that frame; nil if the backend can't read the window back.
+    public func captureFrame(_ completion: @escaping @MainActor (Image?) -> Void) {
+        pendingCaptures.append(completion)
     }
 
     public func quit() {

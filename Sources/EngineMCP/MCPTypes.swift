@@ -78,17 +78,34 @@ public struct MCPTool: Equatable, Sendable {
     }
 }
 
+/// An image in a tool result (`{"type": "image", "data": <base64>, "mimeType": …}`).
+public struct MCPImageContent: Equatable, Sendable {
+    /// The encoded file (PNG, JPEG…), sent base64-encoded.
+    public var data: Data
+    public var mimeType: String
+
+    public init(data: Data, mimeType: String = "image/png") {
+        self.data = data
+        self.mimeType = mimeType
+    }
+
+    var json: JSON { ["type": "image", "data": .string(data.base64EncodedString()), "mimeType": .string(mimeType)] }
+}
+
 /// The result of a tool call. A failure the model should see (bad arguments, a command that
 /// isn't available) is a result with `isError`, not a protocol error.
 public struct MCPToolResult: Equatable, Sendable {
     /// Text blocks shown to the model.
     public var text: [String]
+    /// Images shown to the model, after the text.
+    public var images: [MCPImageContent]
     /// The result as JSON (an object), matching the tool's `outputSchema`.
     public var structuredContent: JSON?
     public var isError: Bool
 
-    public init(text: [String], structuredContent: JSON? = nil, isError: Bool = false) {
+    public init(text: [String], images: [MCPImageContent] = [], structuredContent: JSON? = nil, isError: Bool = false) {
         self.text = text
+        self.images = images
         self.structuredContent = structuredContent
         self.isError = isError
     }
@@ -105,7 +122,7 @@ public struct MCPToolResult: Equatable, Sendable {
 
     func json(protocolVersion: String) -> JSON {
         var object: [String: JSON] = [
-            "content": .array(text.map { ["type": "text", "text": .string($0)] }),
+            "content": .array(text.map { ["type": "text", "text": .string($0)] } + images.map(\.json)),
             "isError": .bool(isError),
         ]
         if let structuredContent, protocolVersion >= MCPProtocol.v2025_06_18 { object["structuredContent"] = structuredContent }

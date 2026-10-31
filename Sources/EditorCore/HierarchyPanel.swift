@@ -47,7 +47,7 @@ public final class HierarchyPanel {
         tree.style.shrink = 1
 
         createButton = Button("Create", name: "create") { [unowned self] in showCreateMenu() }
-        duplicateButton = Button("Duplicate", name: "duplicate") { [unowned session] in session.run(EntityDuplicateCommand.self) }
+        duplicateButton = Button("Duplicate", name: "duplicate") { [unowned session] in session.run(EntityDuplicateCommand.self, .init()) }
         deleteButton = Button("Delete", name: "delete")
         let shortcuts = EditorShortcuts()
         createButton.tooltip = "Create a new entity at the viewport camera's pivot"
@@ -55,7 +55,7 @@ public final class HierarchyPanel {
         deleteButton.tooltip = shortcuts.tooltip("Delete the selection", for: .delete)
         let buttons = HStack(spacing: 6, [createButton, duplicateButton, deleteButton])
         deleteButton.action = { [unowned self] in
-            if let onDelete { onDelete() } else { session.run(EntityDeleteCommand.self) }
+            if let onDelete { onDelete() } else { session.run(EntityDeleteCommand.self, .init()) }
         }
         view.addChildren([buttons, tree])
 

@@ -483,6 +483,10 @@ extension RenderPass {
     func endFrame() throws -> Image?
     /// When true, the next frame is read back and returned by `endFrame`. Resets after.
     var captureNextFrame: Bool { get set }
+    /// Reads `target`'s color (an `.rgba8Srgb` target) back once this frame's passes ran:
+    /// `endFrame` waits for the GPU, like a captured frame, and calls `completion` with the
+    /// pixels (RGBA8, top row first). Call it inside a frame, after the passes into `target`.
+    func readBack(_ target: GPURenderTarget, completion: @escaping @MainActor (Image) -> Void)
     /// Capture the window image (after upscaling and window-pass UI) instead of the scene at
     /// render resolution.
     var captureWindow: Bool { get set }

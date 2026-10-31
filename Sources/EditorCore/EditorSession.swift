@@ -90,6 +90,12 @@ public final class EditorSession {
     }()
     /// The application around the session, for commands that act on its widgets (layout, camera).
     public weak var host: (any EditorHost)?
+    /// The batch `edit.beginBatch` opened (one undo group until `edit.endBatch`), if any.
+    public internal(set) var batch: EditorBatch?
+    /// Meshes for picking without a host renderer: the built-in shapes and the project's meshes.
+    public private(set) lazy var cpuPickMeshes = EditorPickMeshes(session: self)
+    /// What `view.pick` and `scene.raycast` test against: the host's renderer, else `cpuPickMeshes`.
+    public var pickMeshes: any PickMeshSource { host?.pickMeshes ?? cpuPickMeshes }
 
     private var playSnapshot: WorldSnapshot?
 
@@ -320,12 +326,15 @@ public final class EditorSession {
 
     // MARK: Entities
 
-    /// Creates an entity from `template` at `position` (a root; selected afterwards).
+    /// Creates an entity from `template` at `position` (in `parent`'s space; default a root),
+    /// named `name` (default the template's title, numbered when taken); selected afterwards.
     @discardableResult
-    public func create(_ template: EntityTemplate, at position: Vec3 = .zero) -> EntityID? {
+    public func create(_ template: EntityTemplate, at position: Vec3 = .zero, name: String? = nil,
+                       parent: EntityID? = nil) -> EntityID? {
         do {
-            let command = try SpawnCommand(components: template.components(at: position), name: uniqueName(template.title),
-                                           in: world, label: "Create \(template.title)")
+            let parentEntity = try parent.map { try world.require($0) }
+            let command = try SpawnCommand(components: template.components(at: position), name: name ?? uniqueName(template.title),
+                                           parent: parentEntity, in: world, label: "Create \(template.title)")
             guard perform(command) else { return nil }
             selection.set(command.rootIDs)
             return command.rootIDs.first
@@ -339,7 +348,14 @@ public final class EditorSession {
     /// copies. Returns their ids.
     @discardableResult
     public func duplicateSelection() -> [EntityID] {
-        let originals = selection.topLevelEntities(in: world)
+        duplicate(selection.topLevelEntities(in: world))
+    }
+
+    /// Duplicates `entities` with their subtrees next to the originals (one undo step) and
+    /// selects the copies. An entity under another one in the list is copied with it, once.
+    @discardableResult
+    public func duplicate(_ entities: [Entity]) -> [EntityID] {
+        let originals = topLevel(entities)
         guard !originals.isEmpty else { return [] }
         var copies: [EntityID] = []
         undo.beginGroup("Duplicate")
@@ -362,7 +378,14 @@ public final class EditorSession {
     /// number deleted.
     @discardableResult
     public func deleteSelection() -> Int {
-        let doomed = selection.topLevelEntities(in: world)
+        delete(selection.topLevelEntities(in: world))
+    }
+
+    /// Deletes `entities` with their subtrees (one undo step) and deselects what went. Returns
+    /// the number of subtrees deleted.
+    @discardableResult
+    public func delete(_ entities: [Entity]) -> Int {
+        let doomed = topLevel(entities)
         guard !doomed.isEmpty else { return 0 }
         undo.beginGroup(doomed.count == 1 ? "Delete Entity" : "Delete \(doomed.count) Entities")
         defer { undo.endGroup(); changed() }
@@ -375,8 +398,23 @@ public final class EditorSession {
                 log.error("Delete failed: \(error)")
             }
         }
-        selection.clear()
+        selection.prune(in: world)
         return deleted
+    }
+
+    /// The live ones of `entities` that have no ancestor among them, in order, without repeats.
+    private func topLevel(_ entities: [Entity]) -> [Entity] {
+        let set = Set(entities.filter { world.isAlive($0) })
+        var seen = Set<Entity>()
+        return entities.filter { entity in
+            guard set.contains(entity), seen.insert(entity).inserted else { return false }
+            var ancestor = world.parent(of: entity)
+            while let current = ancestor {
+                if set.contains(current) { return false }
+                ancestor = world.parent(of: current)
+            }
+            return true
+        }
     }
 
     /// Renames `id` (one undo step). Returns false when the entity is gone or it failed.

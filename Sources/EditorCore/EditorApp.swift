@@ -61,7 +61,8 @@ public struct EditorOptions: Sendable {
 /// `DockSpace` under a toolbar, renders the viewport through `SceneRenderer.beginViews` /
 /// `renderView` into a `RenderTarget` sized to its panel, routes shortcuts to commands and applies
 /// the UI's cursor. Every button, menu item, shortcut and drop runs a command from
-/// `session.commands`; the app is the session's `EditorHost` (layout reset, framing the camera).
+/// `session.commands`; the app is the session's `EditorHost` (layout reset, framing the camera,
+/// the viewport's view for picking, frame stats and screenshots).
 /// Run it with `Engine(config:).run(EditorApp(options:))`.
 @MainActor
 public final class EditorApp: Game, EditorHost {
@@ -107,6 +108,15 @@ public final class EditorApp: Game, EditorHost {
     /// The MCP server, when a transport is on (`EditorOptions.mcp`).
     public private(set) var mcp: EditorMCP?
 
+    private weak var engine: Engine?
+    /// Screenshots asked for (`capture`) and not rendered yet.
+    private var captureJobs: [CaptureJob] = []
+    /// Draws the selection outline into screenshots (its own mask, apart from the viewport's).
+    private var captureOutline: SelectionOutlineRenderer?
+    /// Screenshot targets rendered this frame, kept until the next one.
+    private var captureTargets: [RenderTarget] = []
+    private var lastStats: EditorStatsSnapshot?
+
     public init(options: EditorOptions) {
         self.options = options
         let document = EditorDocument()
@@ -128,6 +138,7 @@ public final class EditorApp: Game, EditorHost {
     // MARK: Setup
 
     public func setup(engine: Engine) throws {
+        self.engine = engine
         sceneRenderer = try SceneRenderer(device: engine.device, quality: engine.quality)
         try sceneRenderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(0.6, 0.6, 0.58, 1), checker: true, specular: 0.1),
                                            key: StarterScene.checkerMaterial.key)
@@ -333,6 +344,7 @@ public final class EditorApp: Game, EditorHost {
         inspector.refresh()
         console.refresh()
         thumbnails?.prepare()
+        updateCaptures()
         var snapshot = EditorStatsSnapshot()
         snapshot.frame = engine.stats
         snapshot.entityCount = session.world.entityCount
@@ -343,6 +355,9 @@ public final class EditorApp: Game, EditorHost {
         snapshot.redoDepth = session.undo.redoDepth
         snapshot.isPlaying = session.isPlaying
         snapshot.uiPaintTime = ui.stats.paintTime
+        snapshot.backend = engine.device.backend.rawValue
+        snapshot.deviceName = engine.device.deviceName
+        lastStats = snapshot
         stats.refresh(snapshot, time: engine.time)
         toolbar.refresh()
 
@@ -390,7 +405,7 @@ public final class EditorApp: Game, EditorHost {
         let message = (hasChildren ? (doomed.count == 1 ? "Its children are deleted with it. " : "Their children are deleted with them. ") : "")
             + "You can undo this with \(shortcuts.shortcutText(for: .undo))."
         let dialog = ConfirmDialog(title: title, message: message, confirmTitle: "Delete", name: "deleteEntitiesDialog")
-        dialog.onConfirm = { [unowned self] in session.run(EntityDeleteCommand.self) }
+        dialog.onConfirm = { [unowned self] in session.run(EntityDeleteCommand.self, .init()) }
         dialog.present(in: ui)
     }
 
@@ -421,9 +436,14 @@ public final class EditorApp: Game, EditorHost {
     /// Frames the selected entities (their bounds, or their positions) in the viewport
     /// (`view.frameSelection`).
     public func frameSelection() {
+        frame(session.selection.entities(in: session.world))
+    }
+
+    /// Frames `entities` (their bounds, or their positions) in the viewport.
+    public func frame(_ entities: [Entity]) {
         let context = toolContext(view: currentView ?? viewport.view(aspect: sizer.aspectRatio))
         var lo = Vec3(repeating: .infinity), hi = Vec3(repeating: -.infinity)
-        for entity in session.selection.entities(in: session.world) {
+        for entity in entities where session.world.isAlive(entity) {
             let box = context.worldBounds(of: entity)
                 ?? Bounds(center: session.world.worldMatrix(of: entity).translation, halfExtent: Vec3(repeating: 0.5))
             lo = pointwiseMin(lo, box.center - box.halfExtent)
@@ -475,10 +495,7 @@ public final class EditorApp: Game, EditorHost {
         currentView = viewport.view(aspect: target.aspectRatio, clearColor: viewportClearColor())
     }
 
-    private func viewportClearColor() -> Vec4 {
-        let environment = RenderPrep.findEnvironment(in: session.world)
-        return environment.fogDensity > 0 ? Vec4(environment.fogColor, 1) : Vec4(0.08, 0.09, 0.11, 1)
-    }
+    private func viewportClearColor() -> Vec4 { session.viewportClearColor }
 
     func toolContext(view: SceneView) -> ViewportToolContext {
         ViewportToolContext(
@@ -498,39 +515,50 @@ public final class EditorApp: Game, EditorHost {
     /// mesh (meshes get the selection outline), plus the tools' overlays in `toolDraw`.
     private func buildGizmos() {
         guard let view = currentView else { return }
-        let world = session.world
         let context = toolContext(view: view)
-        gizmos.removeAll()
-        gizmos.grid = DebugGrid(height: 0.005, spacing: 1, majorEvery: 10, fadeDistance: 80,
-                                minorColor: Vec4(0.2, 0.21, 0.25, 0.5), majorColor: Vec4(0.28, 0.3, 0.36, 0.85))
+        fillGizmos(gizmos, context: context, grid: true, gizmos: true)
+        toolDraw.removeAll()
+        for tool in viewport.tools { tool.draw(into: toolDraw, context: context) }
+    }
+
+    /// Puts the grid and / or the camera, light and axes gizmos into `draw` (cleared first).
+    private func fillGizmos(_ draw: DebugDraw, context: ViewportToolContext, grid: Bool, gizmos: Bool) {
+        let world = session.world
+        draw.removeAll()
+        if grid {
+            draw.grid = DebugGrid(height: 0.005, spacing: 1, majorEvery: 10, fadeDistance: 80,
+                                  minorColor: Vec4(0.2, 0.21, 0.25, 0.5), majorColor: Vec4(0.28, 0.3, 0.36, 0.85))
+        } else {
+            draw.grid = nil
+        }
+        guard gizmos else { return }
         let labelSize = 12 * ui.scale
 
         world.query(Camera.self) { entity, camera in
             let matrix = world.get(GlobalTransform.self, for: entity)?.matrix ?? world.worldMatrix(of: entity)
             let viewProjection = camera.projection(aspect: 16 / 9) * Camera.viewMatrix(world: matrix)
             let white = Vec4(0.92, 0.92, 0.95, 1)
-            gizmos.frustum(viewProjection: viewProjection, color: white, farFraction: min(1.5 / camera.far, 1),
-                           style: DebugDraw.Style(width: 1.5))
-            gizmos.text(session.displayName(of: entity), at: matrix.translation + Vec3(0, 0.45, 0), color: white, size: labelSize)
+            draw.frustum(viewProjection: viewProjection, color: white, farFraction: min(1.5 / camera.far, 1),
+                         style: DebugDraw.Style(width: 1.5))
+            draw.text(session.displayName(of: entity), at: matrix.translation + Vec3(0, 0.45, 0), color: white, size: labelSize)
         }
         world.query(DirectionalLight.self) { entity, light in
             let matrix = world.get(GlobalTransform.self, for: entity)?.matrix ?? world.worldMatrix(of: entity)
             let start = matrix.translation, yellow = Vec4(1, 0.85, 0.3, 1)
-            gizmos.arrow(from: start, to: start + light.travelDirection(world: matrix) * 1.5, color: yellow, headSize: 0.35,
-                         style: DebugDraw.Style(width: 2))
-            gizmos.text(session.displayName(of: entity), at: start + Vec3(0, 0.45, 0), color: yellow, size: labelSize)
+            draw.arrow(from: start, to: start + light.travelDirection(world: matrix) * 1.5, color: yellow, headSize: 0.35,
+                       style: DebugDraw.Style(width: 2))
+            draw.text(session.displayName(of: entity), at: start + Vec3(0, 0.45, 0), color: yellow, size: labelSize)
         }
 
         for entity in session.selection.entities(in: world) where context.worldBounds(of: entity) == nil {
             let matrix = world.get(GlobalTransform.self, for: entity)?.matrix ?? world.worldMatrix(of: entity)
-            gizmos.axes(matrix, length: 0.6, style: DebugDraw.Style(width: 2, depth: .onTop))
+            draw.axes(matrix, length: 0.6, style: DebugDraw.Style(width: 2, depth: .onTop))
         }
-        toolDraw.removeAll()
-        for tool in viewport.tools { tool.draw(into: toolDraw, context: context) }
     }
 
     public func renderOffscreen(engine: Engine, frame: Frame) {
         thumbnails?.render(frame: frame)
+        renderCaptures(frame: frame)
         guard let view = currentView, sizer.width > 0 else { return }
         sceneRenderer.beginViews(world: session.world, frame: frame, shadowFocus: view)
         let world = session.world
@@ -609,6 +637,191 @@ extension EditorApp {
         list.fillRect(badge, color: theme.popupBackground.withAlpha(0.92), radii: UICornerRadii(4))
         list.strokeRect(badge, color: accepted ? UIColor(hex: 0x3fbf6f) : theme.popupBorder, width: 1, radii: UICornerRadii(4))
         list.drawText(layout, font: theme.font, at: Vec2(badge.x + 8, badge.y + 4), color: theme.textColor)
+    }
+}
+
+// MARK: - Host: picking, stats and screenshots
+
+/// A screenshot asked for through `capture`, until its frame is read back.
+private struct CaptureJob {
+    var request: ScreenshotRequest
+    let future: CommandFuture<Image>
+    /// Frames waited (thumbnails that aren't made yet).
+    var frames = 0
+    /// A mesh, material or prefab thumbnail that is ready: read it back this frame.
+    var thumbnailTarget: RenderTarget?
+}
+
+extension EditorApp {
+    public var viewportView: (view: SceneView, width: Int, height: Int)? {
+        guard let currentView, sizer.width > 0 else { return nil }
+        return (currentView, target.width, target.height)
+    }
+
+    public var pickMeshes: (any PickMeshSource)? { sceneRenderer }
+
+    public var frameStats: EditorStatsSnapshot? { lastStats }
+
+    /// Queues `request`. Camera views render in this frame's `renderOffscreen`, the window and
+    /// panels are read back at the end of this frame, thumbnails once they are made.
+    public func capture(_ request: ScreenshotRequest) -> CommandFuture<Image>? {
+        guard let engine else { return nil }
+        let future = CommandFuture<Image>()
+        switch request.source {
+        case .window:
+            engine.captureFrame { image in
+                if let image { future.resolve(image) } else { future.fail(CommandError.failed("This backend can't read the window back")) }
+            }
+        case .panel:
+            guard let id = request.panel, let panel = dock.panel(id), dock.isOpen(id) else {
+                future.fail(CommandError.failed("The \(request.panel ?? "") panel is closed (layout.reset brings it back)"))
+                return future
+            }
+            // A background tab: bring it to the front so this frame draws it.
+            if !panel.content.isEffectivelyVisible { dock.focusPanel(id) }
+            engine.captureFrame { [weak self] image in
+                guard let self, let image else {
+                    future.fail(CommandError.failed("This backend can't read the window back"))
+                    return
+                }
+                let rect = panel.content.frame
+                guard let cropped = image.cropped(x: Int((rect.x * ui.scale).rounded()), y: Int((rect.y * ui.scale).rounded()),
+                                                  width: Int((rect.width * ui.scale).rounded()),
+                                                  height: Int((rect.height * ui.scale).rounded())) else {
+                    future.fail(CommandError.failed("The \(id) panel isn't on screen"))
+                    return
+                }
+                future.resolve(cropped)
+            }
+        case .viewport, .game, .camera, .thumbnail:
+            captureJobs.append(CaptureJob(request: request, future: future))
+        }
+        return future
+    }
+
+    /// Finds thumbnails that are ready (or makes texture ones); gives up on what takes too long.
+    func updateCaptures() {
+        captureTargets.removeAll()
+        guard !captureJobs.isEmpty else { return }
+        for index in captureJobs.indices.reversed() {
+            var job = captureJobs[index]
+            guard job.request.source == .thumbnail else { continue }
+            job.frames += 1
+            defer { if index < captureJobs.count { captureJobs[index] = job } }
+            guard let reference = job.request.asset, let assets = session.assets, let thumbnails else {
+                job.future.fail(CommandError.failed("Thumbnails need an open project"))
+                captureJobs.remove(at: index)
+                continue
+            }
+            if job.frames > 600 {
+                job.future.fail(CommandError.failed("The thumbnail of \(reference) wasn't ready after 10 seconds"))
+                captureJobs.remove(at: index)
+                continue
+            }
+            guard let kind = Self.thumbnailKind(of: reference, in: assets) else {
+                job.future.fail(CommandError.failed("\(reference) has no thumbnail (it holds no mesh, material, texture or prefab)"))
+                captureJobs.remove(at: index)
+                continue
+            }
+            let object = kind.reference
+            if kind.kind == .texture {
+                guard assets.request(object.asset) == .loaded else { continue }
+                guard let texture = assets.texture(object) else {
+                    job.future.fail(CommandError.failed("\(object) didn't load"))
+                    captureJobs.remove(at: index)
+                    continue
+                }
+                job.future.resolve(AssetThumbnails.downsample(texture.image, to: thumbnails.size))
+                captureJobs.remove(at: index)
+                continue
+            }
+            _ = thumbnails.thumbnail(object, kind: kind.kind)
+            job.thumbnailTarget = thumbnails.currentTarget(for: object)
+        }
+    }
+
+    /// The object whose thumbnail stands for `reference` (as in the asset browser) and its kind.
+    private static func thumbnailKind(of reference: AssetReference, in assets: AssetDatabase)
+        -> (reference: AssetReference, kind: AssetKind)? {
+        guard let record = assets.record(reference.asset) else { return nil }
+        if let sub = reference.subAsset {
+            return record.objects.first { $0.id == sub }.map { (reference, $0.kind) }
+        }
+        let object = record.objects.count == 1 ? record.objects.first : record.objects.last { $0.kind == .prefab }
+        return object.map { (AssetReference(record.id, subAsset: $0.id), $0.kind) }
+    }
+
+    /// Renders this frame's camera-view screenshots into targets of their own and reads them
+    /// (and ready thumbnails) back; called before the viewport renders, which then starts its
+    /// views again, so its picture and stats are as without screenshots.
+    func renderCaptures(frame: Frame) {
+        guard !captureJobs.isEmpty else { return }
+        var remaining: [CaptureJob] = []
+        for job in captureJobs {
+            if job.request.source == .thumbnail {
+                guard let target = job.thumbnailTarget else {
+                    remaining.append(job)
+                    continue
+                }
+                frame.readBack(target) { image in job.future.resolve(image) }
+                continue
+            }
+            let request = job.request
+            guard let view = request.view ?? currentView else {
+                job.future.fail(CommandError.failed("The viewport isn't visible"))
+                continue
+            }
+            let width = request.view == nil ? target.width : request.width
+            let height = request.view == nil ? target.height : request.height
+            do {
+                let shot = try RenderTarget(device: sceneRenderer.device, width: width, height: height, label: "screenshot")
+                renderCapture(view, into: shot, request: request, frame: frame)
+                captureTargets.append(shot)
+                frame.readBack(shot) { image in job.future.resolve(image) }
+            } catch {
+                job.future.fail(error)
+            }
+        }
+        captureJobs = remaining
+    }
+
+    private func renderCapture(_ view: SceneView, into shot: RenderTarget, request: ScreenshotRequest, frame: Frame) {
+        let world = session.world
+        sceneRenderer.beginViews(world: world, frame: frame, shadowFocus: view)
+        // The viewport's own view gets the tools' overlays too (they are sized for it).
+        let isViewport = request.view == nil
+        let draw = DebugDraw()
+        let context = toolContext(view: view)
+        if request.grid || request.gizmos { fillGizmos(draw, context: context, grid: request.grid, gizmos: request.gizmos) }
+        let debugView = DebugView(view: view.view, projection: view.projection, viewportSize: (shot.width, shot.height),
+                                  reversedZ: view.reversedZ)
+        let overlay: (RenderPass) -> Void = { [unowned self] pass in
+            if request.gizmos && isViewport { toolDrawRenderer.draw(toolDraw, in: pass, view: debugView) }
+        }
+        if request.outline, let outliner = captureOutline ?? (try? SelectionOutlineRenderer(device: sceneRenderer.device,
+                                                                                          maskLabel: "screenshot outline mask")) {
+            captureOutline = outliner
+            outliner.renderView(view, sceneRenderer: sceneRenderer, world: world, selection: session.selection.entities(in: world),
+                                primary: session.selection.primaryEntity(in: world), into: shot, pixelScale: ui.scale,
+                                frame: frame, debugDraw: draw, overlay: overlay)
+        } else {
+            sceneRenderer.renderView(view, into: shot, frame: frame, debugDraw: draw, overlay: overlay)
+        }
+    }
+}
+
+extension Image {
+    /// The pixels in a rectangle (clipped to the image), or nil if none are.
+    func cropped(x: Int, y: Int, width: Int, height: Int) -> Image? {
+        let x0 = max(x, 0), y0 = max(y, 0), x1 = min(x + width, self.width), y1 = min(y + height, self.height)
+        guard x1 > x0, y1 > y0 else { return nil }
+        var pixels: [UInt8] = []
+        pixels.reserveCapacity((x1 - x0) * (y1 - y0) * 4)
+        for row in y0..<y1 {
+            let start = (row * self.width + x0) * 4
+            pixels += self.pixels[start..<(start + (x1 - x0) * 4)]
+        }
+        return Image(width: x1 - x0, height: y1 - y0, pixels: pixels)
     }
 }
 

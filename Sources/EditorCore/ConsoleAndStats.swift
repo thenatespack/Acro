@@ -97,6 +97,9 @@ public struct EditorStatsSnapshot: Sendable {
     public var redoDepth = 0
     public var isPlaying = false
     public var uiPaintTime: Double = 0
+    /// The graphics backend ("metal", "vulkan") and the GPU's name.
+    public var backend = ""
+    public var deviceName = ""
 
     public init() {}
 

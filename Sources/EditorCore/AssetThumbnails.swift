@@ -72,6 +72,15 @@ public final class AssetThumbnails {
     /// Thumbnails waiting to be made.
     public var pendingCount: Int { queue.count }
 
+    /// The rendered preview of `reference` (a mesh, material or prefab) if it is made for the
+    /// asset's current revision, else nil (call `thumbnail` to queue it).
+    public func currentTarget(for reference: AssetReference) -> RenderTarget? {
+        guard let assets, let entry = cache[reference.description], entry.revision == assets.revision(of: reference.asset) else {
+            return nil
+        }
+        return entry.target
+    }
+
     /// Makes texture thumbnails and lays out the next previews; call once per frame in `update`.
     public func prepare() {
         for entity in spawned { world.despawn(entity) }

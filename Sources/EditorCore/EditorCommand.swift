@@ -30,8 +30,16 @@ import Foundation
 // every failure is logged to the session's log once (by the command or by the registry) and
 // thrown, so `try?` in the UI loses nothing.
 //
-// Hosts add what only they can do (reset the dock layout, frame the camera) through
-// `EditorHost`; the commands that need it are unavailable without one.
+// Hosts add what only they can do (reset the dock layout, frame the camera, render a
+// screenshot) through `EditorHost`; the commands that need it are unavailable without one.
+//
+// ## Commands that finish later
+//
+// A screenshot needs the next frame rendered and read back, so its command adopts
+// `EditorDeferredCommand`: `start` returns a `CommandFuture` at once and the host fulfills it
+// at the end of a frame. `CommandRegistry.start(_:json:)` runs any command that way (a plain
+// command's future is already finished), which is what transports call; the MCP server
+// answers when the future finishes, so the frame loop never waits for it.
 
 /// A command's stable identifier, e.g. "entity.duplicate". Keyboard shortcuts are bound to these.
 public struct CommandID: Hashable, Comparable, Sendable, Codable, ExpressibleByStringLiteral, CustomStringConvertible {
@@ -83,8 +91,12 @@ public protocol EditorCommand {
     /// Whether running it again with the same arguments changes nothing more. Default false
     /// (MCP's `idempotentHint`).
     static var isIdempotent: Bool { get }
-    /// Whether it can run now (enables its button or menu item). `run` checks it first.
+    /// Whether it can run now (enables its button or menu item).
     static func isAvailable(in session: EditorSession) -> Bool
+    /// Whether it can run now with `arguments`, which `run` checks first. Default
+    /// `isAvailable(in:)`; a command acting on the selection unless given entities says yes
+    /// to the entities even with nothing selected.
+    static func isAvailable(_ arguments: Arguments, in session: EditorSession) -> Bool
     /// Why it can't run now, when `isAvailable` is false ("nothing is selected"). The default
     /// names play mode when playing, else nil.
     static func unavailableReason(in session: EditorSession) -> String?
@@ -98,6 +110,7 @@ extension EditorCommand {
     public static var isDestructive: Bool { false }
     public static var isIdempotent: Bool { false }
     public static func isAvailable(in session: EditorSession) -> Bool { true }
+    public static func isAvailable(_ arguments: Arguments, in session: EditorSession) -> Bool { isAvailable(in: session) }
     public static func unavailableReason(in session: EditorSession) -> String? {
         session.isPlaying ? EditorError.playing.description : nil
     }
@@ -123,6 +136,69 @@ public enum CommandError: Error, Equatable, CustomStringConvertible {
     }
 }
 
+/// A command result that arrives later (a screenshot, after the next frame). Finished once,
+/// with `resolve` or `fail`; read `outcome`, or wait with `onFinish`.
+@MainActor
+public final class CommandFuture<Value> {
+    public private(set) var outcome: Swift.Result<Value, any Error>?
+    private var waiters: [@MainActor (Swift.Result<Value, any Error>) -> Void] = []
+
+    public init() {}
+
+    /// An already finished future.
+    public init(_ value: Value) { outcome = .success(value) }
+
+    public var isFinished: Bool { outcome != nil }
+
+    public func resolve(_ value: Value) { finish(.success(value)) }
+    public func fail(_ error: any Error) { finish(.failure(error)) }
+
+    /// Calls `body` with the outcome when it is there (now, if it already is).
+    public func onFinish(_ body: @escaping @MainActor (Swift.Result<Value, any Error>) -> Void) {
+        if let outcome { body(outcome) } else { waiters.append(body) }
+    }
+
+    /// A future of `transform` applied to the value (a throwing transform fails it).
+    public func map<T>(_ transform: @escaping @MainActor (Value) throws -> T) -> CommandFuture<T> {
+        let mapped = CommandFuture<T>()
+        onFinish { outcome in
+            switch outcome {
+            case .success(let value):
+                do { mapped.resolve(try transform(value)) } catch { mapped.fail(error) }
+            case .failure(let error): mapped.fail(error)
+            }
+        }
+        return mapped
+    }
+
+    private func finish(_ result: Swift.Result<Value, any Error>) {
+        guard outcome == nil else { return }
+        outcome = result
+        let waiters = waiters
+        self.waiters = []
+        for waiter in waiters { waiter(result) }
+    }
+}
+
+/// A command that finishes after a frame or more (see the notes at the top of this file):
+/// `start` checks its arguments and returns a future that the host fulfills. `run` returns the
+/// result only when it is there at once, and throws otherwise; transports call
+/// `CommandRegistry.start`.
+@MainActor
+public protocol EditorDeferredCommand: EditorCommand {
+    static func start(_ arguments: Arguments, in session: EditorSession) throws -> CommandFuture<Result>
+}
+
+extension EditorDeferredCommand {
+    public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
+        switch try start(arguments, in: session).outcome {
+        case .success(let value)?: return value
+        case .failure(let error)?: throw error
+        case nil: throw CommandError.failed("\(title) finishes after the next frame; start it with CommandRegistry.start")
+        }
+    }
+}
+
 /// What the registry lists about a command.
 public struct CommandInfo: Equatable, Sendable, Codable {
     public var id: CommandID
@@ -132,6 +208,8 @@ public struct CommandInfo: Equatable, Sendable, Codable {
     public var isReadOnly: Bool
     public var isDestructive: Bool
     public var isIdempotent: Bool
+    /// Whether it finishes after a frame or more (`EditorDeferredCommand`).
+    public var isDeferred: Bool
     /// The Swift names of the `Arguments` and `Result` types.
     public var argumentsType: String
     public var resultType: String
@@ -139,12 +217,34 @@ public struct CommandInfo: Equatable, Sendable, Codable {
 
 /// What only the application hosting the session can do: things that live in widgets or the
 /// viewport, not in the document. Commands that need it are unavailable without a host (tests).
+/// Everything past `frameSelection` has a default meaning "can't" (nil), so a host implements
+/// what it supports.
 @MainActor
 public protocol EditorHost: AnyObject {
     /// Restores the default dock layout.
     func resetLayout()
     /// Frames the selected entities in the viewport camera.
     func frameSelection()
+    /// Frames `entities` in the viewport camera without changing the selection.
+    func frame(_ entities: [Entity])
+    /// The viewport camera's view and the viewport's size in pixels, or nil without a viewport.
+    var viewportView: (view: SceneView, width: Int, height: Int)? { get }
+    /// Meshes for picking (the renderer's, which include code-registered ones), or nil for the
+    /// session's CPU fallback.
+    var pickMeshes: (any PickMeshSource)? { get }
+    /// The last frame's numbers, or nil without a renderer.
+    var frameStats: EditorStatsSnapshot? { get }
+    /// Starts rendering `request` and returns its future (finished at the end of the frame that
+    /// renders it), or nil when this host can't take screenshots.
+    func capture(_ request: ScreenshotRequest) -> CommandFuture<Image>?
+}
+
+extension EditorHost {
+    public func frame(_ entities: [Entity]) {}
+    public var viewportView: (view: SceneView, width: Int, height: Int)? { nil }
+    public var pickMeshes: (any PickMeshSource)? { nil }
+    public var frameStats: EditorStatsSnapshot? { nil }
+    public func capture(_ request: ScreenshotRequest) -> CommandFuture<Image>? { nil }
 }
 
 /// The session's commands, by id. See the notes at the top of this file.
@@ -157,6 +257,7 @@ public final class CommandRegistry {
         var isAvailable: @MainActor (EditorSession) -> Bool
         var unavailableReason: @MainActor (EditorSession) -> String?
         var runJSON: @MainActor (Data, EditorSession) throws -> Data
+        var startJSON: @MainActor (Data) throws -> CommandFuture<Data>
     }
 
     public unowned let session: EditorSession
@@ -172,26 +273,39 @@ public final class CommandRegistry {
 
     /// Adds `command` (replacing one with the same id).
     public func register<C: EditorCommand>(_ command: C.Type) {
+        let deferred = C.self as? any EditorDeferredCommand.Type
         let info = CommandInfo(id: C.id, title: C.title, doc: C.doc, isUndoable: C.isUndoable, isReadOnly: C.isReadOnly,
-                               isDestructive: C.isDestructive, isIdempotent: C.isIdempotent,
+                               isDestructive: C.isDestructive, isIdempotent: C.isIdempotent, isDeferred: deferred != nil,
                                argumentsType: String(describing: C.Arguments.self), resultType: String(describing: C.Result.self))
         revision += 1
         entries[C.id] = Entry(info: info, argumentsType: C.Arguments.self, resultType: C.Result.self,
                               isAvailable: { C.isAvailable(in: $0) }, unavailableReason: { C.unavailableReason(in: $0) },
                               runJSON: { [unowned self] data, _ in
-            let arguments: C.Arguments
-            do {
-                arguments = try JSONDecoder().decode(C.Arguments.self, from: data.isEmpty ? Data("{}".utf8) : data)
-            } catch {
-                let failure = CommandError.invalidArguments(C.id, Self.describe(error))
-                session.log.error(failure.description)
-                throw failure
-            }
-            let result = try run(C.self, arguments)
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys]
-            return try encoder.encode(result)
+            try Self.encode(run(C.self, decode(C.self, data)))
+        }, startJSON: { [unowned self] data in
+            if let deferred { return try startDeferred(deferred, data) }
+            return CommandFuture(try Self.encode(run(C.self, decode(C.self, data))))
         })
+    }
+
+    private func decode<C: EditorCommand>(_ command: C.Type, _ data: Data) throws -> C.Arguments {
+        do {
+            return try JSONDecoder().decode(C.Arguments.self, from: data.isEmpty ? Data("{}".utf8) : data)
+        } catch {
+            let failure = CommandError.invalidArguments(C.id, Self.describe(error))
+            session.log.error(failure.description)
+            throw failure
+        }
+    }
+
+    private func startDeferred<D: EditorDeferredCommand>(_ command: D.Type, _ data: Data) throws -> CommandFuture<Data> {
+        try start(D.self, decode(D.self, data)).map { try Self.encode($0) }
+    }
+
+    private static func encode<T: Encodable>(_ result: T) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(result)
     }
 
     public func register(_ commands: [any EditorCommand.Type]) {
@@ -227,7 +341,7 @@ public final class CommandRegistry {
     @discardableResult
     public func run<C: EditorCommand>(_ command: C.Type, _ arguments: C.Arguments) throws -> C.Result {
         let mark = session.log.nextSequence
-        guard C.isAvailable(in: session) else {
+        guard C.isAvailable(arguments, in: session) else {
             let failure = CommandError.unavailable(C.id, reason: C.unavailableReason(in: session))
             session.log.warning("\(C.title): \(failure)")
             throw failure
@@ -245,6 +359,41 @@ public final class CommandRegistry {
     @discardableResult
     public func run<C: EditorCommand>(_ command: C.Type) throws -> C.Result where C.Arguments == NoArguments {
         try run(command, NoArguments())
+    }
+
+    /// Starts a command that finishes later: checks availability, starts it and returns its
+    /// future. A failure, now or when it finishes, is logged like `run`'s.
+    public func start<C: EditorDeferredCommand>(_ command: C.Type, _ arguments: C.Arguments) throws -> CommandFuture<C.Result> {
+        let mark = session.log.nextSequence
+        guard C.isAvailable(arguments, in: session) else {
+            let failure = CommandError.unavailable(C.id, reason: C.unavailableReason(in: session))
+            session.log.warning("\(C.title): \(failure)")
+            throw failure
+        }
+        logMarks.append(mark)
+        defer { logMarks.removeLast() }
+        let future: CommandFuture<C.Result>
+        do {
+            future = try C.start(arguments, in: session)
+        } catch {
+            if session.log.problem(since: mark) == nil { session.log.error("\(C.title) failed: \(Self.describe(error))") }
+            throw error
+        }
+        future.onFinish { [weak session] outcome in
+            if case .failure(let error) = outcome { session?.log.error("\(C.title) failed: \(Self.describe(error))") }
+        }
+        return future
+    }
+
+    /// Runs the command `id` with JSON arguments like `run(_:json:)`, returning a future of its
+    /// JSON result: already finished for most commands, fulfilled later for deferred ones.
+    public func start(_ id: CommandID, json arguments: Data? = nil) throws -> CommandFuture<Data> {
+        guard let entry = entries[id] else {
+            let failure = CommandError.unknownCommand(id)
+            session.log.error(failure.description)
+            throw failure
+        }
+        return try entry.startJSON(arguments ?? Data())
     }
 
     /// Runs the command `id` with JSON-encoded arguments (empty data or nil: `{}`) and returns
