@@ -114,6 +114,7 @@ public final class PhysicsWorld {
         body.gravityScale = d.gravityScale
         body.allowSleep = d.allowSleep
         body.entity = d.entity
+        body.previousPose = body.pose
         bodies[index] = body
         setShape(index, d.shape, offset: d.shapeOffset, scale: d.scale, material: d.material, isTrigger: d.isTrigger,
                  layer: d.layer, mask: d.mask)
@@ -179,6 +180,19 @@ public final class PhysicsWorld {
     }
 
     public func linearVelocity(of id: BodyID) -> Vec3 { index(of: id).map { bodies[$0].linearVelocity } ?? .zero }
+
+    /// The velocity of the body's material at a world point: what a character standing there
+    /// is carried at. A kinematic body reports how it moved in the last step (its own velocity
+    /// is zero between steps), a dynamic one its current velocity; static bodies are still.
+    public func velocity(of id: BodyID, at point: Vec3) -> Vec3 {
+        guard let i = index(of: id) else { return .zero }
+        let b = bodies[i]
+        switch b.motion {
+        case .static: return .zero
+        case .kinematic: return b.carryLinear + cross(b.carryAngular, point - b.center)
+        case .dynamic: return b.linearVelocity + cross(b.angularVelocity, point - b.center)
+        }
+    }
     public func angularVelocity(of id: BodyID) -> Vec3 { index(of: id).map { bodies[$0].angularVelocity } ?? .zero }
 
     public func setLinearVelocity(_ id: BodyID, _ v: Vec3) {
@@ -201,6 +215,7 @@ public final class PhysicsWorld {
 
     func setPose(at i: Int, _ pose: Pose) {
         bodies[i].pose = Pose(position: pose.position, rotation: pose.rotation.normalized)
+        bodies[i].previousPose = bodies[i].pose
         bodies[i].kinematicTarget = nil
         bodies[i].updateDerived()
         refreshProxy(i, force: true)
@@ -438,18 +453,39 @@ public final class PhysicsWorld {
     /// How far `advance(by:)` is between the last step and the next one, in [0, 1).
     public var interpolationAlpha: Float { min(accumulator / fixedTimestep, 1) }
 
+    /// Draw the ECS bodies at poses interpolated between the last two steps (by the world's
+    /// `time.alpha`) instead of the latest one; a body's `RigidBody.interpolation` overrides
+    /// this. Only the `Transform`s shown change: the simulation and `pose(of:)` stay exact.
+    public var interpolatesPoses = false
+
+    /// The body's pose `alpha` of the way from its pose before the last step to its current
+    /// one (default: `interpolationAlpha`), for rendering without the ECS.
+    public func interpolatedPose(of id: BodyID, alpha: Float? = nil) -> Pose? {
+        guard let i = index(of: id) else { return nil }
+        return interpolated(i, alpha ?? interpolationAlpha)
+    }
+
+    func interpolated(_ i: Int, _ alpha: Float) -> Pose {
+        let b = bodies[i]
+        guard b.motion != .static, b.previousPose != b.pose else { return b.pose }
+        return Pose(position: b.previousPose.position + (b.pose.position - b.previousPose.position) * alpha,
+                    rotation: Quat.slerp(b.previousPose.rotation, b.pose.rotation, alpha).normalized)
+    }
+
     public func clearEvents() { events.removeAll(keepingCapacity: true) }
 
     /// One simulation step of `dt` seconds.
     public func step(_ dt: Float) {
         guard dt > 0 else { return }
         let firstEvent = events.count
+        for i in bodies.indices where bodies[i].isAlive && bodies[i].motion != .static { bodies[i].previousPose = bodies[i].pose }
         findNewPairs()
         updateContacts(dt)
         buildIslandsAndWake()
         solve(dt)
         updateSleep(dt)
-        for i in bodies.indices where bodies[i].isAlive && bodies[i].isAwake && bodies[i].motion != .static {
+        // Kinematic bodies fall asleep after every step (their target is spent) but did move.
+        for i in bodies.indices where bodies[i].isAlive && (bodies[i].isAwake || bodies[i].motion == .kinematic) && bodies[i].motion != .static {
             refreshProxy(i)
         }
         stepCount += 1
@@ -688,6 +724,13 @@ struct Body {
     var sleepTime: Float = 0
     /// Where `moveKinematic` puts the body at the end of the step.
     var kinematicTarget: Pose?
+    /// The velocities a kinematic body had in the last step (it is back to zero afterwards).
+    var carryLinear = Vec3.zero
+    var carryAngular = Vec3.zero
+    /// The pose before the last step, for interpolation (never read by the simulation).
+    var previousPose = Pose()
+    /// The `Transform` the ECS interpolation wrote for display, until the next fixed step.
+    var smoothed: Transform?
 
     var shape: Shape?
     /// The collider's pose in the body frame.
