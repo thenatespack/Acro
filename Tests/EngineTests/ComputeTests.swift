@@ -188,7 +188,12 @@ import QuartzCore
             #expect(values.count == size * size * 6, "\(device.backend)")
             for i in 0..<min(size * size, values.count / 6) {
                 let f = Float(i), got = Array(values[i * 6..<i * 6 + 6])
-                #expect(got == [f / 255, f * 0.5, -f, f * 0.25, f * 1000 + 0.125, f / 255], "\(device.backend) texel \(i)")
+                var want = [f / 255, f * 0.5, -f, f * 0.25, f * 1000 + 0.125, f / 255]
+                #if os(Linux)
+                // lavapipe converts r8 UNORM to float within an ulp of i / 255 (the spec allows it).
+                for k in [0, 5] where abs(got[k] - want[k]) <= want[k].ulp { want[k] = got[k] }
+                #endif
+                #expect(got == want, "\(device.backend) texel \(i)")
             }
         }
     }

@@ -1,13 +1,15 @@
-import Foundation
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)
-import Glibc
+// Glibc declares `stdout` as a mutable global, which Swift 6 rejects; @preconcurrency allows
+// it, but only when this import comes before Foundation's (which re-exports Glibc).
+@preconcurrency import Glibc
 #elseif canImport(Musl)
 import Musl
 #elseif os(Windows)
 import ucrt
 #endif
+import Foundation
 
 /// The stdio transport: the client launched this process and speaks newline-delimited JSON-RPC
 /// on its standard input and output. Standard output belongs to the protocol, so

@@ -110,7 +110,8 @@ let package = Package(
         .executable(name: "Editor", targets: ["Editor"]),
         .executable(name: "GameRunner", targets: ["GameRunner"]),
     ],
-    targets: vulkanTargets + [
+    // `as [Target]`: without it Swift 6.0's type checker gives up on this expression.
+    targets: vulkanTargets + ([
         zlibTarget,
         // Vendored stb_truetype (public domain): font parsing, kerning and SDF glyph rasterization.
         .target(name: "CStbTrueType"),
@@ -166,5 +167,5 @@ let package = Package(
                     swiftSettings: vulkanEnabled ? [.define("ENGINE_VULKAN")] : []),
         .testTarget(name: "EditorTests", dependencies: ["EditorCore", "Engine", "EngineMCP"], linkerSettings: exportsSymbols),
         .testTarget(name: "EngineMCPTests", dependencies: ["EngineMCP"]),
-    ]
+    ] as [Target])
 )

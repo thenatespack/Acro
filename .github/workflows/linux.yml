@@ -12,7 +12,9 @@ jobs:
   build-and-test:
     runs-on: ubuntu-24.04
     container:
-      image: swift:6.0-noble
+      # The toolchain the engine is developed with: 6.0 can't type-check Package.swift's
+      # target list or compile EngineMCP's stdio code (Scripts/linux-docker-ci.sh runs this locally).
+      image: swift:6.4-noble
     env:
       # Software rendering is slow: small frames, low quality, a few representative scenes.
       ENGINE_RESOLUTION: 720p
@@ -34,7 +36,9 @@ jobs:
         run: swift build -c release --product Demo
 
       - name: Test
-        run: swift test
+        # Under a virtual display: the GPU tests (ComputeTests, FSR3Tests, ...) open a GLFW
+        # window for the Vulkan device and run on lavapipe.
+        run: xvfb-run -a -s "-screen 0 1280x720x24" swift test
 
       - name: Restore baselines from main
         id: golden

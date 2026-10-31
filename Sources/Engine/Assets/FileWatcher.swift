@@ -103,8 +103,10 @@ public final class FileWatcher: @unchecked Sendable {
             let timer = DispatchSource.makeTimerSource(queue: queue)
             timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .milliseconds(Int(interval * 100)))
             var current = interval
-            timer.setEventHandler { [weak self, weak timer] in
-                guard let self, let timer else { return }
+            // Not `[weak timer]`: DispatchSourceTimer isn't class-bound on Linux. self.timer is
+            // this timer while it runs (startTimer cancels the old one before replacing it).
+            timer.setEventHandler { [weak self] in
+                guard let self, let timer = self.timer else { return }
                 let started = DispatchTime.now().uptimeNanoseconds
                 let changes = pollOnQueue()
                 // Back off when polling is expensive (a big tree): at least 20 polls' worth of idle time.
