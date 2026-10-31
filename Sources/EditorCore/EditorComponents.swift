@@ -52,6 +52,7 @@ public enum EditorComponentCatalog {
         register(PointLight.self) { PointLight() }
         register(SpotLight.self) { SpotLight() }
         register(SceneEnvironment.self) { SceneEnvironment() }
+        register(PostProcessSettings.self) { PostProcessSettings() }
         register(MeshRenderer.self) { MeshRenderer(mesh: .cube) }
         register(Spin.self) { Spin() }
     }
