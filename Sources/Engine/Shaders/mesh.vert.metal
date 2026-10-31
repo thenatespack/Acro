@@ -1,7 +1,7 @@
 // Generated from mesh.vert by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
-// spirv-fnv1a64: f2a8cf1b4b6d548c
-// glsl-fnv1a64: 0fad2a3ffedce8eb
+// spirv-fnv1a64: 093eb360912cbc6a
+// glsl-fnv1a64: b9ac8ad13820a631
 
 #include <metal_stdlib>
 #include <simd/simd.h>
@@ -29,11 +29,10 @@ struct vertex_main_out
     float3 m_166 [[user(locn1)]];
     float2 m_175 [[user(locn2)]];
     float4 m_179 [[user(locn3)]];
-    float4 m_185 [[user(locn4)]];
     float4 m_182 [[user(locn5)]];
-    float4 m_191 [[user(locn6)]];
-    float4 m_197 [[user(locn7)]];
-    float4 m_203 [[user(locn8)]];
+    float4 m_185 [[user(locn6)]];
+    float4 m_191 [[user(locn7)]];
+    float4 m_197 [[user(locn8)]];
     float4 gl_Position [[position]];
 };
 
@@ -52,7 +51,7 @@ struct vertex_main_in
     float4 m_50 [[attribute(10)]];
     float4 m_180 [[attribute(11)]];
     float4 m_183 [[attribute(12)]];
-    float4 m_220 [[attribute(13)]];
+    float4 m_214 [[attribute(13)]];
 };
 
 vertex vertex_main_out vertex_main(vertex_main_in in [[stage_in]], constant _147& _149 [[buffer(15)]])
@@ -69,10 +68,9 @@ vertex vertex_main_out vertex_main(vertex_main_in in [[stage_in]], constant _147
     out.m_175 = in.m_177;
     out.m_179 = in.m_180;
     out.m_182 = in.m_183;
-    out.m_185 = _149._m1 * _84;
-    out.m_191 = _149._m2 * _84;
-    out.m_197 = _149._m3 * (float4x4(in.m_44, in.m_46, in.m_48, in.m_50) * _83);
-    out.m_203 = float4(float3x3(float3(in.m_12.xyz), float3(in.m_14.xyz), float3(in.m_16.xyz)) * in.m_220.xyz, in.m_220.w * _138);
+    out.m_185 = _149._m2 * _84;
+    out.m_191 = _149._m3 * (float4x4(in.m_44, in.m_46, in.m_48, in.m_50) * _83);
+    out.m_197 = float4(float3x3(float3(in.m_12.xyz), float3(in.m_14.xyz), float3(in.m_16.xyz)) * in.m_214.xyz, in.m_214.w * _138);
     out.gl_Position.y = -(out.gl_Position.y);    // Invert Y-axis for Metal
     return out;
 }

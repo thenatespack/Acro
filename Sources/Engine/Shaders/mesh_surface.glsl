@@ -18,7 +18,11 @@
 // over that cluster's lights. Each adds the same direct BRDF as the sun (per shading model),
 // with radiance color x intensity / d² windowed smoothly to zero at the light's range
 // (Karis 2013: saturate(1 - (d/range)^4)²) and, for spots, saturate(cos x scale + offset)²
-// between the outer and inner cone. No shadows. Without lights the loop is skipped entirely.
+// between the outer and inner cone, times its shadow if it has one (shadows.glsl). Without
+// lights the loop is skipped entirely.
+//
+// Shadows (shadows.glsl): the directional light's cascades and a few point / spot lights'
+// maps, all in one shadow atlas.
 
 // Must match `SceneRenderer.FrameUniforms`.
 layout(set = 0, binding = 0, std140) uniform Frame {
@@ -36,6 +40,22 @@ layout(set = 0, binding = 0, std140) uniform Frame {
     vec4 viewDepth;      // view depth of a world position: dot(viewDepth.xyz, p) + viewDepth.w
     vec4 clusterScale;   // xy: tiles per pixel, z: slice scale, w: slice bias (slice = log2(depth) * z + w)
     vec4 clusterGrid;    // xyz: tiles x, tiles y, slices; w: 1 when there are point/spot lights
+    // Shadows, must match `ShadowUniforms` (see shadows.glsl).
+    mat4 cascadeMatrices[4];      // world -> cascade tile coordinates (xy 0-1, z depth)
+    mat4 spotShadowMatrices[8];   // world -> spot tile coordinates before the divide
+    vec4 cascadeSplits;           // far view depth of each cascade
+    vec4 cascadeBlendStarts;      // view depth where each cascade starts blending into the next
+    vec4 cascadeNormalOffsets;    // world units
+    vec4 cascadeBiases;           // depth units
+    vec4 shadowDepthRow;          // view depth of p: dot(xyz, p) + w
+    vec4 shadowInfo;              // x: cascades, z: shadowed spots, w: shadowed points
+    vec4 shadowAtlas;             // xy: 1 / atlas size, z: PCF radius, w: tint cascades
+    vec4 shadowTiles;             // xy: cascade tile size, zw: spot tile size (atlas coordinates)
+    vec4 shadowFaces;             // xy: point face size (atlas coordinates), z: face tangent scale
+    vec4 shadowLocal;             // x: normal offset, y: depth bias (texels at the receiver)
+    vec4 spotShadowParams[8];     // xy: tile origin, z: texel size per unit distance
+    vec4 pointShadowPositions[4]; // xyz: position, w: texel size per unit distance
+    vec4 pointShadowParams[4];    // xy: face block origin, depth = z + w / axis distance
 } frame;
 
 // Must match `SceneRenderer.MaterialUniforms` (uniform buffer 2).
@@ -66,7 +86,7 @@ layout(set = 2, binding = 7, std140) uniform LightIndices {
     uvec4 data[1024];  // 10-bit light indices, 3 per word (bits 0, 10, 20), 4 words per uvec4
 } lightIndices;
 
-layout(set = 1, binding = 0) uniform sampler2DShadow shadowMap;
+layout(set = 1, binding = 0) uniform sampler2DShadow shadowMap;  // the shadow atlas
 // Textures 1-5 share sampler 1. Missing ones are a 1x1 white texture.
 layout(set = 2, binding = 9) uniform texture2D baseColorMap;          // sRGB color, alpha
 layout(set = 2, binding = 10) uniform texture2D metallicRoughnessMap; // linear: G roughness, B metallic
@@ -79,7 +99,6 @@ layout(location = 0) in vec3 vWorldPos;
 layout(location = 1) in vec3 vNormal;
 layout(location = 2) in vec2 vUV;
 layout(location = 3) in vec4 vColor;
-layout(location = 4) in vec4 vLightClip;
 layout(location = 5) in vec4 vParams;
 layout(location = 6) in vec4 vCurrentClip;
 layout(location = 7) in vec4 vPreviousClip;
@@ -96,44 +115,7 @@ vec2 motionVector(vec4 current, vec4 previous) {
     return (previous.xy / previous.w - current.xy / current.w) * vec2(0.5, -0.5);
 }
 
-// Tent-filtered PCF over (2r+1)² texels from 4 (r = 1) or 9 (r = 2) hardware comparison
-// taps, each placed and weighted by where the sample falls inside its texel (Castaño,
-// "Shadow Mapping Summary", 2013). Points outside the shadow frustum are lit.
-float shadowFactor() {
-    vec3 ndc = vLightClip.xyz / vLightClip.w;
-    vec2 uv = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
-    float ref = min(ndc.z, 1.0) - frame.shadowParams.y;
-    float texel = frame.shadowParams.x;
-    int radius = int(frame.shadowParams.z);
-    if (radius <= 0) return texture(shadowMap, vec3(uv, ref));
-
-    vec2 p = uv / texel;  // in texels
-    vec2 base = floor(p + 0.5);
-    vec2 st = p + 0.5 - base;
-    base = (base - 0.5) * texel;
-    vec2 w[3], o[3];
-    int n;
-    float norm;
-    if (radius == 1) {
-        w[0] = 3.0 - 2.0 * st; w[1] = 1.0 + 2.0 * st;
-        o[0] = (2.0 - st) / w[0] - 1.0; o[1] = st / w[1] + 1.0;
-        n = 2;
-        norm = 1.0 / 16.0;
-    } else {
-        w[0] = 4.0 - 3.0 * st; w[1] = vec2(7.0); w[2] = 1.0 + 3.0 * st;
-        o[0] = (3.0 - 2.0 * st) / w[0] - 2.0; o[1] = (3.0 + st) / w[1]; o[2] = st / w[2] + 2.0;
-        n = 3;
-        norm = 1.0 / 144.0;
-    }
-    float sum = 0.0;
-    for (int j = 0; j < n; j++) {
-        for (int i = 0; i < n; i++) {
-            sum += w[i].x * w[j].y * texture(shadowMap, vec3(base + vec2(o[i].x, o[j].y) * texel, ref));
-        }
-    }
-    return sum * norm;
-}
+#include "shadows.glsl"
 
 // The hemisphere ambient light arriving from direction d (sky above, ground below).
 vec3 hemisphere(vec3 d) {
@@ -234,7 +216,15 @@ void main() {
     vec3 l = normalize(frame.lightDir.xyz);
     vec3 v = normalize(frame.cameraPos.xyz - vWorldPos);
     vec3 h = normalize(l + v);
-    float shadow = (frame.lightColor.w > 0.5 && vParams.x > 0.5) ? shadowFactor() : 1.0;
+    // The geometric normal on the side being seen, for the shadow lookups' normal offset.
+    vec3 ng = normalize(vNormal) * (gl_FrontFacing ? 1.0 : -1.0);
+    bool receivesShadows = vParams.x > 0.5;
+    float shadow = 1.0;
+    if (frame.lightColor.w > 0.5 && receivesShadows) {
+        vec3 cascadeTint;
+        shadow = directionalShadow(vWorldPos, ng, cascadeTint);
+        albedo *= cascadeTint;
+    }
     vec3 light = frame.lightColor.rgb * frame.lightDir.w;
     float ao = 1.0 + material.surface.w * (texture(sampler2D(occlusionMap, materialSampler), uv).r - 1.0);
 
@@ -249,7 +239,9 @@ void main() {
             uvec2 cell = clusterLights();
             for (uint i = cell.x; i < cell.x + cell.y; i++) {
                 vec3 pl;
-                vec3 radiance = punctualRadiance(lightIndex(i), pl);
+                uint li = lightIndex(i);
+                vec3 radiance = punctualRadiance(li, pl);
+                if (receivesShadows) radiance *= localShadow(li, vWorldPos, ng, pl);
                 float pndotl = dot(n, pl);
                 vec3 ph = normalize(pl + v);
                 color += albedo * max(pndotl, 0.0) * radiance
@@ -282,7 +274,9 @@ void main() {
             uvec2 cell = clusterLights();
             for (uint i = cell.x; i < cell.x + cell.y; i++) {
                 vec3 pl;
-                vec3 radiance = punctualRadiance(lightIndex(i), pl);
+                uint li = lightIndex(i);
+                vec3 radiance = punctualRadiance(li, pl);
+                if (receivesShadows) radiance *= localShadow(li, vWorldPos, ng, pl);
                 vec3 ph = normalize(pl + v);
                 float pNoL = clamp(dot(n, pl), 0.0, 1.0);
                 float pNoH = clamp(dot(n, ph), 0.0, 1.0);

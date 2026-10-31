@@ -13,6 +13,11 @@ public struct PunctualLight: Equatable, Sendable {
     /// Cosines of the cone's half-angles (spot lights; both -1 for point lights, i.e. no cone).
     public var cosInner: Float
     public var cosOuter: Float
+    /// The light's component asks for shadows (`PointLight` / `SpotLight.castsShadows`).
+    public var castsShadows = false
+    /// Its shadow map this frame: an index into the spot or point shadow slots of the shadow
+    /// atlas (`ShadowedLights.select`), or -1 without one.
+    public var shadowSlot = -1
 
     public var isSpot: Bool { direction != .zero }
 
@@ -26,6 +31,7 @@ public struct PunctualLight: Equatable, Sendable {
         range = light.range
         cosInner = -1
         cosOuter = -1
+        castsShadows = light.castsShadows
     }
 
     /// `direction` is the entity's forward axis (normalized here).
@@ -38,6 +44,7 @@ public struct PunctualLight: Equatable, Sendable {
         let inner = min(max(light.innerConeAngle, 0), outer)
         cosOuter = cosf(outer)
         cosInner = cosf(inner)
+        castsShadows = light.castsShadows
     }
 
     /// Every enabled point and spot light of `world` (positioned by `GlobalTransform`), point
@@ -95,6 +102,9 @@ public struct PunctualLight: Equatable, Sendable {
 /// uniform buffers 3–7 of mesh.frag (see mesh_surface.glsl), which sets the limits:
 /// - `maxLights` (1024) visible lights per view, nearest (by bounding sphere) first; the
 ///   rest are dropped. Lights entirely outside the view are culled before counting.
+///   Lights with a shadow map (`PunctualLight.shadowSlot`) come before all others, spot
+///   lights then point lights, each by slot (`shadowedSpots` / `shadowedPoints`), so the
+///   shader finds a light's shadow from its index.
 /// - `maxReferences` (12288) light-in-cluster entries per view in total (10-bit indices, 3 per word).
 /// - `maxLightsPerCluster` (255) per cluster, the nearest ones kept.
 /// When a limit is hit, the farthest lights lose clusters first (`stats.droppedReferences`).
@@ -120,6 +130,9 @@ public struct LightClusters: Sendable {
 
     /// The lights as uploaded (visible ones, nearest first); clusters index into this.
     public private(set) var lights: [PunctualLight] = []
+    /// How many of `lights` are, first, shadowed spot lights and then shadowed point lights.
+    public private(set) var shadowedSpots = 0
+    public private(set) var shadowedPoints = 0
     public private(set) var stats = Stats()
     /// View depth where slice 0 ends its logarithmic range and the slice scale:
     /// slice(d) = floor(log2(d / near) × sliceScale), clamped to the grid.
@@ -177,6 +190,8 @@ public struct LightClusters: Sendable {
         lights.removeAll(keepingCapacity: true)
         indices.removeAll(keepingCapacity: true)
         stats = Stats()
+        shadowedSpots = 0
+        shadowedPoints = 0
         cellFirst = [UInt16](repeating: 0, count: Self.clusterCount)
         cellCount = [UInt16](repeating: 0, count: Self.clusterCount)
         let projector = Projector(projection)
@@ -193,7 +208,19 @@ public struct LightClusters: Sendable {
             visible.append((i, c, r, max(length(c) - r, 0)))
         }
         guard !visible.isEmpty else { return }
-        visible.sort { $0.distance != $1.distance ? $0.distance < $1.distance : $0.light < $1.light }
+        // Shadowed lights first (spots, then points, by slot), then the rest nearest first.
+        func rank(_ light: Int) -> Int {
+            let l = input[light]
+            return l.shadowSlot < 0 ? Int.max : (l.isSpot ? 0 : 1 << 16) + l.shadowSlot
+        }
+        visible.sort {
+            let (a, b) = (rank($0.light), rank($1.light))
+            if a != b { return a < b }
+            return $0.distance != $1.distance ? $0.distance < $1.distance : $0.light < $1.light
+        }
+        for v in visible where input[v.light].shadowSlot >= 0 {
+            if input[v.light].isSpot { shadowedSpots += 1 } else { shadowedPoints += 1 }
+        }
         if visible.count > Self.maxLights { visible.removeLast(visible.count - Self.maxLights) }
 
         var nearest = Float.infinity, farthest: Float = 0
