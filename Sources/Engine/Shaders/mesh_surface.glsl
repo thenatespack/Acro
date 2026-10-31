@@ -11,7 +11,13 @@
 //   (the same light units as Blinn-Phong). Diffuse is weighted by 1 - F. Ambient: the
 //   hemisphere light as irradiance for diffuse, and for specular the hemisphere seen along the
 //   reflection vector (blurred toward the irradiance with roughness) times Karis' analytic
-//   split-sum DFG approximation, so metals aren't black away from the sun. No cubemap IBL.
+//   split-sum DFG approximation, so metals aren't black away from the sun.
+//
+// Image-based lighting (frame.environment.x = 1, see EnvironmentLighting.swift): the ambient
+// light comes from the environment instead of the hemisphere. Diffuse: SH9 irradiance (both
+// models). PBR specular: the prefiltered radiance along the reflection vector, between the two
+// atlas levels around the roughness, times the split-sum BRDF table (f0 x A + B). The
+// occlusion texture darkens both.
 //
 // Point and spot lights (clustered forward, see `LightClusters`): the fragment finds its
 // cluster from gl_FragCoord (screen tile) and its view depth (logarithmic slice), then loops
@@ -56,6 +62,7 @@ layout(set = 0, binding = 0, std140) uniform Frame {
     vec4 spotShadowParams[8];     // xy: tile origin, z: texel size per unit distance
     vec4 pointShadowPositions[4]; // xyz: position, w: texel size per unit distance
     vec4 pointShadowParams[4];    // xy: face block origin, depth = z + w / axis distance
+    vec4 environment;             // x: 1 image-based lighting, y: intensity, z, w: cos, sin of the rotation
 } frame;
 
 // Must match `SceneRenderer.MaterialUniforms` (uniform buffer 2).
@@ -94,6 +101,10 @@ layout(set = 2, binding = 11) uniform texture2D normalMap;            // linear 
 layout(set = 2, binding = 12) uniform texture2D occlusionMap;         // linear: R occlusion
 layout(set = 2, binding = 13) uniform texture2D emissiveMap;          // sRGB color
 layout(set = 2, binding = 17) uniform sampler materialSampler;
+// Image-based lighting: the environment atlas (read with texel loads) and the BRDF table.
+layout(set = 2, binding = 14) uniform texture2D environmentAtlas;
+layout(set = 2, binding = 15) uniform texture2D brdfTable;
+layout(set = 2, binding = 23) uniform sampler brdfSampler;  // linear, clamped
 
 layout(location = 0) in vec3 vWorldPos;
 layout(location = 1) in vec3 vNormal;
@@ -116,10 +127,39 @@ vec2 motionVector(vec4 current, vec4 previous) {
 }
 
 #include "shadows.glsl"
+#include "environment.glsl"
 
 // The hemisphere ambient light arriving from direction d (sky above, ground below).
 vec3 hemisphere(vec3 d) {
     return mix(frame.groundColor.rgb, frame.skyColor.rgb, d.y * 0.5 + 0.5) * frame.skyColor.w;
+}
+
+// The environment's diffuse irradiance / pi arriving at normal n (SH9).
+vec3 environmentIrradiance(vec3 n) {
+    float y[9];
+    shBasis(environmentDirection(n, frame.environment.zw), y);
+    vec3 sum = vec3(0.0);
+    for (int i = 0; i < 9; i++) {
+        sum += texelFetch(sampler2D(environmentAtlas, materialSampler), ENV_SH + ivec2(i, 0), 0).rgb * y[i];
+    }
+    return max(sum, vec3(0.0)) * frame.environment.y;
+}
+
+// The environment's radiance from direction d prefiltered for `roughness`: between the two
+// levels around it (level i holds roughness i / 5).
+vec3 environmentRadiance(vec3 d, float roughness) {
+    vec2 uv = equirectUV(environmentDirection(d, frame.environment.zw));
+    float level = roughness * 5.0;
+    int i = min(int(level), 4);
+    vec3 a = sampleEquirect(environmentAtlas, materialSampler, ENV_LEVELS[i], uv);
+    vec3 b = sampleEquirect(environmentAtlas, materialSampler, ENV_LEVELS[i + 1], uv);
+    return mix(a, b, level - float(i)) * frame.environment.y;
+}
+
+// The split-sum environment BRDF (`EnvironmentMath.environmentBRDF`): scale and bias of F0.
+vec2 environmentBRDFTable(float NoV, float roughness) {
+    vec2 uv = (vec2(NoV, roughness) * (ENV_LUT_SIZE - 1.0) + 0.5) / ENV_LUT_SIZE;
+    return texture(sampler2D(brdfTable, brdfSampler), uv).rg;
 }
 
 // GGX / Trowbridge-Reitz normal distribution, a = roughness².
@@ -233,7 +273,7 @@ void main() {
         float ndotl = dot(n, l);
         vec3 diffuse = max(ndotl, 0.0) * light;
         vec3 specular = pow(max(dot(n, h), 0.0), material.params.w) * material.params.z * step(0.0, ndotl) * light;
-        vec3 ambient = hemisphere(n) * ao;
+        vec3 ambient = (frame.environment.x > 0.5 ? environmentIrradiance(n) : hemisphere(n)) * ao;
         color = albedo * (ambient + diffuse * shadow) + specular * shadow;
         if (frame.clusterGrid.w > 0.5) {
             uvec2 cell = clusterLights();
@@ -264,10 +304,18 @@ void main() {
         vec3 specular = distributionGGX(NoH, a) * visibilitySmithGGXCorrelated(NoV, NoL, a) * F * PI;
         vec3 direct = ((vec3(1.0) - F) * diffuseColor + specular) * NoL * light * shadow;
 
-        vec2 dfg = environmentBRDF(NoV, roughness);
+        vec2 dfg;
+        vec3 irradiance, reflected;
+        if (frame.environment.x > 0.5) {
+            dfg = environmentBRDFTable(NoV, roughness);
+            irradiance = environmentIrradiance(n);
+            reflected = environmentRadiance(reflect(-v, n), roughness);
+        } else {
+            dfg = environmentBRDF(NoV, roughness);
+            irradiance = hemisphere(n);
+            reflected = mix(hemisphere(reflect(-v, n)), irradiance, roughness);
+        }
         vec3 specularAmbient = f0 * dfg.x + dfg.y;
-        vec3 irradiance = hemisphere(n);
-        vec3 reflected = mix(hemisphere(reflect(-v, n)), irradiance, roughness);
         vec3 ambient = ((vec3(1.0) - specularAmbient) * diffuseColor * irradiance + specularAmbient * reflected) * ao;
         color = direct + ambient;
         if (frame.clusterGrid.w > 0.5) {

@@ -58,8 +58,10 @@ public struct SceneRenderStats: Sendable {
 }
 
 /// Draws a `World`'s entities: a forward renderer with one shadow-casting directional light
-/// (cascaded shadow maps), clustered point and spot lights (a few with shadows), hemisphere ambient, exponential fog, instancing, frustum and shadow-caster culling, a
-/// back-to-front sorted transparent pass and motion vectors for temporal upscalers.
+/// (cascaded shadow maps), clustered point and spot lights (a few with shadows), hemisphere ambient
+/// or a sky with image-based lighting (`SceneEnvironment.sky`), exponential fog, instancing,
+/// frustum and shadow-caster culling, a back-to-front sorted transparent pass and motion vectors
+/// for temporal upscalers.
 ///
 /// Opt-in, driven by the game:
 ///
@@ -109,6 +111,12 @@ public final class SceneRenderer {
     /// The CPU copy of each registered mesh, for picking (`geometry(_:)`).
     private var geometries: [MeshGeometry] = []
     private var materials: [(material: Material, sampler: GPUSampler)] = []
+    /// Textures registered with `registerTexture` (environment maps).
+    private var textures: [String: GPUTexture] = [:]
+    /// The sky and image-based lighting of `SceneEnvironment`.
+    private let environmentLighting: EnvironmentLighting
+    /// The view and (jittered) projection `draw` draws the sky for.
+    private var skyView: (view: Mat4, projection: Mat4)?
     private let whiteTexture: GPUTexture
     private let shader: ShaderSource
     /// `shader` with mesh_mask.frag (alpha-tested), loaded with the first masked material.
@@ -230,6 +238,8 @@ public final class SceneRenderer {
         var clusterGrid = Vec4.zero
         /// Shadow cascades and point / spot light shadows (see ShadowMaps.swift / shadows.glsl).
         var shadows = ShadowUniforms()
+        /// Image-based lighting: x 1 when on, y intensity, z, w cos / sin of the environment's rotation.
+        var environment = Vec4.zero
 
         /// Points the shader's cluster lookup at `clusters`, binned for `view` and a target of `size` pixels.
         mutating func setClusters(_ clusters: LightClusters, view: Mat4, size: (width: Int, height: Int)) {
@@ -300,6 +310,7 @@ public final class SceneRenderer {
         shadowMap = try device.makeTexture(TextureDescriptor(width: atlas.width, height: atlas.height, format: .depth32Float))
         whiteTexture = try device.makeTexture(pixels: [255, 255, 255, 255], width: 1, height: 1, format: .rgba8Unorm)
         emptyLightBuffer = try device.makeBuffer([Vec4](repeating: .zero, count: LightClusters.GPUData.entries), usage: .uniform)
+        environmentLighting = try EnvironmentLighting(device: device, placeholder: whiteTexture)
 
         try registerMesh(.cube(), key: MeshHandle.cube.key)
         try registerMesh(.plane(), key: MeshHandle.plane.key)
@@ -338,6 +349,28 @@ public final class SceneRenderer {
         let id = prep.materials.register(MaterialTraits(blends: material.blends, alphaTested: material.alphaTested), key: key)
         if id == materials.count { materials.append(entry) } else { materials[id] = entry }
         return MaterialHandle(key)
+    }
+
+    /// Registers `texture` under `key` (replacing an earlier texture with that key), for
+    /// `TextureHandle`s such as `SceneEnvironment.environmentMap`.
+    @discardableResult
+    public func registerTexture(_ texture: GPUTexture, key: String) -> TextureHandle {
+        textures[key] = texture
+        return TextureHandle(key)
+    }
+
+    /// The texture registered under `handle`'s key, or the project texture asset it names
+    /// (uploaded on first use); nil if neither exists (reported once) or it is still loading.
+    public func texture(_ handle: TextureHandle) -> GPUTexture? {
+        if let texture = textures[handle.key] { return texture }
+        if assets != nil, let reference = AssetReference(handle.key) {
+            return try? assetTexture(reference, ignoringBudget: false)
+        }
+        if !reportedTextures.contains(handle.key) {
+            reportedTextures.insert(handle.key)
+            print("SceneRenderer: no texture registered as '\(handle.key)'")
+        }
+        return nil
     }
 
     /// Stops drawing `key`'s mesh and releases its GPU buffers (the id stays allocated).
@@ -425,6 +458,9 @@ public final class SceneRenderer {
         previousViewProj = viewProj
         uniforms = makeUniforms(viewProj: jittered, current: viewProj, previous: previous, eye: eye, light: light,
                                 environment: environment)
+        prepareEnvironment(environment, light: light)
+        uniforms!.environment = environmentLighting.lighting
+        skyView = (view, jitteredProjection)
         let size = engine.renderSize
         // Binned with the projection the pass rasterizes with, so tiles match gl_FragCoord.
         clusters.build(lights: punctualLights, view: view, projection: jitteredProjection)
@@ -435,6 +471,12 @@ public final class SceneRenderer {
         shadowSetup = light.shadows
         debugView = DebugView(viewProjection: jittered, cameraPosition: eye, viewportSize: size, reversedZ: camera.reversedZ,
                               projectionScale: camera.projection(aspect: engine.aspectRatio).c1.y)
+    }
+
+    /// Sets up the sky and image-based lighting of `environment` for this frame.
+    private func prepareEnvironment(_ environment: SceneEnvironment, light: LightSetup) {
+        let map = environment.sky == .map ? environment.environmentMap.flatMap { texture($0) } : nil
+        environmentLighting.prepare(environment, map: map, toLight: light.toLight, lightColor: light.color * light.intensity)
     }
 
     func gather(_ world: World) {
@@ -524,6 +566,7 @@ public final class SceneRenderer {
     public func renderShadows(frame: Frame) {
         guard uniforms != nil else { return }
         uploaded = list.instances.isEmpty ? nil : frame.upload(list.instances)
+        environmentLighting.render()
         renderShadowAtlas(shadowsActive ? shadowSetup : nil, frame: frame)
     }
 
@@ -567,9 +610,8 @@ public final class SceneRenderer {
     /// back to front, then `debugDraw`.
     public func draw(_ pass: RenderPass) {
         guard let uniforms else { return }
-        if let uploaded {
-            draw(pass, list: list, uniforms: uniforms, instances: uploaded, reversedZ: reversedZ, lights: clusters.isEmpty ? nil : lightData)
-        }
+        draw(pass, list: list, uniforms: uniforms, instances: uploaded, reversedZ: reversedZ, lights: clusters.isEmpty ? nil : lightData,
+             sky: skyView)
         if let debugDraw, let debugView { drawDebug(debugDraw, in: pass, view: debugView) }
     }
 
@@ -593,7 +635,10 @@ public final class SceneRenderer {
             focus = ShadowSetup.Focus(view: view, projection: nil, frustum: nil)
         }
         let light = lightSetup(world: world, focus: focus)
-        views = ViewsFrame(light: light, environment: RenderPrep.findEnvironment(in: world))
+        let environment = RenderPrep.findEnvironment(in: world)
+        views = ViewsFrame(light: light, environment: environment)
+        prepareEnvironment(environment, light: light)
+        environmentLighting.render()
         buildShadowCasters(light.shadows)
         renderShadowAtlas(light.shadows, frame: frame)
     }
@@ -617,11 +662,11 @@ public final class SceneRenderer {
         stats.lights = viewClusters.stats
         uniforms.setClusters(viewClusters, view: view.view, size: (target.width, target.height))
         if let shadows = views.light.shadows { uniforms.shadows = shadows.uniforms(for: viewClusters) }
+        uniforms.environment = environmentLighting.lighting
         let lights = viewClusters.isEmpty ? nil : lightData
         frame.renderPass(into: target, clearColor: view.clearColor, clearDepth: view.reversedZ ? 0 : 1) { pass in
-            if let instances {
-                draw(pass, list: viewList, uniforms: uniforms, instances: instances, reversedZ: view.reversedZ, lights: lights)
-            }
+            draw(pass, list: viewList, uniforms: uniforms, instances: instances, reversedZ: view.reversedZ, lights: lights,
+                 sky: (view.view, view.projection))
             if let debugDraw {
                 drawDebug(debugDraw, in: pass, view: DebugView(
                     view: view.view, projection: view.projection, viewportSize: (target.width, target.height),
@@ -705,14 +750,21 @@ public final class SceneRenderer {
         pass.setSampler(sampler, index: 1)
     }
 
-    /// Opaque batches, then transparent ones back to front.
-    private func draw(_ pass: RenderPass, list: RenderList, uniforms: FrameUniforms, instances uploaded: TransientBuffer,
-                      reversedZ: Bool, lights: LightClusters.GPUData?) {
+    /// Opaque batches, then the sky (seen from `sky`'s view and projection, if the environment
+    /// has one), then transparent batches back to front.
+    private func draw(_ pass: RenderPass, list: RenderList, uniforms: FrameUniforms, instances uploaded: TransientBuffer?,
+                      reversedZ: Bool, lights: LightClusters.GPUData?, sky: (view: Mat4, projection: Mat4)?) {
         pass.setUniforms(uniforms)
         pass.setTexture(shadowMap)
         bindLights(lights, in: pass)
+        environmentLighting.bindLighting(in: pass)
         var current: (pipeline: PipelineKey, material: Int)?
         for (batches, blending) in [(list.opaque, false), (list.transparent, true)] {
+            if blending, let sky {
+                environmentLighting.drawSky(in: pass, view: sky.view, projection: sky.projection, reversedZ: reversedZ)
+                current = nil  // the sky replaced the pipeline and the material's bindings
+            }
+            guard let uploaded else { continue }
             for batch in batches {
                 let key = Self.pipelineKey(for: materials[batch.material].material, blending: blending, reversedZ: reversedZ)
                 if current?.pipeline != key {

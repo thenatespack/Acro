@@ -93,4 +93,5 @@ extension DemoScene {
     Shadows2Scene.self,
     PostScene.self,
     SpritesScene.self,
+    SkyScene.self,
 ]

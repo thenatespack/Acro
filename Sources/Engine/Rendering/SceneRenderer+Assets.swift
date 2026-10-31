@@ -217,7 +217,7 @@ extension SceneRenderer {
     }
 
     /// The GPU texture for a material's texture reference (uploaded once per revision).
-    private func assetTexture(_ reference: AssetReference, ignoringBudget: Bool) throws -> GPUTexture? {
+    func assetTexture(_ reference: AssetReference, ignoringBudget: Bool) throws -> GPUTexture? {
         guard let assets else { return nil }
         let key = reference.description
         if let cached = assetTextures[key], cached.revision == assets.revision(of: reference.asset) { return cached.texture }
