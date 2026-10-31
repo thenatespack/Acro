@@ -123,6 +123,7 @@ final class DemoGame: Game {
         if let target, target != sceneIndex {
             do { try openScene(target, input: input) } catch { print("Failed to open scene \(allScenes[target].name): \(error)") }
             engine.resetTemporalHistory()  // a camera cut
+            engine.postProcess = nil  // scenes with a SceneRenderer set it again from their world
         }
     }
 

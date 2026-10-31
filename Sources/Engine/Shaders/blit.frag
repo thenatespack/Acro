@@ -76,11 +76,16 @@ float weight(Footprint f, int k) {
 float norm(Footprint f) { return f.sparse ? float(SPARSE_TAPS) : float(f.img); }
 
 void main() {
+    ivec2 p = ivec2(gl_FragCoord.xy) - pc.origin;
+    if (pc.imageSize == pc.outputSize) {
+        // 1:1 (an HDR scene at the window size): an exact copy.
+        outColor = vec4(texelFetch(image, p, 0).rgb, 1.0);
+        return;
+    }
     if (pc.imageSize.x <= pc.outputSize.x && pc.imageSize.y <= pc.outputSize.y) {
         outColor = vec4(texture(image, vUV).rgb, 1.0);
         return;
     }
-    ivec2 p = ivec2(gl_FragCoord.xy) - pc.origin;
     Footprint fx = footprint(p.x, pc.imageSize.x, pc.outputSize.x);
     Footprint fy = footprint(p.y, pc.imageSize.y, pc.outputSize.y);
     vec3 sum = vec3(0.0);

@@ -107,12 +107,19 @@ public struct DepthBias: Sendable {
 }
 
 /// What kind of pass a pipeline renders into.
-public enum PipelineTarget: Sendable {
+public enum PipelineTarget: Sendable, Equatable {
     /// The main screen pass (swapchain color + depth, multisampled per `RenderDevice.sampleCount`).
+    /// Also draws into the HDR scene pass (`RenderDevice.hdrScene`), the window pass and
+    /// render targets with depth: backends build the variant each pass needs on first use.
     case screen
     /// A depth-only offscreen pass (e.g. a shadow map). Only the vertex stage runs, unless the
     /// pipeline sets `depthOnlyFragment`.
     case depthOnly
+    /// A single-sample pass with one color attachment of this format and no depth (fullscreen
+    /// post-processing): color-only render targets (`RenderTargetDescriptor.depth` false) and
+    /// `RenderDevice.beginSceneOutputPass` (`.rgba8Srgb`, the window's format). Formats:
+    /// `.rgba16Float` and `.rgba8Srgb`. No depth test, blending or motion vectors.
+    case color(TextureFormat)
 }
 
 public struct PipelineDescriptor: Sendable {
@@ -149,7 +156,7 @@ public struct PipelineDescriptor: Sendable {
     }
 }
 
-public enum TextureFormat: Sendable {
+public enum TextureFormat: Sendable, Equatable {
     /// 32-bit float depth. Render target for depth passes; sampled in shaders with a
     /// linear-filtered comparison sampler (hardware PCF), clamped to a border of 1.
     case depth32Float
@@ -191,11 +198,24 @@ public struct RenderTargetDescriptor: Sendable, Equatable {
     /// Render with the device's MSAA sample count (`RenderDevice.sampleCount`) and resolve
     /// into `texture` at the end of each pass. false renders single-sampled.
     public var multisampled: Bool
+    /// `.rgba8Srgb` (the window's format) or `.rgba16Float`. Only `.rgba8Srgb` targets can have depth.
+    public var format: TextureFormat
+    /// false makes a color-only target (single-sample, no depth) for `.color(format)` pipelines:
+    /// post-processing passes, which draw over every pixel. Its color is not cleared, so a
+    /// pass into it starts with undefined contents.
+    public var depth: Bool
 
-    public init(width: Int, height: Int, multisampled: Bool = true) {
+    public init(width: Int, height: Int, multisampled: Bool = true, format: TextureFormat = .rgba8Srgb, depth: Bool = true) {
         self.width = width
         self.height = height
         self.multisampled = multisampled
+        self.format = format
+        self.depth = depth
+    }
+
+    /// A single-sample color-only target (see `depth`).
+    public static func color(width: Int, height: Int, format: TextureFormat) -> RenderTargetDescriptor {
+        RenderTargetDescriptor(width: width, height: height, multisampled: false, format: format, depth: false)
     }
 }
 
@@ -438,6 +458,20 @@ extension RenderPass {
     func beginPass(target: GPURenderTarget, clearColor: Vec4, clearDepth: Float, label: String) -> RenderPass
     /// Starts the pass the scene renders into (the window, or the offscreen render target).
     func beginScreenPass(clearColor: Vec4, clearDepth: Float) -> RenderPass
+    /// Render the scene pass into a linear RGBA16F image instead of the window's sRGB format,
+    /// for post-processing (see `PostProcessor`). Read in `beginFrame`. The scene then always
+    /// renders offscreen (at the window size when there is no render resolution), and after it
+    /// the frame must end the screen pass (`endPass`), may run passes that read
+    /// `sceneHDRTexture`, and must draw the displayed image in `beginSceneOutputPass` before
+    /// `beginWindowPass`, which upscales or copies that image as usual.
+    var hdrScene: Bool { get set }
+    /// This frame's HDR scene image (`.rgba16Float`, single-sample, at the render size) once the
+    /// screen pass has ended; nil when the frame isn't `hdrScene`.
+    var sceneHDRTexture: GPUTexture? { get }
+    /// With `hdrScene`, after the screen pass: a single-sample pass into the sRGB scene image
+    /// that the window pass shows (and screenshots capture), for `.color(.rgba8Srgb)` pipelines.
+    /// Its contents start undefined; draw every pixel. Timed as `label`.
+    func beginSceneOutputPass(label: String) -> RenderPass
     /// Call right after the screen pass. Returns a pass at window resolution for UI that
     /// uses `.screen` pipelines. With a render size, this ends the screen pass and draws
     /// the scene image into the window (letterboxed) first; otherwise it simply returns
@@ -550,7 +584,8 @@ public struct GraphicsError: Error, CustomStringConvertible {
     public init(_ description: String) { self.description = description }
 }
 
-/// GPU time of one pass: `depth` (`beginDepthPass`), `scene` (`beginScreenPass`), `upscale`
+/// GPU time of one pass: `depth` (`beginDepthPass`), `scene` (`beginScreenPass`), post-processing
+/// passes by their label (`bloom`, `exposure`, `tonemap`), `upscale`
 /// (an upscaler's first stage: EASU, TAAU or MetalFX), `window` (`beginWindowPass` when
 /// rendering offscreen) or a render target pass's label.
 public struct GPUPassTime: Sendable {

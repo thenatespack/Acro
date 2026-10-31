@@ -50,7 +50,7 @@ final class PBRScene: DemoScene {
         try sceneRenderer.registerMaterial(Material(
             baseColor: Vec4(0.08, 0.08, 0.09, 1), metallic: 1, roughness: 0.35, emissiveColor: Vec3(0.3, 0.75, 1),
             emissiveTexture: try device.makeTexture(pixels: glow, width: 128, height: 128, format: .rgba8Srgb, generateMipmaps: true),
-            emissiveStrength: 2), key: "glow")
+            emissiveStrength: 6), key: "glow")
 
         // Plant: cutout leaves (alpha mask), lit from both sides.
         let leaves = Self.leafPixels(size: 128)
@@ -65,6 +65,8 @@ final class PBRScene: DemoScene {
             Transform.looking(from: Vec3(4, 6, 17), at: Vec3(0, 2.5, 0)),
             Camera(fovY: .pi / 3.5, near: 0.1, far: 200, clearColor: Vec4(Self.fogColor, 1)))
         _ = world.spawn(SceneEnvironment(ambientIntensity: 0.5, fogColor: Self.fogColor, fogDensity: 0.004))
+        // HDR post-processing: the emissive panel and the sun's highlights on the metal spheres bloom.
+        _ = world.spawn(Name("Post-processing"), PostProcess(tonemapper: .neutral, bloom: true, bloomIntensity: 0.06))
         _ = world.spawn(
             Transform(rotation: .lookRotation(forward: -normalize(Vec3(-0.45, 0.7, 0.55)))),
             DirectionalLight(intensity: 1.4, shadowExtent: 14, shadowCenter: Vec3(0, 2, 0)))

@@ -10,10 +10,22 @@ let metalUniformBufferIndex = 15
 let metalPushConstantIndex = 16
 private let maxFramesInFlight = 3
 /// Passes per frame whose GPU time is measured; later ones go untimed.
-private let maxTimedPasses = 16
+private let maxTimedPasses = 32
 private let screenDepthFormat = MTLPixelFormat.depth32Float
 /// The scene pass's second color attachment while a temporal upscaler is active.
 private let motionVectorFormat = MTLPixelFormat.rg16Float
+/// The scene pass's color with `hdrScene`, and `.rgba16Float` render targets.
+private let hdrFormat = MTLPixelFormat.rgba16Float
+
+/// The attachments of a color pass; a pipeline draws in it with the variant built for them.
+struct MetalPassFormat: Hashable {
+    var color: MTLPixelFormat
+    var samples: Int
+    /// A motion-vector attachment (`[[color(1)]]`, temporal upscaling).
+    var motionVectors = false
+    /// A depth attachment (every color pass except color-only targets and the scene output pass).
+    var depth = true
+}
 
 final class MetalBuffer: GPUBuffer {
     let buffer: MTLBuffer
@@ -48,45 +60,53 @@ final class MetalPipeline: RenderPipeline {
     let depthState: MTLDepthStencilState
     let cullMode: MTLCullMode
     let depthBias: DepthBias?
-    /// `.screen` pipelines: `state` plus a motion-vector attachment, for scene passes that have
-    /// one (temporal upscaling). Built on first use there.
-    private let motionDescriptor: MTLRenderPipelineDescriptor?
-    private var motionState: MTLRenderPipelineState?
-    /// `.screen` pipelines on a multisampled device: `state` at 1x, for single-sample render
-    /// targets. Built on first use there.
-    private let singleSampleDescriptor: MTLRenderPipelineDescriptor?
-    private var singleSampleState: MTLRenderPipelineState?
+    /// The pass format `state` was built for (nil for depth-only pipelines).
+    let format: MetalPassFormat?
+    /// `.screen` pipelines: the descriptor of `state`, from which the variants for other color
+    /// passes are built on first use there (the HDR scene pass, single-sample render targets,
+    /// scene passes with a motion-vector attachment).
+    private let screenDescriptor: MTLRenderPipelineDescriptor?
+    /// The fragment function with every output, for variants with a motion-vector attachment
+    /// (`state` uses the color-0-only variant when the shader has one).
+    private let fullFragment: MTLFunction?
+    private let writesMotionVectors: Bool
+    private var variants: [MetalPassFormat: MTLRenderPipelineState] = [:]
 
     init(state: MTLRenderPipelineState, depthState: MTLDepthStencilState, cullMode: MTLCullMode, depthBias: DepthBias?,
-         motionDescriptor: MTLRenderPipelineDescriptor? = nil, singleSampleDescriptor: MTLRenderPipelineDescriptor? = nil) {
+         format: MetalPassFormat?, screenDescriptor: MTLRenderPipelineDescriptor? = nil, fullFragment: MTLFunction? = nil,
+         writesMotionVectors: Bool = false) {
         self.state = state
         self.depthState = depthState
         self.cullMode = cullMode
         self.depthBias = depthBias
-        self.motionDescriptor = motionDescriptor
-        self.singleSampleDescriptor = singleSampleDescriptor
+        self.format = format
+        self.screenDescriptor = screenDescriptor
+        self.fullFragment = fullFragment
+        self.writesMotionVectors = writesMotionVectors
     }
 
-    /// The variant for a pass with (`motionVectors`) or without a motion-vector attachment, and
-    /// for a single-sample render target on a multisampled device (`singleSample`).
-    func state(motionVectors: Bool, singleSample: Bool = false) -> MTLRenderPipelineState {
-        if motionVectors { return variant(&motionState, motionDescriptor, "motion-vector") }
-        if singleSample { return variant(&singleSampleState, singleSampleDescriptor, "single-sample") }
-        return state
-    }
-
-    private func variant(_ cached: inout MTLRenderPipelineState?, _ descriptor: MTLRenderPipelineDescriptor?,
-                         _ name: String) -> MTLRenderPipelineState {
-        if let cached { return cached }
-        guard let descriptor, let device = descriptor.vertexFunction?.device else {
-            preconditionFailure("This pipeline has no \(name) variant (depth-only pipelines can't draw in color passes)")
+    /// The variant for a color pass with `pass`'s attachments (nil: a depth-only pass).
+    func state(for pass: MetalPassFormat?) -> MTLRenderPipelineState {
+        guard let pass, pass != format else { return state }
+        if let cached = variants[pass] { return cached }
+        guard pass.depth, let base = screenDescriptor, let descriptor = base.copy() as? MTLRenderPipelineDescriptor,
+              let device = base.vertexFunction?.device else {
+            preconditionFailure("This pipeline can't draw in this pass (\(pass)); check its PipelineTarget")
+        }
+        descriptor.colorAttachments[0].pixelFormat = pass.color
+        descriptor.rasterSampleCount = pass.samples
+        if pass.motionVectors {
+            descriptor.fragmentFunction = fullFragment
+            let motion = descriptor.colorAttachments[1]!
+            motion.pixelFormat = motionVectorFormat
+            motion.writeMask = writesMotionVectors ? [.red, .green] : []
         }
         do {
             let made = try device.makeRenderPipelineState(descriptor: descriptor)
-            cached = made
+            variants[pass] = made
             return made
         } catch {
-            preconditionFailure("Failed to create the \(name) variant of a pipeline: \(error)")
+            preconditionFailure("Failed to create a variant of a pipeline for \(pass): \(error)")
         }
     }
 }
@@ -95,16 +115,19 @@ final class MetalPipeline: RenderPipeline {
 final class MetalRenderTarget: GPURenderTarget {
     let resolved: MetalTexture
     let msaa: MTLTexture?
-    let depth: MTLTexture
+    /// nil for color-only targets.
+    let depth: MTLTexture?
+    let format: MetalPassFormat
     var width: Int { resolved.width }
     var height: Int { resolved.height }
     var sampleCount: Int { msaa?.sampleCount ?? 1 }
     var texture: GPUTexture { resolved }
 
-    init(resolved: MetalTexture, msaa: MTLTexture?, depth: MTLTexture) {
+    init(resolved: MetalTexture, msaa: MTLTexture?, depth: MTLTexture?, format: MetalPassFormat) {
         self.resolved = resolved
         self.msaa = msaa
         self.depth = depth
+        self.format = format
     }
 }
 
@@ -121,6 +144,11 @@ final class MetalRenderDevice: RenderDevice {
     }
     var upscaler = Upscaler.bilinear
     var temporalInputs = TemporalInputs()
+    var hdrScene = false
+    var sceneHDRTexture: GPUTexture? {
+        guard let frame, frame.hdr, frame.sceneEnded else { return nil }
+        return sceneTargets?.hdr
+    }
     var deviceName: String { device.name }
     /// The sum of the pass times when the GPU can time passes. The command buffer's span is the
     /// fallback, but it includes waits for the drawable, so it can read far higher than the GPU's actual work.
@@ -178,6 +206,9 @@ final class MetalRenderDevice: RenderDevice {
         var resolvedUnorm: MTLTexture
         /// Motion vectors, the scene pass's second color attachment (temporal upscalers only).
         var motion: MTLTexture?
+        /// `hdrScene`: the scene pass's single-sample RGBA16F result (`color` is RGBA16F then),
+        /// and `resolved` is written by the scene output pass.
+        var hdr: MetalTexture?
     }
 
     /// First-stage upscaler output at the letterboxed window size (gamma-encoded), plus the
@@ -211,7 +242,15 @@ final class MetalRenderDevice: RenderDevice {
         var ring: TransientRing<MetalBuffer>
         var slot: Int
         var capture: Bool
+        /// The scene renders into `sceneTargets` (a render size is set, or `hdr`).
         var offscreen: Bool
+        /// A render size is set: the window pass scales the scene image. Otherwise an `hdr`
+        /// frame renders at the window size, the window pass copies it 1:1 and screenshots
+        /// capture the window, as when rendering straight to it.
+        var scaled: Bool
+        var hdr: Bool
+        /// The screen pass of an `hdr` frame has ended.
+        var sceneEnded = false
         var windowSize: (width: Int, height: Int)
         /// GPU time of the frame's command buffers, summed as they complete (fallback timing).
         let gpuSpan = LockedValue(0.0)
@@ -378,17 +417,24 @@ final class MetalRenderDevice: RenderDevice {
         try descriptor.validate(maxSize: maxTextureSize)
         let (width, height) = (descriptor.width, descriptor.height)
         let samples = descriptor.multisampled ? sampleCount : 1
+        let pixelFormat = colorPixelFormat(descriptor.format)
         let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: layer.pixelFormat, width: width, height: height, mipmapped: false)
+            pixelFormat: pixelFormat, width: width, height: height, mipmapped: false)
         textureDescriptor.usage = [.renderTarget, .shaderRead]
         textureDescriptor.storageMode = .private
         guard let resolved = device.makeTexture(descriptor: textureDescriptor) else {
             throw GraphicsError("Failed to create \(width)x\(height) render target")
         }
         return MetalRenderTarget(
-            resolved: MetalTexture(resolved, format: .rgba8Srgb),
-            msaa: samples > 1 ? try makeAttachment(layer.pixelFormat, width, height, samples: samples) : nil,
-            depth: try makeAttachment(screenDepthFormat, width, height, samples: samples))
+            resolved: MetalTexture(resolved, format: descriptor.format),
+            msaa: samples > 1 ? try makeAttachment(pixelFormat, width, height, samples: samples) : nil,
+            depth: descriptor.depth ? try makeAttachment(screenDepthFormat, width, height, samples: samples) : nil,
+            format: MetalPassFormat(color: pixelFormat, samples: samples, depth: descriptor.depth))
+    }
+
+    /// The pixel format of color targets of `format` (`.rgba8Srgb` is the window's).
+    private func colorPixelFormat(_ format: TextureFormat) -> MTLPixelFormat {
+        format == .rgba16Float ? hdrFormat : layer.pixelFormat
     }
 
     func makeTexture(levels: [TextureMipLevel], format: TextureFormat) throws -> GPUTexture {
@@ -488,7 +534,7 @@ final class MetalRenderDevice: RenderDevice {
     }
 
     func makePipeline(_ descriptor: PipelineDescriptor) throws -> RenderPipeline {
-        let functions = try makeFunctions(descriptor.shader, fragment: descriptor.target == .screen || descriptor.depthOnlyFragment)
+        let functions = try makeFunctions(descriptor.shader, fragment: descriptor.target != .depthOnly || descriptor.depthOnlyFragment)
 
         let pipelineDescriptor = MTLRenderPipelineDescriptor()
         pipelineDescriptor.vertexFunction = functions.vertex
@@ -515,19 +561,16 @@ final class MetalRenderDevice: RenderDevice {
             pipelineDescriptor.fragmentFunction = functions.fragment
             pipelineDescriptor.depthAttachmentPixelFormat = .depth32Float
             pipelineDescriptor.rasterSampleCount = 1
+        case .color(let format):
+            pipelineDescriptor.fragmentFunction = functions.color0Fragment ?? functions.fragment
+            pipelineDescriptor.rasterSampleCount = 1
+            pipelineDescriptor.colorAttachments[0].pixelFormat = colorPixelFormat(format)
+            pipelineDescriptor.colorAttachments[0].writeMask = descriptor.colorWrites ? .all : []
         }
-        var motionDescriptor: MTLRenderPipelineDescriptor?
-        if descriptor.target == .screen, let copy = pipelineDescriptor.copy() as? MTLRenderPipelineDescriptor {
-            copy.fragmentFunction = functions.fragment
-            let motion = copy.colorAttachments[1]!
-            motion.pixelFormat = motionVectorFormat
-            motion.writeMask = descriptor.writesMotionVectors && descriptor.colorWrites ? [.red, .green] : []
-            motionDescriptor = copy
-        }
-        var singleSampleDescriptor: MTLRenderPipelineDescriptor?
-        if descriptor.target == .screen, sampleCount > 1, let copy = pipelineDescriptor.copy() as? MTLRenderPipelineDescriptor {
-            copy.rasterSampleCount = 1
-            singleSampleDescriptor = copy
+        let format: MetalPassFormat? = switch descriptor.target {
+        case .screen: MetalPassFormat(color: layer.pixelFormat, samples: sampleCount)
+        case .depthOnly: nil
+        case .color(let color): MetalPassFormat(color: colorPixelFormat(color), samples: 1, depth: false)
         }
         let state = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
 
@@ -543,9 +586,11 @@ final class MetalRenderDevice: RenderDevice {
         case .front: .front
         case .back: .back
         }
+        let isScreen = descriptor.target == .screen
         return MetalPipeline(
-            state: state, depthState: depthState, cullMode: cull, depthBias: descriptor.depthBias,
-            motionDescriptor: motionDescriptor, singleSampleDescriptor: singleSampleDescriptor)
+            state: state, depthState: depthState, cullMode: cull, depthBias: descriptor.depthBias, format: format,
+            screenDescriptor: isScreen ? pipelineDescriptor : nil, fullFragment: isScreen ? functions.fragment : nil,
+            writesMotionVectors: descriptor.writesMotionVectors && descriptor.colorWrites)
     }
 
     func uploadTransient(_ bytes: UnsafeRawBufferPointer) -> TransientBuffer {
@@ -599,14 +644,17 @@ final class MetalRenderDevice: RenderDevice {
         resolveOcclusionQueries(slot: slot)
         frameNumber += 1
         try ensureScreenTargets(width: framebufferSize.width, height: framebufferSize.height)
-        if let renderSize {
-            try ensureSceneTargets(width: renderSize.width, height: renderSize.height, temporal: temporal(offscreen: true))
+        let hdr = hdrScene
+        // An HDR scene renders offscreen even without a render size (then at the window size).
+        if let sceneSize = renderSize ?? (hdr ? framebufferSize : nil) {
+            try ensureSceneTargets(width: sceneSize.width, height: sceneSize.height, temporal: temporal(offscreen: renderSize != nil),
+                                   hdr: hdr)
         } else {
             sceneTargets = nil
         }
         frame = FrameState(
-            commandBuffer: commandBuffer, ring: ring, slot: slot, capture: capture, offscreen: renderSize != nil,
-            windowSize: framebufferSize)
+            commandBuffer: commandBuffer, ring: ring, slot: slot, capture: capture, offscreen: renderSize != nil || hdr,
+            scaled: renderSize != nil, hdr: hdr, windowSize: framebufferSize)
         return true
     }
 
@@ -670,23 +718,44 @@ final class MetalRenderDevice: RenderDevice {
         passDescriptor.depthAttachment.loadAction = .clear
         passDescriptor.depthAttachment.storeAction = .store
         passDescriptor.depthAttachment.clearDepth = Double(clearDepth)
-        return beginPass(passDescriptor, timedAs: "depth")
+        return beginPass(passDescriptor, timedAs: "depth", format: nil)
     }
 
     func beginPass(target: GPURenderTarget, clearColor: Vec4, clearDepth: Float, label: String) -> RenderPass {
         let target = target as! MetalRenderTarget
-        let descriptor = Self.colorDepthPass(
-            msaa: target.msaa, target: target.resolved.texture, depth: target.depth, clearColor: clearColor, clearDepth: clearDepth)
         // Textures are hazard-tracked, so later reads of the result (in this or a later command
         // buffer of the queue) wait for this pass, and this pass waits for earlier frames' reads.
-        return beginPass(descriptor, timedAs: label, singleSample: target.sampleCount == 1 && sampleCount > 1)
+        guard let depth = target.depth else {
+            return beginPass(Self.colorOnlyPass(target.resolved.texture), timedAs: label, format: target.format)
+        }
+        let descriptor = Self.colorDepthPass(
+            msaa: target.msaa, target: target.resolved.texture, depth: depth, clearColor: clearColor, clearDepth: clearDepth)
+        return beginPass(descriptor, timedAs: label, format: target.format)
+    }
+
+    func beginSceneOutputPass(label: String) -> RenderPass {
+        guard let frame, frame.hdr, frame.sceneEnded, let scene = sceneTargets else {
+            preconditionFailure("beginSceneOutputPass needs an hdrScene frame whose screen pass has ended")
+        }
+        return beginPass(Self.colorOnlyPass(scene.resolved), timedAs: label,
+                         format: MetalPassFormat(color: layer.pixelFormat, samples: 1, depth: false))
+    }
+
+    /// One single-sample color attachment that the pass overwrites completely (not cleared).
+    private static func colorOnlyPass(_ target: MTLTexture) -> MTLRenderPassDescriptor {
+        let descriptor = MTLRenderPassDescriptor()
+        descriptor.colorAttachments[0].texture = target
+        descriptor.colorAttachments[0].loadAction = .dontCare
+        descriptor.colorAttachments[0].storeAction = .store
+        return descriptor
     }
 
     func beginScreenPass(clearColor: Vec4, clearDepth: Float) -> RenderPass {
         guard let frame, let targets = screenTargets else { preconditionFailure("beginScreenPass outside a frame") }
         let descriptor = if frame.offscreen, let scene = sceneTargets {
             Self.colorDepthPass(
-                msaa: scene.color, target: scene.resolved, depth: scene.depth, clearColor: clearColor, clearDepth: clearDepth)
+                msaa: scene.color, target: scene.hdr?.texture ?? scene.resolved, depth: scene.depth, clearColor: clearColor,
+                clearDepth: clearDepth)
         } else {
             Self.colorDepthPass(
                 msaa: targets.color, target: acquireWindowTarget(), depth: targets.depth, clearColor: clearColor,
@@ -703,7 +772,8 @@ final class MetalRenderDevice: RenderDevice {
             descriptor.depthAttachment.storeAction = .store
         }
         descriptor.visibilityResultBuffer = occlusionResults[frame.slot]
-        return beginPass(descriptor, timedAs: "scene", occlusion: occlusionBatches[frame.slot], motionVectors: motion != nil)
+        let format = MetalPassFormat(color: frame.hdr ? hdrFormat : layer.pixelFormat, samples: sampleCount, motionVectors: motion != nil)
+        return beginPass(descriptor, timedAs: "scene", occlusion: occlusionBatches[frame.slot], format: format)
     }
 
     func beginWindowPass() -> RenderPass {
@@ -713,13 +783,15 @@ final class MetalRenderDevice: RenderDevice {
             return currentPass
         }
         endPass()
+        precondition(!frame.hdr || frame.sceneEnded, "An hdrScene frame must draw beginSceneOutputPass before the window pass")
         let image = (width: scene.resolved.width, height: scene.resolved.height)
         let rect = letterboxRect(image: image, window: frame.windowSize)
-        let upscaled = upscale(scene, to: (rect.width, rect.height), commandBuffer: frame.commandBuffer)
+        // At the window size (an HDR frame without a render size) the image is copied 1:1.
+        let upscaled = frame.scaled ? upscale(scene, to: (rect.width, rect.height), commandBuffer: frame.commandBuffer) : nil
 
         let pass = beginPass(Self.colorDepthPass(
             msaa: targets.color, target: acquireWindowTarget(), depth: targets.depth, clearColor: Vec4(0, 0, 0, 1), clearDepth: 1),
-            timedAs: "window")
+            timedAs: "window", format: MetalPassFormat(color: layer.pixelFormat, samples: sampleCount))
         let metalPass = pass as! MetalRenderPass
         if let upscaled {
             // Sharpen (or copy) the upscaled image 1:1 into its pixel-aligned rectangle.
@@ -907,8 +979,7 @@ final class MetalRenderDevice: RenderDevice {
     }
 
     private func beginPass(_ descriptor: MTLRenderPassDescriptor, timedAs name: String,
-                           occlusion: OcclusionQueryBatch? = nil, motionVectors: Bool = false,
-                           singleSample: Bool = false) -> RenderPass {
+                           occlusion: OcclusionQueryBatch? = nil, format: MetalPassFormat?) -> RenderPass {
         guard let frame else { preconditionFailure("Render pass started outside a frame") }
         precondition(currentPass == nil, "Previous pass was not ended")
         time(descriptor, as: name)
@@ -920,7 +991,7 @@ final class MetalRenderDevice: RenderDevice {
         let pass = MetalRenderPass(
             encoder: encoder, transient: frame.ring, comparisonSampler: comparisonSampler,
             targetSize: (sizing?.width ?? 1, sizing?.height ?? 1),
-            occlusion: occlusion, motionVectors: motionVectors, singleSample: singleSample)
+            occlusion: occlusion, format: format)
         currentPass = pass
         return pass
     }
@@ -1004,6 +1075,8 @@ final class MetalRenderDevice: RenderDevice {
     }
 
     func endPass() {
+        // Only the scene pass has occlusion queries.
+        if currentPass?.occlusion != nil { frame?.sceneEnded = true }
         currentPass?.occlusion?.checkClosed()
         currentPass?.encoder.endEncoding()
         currentPass = nil
@@ -1015,7 +1088,7 @@ final class MetalRenderDevice: RenderDevice {
         self.frame = nil
 
         var readback: (buffer: MTLBuffer, width: Int, height: Int)?
-        if frame.capture, let texture = frame.offscreen && !captureWindow ? sceneTargets?.resolved : frame.drawable?.texture {
+        if frame.capture, let texture = frame.scaled && !captureWindow ? sceneTargets?.resolved : frame.drawable?.texture {
             let bytesPerRow = texture.width * 4
             if let buffer = device.makeBuffer(length: bytesPerRow * texture.height, options: .storageModeShared),
                let blit = frame.commandBuffer.makeBlitCommandEncoder() {
@@ -1062,10 +1135,11 @@ final class MetalRenderDevice: RenderDevice {
                          try makeAttachment(screenDepthFormat, width, height))
     }
 
-    /// Offscreen scene targets at the render size. `temporal` adds motion vectors and keeps the depth.
-    private func ensureSceneTargets(width: Int, height: Int, temporal: Bool) throws {
+    /// Offscreen scene targets at the render size. `temporal` adds motion vectors and keeps the
+    /// depth; `hdr` renders the scene into an RGBA16F image, then `resolved` in the output pass.
+    private func ensureSceneTargets(width: Int, height: Int, temporal: Bool, hdr: Bool) throws {
         if let targets = sceneTargets, targets.resolved.width == width, targets.resolved.height == height,
-           (targets.motion != nil) == temporal {
+           (targets.motion != nil) == temporal, (targets.hdr != nil) == hdr {
             return
         }
         sceneTargets = nil  // free the old ones before allocating (they can be huge)
@@ -1081,12 +1155,13 @@ final class MetalRenderDevice: RenderDevice {
             throw GraphicsError("Failed to create \(width)x\(height) render target")
         }
         sceneTargets = SceneTargets(
-            color: sampleCount > 1 ? try makeAttachment(layer.pixelFormat, width, height) : nil,
+            color: sampleCount > 1 ? try makeAttachment(hdr ? hdrFormat : layer.pixelFormat, width, height) : nil,
             depth: temporal ? try makeSampledTarget(screenDepthFormat, width, height)
                 : try makeAttachment(screenDepthFormat, width, height),
             resolved: resolved,
             resolvedUnorm: resolvedUnorm,
-            motion: temporal ? try makeSampledTarget(motionVectorFormat, width, height) : nil)
+            motion: temporal ? try makeSampledTarget(motionVectorFormat, width, height) : nil,
+            hdr: hdr ? MetalTexture(try makeSampledTarget(hdrFormat, width, height), format: .rgba16Float) : nil)
     }
 
     /// A single-sample render target that later passes read (temporal upscaler inputs).
@@ -1128,27 +1203,23 @@ final class MetalRenderPass: RenderPass {
     private let targetSize: (width: Int, height: Int)
     /// Set for passes with a visibility-result buffer (the screen pass).
     let occlusion: OcclusionQueryBatch?
-    /// The pass has a motion-vector attachment (scene pass with temporal upscaling).
-    let motionVectors: Bool
-    /// A single-sample render target on a multisampled device: pipelines use their 1x variant.
-    let singleSample: Bool
+    /// The pass's attachments, which pick each pipeline's variant (nil: a depth-only pass).
+    let format: MetalPassFormat?
 
     init(encoder: MTLRenderCommandEncoder, transient: TransientRing<MetalBuffer>, comparisonSampler: MTLSamplerState,
-         targetSize: (width: Int, height: Int), occlusion: OcclusionQueryBatch?, motionVectors: Bool = false,
-         singleSample: Bool = false) {
+         targetSize: (width: Int, height: Int), occlusion: OcclusionQueryBatch?, format: MetalPassFormat?) {
         self.encoder = encoder
         self.targetSize = targetSize
         self.transient = transient
         self.comparisonSampler = comparisonSampler
         self.occlusion = occlusion
-        self.motionVectors = motionVectors
-        self.singleSample = singleSample
+        self.format = format
         encoder.setFrontFacing(.counterClockwise)
     }
 
     func setPipeline(_ pipeline: RenderPipeline) {
         let pipeline = pipeline as! MetalPipeline
-        encoder.setRenderPipelineState(pipeline.state(motionVectors: motionVectors, singleSample: singleSample))
+        encoder.setRenderPipelineState(pipeline.state(for: format))
         encoder.setDepthStencilState(pipeline.depthState)
         encoder.setCullMode(pipeline.cullMode)
         let bias = pipeline.depthBias ?? DepthBias(constant: 0, slopeScale: 0)
