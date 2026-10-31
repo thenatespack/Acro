@@ -290,11 +290,9 @@ public final class AssetBrowserPanel {
     let grid = AssetGridView()
     let search = TextField(placeholder: "Search", name: "assetSearch")
     let breadcrumb = Label("Assets", role: .secondary, name: "assetBreadcrumb")
-    /// Inline rename field and delete confirmation, shown on demand.
+    /// Inline rename field, shown on demand.
     let renameField = TextField(placeholder: "Name", name: "assetRename")
     private let renameBar: HStack
-    private let confirmBar: HStack
-    private let confirmLabel = Label("", role: .body, name: "deleteQuestion")
     /// Path entry for Import… where there's no native file dialog.
     let importField = TextField(placeholder: "Path to a file or folder", name: "assetImportPath")
     private let importBar: HStack
@@ -346,19 +344,12 @@ public final class AssetBrowserPanel {
         importField.style.width = 0
         importBar = HStack(spacing: 6, name: "importBar", [Label("Import", role: .secondary), importField, importCancel, importOK])
         importBar.isHidden = true
-        let deleteOK = Button("Delete", role: .primary, name: "deleteOK")
-        let deleteCancel = Button("Cancel", name: "deleteCancel")
-        confirmLabel.style.grow = 1
-        confirmLabel.style.shrink = 1
-        confirmLabel.style.width = 0
-        confirmBar = HStack(spacing: 6, name: "deleteBar", [confirmLabel, deleteCancel, deleteOK])
-        confirmBar.isHidden = true
 
         let gridScroll = ScrollView(grid, name: "assetGridScroll")
         gridScroll.style.grow = 1
         gridScroll.style.shrink = 1
         let right = VStack(spacing: 6, padding: EdgeInsets(top: 0, left: 6, bottom: 0, right: 0), name: "assetContents",
-                           [toolbar, importBar, renameBar, confirmBar, gridScroll])
+                           [toolbar, importBar, renameBar, gridScroll])
         folderTree.background = .clear
         folderTree.allowsDragAndDrop = false
         let split = SplitView(.horizontal, panes: [folderTree, right], fractions: [0.22, 0.78], minSizes: [100, 200], name: "assetSplit")
@@ -383,12 +374,6 @@ public final class AssetBrowserPanel {
         renameOK.action = { [unowned self] in commitRename() }
         renameCancel.action = { [unowned self] in renameBar.isHidden = true }
         renameField.onSubmit = { [unowned self] _ in commitRename() }
-        deleteOK.action = { [unowned self] in
-            confirmBar.isHidden = true
-            model.deleteSelection()
-            sync()
-        }
-        deleteCancel.action = { [unowned self] in confirmBar.isHidden = true }
         search.onChange = { [unowned self] text in model.search = text }
 
         folderTree.onSelect = { [unowned self] node in
@@ -466,7 +451,6 @@ public final class AssetBrowserPanel {
     func beginImport() {
         guard model.session.assets != nil else { return }
         renameBar.isHidden = true
-        confirmBar.isHidden = true
         if FilePicker.isAvailable {
             guard let urls = FilePicker.chooseFiles(title: "Import into Assets/\(model.folder)", prompt: "Import") else { return }
             if !model.importFiles(urls).isEmpty { sync() }
@@ -490,7 +474,6 @@ public final class AssetBrowserPanel {
     func beginRename() {
         guard let path = model.selectedPath else { return }
         importBar.isHidden = true
-        confirmBar.isHidden = true
         renameBar.isHidden = false
         let name = String(path.split(separator: "/").last ?? "")
         renameField.text = name
@@ -503,12 +486,23 @@ public final class AssetBrowserPanel {
         if model.renameSelection(to: renameField.text) { sync() }
     }
 
+    /// Asks in a modal dialog, then deletes the selected file or folder.
     func askDelete() {
-        guard let path = model.selectedPath else { return }
+        guard let path = model.selectedPath, let context = view.context else { return }
         renameBar.isHidden = true
+        importBar.isHidden = true
         let isFolder = model.session.assets?.isFolder(path) ?? false
-        confirmLabel.text = "Delete \(path)\(isFolder ? " and everything in it" : "")? This can't be undone."
-        confirmBar.isHidden = false
+        let name = String(path.split(separator: "/").last ?? "")
+        let dialog = ConfirmDialog(
+            title: "Delete \(isFolder ? "folder" : "file") \u{201C}\(name)\u{201D}?",
+            message: (isFolder ? "Assets/\(path) and everything in it will be deleted." : "Assets/\(path) will be deleted.")
+                + " This can't be undone, and scenes that use \(isFolder ? "these assets" : "it") will show them as missing.",
+            confirmTitle: "Delete", name: "deleteAssetDialog")
+        dialog.onConfirm = { [unowned self] in
+            model.deleteSelection()
+            sync()
+        }
+        dialog.present(in: context)
     }
 
     private func showContextMenu(for entry: AssetBrowserEntry?, at position: Vec2) {

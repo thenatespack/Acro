@@ -17,6 +17,8 @@ public final class HierarchyPanel {
     public let view: VStack
     /// Where Create puts new entities (the host points it at the viewport camera's pivot).
     public var spawnPosition: () -> Vec3 = { .zero }
+    /// What the Delete button does; the editor asks for confirmation first. Defaults to deleting.
+    public var onDelete: (() -> Void)?
 
     private var nodes: [EntityID: TreeNode] = [:]
     private var shownStructure: [Row] = []
@@ -44,12 +46,15 @@ public final class HierarchyPanel {
 
         createButton = Button("Create", name: "create") { [unowned self] in showCreateMenu() }
         let duplicateButton = Button("Duplicate", name: "duplicate") { [unowned session] in session.duplicateSelection() }
-        let deleteButton = Button("Delete", name: "delete") { [unowned session] in session.deleteSelection() }
+        let deleteButton = Button("Delete", name: "delete")
         let shortcuts = EditorShortcuts()
         createButton.tooltip = "Create a new entity at the viewport camera's pivot"
         duplicateButton.tooltip = shortcuts.tooltip("Duplicate the selection", for: .duplicate)
         deleteButton.tooltip = shortcuts.tooltip("Delete the selection", for: .delete)
         let buttons = HStack(spacing: 6, [createButton, duplicateButton, deleteButton])
+        deleteButton.action = { [unowned self] in
+            if let onDelete { onDelete() } else { session.deleteSelection() }
+        }
         view.addChildren([buttons, tree])
 
         tree.onSelectionChange = { [unowned self] _ in pushSelectionFromTree() }

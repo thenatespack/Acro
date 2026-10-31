@@ -152,6 +152,7 @@ public final class EditorApp: Game {
 
     private func buildUI() {
         hierarchy = HierarchyPanel(session: session)
+        hierarchy.onDelete = { [unowned self] in confirmDeleteSelection() }
         hierarchy.spawnPosition = { [unowned self] in
             var p = viewport.camera.pivot
             p.y = max(p.y, 0.5)
@@ -318,7 +319,7 @@ public final class EditorApp: Game {
         case .redo: session.performRedo()
         case .save: save()
         case .duplicate: session.duplicateSelection()
-        case .delete: session.deleteSelection()
+        case .delete: confirmDeleteSelection()
         case .focusSelection: frameSelection()
         case .clearSelection:
             // Esc first cancels a gizmo drag, then clears the selection.
@@ -326,6 +327,20 @@ public final class EditorApp: Game {
         case .togglePlay: session.togglePlay()
         case .importAsset: assetBrowser.beginImport()
         }
+    }
+
+    /// Asks in a modal dialog, then deletes the selected entities (one undo step).
+    func confirmDeleteSelection() {
+        let doomed = session.selection.topLevelEntities(in: session.world)
+        guard !doomed.isEmpty, ui.overlays.isEmpty else { return }
+        let title = doomed.count == 1
+            ? "Delete \u{201C}\(session.displayName(of: doomed[0]))\u{201D}?" : "Delete \(doomed.count) entities?"
+        let hasChildren = doomed.contains { !session.world.children(of: $0).isEmpty }
+        let message = (hasChildren ? (doomed.count == 1 ? "Its children are deleted with it. " : "Their children are deleted with them. ") : "")
+            + "You can undo this with \(shortcuts.shortcutText(for: .undo))."
+        let dialog = ConfirmDialog(title: title, message: message, confirmTitle: "Delete", name: "deleteEntitiesDialog")
+        dialog.onConfirm = { [unowned self] in session.deleteSelection() }
+        dialog.present(in: ui)
     }
 
     func save() {
