@@ -10,9 +10,11 @@ Set-Location (Join-Path $PSScriptRoot '..')
 $sdk = $env:VULKAN_SDK
 $glslc = if ($sdk) { Join-Path $sdk 'Bin\glslc.exe' } else { 'glslc' }
 $shaders = Get-ChildItem Sources, Tests -Recurse -Include *.vert, *.frag, *.comp | Sort-Object FullName
+# Vendored shader libraries (the FidelityFX SDK) include their headers relative to their root.
+$includes = Get-ChildItem Sources, Tests -Recurse -Directory -Filter FidelityFX | ForEach-Object { "-I$($_.FullName)" }
 foreach ($src in $shaders) {
     Write-Host "glslc $($src.FullName) -> $($src.FullName).spv"
-    & $glslc --target-env=vulkan1.1 -O $src.FullName -o "$($src.FullName).spv"
+    & $glslc --target-env=vulkan1.1 -O @includes $src.FullName -o "$($src.FullName).spv"
     if ($LASTEXITCODE -ne 0) { throw "glslc failed for $($src.Name)" }
 }
 

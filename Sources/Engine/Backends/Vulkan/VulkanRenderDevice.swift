@@ -39,8 +39,9 @@ final class VulkanBuffer: GPUBuffer {
 }
 
 final class VulkanTexture: GPUTexture {
-    private let resource: VulkanResource
-    private let deletionQueue: VulkanDeletionQueue
+    /// nil for a borrowed image (`init(borrowing:...)`), which the device frees itself.
+    private let resource: VulkanResource?
+    private let deletionQueue: VulkanDeletionQueue?
     let image: VkImage
     let width: Int
     let height: Int
@@ -54,7 +55,8 @@ final class VulkanTexture: GPUTexture {
     /// Storage textures stay in the general layout (written by compute, sampled by any stage).
     let isStorage: Bool
     /// The layout the image rests in between passes, as sampled.
-    var layout: VkImageLayout { isStorage ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }
+    let layout: VkImageLayout
+    var isBorrowed: Bool { resource == nil }
 
     init(width: Int, height: Int, format: TextureFormat, mipLevelCount: Int = 1, image: VkImage, memory: VkDeviceMemory,
          view: VkImageView, framebuffer: VkFramebuffer? = nil, descriptorSet: VkDescriptorSet? = nil, isStorage: Bool = false,
@@ -69,12 +71,31 @@ final class VulkanTexture: GPUTexture {
         self.framebuffer = framebuffer
         self.descriptorSet = descriptorSet
         self.deletionQueue = deletionQueue
-        resource = .texture(image, memory, view, framebuffer, descriptorSet)
+        layout = isStorage ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+        let resource = VulkanResource.texture(image, memory, view, framebuffer, descriptorSet)
+        self.resource = resource
         deletionQueue.register(resource)
     }
 
+    /// A view of an image the device owns (the scene's color, depth and motion), resting in
+    /// `layout`, to bind in a compute pass of the current frame. Not freed with the wrapper.
+    init(borrowing image: VkImage, view: VkImageView, width: Int, height: Int, format: TextureFormat, layout: VkImageLayout) {
+        self.image = image
+        self.view = view
+        self.width = width
+        self.height = height
+        self.format = format
+        self.layout = layout
+        mipLevelCount = 1
+        framebuffer = nil
+        descriptorSet = nil
+        isStorage = false
+        resource = nil
+        deletionQueue = nil
+    }
+
     deinit {
-        deletionQueue.release(resource)
+        if let resource { deletionQueue?.release(resource) }
     }
 }
 
@@ -354,6 +375,14 @@ final class VulkanRenderDevice: RenderDevice {
     private var taauPipeline: VulkanPipeline?
     /// Pipelines can only differ per color attachment (color vs. motion vectors) with this feature.
     private let independentBlend: Bool
+    /// Shaders may declare one- and two-channel storage images (`r8`, `r16f`, `rg16f`).
+    private let storageImageExtendedFormats: Bool
+    /// Shaders may write storage images declared without a format (FSR 3's clear pass).
+    private let storageImageWriteWithoutFormat: Bool
+    /// FSR 3 (shared with Metal: it records compute passes through this device), made on first use.
+    private var fsr3: FSR3Upscaler?
+    /// Set 1 binding of FSR 3's output for the window pass, for the output texture it was made for.
+    private var fsr3Output: (texture: VulkanTexture, set: VkDescriptorSet)?
     private var upscaleTargets: UpscaleTargets?
     private var offscreen: OffscreenTargets?
     private let commandPool: VkCommandPool
@@ -408,9 +437,11 @@ final class VulkanRenderDevice: RenderDevice {
         vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProperties)
         self.memoryProperties = memoryProperties
 
-        let (device, independentBlend) = try Self.createDevice(physicalDevice: physicalDevice, queueFamily: family)
+        let (device, features) = try Self.createDevice(physicalDevice: physicalDevice, queueFamily: family)
         self.device = device
-        self.independentBlend = independentBlend
+        independentBlend = features.independentBlend != 0
+        storageImageExtendedFormats = features.shaderStorageImageExtendedFormats != 0
+        storageImageWriteWithoutFormat = features.shaderStorageImageWriteWithoutFormat != 0
         var queue: VkQueue?
         vkGetDeviceQueue(device, family, 0, &queue)
         self.queue = queue!
@@ -504,6 +535,8 @@ final class VulkanRenderDevice: RenderDevice {
         case .bilinear: true
         case .fsr1: upscaleRenderPass != nil
         case .taau: upscaleRenderPass != nil && independentBlend
+        case .fsr3: upscaleRenderPass != nil && independentBlend && storageImageWriteWithoutFormat
+            && TextureFormat.storageFormats.allSatisfy(supportsStorage)
         case .metalFXSpatial, .metalFXTemporal: false
         }
     }
@@ -700,6 +733,9 @@ final class VulkanRenderDevice: RenderDevice {
     /// Created in, and kept in, the general layout: compute passes write it, any stage samples it.
     private func makeStorageTexture(_ descriptor: TextureDescriptor) throws -> GPUTexture {
         try descriptor.validateStorage(maxSize: maxTextureSize)
+        guard supportsStorage(descriptor.format) else {
+            throw GraphicsError("This GPU can't use \(descriptor.format) as a storage texture")
+        }
         let allocation = try createImage(
             extent: VkExtent2D(width: UInt32(descriptor.width), height: UInt32(descriptor.height)), format: Self.vkFormat(descriptor.format),
             samples: VK_SAMPLE_COUNT_1_BIT,
@@ -724,6 +760,19 @@ final class VulkanRenderDevice: RenderDevice {
                                  0, 0, nil, 0, nil, 1, &barrier)
         }
         return texture
+    }
+
+    /// Whether `format` can be a storage texture: written, and sampled with linear filtering (but
+    /// `.r32Float`), and for the one- and two-channel formats (formats GLSL calls "extended"), with
+    /// the device feature that lets shaders declare them.
+    private func supportsStorage(_ format: TextureFormat) -> Bool {
+        let extended: [TextureFormat] = [.r8Unorm, .r16Float, .rg16Float]
+        if extended.contains(format) && !storageImageExtendedFormats { return false }
+        var properties = VkFormatProperties()
+        vkGetPhysicalDeviceFormatProperties(physicalDevice, Self.vkFormat(format), &properties)
+        let required = vkFlags(VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)
+            | (format == .r32Float ? 0 : vkFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
+        return properties.optimalTilingFeatures & required == required
     }
 
     func makeRenderTarget(_ descriptor: RenderTargetDescriptor) throws -> GPURenderTarget {
@@ -864,7 +913,11 @@ final class VulkanRenderDevice: RenderDevice {
         switch format {
         case .rgba8Srgb: VK_FORMAT_R8G8B8A8_SRGB
         case .rgba16Float: VK_FORMAT_R16G16B16A16_SFLOAT
-        default: VK_FORMAT_R8G8B8A8_UNORM
+        case .r8Unorm: VK_FORMAT_R8_UNORM
+        case .r16Float: VK_FORMAT_R16_SFLOAT
+        case .rg16Float: VK_FORMAT_R16G16_SFLOAT
+        case .r32Float: VK_FORMAT_R32_SFLOAT
+        case .rgba8Unorm, .depth32Float: VK_FORMAT_R8G8B8A8_UNORM
         }
     }
 
@@ -1350,6 +1403,7 @@ final class VulkanRenderDevice: RenderDevice {
     /// Records the upscale pass (FSR 1 EASU or TAAU) from the scene image into a texture of
     /// `size`. Returns the descriptor set for sampling the result, or nil for bilinear.
     private func upscale(_ offscreen: OffscreenTargets, to size: VkExtent2D) -> VkDescriptorSet? {
+        if case .fsr3(let sharpness) = upscaler { return upscaleFSR3(offscreen, to: size, sharpness: sharpness) }
         let stage = upscaler.firstStage
         guard stage == .easu || stage == .taau, let source = offscreen.unormDescriptorSet else { return nil }
         let targets: UpscaleTargets
@@ -1394,6 +1448,46 @@ final class VulkanRenderDevice: RenderDevice {
         pass.draw(vertexCount: 3)
         endPass()
         return targets.descriptorSets[0]
+    }
+
+    /// Records FSR 3's compute pass (`FSR3Upscaler`) and returns the set 1 binding of its output.
+    private func upscaleFSR3(_ offscreen: OffscreenTargets, to size: VkExtent2D, sharpness: Float) -> VkDescriptorSet? {
+        guard let motion = offscreen.motion, let unormView = offscreen.unormView else { return nil }
+        let (width, height) = (Int(offscreen.extent.width), Int(offscreen.extent.height))
+        // The temporal scene pass leaves color, depth and motion shader-readable.
+        let readable = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+        let inputs = FSR3Inputs(
+            color: VulkanTexture(borrowing: offscreen.resolved.image, view: unormView, width: width, height: height,
+                                 format: .rgba8Unorm, layout: readable),
+            depth: VulkanTexture(borrowing: offscreen.depth.image, view: offscreen.depth.view, width: width, height: height,
+                                 format: .depth32Float, layout: readable),
+            motion: VulkanTexture(borrowing: motion.image, view: motion.view, width: width, height: height,
+                                  format: .rg16Float, layout: readable),
+            temporal: temporalInputs, sharpness: sharpness)
+        do {
+            if let old = upscaleTargets {
+                vkDeviceWaitIdle(device)  // earlier frames may still read it
+                destroy(old)
+                upscaleTargets = nil
+            }
+            let fsr3 = try self.fsr3 ?? FSR3Upscaler(device: self)
+            self.fsr3 = fsr3
+            let output = try fsr3.encode(inputs, output: (Int(size.width), Int(size.height)), device: self) as! VulkanTexture
+            if let current = fsr3Output, current.texture === output { return current.set }
+            if let old = fsr3Output {
+                vkDeviceWaitIdle(device)  // earlier frames' window passes may still use the set
+                var set: VkDescriptorSet? = old.set
+                vkFreeDescriptorSets(device, descriptorPool, 1, &set)
+                fsr3Output = nil
+            }
+            let set = try makeTextureDescriptorSet(view: output.view, layout: output.layout)
+            fsr3Output = (output, set)
+            return set
+        } catch {
+            print("\(upscaler) unavailable, using bilinear: \(error)")
+            upscaler = .bilinear
+            return nil
+        }
     }
 
     private func ensureUpscaleTargets(input: VkExtent2D, output: VkExtent2D) throws -> UpscaleTargets {
@@ -1851,7 +1945,8 @@ final class VulkanRenderDevice: RenderDevice {
     }
 
     /// Also returns whether `independentBlend` (per-attachment blend state) is enabled.
-    private static func createDevice(physicalDevice: VkPhysicalDevice, queueFamily: UInt32) throws -> (VkDevice, Bool) {
+    /// Returns the device and the optional features it enabled.
+    private static func createDevice(physicalDevice: VkPhysicalDevice, queueFamily: UInt32) throws -> (VkDevice, VkPhysicalDeviceFeatures) {
         let arena = Arena()
         var extensions = ["VK_KHR_swapchain"]
         let available: [VkExtensionProperties] = try vkEnumerate("vkEnumerateDeviceExtensionProperties") {
@@ -1880,6 +1975,9 @@ final class VulkanRenderDevice: RenderDevice {
         vkGetPhysicalDeviceFeatures(physicalDevice, &supported)
         var features = VkPhysicalDeviceFeatures()
         features.independentBlend = supported.independentBlend
+        // Storage textures in one- and two-channel formats, and FSR 3's format-less clear.
+        features.shaderStorageImageExtendedFormats = supported.shaderStorageImageExtendedFormats
+        features.shaderStorageImageWriteWithoutFormat = supported.shaderStorageImageWriteWithoutFormat
         info.pEnabledFeatures = arena.store(features)
         #if os(macOS)
         if portabilitySubset {
@@ -1900,7 +1998,7 @@ final class VulkanRenderDevice: RenderDevice {
 
         var device: VkDevice?
         try vkCheck(vkCreateDevice(physicalDevice, &info, nil, &device), "vkCreateDevice")
-        return (device!, features.independentBlend != 0)
+        return (device!, features)
     }
 
     /// The scene pass. `offscreen` leaves the final image shader-readable (for the window pass
@@ -2463,11 +2561,11 @@ final class VulkanRenderDevice: RenderDevice {
             motion: motion, hdr: hdrTexture, outputFramebuffer: outputFramebuffer)
     }
 
-    /// A set-1 binding of `view` (in shader-read layout) with the linear sampler.
-    private func makeTextureDescriptorSet(view: VkImageView) throws -> VkDescriptorSet {
+    /// A set-1 binding of `view` (in `layout`, shader-read by default) with the linear sampler.
+    private func makeTextureDescriptorSet(view: VkImageView,
+                                          layout: VkImageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) throws -> VkDescriptorSet {
         let set = try allocateDescriptorSet(layout: textureSetLayout)
-        var imageInfo = VkDescriptorImageInfo(
-            sampler: linearSampler, imageView: view, imageLayout: VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+        var imageInfo = VkDescriptorImageInfo(sampler: linearSampler, imageView: view, imageLayout: layout)
         var write = VkWriteDescriptorSet()
         write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET
         write.dstSet = set
@@ -2968,7 +3066,7 @@ final class VulkanComputePass: ComputePass {
     func setTexture(_ texture: GPUTexture, index: Int) {
         precondition(textureIndices.contains(index), "Texture index \(index) is outside \(textureIndices)")
         let texture = texture as! VulkanTexture
-        precondition(!texture.format.isDepth, "Depth textures can't be bound in compute passes")
+        precondition(!texture.format.isDepth || texture.isBorrowed, "Depth textures can't be bound in compute passes")
         userBindings.bindTexture(texture.view, layout: texture.layout, index: index)
     }
 

@@ -189,6 +189,8 @@ final class MetalRenderDevice: RenderDevice {
     /// TAAU pass, rendering the next history into `UpscaleTargets.outputs`.
     private var taauPipeline: MTLRenderPipelineState!
     private var upscaleTargets: UpscaleTargets?
+    /// FSR 3 (shared with Vulkan: it records compute passes through this device), made on first use.
+    private var fsr3: FSR3Upscaler?
     private let frameSemaphore = DispatchSemaphore(value: maxFramesInFlight)
     private let lastGPUTime = LockedValue<Double?>(nil)
     private let lastPassTimes = LockedValue<[GPUPassTime]>([])
@@ -373,6 +375,8 @@ final class MetalRenderDevice: RenderDevice {
     func supports(_ upscaler: Upscaler) -> Bool {
         switch upscaler {
         case .bilinear, .fsr1, .taau: true
+        // Reads and writes single-channel storage textures (read-write texture tier 2).
+        case .fsr3: device.readWriteTextureSupport == .tier2
         case .metalFXSpatial: MTLFXSpatialScalerDescriptor.supportsDevice(device)
         case .metalFXTemporal: MTLFXTemporalScalerDescriptor.supportsDevice(device)
         }
@@ -430,8 +434,8 @@ final class MetalRenderDevice: RenderDevice {
         if descriptor.storage {
             try descriptor.validateStorage(maxSize: maxTextureSize)
             let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
-                pixelFormat: descriptor.format == .rgba16Float ? .rgba16Float : .rgba8Unorm,
-                width: descriptor.width, height: descriptor.height, mipmapped: false)
+                pixelFormat: Self.storagePixelFormat(descriptor.format), width: descriptor.width, height: descriptor.height,
+                mipmapped: false)
             textureDescriptor.usage = [.shaderRead, .shaderWrite]
             textureDescriptor.storageMode = .private
             guard let texture = device.makeTexture(descriptor: textureDescriptor) else {
@@ -450,6 +454,20 @@ final class MetalRenderDevice: RenderDevice {
             throw GraphicsError("Failed to create \(descriptor.width)x\(descriptor.height) texture")
         }
         return MetalTexture(texture, format: descriptor.format)
+    }
+
+    /// Pixel formats of storage textures. Apple GPUs (read-write texture tier 2) can also read
+    /// the single-channel formats in shaders with `access::read_write`; `.rg16Float` is write-only
+    /// there (sample it with `setTexture`), as FSR 3 uses it.
+    private static func storagePixelFormat(_ format: TextureFormat) -> MTLPixelFormat {
+        switch format {
+        case .rgba16Float: .rgba16Float
+        case .r8Unorm: .r8Unorm
+        case .r16Float: .r16Float
+        case .rg16Float: .rg16Float
+        case .r32Float: .r32Float
+        case .rgba8Unorm, .rgba8Srgb, .depth32Float: .rgba8Unorm
+        }
     }
 
     func makeRenderTarget(_ descriptor: RenderTargetDescriptor) throws -> GPURenderTarget {
@@ -878,6 +896,23 @@ final class MetalRenderDevice: RenderDevice {
                          commandBuffer: MTLCommandBuffer) -> MTLTexture? {
         guard upscaler != .bilinear else { return nil }
         let input = (width: scene.resolved.width, height: scene.resolved.height)
+        if case .fsr3(let sharpness) = upscaler {
+            guard let motion = scene.motion else { return nil }
+            do {
+                // Its output is a storage texture; it keeps its own histories.
+                upscaleTargets = nil
+                let fsr3 = try self.fsr3 ?? FSR3Upscaler(device: self)
+                self.fsr3 = fsr3
+                let inputs = FSR3Inputs(
+                    color: MetalTexture(scene.resolvedUnorm, format: .rgba8Unorm), depth: MetalTexture(scene.depth, format: .depth32Float),
+                    motion: MetalTexture(motion, format: .rg16Float), temporal: temporalInputs, sharpness: sharpness)
+                return (try fsr3.encode(inputs, output: size, device: self) as! MetalTexture).texture
+            } catch {
+                print("\(upscaler) unavailable, using bilinear: \(error)")
+                upscaler = .bilinear
+                return nil
+            }
+        }
         let targets: UpscaleTargets
         do {
             targets = try ensureUpscaleTargets(input: input, output: size)
@@ -889,7 +924,7 @@ final class MetalRenderDevice: RenderDevice {
         // A fresh scaler or history has nothing to blend with yet.
         let reset = temporalInputs.resetHistory || !targets.hasHistory
         switch upscaler {
-        case .bilinear:
+        case .bilinear, .fsr3:
             return nil
         case .fsr1:
             let passDescriptor = MTLRenderPassDescriptor()
@@ -996,7 +1031,7 @@ final class MetalRenderDevice: RenderDevice {
         case .taau:
             // Color plus accumulated weight, with headroom so small blends don't stall in 8 bits.
             format = .rgba16Float
-        case .none, .easu:
+        case .none, .easu, .fsr3:
             break
         }
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(

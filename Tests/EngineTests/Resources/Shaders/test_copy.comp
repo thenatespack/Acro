@@ -1,0 +1,21 @@
+#version 450
+#extension GL_EXT_samplerless_texture_functions : require
+
+// Tests: copies texture 1 into the buffer as RGBA floats, row by row (for reading back storage
+// textures, e.g. FSR 3's output).
+
+layout(set = 2, binding = 9) uniform texture2D source;
+layout(set = 2, binding = 24, std430) buffer Results { vec4 results[]; };
+
+layout(push_constant) uniform PushConstants {
+    uvec2 size;
+} pc;
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main()
+{
+    uvec2 p = gl_GlobalInvocationID.xy;
+    if (any(greaterThanEqual(p, pc.size))) return;
+    results[p.y * pc.size.x + p.x] = texelFetch(source, ivec2(p), 0);
+}

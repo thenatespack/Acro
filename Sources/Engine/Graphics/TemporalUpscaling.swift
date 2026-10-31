@@ -61,11 +61,15 @@ public struct TemporalInputs: Sendable, Equatable {
     public var resetHistory: Bool
     /// Reversed-Z depth (near = 1, cleared to 0).
     public var reversedDepth: Bool
+    /// The unjittered projection of the main view (the last one passed to `Engine.jittered(_:)`
+    /// this frame), for upscalers that turn depth into view distance (FSR 3); nil if none was.
+    public var projection: Mat4?
 
-    public init(jitter: Vec2 = .zero, resetHistory: Bool = true, reversedDepth: Bool = false) {
+    public init(jitter: Vec2 = .zero, resetHistory: Bool = true, reversedDepth: Bool = false, projection: Mat4? = nil) {
         self.jitter = jitter
         self.resetHistory = resetHistory
         self.reversedDepth = reversedDepth
+        self.projection = projection
     }
 }
 

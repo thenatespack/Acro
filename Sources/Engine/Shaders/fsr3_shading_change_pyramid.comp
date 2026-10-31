@@ -1,0 +1,26 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// FSR 3.1 upscaler, pass 3 (SDK: ffx_fsr3upscaler_shading_change_pyramid_pass): per render
+// pixel, the signed luma change against the reprojected previous frame, downsampled with SPD.
+// The shading-change pass reads levels 0-2, so only those are computed (cbSPD.mips = 3; the SDK
+// stores up to level 5 and never reads 3-5).
+// See fsr3_callbacks.glsl for the bindings and FidelityFX/LICENSE.txt for the license.
+
+#define FSR3UPSCALER_BIND_SRV_CURRENT_LUMA                          9   // texture 1
+#define FSR3UPSCALER_BIND_SRV_PREVIOUS_LUMA                         10  // texture 2
+#define FSR3UPSCALER_BIND_SRV_DILATED_MOTION_VECTORS                11  // texture 3
+#define FSR3UPSCALER_BIND_UAV_SPD_MIPS_LEVEL_0                      32  // storage texture 0
+#define FSR3UPSCALER_BIND_UAV_SPD_MIPS_LEVEL_1                      33  // storage texture 1
+#define FSR3UPSCALER_BIND_UAV_SPD_MIPS_LEVEL_2                      34  // storage texture 2
+
+#include "fsr3_callbacks.glsl"
+#include "FidelityFX/fsr3upscaler/ffx_fsr3upscaler_common.h"
+#include "FidelityFX/fsr3upscaler/ffx_fsr3upscaler_shading_change_pyramid.h"
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    ComputeShadingChangePyramid(gl_WorkGroupID, gl_LocalInvocationIndex);
+}

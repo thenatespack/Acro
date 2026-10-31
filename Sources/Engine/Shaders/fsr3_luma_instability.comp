@@ -1,0 +1,26 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// FSR 3.1 upscaler, pass 6 (SDK: ffx_fsr3upscaler_luma_instability_pass): flags pixels whose
+// luma flickers against the last four frames (kept per render pixel in the luma history).
+// See fsr3_callbacks.glsl for the bindings and FidelityFX/LICENSE.txt for the license.
+
+#define FSR3UPSCALER_BIND_SRV_DILATED_REACTIVE_MASKS                9   // texture 1
+#define FSR3UPSCALER_BIND_SRV_DILATED_MOTION_VECTORS                10  // texture 2
+#define FSR3UPSCALER_BIND_SRV_LUMA_HISTORY                          11  // texture 3
+#define FSR3UPSCALER_BIND_SRV_FARTHEST_DEPTH_MIP1                   12  // texture 4
+#define FSR3UPSCALER_BIND_SRV_CURRENT_LUMA                          13  // texture 5
+#define FSR3UPSCALER_BIND_UAV_LUMA_HISTORY                          32  // storage texture 0
+#define FSR3UPSCALER_BIND_UAV_LUMA_INSTABILITY                      33  // storage texture 1
+#define FSR3UPSCALER_BIND_SAMPLER_LINEAR_CLAMP                      17  // sampler 1
+
+#include "fsr3_callbacks.glsl"
+#include "FidelityFX/fsr3upscaler/ffx_fsr3upscaler_common.h"
+#include "FidelityFX/fsr3upscaler/ffx_fsr3upscaler_luma_instability.h"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+void main()
+{
+    LumaInstability(FfxInt32x2(gl_GlobalInvocationID.xy));
+}

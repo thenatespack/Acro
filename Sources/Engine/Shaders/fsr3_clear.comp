@@ -1,0 +1,29 @@
+#version 450
+
+// FSR 3.1 upscaler helper: fills storage texture 0 with a value (FSR's clear jobs: accumulation
+// and luma on a reset, new locks and the SPD levels when created), or, in mode 1, the
+// reconstructed-depth buffer (storage buffer 0) with the bits of the farthest depth, every frame
+// before the prepare-inputs pass. Both are bound in either mode.
+
+layout(set = 2, binding = 32) writeonly uniform image2D image;  // storage texture 0, any format
+layout(set = 2, binding = 24, std430) buffer Words { uint words[]; };  // storage buffer 0
+
+layout(push_constant) uniform PushConstants {
+    vec4 value;
+    uvec2 size;  // texels (mode 0) or render pixels (mode 1)
+    uint mode;
+    uint word;
+} pc;
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+void main()
+{
+    uvec2 p = gl_GlobalInvocationID.xy;
+    if (any(greaterThanEqual(p, pc.size))) return;
+    if (pc.mode == 0) {
+        imageStore(image, ivec2(p), pc.value);
+    } else {
+        words[p.y * pc.size.x + p.x] = pc.word;
+    }
+}

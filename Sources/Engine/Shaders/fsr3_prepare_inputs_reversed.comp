@@ -1,0 +1,6 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// FSR 3.1 prepare-inputs pass for reversed-Z depth (near 1); see fsr3_prepare_inputs.glsl.
+#define FFX_FSR3UPSCALER_OPTION_INVERTED_DEPTH 1
+#include "fsr3_prepare_inputs.glsl"

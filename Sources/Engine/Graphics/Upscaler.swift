@@ -17,9 +17,14 @@ public enum Upscaler: Equatable, Sendable, CustomStringConvertible {
     /// neighborhood, then sharpened with RCAS (`sharpness` in stops, as for `fsr1`). Works on
     /// every backend. Temporal: see `isTemporal`.
     case taau(sharpness: Float = 0.5)
+    /// AMD FidelityFX Super Resolution 3.1's upscaler (compute; not frame generation): depth- and
+    /// motion-based reprojection with disocclusion, shading-change and thin-feature (lock)
+    /// detection, Lanczos accumulation at the output size, then RCAS (`sharpness` in stops, as for
+    /// `fsr1`; 0.4 is the SDK sample's 0.8). Works on every backend. Temporal: see `isTemporal`.
+    case fsr3(sharpness: Float = 0.4)
 
     /// Parses `bilinear`, `fsr1`, `fsr1:<sharpness>`, `metalfx` (spatial), `metalfx-temporal`,
-    /// `taau`, or `taau:<sharpness>`.
+    /// `taau`, `taau:<sharpness>`, `fsr3` or `fsr3:<sharpness>`.
     public init?(_ string: String) {
         let text = string.lowercased().trimmingCharacters(in: .whitespaces)
         switch text {
@@ -28,12 +33,14 @@ public enum Upscaler: Equatable, Sendable, CustomStringConvertible {
         case "metalfx", "metalfx-spatial": self = .metalFXSpatial
         case "metalfx-temporal": self = .metalFXTemporal
         case "taau": self = .taau()
+        case "fsr3": self = .fsr3()
         default:
             let parts = text.split(separator: ":")
             guard parts.count == 2, let sharpness = Float(parts[1]), sharpness >= 0 else { return nil }
             switch parts[0] {
             case "fsr1", "fsr": self = .fsr1(sharpness: sharpness)
             case "taau": self = .taau(sharpness: sharpness)
+            case "fsr3": self = .fsr3(sharpness: sharpness)
             default: return nil
             }
         }
@@ -45,7 +52,7 @@ public enum Upscaler: Equatable, Sendable, CustomStringConvertible {
     /// and renders the scene without MSAA.
     public var isTemporal: Bool {
         switch self {
-        case .metalFXTemporal, .taau: true
+        case .metalFXTemporal, .taau, .fsr3: true
         case .bilinear, .fsr1, .metalFXSpatial: false
         }
     }
@@ -57,6 +64,7 @@ public enum Upscaler: Equatable, Sendable, CustomStringConvertible {
         case .metalFXSpatial: "MetalFX spatial"
         case .metalFXTemporal: "MetalFX temporal"
         case .taau(let sharpness): "TAAU (sharpness \(sharpness))"
+        case .fsr3(let sharpness): "FSR 3 (sharpness \(sharpness))"
         }
     }
 }
@@ -91,11 +99,11 @@ struct RcasConstants {
 }
 
 extension Upscaler {
-    /// The RCAS factor for the final window pass (0 = plain copy).
+    /// The RCAS factor for the final window pass (0 = plain copy). FSR 3 sharpens in its own RCAS pass.
     var rcasSharpness: Float {
         switch self {
         case .fsr1(let sharpness), .taau(let sharpness): exp2(-sharpness)
-        case .bilinear, .metalFXSpatial, .metalFXTemporal: 0
+        case .bilinear, .metalFXSpatial, .metalFXTemporal, .fsr3: 0
         }
     }
 
@@ -107,11 +115,12 @@ extension Upscaler {
         case .metalFXSpatial: .metalFXSpatial
         case .metalFXTemporal: .metalFXTemporal
         case .taau: .taau
+        case .fsr3: .fsr3
         }
     }
 }
 
 /// The first stage of an upscaler (see `Upscaler.firstStage`); backends key their targets on it.
 enum UpscalerStage: Equatable {
-    case none, easu, metalFXSpatial, metalFXTemporal, taau
+    case none, easu, metalFXSpatial, metalFXTemporal, taau, fsr3
 }
