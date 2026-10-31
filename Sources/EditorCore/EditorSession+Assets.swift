@@ -205,8 +205,30 @@ extension EditorSession {
 
     /// Writes `material` to the `.material` asset `id` without recording an undo step (live
     /// preview during a drag; `setMaterial` records the whole gesture at its end).
-    public func previewMaterial(_ material: MaterialAsset, of id: AssetID) {
-        do { try assets?.writeMaterial(material, to: id) } catch { log.error("Edit material failed: \(error)") }
+    @discardableResult
+    public func previewMaterial(_ material: MaterialAsset, of id: AssetID) -> Bool {
+        guard let assets = requireAssets("Edit Material") else { return false }
+        do {
+            try assets.writeMaterial(material, to: id)
+            return true
+        } catch {
+            log.error("Edit material failed: \(error)")
+            return false
+        }
+    }
+
+    /// Writes `settings` (the importer's settings as JSON) to the asset's sidecar and reimports it.
+    @discardableResult
+    public func applyImportSettings(_ settings: JSONValue, to id: AssetID) -> Bool {
+        guard let assets = requireAssets("Apply Import Settings") else { return false }
+        do {
+            try assets.setSettings(settings, for: id)
+            log.info("Applied import settings of \(assets.path(of: id) ?? id.description)")
+            return true
+        } catch {
+            log.error("Applying import settings failed: \(error)")
+            return false
+        }
     }
 
     /// Writes each material imported from the model `id` (a glTF file) to a `.material` file in
@@ -364,7 +386,8 @@ extension EditorSession {
                                        new: .string(key), label: label))
     }
 
-    /// Handles an asset dropped from the browser (one undo step, logged when refused):
+    /// Handles an asset dropped from the browser by running `asset.assign` or `asset.instantiate`
+    /// (one undo step, logged when refused):
     /// - `.viewport`: a material on an entity sets its material; models, prefabs and meshes
     ///   are instantiated at the point.
     /// - `.hierarchy`: a material or mesh on an entity row is assigned to it; a model or prefab
@@ -380,21 +403,37 @@ extension EditorSession {
                     log.info("Drop a material on an object to assign it")
                     return false
                 }
-                return assign(reference, kind: kind, to: entity)
+                return runAssign(reference, kind, entity)
             }
-            return !instantiate(item, at: position).isEmpty
+            return runInstantiate(item, position, nil)
         case .hierarchy(let parent, let position):
             if let (reference, kind) = droppable, let parent, kind == .material || prefabReference(for: item) == nil {
-                return assign(reference, kind: kind, to: parent)
+                return runAssign(reference, kind, parent)
             }
-            return !instantiate(item, at: parent == nil ? position : .zero, parent: parent).isEmpty
+            return runInstantiate(item, parent == nil ? position : .zero, parent)
         case .field(let entity, let kind):
             guard let (reference, droppedKind) = droppable, droppedKind == kind else {
                 log.info("Only a \(kind.rawValue) can be dropped on this field")
                 return false
             }
-            return assign(reference, kind: kind, to: entity)
+            return runAssign(reference, kind, entity)
         }
+    }
+
+    private func runAssign(_ reference: AssetReference, _ kind: AssetKind, _ entity: EntityID) -> Bool {
+        run(AssetAssignCommand.self, .init(entity: entity, asset: reference, kind: kind)) != nil
+    }
+
+    private func runInstantiate(_ item: AssetItem, _ position: Vec3, _ parent: EntityID?) -> Bool {
+        let reference: AssetReference
+        switch item {
+        case .folder:
+            log.error("Instantiate: only models, prefabs and meshes can be placed in the scene")
+            return false
+        case .asset(let id): reference = AssetReference(id)
+        case .object(let object): reference = object
+        }
+        return run(AssetInstantiateCommand.self, .init(asset: reference, position: position, parent: parent)) != nil
     }
 
     private func requireAssets(_ action: String) -> AssetDatabase? {

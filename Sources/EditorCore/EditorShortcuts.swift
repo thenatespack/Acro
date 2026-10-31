@@ -1,26 +1,22 @@
 import Engine
 
-/// What a keyboard shortcut asks the editor to do.
-public enum EditorAction: Equatable, Sendable {
-    case undo, redo, save, duplicate, delete, focusSelection, clearSelection, togglePlay, importAsset
-}
-
-/// Maps key presses to editor actions:
+/// Maps key presses to the ids of the commands they run (see `CommandRegistry`):
 ///
-/// | Keys | Action |
+/// | Keys | Command |
 /// |---|---|
-/// | Cmd/Ctrl+Z | undo |
-/// | Shift+Cmd/Ctrl+Z, and Ctrl+Y off macOS | redo |
-/// | Cmd/Ctrl+S | save |
-/// | Cmd/Ctrl+D | duplicate selection |
-/// | Cmd/Ctrl+P | play / stop |
-/// | Shift+Cmd/Ctrl+I | import files into the current assets folder |
-/// | Delete or Backspace (also with Cmd/Ctrl) | delete selection |
-/// | F | frame the selection in the viewport |
-/// | Esc | clear the selection |
+/// | Cmd/Ctrl+Z | `edit.undo` |
+/// | Shift+Cmd/Ctrl+Z, and Ctrl+Y off macOS | `edit.redo` |
+/// | Cmd/Ctrl+S | `scene.save` |
+/// | Cmd/Ctrl+D | `entity.duplicate` |
+/// | Cmd/Ctrl+P | `play.toggle` |
+/// | Shift+Cmd/Ctrl+I | `asset.import` (into the current assets folder) |
+/// | Delete or Backspace (also with Cmd/Ctrl) | `entity.delete` |
+/// | F | `view.frameSelection` |
+/// | Esc | `selection.clear` |
 ///
 /// (Cmd on macOS, Ctrl elsewhere: `KeyModifiers.shortcut`.) Undo and redo follow key repeat;
-/// the others ignore repeats. Routing respects the UI: see `actions(for:focus:)`.
+/// the others ignore repeats. Routing respects the UI: see `actions(for:focus:)`. The host runs
+/// the commands, first asking where a command needs it (delete confirms, import picks files).
 public struct EditorShortcuts: Sendable {
     /// The editing modifier: `.command` on macOS, `.control` elsewhere.
     public var shortcutModifier: KeyModifiers
@@ -31,13 +27,13 @@ public struct EditorShortcuts: Sendable {
 
     private var isMac: Bool { shortcutModifier == .command }
 
-    /// The action for one key press, ignoring focus.
-    public func action(for event: KeyEvent) -> EditorAction? {
+    /// The command for one key press, ignoring focus.
+    public func action(for event: KeyEvent) -> CommandID? {
         let mods = event.modifiers
         let shortcut = mods.contains(shortcutModifier)
         let shift = mods.contains(.shift)
         let plain = mods.isEmpty
-        let action: EditorAction?
+        let action: CommandID?
         switch event.key {
         case .z where shortcut: action = shift ? .redo : .undo
         case .y where !isMac && mods == .control: action = .redo
@@ -55,10 +51,15 @@ public struct EditorShortcuts: Sendable {
         return action
     }
 
-    /// The key press that performs `action` (its first binding), for showing in tooltips. Every
-    /// result maps back to `action` through `action(for:)`.
-    public func binding(for action: EditorAction) -> KeyEvent {
-        switch action {
+    /// Every command with a shortcut.
+    public static let boundCommands: [CommandID] = [
+        .undo, .redo, .save, .duplicate, .delete, .focusSelection, .clearSelection, .togglePlay, .importAsset,
+    ]
+
+    /// The key press that runs `command` (its first binding), for showing in tooltips; nil when
+    /// it has no shortcut. Every result maps back to `command` through `action(for:)`.
+    public func binding(for command: CommandID) -> KeyEvent? {
+        switch command {
         case .undo: KeyEvent(key: .z, modifiers: shortcutModifier)
         case .redo: KeyEvent(key: .z, modifiers: [shortcutModifier, .shift])
         case .save: KeyEvent(key: .s, modifiers: shortcutModifier)
@@ -68,12 +69,14 @@ public struct EditorShortcuts: Sendable {
         case .delete: KeyEvent(key: .delete)
         case .focusSelection: KeyEvent(key: .f)
         case .clearSelection: KeyEvent(key: .escape)
+        default: nil
         }
     }
 
-    /// How `action`'s key combination reads: "⌘Z", "⇧⌘Z" on macOS, "Ctrl+Z", "Ctrl+Shift+Z" elsewhere.
-    public func shortcutText(for action: EditorAction) -> String {
-        let event = binding(for: action)
+    /// How `command`'s key combination reads: "⌘Z", "⇧⌘Z" on macOS, "Ctrl+Z", "Ctrl+Shift+Z"
+    /// elsewhere; "" without a shortcut.
+    public func shortcutText(for command: CommandID) -> String {
+        guard let event = binding(for: command) else { return "" }
         let key: String
         switch event.key {
         case .delete: key = "Delete"
@@ -93,9 +96,11 @@ public struct EditorShortcuts: Sendable {
         return (parts + [key]).joined(separator: "+")
     }
 
-    /// `title` followed by the action's shortcut in parentheses: "Undo Rename (⌘Z)".
-    public func tooltip(_ title: String, for action: EditorAction) -> String {
-        "\(title) (\(shortcutText(for: action)))"
+    /// `title` followed by the command's shortcut in parentheses: "Undo Rename (⌘Z)" (just
+    /// `title` when it has none).
+    public func tooltip(_ title: String, for command: CommandID) -> String {
+        let keys = shortcutText(for: command)
+        return keys.isEmpty ? title : "\(title) (\(keys))"
     }
 
     /// What the UI is doing with the keyboard, sampled around `UIContext.update`.
@@ -115,11 +120,11 @@ public struct EditorShortcuts: Sendable {
         }
     }
 
-    /// This frame's actions. Nothing while text is being edited or a popup is open (so
+    /// This frame's commands. Nothing while text is being edited or a popup is open (so
     /// Backspace edits text, Cmd+Z undoes typing in the field, Esc closes the popup). Esc
     /// clears the selection only when no widget had focus: otherwise it just unfocuses.
     /// Other shortcuts work while a non-text widget (a tree, a button) has focus.
-    public func actions(for events: [KeyEvent], focus: Focus) -> [EditorAction] {
+    public func actions(for events: [KeyEvent], focus: Focus) -> [CommandID] {
         guard !focus.textEditing, !focus.overlayOpen else { return [] }
         return events.compactMap { event in
             guard let action = action(for: event) else { return nil }

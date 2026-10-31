@@ -2,9 +2,9 @@ import Engine
 
 /// The hierarchy panel: a `TreeView` mirroring the world's entity tree (roots in `world.roots`
 /// order, children in sibling order, titled by `Name` or "Entity <id>"), bound to the
-/// `EditorSelection` in both directions. Rename in place (F2 / double click) records a
-/// `RenameCommand`; drag and drop records `ReparentCommand`s that keep world transforms; the
-/// buttons create, duplicate and delete through the session.
+/// `EditorSelection` in both directions (`selection.set`). Rename in place (F2 / double click)
+/// runs `entity.rename`; drag and drop runs `entity.reparent`, which keeps world transforms; the
+/// buttons run `entity.create`, `entity.duplicate` and `entity.delete`, enabled by their availability.
 ///
 /// Sync: `sync()` (every frame) compares the world's structure (ids, parents, order, names)
 /// with what the tree shows and rebuilds the nodes only when it differs, e.g. after undo, redo,
@@ -26,6 +26,8 @@ public final class HierarchyPanel {
     /// tree's callbacks don't echo it back.
     private var applyingSelection = false
     private var createButton: Button!
+    private var duplicateButton: Button!
+    private var deleteButton: Button!
 
     struct Row: Equatable {
         var id: EntityID
@@ -45,15 +47,15 @@ public final class HierarchyPanel {
         tree.style.shrink = 1
 
         createButton = Button("Create", name: "create") { [unowned self] in showCreateMenu() }
-        let duplicateButton = Button("Duplicate", name: "duplicate") { [unowned session] in session.duplicateSelection() }
-        let deleteButton = Button("Delete", name: "delete")
+        duplicateButton = Button("Duplicate", name: "duplicate") { [unowned session] in session.run(EntityDuplicateCommand.self) }
+        deleteButton = Button("Delete", name: "delete")
         let shortcuts = EditorShortcuts()
         createButton.tooltip = "Create a new entity at the viewport camera's pivot"
         duplicateButton.tooltip = shortcuts.tooltip("Duplicate the selection", for: .duplicate)
         deleteButton.tooltip = shortcuts.tooltip("Delete the selection", for: .delete)
         let buttons = HStack(spacing: 6, [createButton, duplicateButton, deleteButton])
         deleteButton.action = { [unowned self] in
-            if let onDelete { onDelete() } else { session.deleteSelection() }
+            if let onDelete { onDelete() } else { session.run(EntityDeleteCommand.self) }
         }
         view.addChildren([buttons, tree])
 
@@ -61,13 +63,13 @@ public final class HierarchyPanel {
         tree.onSelect = { [unowned self] _ in pushSelectionFromTree() }
         tree.onRename = { [unowned session] node, title in
             guard let id = node.userData as? EntityID else { return false }
-            session.rename(id, to: title)
+            session.run(EntityRenameCommand.self, .init(entity: id, name: title))
             return true
         }
         tree.onMove = { [unowned session] nodes, parent, index in
             let ids = nodes.compactMap { $0.userData as? EntityID }
             guard ids.count == nodes.count else { return false }
-            return session.move(ids, to: parent?.userData as? EntityID, at: index)
+            return session.run(EntityReparentCommand.self, .init(entities: ids, parent: parent?.userData as? EntityID, index: index)) != nil
         }
         session.selection.observe { [unowned self] _ in applySelectionToTree() }
         sync(force: true)
@@ -81,6 +83,10 @@ public final class HierarchyPanel {
 
     /// Rebuilds the tree if the world's hierarchy or names changed (or always, with `force`).
     public func sync(force: Bool = false) {
+        for (button, command) in [(duplicateButton!, EntityDuplicateCommand.id), (deleteButton!, EntityDeleteCommand.id)] {
+            let enabled = session.commands.isAvailable(command)
+            if button.isEnabled != enabled { button.isEnabled = enabled }
+        }
         guard force || (!tree.isDragging && tree.renamingNode == nil) else { return }
         let structure = Self.structure(of: session.world, name: session.displayName(of:))
         guard force || structure != shownStructure else { return }
@@ -142,7 +148,7 @@ public final class HierarchyPanel {
     private func pushSelectionFromTree() {
         guard !applyingSelection else { return }
         let ids = tree.selectedNodes.compactMap { $0.userData as? EntityID }
-        session.selection.set(ids, primary: tree.selectedNode?.userData as? EntityID)
+        session.run(SelectionSetCommand.self, .init(entities: ids, primary: tree.selectedNode?.userData as? EntityID))
     }
 
     private func showCreateMenu() {
@@ -150,7 +156,7 @@ public final class HierarchyPanel {
         let templates = EntityTemplate.allCases
         let menu = PopupMenu(items: templates.map(\.title), anchor: createButton)
         menu.onSelect = { [unowned self] index in
-            session.create(templates[index], at: spawnPosition())
+            session.run(EntityCreateCommand.self, .init(template: templates[index], position: spawnPosition()))
         }
         context.presentOverlay(menu)
     }

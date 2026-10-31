@@ -56,9 +56,13 @@ public struct ViewportToolContext {
     public let isPlaying: Bool
     /// Local bounds of a mesh (from the renderer), for picking and highlighting.
     public let meshBounds: (MeshHandle) -> Bounds?
+    /// The session's commands: tools record a finished gesture's result through one (the gizmo
+    /// runs `transform.set`). Without them, tools record on `undo` directly.
+    public let commands: CommandRegistry?
 
     public init(world: World, selection: EditorSelection, undo: UndoStack, view: SceneView, viewportRect: UIRect,
-                pixelScale: Float, toolMode: EditorTool, isPlaying: Bool, meshBounds: @escaping (MeshHandle) -> Bounds?) {
+                pixelScale: Float, toolMode: EditorTool, isPlaying: Bool, meshBounds: @escaping (MeshHandle) -> Bounds?,
+                commands: CommandRegistry? = nil) {
         self.world = world
         self.selection = selection
         self.undo = undo
@@ -68,6 +72,7 @@ public struct ViewportToolContext {
         self.toolMode = toolMode
         self.isPlaying = isPlaying
         self.meshBounds = meshBounds
+        self.commands = commands
     }
 
     public var viewportSize: Vec2 { Vec2(viewportRect.width, viewportRect.height) }

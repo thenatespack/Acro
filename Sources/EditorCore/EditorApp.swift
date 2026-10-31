@@ -38,10 +38,12 @@ public struct EditorOptions: Sendable {
 
 /// The editor application: hosts an `EditorSession` in the engine, builds the panels in a
 /// `DockSpace` under a toolbar, renders the viewport through `SceneRenderer.beginViews` /
-/// `renderView` into a `RenderTarget` sized to its panel, routes shortcuts and applies the UI's
-/// cursor. Run it with `Engine(config:).run(EditorApp(options:))`.
+/// `renderView` into a `RenderTarget` sized to its panel, routes shortcuts to commands and applies
+/// the UI's cursor. Every button, menu item, shortcut and drop runs a command from
+/// `session.commands`; the app is the session's `EditorHost` (layout reset, framing the camera).
+/// Run it with `Engine(config:).run(EditorApp(options:))`.
 @MainActor
-public final class EditorApp: Game {
+public final class EditorApp: Game, EditorHost {
     public let session: EditorSession
     public let options: EditorOptions
     public let viewport = ViewportController()
@@ -90,6 +92,7 @@ public final class EditorApp: Game {
             document.world.entityIDGenerator = { generator.next() }
         }
         session = EditorSession(document: document)
+        session.host = self
     }
 
     // MARK: Setup
@@ -127,16 +130,16 @@ public final class EditorApp: Game {
         session.onWillReplaceWorld = { [unowned self] in inspector.recorder.finishGesture() }
         session.onChange = { [unowned self] in toolbar.refresh() }
         session.onAssetsChange = { [unowned self] in assetsChanged() }
-        if let path = options.projectPath, session.openProject(path: path) {
+        if let path = options.projectPath, session.run(ProjectOpenCommand.self, .init(path: path)) != nil {
             toolbar.projectPath.text = path
         } else if !options.deterministic, let path = prefs.lastProjectPath {
             toolbar.projectPath.text = path
         }
         if let path = options.scenePath {
-            if !session.open(path: path) { session.newDocument() }
+            if session.run(SceneOpenCommand.self, .init(path: path)) == nil { session.run(SceneNewCommand.self) }
             toolbar.path.text = path
         } else {
-            session.newDocument()
+            session.run(SceneNewCommand.self)
             toolbar.path.text = prefs.lastScenePath ?? "scene.json"
         }
         hierarchy.sync(force: true)
@@ -235,11 +238,15 @@ public final class EditorApp: Game {
     }
 
     func openProject() {
-        if session.openProject(path: toolbar.projectPath.text) { toolbar.projectPath.text = session.project?.root.path ?? "" }
+        if let result = session.run(ProjectOpenCommand.self, .init(path: toolbar.projectPath.text)) {
+            toolbar.projectPath.text = result.path
+        }
     }
 
     func newProject() {
-        if session.newProject(path: toolbar.projectPath.text) { toolbar.projectPath.text = session.project?.root.path ?? "" }
+        if let result = session.run(ProjectNewCommand.self, .init(path: toolbar.projectPath.text)) {
+            toolbar.projectPath.text = result.path
+        }
     }
 
     /// Writes the prefs file (layout, last scene) if prefs are persisted. The host calls it on exit too.
@@ -255,7 +262,8 @@ public final class EditorApp: Game {
         }
     }
 
-    func resetLayout() {
+    /// `layout.reset`.
+    public func resetLayout() {
         dock.restoreLayout(EditorLayout.defaultLayout)
         prefs.layout = dock.layout
         prefsDirty = true
@@ -273,7 +281,7 @@ public final class EditorApp: Game {
         ui.update(engine: engine, dt: dt)
         let focus = EditorShortcuts.Focus(textEditing: textBefore || textEditing(), overlayOpen: overlayBefore,
                                           widgetFocused: focusedBefore)
-        for action in shortcuts.actions(for: input.keyPresses, focus: focus) { perform(action) }
+        for command in shortcuts.actions(for: input.keyPresses, focus: focus) { invoke(command) }
 
         updateViewport(engine: engine, dt: dt, keyboardFree: !focus.textEditing)
         session.tick(dt: Double(dt))
@@ -313,23 +321,24 @@ public final class EditorApp: Game {
         if prefsDirty && !MouseButton.allCases.contains(where: input.isDown) { savePrefs() }
     }
 
-    func perform(_ action: EditorAction) {
-        switch action {
-        case .undo: session.performUndo()
-        case .redo: session.performRedo()
+    /// Runs the command `id` as the UI does (a shortcut): commands that need an answer from the
+    /// user ask first (delete confirms, import picks files, save takes the path field); the others
+    /// run with default arguments. Unavailable commands do nothing.
+    func invoke(_ id: CommandID) {
+        switch id {
         case .save: save()
-        case .duplicate: session.duplicateSelection()
         case .delete: confirmDeleteSelection()
-        case .focusSelection: frameSelection()
+        case .importAsset: assetBrowser.beginImport()
         case .clearSelection:
             // Esc first cancels a gizmo drag, then clears the selection.
-            if transformTool?.cancelDrag(world: session.world) != true { session.selection.clear() }
-        case .togglePlay: session.togglePlay()
-        case .importAsset: assetBrowser.beginImport()
+            if transformTool?.cancelDrag(world: session.world) != true { session.run(SelectionClearCommand.self) }
+        default:
+            guard session.commands.isAvailable(id) else { return }
+            session.run(id)
         }
     }
 
-    /// Asks in a modal dialog, then deletes the selected entities (one undo step).
+    /// Asks in a modal dialog, then deletes the selected entities (`entity.delete`, one undo step).
     func confirmDeleteSelection() {
         let doomed = session.selection.topLevelEntities(in: session.world)
         guard !doomed.isEmpty, ui.overlays.isEmpty else { return }
@@ -339,20 +348,20 @@ public final class EditorApp: Game {
         let message = (hasChildren ? (doomed.count == 1 ? "Its children are deleted with it. " : "Their children are deleted with them. ") : "")
             + "You can undo this with \(shortcuts.shortcutText(for: .undo))."
         let dialog = ConfirmDialog(title: title, message: message, confirmTitle: "Delete", name: "deleteEntitiesDialog")
-        dialog.onConfirm = { [unowned self] in session.deleteSelection() }
+        dialog.onConfirm = { [unowned self] in session.run(EntityDeleteCommand.self) }
         dialog.present(in: ui)
     }
 
     func save() {
-        if session.save(fallbackPath: toolbar.path.text) { rememberScenePath() }
+        if session.run(SceneSaveCommand.self, .init(path: toolbar.path.text)) != nil { rememberScenePath() }
     }
 
     func saveAs() {
-        if session.save(as: toolbar.path.text) { rememberScenePath() }
+        if session.run(SceneSaveAsCommand.self, .init(path: toolbar.path.text)) != nil { rememberScenePath() }
     }
 
     func open() {
-        if session.open(path: toolbar.path.text) {
+        if session.run(SceneOpenCommand.self, .init(path: toolbar.path.text)) != nil {
             hierarchy.sync(force: true)
             rememberScenePath()
         }
@@ -367,8 +376,9 @@ public final class EditorApp: Game {
         }
     }
 
-    /// Frames the selected entities (their bounds, or their positions) in the viewport.
-    func frameSelection() {
+    /// Frames the selected entities (their bounds, or their positions) in the viewport
+    /// (`view.frameSelection`).
+    public func frameSelection() {
         let context = toolContext(view: currentView ?? viewport.view(aspect: sizer.aspectRatio))
         var lo = Vec3(repeating: .infinity), hi = Vec3(repeating: -.infinity)
         for entity in session.selection.entities(in: session.world) {
@@ -432,7 +442,7 @@ public final class EditorApp: Game {
         ViewportToolContext(
             world: session.world, selection: session.selection, undo: session.undo, view: view, viewportRect: viewport.rect,
             pixelScale: ui.scale, toolMode: session.tool, isPlaying: session.isPlaying,
-            meshBounds: { [unowned self] handle in meshBounds(handle) })
+            meshBounds: { [unowned self] handle in meshBounds(handle) }, commands: session.commands)
     }
 
     private func meshBounds(_ handle: MeshHandle) -> Bounds? {
@@ -627,18 +637,22 @@ final class Toolbar {
     private let playButton: Button
     private let toolButtons: [(EditorTool, Button)]
     private let resetButton: Button
+    /// Buttons enabled by their command's availability.
+    private var commandButtons: [(CommandID, Button)] = []
     private let titleLabel = Label("", role: .secondary, name: "documentTitle")
 
     init(app: EditorApp) {
         self.app = app
         let session = app.session
-        undoButton = Button("Undo", name: "undo") { session.performUndo() }
-        redoButton = Button("Redo", name: "redo") { session.performRedo() }
-        playButton = Button("Play", name: "play") { session.togglePlay() }
-        toolButtons = EditorTool.allCases.map { tool in (tool, Button(tool.title, name: tool.rawValue) { session.tool = tool }) }
+        undoButton = Button("Undo", name: "undo") { session.run(EditUndoCommand.self) }
+        redoButton = Button("Redo", name: "redo") { session.run(EditRedoCommand.self) }
+        playButton = Button("Play", name: "play") { session.run(PlayToggleCommand.self) }
+        toolButtons = EditorTool.allCases.map { tool in
+            (tool, Button(tool.title, name: tool.rawValue) { session.run(ToolSetCommand.self, .init(tool: tool)) })
+        }
         path.style.width = 220
         let shortcuts = app.shortcuts
-        let newButton = Button("New", name: "new") { session.newDocument() }
+        let newButton = Button("New", name: "new") { session.run(SceneNewCommand.self) }
         let openButton = Button("Open", name: "open") { [unowned app] in app.open() }
         let saveButton = Button("Save", name: "save") { [unowned app] in app.save() }
         let saveAsButton = Button("Save As", name: "saveAs") { [unowned app] in app.saveAs() }
@@ -656,6 +670,8 @@ final class Toolbar {
         path.tooltip = "Scene file path, used by Open, Save and Save As"
         resetButton.tooltip = "Restore the default panel layout"
         for (tool, button) in toolButtons { button.tooltip = "\(tool.title) tool" }
+        commandButtons = [(SceneNewCommand.id, newButton), (SceneOpenCommand.id, openButton), (SceneSaveCommand.id, saveButton),
+                          (SceneSaveAsCommand.id, saveAsButton), (LayoutResetCommand.id, resetButton)]
         view = HStack(spacing: 6, padding: EdgeInsets(horizontal: 8, vertical: 5), name: "toolbar")
         view.background = (app.ui?.theme ?? UITheme()).panelBackground
         view.addChildren([
@@ -680,8 +696,9 @@ final class Toolbar {
         let session = app.session
         let undo = session.undo
         let shortcuts = app.shortcuts
-        set(undoButton, title: undo.undoTitle, enabled: undo.canUndo)
-        set(redoButton, title: undo.redoTitle, enabled: undo.canRedo)
+        set(undoButton, title: undo.undoTitle, enabled: session.commands.isAvailable(EditUndoCommand.self))
+        set(redoButton, title: undo.redoTitle, enabled: session.commands.isAvailable(EditRedoCommand.self))
+        for (id, button) in commandButtons { set(button, title: button.title, enabled: session.commands.isAvailable(id)) }
         set(playButton, title: session.isPlaying ? "Stop" : "Play", enabled: true)
         undoButton.tooltip = shortcuts.tooltip(undo.undoTitle, for: .undo)
         redoButton.tooltip = shortcuts.tooltip(undo.redoTitle, for: .redo)

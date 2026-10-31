@@ -519,7 +519,10 @@ public final class AssetBrowserPanel {
                 items.append(("Delete", { [unowned self] in askDelete() }))
             }
             if case .asset(let id) = entry.item, model.session.assets?.record(id)?.importer == GLTFImporter().name {
-                items.append(("Extract Materials", { [unowned self] in model.session.extractMaterials(of: id); model.invalidate() }))
+                items.append(("Extract Materials", { [unowned self] in
+                    model.session.run(AssetExtractMaterialsCommand.self, .init(asset: id))
+                    model.invalidate()
+                }))
             }
             #if os(macOS)
             if let url = model.session.project?.url(forAssetPath: entry.path) {

@@ -38,7 +38,8 @@ public final class EditorLog {
     public private(set) var changeCount = 0
     /// The time stamped on new entries; the host advances it every frame.
     public var time: Double = 0
-    private var nextSequence = 0
+    /// The `sequence` the next entry gets.
+    public private(set) var nextSequence = 0
 
     public init() {}
 

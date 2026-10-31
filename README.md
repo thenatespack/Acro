@@ -269,7 +269,7 @@ Rebinding: `actions.listen(for: .button("jump", slot: 0))` waits for the next ke
 - **Viewport:** the scene rendered into a `RenderTarget` sized to the panel, with a grid, a selection outline (`SelectionOutlineRenderer`), camera frustums and light arrows. The toolbar's Move / Rotate / Scale picks the `TransformGizmo` mode; a gizmo drag is one undo step and Esc cancels it. Click selects exactly against the mesh (`ScenePicker`; Shift or Cmd/Ctrl toggles), middle-drag or Alt-drag orbits, add Shift to pan, the wheel zooms, holding the right button flies (WASD, Q/E, Shift faster). Tools implement `ViewportTool` and get the pointer before the camera.
 - **Hierarchy:** the entity tree (by `Name`), multi-select, F2 / double click renames, drag to reparent or reorder (world transforms kept), Create / Duplicate / Delete. All recorded in undo. Deleting (the button, or Delete/Backspace) asks first in a modal dialog that names the entity, or the count, and says whether children go too.
 - **Inspector:** the primary selected entity's name, id and components (`PropertyGrid`; `MeshRenderer.mesh` / `.material` are dropdowns of the registered keys via `PropertyGrid.stringChoices`); one undo step per drag or typed value; per-component remove; Add Component for registered types with a default (Transform, Camera, DirectionalLight, SceneEnvironment, MeshRenderer, Spin; register more with `EditorComponentCatalog.register`). With several entities selected it shows the primary one.
-- **Shortcuts** (Cmd on macOS, Ctrl elsewhere): Z undo, Shift+Z (or Ctrl+Y) redo, S save, D duplicate, P play/stop, Shift+I import files into the Assets panel's folder, Delete/Backspace delete, F frame selection, Esc clear selection. They are off while a text field is being edited or a popup is open.
+- **Shortcuts** (Cmd on macOS, Ctrl elsewhere): Z undo, Shift+Z (or Ctrl+Y) redo, S save, D duplicate, P play/stop, Shift+I import files into the Assets panel's folder, Delete/Backspace delete, F frame selection, Esc clear selection. `EditorShortcuts` binds them to command ids (below). They are off while a text field is being edited or a popup is open.
 - **Play mode:** Play snapshots the world, runs its systems with real dt and stops recording undo; edits while playing apply but are discarded on Stop, which restores the snapshot. Selection survives (it stores `EntityID`s). Saving, New and Open wait until Stop. The viewport keeps the editor camera while playing.
 - **Files:** plain scene files (`World.save`, JSON).
 - **Projects:** the project path field with Open Project / New Project (or `--project <folder>`) opens a project, imports its assets and watches `Assets/` (changes are rescanned once a second). The inspector's mesh and material dropdowns then list its assets after the built-in keys, titled "path › object"; picking one stores the asset id. The last project path is remembered in the field, not reopened. Without a project the editor behaves as before.
@@ -282,6 +282,32 @@ Rebinding: `actions.listen(for: .button("jump", slot: 0))` waits for the next ke
 - **Long titles** in dropdowns (asset paths in the mesh and material fields) end in "…" before the chevron and show in full as a tooltip.
 - `EDITOR_SELECT_ASSET=<path>` (relative to `Assets/`; `file#sub-asset` for an object) selects an asset at startup, for screenshots of the browser and asset inspector.
 - **Limitations:** no native file dialogs, no right-click menus outside the asset browser, no undo for file operations (rename, move, delete, extract), no multi-selection or dragging several assets at once, no thumbnail disk cache, no multi-entity inspector, no game-camera view in play mode, no pause or step, closed panels come back only via Reset Layout.
+- **Commands** (`EditorCommand`, `CommandRegistry`): every editor action is a named command, and the toolbar, menus, shortcuts, hierarchy, inspector, gizmo, asset browser and drops only run commands; none of them edits the world or the document itself. A command has a stable `id`, a `title` and a `doc`, Codable `Arguments` and `Result`, `isAvailable(in:)` (which enables its buttons) and `run`, which records one undo step when the command is undoable. Commands act on the `EditorSession` only, so they run headless: `session.commands.run(EntityCreateCommand.self, .init(template: .cube))`, or generically `session.commands.run("entity.rename", json: data)` with JSON arguments, returning a JSON result (entities as id strings, assets as `asset:` references or paths under `Assets/`, vectors as arrays). `session.commands.all` lists them (`CommandInfo`). A run checks availability first; failures are logged once and thrown (`CommandError`). Asking the user stays in the UI: Delete confirms and Import picks files, then they run the command. What only the window can do (dock layout, viewport camera) goes through `EditorHost`, which the app implements; those commands are unavailable without it. Live previews during a drag go through commands too (`transient: true`), except the gizmo's, which moves entities itself and then records the result with `transform.set`.
+
+  | Id | Does | Undo |
+  |---|---|---|
+  | `scene.new`, `scene.open {path}`, `scene.save {path?}`, `scene.saveAs {path}` | New / Open / Save / Save As (not while playing) | |
+  | `edit.undo`, `edit.redo` | Undo / Redo | |
+  | `play.start`, `play.stop`, `play.toggle` | Play mode | |
+  | `tool.set {tool}` | Move / Rotate / Scale gizmo | |
+  | `project.open {path}`, `project.new {path}` | Open / create a project | |
+  | `layout.reset`, `view.frameSelection` | Reset the dock layout, frame the selection (need the window) | |
+  | `selection.set {entities, primary?}`, `selection.clear` | Select | |
+  | `entity.create {template, position?}` | Create Empty / Cube / Sphere / Plane | yes |
+  | `entity.duplicate`, `entity.delete` | Duplicate / delete the selection (the UI confirms delete) | yes |
+  | `entity.rename {entity, name}` | Rename | yes |
+  | `entity.reparent {entities, parent?, index?}` | Reparent / reorder, keeping world transforms | yes |
+  | `transform.set {changes: [{entity, transform, previous?}], label?}` | Set local transforms (gizmo drags) | yes |
+  | `component.add {entity, component}`, `component.remove {entity, component}` | Add (catalog default) / remove a component | yes |
+  | `component.setField {entity, component, path, value, previous?, label?, transient?}` | Set a field by reflection path (inspector edits) | yes |
+  | `asset.import {sources, folder?}` | Copy files into the project and import them | no |
+  | `asset.newFolder {folder?, name?}`, `asset.newMaterial {folder?, name?}` | New folder / `.material` | no |
+  | `asset.rename {path, name}`, `asset.move {path, folder}`, `asset.delete {path}` | File operations, keeping ids (the UI confirms delete) | no |
+  | `asset.extractMaterials {asset}` | Extract a model's materials (the scene edit is undoable) | partly |
+  | `asset.applySettings {asset, settings}` | Write import settings and reimport | no |
+  | `asset.instantiate {asset, position?, parent?}` | Place a model, prefab or mesh (drops) | yes |
+  | `asset.assign {entity, asset, kind?}` | Set a renderer's mesh or material (drops) | yes |
+  | `material.set {asset, material, previous?, label?, transient?}` | Edit a `.material` file | yes |
 - **Tooltips:** toolbar buttons show their shortcut, taken from `EditorShortcuts` so it always matches the real binding ("Undo Rename (⌘Z)" on macOS, "(Ctrl+Z)" elsewhere). Tool, file, hierarchy, console and inspector buttons, the component remove buttons ("Remove Transform"), the entity ID, and dock tab close buttons ("Close Console") have tooltips. Truncated names show in full.
 
 ## Building
