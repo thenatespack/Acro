@@ -1,0 +1,33 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// Sub-emitters, step 2 (dispatched indirectly with the workgroups particle_events.comp
+// computed): spawns the child emitter's particles for this step's events, `perEvent` per
+// event, into consecutive ring slots. Each comes from the child's shape and cone (rotated and
+// scaled by its entity, but centered on the event) and inherits a fraction of the event's
+// velocity. particle_simulate.comp then integrates them with the child's other particles.
+
+#include "particles.glsl"
+
+layout(local_size_x = 256) in;
+
+layout(set = 2, binding = 2, std140) uniform Params { EmitterParams emitter; };
+layout(push_constant) uniform Push {
+    uint perEvent;
+    float inheritVelocity;
+} push;
+layout(set = 2, binding = 24, std430) buffer Particles { Particle particles[]; };
+layout(set = 2, binding = 28, std430) readonly buffer EventList { vec4 events[]; };
+layout(set = 2, binding = 29, std430) readonly buffer Spawner { uint spawner[]; };
+
+#include "particle_spawn.glsl"
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= spawner[5]) return;
+    uint event = i / push.perEvent;
+    Particle p = spawnParticle(spawner[6] + i);
+    p.position.xyz += events[2u * event].xyz;
+    p.velocity.xyz = fma(events[2u * event + 1u].xyz, vec3(push.inheritVelocity), p.velocity.xyz);
+    particles[(spawner[4] + i) % emitter.info.x] = p;
+}

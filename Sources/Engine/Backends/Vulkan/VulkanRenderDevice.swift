@@ -54,7 +54,8 @@ final class VulkanTexture: GPUTexture {
     let descriptorSet: VkDescriptorSet?
     /// Storage textures stay in the general layout (written by compute, sampled by any stage).
     let isStorage: Bool
-    /// The layout the image rests in between passes, as sampled.
+    /// The layout the image rests in between passes, as sampled (depth textures: depth read-only,
+    /// where a depth pass leaves them).
     let layout: VkImageLayout
     var isBorrowed: Bool { resource == nil }
 
@@ -71,7 +72,7 @@ final class VulkanTexture: GPUTexture {
         self.framebuffer = framebuffer
         self.descriptorSet = descriptorSet
         self.deletionQueue = deletionQueue
-        layout = isStorage ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+        layout = isStorage ? VK_IMAGE_LAYOUT_GENERAL : format.isDepth ? depthReadLayout : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
         let resource = VulkanResource.texture(image, memory, view, framebuffer, descriptorSet)
         self.resource = resource
         deletionQueue.register(resource)
@@ -1646,8 +1647,9 @@ final class VulkanRenderDevice: RenderDevice {
             timedPassEnd = query + 1
         }
         Self.recordMemoryBarrier(cmd, from: vkFlags(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT), vkFlags(VK_ACCESS_MEMORY_WRITE_BIT),
-                                 to: vkFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT),
-                                 vkFlags(VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_UNIFORM_READ_BIT))
+                                 to: vkFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT),
+                                 vkFlags(VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_UNIFORM_READ_BIT,
+                                         VK_ACCESS_INDIRECT_COMMAND_READ_BIT))
         let pass = VulkanComputePass(
             commandBuffer: cmd, device: device, layout: pipelineLayout, transient: frame.transient, descriptors: frame.descriptors)
         currentComputePass = pass
@@ -2937,7 +2939,8 @@ final class VulkanRenderPass: RenderPass {
     func setTexture(_ texture: GPUTexture, index: Int, stage: ShaderStage) {
         precondition(textureIndices.contains(index), "Texture index \(index) is outside \(textureIndices)")
         let texture = texture as! VulkanTexture
-        precondition(!texture.format.isDepth, "Depth textures are bound with setTexture(_:)")
+        // A depth texture binds as a plain texture too (read with texelFetch), in the
+        // depth read-only layout its depth pass left it in.
         userBindings.bindTexture(texture.view, layout: texture.layout, index: index)
     }
 
@@ -3077,7 +3080,6 @@ final class VulkanComputePass: ComputePass {
     func setTexture(_ texture: GPUTexture, index: Int) {
         precondition(textureIndices.contains(index), "Texture index \(index) is outside \(textureIndices)")
         let texture = texture as! VulkanTexture
-        precondition(!texture.format.isDepth || texture.isBorrowed, "Depth textures can't be bound in compute passes")
         userBindings.bindTexture(texture.view, layout: texture.layout, index: index)
     }
 
@@ -3115,6 +3117,19 @@ final class VulkanComputePass: ComputePass {
     func dispatch(groups: ComputeSize) {
         precondition(pipeline != nil, "dispatch without a compute pipeline")
         guard groups.count > 0 else { return }
+        prepareDispatch()
+        vkCmdDispatch(commandBuffer, UInt32(groups.x), UInt32(groups.y), UInt32(groups.z))
+    }
+
+    func dispatchIndirect(buffer: GPUBuffer, offset: Int) {
+        precondition(pipeline != nil, "dispatch without a compute pipeline")
+        validateDispatchIndirect(buffer, offset: offset)
+        prepareDispatch()
+        vkCmdDispatchIndirect(commandBuffer, (buffer as! VulkanBuffer).buffer, VkDeviceSize(offset))
+    }
+
+    /// Binds a new set 2 if bindings changed, and waits for the previous dispatch's writes.
+    private func prepareDispatch() {
         if userBindings.isDirty {
             do {
                 var set: VkDescriptorSet? = try userBindings.makeSet(from: descriptors, device: device)
@@ -3124,16 +3139,18 @@ final class VulkanComputePass: ComputePass {
             }
         }
         if dispatched {
-            // Each dispatch sees the previous ones' writes (and doesn't overwrite what they still read).
+            // Each dispatch sees the previous ones' writes, also as indirect arguments (and
+            // doesn't overwrite what they still read).
             var barrier = VkMemoryBarrier()
             barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER
             barrier.srcAccessMask = vkFlags(VK_ACCESS_SHADER_WRITE_BIT)
-            barrier.dstAccessMask = vkFlags(VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_UNIFORM_READ_BIT)
+            barrier.dstAccessMask = vkFlags(VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_UNIFORM_READ_BIT,
+                                            VK_ACCESS_INDIRECT_COMMAND_READ_BIT)
             let compute = vkFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT)
-            vkCmdPipelineBarrier(commandBuffer, compute, compute, 0, 1, &barrier, 0, nil, 0, nil)
+            vkCmdPipelineBarrier(commandBuffer, compute, vkFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT),
+                                 0, 1, &barrier, 0, nil, 0, nil)
         }
         dispatched = true
-        vkCmdDispatch(commandBuffer, UInt32(groups.x), UInt32(groups.y), UInt32(groups.z))
     }
 }
 

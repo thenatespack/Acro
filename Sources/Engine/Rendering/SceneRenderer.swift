@@ -149,7 +149,7 @@ public final class SceneRenderer {
     private var shadowsActive = false
     /// The shadows `prepare` set up for `renderShadows`.
     private var shadowSetup: ShadowSetup?
-    private var uploaded: TransientBuffer?
+    var uploaded: TransientBuffer?
     private var previousViewProj: Mat4?
     private var reportedMissing: Set<String> = []
 
@@ -225,6 +225,15 @@ public final class SceneRenderer {
     /// GPU particles of the world's `ParticleEmitter`s (see `SceneRenderer+Particles.swift`),
     /// created with the first emitter; nil until then.
     public internal(set) var particles: ParticleSystem?
+    /// The `prepare` camera, for the particles' depth prepass (`renderParticleDepth`).
+    var particleView: (viewProjection: Mat4, projection: Mat4, eye: Vec3, size: (width: Int, height: Int), reversedZ: Bool)?
+    /// This frame's depth prepass of the `prepare` camera, when particles need it.
+    var particleDepth: ParticleSceneDepth?
+    /// Depth prepass textures: the `prepare` camera's, and `renderView`'s by size.
+    var particleDepthTexture: GPUTexture?
+    var viewParticleDepthTextures: [[Int]: GPUTexture] = [:]
+    /// The camera depth prepass's pipelines (`DepthVariant.prepass`), created on first use.
+    private var prepassPipelines: [PrepassKey: RenderPipeline] = [:]
 
     /// The light as `prepare` / `beginViews` set it up, with the frame's shadows.
     private struct LightSetup {
@@ -527,6 +536,7 @@ public final class SceneRenderer {
         shadowSetup = light.shadows
         debugView = DebugView(viewProjection: jittered, cameraPosition: eye, viewportSize: size, reversedZ: camera.reversedZ,
                               projectionScale: camera.projection(aspect: engine.aspectRatio).c1.y)
+        particleView = (jittered, jitteredProjection, eye, size, camera.reversedZ)
         prepareParticles(world: world, cameraPosition: eye)
     }
 
@@ -625,6 +635,7 @@ public final class SceneRenderer {
         uploaded = list.instances.isEmpty ? nil : frame.upload(list.instances)
         environmentLighting.render()
         renderShadowAtlas(shadowsActive ? shadowSetup : nil, frame: frame)
+        renderParticleDepth(frame: frame)
         particles?.simulate(frame: frame)
     }
 
@@ -669,7 +680,7 @@ public final class SceneRenderer {
     public func draw(_ pass: RenderPass) {
         guard let uniforms else { return }
         draw(pass, list: list, uniforms: uniforms, instances: uploaded, reversedZ: reversedZ, lights: clusters.isEmpty ? nil : lightData,
-             sky: skyView)
+             sky: skyView, particleDepth: particleDepth)
         if let debugDraw, let debugView { drawDebug(debugDraw, in: pass, view: debugView) }
     }
 
@@ -705,6 +716,7 @@ public final class SceneRenderer {
         renderShadowAtlas(light.shadows, frame: frame)
         prepareParticles(world: world, cameraPosition: shadowFocus?.eye ?? Vec3(focus.view.inverse.c3.x, focus.view.inverse.c3.y,
                                                                                 focus.view.inverse.c3.z))
+        particles?.sceneDepth = nil  // no single camera: no depth collisions
         particles?.simulate(frame: frame)
     }
 
@@ -729,9 +741,11 @@ public final class SceneRenderer {
         if let shadows = views.light.shadows { uniforms.shadows = shadows.uniforms(for: viewClusters) }
         uniforms.environment = environmentLighting.lighting
         let lights = viewClusters.isEmpty ? nil : lightData
+        let particleDepth = renderViewParticleDepth(list: viewList, instances: instances, view: view,
+                                                    size: (target.width, target.height), frame: frame)
         frame.renderPass(into: target, clearColor: view.clearColor, clearDepth: view.reversedZ ? 0 : 1) { pass in
             draw(pass, list: viewList, uniforms: uniforms, instances: instances, reversedZ: view.reversedZ, lights: lights,
-                 sky: (view.view, view.projection))
+                 sky: (view.view, view.projection), particleDepth: particleDepth)
             if let debugDraw {
                 drawDebug(debugDraw, in: pass, view: DebugView(
                     view: view.view, projection: view.projection, viewportSize: (target.width, target.height),
@@ -755,14 +769,30 @@ public final class SceneRenderer {
         debugRenderer?.draw(debug, in: pass, view: view)
     }
 
+    /// Depth-only pipeline configurations: the shadow atlas's (depth bias, standard Z) and the
+    /// camera depth prepass's (`renderDepthPrepass`: no bias, the camera's depth direction).
+    enum DepthVariant: Hashable {
+        case shadow
+        case prepass(reversedZ: Bool)
+    }
+
+    private struct PrepassKey: Hashable {
+        var reversedZ: Bool
+        var alphaTested: Bool
+        var skinned: Bool
+    }
+
     /// Shadow batches: depth only, except alpha-tested ones, which sample their material's alpha.
-    /// Skinned casters use the skinning variants with their joint matrices.
-    private func drawShadows(_ pass: RenderPass, _ batches: ArraySlice<RenderBatch>, instances: TransientBuffer) {
+    /// Skinned casters use the skinning variants with their joint matrices. The pass starts with
+    /// `variant`'s plain pipeline set.
+    private func drawShadows(_ pass: RenderPass, _ batches: ArraySlice<RenderBatch>, instances: TransientBuffer,
+                             variant: DepthVariant = .shadow) {
+        guard let plain = depthPipeline(variant, alphaTested: false, skinned: false) else { return }
         var masked = false
         var skinned = false
         for batch in batches {
             if batch.skin >= 0 {
-                guard let pipeline = skinnedShadowPipeline(alphaTested: batch.material >= 0) else { continue }
+                guard let pipeline = depthPipeline(variant, alphaTested: batch.material >= 0, skinned: true) else { continue }
                 pass.setPipeline(pipeline)
                 if batch.material >= 0 { bindMaterial(batch.material, in: pass, skin: batch.skin) } else { bindSkin(batch.skin, material: nil, in: pass) }
                 skinned = true
@@ -771,20 +801,75 @@ public final class SceneRenderer {
             }
             if skinned {
                 // Back to the pipeline the batches below expect.
-                pass.setPipeline(masked ? maskedShadowPipeline() ?? shadowPipeline : shadowPipeline)
+                pass.setPipeline(masked ? depthPipeline(variant, alphaTested: true, skinned: false) ?? plain : plain)
                 skinned = false
             }
-            if batch.material >= 0, let pipeline = maskedShadowPipeline() {
+            if batch.material >= 0, let pipeline = depthPipeline(variant, alphaTested: true, skinned: false) {
                 if !masked { pass.setPipeline(pipeline) }
                 masked = true
                 bindMaterial(batch.material, in: pass)
             } else if masked {
-                pass.setPipeline(shadowPipeline)
+                pass.setPipeline(plain)
                 masked = false
             }
             draw(pass, batch, instances: instances)
         }
-        if skinned { pass.setPipeline(masked ? maskedShadowPipeline() ?? shadowPipeline : shadowPipeline) }
+        if skinned { pass.setPipeline(masked ? depthPipeline(variant, alphaTested: true, skinned: false) ?? plain : plain) }
+    }
+
+    private func depthPipeline(_ variant: DepthVariant, alphaTested: Bool, skinned: Bool) -> RenderPipeline? {
+        switch variant {
+        case .shadow:
+            skinned ? skinnedShadowPipeline(alphaTested: alphaTested) : alphaTested ? maskedShadowPipeline() : shadowPipeline
+        case .prepass(let reversedZ):
+            prepassPipeline(PrepassKey(reversedZ: reversedZ, alphaTested: alphaTested, skinned: skinned))
+        }
+    }
+
+    /// The shadow shaders without depth bias, testing in the camera's depth direction.
+    private func prepassPipeline(_ key: PrepassKey) -> RenderPipeline? {
+        if let pipeline = prepassPipelines[key] { return pipeline }
+        do {
+            let shader = switch (key.skinned, key.alphaTested) {
+            case (false, false): try ShaderSource.load(named: "mesh_shadow", bundle: .module)
+            case (false, true): try ShaderSource.load(named: "mesh_shadow_mask", bundle: .module)
+            case (true, false): try ShaderSource.load(named: "mesh_shadow_skinned", bundle: .module)
+            case (true, true): try ShaderSource.load(vertex: "mesh_shadow_mask_skinned", fragment: "mesh_shadow_mask", bundle: .module)
+            }
+            var descriptor = PipelineDescriptor(shader: shader, vertexLayout: key.skinned ? SkinnedMeshVertex.layout : MeshVertex.layout,
+                                                instanceLayout: MeshInstance.layout)
+            descriptor.target = .depthOnly
+            descriptor.depthOnlyFragment = key.alphaTested
+            descriptor.cullMode = .none
+            descriptor.depthCompare = key.reversedZ ? .greater : .less
+            let pipeline = try device.makePipeline(descriptor)
+            prepassPipelines[key] = pipeline
+            return pipeline
+        } catch {
+            print("SceneRenderer: depth prepass pipeline creation failed: \(error)")
+            return nil
+        }
+    }
+
+    /// Renders the opaque batches of `list` (`instances` uploaded for it), seen with
+    /// `viewProjection`, into `target`'s depth (cleared to the far plane): what particles fade
+    /// against (`softness`) and collide with (`collidesWithDepth`). Transparent batches don't
+    /// occlude and aren't drawn.
+    func renderDepthPrepass(into target: GPUTexture, list: RenderList, instances: TransientBuffer?, viewProjection: Mat4,
+                            reversedZ: Bool, frame: Frame) {
+        let variant = DepthVariant.prepass(reversedZ: reversedZ)
+        // Depth-only batches have no material, alpha-tested ones keep theirs (as for shadows).
+        let batches = list.opaque.map { batch -> RenderBatch in
+            var batch = batch
+            if !materials[batch.material].material.alphaTested { batch.material = -1 }
+            return batch
+        }
+        frame.depthPass(into: target, clearDepth: reversedZ ? 0 : 1) { pass in
+            guard let instances, !batches.isEmpty, let plain = depthPipeline(variant, alphaTested: false, skinned: false) else { return }
+            pass.setPipeline(plain)
+            pass.setUniforms(ShadowPassUniforms(viewProj: viewProjection, lightViewProj: viewProjection))
+            drawShadows(pass, batches[...], instances: instances, variant: variant)
+        }
     }
 
     private func skinnedShadowPipeline(alphaTested: Bool) -> RenderPipeline? {
@@ -828,16 +913,16 @@ public final class SceneRenderer {
     /// Binds the point / spot light buffers 3-7 (copied into the frame's transient memory), or
     /// zeros when there are none (the shader skips the lights then, but Vulkan wants every
     /// declared binding valid).
-    private func bindLights(_ lights: LightClusters.GPUData?, in pass: RenderPass) {
+    func bindLights(_ lights: LightClusters.GPUData?, in pass: RenderPass, stage: ShaderStage = .fragment) {
         guard let lights else {
-            for index in 3...7 { pass.setUniformBuffer(emptyLightBuffer, index: index, stage: .fragment) }
+            for index in 3...7 { pass.setUniformBuffer(emptyLightBuffer, index: index, stage: stage) }
             return
         }
-        lights.positions.withUnsafeBytes { pass.setUniformData($0, index: 3, stage: .fragment) }
-        lights.colors.withUnsafeBytes { pass.setUniformData($0, index: 4, stage: .fragment) }
-        lights.directions.withUnsafeBytes { pass.setUniformData($0, index: 5, stage: .fragment) }
-        lights.cells.withUnsafeBytes { pass.setUniformData($0, index: 6, stage: .fragment) }
-        lights.indices.withUnsafeBytes { pass.setUniformData($0, index: 7, stage: .fragment) }
+        lights.positions.withUnsafeBytes { pass.setUniformData($0, index: 3, stage: stage) }
+        lights.colors.withUnsafeBytes { pass.setUniformData($0, index: 4, stage: stage) }
+        lights.directions.withUnsafeBytes { pass.setUniformData($0, index: 5, stage: stage) }
+        lights.cells.withUnsafeBytes { pass.setUniformData($0, index: 6, stage: stage) }
+        lights.indices.withUnsafeBytes { pass.setUniformData($0, index: 7, stage: stage) }
     }
 
     /// Binds the skinning uniform block of `prep.skins[skin]` (buffer 2, both stages), with
@@ -868,7 +953,8 @@ public final class SceneRenderer {
     /// Opaque batches, then the sky (seen from `sky`'s view and projection, if the environment
     /// has one), then transparent batches back to front.
     private func draw(_ pass: RenderPass, list: RenderList, uniforms: FrameUniforms, instances uploaded: TransientBuffer?,
-                      reversedZ: Bool, lights: LightClusters.GPUData?, sky: (view: Mat4, projection: Mat4)?) {
+                      reversedZ: Bool, lights: LightClusters.GPUData?, sky: (view: Mat4, projection: Mat4)?,
+                      particleDepth: ParticleSceneDepth?) {
         pass.setUniforms(uniforms)
         pass.setTexture(shadowMap)
         bindLights(lights, in: pass)
@@ -894,7 +980,13 @@ public final class SceneRenderer {
                 draw(pass, batch, instances: uploaded)
             }
         }
-        drawParticles(in: pass, uniforms: uniforms, reversedZ: reversedZ)
+        if particles?.hasLitEmitters == true {
+            // Lit particles are lit per vertex: the vertex stage reads what the meshes' fragments did.
+            bindLights(lights, in: pass, stage: .vertex)
+            environmentLighting.bindLighting(in: pass, stage: .vertex)
+            pass.setTexture(shadowMap, index: 3, stage: .vertex)
+        }
+        drawParticles(in: pass, uniforms: uniforms, reversedZ: reversedZ, depth: particleDepth)
     }
 
     private func draw(_ pass: RenderPass, _ batch: RenderBatch, instances: TransientBuffer) {

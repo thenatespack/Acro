@@ -1,0 +1,48 @@
+#version 450
+
+// Back-to-front sorting, bitonic steps that stay inside 2048-element blocks, in shared memory
+// (one workgroup per block, 4 compare-exchanges per invocation per step): with k = 0 the whole
+// bitonic sort of each block (merge widths 2 ... 2048, alternating direction per block so the
+// blocks form bitonic sequences), else the last steps (distances 1024 ... 1) of the merge of
+// width k, after particle_sort_global.comp did the wider ones.
+
+layout(local_size_x = 256) in;
+
+layout(push_constant) uniform Push {
+    uvec4 merge;  // x merge width k (0: sort each block)
+} push;
+layout(set = 2, binding = 31, std430) buffer Keys { uvec2 keys[]; };
+
+shared uvec2 block[2048];
+
+bool before(uvec2 a, uvec2 b) {
+    return a.x < b.x || (a.x == b.x && a.y < b.y);
+}
+
+void exchange(uint base, uint k, uint j) {
+    for (uint t = 0u; t < 4u; t++) {
+        uint p = gl_LocalInvocationIndex + 256u * t;  // pair 0...1023
+        uint i = 2u * j * (p / j) + p % j, l = i + j;
+        bool ascending = ((base + i) & k) == 0u;
+        if (before(block[l], block[i]) == ascending) {
+            uvec2 a = block[i];
+            block[i] = block[l];
+            block[l] = a;
+        }
+    }
+    barrier();
+}
+
+void main() {
+    uint base = gl_WorkGroupID.x * 2048u, local = gl_LocalInvocationIndex;
+    for (uint t = 0u; t < 8u; t++) block[local + 256u * t] = keys[base + local + 256u * t];
+    barrier();
+    if (push.merge.x == 0u) {
+        for (uint k = 2u; k <= 2048u; k <<= 1) {
+            for (uint j = k >> 1; j > 0u; j >>= 1) exchange(base, k, j);
+        }
+    } else {
+        for (uint j = 1024u; j > 0u; j >>= 1) exchange(base, push.merge.x, j);
+    }
+    for (uint t = 0u; t < 8u; t++) keys[base + local + 256u * t] = block[local + 256u * t];
+}
