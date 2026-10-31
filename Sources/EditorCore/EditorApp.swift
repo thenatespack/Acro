@@ -21,6 +21,10 @@ public struct EditorOptions: Sendable {
     public var mcp = MCPOptions()
     /// Game code to load (`--game`), over the project's `"game"` setting (EditorGameModule.swift).
     public var game: GameModuleSettings?
+    /// UI zoom over the prefs' `uiScale` (`EDITOR_UI_SCALE`), clamped to `EditorApp.uiScaleRange`.
+    public var uiScale: Float?
+    /// A `UITheme` preset name over the prefs' `theme` (`EDITOR_THEME`: Dark, Light, High Contrast, Game).
+    public var theme: String?
 
     /// Which MCP transports to start.
     public struct MCPOptions: Sendable {
@@ -56,6 +60,8 @@ public struct EditorOptions: Sendable {
         var options = EditorOptions(scenePath: scenePath, projectPath: projectPath, deterministic: deterministic,
                                     prefsURL: deterministic ? nil : EditorPrefsStore.defaultURL())
         options.selectAssetPath = environment["EDITOR_SELECT_ASSET"]
+        options.uiScale = environment["EDITOR_UI_SCALE"].flatMap { Float($0) }
+        options.theme = environment["EDITOR_THEME"]
         options.mcp.http = !deterministic && environment["EDITOR_MCP_HTTP"] != "0"
         if let port = environment["EDITOR_MCP_PORT"].flatMap({ UInt16($0) }) { options.mcp.port = port }
         return options
@@ -110,6 +116,8 @@ public final class EditorApp: Game, EditorHost {
     private var shownAssetKeys: [AssetReference] = []
     private weak var shownAssets: AssetDatabase?
     private var prefs = EditorPrefs()
+    /// The UI zoom asked for (prefs, `EDITOR_UI_SCALE`); `ui.uiScale` is lower in a small window.
+    public private(set) var preferredUIScale: Float = 1
     private var prefsDirty = false
     private var captureRequested = false
     /// The MCP server, when a transport is on (`EditorOptions.mcp`).
@@ -178,9 +186,49 @@ public final class EditorApp: Game, EditorHost {
         FilePicker.isSuppressed = true  // no modal dialogs without a window
         transformTool = TransformTool(meshes: session.cpuPickMeshes)
         finishSetup()
-        ui.setViewport(size: size, scale: scale)
+        resizeWithoutWindow(size: size, scale: scale)
+    }
+
+    /// Lays the UI out for a window of `size` points at backing `scale` (and the UI's `uiScale`),
+    /// as a resized window would; no window or GPU (`setupWithoutWindow`).
+    public func resizeWithoutWindow(size: Vec2, scale: Float = 1) {
+        fitUIScale(window: size)
+        let zoom = ui.uiScale
+        ui.setViewport(size: size / zoom, scale: scale * zoom)
         ui.layoutIfNeeded()
         syncPanels()
+    }
+
+    /// The UI zooms the editor allows (`EditorPrefs.uiScale`, `EDITOR_UI_SCALE`): below 0.85 the
+    /// small text (11 pt) drops under 9 pt; above 2 a 1280-point window has too little room.
+    public static let uiScaleRange: ClosedRange<Float> = 0.85...2
+
+    /// The smallest UI, in points, a zoom above 100% may leave: a window with less room zooms less.
+    public static let minimumZoomedUISize = Vec2(800, 500)
+
+    /// `preferred` lowered (not below 1, or below `preferred` when that is under 1) so a window
+    /// of `window` points keeps at least `minimumZoomedUISize` points of UI.
+    public static func fittedUIScale(_ preferred: Float, window: Vec2) -> Float {
+        guard preferred > 1, window.x > 0, window.y > 0 else { return preferred }
+        let fit = min(window.x / minimumZoomedUISize.x, window.y / minimumZoomedUISize.y)
+        return max(1, min(preferred, (fit * 100).rounded(.down) / 100))
+    }
+
+    private func fitUIScale(window: Vec2) {
+        let zoom = Self.fittedUIScale(preferredUIScale, window: window)
+        if ui.uiScale != zoom { ui.uiScale = zoom }
+    }
+
+    /// The theme and UI zoom from the options, else the prefs, else Dark at 100%.
+    private func appearance() -> (theme: UITheme, uiScale: Float) {
+        let name = options.theme ?? prefs.theme
+        var theme = name.flatMap(UITheme.named) ?? .dark()
+        if let name, UITheme.named(name) == nil {
+            session.log.warning("Unknown theme '\(name)' (\(UITheme.presets.map(\.name).joined(separator: ", "))); using Dark")
+        }
+        if options.deterministic { theme.caretBlinkPeriod = 0 }
+        let zoom = options.uiScale ?? prefs.uiScale ?? 1
+        return (theme, min(max(zoom.isFinite ? zoom : 1, Self.uiScaleRange.lowerBound), Self.uiScaleRange.upperBound))
     }
 
     /// One frame without a window: what `update` does apart from rendering and real input.
@@ -198,11 +246,7 @@ public final class EditorApp: Game, EditorHost {
     private func finishSetup() {
         viewport.tools = [transformTool]
 
-        var theme = UITheme.dark()
-        if options.deterministic { theme.caretBlinkPeriod = 0 }
-        ui = UIContext(theme: theme)
         session.log.echoesToStandardOutput = !options.deterministic
-
         if let url = options.prefsURL {
             do {
                 prefs = try EditorPrefsStore(url: url).load() ?? EditorPrefs()
@@ -210,6 +254,10 @@ public final class EditorApp: Game, EditorHost {
                 session.log.warning("Ignoring unreadable editor prefs at \(url.path): \(error)")
             }
         }
+        let appearance = appearance()
+        ui = UIContext(theme: appearance.theme)
+        preferredUIScale = appearance.uiScale
+        ui.uiScale = appearance.uiScale
         var ai = prefs.ai ?? AISettings()
         if options.mcp.readOnly { ai.readOnly = true }
         session.aiSettings = ai
@@ -310,11 +358,14 @@ public final class EditorApp: Game, EditorHost {
         viewportPanel.passesPointerThrough = true
         dock.addPanel(viewportPanel)
         dock.addPanel(DockPanel(id: EditorLayout.hierarchy, title: "Hierarchy", content: hierarchy.view, minSize: Vec2(160, 120)))
-        dock.addPanel(DockPanel(id: EditorLayout.inspector, title: "Inspector", content: inspector.view, minSize: Vec2(220, 120)))
+        dock.addPanel(DockPanel(id: EditorLayout.inspector, title: "Inspector", content: inspector.view, minSize: Vec2(240, 120)))
         dock.addPanel(DockPanel(id: EditorLayout.console, title: "Console", content: console.view))
         dock.addPanel(DockPanel(id: EditorLayout.stats, title: "Stats", content: stats.view))
         dock.addPanel(DockPanel(id: EditorLayout.assets, title: "Assets", content: assetBrowser.view, minSize: Vec2(240, 120)))
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
+        // The gaps between panels: the dock builds its splits before it is in the context, so
+        // without this they would take the default (dark) theme's field color in every theme.
+        if ui.theme.name != UITheme.dark().name { dock.gapColor = ui.theme.fieldBackground }
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
         // Layouts saved before the Assets panel existed get it next to the console.
         if !dock.isOpen(EditorLayout.assets) {
@@ -440,6 +491,7 @@ public final class EditorApp: Game, EditorHost {
         // What the UI does with the keyboard, before and after it handles this frame's input.
         func textEditing() -> Bool { ui.focusedWidget?.wantsTextInput == true || input.isTextInputActive }
         let textBefore = textEditing(), focusedBefore = ui.focusedWidget != nil, overlayBefore = !ui.overlays.isEmpty
+        fitUIScale(window: engine.ui.size)
         ui.update(engine: engine, dt: dt)
         let focus = EditorShortcuts.Focus(textEditing: textBefore || textEditing(), overlayOpen: overlayBefore,
                                           widgetFocused: focusedBefore)
@@ -469,13 +521,13 @@ public final class EditorApp: Game, EditorHost {
 
         // Size the target to the panel before painting, so the image drawn this frame is the one rendered.
         ui.layoutIfNeeded()
-        resizeTarget(scale: engine.ui.scale)
+        resizeTarget(scale: ui.scale)
         buildGizmos()
         viewportWidget.texture = target.texture
         viewportWidget.caption = playCaption()
         viewportWidget.isPlaying = session.isPlaying
         ui.draw(into: engine.ui)
-        drawAssetDrag(into: engine.ui)
+        engine.ui.withTransform(scale: ui.uiScale) { drawAssetDrag(into: engine.ui) }
 
         input.cursor = cursorShape(for: ui.desiredCursor)
         let project = session.project.map { " — \($0.name)" } ?? ""
@@ -585,7 +637,8 @@ public final class EditorApp: Game, EditorHost {
     /// the viewport; what is down stays down until released.
     private func forwardInputToGame(_ input: Input, keyboardFree: Bool) {
         let rect = viewportWidget.frame
-        let hovered = viewportWidget.isEffectivelyVisible && rect.contains(input.mousePosition) && !ui.wantsPointer
+        let mouse = uiPoint(input.mousePosition)
+        let hovered = viewportWidget.isEffectivelyVisible && rect.contains(mouse) && !ui.wantsPointer
         var events: [InputEvent] = []
         for key in Key.allCases {
             let down = keyboardFree && input.isDown(key)
@@ -600,7 +653,7 @@ public final class EditorApp: Game, EditorHost {
             events.append(.button(button, down: down))
         }
         if hovered || !forwardedButtons.isEmpty {
-            let local = input.mousePosition - Vec2(rect.x, rect.y)
+            let local = mouse - Vec2(rect.x, rect.y)
             if local != forwardedPointer {
                 forwardedPointer = local
                 events.append(.mouseMove(to: local))
@@ -632,8 +685,8 @@ public final class EditorApp: Game, EditorHost {
             return
         }
         releaseForwardedInput()
-        var frameInput = ViewportInput(mousePosition: input.mousePosition)
-        frameInput.mouseDelta = input.mouseDelta
+        var frameInput = ViewportInput(mousePosition: uiPoint(input.mousePosition))
+        frameInput.mouseDelta = input.mouseDelta / ui.uiScale
         for button in MouseButton.allCases {
             if input.wasPressed(button) { frameInput.pressed.insert(button) }
             if input.wasReleased(button) { frameInput.released.insert(button) }
@@ -656,6 +709,10 @@ public final class EditorApp: Game, EditorHost {
         }
     }
 
+    /// A window point (the mouse) in the UI's points, which `uiScale` zooms.
+    private func uiPoint(_ windowPoint: Vec2) -> Vec2 { windowPoint / ui.uiScale }
+
+    /// Sizes the viewport's render target to its panel at `scale` framebuffer pixels per UI point.
     private func resizeTarget(scale: Float) {
         let rect = viewportWidget.isEffectivelyVisible ? viewportWidget.frame : .zero
         viewport.rect = rect
@@ -1114,7 +1171,6 @@ final class Toolbar {
             session.run(PlaySetTimeScaleCommand.self, .init(scale: Self.timeScales[index]))
         }
         timeScale.tooltip = "Play speed (time scale)"
-        timeScale.style.width = 64
         gameViewButton.tooltip = "Show the scene's camera in the viewport while playing, and send it the keyboard and mouse"
         toolButtons = EditorTool.allCases.map { tool in
             (tool, Button(tool.title, name: tool.rawValue) { session.run(ToolSetCommand.self, .init(tool: tool)) })
@@ -1155,18 +1211,33 @@ final class Toolbar {
             (openProjectButton, ProjectOpenCommand.id), (newProjectButton, ProjectNewCommand.id),
         ] + toolButtons.map { ($0.1, ToolSetCommand.id) }
         for (widget, id) in tagged { widget.command = id.rawValue }
+        // Undo / redo titles name the step ("Undo AI: Set Transform.position on Crate…"): they
+        // give way and end in "…" (the tooltip has the whole title) instead of pushing the rest away.
+        for button in [undoButton, redoButton] {
+            button.style.maxWidth = 220
+            button.style.shrink = 1
+            button.style.minWidth = 56
+        }
         view = HStack(spacing: 6, padding: EdgeInsets(horizontal: 8, vertical: 5), name: "toolbar")
+        // Rows that don't fit the window wrap onto a second (third…) row instead of running off the edge.
+        view.wraps = true
         view.background = (app.ui?.theme ?? UITheme()).panelBackground
+        // Vertical rules between the groups (a bare Separator measures 0 points tall in a row).
+        func separator() -> Separator {
+            let rule = Separator(.vertical)
+            rule.style.height = 18
+            return rule
+        }
         view.addChildren([
             newButton, openButton, saveButton, saveAsButton,
             path,
-            Separator(.vertical),
+            separator(),
             undoButton, redoButton,
-            Separator(.vertical),
+            separator(),
             playButton, pauseButton, stepButton, timeScale, gameViewButton, reloadGameButton,
-            Separator(.vertical),
+            separator(),
         ] + toolButtons.map(\.1) + [
-            Separator(.vertical),
+            separator(),
             projectPath, openProjectButton, newProjectButton,
             Spacer(),
             titleLabel,

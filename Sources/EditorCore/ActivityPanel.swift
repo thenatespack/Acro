@@ -47,6 +47,7 @@ public final class ActivityPanel {
         let bar = HStack(spacing: 8, padding: EdgeInsets(horizontal: 4, vertical: 0), name: "activityBar", [
             revertAll, clearButton, Separator(.vertical), readOnly, askFirst, http, Spacer(), summary,
         ])
+        bar.wraps = true
         view.addChildren([bar, scroll])
         refresh()
     }

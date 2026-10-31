@@ -74,8 +74,8 @@ public final class ConsolePanel {
             let label = Label(format(entry), role: entry.level == .info ? .secondary : .body)
             switch entry.level {
             case .info: break
-            case .warning: label.color = UIColor(hex: 0xe8b04a)
-            case .error: label.color = UIColor(hex: 0xf07167)
+            case .warning: label.color = view.theme.warningTextColor
+            case .error: label.color = view.theme.errorTextColor
             }
             lines.addChild(label)
         }
@@ -131,13 +131,17 @@ public struct EditorStatsSnapshot: Sendable {
 /// The stats panel: `EditorStatsSnapshot.lines`, refreshed a few times per second.
 @MainActor
 public final class StatsPanel {
-    public let view: VStack
+    /// The lines, in a scroll view so a short panel can still show them all.
+    public let view: ScrollView
+    private let lines: VStack
     /// Seconds between refreshes (text changes relayout the panel).
     public var interval: Double = 0.25
     private var lastRefresh = -Double.infinity
 
     public init() {
-        view = VStack(spacing: 3, padding: EdgeInsets(10), name: "statsPanel")
+        lines = VStack(spacing: 3, padding: EdgeInsets(10), name: "statsLines")
+        view = ScrollView(lines, name: "statsPanel")
+        view.scrollsHorizontally = true
         view.tooltip = "Frame, CPU and GPU timings, draw calls and editor state"
     }
 
@@ -145,6 +149,7 @@ public final class StatsPanel {
         guard time - lastRefresh >= interval else { return }
         lastRefresh = time
         let lines = stats.lines
+        let view = self.lines
         while view.children.count < lines.count { view.addChild(Label("", role: .secondary)) }
         while view.children.count > lines.count { view.children.last?.removeFromParent() }
         for (label, line) in zip(view.children, lines) {

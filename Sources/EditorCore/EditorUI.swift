@@ -119,7 +119,9 @@ final class StatusBar {
         if view.isHidden != hidden { view.isHidden = hidden }
         guard let status else { return }
         if aiStatus.text != status.text { aiStatus.text = status.text }
-        let color: UIColor? = status.acting ? app.ui.theme.accent : nil
+        // The accent is a fill color; as small text it needs lifting toward the text color to read.
+        let theme = app.ui.theme
+        let color: UIColor? = status.acting ? theme.accent.mixed(with: theme.textColor, 0.4) : nil
         if aiStatus.color != color { aiStatus.color = color }
     }
 
