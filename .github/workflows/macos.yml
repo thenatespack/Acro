@@ -1,0 +1,62 @@
+name: macOS
+
+# Builds, runs the tests, and renders the demo scenes on Metal and (through MoltenVK) Vulkan on
+# the runner's GPU, failing if the two backends differ (Scripts/render-scenes.sh). Screenshots are
+# also compared with the baselines of the last run on main, with a tolerance
+# (Scripts/compare-golden.sh; see README "Continuous integration").
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-latest
+    env:
+      ENGINE_RESOLUTION: 720p
+      SCENES: ecs shadows transparency pbr
+      ENGINE_CRASH_DIR: crashes
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Vulkan (MoltenVK), GLFW and shader tools
+        run: brew install vulkan-loader vulkan-headers molten-vk glfw shaderc pkgconf
+
+      - name: Build
+        run: swift build -c release --product Demo
+
+      - name: Test
+        run: swift test
+
+      - name: Restore baselines from main
+        uses: actions/cache/restore@v4
+        with:
+          path: golden
+          key: golden-macos-${{ github.sha }}
+          restore-keys: golden-macos-
+
+      - name: Render scenes (Metal and MoltenVK)
+        # Hosted runners have a virtualized GPU that may lack features; until this has run there, it doesn't fail the job.
+        continue-on-error: true
+        env:
+          GOLDEN_DIR: golden
+        run: Scripts/render-scenes.sh low shots
+
+      - name: Save baselines (main only)
+        if: github.ref == 'refs/heads/main'
+        run: Scripts/compare-golden.sh --update golden shots
+
+      - uses: actions/cache/save@v4
+        if: github.ref == 'refs/heads/main'
+        with:
+          path: golden
+          key: golden-macos-${{ github.sha }}
+
+      - name: Upload screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-scene-shots
+          path: |
+            shots
+            crashes
+          if-no-files-found: ignore

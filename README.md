@@ -478,7 +478,7 @@ swift run -c release Demo
 
 ### Windows
 
-**Untested so far:** the setup below has not been built on a Windows machine yet. CI (`.github/workflows/windows.yml`, build only) is set up but has not run.
+**Untested so far:** the setup below has not been built on a Windows machine yet. CI (`.github/workflows/windows.yml`, build only) is set up but has not run. Linux and macOS CI are described under Continuous integration.
 
 Needs Swift for Windows, the LunarG Vulkan SDK (sets `VULKAN_SDK`), GLFW (the prebuilt `glfw-3.4.bin.WIN64` zip works: copy `lib-vc2022` to `lib`) and zlib (e.g. `vcpkg install zlib:x64-windows`; `zlib1.dll` must be on `PATH` to run).
 
@@ -514,6 +514,11 @@ Results are read back when the frame slot is reused: 3 frames later on Metal (vi
 | `ENGINE_SCREENSHOT=out.png` | Run with a fixed timestep, ignore keyboard/mouse input, save frame `ENGINE_SCREENSHOT_FRAME` (default 60) and quit, printing average update / render / GPU times and GPU time per pass over the run (a quick benchmark; add `ENGINE_VSYNC=0`). Useful for golden-image tests. With `ENGINE_OVERLAY=0`, Metal and Vulkan produce byte-identical output for every demo scene at every quality level, post-processing included. Culling in `occlusion` is exact on both backends: the image with culling on matches the one with culling off byte for byte. (The overlay shows live timings, so it differs run to run.) |
 | `ENGINE_SHOW_CASCADES=1` | `SceneRenderer` tints each shadow cascade (red, green, blue, yellow; `showsShadowCascades`) |
 | `ENGINE_MCP=1\|http[:<port>]\|0` | Override `EngineConfig.mcp`: the game hosts an MCP server (stdio or Streamable HTTP) with play control, input injection, screenshots, stats and entity tools (see Editor › Games as MCP servers) |
+| `ENGINE_LOG=<level>[,<category>=<level>…]` | Minimum log level (trace, debug, info, warning, error, fault; default info) with per-category overrides, e.g. `warning,audio=debug` (see Logging) |
+| `ENGINE_LOG_FILE=<path>` | Also append log messages to a file |
+| `ENGINE_CRASH_DIR=<dir>` / `ENGINE_CRASH_REPORTS=0` | Where crash reports go (default `<tmp>/EngineCrashReports`) / turn the signal handlers off |
+| `ENGINE_PROFILER=1` | Start with the CPU profiler on and its timeline in the overlay (F3 toggles it, F4 saves a trace; see CPU profiler) |
+| `ENGINE_PROFILE_TRACE=<file.json>` | Record the whole run and write Chrome trace JSON at exit |
 | `ENGINE_VULKAN_VALIDATION=1` | Enable `VK_LAYER_KHRONOS_validation`; its warnings and errors go through a debug messenger to `EngineLog` (printed, or in the editor's console, `log.read` and `diagnostics.get`). On macOS with Homebrew, also set `VK_LAYER_PATH=$(brew --prefix vulkan-validationlayers)/share/vulkan/explicit_layer.d` and `DYLD_LIBRARY_PATH=$(brew --prefix vulkan-validationlayers)/lib`. Launch the binary directly, because SIP-protected wrappers such as `timeout` strip `DYLD_*`. |
 
 `engine.saveScreenshot(to:)` captures the next frame from game code.
@@ -528,6 +533,39 @@ Reading the numbers:
 - With vsync on, the GPU clocks down when it has headroom, so pass times read higher than with `ENGINE_VSYNC=0`.
 - On macOS, even with vsync off, the window server limits how fast a window can present (120 or 240 FPS depending on the display, and it varies between runs). Most demo scenes hit that limit long before the GPU is busy. Compare GPU time with frame time to see how much headroom is left.
 - The window pass's cost is the texel reads of the scene image. When downscaling it box-filters the whole footprint: on an M5 about 2–3 ms from 8K and about 20 ms from 16K (a single-tap blit was about 0.4 ms from 8K). Upscaling and native rendering are unaffected. (On Metal, the scene image deliberately has no `.pixelFormatView` usage: the flag turns off Apple GPUs' lossless compression, which made this pass 3–4x slower. Views that only drop sRGB don't need it.)
+
+### Logging, assertions and crash reports
+
+`EngineLog` is the engine's log (the editor console and `log.read` receive what it posts through `EngineLog.setHandler`). Levels `trace`, `debug`, `info`, `warning`, `error`, `fault`; categories (`.engine`, `.rendering`, `.audio`, … or any string) filter independently:
+
+```swift
+EngineLog.warning("no mesh '\(key)'", category: .rendering)
+EngineLog.debug("\(expensiveDump())", category: .audio)   // autoclosure: only built if audio logs debug
+```
+
+`ENGINE_LOG=warning,audio=debug` sets the minimum level and per-category overrides (default `info`); `EngineLog.minimumLevel`, `setLevel(_:for:)` and `isEnabled` do the same in code. A filtered-out call costs one lock and a comparison. Sinks: standard error (`[  1.234] [warning] [audio] text`; replaced by the handler when one is installed), an in-memory ring of the last 512 entries (`EngineLog.recent()`, included in crash reports) and, with `ENGINE_LOG_FILE=<path>` or `EngineLog.setFile`, a file. Posting is thread-safe. The engine's own warnings and errors use it; the lines scripts parse (`GPU passes:`, `Averages over…`, `Saved screenshot to…`) are still printed to standard output.
+
+Assertions: `engineFatal(_:)` logs a fault, writes a crash report and traps (any build). `engineAssert(_:_:)` does that in debug builds only and doesn't evaluate its condition in release. `engineVerify(_:_:)` checks in every build: debug traps, release logs an error with file and line and returns false so the caller can recover.
+
+Crash reports: `Engine.run` installs handlers for SIGSEGV, SIGABRT, SIGILL, SIGBUS, SIGFPE and SIGTRAP (Swift traps and `precondition` failures included), and `engineFatal` reports directly. The report is a text file in `ENGINE_CRASH_DIR` (default `<temporary directory>/EngineCrashReports`), `crash-<time>-<pid>.txt`, and its path is printed to standard error. It holds the reason, build, frame number, engine / backend / GPU / resolution info (`CrashReporter.setInfo` adds lines), a backtrace and the last 200 log lines. A signal handler can't be fully async-signal-safe while using Foundation to format the report, so it is best effort: handlers reset to default first (a second fault terminates normally), the log ring is read with a try-lock, and a 5 second `alarm` ends a handler that hangs. It runs on the crashing thread's stack, so a stack overflow can't be reported. `ENGINE_CRASH_REPORTS=0` leaves the signals alone (e.g. under a debugger or another crash reporter). Windows installs the handlers for the signals the C runtime has and is untested.
+
+### CPU profiler
+
+`Profiler` records scoped markers per thread into a ring of recent frames. Disabled (the default) a marker is one flag test.
+
+```swift
+Profiler.scope("pathfinding") { solve() }            // nests; also Profiler.begin("x") / Profiler.end()
+```
+
+Turn it on with `ENGINE_PROFILER=1`, F3 (`EngineConfig.profilerKey`) or `Profiler.isEnabled`. The engine marks its loop: `events`, `update`, `world` (with a `stage …` scope per system stage and one scope per system, named as registered, plus `propagateTransforms`), `render prep` (`SceneRenderer.prepare` / `beginViews`), `acquire`, `renderOffscreen`, `window wait`, `render`, `postprocess`, `ui`, `overlay` and `present`. While the profiler is on, the overlay (when visible) adds a panel at the bottom left: the last 80 frames as stacked bars (left: top-level CPU scopes of the main thread; right, narrower: the GPU passes of the frame that had finished by then, colored by name against a 33 ms ceiling and a 60 FPS line) and below it the newest frame's nested scopes as an icicle chart. With vsync on, `acquire` / `window wait` / `present` hold the frame wait, which is why they dominate.
+
+Export: `ENGINE_PROFILE_TRACE=out.json` records the whole run (up to 100k frames) and writes it at exit; F4 (`profilerExportKey`) saves the ring to `<tmp>/EngineProfiles/profile-<time>.json`; `Profiler.exportChromeTrace(to:)` does it from code. The JSON is Chrome's Trace Event Format: open it in chrome://tracing or ui.perfetto.dev. Threads are tracks (`main`, `thread N`), plus a `frames` track and a `GPU` track whose pass durations are laid end to end from each frame's start (their lengths are exact; their placement is not).
+
+### Continuous integration
+
+`.github/workflows/`: `linux.yml` (Swift 6 container, `mesa-vulkan-drivers` lavapipe, xvfb): build, `swift test`, then `Scripts/render-scenes.sh` on the software Vulkan device. `macos.yml`: build, `swift test`, then `render-scenes.sh` on Metal and MoltenVK (fails if they differ). `windows.yml`: build only. Both render jobs render a few scenes at 720p / low quality (`SCENES`, `ENGINE_RESOLUTION`) and upload the screenshots, per-run logs and crash reports as an artifact (also on failure). The render steps are `continue-on-error` until they have run on hosted runners, which couldn't be tried from here (the workflows are validated with actionlint only).
+
+Golden images: software Vulkan and Metal aren't byte-identical, so there are no committed goldens. On pushes to `main` the render job saves its screenshots as baselines in the Actions cache (`golden-<os>-<sha>`); other runs restore the newest baseline for the same OS and compare with `Scripts/compare-golden.sh <golden-dir> <shots-dir>`, which passes an image when the mean difference is at most `GOLDEN_MEAN` (2.0 of 255) and at most `GOLDEN_FRACTION` (2%) of the pixels differ by more than 16 in a channel (`Scripts/png-diff.py`, standard library only). Images without a baseline are skipped (`GOLDEN_STRICT=1` fails them); failing ones are copied next to the shots as `<name>.golden.png`. Locally: `GOLDEN_DIR=goldens UPDATE_GOLDEN=1 Scripts/render-scenes.sh` writes baselines, `GOLDEN_DIR=goldens Scripts/render-scenes.sh` compares, `SCENES="ecs shadows"` limits the scenes.
 
 ## Render quality
 
@@ -649,7 +687,7 @@ Everywhere: **1–9** and **0** (scene 10) switch scenes, **]** / **[** next / p
 
 `--window <width>x<height>` sets the window size in points (default 1280x720; doubled in pixels on Retina). On macOS a Metal window given this way keeps its size even when it is larger than the screen (`EngineConfig.allowsWindowLargerThanScreen`) and hangs off the bottom/right edge, so `--window 1920x1080 --resolution performance` with `ENGINE_UPSCALER=taau` renders 1080p upscaled to a real 3840x2160 output even on a smaller display (`ENGINE_SCREENSHOT_SOURCE=window` captures it). The GLFW (Vulkan) window is still shrunk to fit the screen.
 
-`Scripts/render-scenes.sh [quality]` renders every scene on each available backend, writes PNGs to `.build/scene-shots/<quality>[-<resolution>]/`, and fails if the backends differ. Set `ENGINE_RESOLUTION` to render at a fixed size. Set `ENGINE_UPSCALER` as well to compare upscaled window images. Set `VALIDATE=1` to run Vulkan under the validation layers, which also fails on validation errors.
+`Scripts/render-scenes.sh [quality] [output-dir]` renders every scene on each available backend, writes PNGs to `.build/scene-shots/<quality>[-<resolution>]/`, and fails if the backends differ. Set `ENGINE_RESOLUTION` to render at a fixed size. Set `ENGINE_UPSCALER` as well to compare upscaled window images. Set `VALIDATE=1` to run Vulkan under the validation layers, which also fails on validation errors. `SCENES="ecs shadows"` limits the scenes; `GOLDEN_DIR` compares with reference images (see Continuous integration).
 
 ## Current limitations / next steps
 

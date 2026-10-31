@@ -1,0 +1,75 @@
+name: Linux
+
+# Builds, runs the tests and renders the demo scenes on the Vulkan backend with lavapipe
+# (Mesa's software Vulkan) under a virtual X display. Screenshots are compared with the
+# baselines of the last run on main (Scripts/compare-golden.sh, with a tolerance; see README
+# "Continuous integration").
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    container:
+      image: swift:6.0-noble
+    env:
+      # Software rendering is slow: small frames, low quality, a few representative scenes.
+      ENGINE_RESOLUTION: 720p
+      SCENES: ecs shadows transparency pbr
+      VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      ENGINE_CRASH_DIR: crashes
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            libvulkan-dev libglfw3-dev zlib1g-dev pkg-config glslc \
+            mesa-vulkan-drivers vulkan-tools xvfb xauth python3 libasound2-dev ca-certificates
+
+      - name: Build
+        run: swift build -c release --product Demo
+
+      - name: Test
+        run: swift test
+
+      - name: Restore baselines from main
+        id: golden
+        uses: actions/cache/restore@v4
+        with:
+          path: golden
+          key: golden-linux-${{ github.sha }}
+          restore-keys: golden-linux-
+
+      - name: Render scenes (lavapipe)
+        # Not verified on a hosted runner yet: until it is, a failure here is reported but doesn't fail the job.
+        continue-on-error: true
+        run: |
+          vulkaninfo --summary | head -20
+          GOLDEN_DIR=golden xvfb-run -a -s "-screen 0 1280x720x24" Scripts/render-scenes.sh low shots
+
+      - name: Save baselines (main only)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p golden
+          Scripts/compare-golden.sh --update golden shots
+
+      - uses: actions/cache/save@v4
+        if: github.ref == 'refs/heads/main'
+        with:
+          path: golden
+          key: golden-linux-${{ github.sha }}
+
+      - name: Upload screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-scene-shots
+          path: |
+            shots
+            .build/*.log
+            crashes
+          if-no-files-found: ignore

@@ -144,10 +144,10 @@ public final class AudioSystem {
         let device = makeDefaultDevice(headless: headless)
         do {
             let system = try AudioSystem(device: device)
-            print("Audio: \(device.name)")
+            EngineLog.info("Audio: \(device.name)", category: .audio)
             return system
         } catch {
-            print("Audio device \(device.name) failed to start (\(error)); using the offline device (silent)")
+            EngineLog.warning("Audio device \(device.name) failed to start (\(error)); using the offline device (silent)", category: .audio)
             return try! AudioSystem(device: OfflineAudioDevice())  // the offline device can't fail
         }
     }
@@ -161,7 +161,7 @@ public final class AudioSystem {
         guard !isShutDown else { return }
         isShutDown = true
         device.stop()
-        if streamUnderruns > 0 { print("Audio: \(streamUnderruns) frames of stream underrun (update ran too rarely)") }
+        if streamUnderruns > 0 { EngineLog.warning("\(streamUnderruns) frames of stream underrun (update ran too rarely)", category: .audio) }
         for i in slots.indices where slots[i].inUse { release(i) }
     }
 
@@ -172,7 +172,7 @@ public final class AudioSystem {
     @discardableResult
     public func addBus(_ name: String, parent: AudioBus? = nil) -> AudioBus {
         guard busInfo.count < Self.maxBuses else {
-            print("AudioSystem: no room for bus '\(name)' (max \(Self.maxBuses)); using master")
+            EngineLog.warning("no room for bus '\(name)' (max \(Self.maxBuses)); using master", category: .audio)
             return master
         }
         busInfo.append(BusInfo(name: name, parent: parent?.index ?? 0))
@@ -318,7 +318,7 @@ public final class AudioSystem {
                        retain: (inout Slot) -> Void) -> Voice {
         reclaimFinishedVoices()
         guard !isShutDown, let slot = freeSlots.popLast() else {
-            if !isShutDown { print("AudioSystem: all \(maxVoices) voices busy; '\(name)' not played") }
+            if !isShutDown { EngineLog.warning("all \(maxVoices) voices busy; '\(name)' not played", category: .audio) }
             return Voice(system: self, slot: -1, generation: 0)
         }
         let generation = nextGeneration
@@ -783,7 +783,7 @@ final class AudioStream {
             do {
                 got = try scratch.withUnsafeMutableBufferPointer { try decoder.read(into: $0.baseAddress!, frames: wanted) }
             } catch {
-                print("Audio stream decode failed: \(error)")
+                EngineLog.error("Audio stream decode failed: \(error)", category: .audio)
                 got = 0
                 emptyReadsInARow = 2
             }

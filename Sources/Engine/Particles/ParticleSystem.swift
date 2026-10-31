@@ -133,7 +133,7 @@ public final class ParticleSystem {
                 do {
                     emitters[entity] = try EmitterState(key: key, emitter: emitter, device: device)
                 } catch {
-                    print("ParticleSystem: emitter of \(key.capacity) particles unavailable: \(error)")
+                    EngineLog.warning("emitter of \(key.capacity) particles unavailable: \(error)", category: .particles)
                     return
                 }
             }
@@ -253,7 +253,7 @@ public final class ParticleSystem {
             pipelines[key] = pipeline
             return pipeline
         } catch {
-            print("ParticleSystem: pipeline creation failed: \(error)")
+            EngineLog.error("pipeline creation failed: \(error)", category: .particles)
             return nil
         }
     }

@@ -32,6 +32,11 @@ public struct EngineConfig: Sendable {
     /// inspect the game (see GameMCP.swift). Off by default; `ENGINE_MCP=1` (stdio),
     /// `ENGINE_MCP=http[:<port>]` or `ENGINE_MCP=0` override it.
     public var mcp: EngineMCPMode = .off
+    /// Key that toggles the CPU profiler and its timeline in the overlay (`ENGINE_PROFILER=1`
+    /// starts it on); nil disables the shortcut. See `Profiler`.
+    public var profilerKey: Key? = .f3
+    /// Key that saves the profiler's recent frames as Chrome trace JSON; nil disables it.
+    public var profilerExportKey: Key? = .f4
 
     public init(
         title: String = "Game",
@@ -180,7 +185,7 @@ public final class Engine {
     public var renderResolution: RenderResolution {
         didSet {
             if let error = validate(renderResolution) {
-                print("Render resolution \(renderResolution) rejected: \(error)")
+                EngineLog.warning("Render resolution \(renderResolution) rejected: \(error)")
                 renderResolution = oldValue
             }
         }
@@ -192,7 +197,7 @@ public final class Engine {
     public var upscaler: Upscaler {
         didSet {
             if let error = unsupported(upscaler) {
-                print("Upscaler \(upscaler) rejected: \(error); keeping \(oldValue)")
+                EngineLog.warning("Upscaler \(upscaler) rejected: \(error); keeping \(oldValue)")
                 upscaler = oldValue
             } else {
                 device.upscaler = upscaler
@@ -263,6 +268,10 @@ public final class Engine {
     public private(set) var stats = FrameStats()
     public var showDebugOverlay: Bool
     public var debugOverlayKey: Key?
+    public var profilerKey: Key?
+    public var profilerExportKey: Key?
+    /// Set via ENGINE_PROFILE_TRACE=<path.json>: the whole run's profile is written there at exit.
+    private var profileTraceURL: URL?
     /// The 2D UI draw list (see `UIDrawList`). Cleared at the start of each frame; fill it in
     /// `Game.update` or `Game.render`, in points. The engine draws it in the window pass, at
     /// window resolution, over the scene and under the debug overlay.
@@ -407,16 +416,25 @@ public final class Engine {
         var requestedSamples = envQuality == nil ? config.sampleCount ?? quality.sampleCount : quality.sampleCount
         if upscaler.isTemporal && requestedSamples > 1 {
             // Temporal upscalers anti-alias themselves and need single-sample depth and motion vectors.
-            print("MSAA reduced from \(requestedSamples)x to 1x for the \(upscaler) upscaler")
+            EngineLog.info("MSAA reduced from \(requestedSamples)x to 1x for the \(upscaler) upscaler")
             requestedSamples = 1
         }
         // Huge render sizes get fewer samples so the multisampled targets fit in memory.
         let sampleCount = resolution.affordableSampleCount(requestedSamples)
         if sampleCount < requestedSamples {
-            print("MSAA reduced from \(requestedSamples)x to \(sampleCount)x to fit \(resolution) in memory")
+            EngineLog.info("MSAA reduced from \(requestedSamples)x to \(sampleCount)x to fit \(resolution) in memory")
         }
         showDebugOverlay = ProcessInfo.processInfo.environment["ENGINE_OVERLAY"].map { $0 != "0" } ?? config.showDebugOverlay
         debugOverlayKey = config.debugOverlayKey
+        profilerKey = config.profilerKey
+        profilerExportKey = config.profilerExportKey
+        let environment = ProcessInfo.processInfo.environment
+        if environment["ENGINE_PROFILER"].map({ $0 != "0" }) == true { Profiler.isEnabled = true }
+        if let path = environment["ENGINE_PROFILE_TRACE"], !path.isEmpty {
+            profileTraceURL = URL(fileURLWithPath: path)
+            Profiler.startTraceCapture()
+        }
+        CrashReporter.install()
         if let path = ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT"] {
             let frame = ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT_FRAME"].flatMap(Int.init) ?? 60
             automatedScreenshot = (URL(fileURLWithPath: path), frame)
@@ -451,6 +469,12 @@ public final class Engine {
         // upscaled image the window shows instead.
         device.captureWindow = ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT_SOURCE"]?.lowercased() == "window"
         mcp?.engine = self
+        CrashReporter.setInfo("Backend", backend.rawValue)
+        CrashReporter.setInfo("GPU", device.deviceName)
+        CrashReporter.setInfo("Quality", "\(quality)")
+        CrashReporter.setInfo("Render resolution", "\(resolution), \(sampleCount)x MSAA, upscaler \(upscaler)")
+        CrashReporter.setInfo("Window", "\(window.framebufferSize.width)x\(window.framebufferSize.height) pixels")
+        EngineLog.debug("\(backend.rawValue) on \(device.deviceName), quality \(quality)")
     }
 
     /// Why `resolution` can't be used on this device, or nil if it can.
@@ -468,6 +492,14 @@ public final class Engine {
     /// Runs the main loop until the window closes or `quit()` is called.
     public func run(_ game: Game) throws {
         defer {
+            if let url = profileTraceURL {
+                do {
+                    try Profiler.finishTraceCapture(to: url)
+                    EngineLog.info("Saved profile trace to \(url.path)", category: .engine)
+                } catch {
+                    EngineLog.error("Saving the profile trace to \(url.path) failed: \(error)")
+                }
+            }
             mcp?.stop()
             audioSystem?.shutdown()
             device.waitIdle()
@@ -480,17 +512,17 @@ public final class Engine {
         do {
             uiRenderer = try UIRenderer(device: device)
         } catch {
-            print("UI renderer unavailable: \(error)")
+            EngineLog.warning("UI renderer unavailable: \(error)")
         }
         do {
             overlay = try DebugOverlay(device: device)
         } catch {
-            print("Debug overlay unavailable: \(error)")
+            EngineLog.warning("Debug overlay unavailable: \(error)")
         }
         do {
             postProcessor = try PostProcessor(device: device)
         } catch {
-            print("Post-processing unavailable: \(error)")
+            EngineLog.warning("Post-processing unavailable: \(error)")
         }
 
         let clock = ContinuousClock()
@@ -499,7 +531,8 @@ public final class Engine {
 
         while !window.shouldClose {
             input.beginFrame()
-            window.pollEvents(into: automatedScreenshot == nil ? input : ignoredInput)
+            CrashReporter.frame = frameCount
+            Profiler.scope("events") { window.pollEvents(into: automatedScreenshot == nil ? input : ignoredInput) }
             // MCP requests (they may inject input, pause or step), then this frame's injected input.
             if let mcp {
                 mcp.pump()
@@ -526,18 +559,20 @@ public final class Engine {
             let gameDt = stepping ? world?.fixedTimestep ?? 1.0 / 60.0 : advancing ? dt * timeScale : 0
 
             if let key = debugOverlayKey, input.wasPressed(key) { showDebugOverlay.toggle() }
+            if let key = profilerKey, input.wasPressed(key) { Profiler.isEnabled.toggle() }
+            if let key = profilerExportKey, input.wasPressed(key) { saveProfilerTrace() }
 
             ui.beginFrame(framebufferSize: window.framebufferSize, scale: window.contentScale)
             debugDraw.beginFrame(dt: Float(dt))
             let updateStart = clock.now
-            game.update(engine: self, dt: Float(gameDt))
-            world?.update(dt: gameDt)
+            Profiler.scope("update") { game.update(engine: self, dt: Float(gameDt)) }
+            Profiler.scope("world") { world?.update(dt: gameDt) }
             if advancing {
                 inputPlayer.advance(by: gameDt)
                 gameTime += gameDt
                 gameFrameCount += 1
             }
-            audioSystem?.update(dt: dt)
+            Profiler.scope("audio") { audioSystem?.update(dt: dt) }
             if automatedScreenshot == nil {
                 // Screenshot runs leave the user's cursor alone (their input is ignored anyway).
                 window.applyCursor(input.cursor, captured: input.isMouseCaptured)
@@ -567,21 +602,28 @@ public final class Engine {
             device.temporalInputs = temporalInputs
             let hdrFrame = postProcess != nil && postProcessor != nil
             device.hdrScene = hdrFrame
-            if try device.beginFrame(framebufferSize: framebufferSize, renderSize: renderSize) {
+            Profiler.begin("acquire")
+            let frameBegan = try device.beginFrame(framebufferSize: framebufferSize, renderSize: renderSize)
+            Profiler.end()
+            if frameBegan {
                 countingPass.resetCounts()
                 let renderStart = clock.now
-                game.renderOffscreen(engine: self, frame: Frame(device: device, counter: countingPass))
+                Profiler.scope("renderOffscreen") {
+                    game.renderOffscreen(engine: self, frame: Frame(device: device, counter: countingPass))
+                }
                 // Starting the screen pass can block until the window has an image to draw into
                 // (when it renders straight to the window); that wait isn't recording time.
                 let screenPassStart = clock.now
                 // An sRGB target stores the clear color as an 8-bit code; clearing to one exactly
                 // keeps every backend and pass layout on the same code (see `snappedToSRGB8`).
-                let pass = device.beginScreenPass(
-                    clearColor: hdrFrame ? clearColor : PostProcessMath.snappedToSRGB8(clearColor), clearDepth: clearDepth)
+                let pass = Profiler.scope("window wait") {
+                    device.beginScreenPass(
+                        clearColor: hdrFrame ? clearColor : PostProcessMath.snappedToSRGB8(clearColor), clearDepth: clearDepth)
+                }
                 let windowWait = clock.now - screenPassStart
                 countingPass.inner = pass
-                game.render(engine: self, pass: countingPass)
-                if hdrFrame { renderPostProcessing(dt: Float(dt)) }
+                Profiler.scope("render") { game.render(engine: self, pass: countingPass) }
+                if hdrFrame { Profiler.scope("postprocess") { renderPostProcessing(dt: Float(dt)) } }
                 stats.renderTime = Self.seconds(clock.now - renderStart - windowWait)
                 stats.drawCalls = countingPass.drawCalls
                 stats.triangles = countingPass.triangles
@@ -612,14 +654,18 @@ public final class Engine {
                 // UI at window resolution (this also scales a fixed-resolution scene into the window).
                 let windowPass = device.beginWindowPass()
                 overlay?.record(stats)
-                uiRenderer?.render(ui, into: windowPass)
+                Profiler.scope("ui") { uiRenderer?.render(ui, into: windowPass) }
                 if showDebugOverlay, let overlay {
-                    overlay.render(
-                        pass: windowPass, stats: stats, time: time, framebufferSize: framebufferSize,
-                        renderSize: renderSize, upscaler: upscaler, vsync: device.vsync, contentScale: window.contentScale,
-                        backend: device.backend, deviceName: device.deviceName)
+                    Profiler.scope("overlay") {
+                        overlay.render(
+                            pass: windowPass, stats: stats, time: time, framebufferSize: framebufferSize,
+                            renderSize: renderSize, upscaler: upscaler, vsync: device.vsync, contentScale: window.contentScale,
+                            backend: device.backend, deviceName: device.deviceName)
+                    }
                 }
+                Profiler.begin("present")
                 let captured = try device.endFrame()
+                Profiler.end()
                 for capture in captures { capture(captured) }
                 if let image = captured {
                     for url in pendingScreenshots { try image.writePNG(to: url) }
@@ -639,6 +685,22 @@ public final class Engine {
                 if automatedScreenshot != nil { screenshotTotals.skipped += 1 }
                 Thread.sleep(forTimeInterval: 1.0 / 60.0)
             }
+            Profiler.endFrame(gpuPasses: stats.gpuPassTimes)
+        }
+    }
+
+    /// Writes the profiler's recent frames as Chrome trace JSON (the profiler key's export).
+    private func saveProfilerTrace() {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("EngineProfiles", isDirectory: true)
+            .appendingPathComponent("profile-\(formatter.string(from: Date())).json")
+        do {
+            try Profiler.exportChromeTrace(to: url)
+            EngineLog.info("Saved profile trace (\(Profiler.frames.count) frames) to \(url.path)")
+        } catch {
+            EngineLog.error("Saving the profile trace failed: \(error)")
         }
     }
 

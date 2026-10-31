@@ -456,7 +456,11 @@ public final class SceneRenderer {
     /// a camera, nothing is drawn this frame.
     public func prepare(world: World, engine: Engine) {
         let start = ContinuousClock.now
-        defer { stats.prepareTime = Self.seconds(since: start) }
+        Profiler.begin("render prep")
+        defer {
+            Profiler.end()
+            stats.prepareTime = Self.seconds(since: start)
+        }
         gather(world)
         engine.postProcess = PostProcessSettings.find(in: world)
 
@@ -659,7 +663,11 @@ public final class SceneRenderer {
     /// `Game.renderOffscreen`, after the world's transforms are current.
     public func beginViews(world: World, frame: Frame, shadowFocus: SceneView? = nil) {
         let start = ContinuousClock.now
-        defer { stats.prepareTime = Self.seconds(since: start) }
+        Profiler.begin("render prep")
+        defer {
+            Profiler.end()
+            stats.prepareTime = Self.seconds(since: start)
+        }
         gather(world)
         let focus: ShadowSetup.Focus
         if let shadowFocus {

@@ -89,7 +89,7 @@ extension AudioSystem {
                 throw AudioError("AVAudioEngine is only available on Apple platforms")
                 #endif
             default:
-                if choice != "default" { print("Unknown ENGINE_AUDIO '\(choice)'; using the default device") }
+                if choice != "default" { EngineLog.warning("Unknown ENGINE_AUDIO '\(choice)'; using the default device", category: .audio) }
                 #if canImport(AVFAudio)
                 return try AVAudioEngineDevice()
                 #else
@@ -97,7 +97,7 @@ extension AudioSystem {
                 #endif
             }
         } catch {
-            print("Audio device unavailable (\(error)); using the offline device (silent)")
+            EngineLog.warning("Audio device unavailable (\(error)); using the offline device (silent)", category: .audio)
             return OfflineAudioDevice()
         }
     }

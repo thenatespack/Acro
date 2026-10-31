@@ -5,7 +5,7 @@ import Foundation
 /// `setVertexData`, so it needs no textures.
 @MainActor
 final class DebugOverlay {
-    private struct Vertex {
+    struct Vertex {
         var x, y: Float
         var r, g, b, a: Float
     }
@@ -16,7 +16,7 @@ final class DebugOverlay {
     private static let textRefreshInterval = 0.25
 
     private let pipeline: RenderPipeline
-    private var vertices: [Vertex] = []
+    var vertices: [Vertex] = []
     private var history = [Double](repeating: 0, count: historyLength)
     private var historyIndex = 0
 
@@ -101,6 +101,8 @@ final class DebugOverlay {
         let target = graphTop + graphHeight - Float((1.0 / 60.0) / Self.graphCeiling) * graphHeight
         rect(graphLeft, target, graphWidth, max(ui, 1), color: (1, 1, 1, 0.35))
 
+        if Profiler.isEnabled { appendProfilerTimeline(framebufferSize: framebufferSize, scale: ui) }
+
         pass.setPipeline(pipeline)
         pass.setPushConstants(Vec2(Float(framebufferSize.width), Float(framebufferSize.height)))
         pass.setVertexData(vertices)
@@ -149,13 +151,13 @@ final class DebugOverlay {
         return lines
     }
 
-    private func fpsColor(_ frameTime: Double) -> (Float, Float, Float, Float) {
+    func fpsColor(_ frameTime: Double) -> (Float, Float, Float, Float) {
         if frameTime <= 1.0 / 55.0 { return (0.3, 0.9, 0.4, 1) }
         if frameTime <= 1.0 / 28.0 { return (0.95, 0.8, 0.2, 1) }
         return (0.95, 0.3, 0.25, 1)
     }
 
-    private func text(_ string: String, x: Float, y: Float, pixel: Float, color: (Float, Float, Float, Float)) {
+    func text(_ string: String, x: Float, y: Float, pixel: Float, color: (Float, Float, Float, Float)) {
         var penX = x
         for character in string {
             for (row, runs) in BitmapFont.runs(for: character).enumerated() {
@@ -168,7 +170,7 @@ final class DebugOverlay {
         }
     }
 
-    private func rect(_ x: Float, _ y: Float, _ width: Float, _ height: Float, color: (Float, Float, Float, Float)) {
+    func rect(_ x: Float, _ y: Float, _ width: Float, _ height: Float, color: (Float, Float, Float, Float)) {
         let (r, g, b, a) = color
         let x1 = x + width, y1 = y + height
         vertices.append(Vertex(x: x, y: y, r: r, g: g, b: b, a: a))

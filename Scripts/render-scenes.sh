@@ -11,6 +11,9 @@
 # Set ENGINE_UPSCALER (e.g. fsr1, with ENGINE_RESOLUTION=performance) to test an upscaler;
 # screenshots then capture the upscaled window image instead.
 # Set VALIDATE=1 to run Vulkan with validation layers (Homebrew paths on macOS).
+# Set SCENES="ecs shadows" to render only those scenes (default: all, from --list).
+# Set GOLDEN_DIR=<dir> to also compare each screenshot with <dir>/<scene>-<backend>.png within a
+# tolerance (Scripts/compare-golden.sh); UPDATE_GOLDEN=1 writes the screenshots there instead.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -39,7 +42,7 @@ if [[ "${VALIDATE:-0}" == 1 ]]; then
 fi
 
 status=0
-for scene in $("$demo" --list); do
+for scene in ${SCENES:-$("$demo" --list)}; do
     for backend in "${backends[@]}"; do
         log="$out/$scene-$backend.log"
         extra=()
@@ -66,5 +69,12 @@ for scene in $("$demo" --list); do
         echo "ok    $scene: rendered on ${backends[0]}"
     fi
 done
+if [[ -n "${GOLDEN_DIR:-}" ]]; then
+    if [[ "${UPDATE_GOLDEN:-0}" == 1 ]]; then
+        Scripts/compare-golden.sh --update "$GOLDEN_DIR" "$out"
+    else
+        Scripts/compare-golden.sh "$GOLDEN_DIR" "$out" || status=1
+    fi
+fi
 echo "Screenshots in $out"
 exit $status

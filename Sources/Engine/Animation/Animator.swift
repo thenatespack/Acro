@@ -433,7 +433,7 @@ extension World {
             world.queryMutating(Animator.self) { entity, animator in
                 let pose = animator.update(dt: dt) { handle in
                     if let clip = library.clip(handle) { return clip }
-                    if reported.insert(handle.key).inserted { print("Animator: no animation clip registered as '\(handle.key)'") }
+                    if reported.insert(handle.key).inserted { EngineLog.warning("no animation clip registered as '\(handle.key)'", category: .animation) }
                     return nil
                 }
                 for i in 0..<min(pose.count, animator.targets.count) where pose.animated[i] {

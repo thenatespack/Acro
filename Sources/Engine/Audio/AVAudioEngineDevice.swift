@@ -75,7 +75,7 @@ public final class AVAudioEngineDevice: AudioDevice {
         configurationObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { _ in
-            do { try engine.start() } catch { print("AVAudioEngine restart failed: \(error.localizedDescription)") }
+            do { try engine.start() } catch { EngineLog.error("AVAudioEngine restart failed: \(error.localizedDescription)", category: .audio) }
         }
     }
 

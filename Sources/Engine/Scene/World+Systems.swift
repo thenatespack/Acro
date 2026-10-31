@@ -109,7 +109,7 @@ extension World {
         time.delta = Float(dt)
         run(.update)
         run(.lateUpdate)
-        propagateTransforms()
+        Profiler.scope("propagateTransforms") { propagateTransforms() }
         run(.renderPrep)
         time.frame += 1
     }
@@ -118,6 +118,13 @@ extension World {
     /// every stage; call it directly for custom loops and tests.
     public func run(_ stage: SystemStage) {
         // Iterate a snapshot: systems may add or remove systems.
-        for system in systems[stage.rawValue] { system.run(self) }
+        let profiling = Profiler.isEnabled
+        if profiling { Profiler.begin("stage \(stage)") }
+        for system in systems[stage.rawValue] {
+            if profiling { Profiler.begin(system.name) }
+            system.run(self)
+            if profiling { Profiler.end() }
+        }
+        if profiling { Profiler.end() }
     }
 }
