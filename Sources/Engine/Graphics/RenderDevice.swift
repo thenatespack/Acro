@@ -153,8 +153,19 @@ public enum TextureFormat: Sendable {
     case rgba8Unorm
     /// 8-bit RGBA with sRGB-encoded color channels: sampling returns linear values.
     case rgba8Srgb
+    /// 16-bit float RGBA (8 bytes per texel), linear: HDR images and data that needs range
+    /// beyond 0...1. Uploaded as IEEE half floats, little-endian.
+    case rgba16Float
 
     var isDepth: Bool { self == .depth32Float }
+
+    /// Bytes per texel of a color format (depth formats are never uploaded from the CPU).
+    var bytesPerPixel: Int {
+        switch self {
+        case .depth32Float, .rgba8Unorm, .rgba8Srgb: 4
+        case .rgba16Float: 8
+        }
+    }
 }
 
 public struct TextureDescriptor: Sendable {
@@ -382,11 +393,22 @@ extension RenderPass {
     func updateBuffer(_ buffer: GPUBuffer, offset: Int, bytes: UnsafeRawBufferPointer) throws
     /// An offscreen render target (currently `.depth32Float` only).
     func makeTexture(_ descriptor: TextureDescriptor) throws -> GPUTexture
-    /// A 2D color texture from tightly packed RGBA8 pixels (`width * height * 4` bytes, top
-    /// row first). `generateMipmaps` builds a full chain on the CPU (a box filter, in linear
-    /// light for `.rgba8Srgb`). The data is copied; the texture is freed like a `GPUBuffer`.
-    func makeTexture(pixels: UnsafeRawBufferPointer, width: Int, height: Int, format: TextureFormat,
-                     generateMipmaps: Bool) throws -> GPUTexture
+    /// A 2D color texture from explicit mip levels (`TextureMipLevel`, level 0 first, each half
+    /// the size of the previous, at least one). The data is copied; the texture is freed like
+    /// a `GPUBuffer`. Most code wants `makeTexture(pixels:...)` or `makeTexture(image:...)`,
+    /// which build the levels.
+    func makeTexture(levels: [TextureMipLevel], format: TextureFormat) throws -> GPUTexture
+    /// Overwrites a sub-rectangle of one mip level of a texture from `makeTexture` with tightly
+    /// packed texels in the texture's format (`region.width * region.height * bytesPerPixel`
+    /// bytes, top row first). Other levels are not regenerated.
+    ///
+    /// Synchronous and callable at any time, even inside a pass: the new texels are visible to
+    /// every pass recorded after the call. On Vulkan it runs on its own command buffer with the
+    /// image transitions it needs and waits for the queue, so it is safe against frames still in
+    /// flight but costs a stall; batch changes into one call (the glyph atlas uploads one
+    /// bounding rectangle per page). On Metal the bytes are written directly, so don't change
+    /// texels that frames still in flight are sampling.
+    func updateTexture(_ texture: GPUTexture, region: TextureRegion, mipLevel: Int, bytes: UnsafeRawBufferPointer) throws
     /// A sampler for `descriptor`. Identical descriptors return the same object.
     func makeSampler(_ descriptor: SamplerDescriptor) throws -> GPUSampler
     func makePipeline(_ descriptor: PipelineDescriptor) throws -> RenderPipeline
@@ -449,9 +471,65 @@ extension RenderDevice {
         try elements.withUnsafeBytes { try makeBuffer(bytes: $0, usage: usage) }
     }
 
+    /// A texture from a decoded 8-bit image (see `ImageDecoder`), with a full mip chain unless
+    /// `generateMipmaps` is false. `srgb` picks how the bytes are interpreted: true for color
+    /// (albedo, emissive, UI), which samples as linear light and is averaged in linear light
+    /// when building mips; false for data (normal, roughness, metalness, masks).
+    ///
+    /// Decoding is CPU-only and can run on any thread, but this creates the GPU texture, so call
+    /// it on the main thread; on Vulkan it blocks until the upload has finished.
+    public func makeTexture(image: Image, srgb: Bool, generateMipmaps: Bool = true) throws -> GPUTexture {
+        try makeTexture(pixels: image.pixels, width: image.width, height: image.height,
+                        format: srgb ? .rgba8Srgb : .rgba8Unorm, generateMipmaps: generateMipmaps)
+    }
+
+    /// An `.rgba16Float` texture from a decoded HDR image, with a full mip chain (filtered in
+    /// float) unless `generateMipmaps` is false. Same threading as `makeTexture(image:srgb:)`.
+    public func makeTexture(image: FloatImage, generateMipmaps: Bool = true) throws -> GPUTexture {
+        try TextureFormat.rgba16Float.validateUpload(
+            byteCount: image.width * image.height * 8, width: image.width, height: image.height, maxSize: maxTextureSize)
+        return try makeTexture(
+            levels: MipChain.generateFloat(pixels: image.pixels, width: image.width, height: image.height,
+                                           generateMipmaps: generateMipmaps),
+            format: .rgba16Float)
+    }
+
+    /// A texture from either kind of decoded image. `srgb` applies to 8-bit images only
+    /// (HDR is always linear).
+    public func makeTexture(decoded: DecodedImage, srgb: Bool, generateMipmaps: Bool = true) throws -> GPUTexture {
+        switch decoded {
+        case .rgba8(let image): try makeTexture(image: image, srgb: srgb, generateMipmaps: generateMipmaps)
+        case .rgba32F(let image): try makeTexture(image: image, generateMipmaps: generateMipmaps)
+        }
+    }
+
+    /// `updateTexture(_:region:mipLevel:bytes:)` with the bytes as an array.
+    public func updateTexture(_ texture: GPUTexture, region: TextureRegion, mipLevel: Int = 0, pixels: [UInt8]) throws {
+        try pixels.withUnsafeBytes { try updateTexture(texture, region: region, mipLevel: mipLevel, bytes: $0) }
+    }
+
     /// Replaces the start of `buffer` (or `offset` bytes in) with `elements`; see `updateBuffer(_:offset:bytes:)`.
     public func updateBuffer<T: BitwiseCopyable>(_ buffer: GPUBuffer, offset: Int = 0, elements: [T]) throws {
         try elements.withUnsafeBytes { try updateBuffer(buffer, offset: offset, bytes: $0) }
+    }
+
+    /// A 2D color texture from tightly packed pixels (`width * height * bytesPerPixel` bytes,
+    /// top row first; RGBA8 for `.rgba8Unorm` / `.rgba8Srgb`, half floats for `.rgba16Float`).
+    /// `generateMipmaps` builds a full chain on the CPU (a box filter, in linear light for
+    /// `.rgba8Srgb`; not supported for `.rgba16Float`, use `makeTexture(image: FloatImage)` for
+    /// HDR mips). The data is copied; the texture is freed like a `GPUBuffer`.
+    public func makeTexture(pixels: UnsafeRawBufferPointer, width: Int, height: Int, format: TextureFormat,
+                            generateMipmaps: Bool) throws -> GPUTexture {
+        try format.validateUpload(byteCount: pixels.count, width: width, height: height, maxSize: maxTextureSize)
+        guard generateMipmaps else {
+            return try makeTexture(levels: [TextureMipLevel(width: width, height: height, pixels: Array(pixels))], format: format)
+        }
+        guard format != .rgba16Float else {
+            throw GraphicsError("Mip generation for .rgba16Float needs the float source: use makeTexture(image: FloatImage)")
+        }
+        return try makeTexture(
+            levels: MipChain.generate(pixels: Array(pixels), width: width, height: height, srgb: format == .rgba8Srgb),
+            format: format)
     }
 
     public func makeTexture(pixels: [UInt8], width: Int, height: Int, format: TextureFormat = .rgba8Srgb,

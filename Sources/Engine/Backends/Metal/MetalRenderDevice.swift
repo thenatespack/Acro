@@ -391,14 +391,16 @@ final class MetalRenderDevice: RenderDevice {
             depth: try makeAttachment(screenDepthFormat, width, height, samples: samples))
     }
 
-    func makeTexture(pixels: UnsafeRawBufferPointer, width: Int, height: Int, format: TextureFormat,
-                     generateMipmaps: Bool) throws -> GPUTexture {
-        try format.validateUpload(byteCount: pixels.count, width: width, height: height, maxSize: maxTextureSize)
-        let levels = generateMipmaps
-            ? MipChain.generate(pixels: Array(pixels), width: width, height: height, srgb: format == .rgba8Srgb)
-            : [MipChain.Level(width: width, height: height, pixels: Array(pixels))]
+    func makeTexture(levels: [TextureMipLevel], format: TextureFormat) throws -> GPUTexture {
+        try format.validateLevels(levels, maxSize: maxTextureSize)
+        let (width, height) = (levels[0].width, levels[0].height)
+        let pixelFormat: MTLPixelFormat = switch format {
+        case .rgba8Srgb: .rgba8Unorm_srgb
+        case .rgba16Float: .rgba16Float
+        default: .rgba8Unorm
+        }
         let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: format == .rgba8Srgb ? .rgba8Unorm_srgb : .rgba8Unorm, width: width, height: height, mipmapped: false)
+            pixelFormat: pixelFormat, width: width, height: height, mipmapped: false)
         textureDescriptor.mipmapLevelCount = levels.count
         textureDescriptor.usage = .shaderRead
         guard let texture = device.makeTexture(descriptor: textureDescriptor) else {
@@ -408,10 +410,20 @@ final class MetalRenderDevice: RenderDevice {
             mip.pixels.withUnsafeBytes {
                 texture.replace(
                     region: MTLRegionMake2D(0, 0, mip.width, mip.height), mipmapLevel: level, withBytes: $0.baseAddress!,
-                    bytesPerRow: mip.width * 4)
+                    bytesPerRow: mip.width * format.bytesPerPixel)
             }
         }
         return MetalTexture(texture, format: format)
+    }
+
+    func updateTexture(_ texture: GPUTexture, region: TextureRegion, mipLevel: Int, bytes: UnsafeRawBufferPointer) throws {
+        let target = texture as! MetalTexture
+        try target.format.validateUpdate(
+            region, mipLevel: mipLevel, byteCount: bytes.count,
+            width: target.width, height: target.height, mipLevelCount: target.mipLevelCount)
+        target.texture.replace(
+            region: MTLRegionMake2D(region.x, region.y, region.width, region.height), mipmapLevel: mipLevel,
+            withBytes: bytes.baseAddress!, bytesPerRow: region.width * target.format.bytesPerPixel)
     }
 
     func makeSampler(_ descriptor: SamplerDescriptor) throws -> GPUSampler {
