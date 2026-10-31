@@ -113,6 +113,8 @@ public struct RenderPrep {
     public var skinnedMeshes: [Int: SkinnedMeshInfo] = [:]
     public var motion = MotionHistory()
     public var skinHistory = SkinHistory()
+    /// Poses skinned meshes in parallel (the result doesn't depend on its thread count).
+    public var jobs = JobSystem.shared
     public private(set) var items: [RenderItem] = []
     /// The joint matrices of this frame's skinned items (`RenderItem.skin`).
     public private(set) var skins: [SkinPose] = []
@@ -146,26 +148,56 @@ public struct RenderPrep {
             }
             let model = transform.matrix
             let previous = motion.previousMatrix(for: entity, current: model)
-            var localBounds = meshes[mesh]
             var skin = -1
             if !skinnedMeshes.isEmpty, let info = skinnedMeshes[mesh] {
-                let joints = SkinPose.joints(of: world.get(Skin.self, for: entity), meshWorld: model, jointCount: info.jointCount) {
-                    world.get(GlobalTransform.self, for: $0)?.matrix
-                }
-                let previousJoints = skinHistory.previousJoints(for: entity, current: joints, frame: motion.frame)
-                if let posed = SkinPose.bounds(info.jointBounds, joints: joints) { localBounds = posed }
+                // Posed below, in parallel.
                 skin = skins.count
-                skins.append(SkinPose(joints: joints, previousJoints: previousJoints))
+                skins.append(SkinPose(joints: [], previousJoints: []))
+                pendingSkins.append(PendingSkin(item: items.count, entity: entity, model: model, skin: world.get(Skin.self, for: entity),
+                                                info: info))
             }
             items.append(RenderItem(
                 entity: entity, mesh: mesh, material: material,
                 instance: MeshInstance(model: model, previousModel: previous, color: Vec4(renderer.tint, renderer.opacity),
                                        params: Vec4(renderer.receivesShadows ? 1 : 0, 0, 0, 0)),
-                bounds: localBounds.transformed(by: model),
+                bounds: meshes[mesh].transformed(by: model),
                 castsShadows: renderer.castsShadows,
                 transparent: renderer.opacity < 1 || materials[material].blends,
                 alphaTested: materials[material].alphaTested,
                 skin: skin))
+        }
+        poseSkins(world: world)
+    }
+
+    /// A skinned item waiting for its joint matrices.
+    private struct PendingSkin {
+        var item: Int
+        var entity: Entity
+        var model: Mat4
+        var skin: Skin?
+        var info: SkinnedMeshInfo
+    }
+    private var pendingSkins: [PendingSkin] = []
+
+    /// Computes the joint matrices and posed bounds of this frame's skinned items on `jobs`
+    /// (each reads only its joints' `GlobalTransform`s), then records the history in item order.
+    private mutating func poseSkins(world: World) {
+        guard !pendingSkins.isEmpty else { return }
+        defer { pendingSkins.removeAll(keepingCapacity: true) }
+        let pending = pendingSkins
+        let transforms = world.existingStore(GlobalTransform.self)?.view
+        let posed = jobs.parallelMap(pending.count, batchSize: 16, name: "skin poses") { k -> (joints: [Mat4], bounds: Bounds?) in
+            let p = pending[k]
+            let joints = SkinPose.joints(of: p.skin, meshWorld: p.model, jointCount: p.info.jointCount) { joint in
+                guard let transforms, let dense = transforms.denseIndex(of: joint) else { return nil }
+                return transforms.values[dense].matrix
+            }
+            return (joints, SkinPose.bounds(p.info.jointBounds, joints: joints))
+        }
+        for (k, (p, pose)) in zip(pending, posed).enumerated() {
+            let previousJoints = skinHistory.previousJoints(for: p.entity, current: pose.joints, frame: motion.frame)
+            skins[k] = SkinPose(joints: pose.joints, previousJoints: previousJoints)
+            if let bounds = pose.bounds { items[p.item].bounds = bounds.transformed(by: p.model) }
         }
     }
 
@@ -286,6 +318,10 @@ public struct RenderList {
     private var transparentItems: [(item: Int32, distance: Float)] = []
     private var opaqueSlots: [Int: Int] = [:]
     private var shadowSlots: [Int: Int] = [:]
+    private var visibility: [UInt8] = []
+    /// Runs the visibility tests (in batches of 4096 items; the result doesn't depend on its
+    /// thread count).
+    public var jobs = JobSystem.shared
 
     public init() {}
 
@@ -306,11 +342,28 @@ public struct RenderList {
         shadowSlotOfItem.removeAll(keepingCapacity: true)
         shadowSlotOfItem.append(contentsOf: repeatElement(-1, count: items.count))
 
-        // Classify and count. `count` of each batch is used as a counter here.
+        // Visibility tests first, in parallel: one flag byte per item (1: in view, 2: casts a
+        // visible shadow).
+        visibility.removeAll(keepingCapacity: true)
+        visibility.append(contentsOf: repeatElement(0, count: items.count))
+        let jobs = self.jobs
+        visibility.withUnsafeMutableBufferPointer { flags in
+            jobs.parallelFor(items.indices, batchSize: 4096, name: "cull") { range in
+                for i in range {
+                    let item = items[i]
+                    var flag: UInt8 = 0
+                    if cameraBatches && view.intersects(center: item.bounds.center, halfExtent: item.bounds.halfExtent) { flag |= 1 }
+                    if let shadows, item.castsShadows, shadows.castsVisibleShadow(item.bounds, view: view) { flag |= 2 }
+                    flags[i] = flag
+                }
+            }
+        }
+
+        // Classify and count, in item order. `count` of each batch is used as a counter here.
         var lastKey = Int.min, lastSlot = -1
         for (i, item) in items.enumerated() {
-            if let shadows, item.castsShadows {
-                if shadows.castsVisibleShadow(item.bounds, view: view) {
+            if shadows != nil, item.castsShadows {
+                if visibility[i] & 2 != 0 {
                     let slot: Int
                     // Alpha-tested casters need their material; the rest share a depth-only batch per mesh.
                     let material = item.alphaTested ? item.material : -1
@@ -330,7 +383,7 @@ public struct RenderList {
                 }
             }
             guard cameraBatches else { continue }
-            guard view.intersects(center: item.bounds.center, halfExtent: item.bounds.halfExtent) else {
+            guard visibility[i] & 1 != 0 else {
                 stats.culled += 1
                 continue
             }

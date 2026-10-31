@@ -9,7 +9,9 @@ import Foundation
 ///
 /// The simulation is deterministic: bodies, contacts and joints live in arrays in creation
 /// order, new pairs are sorted, and nothing iterates a dictionary or reads a clock, so the
-/// same calls give bit-identical results.
+/// same calls give bit-identical results. Steps 1 and 2 run on `jobs` (each moved body's
+/// query and each contact's narrowphase on its own, merged in a fixed order), so the thread
+/// count doesn't change them either.
 ///
 /// One step (`step(_:)`):
 /// 1. New pairs: every body whose fat box moved queries the tree; new pairs become contacts.
@@ -50,6 +52,9 @@ public final class PhysicsWorld {
     public var speculativeDistance: Float = 0.04
     /// Approach speeds below this don't bounce.
     public var restitutionThreshold: Float = 1
+    /// Runs the pair search and the narrowphase in parallel (the solver stays on the calling
+    /// thread). Results are the same for any thread count.
+    public var jobs = JobSystem.shared
 
     /// Events of the steps since the last `clearEvents()` (`advance(by:)` and the ECS
     /// integration clear them once per frame).
@@ -483,9 +488,9 @@ public final class PhysicsWorld {
         for i in bodies.indices where bodies[i].isAlive && bodies[i].motion != .static { bodies[i].previousPose = bodies[i].pose }
         findNewPairs()
         updateContacts(dt)
-        buildIslandsAndWake()
-        solve(dt)
-        updateSleep(dt)
+        Profiler.scope("islands") { buildIslandsAndWake() }
+        Profiler.scope("solver") { solve(dt) }
+        Profiler.scope("sleep update") { updateSleep(dt) }
         // Kinematic bodies fall asleep after every step (their target is spent) but did move.
         for i in bodies.indices where bodies[i].isAlive && (bodies[i].isAwake || bodies[i].motion == .kinematic) && bodies[i].motion != .static {
             refreshProxy(i)
@@ -500,16 +505,23 @@ public final class PhysicsWorld {
         guard !movedProxies.isEmpty else { return }
         let moved = movedProxies.sorted()
         movedProxies.removeAll(keepingCapacity: true)
-        var newPairs: [UInt64] = []
-        for i in moved where bodies[i].isAlive && bodies[i].proxy != nil {
+        // Tree queries only read, so the moved bodies query on the job system; the pairs are
+        // sorted below, so the order they are found in doesn't matter.
+        let (bodies, tree, existing) = (self.bodies, self.tree, self.contactKeys)
+        let found = jobs.parallelMap(moved.count, batchSize: 32, name: "physics pairs") { k -> [UInt64] in
+            let i = moved[k]
+            guard bodies[i].isAlive && bodies[i].proxy != nil else { return [] }
+            var pairs: [UInt64] = []
             tree.query(bodies[i].fatBox) { other in
                 if other != i && shouldCollide(i, other) {
                     let key = pairKey(i, other)
-                    if !contactKeys.contains(key) { newPairs.append(key) }
+                    if !existing.contains(key) { pairs.append(key) }
                 }
                 return true
             }
+            return pairs
         }
+        var newPairs = found.flatMap { $0 }
         newPairs.sort()
         var last: UInt64?
         for key in newPairs where key != last {
@@ -539,61 +551,90 @@ public final class PhysicsWorld {
         return true
     }
 
+    /// What the narrowphase made of a contact this step.
+    private enum ContactUpdate {
+        /// Both bodies asleep or still: the manifold stays as it is.
+        case inactive
+        /// The fat boxes parted: the contact goes.
+        case separated
+        /// The new manifold (a trigger's has no points) and whether the shapes touch.
+        case updated(points: [ManifoldPoint], touching: Bool)
+    }
+
+    /// The narrowphase of one contact. It reads only the contact and its bodies, so contacts
+    /// are processed in parallel on the job system.
+    private nonisolated static func narrowphase(_ c: Contact, _ a: Body, _ b: Body, dt: Float, speculativeDistance: Float,
+                                                linearSlop: Float) -> ContactUpdate {
+        let active = (a.isAwake && a.motion != .static) || (b.isAwake && b.motion != .static)
+        guard active else { return .inactive }
+        guard a.fatBox.overlaps(b.fatBox) else { return .separated }
+        if c.isTrigger {
+            let points = Narrowphase.collide(a.shape!, a.shapePose, b.shape!, b.shapePose, margin: 0)
+            return .updated(points: [], touching: points.contains { $0.separation <= 0 })
+        }
+        // Look as far ahead as the bodies can close in one step, so fast bodies are
+        // caught by speculative points instead of tunneling.
+        let closing = length(b.linearVelocity - a.linearVelocity) + length(a.angularVelocity) * a.shape!.extent
+            + length(b.angularVelocity) * b.shape!.extent
+        let found = Narrowphase.collide(a.shape!, a.shapePose, b.shape!, b.shapePose,
+                                        margin: speculativeDistance + closing * dt)
+        var points: [ManifoldPoint] = []
+        points.reserveCapacity(found.count)
+        for p in found {
+            var m = ManifoldPoint(localA: a.pose.rotation.conjugate * (p.pointA - a.center),
+                                  localB: b.pose.rotation.conjugate * (p.pointB - b.center),
+                                  normal: p.normal, separation: p.separation, position: (p.pointA + p.pointB) * 0.5)
+            // Warm start from the old point nearest on body A (same feature, roughly).
+            var best = 0.02 * 0.02 as Float
+            for old in c.points where dot(old.normal, m.normal) > 0.95 {
+                let d = lengthSquared(old.localA - m.localA)
+                if d < best {
+                    best = d
+                    m.normalImpulse = old.normalImpulse
+                }
+            }
+            points.append(m)
+        }
+        return .updated(points: points, touching: points.contains { $0.separation <= linearSlop * 2 })
+    }
+
     private func updateContacts(_ dt: Float) {
+        // The narrowphase in parallel (each contact on its own), then removals and events in
+        // contact order, so nothing depends on the thread count.
+        let (previous, bodies) = (contacts, self.bodies)
+        let (speculativeDistance, linearSlop) = (self.speculativeDistance, self.linearSlop)
+        let updates = jobs.parallelMap(previous.count, batchSize: 16, name: "narrowphase") { k in
+            Self.narrowphase(previous[k], bodies[previous[k].a], bodies[previous[k].b], dt: dt,
+                             speculativeDistance: speculativeDistance, linearSlop: linearSlop)
+        }
         var kept: [Contact] = []
-        kept.reserveCapacity(contacts.count)
+        kept.reserveCapacity(previous.count)
         var newEvents: [PhysicsEvent] = []
-        for var c in contacts {
+        for (k, var c) in previous.enumerated() {
             let a = bodies[c.a], b = bodies[c.b]
-            let active = (a.isAwake && a.motion != .static) || (b.isAwake && b.motion != .static)
-            if !active {
-                // Both asleep or still: keep the manifold as it is.
+            let wasTouching = c.touching
+            switch updates[k] {
+            case .inactive:
                 if c.isTrigger && c.touching { newEvents.append(triggerEvent(.triggerStayed, c)) }
                 kept.append(c)
                 continue
-            }
-            if !a.fatBox.overlaps(b.fatBox) {
+            case .separated:
                 contactKeys.remove(c.key)
                 if c.touching { newEvents.append(endEvent(c)) }
                 continue
+            case .updated(let points, let touching):
+                c.points = points
+                c.touching = touching
             }
-            let wasTouching = c.touching
             if c.isTrigger {
-                let points = Narrowphase.collide(a.shape!, a.shapePose, b.shape!, b.shapePose, margin: 0)
-                c.touching = points.contains { $0.separation <= 0 }
-                c.points = []
                 if c.touching { newEvents.append(triggerEvent(wasTouching ? .triggerStayed : .triggerEntered, c)) }
                 if wasTouching && !c.touching { newEvents.append(triggerEvent(.triggerExited, c)) }
             } else {
-                // Look as far ahead as the bodies can close in one step, so fast bodies are
-                // caught by speculative points instead of tunneling.
-                let closing = length(b.linearVelocity - a.linearVelocity) + length(a.angularVelocity) * a.shape!.extent
-                    + length(b.angularVelocity) * b.shape!.extent
-                let found = Narrowphase.collide(a.shape!, a.shapePose, b.shape!, b.shapePose,
-                                                margin: speculativeDistance + closing * dt)
-                var points: [ManifoldPoint] = []
-                points.reserveCapacity(found.count)
-                for p in found {
-                    var m = ManifoldPoint(localA: a.pose.rotation.conjugate * (p.pointA - a.center),
-                                          localB: b.pose.rotation.conjugate * (p.pointB - b.center),
-                                          normal: p.normal, separation: p.separation, position: (p.pointA + p.pointB) * 0.5)
-                    // Warm start from the old point nearest on body A (same feature, roughly).
-                    var best = 0.02 * 0.02 as Float
-                    for old in c.points where dot(old.normal, m.normal) > 0.95 {
-                        let d = lengthSquared(old.localA - m.localA)
-                        if d < best {
-                            best = d
-                            m.normalImpulse = old.normalImpulse
-                        }
-                    }
-                    points.append(m)
-                }
-                c.points = points
+                let points = c.points
                 if points.isEmpty {
                     c.tangentImpulse = .zero
                     c.twistImpulse = 0
                 }
-                c.touching = points.contains { $0.separation <= linearSlop * 2 }
                 if c.touching && !wasTouching {
                     let deepest = points.min { $0.separation < $1.separation }!
                     newEvents.append(PhysicsEvent(kind: .collisionBegan, bodyA: id(c.a), bodyB: id(c.b), entityA: a.entity,
