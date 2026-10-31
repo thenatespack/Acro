@@ -72,8 +72,8 @@ final class GizmosScene: DemoScene {
             nextID += 1
             return EntityID(high: 0x6a1d, low: nextID)
         }
-        try sceneRenderer.registerMaterial(Material(baseColor: Vec4(0.55, 0.53, 0.5, 1), checker: true, specular: 0.1), key: "floor")
-        try sceneRenderer.registerMaterial(Material(baseColor: Vec4(1, 1, 1, 1), specular: 0.4, shininess: 48), key: "paint")
+        try sceneRenderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(0.55, 0.53, 0.5, 1), checker: true, specular: 0.1), key: "floor")
+        try sceneRenderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(1, 1, 1, 1), specular: 0.4, shininess: 48), key: "paint")
 
         views = [
             try Viewport(title: "Editor", device: renderer.device, multisampled: true),

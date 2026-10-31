@@ -571,18 +571,15 @@ private func quadGeometryIsUnchanged(_ model: ImportedModel) -> Bool {
         m.alphaMode = .blend
         e = m.engineMaterial()
         #expect(e.baseColor.w == 0.5 && e.isTransparent)
-        // Smooth metals get a strong, tight highlight; rough dielectrics almost none.
+        // PBR: metallic and roughness carry over; Blinn-Phong's specular/shininess are unused.
         let smooth = m.engineMaterial()
+        #expect(smooth.shading == .pbr && smooth.metallic == 1 && abs(smooth.roughness - 0.2) < 1e-6)
         var rough = m
-        rough.roughnessFactor = 1
-        rough.metallicFactor = 0
-        #expect(smooth.specular > 0.5 && smooth.shininess > 100)
-        #expect(rough.engineMaterial().specular < 0.01 && rough.engineMaterial().shininess <= 2)
         rough.unlit = true
         #expect(rough.engineMaterial().emissive == 1)
-        // Offsets can't be expressed by uvScale.
+        // The whole texture transform carries over.
         m.baseColorTexture?.transform?.offset = Vec2(0.5, 0)
-        #expect(m.engineMaterial().uvScale == Vec2(1, 1))
+        #expect(m.engineMaterial().uvScale == Vec2(4, 2) && m.engineMaterial().uvOffset == Vec2(0.5, 0))
     }
 
     @Test func imagesFromBufferViewsAndDataURIsAreReturnedEncoded() throws {

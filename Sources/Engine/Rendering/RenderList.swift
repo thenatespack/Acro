@@ -81,9 +81,11 @@ public struct RenderItem: Sendable {
     public var bounds: Bounds
     public var castsShadows: Bool
     public var transparent: Bool
+    /// The material is alpha-tested (`MaterialTraits.alphaTested`), so its shadow batch keeps it.
+    public var alphaTested: Bool
 
     public init(entity: Entity, mesh: Int, material: Int, instance: MeshInstance, bounds: Bounds,
-                castsShadows: Bool, transparent: Bool) {
+                castsShadows: Bool, transparent: Bool, alphaTested: Bool = false) {
         self.entity = entity
         self.mesh = mesh
         self.material = material
@@ -91,17 +93,17 @@ public struct RenderItem: Sendable {
         self.bounds = bounds
         self.castsShadows = castsShadows
         self.transparent = transparent
+        self.alphaTested = alphaTested
     }
 }
 
 /// Collects a world's `MeshRenderer`s into `RenderItem`s and finds its camera, light and
 /// environment. Mesh and material handles resolve through `meshes` (local bounds) and
-/// `materials` (whether the material blends); entities naming unknown keys are skipped.
+/// `materials` (whether the material blends or is alpha-tested); entities naming unknown keys are skipped.
 @MainActor
 public struct RenderPrep {
     public var meshes = AssetRegistry<Bounds>()
-    /// Value: the material always blends (`Material.isTransparent` or base alpha < 1).
-    public var materials = AssetRegistry<Bool>()
+    public var materials = AssetRegistry<MaterialTraits>()
     public var motion = MotionHistory()
     public private(set) var items: [RenderItem] = []
     /// Keys entities referenced that aren't registered (reported once by the renderer).
@@ -139,7 +141,8 @@ public struct RenderPrep {
                                        params: Vec4(renderer.receivesShadows ? 1 : 0, 0, 0, 0)),
                 bounds: meshes[mesh].transformed(by: model),
                 castsShadows: renderer.castsShadows,
-                transparent: renderer.opacity < 1 || materials[material]))
+                transparent: renderer.opacity < 1 || materials[material].blends,
+                alphaTested: materials[material].alphaTested))
         }
     }
 
@@ -209,7 +212,7 @@ public struct ShadowCasterCulling: Sendable {
 /// A run of instances in `RenderList.instances` drawn with one mesh and material.
 public struct RenderBatch: Equatable, Sendable {
     public var mesh: Int
-    /// -1 for shadow batches (depth only, any material).
+    /// -1 for shadow batches drawn depth only (any material); alpha-tested shadow batches keep theirs.
     public var material: Int
     public var first: Int
     public var count: Int
@@ -242,7 +245,8 @@ public struct RenderListStats: Equatable, Sendable {
 /// one copy. Opaque batches group by (mesh, material) in order of first appearance;
 /// transparent instances are sorted back to front by the distance from the camera to their
 /// bounds' center (ties by entity index), and consecutive ones sharing mesh and material
-/// share a batch. Shadow batches group casters by mesh.
+/// share a batch. Shadow batches group casters by mesh, and alpha-tested ones by mesh and
+/// material (their batch keeps the material, others have -1).
 public struct RenderList {
     public private(set) var instances: [MeshInstance] = []
     public private(set) var opaque: [RenderBatch] = []
@@ -282,12 +286,15 @@ public struct RenderList {
             if let shadows, item.castsShadows {
                 if shadows.castsVisibleShadow(item.bounds, view: view) {
                     let slot: Int
-                    if let existing = shadowSlots[item.mesh] {
+                    // Alpha-tested casters need their material; the rest share a depth-only batch per mesh.
+                    let material = item.alphaTested ? item.material : -1
+                    let key = item.mesh << 32 | (material & 0xffff_ffff)
+                    if let existing = shadowSlots[key] {
                         slot = existing
                     } else {
                         slot = shadow.count
-                        shadowSlots[item.mesh] = slot
-                        shadow.append(RenderBatch(mesh: item.mesh, material: -1, first: 0, count: 0))
+                        shadowSlots[key] = slot
+                        shadow.append(RenderBatch(mesh: item.mesh, material: material, first: 0, count: 0))
                     }
                     shadow[slot].count += 1
                     shadowSlotOfItem[i] = Int32(slot)

@@ -95,8 +95,8 @@ private func item(_ index: UInt32, mesh: Int = 0, material: Int = 0, at position
     let world = World()
     var prep = RenderPrep()
     prep.meshes.register(unitBox, key: "cube")
-    prep.materials.register(false, key: "default")
-    prep.materials.register(true, key: "glass")
+    prep.materials.register(MaterialTraits(), key: "default")
+    prep.materials.register(MaterialTraits(blends: true), key: "glass")
 
     let parent = world.spawn(Transform(position: Vec3(10, 0, 0)))
     let child = world.spawn(Transform(position: Vec3(1, 0, 0)), MeshRenderer(mesh: .cube))
@@ -279,8 +279,8 @@ private func item(_ index: UInt32, mesh: Int = 0, material: Int = 0, at position
     var prep = RenderPrep()
     prep.meshes.register(unitBox, key: "cube")
     prep.meshes.register(Bounds(center: .zero, halfExtent: Vec3(repeating: 0.5)), key: "sphere")
-    prep.materials.register(false, key: "default")
-    prep.materials.register(false, key: "b")
+    prep.materials.register(MaterialTraits(), key: "default")
+    prep.materials.register(MaterialTraits(), key: "b")
     for i in 0..<10_000 {
         let p = Vec3(Float(i % 100) - 50, 0, Float(i / 100) - 50)
         _ = world.spawn(Transform(position: p),

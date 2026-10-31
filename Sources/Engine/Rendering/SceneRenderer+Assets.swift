@@ -14,8 +14,8 @@ import Foundation
 // placeholder-ish is ever drawn.
 //
 // Every registered asset key remembers a "signature" of what it was uploaded from: the asset's
-// revision, and for a material its texture's revision (or -1 when the texture isn't uploaded
-// yet). `syncAssets` re-uploads keys whose desired signature differs, which is how reimports,
+// revision, and for a material the revisions of all its textures (base color, metallic-roughness,
+// normal, occlusion, emissive; -1 for one that isn't uploaded yet). `syncAssets` re-uploads keys whose desired signature differs, which is how reimports,
 // finished loads and texture changes reach the viewport. An asset that was deleted releases
 // its mesh (nothing is drawn) or turns its material into the placeholder, and is reported.
 
@@ -69,8 +69,8 @@ extension SceneRenderer {
                     return false
                 }
                 guard let material = assets.material(reference) else { break }
-                let (texture, signature) = try materialTexture(material, reference: reference, ignoringBudget: ignoringBudget)
-                try registerMaterial(material.material(texture: texture), key: key)
+                let (resolved, signature) = try materialTextures(material, reference: reference, ignoringBudget: ignoringBudget)
+                try registerMaterial(resolved, key: key)
                 assetKeys[key] = signature
                 return true
             case .texture, .prefab:
@@ -134,8 +134,8 @@ extension SceneRenderer {
                 _ = try? registerMesh(geometry, key: key)
                 assetKeys[key] = assets.revision(of: reference.asset)
             } else if let material = assets.material(reference), signature != desiredSignature(of: material, reference: reference) {
-                guard let (texture, actual) = try? materialTexture(material, reference: reference, ignoringBudget: false) else { continue }
-                _ = try? registerMaterial(material.material(texture: texture), key: key)
+                guard let (resolved, actual) = try? materialTextures(material, reference: reference, ignoringBudget: false) else { continue }
+                _ = try? registerMaterial(resolved, key: key)
                 assetKeys[key] = actual
             }
         }
@@ -182,24 +182,38 @@ extension SceneRenderer {
 
     private static func combine(_ revision: Int, _ texture: Int) -> Int { revision &* 1_000_003 &+ texture }
 
-    /// What `material`'s signature will be once everything it needs is uploaded: the revision of
-    /// its asset and of its texture's (-1 while the texture isn't loaded or has failed).
-    private func desiredSignature(of material: MaterialAsset, reference: AssetReference) -> Int {
-        guard let assets else { return Self.loadingSignature }
-        let texture = material.texture.map { assets.loadState(of: $0.asset) == .loaded ? assets.revision(of: $0.asset) : -1 } ?? 0
-        return Self.combine(assets.revision(of: reference.asset), texture)
+    /// Each texture slot of a material, in a fixed order (nil for an empty slot), for signatures.
+    private static func textureSlots(_ material: MaterialAsset) -> [AssetReference?] {
+        [material.texture, material.metallicRoughnessTexture, material.normalTexture, material.occlusionTexture,
+         material.emissiveTexture]
     }
 
-    /// The GPU texture for `material` (nil while it loads, is deferred or missing) and the
-    /// signature of what was uploaded.
-    private func materialTexture(_ material: MaterialAsset, reference: AssetReference, ignoringBudget: Bool) throws -> (GPUTexture?, Int) {
-        guard let assets else { return (nil, Self.loadingSignature) }
-        let revision = assets.revision(of: reference.asset)
-        guard let textureReference = material.texture else { return (nil, Self.combine(revision, 0)) }
-        guard let texture = try assetTexture(textureReference, ignoringBudget: ignoringBudget) else {
-            return (nil, Self.combine(revision, -1))
+    /// What `material`'s signature will be once everything it needs is uploaded: the revision of
+    /// its asset and of each of its textures (0 for an empty slot, -1 while a texture isn't
+    /// loaded or has failed).
+    private func desiredSignature(of material: MaterialAsset, reference: AssetReference) -> Int {
+        guard let assets else { return Self.loadingSignature }
+        return Self.textureSlots(material).reduce(assets.revision(of: reference.asset)) { signature, slot in
+            Self.combine(signature, slot.map { assets.loadState(of: $0.asset) == .loaded ? assets.revision(of: $0.asset) : -1 } ?? 0)
         }
-        return (texture, Self.combine(revision, assets.revision(of: textureReference.asset)))
+    }
+
+    /// `material` with the GPU textures of all its texture references (a slot stays empty while
+    /// its texture loads, is deferred or missing) and the signature of what was uploaded.
+    private func materialTextures(_ material: MaterialAsset, reference: AssetReference, ignoringBudget: Bool) throws -> (Material, Int) {
+        guard let assets else { return (material.material(texture: nil), Self.loadingSignature) }
+        var signature = assets.revision(of: reference.asset)
+        for slot in Self.textureSlots(material) {
+            guard let slot else { signature = Self.combine(signature, 0); continue }
+            let uploaded = try assetTexture(slot, ignoringBudget: ignoringBudget) != nil
+            signature = Self.combine(signature, uploaded ? assets.revision(of: slot.asset) : -1)
+        }
+        // The uploads above are cached in `assetTextures`, so resolving again only looks them up.
+        let resolved = try material.material(textures: { reference in
+            guard let cached = assetTextures[reference.description], cached.revision == assets.revision(of: reference.asset) else { return nil }
+            return cached.texture
+        })
+        return (resolved, signature)
     }
 
     /// The GPU texture for a material's texture reference (uploaded once per revision).

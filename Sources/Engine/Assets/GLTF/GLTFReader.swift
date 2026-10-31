@@ -718,6 +718,14 @@ struct GLTFParser {
             for i in 0..<vertexCount {
                 vertices[i].normal = normalize(Vec3(normals.values[i * 3], normals.values[i * 3 + 1], normals.values[i * 3 + 2]))
             }
+            // The file's tangents count only with its normals (glTF: generated normals ignore them).
+            if let extraTangents {
+                for i in 0..<vertexCount {
+                    let t = extraTangents[i]
+                    let xyz = Vec3(t.x, t.y, t.z), len = length(xyz)
+                    if len > 0 && len.isFinite { vertices[i].tangent = Vec4(xyz / len, t.w < 0 ? -1 : 1) }
+                }
+            }
         } else if options.normals == .flat {
             // Unweld: each triangle gets its own three vertices and its face normal.
             func unweld<T>(_ values: [T]?) -> [T]? { values.map { v in indices.map { v[Int($0)] } } }

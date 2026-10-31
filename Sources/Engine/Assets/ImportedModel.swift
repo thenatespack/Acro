@@ -60,11 +60,13 @@ public struct ImportedMesh: Sendable {
 }
 
 /// One drawable part of a mesh: triangles in the engine's vertex format plus the vertex
-/// attributes `MeshVertex` has no slot for yet. All per-vertex arrays have
+/// attributes `MeshVertex` has no slot for. All per-vertex arrays have
 /// `geometry.vertices.count` entries.
 public struct ImportedPrimitive: Sendable {
-    /// Positions, normals (generated when the file has none) and `TEXCOORD_0` (zero when
-    /// missing), as an indexed triangle list with counter-clockwise front faces.
+    /// Positions, normals (generated when the file has none), `TEXCOORD_0` (zero when missing)
+    /// and the file's tangents (only together with its normals, as glTF requires; otherwise
+    /// zero, and `SceneRenderer.registerMesh` generates them), as an indexed triangle list with
+    /// counter-clockwise front faces.
     public var geometry: MeshGeometry
     /// `TANGENT`: xyz is the tangent, w (±1) the bitangent sign. nil when the file has none.
     public var tangents: [Vec4]?
@@ -250,8 +252,8 @@ public enum AlphaMode: String, Sendable, Codable {
 }
 
 /// A glTF metallic-roughness material, with every parameter the file gave. Colors and
-/// factors are linear. `engineMaterial(baseColorTexture:)` maps it onto the engine's current
-/// `Material`, which supports only part of it.
+/// factors are linear. `engineMaterial(textures:sampler:)` maps it onto the engine's PBR
+/// `Material` (`materialAsset` onto its data form).
 public struct ImportedMaterial: Sendable, Equatable {
     public var name: String?
     /// Linear RGBA, multiplied with the base color texture.
@@ -301,43 +303,53 @@ public struct ImportedMaterial: Sendable, Equatable {
 }
 
 extension ImportedMaterial {
-    /// The closest `Material` the engine's current Blinn-Phong shader can draw:
-    /// - base color factor and texture (pass the GPU texture for `baseColorTexture`, created
-    ///   as `.rgba8Srgb`), with its sampler and a scale-only `KHR_texture_transform` as `uvScale`;
-    /// - roughness and metalness become specular strength and shininess;
-    /// - `.blend` draws in the transparent pass; `.opaque` forces alpha to 1; `.mask` has no
-    ///   cutoff in the shader and is drawn opaque;
-    /// - `unlit` sets `emissive` to 1; `doubleSided` carries over.
+    /// The texture whose sampler and `KHR_texture_transform` the engine material uses for all
+    /// its textures (a `Material` has one sampler and one UV transform): the base color
+    /// texture, else the first texture in slot order.
+    public var primaryTexture: TextureReference? { textureReferences.first?.reference }
+
+    /// The engine's PBR `Material` for this glTF material:
+    /// - base color, metallic and roughness factors, normal scale, occlusion strength,
+    ///   emissive factor times `KHR_materials_emissive_strength`, alpha mode and cutoff,
+    ///   double-sided carry over; `.opaque` forces alpha to 1; unlit sets `emissive` to 1;
+    /// - `textures` supplies the GPU texture of each of the five texture references (created
+    ///   in the slot's color space, see `TextureSlot.colorSpace`; nil leaves the slot empty);
+    /// - `sampler` (the `primaryTexture`'s) and the primary texture's transform (offset,
+    ///   rotation, scale) apply to every texture.
     ///
-    /// Not mapped: normal, occlusion, metallic-roughness and emissive textures, the emissive
-    /// color, texture offset/rotation, `TEXCOORD_1`.
-    public func engineMaterial(baseColorTexture texture: GPUTexture? = nil, sampler: ImportedSampler? = nil) -> Material {
-        var material = materialAsset(sampler: sampler).material(texture: texture)
+    /// Not mapped: per-texture samplers and transforms when they differ, `TEXCOORD_1` (every
+    /// texture samples `TEXCOORD_0`), separate U/V wrap modes (U's is used).
+    public func engineMaterial(textures: (TextureReference) -> GPUTexture? = { _ in nil },
+                               sampler: ImportedSampler? = nil) -> Material {
+        var material = materialAsset(sampler: sampler).material(texture: nil)
         material.sampler = (sampler ?? ImportedSampler()).descriptor
+        material.texture = baseColorTexture.flatMap(textures)
+        material.metallicRoughnessTexture = metallicRoughnessTexture.flatMap(textures)
+        material.normalTexture = normalTexture.flatMap(textures)
+        material.occlusionTexture = occlusionTexture.flatMap(textures)
+        material.emissiveTexture = emissiveTexture.flatMap(textures)
         return material
     }
 
-    /// The same mapping as `engineMaterial`, as data for the asset database: the base color
-    /// texture is an `AssetReference`, and the sampler keeps only its mag filter
+    /// The same mapping as `engineMaterial`, as data for the asset database: textures are
+    /// `AssetReference`s from `textures`, and the sampler keeps only its mag filter
     /// (`MaterialAsset` has one filter for both).
-    public func materialAsset(baseColorTexture texture: AssetReference? = nil, sampler: ImportedSampler? = nil) -> MaterialAsset {
+    public func materialAsset(textures: (TextureReference) -> AssetReference? = { _ in nil },
+                              sampler: ImportedSampler? = nil) -> MaterialAsset {
         var color = baseColorFactor
-        if alphaMode != .blend { color.w = 1 }
-        let roughness = min(max(roughnessFactor, 0.03), 1)
-        let smooth = 1 - roughness
-        // Metals reflect more; rough surfaces barely show a highlight. Shininess follows the
-        // usual Blinn-Phong ↔ GGX correspondence (2 / α² − 2, with α = roughness²).
-        let specular = smooth * smooth * (0.25 + 0.75 * min(max(metallicFactor, 0), 1))
-        let alpha = roughness * roughness
-        let shininess = min(max(2 / (alpha * alpha) - 2, 2), 256)
-        var uvScale = Vec2(1, 1)
-        if let transform = baseColorTexture?.transform, transform.isScaleOnly { uvScale = transform.scale }
+        if alphaMode == .opaque { color.w = 1 }
+        let transform = primaryTexture?.transform ?? TextureTransform()
         let sampler = (sampler ?? ImportedSampler()).descriptor
         return MaterialAsset(
-            baseColor: color, texture: texture,
+            shading: .pbr, baseColor: color, texture: baseColorTexture.flatMap(textures),
             filter: sampler.magFilter, mipFilter: sampler.mipFilter, addressMode: sampler.addressMode,
-            uvScale: uvScale, emissive: unlit ? 1 : 0, specular: specular, shininess: shininess,
-            doubleSided: doubleSided, isTransparent: alphaMode == .blend)
+            uvScale: transform.scale, uvOffset: transform.offset, uvRotation: transform.rotation,
+            emissive: unlit ? 1 : 0, metallic: min(max(metallicFactor, 0), 1), roughness: min(max(roughnessFactor, 0), 1),
+            metallicRoughnessTexture: metallicRoughnessTexture.flatMap(textures), normalTexture: normalTexture.flatMap(textures),
+            normalScale: normalScale, occlusionTexture: occlusionTexture.flatMap(textures),
+            occlusionStrength: min(max(occlusionStrength, 0), 1), emissiveColor: emissiveFactor,
+            emissiveTexture: emissiveTexture.flatMap(textures), emissiveStrength: emissiveStrength,
+            alphaMode: alphaMode, alphaCutoff: alphaCutoff, doubleSided: doubleSided)
     }
 }
 

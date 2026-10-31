@@ -804,7 +804,7 @@ final class VulkanRenderDevice: RenderDevice {
         let vertexModule = try createShaderModule(vertexCode)
         defer { vkDestroyShaderModule(device, vertexModule, nil) }
         var fragmentModule: VkShaderModule?
-        if isScreen {
+        if isScreen || descriptor.depthOnlyFragment {
             guard let fragmentCode = descriptor.shader.spirvFragment else {
                 throw GraphicsError("Shader has no SPIR-V fragment stage (run Scripts/compile-shaders.sh)")
             }

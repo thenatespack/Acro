@@ -5,11 +5,17 @@ public struct MeshVertex: Equatable, Sendable, BitwiseCopyable {
     public var position: Vec3
     public var normal: Vec3
     public var uv: Vec2
+    /// xyz: the direction of increasing U, w: ±1, the handedness of the tangent frame: the
+    /// bitangent (toward decreasing V, "up" in the texture) is `cross(normal, tangent.xyz) * w`
+    /// (glTF `TANGENT`). All zero when unknown; `SceneRenderer.registerMesh` then generates
+    /// them (`MeshGeometry.generateTangents()`).
+    public var tangent: Vec4
 
-    public init(position: Vec3, normal: Vec3, uv: Vec2 = .zero) {
+    public init(position: Vec3, normal: Vec3, uv: Vec2 = .zero, tangent: Vec4 = .zero) {
         self.position = position
         self.normal = normal
         self.uv = uv
+        self.tangent = tangent
     }
 
     static let layout = VertexLayout(
@@ -18,6 +24,7 @@ public struct MeshVertex: Equatable, Sendable, BitwiseCopyable {
             VertexAttribute(location: 0, format: .float3, offset: MemoryLayout<MeshVertex>.offset(of: \.position)!),
             VertexAttribute(location: 1, format: .float3, offset: MemoryLayout<MeshVertex>.offset(of: \.normal)!),
             VertexAttribute(location: 2, format: .float2, offset: MemoryLayout<MeshVertex>.offset(of: \.uv)!),
+            VertexAttribute(location: 13, format: .float4, offset: MemoryLayout<MeshVertex>.offset(of: \.tangent)!),
         ])
 }
 
@@ -133,5 +140,72 @@ public struct MeshGeometry: Sendable {
             }
         }
         return geometry
+    }
+}
+
+// MARK: - Tangents
+
+extension MeshGeometry {
+    /// Whether every vertex has a tangent frame (a nonzero handedness in `tangent.w`).
+    public var hasTangents: Bool { !vertices.isEmpty && vertices.allSatisfy { $0.tangent.w != 0 } }
+
+    /// Computes `MeshVertex.tangent` for every vertex from positions, normals and UVs, in the
+    /// spirit of MikkTSpace: each triangle corner contributes its UV gradient direction
+    /// (∂p/∂u for the tangent, ∂p/∂v for the handedness), projected onto the vertex's normal
+    /// plane, normalized and weighted by the corner's angle; the sum is orthonormalized
+    /// against the normal. Unlike MikkTSpace, vertices are never split, so a vertex shared by
+    /// triangles with mirrored UVs gets one averaged frame. Vertices without usable UVs get an
+    /// arbitrary tangent perpendicular to their normal.
+    public mutating func generateTangents() {
+        let count = vertices.count
+        var tangents = [Vec3](repeating: .zero, count: count)
+        var bitangents = [Vec3](repeating: .zero, count: count)
+        for t in stride(from: 0, to: indices.count - 2, by: 3) {
+            let corners = (Int(indices[t]), Int(indices[t + 1]), Int(indices[t + 2]))
+            let ids = [corners.0, corners.1, corners.2]
+            let p = ids.map { vertices[$0].position }, uv = ids.map { vertices[$0].uv }
+            let e1 = p[1] - p[0], e2 = p[2] - p[0]
+            let d1 = uv[1] - uv[0], d2 = uv[2] - uv[0]
+            let det = d1.x * d2.y - d2.x * d1.y
+            guard abs(det) > 1e-12, det.isFinite else { continue }
+            // ∂p/∂u and ∂p/∂v of the triangle's planar UV mapping.
+            let dpdu = (e1 * d2.y - e2 * d1.y) / det
+            let dpdv = (e2 * d1.x - e1 * d2.x) / det
+            for k in 0..<3 {
+                let a = p[(k + 1) % 3] - p[k], b = p[(k + 2) % 3] - p[k]
+                let la = length(a), lb = length(b)
+                guard la > 0, lb > 0 else { continue }
+                let angle = acosf(min(max(dot(a, b) / (la * lb), -1), 1))
+                let n = vertices[ids[k]].normal
+                let tu = dpdu - n * dot(n, dpdu), tv = dpdv - n * dot(n, dpdv)
+                let lu = length(tu), lv = length(tv)
+                if lu > 0, lu.isFinite { tangents[ids[k]] += tu / lu * angle }
+                if lv > 0, lv.isFinite { bitangents[ids[k]] += tv / lv * angle }
+            }
+        }
+        for i in 0..<count {
+            let n = vertices[i].normal
+            var t = tangents[i] - n * dot(n, tangents[i])
+            var len = length(t)
+            if !(len > 1e-8) || !len.isFinite {
+                // No UV gradient: any direction in the normal's plane.
+                t = abs(n.x) < 0.9 ? cross(n, Vec3(1, 0, 0)) : cross(n, Vec3(0, 1, 0))
+                t = cross(t, n)
+                len = length(t)
+                if !(len > 0) { t = Vec3(1, 0, 0); len = 1 }
+            }
+            t /= len
+            // The shader's bitangent cross(n, t) * w must point toward decreasing V.
+            let w: Float = dot(cross(n, t), bitangents[i]) > 0 ? -1 : 1
+            vertices[i].tangent = Vec4(t, w)
+        }
+    }
+
+    /// A copy with tangents generated where they are missing (`hasTangents` false).
+    public func withTangents() -> MeshGeometry {
+        if hasTangents { return self }
+        var copy = self
+        copy.generateTangents()
+        return copy
     }
 }

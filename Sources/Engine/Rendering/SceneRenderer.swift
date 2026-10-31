@@ -85,7 +85,7 @@ public struct SceneRenderStats: Sendable {
 /// What gets drawn comes from components: the active `Camera`, the first `DirectionalLight`,
 /// the first `SceneEnvironment` and every entity with a `MeshRenderer` and a
 /// `GlobalTransform`. Meshes and materials are registered under string keys; the built-in
-/// meshes `MeshHandle.cube`, `.plane`, `.sphere` and `MaterialHandle.default` exist from the start.
+/// meshes `MeshHandle.cube`, `.plane`, `.sphere` and `MaterialHandle.default` (Blinn-Phong, the pre-PBR look) exist from the start.
 @MainActor
 public final class SceneRenderer {
     public let device: RenderDevice
@@ -105,7 +105,11 @@ public final class SceneRenderer {
     private var materials: [(material: Material, sampler: GPUSampler)] = []
     private let whiteTexture: GPUTexture
     private let shader: ShaderSource
+    /// `shader` with mesh_mask.frag (alpha-tested), loaded with the first masked material.
+    private var maskShader: ShaderSource?
     private let shadowPipeline: RenderPipeline
+    /// The shadow pipeline for alpha-tested casters (mesh_shadow_mask), created on first use.
+    private var shadowMaskPipeline: RenderPipeline?
     private var pipelines: [PipelineKey: RenderPipeline] = [:]
     public let shadowMap: GPUTexture
     private var shadowMapCleared = false
@@ -119,7 +123,7 @@ public final class SceneRenderer {
 
     /// Resolves handles that name project assets (`MeshHandle(AssetReference)`, keys
     /// `asset:<id>[#<sub-asset>]`): the first frame an entity uses one, its mesh or material
-    /// (and the material's texture) is taken from the database and uploaded, then registered
+    /// (and the material's textures) is taken from the database and uploaded, then registered
     /// under that key like any other. Assets the database imports again are re-uploaded on the
     /// next frame. Built-in and code-registered keys are unaffected. Nil (the default) leaves
     /// asset keys unresolved (reported as missing, entities skipped).
@@ -198,17 +202,41 @@ public final class SceneRenderer {
         var shadowParams: Vec4
     }
 
-    /// Must match `MaterialData` in mesh.frag (uniform buffer 2).
+    /// Must match `MaterialData` in mesh_surface.glsl (uniform buffer 2).
     struct MaterialUniforms: BitwiseCopyable {
         var baseColor: Vec4
+        /// x: checker, y: unlit, z: specular, w: shininess
         var params: Vec4
-        var uvScale: Vec4
+        var uvRow0: Vec4
+        var uvRow1: Vec4
+        /// x: metallic, y: roughness, z: normal scale, w: occlusion strength
+        var surface: Vec4
+        /// rgb: emissive color x strength, w: 1 for PBR
+        var emissive: Vec4
+        /// x: alpha cutoff, y: has a normal map
+        var flags: Vec4
+
+        init(_ material: Material) {
+            baseColor = material.baseColor
+            params = Vec4(material.checker ? 1 : 0, material.emissive, material.specular, material.shininess)
+            (uvRow0, uvRow1) = material.uvTransformRows
+            surface = Vec4(material.metallic, material.roughness, material.normalScale, material.occlusionStrength)
+            emissive = Vec4(material.emissiveColor * material.emissiveStrength, material.shading == .pbr ? 1 : 0)
+            flags = Vec4(material.alphaCutoff, material.normalTexture != nil ? 1 : 0, 0, 0)
+        }
     }
 
-    private struct PipelineKey: Hashable {
+    struct PipelineKey: Hashable {
         var blending: Bool
         var doubleSided: Bool
         var reversedZ: Bool
+        /// The alpha-tested shader variant (mesh_mask.frag).
+        var alphaTested: Bool = false
+    }
+
+    /// The pipeline variant a batch of `material` draws with, in the transparent pass when `blending`.
+    static func pipelineKey(for material: Material, blending: Bool, reversedZ: Bool) -> PipelineKey {
+        PipelineKey(blending: blending, doubleSided: material.doubleSided, reversedZ: reversedZ, alphaTested: material.alphaTested)
     }
 
     /// Also draws `engine.debugDraw` in the screen pass.
@@ -235,14 +263,17 @@ public final class SceneRenderer {
         try registerMesh(.cube(), key: MeshHandle.cube.key)
         try registerMesh(.plane(), key: MeshHandle.plane.key)
         try registerMesh(.sphere(), key: MeshHandle.sphere.key)
-        try registerMaterial(Material(), key: MaterialHandle.default.key)
+        // Blinn-Phong, so scenes made before PBR keep their look.
+        try registerMaterial(Material(shading: .blinnPhong), key: MaterialHandle.default.key)
     }
 
     // MARK: - Assets
 
     /// Uploads `geometry` and registers it under `key` (replacing an earlier mesh with that key).
+    /// Tangents are generated first unless every vertex has one (`MeshGeometry.hasTangents`).
     @discardableResult
     public func registerMesh(_ geometry: MeshGeometry, key: String) throws -> MeshHandle {
+        let geometry = geometry.withTangents()
         let mesh = GPUMesh(
             vertexBuffer: try device.makeBuffer(geometry.vertices, usage: .vertex),
             indexBuffer: try device.makeBuffer(geometry.indices, usage: .index),
@@ -263,7 +294,7 @@ public final class SceneRenderer {
     @discardableResult
     public func registerMaterial(_ material: Material, key: String) throws -> MaterialHandle {
         let entry = (material, try device.makeSampler(material.sampler))
-        let id = prep.materials.register(material.blends, key: key)
+        let id = prep.materials.register(MaterialTraits(blends: material.blends, alphaTested: material.alphaTested), key: key)
         if id == materials.count { materials.append(entry) } else { materials[id] = entry }
         return MaterialHandle(key)
     }
@@ -443,9 +474,7 @@ public final class SceneRenderer {
             pass.setPipeline(shadowPipeline)
             pass.setUniforms(uniforms)
             guard shadowsActive, let uploaded else { return }
-            for batch in list.shadow {
-                draw(pass, batch, instances: uploaded)
-            }
+            drawShadows(pass, list.shadow, instances: uploaded)
         }
     }
 
@@ -490,9 +519,7 @@ public final class SceneRenderer {
             pass.setPipeline(shadowPipeline)
             pass.setUniforms(uniforms)
             guard let instances else { return }
-            for batch in shadowList.shadow {
-                draw(pass, batch, instances: instances)
-            }
+            drawShadows(pass, shadowList.shadow, instances: instances)
         }
     }
 
@@ -537,6 +564,51 @@ public final class SceneRenderer {
         debugRenderer?.draw(debug, in: pass, view: view)
     }
 
+    /// Shadow batches: depth only, except alpha-tested ones, which sample their material's alpha.
+    private func drawShadows(_ pass: RenderPass, _ batches: [RenderBatch], instances: TransientBuffer) {
+        var masked = false
+        for batch in batches {
+            if batch.material >= 0, let pipeline = maskedShadowPipeline() {
+                if !masked { pass.setPipeline(pipeline) }
+                masked = true
+                bindMaterial(batch.material, in: pass)
+            } else if masked {
+                pass.setPipeline(shadowPipeline)
+                masked = false
+            }
+            draw(pass, batch, instances: instances)
+        }
+    }
+
+    private func maskedShadowPipeline() -> RenderPipeline? {
+        if let shadowMaskPipeline { return shadowMaskPipeline }
+        do {
+            var descriptor = PipelineDescriptor(
+                shader: try ShaderSource.load(named: "mesh_shadow_mask", bundle: .module),
+                vertexLayout: MeshVertex.layout, instanceLayout: MeshInstance.layout)
+            descriptor.target = .depthOnly
+            descriptor.depthOnlyFragment = true
+            descriptor.cullMode = .none
+            descriptor.depthBias = DepthBias(constant: 1.5, slopeScale: 2.5)
+            shadowMaskPipeline = try device.makePipeline(descriptor)
+        } catch {
+            print("SceneRenderer: alpha-tested shadow pipeline creation failed: \(error)")
+        }
+        return shadowMaskPipeline
+    }
+
+    /// Binds a material's uniforms (buffer 2), textures 1-5 and sampler 1.
+    private func bindMaterial(_ index: Int, in pass: RenderPass) {
+        let (material, sampler) = materials[index]
+        pass.setUniformData(MaterialUniforms(material), index: 2, stage: .fragment)
+        pass.setTexture(material.texture ?? whiteTexture, index: 1)
+        pass.setTexture(material.metallicRoughnessTexture ?? whiteTexture, index: 2)
+        pass.setTexture(material.normalTexture ?? whiteTexture, index: 3)
+        pass.setTexture(material.occlusionTexture ?? whiteTexture, index: 4)
+        pass.setTexture(material.emissiveTexture ?? whiteTexture, index: 5)
+        pass.setSampler(sampler, index: 1)
+    }
+
     /// Opaque batches, then transparent ones back to front.
     private func draw(_ pass: RenderPass, list: RenderList, uniforms: FrameUniforms, instances uploaded: TransientBuffer,
                       reversedZ: Bool) {
@@ -545,20 +617,12 @@ public final class SceneRenderer {
         var current: (pipeline: PipelineKey, material: Int)?
         for (batches, blending) in [(list.opaque, false), (list.transparent, true)] {
             for batch in batches {
-                let (material, sampler) = materials[batch.material]
-                let key = PipelineKey(blending: blending, doubleSided: material.doubleSided, reversedZ: reversedZ)
+                let key = Self.pipelineKey(for: materials[batch.material].material, blending: blending, reversedZ: reversedZ)
                 if current?.pipeline != key {
                     guard let pipeline = pipeline(key) else { continue }
                     pass.setPipeline(pipeline)
                 }
-                if current?.material != batch.material {
-                    pass.setUniformData(MaterialUniforms(
-                        baseColor: material.baseColor,
-                        params: Vec4(material.checker ? 1 : 0, material.emissive, material.specular, material.shininess),
-                        uvScale: Vec4(material.uvScale.x, material.uvScale.y, 0, 0)), index: 2, stage: .fragment)
-                    pass.setTexture(material.texture ?? whiteTexture, index: 1)
-                    pass.setSampler(sampler, index: 1)
-                }
+                if current?.material != batch.material { bindMaterial(batch.material, in: pass) }
                 current = (key, batch.material)
                 draw(pass, batch, instances: uploaded)
             }
@@ -575,7 +639,16 @@ public final class SceneRenderer {
 
     private func pipeline(_ key: PipelineKey) -> RenderPipeline? {
         if let pipeline = pipelines[key] { return pipeline }
-        var descriptor = PipelineDescriptor(shader: shader, vertexLayout: MeshVertex.layout, instanceLayout: MeshInstance.layout)
+        if key.alphaTested && maskShader == nil {
+            do {
+                maskShader = try ShaderSource.load(vertex: "mesh", fragment: "mesh_mask", bundle: .module)
+            } catch {
+                print("SceneRenderer: alpha-tested shader unavailable: \(error)")
+                return nil
+            }
+        }
+        var descriptor = PipelineDescriptor(shader: key.alphaTested ? maskShader! : shader, vertexLayout: MeshVertex.layout,
+                                            instanceLayout: MeshInstance.layout)
         descriptor.cullMode = key.doubleSided ? .none : .back
         descriptor.alphaBlending = key.blending
         descriptor.depthWrite = !key.blending

@@ -477,7 +477,7 @@ final class MetalRenderDevice: RenderDevice {
     }
 
     func makePipeline(_ descriptor: PipelineDescriptor) throws -> RenderPipeline {
-        let functions = try makeFunctions(descriptor.shader, fragment: descriptor.target == .screen)
+        let functions = try makeFunctions(descriptor.shader, fragment: descriptor.target == .screen || descriptor.depthOnlyFragment)
 
         let pipelineDescriptor = MTLRenderPipelineDescriptor()
         pipelineDescriptor.vertexFunction = functions.vertex
@@ -501,6 +501,7 @@ final class MetalRenderDevice: RenderDevice {
                 color.destinationAlphaBlendFactor = .oneMinusSourceAlpha
             }
         case .depthOnly:
+            pipelineDescriptor.fragmentFunction = functions.fragment
             pipelineDescriptor.depthAttachmentPixelFormat = .depth32Float
             pipelineDescriptor.rasterSampleCount = 1
         }

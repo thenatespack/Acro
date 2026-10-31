@@ -85,4 +85,21 @@ public struct ShaderSource: Sendable {
         }
         return source
     }
+
+    /// The vertex stage of the generated shader `vertex` with the fragment stage of the
+    /// generated `fragment` (`<fragment>.frag.spv`, `.frag.metal`, `.frag.color0.metal`), for
+    /// fragment variants that share a vertex shader.
+    public static func load(vertex: String, fragment: String, bundle: Bundle, subdirectory: String? = "Shaders") throws -> ShaderSource {
+        var source = try load(named: vertex, bundle: bundle, subdirectory: subdirectory)
+        func url(_ ext: String) -> URL? {
+            bundle.url(forResource: fragment, withExtension: ext, subdirectory: subdirectory)
+        }
+        guard let spirv = url("frag.spv") else {
+            throw GraphicsError("No fragment shader named '\(fragment)' found in \(bundle.bundlePath)")
+        }
+        source.spirvFragment = Array(try Data(contentsOf: spirv))
+        source.metalFragmentSource = try url("frag.metal").map { try String(contentsOf: $0, encoding: .utf8) }
+        source.metalFragmentColor0Source = try url("frag.color0.metal").map { try String(contentsOf: $0, encoding: .utf8) }
+        return source
+    }
 }
