@@ -191,6 +191,7 @@ public final class EditorApp: Game, EditorHost {
         }
         session.assets?.pump()
         session.tick(dt: Double(dt))
+        session.recovery?.update()
         syncPanels()
     }
 
@@ -208,6 +209,9 @@ public final class EditorApp: Game, EditorHost {
                 prefs = try EditorPrefsStore(url: url).load() ?? EditorPrefs()
             } catch {
                 session.log.warning("Ignoring unreadable editor prefs at \(url.path): \(error)")
+            }
+            if !options.deterministic, ProcessInfo.processInfo.environment["EDITOR_RECOVERY"] != "0" {
+                session.recovery = EditorRecovery(session: session, folder: url.deletingLastPathComponent().appendingPathComponent("Recovery", isDirectory: true))
             }
         }
         var ai = prefs.ai ?? AISettings()
@@ -249,6 +253,7 @@ public final class EditorApp: Game, EditorHost {
         }
         if let path = options.selectAssetPath { assetBrowser.model.reveal(path) }
         session.log.info("Editor ready. Right-drag flies the camera, Alt-drag or middle-drag orbits, the wheel zooms.")
+        offerRecovery()
         if options.mcp.http, session.aiSettings.httpEnabled, let mcp {
             do {
                 try mcp.startHTTP(port: options.mcp.port)
@@ -405,6 +410,45 @@ public final class EditorApp: Game, EditorHost {
         }
     }
 
+    /// The host calls it when the main loop ended (`quitReason`: why, from `Engine.quitReason`):
+    /// saves the prefs and leaves unsaved work for recovery (EditorRecovery.swift). Says loudly
+    /// on standard error why the editor is quitting and what was in flight.
+    public func shutdown(quitReason: String?) {
+        var notes: [String] = []
+        if session.gameModule.isBusy { notes.append("a game rebuild was still running (abandoned)") }
+        if session.isPlaying { notes.append("play mode was on") }
+        if session.document.isDirty { notes.append("the scene had unsaved changes") }
+        let line = "Editor: quitting (\(quitReason ?? "the main loop ended"))" + (notes.isEmpty ? "" : ": " + notes.joined(separator: "; "))
+        FileHandle.standardError.write(Data((line + "\n").utf8))
+        savePrefs()
+        session.recovery?.finish(quitReason: quitReason)
+    }
+
+    /// Recovery files of sessions that are gone: say so in the console and ask.
+    private func offerRecovery() {
+        guard let recovery = session.recovery, let newest = recovery.found.first else { return }
+        let more = recovery.found.count > 1 ? " (and \(recovery.found.count - 1) older)" : ""
+        session.log.warning("Recovery: \(newest.sceneName) was left by \(EditorRecovery.describe(newest))\(more). "
+            + "scene.recover opens it, scene.discardRecovery deletes it.")
+        guard !options.deterministic else { return }
+        let changes = newest.unsaved ? "unsaved changes to \(newest.sceneName)" : "\(newest.sceneName) as it was"
+        let play = newest.hasPlayState ? " A play state is included (scene.recover with playState)." : ""
+        let dialog = ConfirmDialog(
+            title: "Recover unsaved work?",
+            message: "The last editor session left work behind (\(newest.reason)). It kept \(changes) (\(newest.entities) entities).\(play) "
+                + "Not Now keeps it for later (scene.recover).",
+            confirmTitle: "Recover", name: "recoveryDialog")
+        dialog.cancelButton.title = "Not Now"
+        dialog.command = SceneRecoverCommand.id.rawValue
+        dialog.onConfirm = { [unowned self] in
+            if session.run(SceneRecoverCommand.self, .init(id: newest.id)) != nil {
+                hierarchy.sync(force: true)
+                if let path = newest.scenePath { toolbar.path.text = path }
+            }
+        }
+        dialog.present(in: ui)
+    }
+
     /// Writes the prefs file (layout, last scene) if prefs are persisted. The host calls it on exit too.
     public func savePrefs() {
         guard let url = options.prefsURL else { return }
@@ -434,7 +478,7 @@ public final class EditorApp: Game, EditorHost {
         // Requests from MCP clients run here, between frames, before the UI reads the session.
         if let mcp {
             mcp.pump()
-            if mcp.stdioClientDisconnected { engine.quit() }
+            if mcp.stdioClientDisconnected { engine.quit(reason: "the MCP stdio client disconnected") }
         }
 
         // What the UI does with the keyboard, before and after it handles this frame's input.
@@ -482,6 +526,7 @@ public final class EditorApp: Game, EditorHost {
         let title = "\(session.document.title)\(project) — Editor" + (session.isPlaying ? " [Playing]" : "")
         if engine.title != title { engine.title = title }
         if prefsDirty && !MouseButton.allCases.contains(where: input.isDown) { savePrefs() }
+        session.recovery?.update()
     }
 
     /// Runs the command `id` as the UI does (a shortcut): commands that need an answer from the
