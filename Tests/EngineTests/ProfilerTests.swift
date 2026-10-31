@@ -120,22 +120,48 @@ private func spin(_ seconds: Double) {
     #expect(profiler.finishCapture().map(\.index) == [0, 1, 2, 3, 4, 5])
 }
 
-/// Disabled markers are a flag test; this is the only test that touches the global profiler.
-@Test func disabledProfilerRecordsNothingAndIsCheap() {
-    Profiler.isEnabled = false
-    Profiler.clear()
-    nonisolated(unsafe) var sum = 0
-    let elapsed = ContinuousClock().measure {
-        for i in 0..<1_000_000 {
-            Profiler.scope("hot") { sum &+= i }
-            Profiler.begin("hot")
-            Profiler.end()
+/// The tests that touch the global `Profiler`. Swift Testing runs suites in parallel, so they share
+/// one serialized suite: the disabled test expects no frames while the job-worker test records some.
+@Suite(.serialized) struct GlobalProfilerTests {
+    /// Disabled markers are a flag test.
+    @Test func disabledProfilerRecordsNothingAndIsCheap() {
+        Profiler.isEnabled = false
+        Profiler.clear()
+        nonisolated(unsafe) var sum = 0
+        let elapsed = ContinuousClock().measure {
+            for i in 0..<1_000_000 {
+                Profiler.scope("hot") { sum &+= i }
+                Profiler.begin("hot")
+                Profiler.end()
+            }
         }
+        #expect(sum > 0)
+        #expect(Profiler.frames.isEmpty)
+        #expect(elapsed < .seconds(1), "1M disabled scopes took \(elapsed)")
+        Profiler.beginFrame(index: 0)
+        Profiler.endFrame()
+        #expect(Profiler.frames.isEmpty)
     }
-    #expect(sum > 0)
-    #expect(Profiler.frames.isEmpty)
-    #expect(elapsed < .seconds(1), "1M disabled scopes took \(elapsed)")
-    Profiler.beginFrame(index: 0)
-    Profiler.endFrame()
-    #expect(Profiler.frames.isEmpty)
+
+    @Test func workersGetProfilerLanes() throws {
+        let wasEnabled = Profiler.isEnabled
+        defer { Profiler.isEnabled = wasEnabled }
+        Profiler.isEnabled = true
+        let jobs = JobSystem(threadCount: 3)
+        defer { jobs.shutdown() }
+        Profiler.beginFrame(index: 1)
+        let group = JobGroup()
+        for _ in 0..<6 { jobs.schedule("JobSystemTests.work", in: group) { usleep(2000) } }
+        jobs.wait(group)
+        jobs.parallelFor(0..<64, batchSize: 1, name: "JobSystemTests.loop") { _ in usleep(200) }
+        Profiler.endFrame()
+        // Other suites may start frames meanwhile, so look through the whole ring.
+        let frames = Profiler.frames
+        let workerEvents = frames.flatMap { frame in
+            frame.events.filter { $0.name.hasPrefix("JobSystemTests.") && frame.threadNames[$0.thread]?.hasPrefix("job worker") == true }
+        }
+        #expect(!workerEvents.isEmpty)
+        #expect(frames.contains { $0.events.contains { $0.name == "JobSystemTests.work" } })
+        #expect(Profiler.chromeTrace(frames: frames).contains("job worker"))
+    }
 }

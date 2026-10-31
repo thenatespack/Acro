@@ -166,28 +166,6 @@ private final class JobSystemTestsCounter: @unchecked Sendable {
         let mapped = jobs.parallelMap(10, batchSize: 1) { $0 }
         #expect(mapped == Array(0..<10))
     }
-
-    @Test func workersGetProfilerLanes() throws {
-        let wasEnabled = Profiler.isEnabled
-        defer { Profiler.isEnabled = wasEnabled }
-        Profiler.isEnabled = true
-        let jobs = JobSystem(threadCount: 3)
-        defer { jobs.shutdown() }
-        Profiler.beginFrame(index: 1)
-        let group = JobGroup()
-        for _ in 0..<6 { jobs.schedule("JobSystemTests.work", in: group) { usleep(2000) } }
-        jobs.wait(group)
-        jobs.parallelFor(0..<64, batchSize: 1, name: "JobSystemTests.loop") { _ in usleep(200) }
-        Profiler.endFrame()
-        // Other suites may start frames meanwhile, so look through the whole ring.
-        let frames = Profiler.frames
-        let workerEvents = frames.flatMap { frame in
-            frame.events.filter { $0.name.hasPrefix("JobSystemTests.") && frame.threadNames[$0.thread]?.hasPrefix("job worker") == true }
-        }
-        #expect(!workerEvents.isEmpty)
-        #expect(frames.contains { $0.events.contains { $0.name == "JobSystemTests.work" } })
-        #expect(Profiler.chromeTrace(frames: frames).contains("job worker"))
-    }
 }
 
 // MARK: - The engine's parallel paths give the same results inline and threaded
