@@ -22,23 +22,23 @@ layout(push_constant) uniform PushConstants {
 
 layout(location = 0) out vec4 outColor;
 
-// The 2x2 box whose top-left texel is source texel p.
-vec3 box(ivec2 p) {
-    vec3 a = min(loadClamped(sourceImage, p, pc.sourceMax), vec3(pc.maxValue));
-    vec3 b = min(loadClamped(sourceImage, p + ivec2(1, 0), pc.sourceMax), vec3(pc.maxValue));
-    vec3 c = min(loadClamped(sourceImage, p + ivec2(0, 1), pc.sourceMax), vec3(pc.maxValue));
-    vec3 d = min(loadClamped(sourceImage, p + ivec2(1, 1), pc.sourceMax), vec3(pc.maxValue));
-    return (a + b + c + d) * 0.25;
-}
-
 void main() {
-    // Box at corner offset (i, j) from the pixel's center corner starts at texel 2x + i, 2y + j.
-    ivec2 o = ivec2(gl_FragCoord.xy) * 2;
-    vec3 A = box(o + ivec2(-2, -2)), B = box(o + ivec2(0, -2)), C = box(o + ivec2(2, -2));
-    vec3 D = box(o + ivec2(-1, -1)), E = box(o + ivec2(1, -1));
-    vec3 F = box(o + ivec2(-2, 0)), G = box(o), H = box(o + ivec2(2, 0));
-    vec3 I = box(o + ivec2(-1, 1)), J = box(o + ivec2(1, 1));
-    vec3 K = box(o + ivec2(-2, 2)), L = box(o + ivec2(0, 2)), M = box(o + ivec2(2, 2));
+    // Output pixel x covers texels 2x and 2x + 1; the 13 boxes span texels 2x - 2 ... 2x + 3.
+    // Each of those 6x6 texels is loaded once (52 loads if each box loaded its own four).
+    ivec2 o = ivec2(gl_FragCoord.xy) * 2 - 2;
+    vec3 t[36];
+    for (int y = 0; y < 6; y++) {
+        for (int x = 0; x < 6; x++) {
+            t[y * 6 + x] = min(loadClamped(sourceImage, o + ivec2(x, y), pc.sourceMax), vec3(pc.maxValue));
+        }
+    }
+    // The 2x2 box whose top-left texel is (i, j) in that block.
+#define BOX(i, j) ((t[(j) * 6 + (i)] + t[(j) * 6 + (i) + 1] + t[((j) + 1) * 6 + (i)] + t[((j) + 1) * 6 + (i) + 1]) * 0.25)
+    vec3 A = BOX(0, 0), B = BOX(2, 0), C = BOX(4, 0);
+    vec3 D = BOX(1, 1), E = BOX(3, 1);
+    vec3 F = BOX(0, 2), G = BOX(2, 2), H = BOX(4, 2);
+    vec3 I = BOX(1, 3), J = BOX(3, 3);
+    vec3 K = BOX(0, 4), L = BOX(2, 4), M = BOX(4, 4);
 
     vec3 groups[5] = vec3[5]((D + E + I + J) * 0.25, (A + B + F + G) * 0.25, (B + C + G + H) * 0.25,
                              (F + G + K + L) * 0.25, (G + H + L + M) * 0.25);

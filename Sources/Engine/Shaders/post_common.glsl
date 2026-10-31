@@ -47,3 +47,16 @@ vec3 tentUpsample(texture2D image, ivec2 p, ivec2 maxTexel) {
     }
     return sum;
 }
+
+// The half-resolution `image` bilinearly upsampled to output pixel `p` (4 loads): weights
+// 1/4 and 3/4 per axis, toward the source texel output pixel p lies in.
+vec3 bilinearUpsample(texture2D image, ivec2 p, ivec2 maxTexel) {
+    ivec2 m = p >> 1;
+    ivec2 first = m - 1 + (p & 1);  // the left / upper texel: m - 1 for even p, m for odd p
+    vec2 w = vec2(p & 1) * 0.5 + 0.25;  // weight of `first`: 1/4 (even) or 3/4 (odd)
+    vec3 a = loadClamped(image, first, maxTexel);
+    vec3 b = loadClamped(image, first + ivec2(1, 0), maxTexel);
+    vec3 c = loadClamped(image, first + ivec2(0, 1), maxTexel);
+    vec3 d = loadClamped(image, first + ivec2(1, 1), maxTexel);
+    return mix(mix(b, a, w.x), mix(d, c, w.x), 1.0 - w.y);
+}

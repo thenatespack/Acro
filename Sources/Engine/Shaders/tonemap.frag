@@ -3,8 +3,8 @@
 
 // The last post-processing pass: HDR scene (linear, RGBA16F) -> displayed image (the sRGB
 // scene image the upscalers and the window pass read). Per pixel:
-// 1. mix in the bloom (half resolution, tent-upsampled) by its intensity: an energy-conserving
-//    lerp, so there is no threshold and brightness is preserved;
+// 1. mix in the bloom (half resolution, bilinearly upsampled: it is smooth already) by its
+//    intensity: an energy-conserving lerp, so there is no threshold and brightness is preserved;
 // 2. scale by the exposure: 2^EV, times the auto exposure (exposure_adapt.frag) when enabled;
 // 3. tonemap to 0...1 with the selected curve;
 // 4. write linear values: the sRGB target encodes them.
@@ -62,7 +62,7 @@ void main() {
     ivec2 p = ivec2(gl_FragCoord.xy);
     vec3 color = texelFetch(sampler2D(sceneImage, pointSampler), p, 0).rgb;
     if (pc.bloomIntensity > 0.0) {
-        color = mix(color, tentUpsample(bloomImage, p, pc.bloomMax), pc.bloomIntensity);
+        color = mix(color, bilinearUpsample(bloomImage, p, pc.bloomMax), pc.bloomIntensity);
     }
     float exposure = pc.exposure;
     if (pc.autoExposure > 0.5) {
