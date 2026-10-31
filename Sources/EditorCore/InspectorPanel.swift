@@ -210,12 +210,13 @@ public final class InspectorPanel {
         emptyLabel.isHidden = hasEntity
         guard let entity else { return }
         let (kind, component) = EditorIcons.entityKind(entity, in: world)
-        let icon = EditorIcons.entityIcon(kind: kind, component: component)
+        let icon = EditorIcons.entityIcon(entity, in: world)
         let iconColor: UIColor? = kind == .prefab ? EditorIcons.prefabColor(theme: view.theme) : nil
         if entityIcon.color != iconColor { entityIcon.color = iconColor }
         if entityIcon.icon != icon {
             entityIcon.icon = icon
-            entityIcon.tooltip = component ?? (kind == .group ? "Group" : "Empty entity")
+            let mesh = kind == .mesh ? world.get(MeshRenderer.self, for: entity).map { " (\($0.mesh.key))" } ?? "" : ""
+            entityIcon.tooltip = component.map { $0 + mesh } ?? (kind == .group ? "Group" : "Empty entity")
         }
         if !nameField.isFocused {
             let name = world.get(Name.self, for: entity)?.value ?? ""

@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Editor › AI control). 99 tools.
+named by its id (see README › Editor › AI control). 100 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -34,7 +34,7 @@ optional arguments.
 | `tool` | [`tool.set`](#toolset), [`tool.snapping`](#toolsnapping) |
 | `transform` | [`transform.lookAt`](#transformlookat), [`transform.set`](#transformset) |
 | `ui` | [`ui.click`](#uiclick), [`ui.drag`](#uidrag), [`ui.find`](#uifind), [`ui.hover`](#uihover), [`ui.key`](#uikey), [`ui.scroll`](#uiscroll), [`ui.snapshot`](#uisnapshot), [`ui.type`](#uitype) |
-| `view` | [`view.frameSelection`](#viewframeselection), [`view.gameCamera`](#viewgamecamera), [`view.pick`](#viewpick), [`view.screenshot`](#viewscreenshot) |
+| `view` | [`view.appearance`](#viewappearance), [`view.frameSelection`](#viewframeselection), [`view.gameCamera`](#viewgamecamera), [`view.pick`](#viewpick), [`view.screenshot`](#viewscreenshot) |
 
 ## activity
 
@@ -1607,6 +1607,24 @@ Result:
 - `viewport?`: boolean
 
 ## view
+
+### `view.appearance`
+
+**Appearance** · _idempotent_
+
+The editor's theme and UI zoom (the toolbar's View menu): sets `theme` (Dark, Light, High Contrast; Game previews the game UI preset) and / or `uiScale` (0.85-2) when given and saves them in the prefs, then returns them. A zoom the window is too small for is lowered while it lasts (`effectiveUIScale`). Needs the editor window.
+
+Arguments:
+
+- `theme?`: string
+- `uiScale?`: number
+
+Result:
+
+- `effectiveUIScale`: number
+- `theme`: string
+- `themes`: [string]
+- `uiScale`: number
 
 ### `view.frameSelection`
 

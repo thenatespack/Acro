@@ -19,7 +19,7 @@ public enum BuiltinCommands {
         InputInjectCommand.self, InputClearCommand.self, InputStateCommand.self,
         ToolSetCommand.self, ToolSnappingCommand.self,
         ProjectOpenCommand.self, ProjectNewCommand.self, ProjectCloseCommand.self,
-        LayoutResetCommand.self, ViewFrameSelectionCommand.self,
+        LayoutResetCommand.self, ViewAppearanceCommand.self, ViewFrameSelectionCommand.self,
         ViewScreenshotCommand.self, ViewPickCommand.self, SceneRaycastCommand.self,
         SelectionSetCommand.self, SelectionClearCommand.self, SelectionGetCommand.self,
         SceneHierarchyCommand.self, EntityFindCommand.self, EntityGetCommand.self,
@@ -327,6 +327,36 @@ public enum LayoutResetCommand: EditorCommand {
     public static func run(_ arguments: NoArguments, in session: EditorSession) throws -> NoResult {
         session.host?.resetLayout()
         return NoResult()
+    }
+}
+
+public enum ViewAppearanceCommand: EditorCommand {
+    public struct Arguments: Codable, Equatable, Sendable {
+        /// A theme: Dark, Light, High Contrast or Game (case-insensitive).
+        public var theme: String?
+        /// The UI zoom, 0.85...2 (1 = 100%).
+        public var uiScale: Float?
+        public init(theme: String? = nil, uiScale: Float? = nil) {
+            self.theme = theme
+            self.uiScale = uiScale
+        }
+    }
+
+    public static let id: CommandID = "view.appearance"
+    public static let title = "Appearance"
+    public static let doc = """
+        The editor's theme and UI zoom (the toolbar's View menu): sets `theme` (Dark, Light, High Contrast; Game \
+        previews the game UI preset) and / or `uiScale` (0.85-2) when given and saves them in the prefs, then returns \
+        them. A zoom the window is too small for is lowered while it lasts (`effectiveUIScale`). Needs the editor window.
+        """
+    public static let isIdempotent = true
+    public static func isAvailable(in session: EditorSession) -> Bool { session.host != nil }
+    public static func unavailableReason(in session: EditorSession) -> String? { noWindowReason }
+    public static func run(_ arguments: Arguments, in session: EditorSession) throws -> EditorAppearance {
+        guard let appearance = try session.host?.appearance(theme: arguments.theme, uiScale: arguments.uiScale) else {
+            throw CommandError.failed("Appearance: \(noWindowReason)")
+        }
+        return appearance
     }
 }
 

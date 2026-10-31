@@ -32,6 +32,8 @@ let usage = """
     """
 
 var config = EngineConfig(title: "Editor", width: 1440, height: 900, showDebugOverlay: false)
+// Below this the panels' minimum sizes no longer fit (docs/EditorUIReview.md #23).
+config.minimumWindowSize = (Int(EditorApp.minimumWindowSize.x), Int(EditorApp.minimumWindowSize.y))
 // EDITOR_WINDOW_SIZE=<w>x<h> (points) opens the window at that size, even past the screen (UI reviews).
 if let size = ProcessInfo.processInfo.environment["EDITOR_WINDOW_SIZE"]?.split(separator: "x").compactMap({ Int($0) }), size.count == 2 {
     config.width = size[0]

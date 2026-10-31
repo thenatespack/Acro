@@ -143,9 +143,10 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
         for theme in UITheme.presets {
             let app = layoutApp(Vec2(1280, 720), theme: theme.name)
             #expect(app.ui.theme.name == theme.name)
-            // The dividers between panels are the theme's (they were the dark theme's in every theme).
+            // The dividers between panels are the theme's (they were the dark theme's in every
+            // theme): the splits take the theme's color when they draw, with no editor workaround.
             let split = try #require(app.dock.descendant(named: "dockSplit") as? SplitView)
-            #expect(split.dividerColor == theme.fieldBackground)
+            #expect(split.dividerColor == nil && split.dividerUsesThemeColor && app.dock.gapColor == nil)
             checkBusyStates(app, theme.name)
             expectClean(layoutApp(Vec2(800, 600), theme: theme.name), "\(theme.name) 800x600")
         }
@@ -212,6 +213,161 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
         expectClean(app, "long undo title")
     }
 
+    // MARK: Re-review after icons and the #661 follow-ups
+
+    /// The window can't go below `EditorApp.minimumWindowSize` (#23), and at that size the
+    /// default layout has no findings and the toolbar stays one row.
+    @Test func minimumWindowSizeIsHonoured() {
+        var config = EngineConfig(width: 640, height: 400)
+        #expect(config.openingWindowSize == (640, 400))
+        config.minimumWindowSize = (Int(EditorApp.minimumWindowSize.x), Int(EditorApp.minimumWindowSize.y))
+        #expect(config.openingWindowSize == (800, 500))
+        config.width = 1440
+        #expect(config.openingWindowSize == (1440, 500))
+        for scale: Float in [1, 2] {
+            let app = layoutApp(EditorApp.minimumWindowSize, scale: scale)
+            expectClean(app, "minimum window @\(scale)x")
+            let toolbar = app.toolbar.view
+            #expect(toolbar.frame.height <= app.ui.theme.controlHeight + toolbar.padding.vertical + 0.5)
+        }
+    }
+
+    /// Tab close buttons, tree disclosure triangles and checkboxes take clicks over at least
+    /// 24x24 points (WCAG 2.2 target size, #24), whatever their glyph's size.
+    @Test func smallControlsHaveTwentyFourPointHitTargets() throws {
+        for theme in ["Dark", "Game"] {
+            let app = layoutApp(Vec2(1280, 720), theme: theme)
+            let client = LayoutClient(app)
+            let holder = client.call("entity.create", ["template": "cube", "name": "Holder"])["entity"] ?? nil
+            client.call("selection.set", ["entities": [holder], "primary": holder])
+            let elements = app.ui.accessibilityElements().filter(\.isOnScreen)
+            let closes = elements.filter { $0.path.split(separator: "/").last?.hasPrefix("close:") == true }
+            let toggles = elements.filter { $0.path.split(separator: "/").last?.hasPrefix("toggle:") == true }
+            let checkboxes = elements.filter { $0.role == .checkbox }
+            #expect(!closes.isEmpty && !toggles.isEmpty && !checkboxes.isEmpty)
+            for element in closes + toggles + checkboxes {
+                #expect(element.frame.width >= 24 && element.frame.height >= 24,
+                        "\(theme): \(element.path) is \(element.frame.width)x\(element.frame.height)")
+            }
+            // A click at the edge of the larger area still hits: collapse "Props" by its toggle's corner.
+            let toggle = try #require(toggles.first { $0.path.hasSuffix("toggle:Props") })
+            app.ui.synthesizeClick(at: Vec2(toggle.frame.x + 1, toggle.frame.y + 1))
+            app.syncPanels()
+            #expect(app.ui.accessibilityElements().first { $0.path.hasSuffix("toggle:Props") }?.value == "collapsed")
+        }
+    }
+
+    /// Floating windows stay wholly in the dock (#32): one placed for a bigger window, or
+    /// taller than the dock, is pulled in and shrunk, and its stored frame is kept.
+    @Test func floatingWindowsStayOnScreen() throws {
+        let app = layoutApp(Vec2(800, 600))
+        let client = LayoutClient(app)
+        client.call("panel.dock", ["panel": "inspector", "floating": [600, 450, 320, 900]])
+        let dock = app.dock
+        let window = try #require(dock.children.first { $0.name == "dockFloating" })
+        let inside = dock.contentRect
+        #expect(window.frame.x >= inside.x && window.frame.y >= inside.y)
+        #expect(window.frame.maxX <= inside.maxX + 0.5 && window.frame.maxY <= inside.maxY + 0.5, "\(window.frame) in \(inside)")
+        expectClean(app, "floating inspector placed off screen")
+        #expect(dock.layout.floating.first?.frame == UIRect(x: 600, y: 450, width: 320, height: 900))
+    }
+
+    /// The View menu switches the theme and the zoom of the running editor (#29): everything
+    /// built in the old theme follows, and the choice is saved in the prefs.
+    @Test func viewMenuSwitchesThemeAndZoom() throws {
+        let app = layoutApp(Vec2(1280, 720))
+        let client = LayoutClient(app)
+        let opened = client.call("ui.click", ["label": "View", "role": "button"])["opened"]?.arrayValue ?? []
+        let items = opened.filter { $0["role"] == "menuItem" }.compactMap { $0["label"]?.stringValue }
+        #expect(items.first == "Reset Layout")
+        #expect(items.contains("Light Theme") && items.contains("Zoom 125%"))
+        #expect(!items.contains("Game Theme"))  // a game HUD preset, not offered for the editor
+        client.call("ui.click", ["label": "Light Theme", "role": "menuItem"])
+        let light = UITheme.light()
+        #expect(app.ui.theme.name == "Light" && app.prefs.theme == "Light")
+        #expect(app.toolbar.view.background == light.panelBackground && app.dock.background == light.fieldBackground)
+        expectClean(app, "switched to Light")
+
+        let result = client.call("view.appearance", ["uiScale": 1.25])
+        #expect(result["theme"] == "Light" && result["uiScale"] == 1.25 && result["effectiveUIScale"] == 1.25)
+        #expect(app.ui.uiScale == 1.25 && app.prefs.uiScale == 1.25)
+        expectClean(app, "Light at 125%")
+        // The menu checks what is chosen.
+        client.call("ui.click", ["label": "View", "role": "button"])
+        let menu = try #require(app.ui.overlays.compactMap { $0 as? PopupMenu }.last)
+        #expect(menu.checkedIndices == [2, 1 + EditorApp.menuThemes.count + 2])
+        client.call("ui.key", ["keys": ["escape"]])
+        // Game stays reachable for previewing a game's UI.
+        #expect(client.call("view.appearance", ["theme": "game"])["theme"] == "Game")
+        expectClean(app, "Game at 125%")
+    }
+
+    /// Panel content taller than its panel scrolls with the panel (#33): in the Game theme at
+    /// zoom 2 the prefab variant rows filled the inspector and pushed Add Component below the
+    /// window.
+    @Test func panelContentScrollsWhenTallerThanThePanel() throws {
+        let app = layoutApp(Vec2(1280, 720), uiScale: 2, theme: "Game")
+        let session = app.session
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("EditorLayoutTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try #require(session.run(ProjectNewCommand.self, .init(path: folder.path)) != nil)
+        let cube = try #require(session.run(EntityCreateCommand.self, .init(template: .cube, name: "Crate")))
+        try #require(session.run(PrefabCreateCommand.self, .init(entity: cube.entity)) != nil)
+        let client = LayoutClient(app)
+        let id = JSON.string(cube.entity.description)
+        client.call("component.setField", ["entity": id, "path": "Transform.position", "value": [0, 2, 0]])
+        try #require(session.run(PrefabCreateVariantCommand.self, .init(entity: cube.entity, name: "Crate Variant")) != nil)
+        client.call("component.setField", ["entity": id, "path": "MeshRenderer.receivesShadows", "value": false])
+        session.run(SelectionSetCommand.self, .init(entities: [cube.entity], primary: cube.entity))
+        app.syncPanels()
+        let group = try #require(app.inspector.view.parent as? TabView)
+        let add = try #require(app.inspector.view.descendant(named: "addComponent"))
+        #expect(group.contentOverflow > 0, "inspector \(group.contentArea), Add Component \(add.frame)")
+        expectClean(app, "Game zoom 2, prefab variant in the inspector")
+        // Scrolling the panel brings Add Component into view.
+        app.ui.synthesizeScroll(at: group.contentArea.center, by: Vec2(0, -1000))
+        app.syncPanels()
+        #expect(group.contentOffset == group.contentOverflow)
+        #expect(add.frame.maxY <= group.contentArea.maxY + 0.5 && add.frame.y >= group.contentArea.y)
+    }
+
+    /// The viewport's caption sits in its tab bar, where it can't cover scene labels (#30);
+    /// it falls back to the badge only when the bar has no room.
+    @Test func viewportCaptionIsInTheTabBar() throws {
+        let app = layoutApp(Vec2(1280, 720))
+        let panel = try #require(app.dock.panel(EditorLayout.viewport))
+        #expect(panel.caption == "Perspective · Move")
+        #expect(panel.owner?.captionIsShown == true && !app.viewportWidget.drawsCaption)
+        let client = LayoutClient(app)
+        client.call("panel.dock", ["panel": "hierarchy", "edge": "left", "fraction": 0.45])
+        client.call("panel.dock", ["panel": "inspector", "edge": "right", "fraction": 0.5])
+        app.syncPanels()
+        if panel.owner?.captionIsShown == false { #expect(app.viewportWidget.drawsCaption) }
+    }
+
+    /// The document title hides rather than showing "U…" when the toolbar squeezes it.
+    @Test func documentTitleHidesWhenSqueezed() throws {
+        let app = layoutApp(Vec2(800, 600))
+        let title = try #require(app.toolbar.view.descendant(named: "documentTitle") as? Label)
+        #expect(title.minimumTruncatedWidth > 0)
+        #expect(title.tooltip(at: title.frame.center) == (title.isTruncated ? title.text : nil))
+        let wide = layoutApp(Vec2(1440, 900))
+        let full = try #require(wide.toolbar.view.descendant(named: "documentTitle") as? Label)
+        #expect(!full.isTruncated)
+    }
+
+    /// The inspector's name field shows a long name's start when not editing (#28).
+    @Test func nameFieldShowsTheStartOfALongName() throws {
+        let app = layoutApp(Vec2(800, 600))
+        let client = LayoutClient(app)
+        let entity = client.call("entity.create", ["template": "cube", "name": .string(longName)])["entity"] ?? nil
+        client.call("selection.set", ["entities": [entity], "primary": entity])
+        let field = try #require(app.inspector.view.descendant(named: "entityName") as? TextField)
+        #expect(field.text == longName && !field.isFocused)
+        #expect(field.characterIndex(atX: field.contentRect.x + 1) == 0)
+        #expect(field.tooltip(at: field.frame.center) == longName)
+    }
+
     @Test func themeTextMeetsWCAGContrast() {
         for theme in UITheme.presets {
             // Translucent surfaces (the game theme's) are judged over black, where they're drawn over a scene.
@@ -239,6 +395,14 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
             // Text in a focused selected row.
             let selected = theme.rowSelectedFocused.composited(over: solid(theme.panelBackground))
             #expect(theme.textColor.contrastRatio(with: selected) >= 4.5, "\(theme.name): text on a selected row")
+            // Disabled text is exempt from WCAG, but under 3:1 it couldn't be read at all (#25).
+            for (surfaceName, surface) in surfaces {
+                let ratio = theme.disabledTextColor.contrastRatio(with: surface)
+                #expect(ratio >= 3, "\(theme.name): disabled text on \(surfaceName) is \(ratio):1")
+            }
+            // And on a disabled button's half-faded fill.
+            let disabledFill = theme.controlBackground.fading(0.5).composited(over: solid(theme.panelBackground))
+            #expect(theme.disabledTextColor.contrastRatio(with: disabledFill) >= 3, "\(theme.name): disabled button")
             // Theme text sizes at the smallest editor zoom.
             #expect(theme.smallFontSize * EditorApp.uiScaleRange.lowerBound >= 9)
         }
