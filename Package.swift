@@ -17,7 +17,7 @@ let vulkanEnabled: Bool = {
 let vulkanEnabled = true
 #endif
 
-var engineDependencies: [Target.Dependency] = ["CZlib", "CStbTrueType", "CStbImage"]
+var engineDependencies: [Target.Dependency] = ["CZlib", "CStbTrueType", "CStbImage", "CAudio"]
 var engineSwiftSettings: [SwiftSetting] = []
 var vulkanTargets: [Target] = []
 
@@ -99,6 +99,14 @@ let package = Package(
         .target(name: "CStbTrueType"),
         // Vendored stb_image v2.30 (public domain): PNG/JPEG/TGA/HDR decoding from memory.
         .target(name: "CStbImage"),
+        // Vendored audio: miniaudio (device output on Linux/Windows), stb_vorbis and dr_mp3
+        // (decoders); public domain / MIT-0. See Sources/CAudio/LICENSES.md.
+        .target(
+            name: "CAudio",
+            exclude: ["LICENSES.md"],
+            linkerSettings: [.linkedLibrary("dl", .when(platforms: [.linux])), .linkedLibrary("pthread", .when(platforms: [.linux])),
+                             .linkedLibrary("m", .when(platforms: [.linux]))]
+        ),
         .target(
             name: "Engine",
             dependencies: engineDependencies,
