@@ -79,4 +79,5 @@ extension DemoScene {
     ViewportsScene.self,
     GizmosScene.self,
     ImagesScene.self,
+    GLTFScene.self,
 ]
