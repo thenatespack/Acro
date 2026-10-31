@@ -287,8 +287,8 @@ public enum TexturePixels: Sendable {
     case rgba8(Image)
     /// Linear float RGBA (Radiance HDR), uploaded as `.rgba16Float`.
     case rgbaFloat(FloatImage)
-    /// A block-compressed mip chain (`TextureCodec`) in one of `TextureFormat.compressedFormats`,
-    /// level 0 first.
+    /// A block-compressed mip chain (`TextureCodec`) in one of `TextureFormat.compressedFormats`
+    /// or `hdrCompressedFormats`, level 0 first.
     case compressed(format: TextureFormat, levels: [TextureMipLevel])
 }
 
@@ -332,16 +332,18 @@ public struct TextureAsset: Sendable {
         }
     }
 
-    /// The 8-bit pixels. For a float texture this is a clamped 0...1 conversion (not sRGB
-    /// encoded); use `floatImage` to read the real values. A compressed texture's level 0 is
-    /// decoded (transparent black if its data is damaged).
+    /// The 8-bit pixels. For a float texture (an HDR compressed one too) this is a clamped 0...1
+    /// conversion (not sRGB encoded); use `floatImage` to read the real values. A compressed
+    /// texture's level 0 is decoded (transparent black if its data is damaged).
     public var image: Image {
         get {
             switch pixels {
             case .rgba8(let image): return image
-            case .rgbaFloat(let image):
-                return Image(width: image.width, height: image.height,
-                             pixels: image.pixels.map { UInt8((min(max($0, 0), 1) * 255).rounded()) })
+            case .rgbaFloat(let image): return Self.clamped(image)
+            case .compressed(let format, let levels) where format.isHDR:
+                return floatImage.map(Self.clamped)
+                    ?? Image(width: levels[0].width, height: levels[0].height,
+                             pixels: [UInt8](repeating: 0, count: levels[0].width * levels[0].height * 4))
             case .compressed(let format, let levels):
                 return (try? TextureCodec.decode(levels[0], format: format))
                     ?? Image(width: levels[0].width, height: levels[0].height,
@@ -351,13 +353,29 @@ public struct TextureAsset: Sendable {
         set { pixels = .rgba8(newValue) }
     }
 
-    /// The float pixels, or nil for an 8-bit texture.
-    public var floatImage: FloatImage? {
-        if case .rgbaFloat(let image) = pixels { return image }
-        return nil
+    private static func clamped(_ image: FloatImage) -> Image {
+        Image(width: image.width, height: image.height, pixels: image.pixels.map { UInt8((min(max($0, 0), 1) * 255).rounded()) })
     }
 
-    public var isHDR: Bool { floatImage != nil }
+    /// The float pixels, or nil for an 8-bit texture. An HDR compressed texture's level 0 is
+    /// decoded (`TextureCodec.decodeFloat`; nil if its data is damaged), e.g. for CPU-side
+    /// precomputation from an environment map.
+    public var floatImage: FloatImage? {
+        switch pixels {
+        case .rgbaFloat(let image): image
+        case .compressed(let format, let levels) where format.isHDR: try? TextureCodec.decodeFloat(levels[0], format: format)
+        default: nil
+        }
+    }
+
+    /// Float pixels, uncompressed (`.rgba16Float` on the GPU) or in an HDR compressed format.
+    public var isHDR: Bool {
+        switch pixels {
+        case .rgba8: false
+        case .rgbaFloat: true
+        case .compressed(let format, _): format.isHDR
+        }
+    }
 
     /// The compressed mip chain, or nil for RGBA8 and float pixels.
     public var compressedLevels: [TextureMipLevel]? {

@@ -129,7 +129,7 @@ final class DebugOverlay {
         ] + (stats.gpuPassTimes.isEmpty ? [] : [
             stats.gpuPassTimes.map { String(format: "\($0.name.uppercased()) %.2f", $0.seconds * 1000) }.joined(separator: "  "),
         ]) + [
-            "DRAWS \(stats.drawCalls)  TRIS \(stats.triangles)",
+            "DRAWS \(stats.drawCalls)  TRIS \(stats.triangles)" + (stats.descriptorPools.map { "  POOLS \($0)" } ?? ""),
             "\(backend.rawValue) \(deviceName)  VSYNC \(vsync ? "ON" : "OFF")",
         ] + Self.resolutionLines(window: framebufferSize, render: renderSize, upscaler: upscaler)
     }

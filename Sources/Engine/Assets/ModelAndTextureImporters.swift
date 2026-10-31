@@ -3,7 +3,9 @@ import Foundation
 /// Imports PNG, JPEG, TGA and Radiance HDR images (`ImageDecoder.decodeAny`) as one `texture`
 /// sub-asset: RGBA8, sRGB or linear, with a mip chain unless turned off. Use linear
 /// (`sRGB: false`) for data such as normal maps and masks. `.hdr` files stay float
-/// (`TextureAsset.floatImage`, uploaded as `.rgba16Float`) and ignore `sRGB` and `compression`.
+/// (`TextureAsset.floatImage`, uploaded as `.rgba16Float`) and ignore `sRGB`; with
+/// `compression` they become BC6H or ASTC 4x4 HDR (`TextureCompression.hdrFormat`: `auto`
+/// picks per machine, as for 8-bit images), an eighth of the memory.
 ///
 /// With `compression` (BC7 / ASTC 4x4, or `auto` for this machine's GPUs), the mip chain is
 /// built and block-compressed here (`TextureCodec`), so the Library caches the compressed
@@ -59,15 +61,23 @@ public struct TextureImporter: AssetImporter {
         let data = try context.data()
         let image = try ImageDecoder.decodeAny(data)
         var texture = TextureAsset(decoded: image, isSRGB: settings.sRGB, generatesMipmaps: settings.mipmaps)
-        if let format = settings.compression.format(srgb: settings.sRGB, normalMap: settings.normalMap) {
-            if case .rgba8(let pixels) = texture.pixels {
+        switch texture.pixels {
+        case .rgba8(let pixels):
+            if let format = settings.compression.format(srgb: settings.sRGB, normalMap: settings.normalMap) {
                 texture = TextureAsset(compressedLevels: try CompressedTextureCache.levels(
                     pixels, format: format, quality: settings.compressionQuality, mipmaps: settings.mipmaps,
                     sourceHash: ContentHash.hex(data), file: context.cacheDirectory?.appendingPathComponent("\(format.rawValue).bin"),
                     label: context.assetPath), format: format)
-            } else {
-                context.warnings.append("\(context.assetPath): HDR textures aren't compressed; compression \(settings.compression) ignored")
             }
+        case .rgbaFloat(let image):
+            if let format = settings.compression.hdrFormat {
+                texture = TextureAsset(compressedLevels: try CompressedTextureCache.levels(
+                    hdr: image, format: format, quality: settings.compressionQuality, mipmaps: settings.mipmaps,
+                    sourceHash: ContentHash.hex(data), file: context.cacheDirectory?.appendingPathComponent("\(format.rawValue).bin"),
+                    label: context.assetPath), format: format)
+            }
+        case .compressed:
+            break
         }
         var asset = ImportedAsset()
         asset.add("texture", name: ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension,
@@ -91,11 +101,30 @@ enum CompressedTextureCache {
         if let file, let levels = read(file, key: key, format: format, width: image.width, height: image.height) {
             return levels
         }
-        let start = DispatchTime.now().uptimeNanoseconds
         let source = format.isTwoChannel ? TextureCodec.normalized(normalMap: image) : image
-        let levels = try TextureCodec.encode(source, format: format, mipmaps: mipmaps, quality: quality)
+        return try encode(width: image.width, height: image.height, format: format, key: key, file: file, label: label) {
+            try TextureCodec.encode(source, format: format, mipmaps: mipmaps, quality: quality)
+        }
+    }
+
+    /// `levels(_:...)` for an HDR image and one of `TextureFormat.hdrCompressedFormats`.
+    static func levels(hdr image: FloatImage, format: TextureFormat, quality: TextureCompressionQuality, mipmaps: Bool,
+                       sourceHash: String, file: URL?, label: String) throws -> [TextureMipLevel] {
+        let key = "\(sourceHash) \(format) \(quality) mipmaps:\(mipmaps) codec:\(TextureCodec.version)"
+        if let file, let levels = read(file, key: key, format: format, width: image.width, height: image.height) {
+            return levels
+        }
+        return try encode(width: image.width, height: image.height, format: format, key: key, file: file, label: label) {
+            try TextureCodec.encode(image, format: format, mipmaps: mipmaps, quality: quality)
+        }
+    }
+
+    private static func encode(width: Int, height: Int, format: TextureFormat, key: String, file: URL?, label: String,
+                               _ body: () throws -> [TextureMipLevel]) throws -> [TextureMipLevel] {
+        let start = DispatchTime.now().uptimeNanoseconds
+        let levels = try body()
         let milliseconds = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
-        EngineLog.debug("Encoded \(label) (\(image.width)x\(image.height), \(levels.count) levels) as \(format) in "
+        EngineLog.debug("Encoded \(label) (\(width)x\(height), \(levels.count) levels) as \(format) in "
                         + String(format: "%.0f ms", milliseconds), category: .assets)
         if let file { write(levels, key: key, to: file) }
         return levels

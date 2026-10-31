@@ -225,19 +225,7 @@ private func makeProject() throws -> Project {
         #expect(database.texture(reference)?.compressedLevels?.last?.pixels.last == levels.last!.pixels.last!)
     }
 
-    @MainActor @Test func hdrTexturesIgnoreCompressionWithAWarning() throws {
-        let project = try makeProject()
-        defer { try? FileManager.default.removeItem(at: project.root) }
-        var hdr = Data("#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 2\n".utf8)
-        hdr.append(contentsOf: [128, 64, 32, 130, 0, 0, 0, 0])
-        try hdr.write(to: project.assetsURL.appendingPathComponent("sky.hdr"))
-        let database = AssetDatabase(project: project)
-        database.refresh()
-        let id = try #require(database.id(forPath: "sky.hdr"))
-        try database.setSettings(TextureImporter.Settings(compression: .auto), for: id)
-        #expect(database.texture(AssetReference(id, subAsset: "texture"))?.format == .rgba16Float)
-        #expect(database.reimport(id).warnings.contains { $0.contains("HDR textures aren't compressed") })
-    }
+    // HDR images: HDRCompressionTests.
 
     // MARK: GPU
 

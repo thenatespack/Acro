@@ -227,6 +227,9 @@ final class EnvironmentLighting {
     /// Prefiltering samples per texel (env_prefilter.frag).
     static let prefilterSamples = 256
 
+    /// The atlas `render` fills (nil until the first `prepare` with image-based lighting).
+    var atlasTexture: GPUTexture? { targets?.atlas.texture }
+
     init(device: RenderDevice, placeholder: GPUTexture) throws {
         self.device = device
         self.placeholder = placeholder

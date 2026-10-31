@@ -237,6 +237,12 @@ public enum TextureFormat: String, Sendable, Equatable {
     /// (astc-encoder's normal-map mode), so it samples as (x, x, x, y); the same GPU format as
     /// `astc4x4Unorm`, a different channel layout.
     case bc5Unorm, astc4x4RG
+    /// HDR block compression (`isHDR`), 16 bytes per 4x4 block (an eighth of `.rgba16Float`
+    /// without alpha): linear RGB half floats, alpha 1. `bc6hUfloat`: BC6H unsigned (desktop GPUs,
+    /// Apple silicon; negative values clamp to 0). `astc4x4HDR`: ASTC 4x4 with the HDR profile
+    /// (Apple GPUs from A13 / M1; on Vulkan `VK_EXT_texture_compression_astc_hdr`). A GPU without
+    /// one gets `.rgba16Float` decoded on the CPU (`makeTexture(compressedLevels:format:)`).
+    case bc6hUfloat, astc4x4HDR
 
     var isDepth: Bool { self == .depth32Float }
 
@@ -246,8 +252,14 @@ public enum TextureFormat: String, Sendable, Equatable {
     /// Formats a storage texture can have.
     static let storageFormats: [TextureFormat] = [.rgba16Float, .rgba8Unorm, .r8Unorm, .r16Float, .rg16Float, .r32Float]
 
-    /// The block-compressed formats.
+    /// The block-compressed formats for 8-bit images (`TextureCodec.encode(_:format:)` with an `Image`).
     public static let compressedFormats: [TextureFormat] = [.bc7Unorm, .bc7Srgb, .astc4x4Unorm, .astc4x4Srgb, .bc5Unorm, .astc4x4RG]
+
+    /// The block-compressed formats for HDR images (`TextureCodec.encode(_:format:)` with a `FloatImage`).
+    public static let hdrCompressedFormats: [TextureFormat] = [.bc6hUfloat, .astc4x4HDR]
+
+    /// A compressed format holding HDR (half-float) color, which decodes to `.rgba16Float`.
+    public var isHDR: Bool { self == .bc6hUfloat || self == .astc4x4HDR }
 
     /// Stores two channels, a normal map's X and Y (`.bc5Unorm`, `.astc4x4RG`).
     public var isTwoChannel: Bool { self == .bc5Unorm || self == .astc4x4RG }
@@ -258,17 +270,19 @@ public enum TextureFormat: String, Sendable, Equatable {
     /// Color channels are sRGB-encoded (sampling returns linear values).
     public var isSRGB: Bool { self == .rgba8Srgb || self == .bc7Srgb || self == .astc4x4Srgb }
 
-    /// The 8-bit format a compressed one decodes to (itself for the others). Two-channel formats
-    /// fall back to a full normal map (see `RenderDevice.makeTexture(compressedLevels:format:)`).
+    /// The format a compressed one decodes to: 8-bit RGBA, or `.rgba16Float` for the HDR ones
+    /// (itself for the others). Two-channel formats fall back to a full normal map (see
+    /// `RenderDevice.makeTexture(compressedLevels:format:)`).
     public var decompressedFormat: TextureFormat {
         guard isCompressed else { return self }
+        if isHDR { return .rgba16Float }
         return isSRGB ? .rgba8Srgb : .rgba8Unorm
     }
 
     /// Width and height of a block in texels: 4 for the compressed formats, else 1.
     public var blockSize: Int {
         switch self {
-        case .bc7Unorm, .bc7Srgb, .astc4x4Unorm, .astc4x4Srgb, .bc5Unorm, .astc4x4RG: 4
+        case .bc7Unorm, .bc7Srgb, .astc4x4Unorm, .astc4x4Srgb, .bc5Unorm, .astc4x4RG, .bc6hUfloat, .astc4x4HDR: 4
         default: 1
         }
     }
@@ -283,7 +297,7 @@ public enum TextureFormat: String, Sendable, Equatable {
         case .r16Float: 2
         case .depth32Float, .rgba8Unorm, .rgba8Srgb, .rg16Float, .r32Float: 4
         case .rgba16Float: 8
-        case .bc7Unorm, .bc7Srgb, .astc4x4Unorm, .astc4x4Srgb, .bc5Unorm, .astc4x4RG: 1
+        case .bc7Unorm, .bc7Srgb, .astc4x4Unorm, .astc4x4Srgb, .bc5Unorm, .astc4x4RG, .bc6hUfloat, .astc4x4HDR: 1
         }
     }
 
@@ -583,6 +597,9 @@ public struct DrawIndexedIndirectArguments: Sendable, BitwiseCopyable, Equatable
     /// unsupported). Unlike `gpuFrameTime`, this excludes time the GPU spends waiting, e.g.
     /// for the window server to release a drawable.
     var gpuPassTimes: [GPUPassTime] { get }
+    /// Descriptor pools the backend has made so far (Vulkan, whose pools grow on demand; nil
+    /// for backends without them).
+    var descriptorPoolCount: Int? { get }
 
     func makeBuffer(bytes: UnsafeRawBufferPointer, usage: BufferUsage) throws -> GPUBuffer
     /// A buffer of `length` zero bytes, typically `.storage` for a compute pass to fill. Like
@@ -698,8 +715,8 @@ public struct DrawIndexedIndirectArguments: Sendable, BitwiseCopyable, Equatable
     var upscaler: Upscaler { get set }
     func supports(_ upscaler: Upscaler) -> Bool
     /// Whether textures of `format` can be created and sampled with filtering. Always true for
-    /// the uncompressed formats; the compressed ones depend on the GPU (BC7: desktop GPUs and
-    /// Apple silicon; ASTC: Apple and mobile GPUs).
+    /// the uncompressed formats; the compressed ones depend on the GPU (BC7, BC5, BC6H: desktop
+    /// GPUs and Apple silicon; ASTC: Apple and mobile GPUs; ASTC HDR: newer Apple GPUs).
     func supports(_ format: TextureFormat) -> Bool
     /// Jitter, history reset and depth convention for a temporal upscaler, read in
     /// `beginWindowPass`. While one is active (with a render size), the scene pass also has a
@@ -711,6 +728,8 @@ public struct DrawIndexedIndirectArguments: Sendable, BitwiseCopyable, Equatable
 }
 
 extension RenderDevice {
+    public var descriptorPoolCount: Int? { nil }
+
     public func beginFrame(framebufferSize: (width: Int, height: Int)) throws -> Bool {
         try beginFrame(framebufferSize: framebufferSize, renderSize: nil)
     }

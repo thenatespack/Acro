@@ -598,6 +598,7 @@ public final class Engine {
             }
             stats.gpuTime = device.gpuFrameTime
             stats.gpuPassTimes = device.gpuPassTimes
+            stats.descriptorPools = device.descriptorPoolCount
 
             if let shot = automatedScreenshot, frameCount == shot.frame {
                 pendingScreenshots.append(shot.url)
