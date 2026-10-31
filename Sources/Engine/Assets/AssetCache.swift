@@ -33,6 +33,16 @@ struct LibraryIndex: Codable {
         var objects: [AssetObjectInfo]
         /// The last import failed with this message (and `objects` are from the import before).
         var error: String?
+        /// Other files the import read (`ImportContext.readDependency`); it is out of date when one changes.
+        var dependencies: [Dependency]?
+    }
+
+    /// A file an import depended on: its path relative to `Assets/` and what it looked like.
+    struct Dependency: Codable, Equatable, Sendable {
+        var path: String
+        var hash: String
+        var size: Int64
+        var modified: Double
     }
 
     static func load(from url: URL) -> LibraryIndex {
@@ -84,6 +94,8 @@ enum AssetArtifacts {
         var height: Int?
         var srgb: Bool?
         var mipmaps: Bool?
+        /// The texture's file holds 32-bit float RGBA.
+        var hdr: Bool?
         var material: MaterialAsset?
         var prefab: PrefabAsset?
     }
@@ -106,10 +118,16 @@ enum AssetArtifacts {
                 entry.indexCount = geometry.indices.count
             case .texture(let texture):
                 let file = "texture-\(n).bin"
-                try Data(texture.image.pixels).write(to: directory.appendingPathComponent(file))
+                switch texture.pixels {
+                case .rgba8(let image):
+                    try Data(image.pixels).write(to: directory.appendingPathComponent(file))
+                case .rgbaFloat(let image):
+                    try image.pixels.withUnsafeBytes { try Data($0).write(to: directory.appendingPathComponent(file)) }
+                    entry.hdr = true
+                }
                 entry.file = file
-                entry.width = texture.image.width
-                entry.height = texture.image.height
+                entry.width = texture.width
+                entry.height = texture.height
                 entry.srgb = texture.isSRGB
                 entry.mipmaps = texture.generatesMipmaps
             case .material(let material):
@@ -146,10 +164,18 @@ enum AssetArtifacts {
                 value = .mesh(MeshGeometry(vertices: vertices, indices: indices))
             case .texture:
                 guard let file = entry.file, let width = entry.width, let height = entry.height,
-                      let bytes = FileManager.default.contents(atPath: directory.appendingPathComponent(file).path),
-                      bytes.count == width * height * 4 else { return nil }
-                value = .texture(TextureAsset(image: Image(width: width, height: height, pixels: [UInt8](bytes)),
-                                              isSRGB: entry.srgb ?? true, generatesMipmaps: entry.mipmaps ?? true))
+                      let bytes = FileManager.default.contents(atPath: directory.appendingPathComponent(file).path) else { return nil }
+                if entry.hdr == true {
+                    guard bytes.count == width * height * 16 else { return nil }
+                    var pixels = [Float](repeating: 0, count: width * height * 4)
+                    bytes.withUnsafeBytes { source in pixels.withUnsafeMutableBytes { $0.copyMemory(from: source) } }
+                    value = .texture(TextureAsset(floatImage: FloatImage(width: width, height: height, pixels: pixels),
+                                                  generatesMipmaps: entry.mipmaps ?? true))
+                } else {
+                    guard bytes.count == width * height * 4 else { return nil }
+                    value = .texture(TextureAsset(image: Image(width: width, height: height, pixels: [UInt8](bytes)),
+                                                  isSRGB: entry.srgb ?? true, generatesMipmaps: entry.mipmaps ?? true))
+                }
             case .material:
                 guard let material = entry.material else { return nil }
                 value = .material(material)

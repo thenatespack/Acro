@@ -106,6 +106,9 @@ public struct RenderPrep {
     public private(set) var items: [RenderItem] = []
     /// Keys entities referenced that aren't registered (reported once by the renderer).
     public private(set) var missingKeys: Set<String> = []
+    /// The same, split by what the entity wanted the key for.
+    public private(set) var missingMeshKeys: Set<String> = []
+    public private(set) var missingMaterialKeys: Set<String> = []
 
     public init() {}
 
@@ -118,8 +121,14 @@ public struct RenderPrep {
             guard renderer.isVisible else { return }
             let mesh = meshes.id(of: renderer.mesh.key), material = materials.id(of: renderer.material.key)
             guard let mesh, let material else {
-                if mesh == nil { missingKeys.insert(renderer.mesh.key) }
-                if material == nil { missingKeys.insert(renderer.material.key) }
+                if mesh == nil {
+                    missingKeys.insert(renderer.mesh.key)
+                    missingMeshKeys.insert(renderer.mesh.key)
+                }
+                if material == nil {
+                    missingKeys.insert(renderer.material.key)
+                    missingMaterialKeys.insert(renderer.material.key)
+                }
                 return
             }
             let model = transform.matrix

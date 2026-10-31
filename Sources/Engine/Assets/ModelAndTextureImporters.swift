@@ -1,10 +1,9 @@
 import Foundation
 
-/// Imports PNG, JPEG and TGA images (`ImageDecoder`) as one `texture` sub-asset: RGBA8, sRGB
-/// or linear, with a mip chain unless turned off. Use linear (`sRGB: false`) for data such as
-/// normal maps and masks.
-///
-/// Radiance HDR isn't imported yet: `TextureAsset` holds 8-bit pixels only.
+/// Imports PNG, JPEG, TGA and Radiance HDR images (`ImageDecoder.decodeAny`) as one `texture`
+/// sub-asset: RGBA8, sRGB or linear, with a mip chain unless turned off. Use linear
+/// (`sRGB: false`) for data such as normal maps and masks. `.hdr` files stay float
+/// (`TextureAsset.floatImage`, uploaded as `.rgba16Float`) and ignore `sRGB`.
 public struct TextureImporter: AssetImporter {
     public struct Settings: Codable, Equatable, Sendable {
         /// Color data (true) or linear data such as normals and masks (false).
@@ -20,15 +19,15 @@ public struct TextureImporter: AssetImporter {
     public init() {}
 
     public var name: String { "texture" }
-    public var fileExtensions: [String] { ["png", "jpg", "jpeg", "tga"] }
+    public var fileExtensions: [String] { ["png", "jpg", "jpeg", "tga", "hdr"] }
     public var version: Int { 1 }
     public var defaultSettings: Settings { Settings() }
 
     public func importAsset(_ context: inout ImportContext, settings: Settings) throws -> ImportedAsset {
-        let image = try ImageDecoder.decode(context.data())
+        let image = try ImageDecoder.decodeAny(context.data())
         var asset = ImportedAsset()
         asset.add("texture", name: ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension,
-                  .texture(TextureAsset(image: image, isSRGB: settings.sRGB, generatesMipmaps: settings.mipmaps)))
+                  .texture(TextureAsset(decoded: image, isSRGB: settings.sRGB, generatesMipmaps: settings.mipmaps)))
         return asset
     }
 }
@@ -46,7 +45,8 @@ public struct TextureImporter: AssetImporter {
 /// - `prefab/<file name>`, the main object: the scene's node tree, laid out like
 ///   `ImportedModel.instantiate` (multi-primitive meshes get one child node per primitive).
 ///
-/// External `.bin` buffers are read relative to the model's folder.
+/// External `.bin` buffers are read relative to the model's folder and recorded as
+/// dependencies (`ImportContext.readDependency`): editing one reimports the model.
 public struct GLTFImporter: AssetImporter {
     public struct Settings: Codable, Equatable, Sendable {
         /// Generate smooth (area-weighted) normals where the file has none, instead of flat.
@@ -64,10 +64,11 @@ public struct GLTFImporter: AssetImporter {
 
     public func importAsset(_ context: inout ImportContext, settings: Settings) throws -> ImportedAsset {
         let folder = context.sourceURL.deletingLastPathComponent()
+        let reader = context  // the loader below can't capture the inout context; the dependency log is shared
         let model = try GLTFReader.read(
             data: context.data(), baseURL: folder,
             options: GLTFReader.Options(normals: settings.smoothNormals ? .smooth : .flat),
-            loadResource: { try Data(contentsOf: folder.appendingPathComponent($0)) })
+            loadResource: { try reader.readDependency(relativePath: $0) })
         for warning in model.warnings { context.warn(warning) }
 
         var asset = ImportedAsset()

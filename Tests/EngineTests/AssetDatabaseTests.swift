@@ -624,6 +624,7 @@ import QuartzCore
 
         let device = try MetalRenderDevice(layer: CAMetalLayer(), sampleCount: 1)
         let renderer = try SceneRenderer(device: device, quality: .low)
+        renderer.blocksOnAssetLoading = true  // the first frame waits for the import (see AssetLoadingTests for async)
         let world = World()
         let mesh = MeshHandle(AssetReference(id, subAsset: "mesh/main"))
         let material = MaterialHandle(AssetReference(id))

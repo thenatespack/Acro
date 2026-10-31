@@ -56,6 +56,7 @@ private let rocksOBJ = """
         #expect(session.openProject(path: path))
         #expect(notified == 2)
         let assets = try #require(session.assets)
+        assets.waitForAll()  // projects import in the background
         let id = try #require(assets.id(forPath: "rocks.obj"))
         #expect(assets.references(of: .mesh) == [AssetReference(id, subAsset: "mesh/Rock"), AssetReference(id, subAsset: "mesh/Pebble")])
         #expect(session.log.entries.contains { $0.message.contains("Opened project Game") })
@@ -84,6 +85,7 @@ private let rocksOBJ = """
         try Data("{}".utf8).write(to: folder.appendingPathComponent("Assets/plain.material"))
         #expect(session.openProject(path: folder.path))
         let assets = try #require(session.assets)
+        assets.waitForAll()
         let rocks = try #require(assets.id(forPath: "rocks.obj"))
         let plain = try #require(assets.id(forPath: "plain.material"))
         let rock = AssetReference(rocks, subAsset: "mesh/Rock").description
@@ -110,6 +112,7 @@ private let rocksOBJ = """
         #expect(session.newProject(path: folder.path))
         try Data(rocksOBJ.utf8).write(to: folder.appendingPathComponent("Assets/rocks.obj"))
         #expect(session.openProject(path: folder.path))
+        session.assets?.waitForAll()
         let rocks = try #require(session.assets?.id(forPath: "rocks.obj"))
 
         let panel = InspectorPanel(session: session)
