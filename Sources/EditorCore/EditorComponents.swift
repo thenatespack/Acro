@@ -49,6 +49,8 @@ public enum EditorComponentCatalog {
         register(Transform.self) { Transform() }
         register(Camera.self) { Camera() }
         register(DirectionalLight.self) { DirectionalLight() }
+        register(PointLight.self) { PointLight() }
+        register(SpotLight.self) { SpotLight() }
         register(SceneEnvironment.self) { SceneEnvironment() }
         register(MeshRenderer.self) { MeshRenderer(mesh: .cube) }
         register(Spin.self) { Spin() }
