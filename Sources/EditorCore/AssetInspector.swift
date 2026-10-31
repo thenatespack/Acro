@@ -107,20 +107,13 @@ public final class AssetSettingsEditor {
         try world.setField(path, of: componentName, for: entity, to: value)
     }
 
-    /// Writes the pending settings to the sidecar and reimports. Returns whether it worked.
+    /// Writes the pending settings to the sidecar and reimports (`asset.applySettings`). Returns
+    /// whether it worked.
     @discardableResult
     public func apply() -> Bool {
-        guard let assets = session.assets else { return false }
-        let settings = pending
-        do {
-            try assets.setSettings(settings, for: asset)
-            session.log.info("Applied import settings of \(assets.path(of: asset) ?? asset.description)")
-            revert()
-            return true
-        } catch {
-            session.log.error("Applying import settings failed: \(error)")
-            return false
-        }
+        guard session.run(AssetApplySettingsCommand.self, .init(asset: asset, settings: pending)) != nil else { return false }
+        revert()
+        return true
     }
 
     /// Drops pending changes: the form shows the stored settings again.
@@ -177,8 +170,9 @@ struct MaterialAssetComponent: Component {
 }
 
 /// Edits a material asset through a form. For a `.material` file, every gesture is one undo
-/// step (`MaterialEditCommand`) that saves the file; changes during a drag are written live
-/// without being recorded. Materials imported from a model are shown read-only.
+/// step (`material.set`, a `MaterialEditCommand`) that saves the file; changes during a drag are
+/// written live without being recorded (`material.set`, transient). Materials imported from a
+/// model are shown read-only.
 @MainActor
 public final class MaterialAssetEditor {
     public let session: EditorSession
@@ -229,10 +223,13 @@ public final class MaterialAssetEditor {
             }
             guard let updated = material else { return }
             if edit.phase == .changed {
-                if updated != current { session.previewMaterial(updated, of: reference.asset) }
+                if updated != current {
+                    session.run(MaterialSetCommand.self, .init(asset: reference.asset, material: updated, transient: true))
+                }
             } else {
                 gestureStart = nil
-                session.setMaterial(updated, of: reference.asset, from: start, label: "Edit Material \(edit.path)")
+                session.run(MaterialSetCommand.self, .init(asset: reference.asset, material: updated, previous: start,
+                                                           label: "Edit Material \(edit.path)"))
             }
             shownRevision = session.assets?.revision(of: reference.asset) ?? shownRevision
         }
@@ -330,7 +327,7 @@ public final class AssetInspectorView {
             }
             if record.importer == GLTFImporter().name, record.objects.contains(where: { $0.kind == .material }) {
                 let extract = Button("Extract Materials", name: "extractMaterials") { [unowned self] in
-                    session.extractMaterials(of: id)
+                    session.run(AssetExtractMaterialsCommand.self, .init(asset: id))
                     shownRevision = -1
                 }
                 extract.tooltip = "Write the model's materials to .material files you can edit, and use them for this model"

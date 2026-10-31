@@ -20,7 +20,7 @@ public enum PlayState: Sendable, Equatable {
 }
 
 /// What the "Create" menu makes.
-public enum EntityTemplate: String, CaseIterable, Sendable {
+public enum EntityTemplate: String, CaseIterable, Codable, Sendable {
     case empty, cube, sphere, plane
 
     public var title: String {
@@ -44,8 +44,9 @@ public enum EntityTemplate: String, CaseIterable, Sendable {
 }
 
 /// The editor's model, independent of any GPU or window: the document, the selection, the log,
-/// the current tool and play mode, and every action the toolbar, menus, shortcuts and panels
-/// trigger. Edits go through the document's `UndoStack`; failures are logged rather than thrown.
+/// the current tool and play mode, and the actions behind every command (`commands`, the
+/// `CommandRegistry` the toolbar, menus, shortcuts and panels run). Edits go through the
+/// document's `UndoStack`; failures are logged rather than thrown.
 ///
 /// ## Play mode
 /// `play()` takes a `world.snapshot()`, turns undo recording off and from then on `tick(dt:)`
@@ -80,6 +81,16 @@ public final class EditorSession {
     /// Called after `inspectedAsset` changed.
     public var onInspectedAssetChange: (() -> Void)?
 
+    /// Every editor action by id (see EditorCommand.swift). The UI runs these, never the
+    /// methods below directly.
+    public private(set) lazy var commands: CommandRegistry = {
+        let registry = CommandRegistry(session: self)
+        registry.register(BuiltinCommands.all)
+        return registry
+    }()
+    /// The application around the session, for commands that act on its widgets (layout, camera).
+    public weak var host: (any EditorHost)?
+
     private var playSnapshot: WorldSnapshot?
 
     public var world: World { document.world }
@@ -107,12 +118,14 @@ public final class EditorSession {
 
     // MARK: Document
 
-    public func newDocument() {
-        guard !refuseWhilePlaying("New") else { return }
+    @discardableResult
+    public func newDocument() -> Bool {
+        guard !refuseWhilePlaying("New") else { return false }
         onWillReplaceWorld?()
         document.newDocument()
         log.info("New scene")
         changed()
+        return true
     }
 
     @discardableResult
@@ -239,21 +252,30 @@ public final class EditorSession {
 
     // MARK: Undo
 
-    public func performUndo() {
+    /// Undoes the last step. Returns false when there was nothing to undo or it failed.
+    @discardableResult
+    public func performUndo() -> Bool {
         do {
-            if try undo.undo() { changed() }
+            guard try undo.undo() else { return false }
+            changed()
+            return true
         } catch {
             log.error("Undo failed: \(error)")
             changed()
+            return false
         }
     }
 
-    public func performRedo() {
+    @discardableResult
+    public func performRedo() -> Bool {
         do {
-            if try undo.redo() { changed() }
+            guard try undo.redo() else { return false }
+            changed()
+            return true
         } catch {
             log.error("Redo failed: \(error)")
             changed()
+            return false
         }
     }
 
@@ -313,10 +335,12 @@ public final class EditorSession {
         }
     }
 
-    /// Duplicates the selected subtrees next to their originals (one undo step) and selects the copies.
-    public func duplicateSelection() {
+    /// Duplicates the selected subtrees next to their originals (one undo step) and selects the
+    /// copies. Returns their ids.
+    @discardableResult
+    public func duplicateSelection() -> [EntityID] {
         let originals = selection.topLevelEntities(in: world)
-        guard !originals.isEmpty else { return }
+        guard !originals.isEmpty else { return [] }
         var copies: [EntityID] = []
         undo.beginGroup("Duplicate")
         defer { undo.endGroup(); changed() }
@@ -331,23 +355,42 @@ public final class EditorSession {
             }
         }
         selection.set(copies)
+        return copies
     }
 
-    /// Deletes the selected subtrees (one undo step) and clears the selection.
-    public func deleteSelection() {
+    /// Deletes the selected subtrees (one undo step) and clears the selection. Returns the
+    /// number deleted.
+    @discardableResult
+    public func deleteSelection() -> Int {
         let doomed = selection.topLevelEntities(in: world)
-        guard !doomed.isEmpty else { return }
+        guard !doomed.isEmpty else { return 0 }
         undo.beginGroup(doomed.count == 1 ? "Delete Entity" : "Delete \(doomed.count) Entities")
         defer { undo.endGroup(); changed() }
+        var deleted = 0
         for entity in doomed {
-            do { try undo.perform(DespawnCommand(entity, in: world)) } catch { log.error("Delete failed: \(error)") }
+            do {
+                try undo.perform(DespawnCommand(entity, in: world))
+                deleted += 1
+            } catch {
+                log.error("Delete failed: \(error)")
+            }
         }
         selection.clear()
+        return deleted
     }
 
-    public func rename(_ id: EntityID, to name: String) {
-        guard let entity = world.entity(for: id), world.get(Name.self, for: entity)?.value != name else { return }
-        do { perform(try RenameCommand(entity, to: name, in: world)) } catch { log.error("Rename failed: \(error)") }
+    /// Renames `id` (one undo step). Returns false when the entity is gone or it failed.
+    @discardableResult
+    public func rename(_ id: EntityID, to name: String) -> Bool {
+        guard let entity = world.entity(for: id) else {
+            log.error("Rename failed: \(UndoError.entityNotFound(id))")
+            return false
+        }
+        guard world.get(Name.self, for: entity)?.value != name else { return true }
+        do { return perform(try RenameCommand(entity, to: name, in: world)) } catch {
+            log.error("Rename failed: \(error)")
+            return false
+        }
     }
 
     /// Moves `ids` (in order) to become children of `parent` (nil: roots) starting at `index`
@@ -380,22 +423,38 @@ public final class EditorSession {
 
     // MARK: Components
 
-    public func addComponent(named name: String, to id: EntityID) {
-        guard let entity = world.entity(for: id) else { return }
+    /// Adds the catalog's default `name` component to `id` (one undo step). Returns whether it worked.
+    @discardableResult
+    public func addComponent(named name: String, to id: EntityID) -> Bool {
+        guard let entity = world.entity(for: id) else {
+            log.error("Add \(name) failed: \(UndoError.entityNotFound(id))")
+            return false
+        }
         guard let component = EditorComponentCatalog.makeDefault(named: name) else {
             log.error("Add component: \(EditorError.unknownComponent(name))")
-            return
+            return false
         }
-        do { perform(try AddComponentCommand(entity, component, in: world)) } catch { log.error("Add \(name) failed: \(error)") }
+        do { return perform(try AddComponentCommand(entity, component, in: world)) } catch {
+            log.error("Add \(name) failed: \(error)")
+            return false
+        }
     }
 
-    public func removeComponent(named name: String, from id: EntityID) {
-        guard let entity = world.entity(for: id) else { return }
+    /// Removes the `name` component from `id` (one undo step). Returns whether it worked.
+    @discardableResult
+    public func removeComponent(named name: String, from id: EntityID) -> Bool {
+        guard let entity = world.entity(for: id) else {
+            log.error("Remove \(name) failed: \(UndoError.entityNotFound(id))")
+            return false
+        }
         guard let type = ComponentRegistry.type(named: name) else {
             log.error("Remove component: \(EditorError.unknownComponent(name))")
-            return
+            return false
         }
-        do { perform(try RemoveComponentCommand(entity, type, in: world)) } catch { log.error("Remove \(name) failed: \(error)") }
+        do { return perform(try RemoveComponentCommand(entity, type, in: world)) } catch {
+            log.error("Remove \(name) failed: \(error)")
+            return false
+        }
     }
 
     // MARK: Helpers
@@ -430,8 +489,8 @@ public final class EditorSession {
 }
 
 /// Turns `PropertyGrid` edits into undo steps: one step per gesture. `.began` opens an undo
-/// group, `.changed` applies the value live (unrecorded), and `.ended` records a single
-/// `SetFieldCommand` from the value at `.began` to the final one and closes the group. A whole
+/// group, `.changed` applies the value live (`component.setField`, transient), and `.ended`
+/// runs `component.setField` from the value at `.began` to the final one and closes the group. A whole
 /// scrub or drag is then exactly one step, as is a typed value, and a gesture that ends where
 /// it began records nothing. Use it with `grid.appliesEditsToWorld = false`.
 @MainActor
@@ -452,15 +511,13 @@ public final class InspectorEditRecorder {
             session.undo.beginGroup("Edit \(edit.path)")
             openGesture = (edit.componentName, edit.path)
         case .changed:
-            do {
-                try world.setField(edit.path, of: edit.componentName, for: edit.entity, to: edit.newValue)
-            } catch {
-                session.log.error("Edit \(edit.componentName).\(edit.path) failed: \(error)")
-            }
+            guard let id = world.id(of: edit.entity) else { return }
+            session.run(ComponentSetFieldCommand.self, .init(entity: id, component: edit.componentName, path: edit.path,
+                                                             value: edit.newValue, transient: true, in: world))
         case .ended:
             if edit.newValue != edit.oldValue, let id = world.id(of: edit.entity) {
-                session.perform(SetFieldCommand(id: id, component: edit.componentName, path: edit.path,
-                                                old: edit.oldValue, new: edit.newValue))
+                session.run(ComponentSetFieldCommand.self, .init(entity: id, component: edit.componentName, path: edit.path,
+                                                                 value: edit.newValue, previous: edit.oldValue, in: world))
             }
             finishGesture()
         }

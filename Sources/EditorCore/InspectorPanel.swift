@@ -2,10 +2,10 @@ import Engine
 import Foundation
 
 /// The inspector panel for the primary selected entity: a header with its name (editable,
-/// recorded as a `RenameCommand`) and id, a reflection-driven `PropertyGrid` whose edits are
-/// recorded one undo step per gesture (`InspectorEditRecorder`), a remove button per component
-/// (`RemoveComponentCommand`) and "Add Component" (`AddComponentCommand` with the catalog's
-/// default value). With several entities selected it shows the primary one only.
+/// `entity.rename`) and id, a reflection-driven `PropertyGrid` whose edits are recorded one undo
+/// step per gesture (`InspectorEditRecorder`, `component.setField`), a remove button per component
+/// (`component.remove`) and "Add Component" (`component.add` with the catalog's default value).
+/// With several entities selected it shows the primary one only.
 /// Dropdown options for asset-key fields in the inspector: `MeshRenderer.mesh` lists the
 /// registered meshes and `MeshRenderer.material` the registered materials (with a project open,
 /// its assets too, as `asset:` keys shown by `title`).
@@ -96,7 +96,7 @@ public final class InspectorPanel {
         grid.onFieldEdit = { [unowned self] edit in recorder.handle(edit) }
         grid.onRemoveComponent = { [unowned self] entity, name in
             guard let id = session.world.id(of: entity) else { return }
-            session.removeComponent(named: name, from: id)
+            session.run(ComponentRemoveCommand.self, .init(entity: id, component: name))
         }
         scroll.style.grow = 1
         scroll.style.shrink = 1
@@ -167,7 +167,7 @@ public final class InspectorPanel {
         guard let id = shownID, session.world.entity(for: id) != nil else { return }
         let name = text.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
-        session.rename(id, to: name)
+        session.run(EntityRenameCommand.self, .init(entity: id, name: name))
     }
 
     private func showAddMenu() {
@@ -178,7 +178,7 @@ public final class InspectorPanel {
             return
         }
         let menu = PopupMenu(items: names, anchor: addButton)
-        menu.onSelect = { [unowned self] index in session.addComponent(named: names[index], to: id) }
+        menu.onSelect = { [unowned self] index in session.run(ComponentAddCommand.self, .init(entity: id, component: names[index])) }
         context.presentOverlay(menu)
     }
 }

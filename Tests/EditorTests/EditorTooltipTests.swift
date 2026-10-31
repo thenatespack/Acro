@@ -40,9 +40,10 @@ import Testing
 }
 
 @Test func shownBindingsAreTheRealBindings() {
-    let all: [EditorAction] = [.undo, .redo, .save, .duplicate, .delete, .focusSelection, .clearSelection, .togglePlay, .importAsset]
+    let all: [CommandID] = [.undo, .redo, .save, .duplicate, .delete, .focusSelection, .clearSelection, .togglePlay, .importAsset]
+    #expect(EditorShortcuts.boundCommands == all)
     for shortcuts in [EditorShortcuts(shortcutModifier: .command), EditorShortcuts(shortcutModifier: .control)] {
-        for action in all { #expect(shortcuts.action(for: shortcuts.binding(for: action)) == action) }
+        for action in all { #expect(shortcuts.action(for: shortcuts.binding(for: action)!) == action) }
     }
 }
 

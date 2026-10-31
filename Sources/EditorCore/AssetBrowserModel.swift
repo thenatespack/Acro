@@ -174,31 +174,32 @@ public final class AssetBrowserModel {
         return parts
     }
 
-    // MARK: Actions (on the selection or the current folder)
+    // MARK: Actions (on the selection or the current folder, through the session's commands)
 
-    /// Creates a folder in the current folder and selects it.
+    /// Creates a folder in the current folder (`asset.newFolder`) and selects it.
     @discardableResult
     public func newFolder() -> String? {
-        guard let path = session.createAssetFolder(in: targetFolder) else { return nil }
+        guard let path = session.run(AssetNewFolderCommand.self, .init(folder: targetFolder))?.path else { return nil }
         invalidate()
         selection = .folder(path)
         return path
     }
 
-    /// Creates a material in the current folder and selects it.
+    /// Creates a material in the current folder (`asset.newMaterial`) and selects it.
     @discardableResult
     public func newMaterial() -> AssetID? {
-        guard let id = session.createMaterialAsset(in: targetFolder) else { return nil }
+        guard let id = session.run(AssetNewMaterialCommand.self, .init(folder: targetFolder))?.asset else { return nil }
         invalidate()
         selection = .asset(id)
         return id
     }
 
     /// Copies files or folders from outside the project into the current folder, imports them
-    /// and selects the first one. Returns the new paths.
+    /// (`asset.import`) and selects the first one. Returns the new paths.
     @discardableResult
     public func importFiles(_ urls: [URL]) -> [String] {
-        let paths = session.importAssets(urls, into: targetFolder)
+        guard !urls.isEmpty else { return [] }
+        let paths = session.run(AssetImportCommand.self, .init(sources: urls.map(\.path), folder: targetFolder))?.paths ?? []
         guard let first = paths.first, let assets = session.assets else { return paths }
         invalidate()
         if assets.isFolder(first) {
@@ -218,32 +219,33 @@ public final class AssetBrowserModel {
         }
     }
 
-    /// Renames the selected file or folder. Returns whether it worked.
+    /// Renames the selected file or folder (`asset.rename`). Returns whether it worked.
     @discardableResult
     public func renameSelection(to name: String) -> Bool {
-        guard let path = selectedPath, let newPath = session.renameAsset(at: path, to: name) else { return false }
+        guard let path = selectedPath,
+              let newPath = session.run(AssetRenameCommand.self, .init(path: path, name: name))?.path else { return false }
         invalidate()
         if case .folder = selection { selection = .folder(newPath) }
         if folder == path || folder.hasPrefix(path + "/") { folder = newPath + folder.dropFirst(path.count) }
         return true
     }
 
-    /// Moves `item` (a file or folder) into `folder`. Returns whether it worked.
+    /// Moves `item` (a file or folder) into `folder` (`asset.move`). Returns whether it worked.
     @discardableResult
     public func move(_ item: AssetItem, into folder: String) -> Bool {
         guard let path = session.path(of: item), !path.isEmpty else { return false }
         if case .object = item { return false }
         guard EditorSession.parentFolder(of: path) != folder else { return false }
-        guard let newPath = session.moveAsset(at: path, into: folder) else { return false }
+        guard let newPath = session.run(AssetMoveCommand.self, .init(path: path, folder: folder))?.path else { return false }
         invalidate()
         if case .folder = item, selection == item { selection = .folder(newPath) }
         return true
     }
 
-    /// Deletes the selected file or folder (ask first). Returns whether it worked.
+    /// Deletes the selected file or folder (`asset.delete`; ask first). Returns whether it worked.
     @discardableResult
     public func deleteSelection() -> Bool {
-        guard let path = selectedPath, session.deleteAsset(at: path) else { return false }
+        guard let path = selectedPath, session.run(AssetDeleteCommand.self, .init(path: path)) != nil else { return false }
         invalidate()
         selection = nil
         if folder == path || folder.hasPrefix(path + "/") { folder = EditorSession.parentFolder(of: path) }
