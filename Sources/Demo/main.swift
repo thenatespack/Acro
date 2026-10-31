@@ -154,7 +154,7 @@ final class DemoGame: Game {
 @MainActor func usage() -> String {
     var text = """
         Usage: Demo [--scene <name|number>] [--quality low|medium|high|ultra] [--resolution <res>]
-                    [--backend metal|vulkan] [--list]
+                    [--window <width>x<height>] [--backend metal|vulkan] [--list]
 
         Resolutions: native (default), \(RenderResolution.presets.map(\.name).joined(separator: ", ")),
                      any <height>p or <n>k (16:9), or <width>x<height>
@@ -205,6 +205,12 @@ while i < arguments.count {
         let name = value()
         guard let resolution = RenderResolution(name) else { fail("Unknown resolution '\(name)'") }
         config.renderResolution = resolution
+    case "--window":
+        // In points, like EngineConfig (a Retina display doubles it in pixels).
+        let parts = value().split(separator: "x").compactMap { Int($0) }
+        guard parts.count == 2, parts[0] > 0, parts[1] > 0 else { fail("--window takes <width>x<height> in points") }
+        config.width = parts[0]
+        config.height = parts[1]
     case "--backend":
         let name = value()
         guard let backend = GraphicsBackend(rawValue: name) else {

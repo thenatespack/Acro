@@ -494,6 +494,8 @@ swift run -c release Demo --scene shadows --quality ultra --resolution 4k   # --
 
 Everywhere: **1–9** and **0** (scene 10) switch scenes, **]** / **[** next / previous scene, **F2** toggles a text-input test mode (echoes typing in the window title), **Tab / Shift-Tab** cycle the render resolution (native, quality, performance, 144p … 16k), **U** cycles the upscaler (temporal ones only without MSAA), **V** toggles vsync, **Space** pauses animation, arrows/WASD or left-drag orbit, **Q/E** zoom, **Esc** quits. The window title shows the scene, its state, the render size, the quality and the backend.
 
+`--window <width>x<height>` sets the window size in points (default 1280x720; doubled in pixels on Retina). On macOS a Metal window larger than the screen keeps its size and hangs off the bottom/right edge, so `--window 1920x1080 --resolution performance` with `ENGINE_UPSCALER=taau` renders 1080p upscaled to a real 3840x2160 output even on a smaller display (`ENGINE_SCREENSHOT_SOURCE=window` captures it). The GLFW (Vulkan) window is still shrunk to fit the screen.
+
 `Scripts/render-scenes.sh [quality]` renders every scene on each available backend, writes PNGs to `.build/scene-shots/<quality>[-<resolution>]/`, and fails if the backends differ. Set `ENGINE_RESOLUTION` to render at a fixed size. Set `ENGINE_UPSCALER` as well to compare upscaled window images. Set `VALIDATE=1` to run Vulkan under the validation layers, which also fails on validation errors.
 
 ## Current limitations / next steps
