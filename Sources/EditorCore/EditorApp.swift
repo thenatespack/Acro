@@ -13,6 +13,10 @@ public struct EditorOptions: Sendable {
     public var deterministic: Bool
     /// Where the dock layout is persisted; nil doesn't persist it.
     public var prefsURL: URL?
+    /// An asset to select in the browser (and show in the inspector) at startup, by path
+    /// relative to `Assets/`: a folder opens it, a file selects it in its folder, and
+    /// "file#sub-asset" expands the file and selects that object (`EDITOR_SELECT_ASSET`).
+    public var selectAssetPath: String?
 
     public init(scenePath: String? = nil, projectPath: String? = nil, deterministic: Bool = false, prefsURL: URL? = nil) {
         self.scenePath = scenePath
@@ -23,9 +27,12 @@ public struct EditorOptions: Sendable {
 
     /// From the environment: deterministic with `ENGINE_SCREENSHOT`, prefs at `EditorPrefsStore.defaultURL`.
     public static func fromEnvironment(scenePath: String?, projectPath: String? = nil) -> EditorOptions {
-        let deterministic = ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT"] != nil
-        return EditorOptions(scenePath: scenePath, projectPath: projectPath, deterministic: deterministic,
-                             prefsURL: deterministic ? nil : EditorPrefsStore.defaultURL())
+        let environment = ProcessInfo.processInfo.environment
+        let deterministic = environment["ENGINE_SCREENSHOT"] != nil
+        var options = EditorOptions(scenePath: scenePath, projectPath: projectPath, deterministic: deterministic,
+                                    prefsURL: deterministic ? nil : EditorPrefsStore.defaultURL())
+        options.selectAssetPath = environment["EDITOR_SELECT_ASSET"]
+        return options
     }
 }
 
@@ -60,10 +67,17 @@ public final class EditorApp: Game {
     private var hierarchy: HierarchyPanel!
     private var inspector: InspectorPanel!
     private var console: ConsolePanel!
+    /// The Assets panel (browser) and its thumbnails.
+    public private(set) var assetBrowser: AssetBrowserPanel!
+    private var thumbnails: AssetThumbnails?
+    /// An asset being dragged from the browser, and where the pointer is.
+    private var assetDrag: (entry: AssetBrowserEntry, position: Vec2)?
     private let stats = StatsPanel()
     private let viewportWidget = ViewportWidget()
     private var toolbar: Toolbar!
 
+    private var shownAssetKeys: [AssetReference] = []
+    private weak var shownAssets: AssetDatabase?
     private var prefs = EditorPrefs()
     private var prefsDirty = false
     private var captureRequested = false
@@ -88,6 +102,11 @@ public final class EditorApp: Game {
         outline = try SelectionOutlineRenderer(device: engine.device)
         toolDrawRenderer = try DebugDrawRenderer(device: engine.device)
         transformTool = TransformTool(meshes: sceneRenderer)
+        do {
+            thumbnails = try AssetThumbnails(device: engine.device, quality: engine.quality)
+        } catch {
+            print("Editor: asset thumbnails unavailable: \(error)")
+        }
         viewport.tools = [transformTool]
         engine.clearColor = Vec4(0.02, 0.022, 0.03, 1)
 
@@ -126,6 +145,7 @@ public final class EditorApp: Game {
             let sphere = world.roots.flatMap { [$0] + world.children(of: $0) }.first { session.displayName(of: $0) == "Blue Sphere" }
             session.selection.select(sphere.flatMap { world.id(of: $0) })
         }
+        if let path = options.selectAssetPath { assetBrowser.model.reveal(path) }
         session.log.info("Editor ready. Right-drag flies the camera, Alt-drag or middle-drag orbits, the wheel zooms.")
         toolbar.refresh()
     }
@@ -141,6 +161,12 @@ public final class EditorApp: Game {
         inspector.assetChoices = makeAssetChoices()
         console = ConsolePanel(log: session.log)
         console.showsTime = !options.deterministic
+        assetBrowser = AssetBrowserPanel(session: session)
+        assetBrowser.grid.thumbnail = { [unowned self] entry in
+            guard let reference = entry.thumbnail, let kind = entry.thumbnailKind else { return nil }
+            return thumbnails?.thumbnail(reference, kind: kind)
+        }
+        assetBrowser.onDrag = { [unowned self] entry, position, phase in assetDragged(entry, at: position, phase: phase) }
 
         let viewportPanel = DockPanel(id: EditorLayout.viewport, title: "Scene", content: viewportWidget, isClosable: false,
                                       minSize: Vec2(200, 120))
@@ -150,7 +176,13 @@ public final class EditorApp: Game {
         dock.addPanel(DockPanel(id: EditorLayout.inspector, title: "Inspector", content: inspector.view, minSize: Vec2(220, 120)))
         dock.addPanel(DockPanel(id: EditorLayout.console, title: "Console", content: console.view))
         dock.addPanel(DockPanel(id: EditorLayout.stats, title: "Stats", content: stats.view))
+        dock.addPanel(DockPanel(id: EditorLayout.assets, title: "Assets", content: assetBrowser.view, minSize: Vec2(240, 120)))
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
+        // Layouts saved before the Assets panel existed get it next to the console.
+        if !dock.isOpen(EditorLayout.assets) {
+            dock.dock(EditorLayout.assets, at: dock.isOpen(EditorLayout.console) ? .tab(with: EditorLayout.console, index: 0)
+                                                                                   : .edge(.bottom))
+        }
         dock.style.grow = 1
         dock.padding = EdgeInsets(top: 0, left: 4, bottom: 4, right: 4)
         dock.background = ui.theme.fieldBackground
@@ -177,8 +209,17 @@ public final class EditorApp: Game {
     /// inspector's dropdowns and watch its `Assets/` folder.
     private func assetsChanged() {
         sceneRenderer.assets = session.assets
+        thumbnails?.assets = session.assets
         meshBoundsCache.removeAll()
-        inspector.assetChoices = makeAssetChoices()
+        // Rebuilding the dropdowns resets the inspector's grid, so only when the choices changed
+        // (not for every reimport, such as a material edited live).
+        let keys = session.assets.map { $0.references(of: .mesh) + $0.references(of: .material) } ?? []
+        if keys != shownAssetKeys || session.assets !== shownAssets {
+            shownAssetKeys = keys
+            shownAssets = session.assets
+            inspector.assetChoices = makeAssetChoices()
+        }
+        assetBrowser.model.invalidate()
         guard let project = session.project else { return }
         if assetWatcher?.directory != project.assetsURL {
             assetWatcher?.stop()
@@ -237,8 +278,10 @@ public final class EditorApp: Game {
         session.tick(dt: Double(dt))
 
         hierarchy.sync()
+        assetBrowser.sync()
         inspector.refresh()
         console.refresh()
+        thumbnails?.prepare()
         var snapshot = EditorStatsSnapshot()
         snapshot.frame = engine.stats
         snapshot.entityCount = session.world.entityCount
@@ -260,6 +303,7 @@ public final class EditorApp: Game {
         viewportWidget.caption = "Perspective · \(session.tool.title)" + (session.isPlaying ? " · Playing" : "")
         viewportWidget.isPlaying = session.isPlaying
         ui.draw(into: engine.ui)
+        drawAssetDrag(into: engine.ui)
 
         input.cursor = cursorShape(for: ui.desiredCursor)
         let project = session.project.map { " — \($0.name)" } ?? ""
@@ -418,6 +462,7 @@ public final class EditorApp: Game {
     }
 
     public func renderOffscreen(engine: Engine, frame: Frame) {
+        thumbnails?.render(frame: frame)
         guard let view = currentView, sizer.width > 0 else { return }
         sceneRenderer.beginViews(world: session.world, frame: frame, shadowFocus: view)
         let world = session.world
@@ -431,6 +476,72 @@ public final class EditorApp: Game {
     }
 
     public func render(engine: Engine, pass: RenderPass) {}
+}
+
+// MARK: - Dragging assets from the browser
+
+extension EditorApp {
+    /// A browser cell is being dragged: remember it for the badge; on drop, find what is under
+    /// the pointer (viewport, hierarchy row, inspector field) and hand it to the session.
+    fileprivate func assetDragged(_ entry: AssetBrowserEntry, at position: Vec2, phase: AssetGridView.DragPhase) {
+        switch phase {
+        case .began, .moved:
+            assetDrag = (entry, position)
+        case .cancelled:
+            assetDrag = nil
+        case .dropped:
+            assetDrag = nil
+            guard let target = dropTarget(at: position) else { return }
+            if session.drop(entry.item, on: target) { hierarchy.sync(force: true) }
+        }
+    }
+
+    /// What a drop at `position` (window points) lands on.
+    func dropTarget(at position: Vec2) -> AssetDropTarget? {
+        let world = session.world
+        if viewportWidget.isEffectivelyVisible, viewportWidget.frame.contains(position), let view = currentView {
+            let rect = viewportWidget.frame
+            let local = position - Vec2(rect.x, rect.y)
+            let projection = ViewportProjection(view, size: Vec2(rect.width, rect.height), pixelScale: ui.scale)
+            let hit = transformTool.picker.pick(at: local, in: projection, world: world)
+            let ray = projection.ray(through: local)
+            var point = ray.origin + ray.direction * 6
+            if let hit {
+                point = hit.point
+            } else if ray.direction.y < -1e-4 {
+                let t = -ray.origin.y / ray.direction.y
+                if t > 0 && t < 200 { point = ray.origin + ray.direction * t }
+            }
+            return .viewport(position: point, entity: hit.flatMap { world.id(of: $0.entity) })
+        }
+        let tree = hierarchy.tree
+        if tree.isEffectivelyVisible, tree.frame.contains(position) {
+            let parent = tree.row(at: position).flatMap { tree.visibleNodes[$0].userData as? EntityID }
+            return .hierarchy(parent: parent, position: hierarchy.spawnPosition())
+        }
+        if inspector.view.isEffectivelyVisible, inspector.view.frame.contains(position), session.inspectedAsset == nil,
+           let entity = session.selection.primaryEntity(in: world), let id = world.id(of: entity) {
+            var widget = ui.hitTest(position)
+            while let current = widget {
+                if current.name == "row.\(MeshRenderer.componentName).mesh" { return .field(entity: id, kind: .mesh) }
+                if current.name == "row.\(MeshRenderer.componentName).material" { return .field(entity: id, kind: .material) }
+                widget = current.parent
+            }
+        }
+        return nil
+    }
+
+    /// The dragged asset's name next to the pointer, green where it can be dropped.
+    fileprivate func drawAssetDrag(into list: UIDrawList) {
+        guard let (entry, position) = assetDrag else { return }
+        let theme = ui.theme
+        let accepted = dropTarget(at: position) != nil
+        let layout = ui.textLayout(entry.title, size: theme.fontSize)
+        let badge = UIRect(x: position.x + 14, y: position.y + 10, width: layout.width + 16, height: layout.height + 8)
+        list.fillRect(badge, color: theme.popupBackground.withAlpha(0.92), radii: UICornerRadii(4))
+        list.strokeRect(badge, color: accepted ? UIColor(hex: 0x3fbf6f) : theme.popupBorder, width: 1, radii: UICornerRadii(4))
+        list.drawText(layout, font: theme.font, at: Vec2(badge.x + 8, badge.y + 4), color: theme.textColor)
+    }
 }
 
 extension Mat4 {

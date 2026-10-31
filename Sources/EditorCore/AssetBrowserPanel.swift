@@ -1,0 +1,504 @@
+import Engine
+import Foundation
+
+/// The asset browser's grid (or list) of entries: a thumbnail (or icon) and a name per cell,
+/// drawn only where visible. Put it in a `ScrollView`. Click selects, double click activates
+/// (opens a folder, expands a model), the triangle on a model expands it, right click asks for
+/// a context menu, and dragging a cell reports `onDrag` (began, moved, dropped) with the window
+/// position, so the host can drop it anywhere in the editor.
+@MainActor
+final class AssetGridView: Widget {
+    enum DragPhase { case began, moved, dropped, cancelled }
+
+    var entries: [AssetBrowserEntry] = [] { didSet { if entries != oldValue { setNeedsLayout() } } }
+    var selected: AssetItem? { didSet { if selected != oldValue { setNeedsDisplay() } } }
+    var listMode = false { didSet { if listMode != oldValue { setNeedsLayout() } } }
+    /// Grid cell size in points (thumbnail plus a title line).
+    var cellSize = Vec2(88, 104)
+    var listRowHeight: Float = 24
+    var dragThreshold: Float = 5
+    /// The thumbnail for an entry, if one is ready (asked while drawing visible cells).
+    var thumbnail: ((AssetBrowserEntry) -> GPUTexture?)?
+    var onSelect: ((AssetBrowserEntry?) -> Void)?
+    var onActivate: ((AssetBrowserEntry) -> Void)?
+    var onToggleExpanded: ((AssetBrowserEntry) -> Void)?
+    var onContextMenu: ((AssetBrowserEntry?, Vec2) -> Void)?
+    var onDrag: ((AssetBrowserEntry, Vec2, DragPhase) -> Void)?
+
+    private var press: (index: Int, position: Vec2)?
+    private(set) var dragging: AssetBrowserEntry?
+
+    init() {
+        super.init(name: "assetGrid")
+    }
+
+    override var acceptsFocus: Bool { true }
+
+    private var columns: Int {
+        listMode ? 1 : max(1, Int((contentRect.width / cellSize.x).rounded(.down)))
+    }
+
+    private func columns(forWidth width: Float) -> Int {
+        listMode ? 1 : max(1, Int((width / cellSize.x).rounded(.down)))
+    }
+
+    override func measureContent(width: Float?) -> Vec2 {
+        let w = width ?? cellSize.x * 4
+        let rows = (entries.count + columns(forWidth: w) - 1) / columns(forWidth: w)
+        return Vec2(listMode ? 160 : cellSize.x, Float(max(rows, 1)) * (listMode ? listRowHeight : cellSize.y))
+    }
+
+    /// The frame of entry `index` in window points.
+    func cellRect(_ index: Int) -> UIRect {
+        let content = contentRect
+        if listMode {
+            return UIRect(x: content.x, y: content.y + Float(index) * listRowHeight, width: content.width, height: listRowHeight)
+        }
+        let n = columns
+        let width = content.width / Float(n)
+        return UIRect(x: content.x + Float(index % n) * width, y: content.y + Float(index / n) * cellSize.y, width: width,
+                      height: cellSize.y)
+    }
+
+    /// The entry under a window point.
+    func index(at point: Vec2) -> Int? {
+        let content = contentRect
+        guard content.contains(point) else { return nil }
+        let row = Int(((point.y - content.y) / (listMode ? listRowHeight : cellSize.y)).rounded(.down))
+        let column = listMode ? 0 : Int(((point.x - content.x) / (content.width / Float(columns))).rounded(.down))
+        let index = row * columns + column
+        return entries.indices.contains(index) ? index : nil
+    }
+
+    private func thumbnailRect(_ cell: UIRect) -> UIRect {
+        if listMode {
+            return UIRect(x: cell.x + 4 + (entries.isEmpty ? 0 : 0), y: cell.y + 3, width: cell.height - 6, height: cell.height - 6)
+        }
+        let side = min(cell.width - 16, cell.height - 30)
+        return UIRect(x: snap(cell.x + (cell.width - side) / 2), y: cell.y + 6, width: side, height: side)
+    }
+
+    /// The expand triangle of an expandable entry.
+    private func expanderRect(_ index: Int) -> UIRect? {
+        guard entries[index].isExpandable else { return nil }
+        let cell = cellRect(index)
+        if listMode { return UIRect(x: cell.maxX - 22, y: cell.y, width: 22, height: cell.height) }
+        let thumb = thumbnailRect(cell)
+        return UIRect(x: thumb.maxX - 18, y: thumb.y + (thumb.height - 22) / 2, width: 22, height: 22)
+    }
+
+    // MARK: Events
+
+    override func handleEvent(_ event: UIEvent) -> Bool {
+        switch event {
+        case .pointerDown(let e) where e.button == .right:
+            let index = index(at: e.position)
+            if let index {
+                selected = entries[index].item
+                onSelect?(entries[index])
+            }
+            onContextMenu?(index.map { entries[$0] }, e.position)
+            return true
+        case .pointerDown(let e) where e.button == .left:
+            guard let index = index(at: e.position) else {
+                selected = nil
+                onSelect?(nil)
+                return true
+            }
+            let entry = entries[index]
+            if let expander = expanderRect(index), expander.contains(e.position) {
+                onToggleExpanded?(entry)
+                return true
+            }
+            selected = entry.item
+            onSelect?(entry)
+            if e.clickCount == 2 {
+                onActivate?(entry)
+            } else {
+                press = (index, e.position)
+            }
+            return true
+        case .pointerDrag(let e):
+            if let dragging {
+                onDrag?(dragging, e.position, .moved)
+            } else if let press, entries.indices.contains(press.index), length(Vec3(e.position - press.position, 0)) > dragThreshold {
+                dragging = entries[press.index]
+                onDrag?(entries[press.index], e.position, .began)
+                setNeedsDisplay()
+            }
+            return true
+        case .pointerUp(let e):
+            if let dragging { onDrag?(dragging, e.position, .dropped) }
+            dragging = nil
+            press = nil
+            return true
+        case .key(let e) where e.key == .escape && dragging != nil:
+            if let dragging { onDrag?(dragging, context?.pointerPosition ?? .zero, .cancelled) }
+            dragging = nil
+            press = nil
+            return true
+        case .key(let e):
+            guard let current = entries.firstIndex(where: { $0.item == selected }) ?? (entries.isEmpty ? nil : -1) else { return false }
+            let step: Int
+            switch e.key {
+            case .left: step = -1
+            case .right: step = 1
+            case .up: step = -columns
+            case .down: step = columns
+            case .enter:
+                if current >= 0 { onActivate?(entries[current]) }
+                return true
+            default: return false
+            }
+            let next = min(max(current + step, 0), entries.count - 1)
+            selected = entries[next].item
+            onSelect?(entries[next])
+            _ = parent?.scrollToReveal(cellRect(next))
+            return true
+        default:
+            return false
+        }
+    }
+
+    override func tooltip(at point: Vec2) -> String? {
+        guard dragging == nil, let index = index(at: point) else { return tooltip }
+        let entry = entries[index]
+        return "\(entry.title)\n\(entry.kind.rawValue.capitalized) · \(entry.isSubAsset ? "in " : "")Assets/\(entry.path)"
+    }
+
+    // MARK: Drawing
+
+    override func draw(_ list: UIDrawList, theme: UITheme) {
+        guard !entries.isEmpty else {
+            let layout = context?.textLayout("Empty", size: theme.fontSize) ?? TextLayout("Empty", font: theme.font, size: theme.fontSize)
+            list.drawText(layout, font: theme.font, at: Vec2(snap(contentRect.x + 8), snap(contentRect.y + 8)),
+                          color: theme.secondaryTextColor)
+            return
+        }
+        let clip = list.clipBounds ?? frame
+        let hovered = isHovered && dragging == nil ? context.flatMap { index(at: $0.pointerPosition) } : nil
+        for index in entries.indices {
+            let cell = cellRect(index)
+            if cell.maxY < clip.y { continue }
+            if cell.y > clip.maxY { break }
+            drawCell(index, in: cell, hovered: hovered == index, list: list, theme: theme)
+        }
+    }
+
+    private func drawCell(_ index: Int, in cell: UIRect, hovered: Bool, list: UIDrawList, theme: UITheme) {
+        let entry = entries[index]
+        let isSelected = entry.item == selected
+        let box = cell.inset(by: EdgeInsets(2))
+        if entry.isSubAsset { list.fillRect(box, color: UIColor(hex: 0xffffff, alpha: 0.03), radii: UICornerRadii(4)) }
+        if isSelected {
+            list.fillRect(box, color: isFocused ? theme.rowSelectedFocused : theme.rowSelected, radii: UICornerRadii(4))
+        } else if hovered {
+            list.fillRect(box, color: theme.rowHover, radii: UICornerRadii(4))
+        }
+        var thumb = thumbnailRect(cell)
+        if listMode, entry.isSubAsset { thumb.x += 16 }
+        if let texture = thumbnail?(entry) {
+            // Fit, keeping the aspect ratio.
+            let aspect = Float(texture.width) / Float(max(texture.height, 1))
+            var rect = thumb
+            if aspect > 1 {
+                rect.height = thumb.width / aspect
+                rect.y += (thumb.height - rect.height) / 2
+            } else {
+                rect.width = thumb.height * aspect
+                rect.x += (thumb.width - rect.width) / 2
+            }
+            list.drawImage(texture, in: snappedRect(rect), radii: UICornerRadii(listMode ? 2 : 4))
+        } else {
+            Self.drawIcon(entry.kind, in: thumb, list: list, theme: theme)
+        }
+        if let expander = expanderRect(index) {
+            let c = expander.center
+            if !listMode { list.fillRect(expander, color: UIColor(0, 0, 0, 0.45), radii: UICornerRadii(11)) }
+            let s: Float = 3.5
+            let color = theme.textColor
+            if entry.isExpanded {
+                list.drawLine(from: c + Vec2(s / 2, -s), to: c + Vec2(-s / 2, 0), width: 1.5, color: color, cap: .round)
+                list.drawLine(from: c + Vec2(-s / 2, 0), to: c + Vec2(s / 2, s), width: 1.5, color: color, cap: .round)
+            } else {
+                list.drawLine(from: c + Vec2(-s / 2, -s), to: c + Vec2(s / 2, 0), width: 1.5, color: color, cap: .round)
+                list.drawLine(from: c + Vec2(s / 2, 0), to: c + Vec2(-s / 2, s), width: 1.5, color: color, cap: .round)
+            }
+        }
+        let size = listMode ? theme.fontSize : theme.smallFontSize
+        let textRect: UIRect
+        let alignment: TextAlignment
+        if listMode {
+            let right = expanderRect(index).map { $0.width } ?? 0
+            textRect = UIRect(x: thumb.maxX + 8, y: cell.y, width: max(0, cell.maxX - right - thumb.maxX - 12), height: cell.height)
+            alignment = .left
+        } else {
+            textRect = UIRect(x: cell.x + 4, y: thumb.maxY + 3, width: cell.width - 8, height: cell.maxY - thumb.maxY - 6)
+            alignment = .center
+        }
+        drawEllipsizedLine(entry.title, size: size, in: textRect, alignment: alignment,
+                           color: entry.isSubAsset ? theme.secondaryTextColor : theme.textColor, list: list, theme: theme)
+    }
+
+    private func drawEllipsizedLine(_ text: String, size: Float, in rect: UIRect, alignment: TextAlignment, color: UIColor,
+                                    list: UIDrawList, theme: UITheme) {
+        guard rect.width > 0 else { return }
+        var layout = context?.textLayout(text, size: size) ?? TextLayout(text, font: theme.font, size: size)
+        if layout.width > rect.width + 1 / scale, let short = TextEllipsis.fit(text, font: theme.font, size: size, width: rect.width) {
+            layout = context?.textLayout(short, size: size) ?? TextLayout(short, font: theme.font, size: size)
+        }
+        let x: Float = alignment == .center ? rect.x + (rect.width - layout.width) / 2 : rect.x
+        list.drawText(layout, font: theme.font, at: Vec2(snap(x), snap(rect.y + (rect.height - layout.height) / 2)), color: color)
+    }
+
+    /// Icons for entries without a thumbnail, drawn from shapes.
+    static func drawIcon(_ kind: AssetBrowserEntry.Kind, in rect: UIRect, list: UIDrawList, theme: UITheme) {
+        let side = min(rect.width, rect.height)
+        let c = rect.center
+        switch kind {
+        case .folder:
+            let w = side * 0.8, h = side * 0.6
+            let body = UIRect(x: c.x - w / 2, y: c.y - h / 2 + side * 0.04, width: w, height: h)
+            let tab = UIRect(x: body.x, y: body.y - side * 0.08, width: w * 0.42, height: side * 0.14)
+            let color = UIColor(hex: 0xd9a646)
+            list.fillRect(tab, color: color.withAlpha(0.85), radii: UICornerRadii(side * 0.04))
+            list.fillRect(body, color: color, radii: UICornerRadii(side * 0.06))
+        default:
+            let w = side * 0.62, h = side * 0.78
+            let page = UIRect(x: c.x - w / 2, y: c.y - h / 2, width: w, height: h)
+            list.fillRect(page, color: theme.controlBackground, radii: UICornerRadii(side * 0.05))
+            list.strokeRect(page, color: theme.controlBorder, width: 1, radii: UICornerRadii(side * 0.05))
+            let label = kind == .file ? "?" : String(kind.rawValue.prefix(1)).uppercased()
+            list.drawText(label, at: Vec2(c.x - side * 0.08, c.y - side * 0.14), size: side * 0.26, color: theme.secondaryTextColor)
+        }
+    }
+}
+
+/// The dockable Assets panel: the project's folders on the left (a tree), the selected folder's
+/// files on the right as a grid of thumbnails (or a list), with a breadcrumb, a search field
+/// and New Folder / New Material / Rename / Delete (with confirmation). Models expand to show
+/// their meshes, materials, textures and prefab. Selecting an item shows it in the inspector;
+/// cells can be dragged onto the viewport, the hierarchy or an inspector field
+/// (`onDrag`, handled by the host), or onto a folder in the tree to move them.
+@MainActor
+public final class AssetBrowserPanel {
+    public let model: AssetBrowserModel
+    public let view: Widget
+    let folderTree = TreeView(roots: [], name: "assetFolders")
+    let grid = AssetGridView()
+    let search = TextField(placeholder: "Search", name: "assetSearch")
+    let breadcrumb = Label("Assets", role: .secondary, name: "assetBreadcrumb")
+    /// Inline rename field and delete confirmation, shown on demand.
+    let renameField = TextField(placeholder: "Name", name: "assetRename")
+    private let renameBar: HStack
+    private let confirmBar: HStack
+    private let confirmLabel = Label("", role: .body, name: "deleteQuestion")
+    private let viewToggle: Button
+    private let noProject = Label("Open or create a project to see its assets", role: .secondary, name: "noProject")
+    private let content: Widget
+    private var shownVersion = -1
+    private var shownFolders: [String]?
+    private var folderNodes: [String: TreeNode] = [:]
+    private var applyingTree = false
+
+    /// The host's drop handling for a drag that ends outside the browser; also gets moves.
+    var onDrag: ((AssetBrowserEntry, Vec2, AssetGridView.DragPhase) -> Void)?
+
+    public init(session: EditorSession) {
+        model = AssetBrowserModel(session: session)
+        let newFolder = Button("New Folder", name: "newFolder")
+        let newMaterial = Button("New Material", name: "newMaterial")
+        let rename = Button("Rename", name: "renameAsset")
+        let delete = Button("Delete", name: "deleteAsset")
+        viewToggle = Button("List", name: "assetViewMode")
+        newFolder.tooltip = "Create a folder in the current folder"
+        newMaterial.tooltip = "Create a .material file in the current folder"
+        rename.tooltip = "Rename the selected file or folder (its id is kept)"
+        delete.tooltip = "Delete the selected file or folder"
+        viewToggle.tooltip = "Switch between thumbnails and a list"
+        search.style.width = 140
+        search.tooltip = "Filter the whole project by name"
+        breadcrumb.style.grow = 1
+        breadcrumb.style.shrink = 1
+        breadcrumb.style.width = 0
+        let toolbar = HStack(spacing: 6, name: "assetToolbar", [breadcrumb, search, newFolder, newMaterial, rename, delete, viewToggle])
+
+        let renameOK = Button("Rename", role: .primary, name: "renameOK")
+        let renameCancel = Button("Cancel", name: "renameCancel")
+        renameField.style.grow = 1
+        renameField.style.width = 0
+        renameBar = HStack(spacing: 6, name: "renameBar", [Label("Rename to", role: .secondary), renameField, renameCancel, renameOK])
+        renameBar.isHidden = true
+        let deleteOK = Button("Delete", role: .primary, name: "deleteOK")
+        let deleteCancel = Button("Cancel", name: "deleteCancel")
+        confirmLabel.style.grow = 1
+        confirmLabel.style.shrink = 1
+        confirmLabel.style.width = 0
+        confirmBar = HStack(spacing: 6, name: "deleteBar", [confirmLabel, deleteCancel, deleteOK])
+        confirmBar.isHidden = true
+
+        let gridScroll = ScrollView(grid, name: "assetGridScroll")
+        gridScroll.style.grow = 1
+        gridScroll.style.shrink = 1
+        let right = VStack(spacing: 6, padding: EdgeInsets(top: 0, left: 6, bottom: 0, right: 0), name: "assetContents",
+                           [toolbar, renameBar, confirmBar, gridScroll])
+        folderTree.background = .clear
+        folderTree.allowsDragAndDrop = false
+        let split = SplitView(.horizontal, panes: [folderTree, right], fractions: [0.22, 0.78], minSizes: [100, 200], name: "assetSplit")
+        split.style.grow = 1
+        content = split
+        noProject.isHidden = true
+        let root = VStack(spacing: 6, padding: EdgeInsets(6), name: "assetsPanel", [split, noProject])
+        view = root
+
+        newFolder.action = { [unowned self] in model.newFolder(); sync() }
+        newMaterial.action = { [unowned self] in model.newMaterial(); sync() }
+        rename.action = { [unowned self] in beginRename() }
+        delete.action = { [unowned self] in askDelete() }
+        viewToggle.action = { [unowned self] in
+            grid.listMode.toggle()
+            viewToggle.title = grid.listMode ? "Grid" : "List"
+        }
+        renameOK.action = { [unowned self] in commitRename() }
+        renameCancel.action = { [unowned self] in renameBar.isHidden = true }
+        renameField.onSubmit = { [unowned self] _ in commitRename() }
+        deleteOK.action = { [unowned self] in
+            confirmBar.isHidden = true
+            model.deleteSelection()
+            sync()
+        }
+        deleteCancel.action = { [unowned self] in confirmBar.isHidden = true }
+        search.onChange = { [unowned self] text in model.search = text }
+
+        folderTree.onSelect = { [unowned self] node in
+            guard !applyingTree, let path = node?.userData as? String else { return }
+            model.folder = path
+            model.select(.folder(path))
+        }
+        grid.onSelect = { [unowned self] entry in model.select(entry?.item) }
+        grid.onActivate = { [unowned self] entry in model.activate(entry); sync() }
+        grid.onToggleExpanded = { [unowned self] entry in
+            if let id = entry.item.assetID { model.toggleExpanded(id) }
+        }
+        grid.onContextMenu = { [unowned self] entry, position in showContextMenu(for: entry, at: position) }
+        grid.onDrag = { [unowned self] entry, position, phase in
+            if phase == .dropped, dropOnFolderTree(entry, at: position) { return }
+            onDrag?(entry, position, phase)
+        }
+        sync()
+    }
+
+    /// Pulls the model into the widgets; call every frame.
+    public func sync() {
+        let hasProject = model.session.assets != nil
+        if content.isHidden == hasProject { content.isHidden = !hasProject }
+        if noProject.isHidden != !hasProject { noProject.isHidden = hasProject }
+        let entries = model.entries
+        let folders = model.folders
+        if folders != shownFolders { rebuildTree(folders) }
+        guard model.version != shownVersion else { return }
+        shownVersion = model.version
+        grid.entries = entries
+        grid.selected = model.selection
+        let crumb = model.search.isEmpty ? model.breadcrumb.map(\.title).joined(separator: " › ") : "Search results"
+        if breadcrumb.text != crumb { breadcrumb.text = crumb }
+        if search.text != model.search, !search.isFocused { search.text = model.search }
+        applyingTree = true
+        if let node = folderNodes[model.folder] {
+            var parent = node.parent
+            while let p = parent { p.isExpanded = true; parent = p.parent }
+            folderTree.reloadData()
+            if folderTree.selectedNode !== node { folderTree.select(node) }
+        }
+        applyingTree = false
+    }
+
+    private func rebuildTree(_ folders: [String]) {
+        shownFolders = folders
+        let expandedPaths = Set(folderNodes.filter { $0.value.isExpanded }.map(\.key))
+        let root = TreeNode("Assets", isExpanded: true, userData: "")
+        folderNodes = ["": root]
+        for path in folders {
+            let parent = folderNodes[EditorSession.parentFolder(of: path)] ?? root
+            let node = TreeNode(String(path.split(separator: "/").last ?? ""), isExpanded: expandedPaths.contains(path), userData: path)
+            parent.addChild(node)
+            folderNodes[path] = node
+        }
+        applyingTree = true
+        folderTree.roots = [root]
+        applyingTree = false
+        shownVersion = -1
+    }
+
+    /// A cell dropped on a folder of the tree moves there.
+    private func dropOnFolderTree(_ entry: AssetBrowserEntry, at position: Vec2) -> Bool {
+        guard folderTree.isEffectivelyVisible, folderTree.frame.contains(position) else { return false }
+        if let row = folderTree.row(at: position), let path = folderTree.visibleNodes[row].userData as? String {
+            if model.move(entry.item, into: path) { sync() }
+        }
+        return true
+    }
+
+    func beginRename() {
+        guard let path = model.selectedPath else { return }
+        confirmBar.isHidden = true
+        renameBar.isHidden = false
+        let name = String(path.split(separator: "/").last ?? "")
+        renameField.text = name
+        view.context?.focus(renameField)
+    }
+
+    private func commitRename() {
+        guard !renameBar.isHidden else { return }
+        renameBar.isHidden = true
+        if model.renameSelection(to: renameField.text) { sync() }
+    }
+
+    func askDelete() {
+        guard let path = model.selectedPath else { return }
+        renameBar.isHidden = true
+        let isFolder = model.session.assets?.isFolder(path) ?? false
+        confirmLabel.text = "Delete \(path)\(isFolder ? " and everything in it" : "")? This can't be undone."
+        confirmBar.isHidden = false
+    }
+
+    private func showContextMenu(for entry: AssetBrowserEntry?, at position: Vec2) {
+        guard let context = view.context else { return }
+        var items: [(String, () -> Void)] = [
+            ("New Folder", { [unowned self] in model.newFolder(); sync() }),
+            ("New Material", { [unowned self] in model.newMaterial(); sync() }),
+        ]
+        if let entry {
+            if case .folder = entry.item { items.append(("Open", { [unowned self] in model.activate(entry); sync() })) }
+            if !entry.isSubAsset {
+                items.append(("Rename", { [unowned self] in beginRename() }))
+                items.append(("Delete", { [unowned self] in askDelete() }))
+            }
+            if case .asset(let id) = entry.item, model.session.assets?.record(id)?.importer == GLTFImporter().name {
+                items.append(("Extract Materials", { [unowned self] in model.session.extractMaterials(of: id); model.invalidate() }))
+            }
+            #if os(macOS)
+            if let url = model.session.project?.url(forAssetPath: entry.path) {
+                items.append(("Show in Finder", {
+                    let process = Process()
+                    process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                    process.arguments = ["-R", url.path]
+                    try? process.run()
+                }))
+            }
+            #endif
+        }
+        let menu = PopupMenu(items: items.map(\.0))
+        menu.anchorRect = UIRect(x: position.x, y: position.y, width: 1, height: 1)
+        menu.onSelect = { index in items[index].1() }
+        context.presentOverlay(menu)
+    }
+}
+
+extension AssetBrowserModel {
+    /// Selects `item` and shows it in the inspector (again, if an entity was selected since).
+    public func select(_ item: AssetItem?) {
+        selection = item
+        if let item { session.inspectedAsset = item }
+    }
+}

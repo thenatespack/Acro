@@ -322,6 +322,8 @@ final class ReflectionNode {
         case is Vec4.Type: .vec4
         case is Quat.Type: .quat
         case is Entity.Type: .entity
+        // Encodes as its text form, so a nil one is a string field that can be set.
+        case is AssetReference.Type: .string
         default: nil
         }
     }

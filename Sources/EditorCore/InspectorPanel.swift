@@ -58,6 +58,8 @@ public final class InspectorPanel {
     public let grid: PropertyGrid
     public let recorder: InspectorEditRecorder
     public let view: VStack
+    /// Shown instead of the entity while `session.inspectedAsset` is set.
+    public let assetView: AssetInspectorView
     /// Turns asset-key fields into dropdowns of the registered keys (see `AssetChoices`).
     public var assetChoices: AssetChoices? {
         didSet {
@@ -71,6 +73,7 @@ public final class InspectorPanel {
     private let subtitle = Label("", role: .caption, name: "selectionCount")
     private let emptyLabel = Label("Nothing selected", role: .secondary, name: "empty")
     private let addButton: Button
+    private let separator = Separator()
     private let scroll: ScrollView
     private var shownEntity: Entity?
     private var shownID: EntityID?
@@ -79,6 +82,7 @@ public final class InspectorPanel {
         self.session = session
         grid = PropertyGrid(world: session.world)
         recorder = InspectorEditRecorder(session: session)
+        assetView = AssetInspectorView(session: session)
         view = VStack(spacing: 6, padding: EdgeInsets(8), name: "inspectorPanel")
         addButton = Button("Add Component", name: "addComponent")
         addButton.tooltip = "Add a component to the selected entity"
@@ -104,14 +108,32 @@ public final class InspectorPanel {
         addButton.action = { [unowned self] in showAddMenu() }
 
         let header = HStack(spacing: 6, [nameField])
-        view.addChildren([header, idLabel, subtitle, Separator(), scroll, addButton, emptyLabel])
+        assetView.view.style.grow = 1
+        assetView.view.style.shrink = 1
+        view.addChildren([header, idLabel, subtitle, separator, scroll, addButton, emptyLabel, assetView.view])
         refresh()
     }
 
     /// Re-reads the selection and the entity; call every frame after the UI processed input.
     public func refresh() {
         let world = session.world
-        let entity = session.selection.primaryEntity(in: world)
+        let asset = session.inspectedAsset
+        if assetView.view.isHidden != (asset == nil) { assetView.view.isHidden = asset == nil }
+        if separator.isHidden != (asset != nil) { separator.isHidden = asset != nil }
+        assetView.show(asset)
+        let entity = asset == nil ? session.selection.primaryEntity(in: world) : nil
+        if asset != nil {
+            for widget in [nameField, idLabel, subtitle, scroll, addButton, emptyLabel] as [Widget] where !widget.isHidden {
+                widget.isHidden = true
+            }
+            if shownEntity != nil {
+                recorder.finishGesture()
+                shownEntity = nil
+                shownID = nil
+                grid.entity = nil
+            }
+            return
+        }
         if entity != shownEntity || entity.flatMap({ world.id(of: $0) }) != shownID {
             // A gesture can't continue on another entity (or after its entity went away).
             recorder.finishGesture()
