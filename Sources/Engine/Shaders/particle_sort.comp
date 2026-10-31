@@ -1,0 +1,74 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// The draw list of an alpha-blended emitter (at most 2048 slots): its live particles sorted
+// back to front from the camera, in one workgroup with a bitonic sort in shared memory. Keys
+// are the distance's float bits (inverted: far first), ties broken by slot, so the order is
+// fully determined. Dead slots sort last; the draw arguments count the live ones.
+
+#include "particles.glsl"
+
+layout(local_size_x = 256) in;
+
+// Must match ParticleSortUniforms in ParticleSystem.swift.
+layout(set = 2, binding = 2, std140) uniform Params {
+    vec4 camera;   // xyz camera position
+    uvec4 sizes;   // x capacity, y sort size (a power of two >= capacity, <= 2048)
+} params;
+layout(set = 2, binding = 24, std430) readonly buffer Particles { Particle particles[]; };
+layout(set = 2, binding = 25, std430) buffer State { uint state[]; };
+layout(set = 2, binding = 26, std430) writeonly buffer DrawList { uint drawList[]; };
+
+shared uint keys[2048];
+shared uint slots[2048];
+shared uint aliveCount;
+
+bool before(uint i, uint j) {
+    return keys[i] < keys[j] || (keys[i] == keys[j] && slots[i] < slots[j]);
+}
+
+void main() {
+    uint local = gl_LocalInvocationIndex;
+    uint capacity = params.sizes.x, n = params.sizes.y;
+    if (local == 0u) aliveCount = 0u;
+    barrier();
+    for (uint i = local; i < n; i += 256u) {
+        uint key = 0xFFFFFFFFu;
+        if (i < capacity && particles[i].velocity.w > 0.0) {
+            float distance = max(length(particles[i].position.xyz - params.camera.xyz), 1e-6);
+            key = ~floatBitsToUint(distance);  // positive floats order like their bits; inverted: far first
+            atomicAdd(aliveCount, 1u);
+        }
+        keys[i] = key;
+        slots[i] = i;
+    }
+    barrier();
+
+    for (uint k = 2u; k <= n; k <<= 1) {
+        for (uint j = k >> 1; j > 0u; j >>= 1) {
+            for (uint i = local; i < n; i += 256u) {
+                uint l = i ^ j;
+                if (l > i) {
+                    bool ascending = (i & k) == 0u;
+                    if (before(l, i) == ascending) {
+                        uint key = keys[i], slot = slots[i];
+                        keys[i] = keys[l];
+                        slots[i] = slots[l];
+                        keys[l] = key;
+                        slots[l] = slot;
+                    }
+                }
+            }
+            barrier();
+        }
+    }
+
+    uint count = aliveCount;
+    for (uint i = local; i < count; i += 256u) drawList[i] = slots[i];
+    if (local == 0u) {
+        state[0] = 6u;
+        state[1] = count;
+        state[2] = 0u;
+        state[3] = 0u;
+    }
+}

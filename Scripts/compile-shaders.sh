@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Regenerates every shader under Sources/ from its GLSL (*.vert, *.frag), the single source:
+# Regenerates every shader under Sources/ and Tests/ from its GLSL (*.vert, *.frag, *.comp), the
+# single source:
 #   name.vert  -> name.vert.spv   (glslc; used by the Vulkan backend)
 #   name.vert.spv -> name.vert.metal (SPIRV-Cross via Scripts/spirv-to-msl.c; used by the Metal backend)
-# and the same for .frag. A fragment shader with more outputs than [[color(0)]] also gets
+# and the same for .frag and .comp (compute; entry point compute_main in MSL). A fragment
+# shader with more outputs than [[color(0)]] also gets
 #   name.frag.spv -> name.frag.color0.metal (outputs other than color 0 dropped; the Metal
 #   backend uses it for pipelines without those attachments, as MoltenVK does)
 # All outputs are committed, so building the package needs neither tool.
@@ -13,7 +15,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 shaders=()
-while IFS= read -r src; do shaders+=("$src"); done < <(find Sources -type f \( -name '*.vert' -o -name '*.frag' \) | sort)
+while IFS= read -r src; do shaders+=("$src"); done < <(find Sources Tests -type f \( -name '*.vert' -o -name '*.frag' -o -name '*.comp' \) | sort)
 
 for src in "${shaders[@]}"; do
     echo "glslc $src -> $src.spv"

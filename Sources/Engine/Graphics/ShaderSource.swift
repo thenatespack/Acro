@@ -23,6 +23,11 @@ import Foundation
 /// | `setTexture(_:index:)`, n in 1...7 | `texture2d<float> [[texture(n)]]` | `layout(set = 2, binding = 8 + n) uniform texture2D` |
 /// | `setSampler(_:index:)`, n in 1...7 | `sampler [[sampler(n)]]` | `layout(set = 2, binding = 16 + n) uniform sampler` |
 /// | `setPushConstants` (≤ 128 B) | `constant T& [[buffer(16)]]` | `layout(push_constant) uniform` |
+/// | `setStorageBuffer`, n in 0...7 | `device T& [[buffer(20 + n)]]` | `layout(set = 2, binding = 24 + n, std430) buffer` |
+/// | `ComputePass.setStorageTexture`, n in 0...7 | `texture2d<float, access::read_write> [[texture(8 + n)]]` | `layout(set = 2, binding = 32 + n, rgba16f) uniform image2D` |
+///
+/// Compute shaders (`name.comp` → `name.comp.spv`, `name.comp.metal` with `compute_main`) use
+/// the same set 2 table and push constants; see `ComputePass`.
 ///
 /// On Vulkan, textures and samplers are separate descriptors (combine them in the shader with
 /// `texture(sampler2D(tex, samp), uv)`), matching Metal where either can be mixed freely.
@@ -44,6 +49,9 @@ public struct ShaderSource: Sendable {
     /// SPIR-V for the Vulkan backend.
     public var spirvVertex: [UInt8]?
     public var spirvFragment: [UInt8]?
+    /// MSL defining `compute_main` (a compute shader; the vertex and fragment fields stay nil).
+    public var metalComputeSource: String?
+    public var spirvCompute: [UInt8]?
 
     public init(metalSource: String? = nil, metalFragmentSource: String? = nil, metalFragmentColor0Source: String? = nil,
                 spirvVertex: [UInt8]? = nil, spirvFragment: [UInt8]? = nil) {
@@ -52,6 +60,25 @@ public struct ShaderSource: Sendable {
         self.metalFragmentColor0Source = metalFragmentColor0Source
         self.spirvVertex = spirvVertex
         self.spirvFragment = spirvFragment
+    }
+
+    /// Loads the compute shader `<name>.comp.spv` and `<name>.comp.metal` (generated from
+    /// `<name>.comp`), or a hand-written `<name>.metal` defining `compute_main`.
+    public static func load(compute name: String, bundle: Bundle, subdirectory: String? = "Shaders") throws -> ShaderSource {
+        func url(_ ext: String) -> URL? {
+            bundle.url(forResource: name, withExtension: ext, subdirectory: subdirectory)
+        }
+        var source = ShaderSource()
+        if let metal = url("metal") ?? url("comp.metal") {
+            source.metalComputeSource = try String(contentsOf: metal, encoding: .utf8)
+        }
+        if let spirv = url("comp.spv") {
+            source.spirvCompute = Array(try Data(contentsOf: spirv))
+        }
+        if source.metalComputeSource == nil && source.spirvCompute == nil {
+            throw GraphicsError("No compute shader named '\(name)' found in \(bundle.bundlePath)")
+        }
+        return source
     }
 
     /// Loads `<name>.vert.spv` and `<name>.frag.spv` from a bundle, plus MSL: `<name>.metal`

@@ -1,0 +1,26 @@
+#version 450
+// ComputeTests: mode 0 writes a gradient into the storage texture; mode 1 reads the same texture
+// back through a sampled binding (texelFetch) and packs it into a buffer as RGBA8.
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 2, binding = 32, rgba16f) uniform image2D image;
+layout(set = 2, binding = 9) uniform texture2D sampled;
+layout(set = 2, binding = 17) uniform sampler samp;
+layout(set = 2, binding = 24, std430) buffer Pixels { uint pixels[]; };
+
+layout(push_constant) uniform Push {
+    ivec2 size;
+    uint mode;
+} push;
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (p.x >= push.size.x || p.y >= push.size.y) return;
+    if (push.mode == 0u) {
+        // Multiples of 1/64: exact in half precision, and never halfway between two 8-bit codes.
+        imageStore(image, p, vec4(float(p.x) / 64.0, float(p.y) / 64.0, 0.25, 1.0));
+    } else {
+        vec4 c = texelFetch(sampler2D(sampled, samp), p, 0);
+        pixels[p.y * push.size.x + p.x] = packUnorm4x8(c);
+    }
+}

@@ -1,0 +1,54 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// Builds an emitter's draw list: the slots of its live particles in slot order, and the draw
+// arguments (6 vertices per particle, one instance per live particle) for drawIndirect.
+// A stable compaction rather than an atomic append, so the order (and with it the blending)
+// is the same every run: each workgroup sums the live counts of the workgroups before it
+// (written by particle_simulate.comp), then places its own live slots with a prefix sum.
+
+#include "particles.glsl"
+
+layout(local_size_x = 256) in;
+
+layout(set = 2, binding = 2, std140) uniform Params { EmitterParams emitter; };
+layout(set = 2, binding = 24, std430) readonly buffer Particles { Particle particles[]; };
+layout(set = 2, binding = 25, std430) buffer State { uint state[]; };
+layout(set = 2, binding = 26, std430) writeonly buffer DrawList { uint drawList[]; };
+
+shared uint sums[256];
+
+void main() {
+    uint local = gl_LocalInvocationIndex, group = gl_WorkGroupID.x;
+    uint slot = gl_GlobalInvocationID.x;
+
+    // How many live particles the earlier workgroups hold.
+    uint before = 0u;
+    for (uint g = local; g < group; g += 256u) before += state[4u + g];
+    sums[local] = before;
+    barrier();
+    for (uint stride = 128u; stride > 0u; stride >>= 1) {
+        if (local < stride) sums[local] += sums[local + stride];
+        barrier();
+    }
+    uint base = sums[0];
+    barrier();
+
+    // Inclusive prefix sum of the live flags within the workgroup (Hillis-Steele).
+    uint alive = slot < emitter.info.x && particles[slot].velocity.w > 0.0 ? 1u : 0u;
+    sums[local] = alive;
+    barrier();
+    for (uint stride = 1u; stride < 256u; stride <<= 1) {
+        uint add = local >= stride ? sums[local - stride] : 0u;
+        barrier();
+        sums[local] += add;
+        barrier();
+    }
+    if (alive == 1u) drawList[base + sums[local] - 1u] = slot;
+    if (group == emitter.info.y - 1u && local == 255u) {
+        state[0] = 6u;                  // vertexCount: a quad
+        state[1] = base + sums[local];  // instanceCount: every live particle
+        state[2] = 0u;
+        state[3] = 0u;
+    }
+}

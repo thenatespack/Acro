@@ -16,10 +16,13 @@ import Foundation
 /// available everywhere; a pool reset is a cheap pointer reset in drivers.)
 ///
 /// Layout of set 2, matching the table in `ShaderSource`: uniform buffer n at binding n,
-/// texture n (sampled image) at binding 8 + n, sampler n at binding 16 + n.
+/// texture n (sampled image) at binding 8 + n, sampler n at binding 16 + n, storage buffer n
+/// at 24 + n, storage texture n at 32 + n. Compute passes use the same layout (and arenas).
 let vulkanUniformBinding = 0
 let vulkanTextureBinding = 8
 let vulkanSamplerBinding = 16
+let vulkanStorageBufferBinding = 24
+let vulkanStorageImageBinding = 32
 private let slotCount = 8
 
 final class VulkanSampler: GPUSampler {
@@ -87,6 +90,8 @@ final class VulkanDescriptorArena {
             VkDescriptorPoolSize(type: VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, descriptorCount: sets * perSet),
             VkDescriptorPoolSize(type: VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, descriptorCount: sets * perSet),
             VkDescriptorPoolSize(type: VK_DESCRIPTOR_TYPE_SAMPLER, descriptorCount: sets * perSet),
+            VkDescriptorPoolSize(type: VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, descriptorCount: sets * perSet),
+            VkDescriptorPoolSize(type: VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, descriptorCount: sets * perSet),
         ]
         var info = VkDescriptorPoolCreateInfo()
         info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO
@@ -101,13 +106,16 @@ final class VulkanDescriptorArena {
         return pool!
     }
 
-    /// The layout of set 2: `slotCount` uniform buffers, sampled images and samplers.
+    /// The layout of set 2: `slotCount` uniform buffers, sampled images, samplers, storage
+    /// buffers and storage images, visible to every stage.
     static func makeLayout(device: VkDevice) throws -> VkDescriptorSetLayout {
-        let stages = vkFlags(VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT)
+        let stages = vkFlags(VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_COMPUTE_BIT)
         let groups: [(first: Int, type: VkDescriptorType)] = [
             (vulkanUniformBinding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER),
             (vulkanTextureBinding, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE),
             (vulkanSamplerBinding, VK_DESCRIPTOR_TYPE_SAMPLER),
+            (vulkanStorageBufferBinding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+            (vulkanStorageImageBinding, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE),
         ]
         var bindings: [VkDescriptorSetLayoutBinding] = []
         for group in groups {
@@ -130,11 +138,14 @@ final class VulkanDescriptorArena {
     }
 }
 
-/// What a pass has bound in set 2, written out as a descriptor set before the next draw.
+/// What a pass has bound in set 2, written out as a descriptor set before the next draw or dispatch.
 struct VulkanUserBindings {
     private var uniforms = [VkDescriptorBufferInfo?](repeating: nil, count: slotCount)
-    private var textures = [VkImageView?](repeating: nil, count: slotCount)
+    private var textures = [(view: VkImageView, layout: VkImageLayout)?](repeating: nil, count: slotCount)
     private var samplers = [VkSampler?](repeating: nil, count: slotCount)
+    private var storageBuffers = [VkDescriptorBufferInfo?](repeating: nil, count: slotCount)
+    /// Storage images are always in the general layout.
+    private var storageImages = [VkImageView?](repeating: nil, count: slotCount)
     private(set) var isDirty = false
 
     mutating func bindUniform(buffer: VkBuffer, offset: Int, range: Int, index: Int) {
@@ -142,8 +153,19 @@ struct VulkanUserBindings {
         isDirty = true
     }
 
-    mutating func bindTexture(_ view: VkImageView, index: Int) {
-        textures[index] = view
+    /// `layout`: the one the image rests in (shader-read, or general for storage textures).
+    mutating func bindTexture(_ view: VkImageView, layout: VkImageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, index: Int) {
+        textures[index] = (view, layout)
+        isDirty = true
+    }
+
+    mutating func bindStorageBuffer(buffer: VkBuffer, offset: Int, range: Int, index: Int) {
+        storageBuffers[index] = VkDescriptorBufferInfo(buffer: buffer, offset: VkDeviceSize(offset), range: VkDeviceSize(range))
+        isDirty = true
+    }
+
+    mutating func bindStorageImage(_ view: VkImageView, index: Int) {
+        storageImages[index] = view
         isDirty = true
     }
 
@@ -174,11 +196,22 @@ struct VulkanUserBindings {
             w.pBufferInfo = arena.store(info)
             writes.append(w)
         }
-        for (slot, view) in textures.enumerated() {
-            guard let view else { continue }
+        for (slot, texture) in textures.enumerated() {
+            guard let texture else { continue }
             var w = write(binding: vulkanTextureBinding + slot, type: VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE)
-            w.pImageInfo = arena.store(VkDescriptorImageInfo(
-                sampler: nil, imageView: view, imageLayout: VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
+            w.pImageInfo = arena.store(VkDescriptorImageInfo(sampler: nil, imageView: texture.view, imageLayout: texture.layout))
+            writes.append(w)
+        }
+        for (slot, info) in storageBuffers.enumerated() {
+            guard let info else { continue }
+            var w = write(binding: vulkanStorageBufferBinding + slot, type: VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+            w.pBufferInfo = arena.store(info)
+            writes.append(w)
+        }
+        for (slot, view) in storageImages.enumerated() {
+            guard let view else { continue }
+            var w = write(binding: vulkanStorageImageBinding + slot, type: VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+            w.pImageInfo = arena.store(VkDescriptorImageInfo(sampler: nil, imageView: view, imageLayout: VK_IMAGE_LAYOUT_GENERAL))
             writes.append(w)
         }
         for (slot, sampler) in samplers.enumerated() {

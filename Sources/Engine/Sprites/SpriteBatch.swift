@@ -16,6 +16,17 @@ public enum SpriteBlend: String, Codable, Sendable {
     case alpha
     /// Replaces the target (no blending, alpha is ignored): backgrounds and solid tiles.
     case opaque
+    /// Adds color × alpha to the target (`BlendMode.additive`): glows, sparks, light shafts.
+    case additive
+
+    /// The pipeline blend mode this maps to.
+    var blendMode: BlendMode {
+        switch self {
+        case .alpha: .alpha
+        case .opaque: .opaque
+        case .additive: .additive
+        }
+    }
 }
 
 /// One corner of a sprite quad as the sprite shader consumes it. `color` is linear RGBA with

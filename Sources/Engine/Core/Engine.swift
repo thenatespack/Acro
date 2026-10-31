@@ -122,6 +122,22 @@ public final class Frame {
         device.endPass()
     }
 
+    /// Records a compute pass (see `ComputePass`), timed under `label`. Passes recorded after
+    /// it, this frame's screen pass included, see what it wrote.
+    public func computePass(label: String = "compute", _ body: (ComputePass) -> Void) {
+        let pass = device.beginComputePass(label: label)
+        body(pass)
+        device.endPass()
+    }
+
+    /// Copies part of `buffer` at this point of the frame and calls `completion` with the bytes
+    /// once the GPU has finished the frame, without waiting for it (a few frames later, or in
+    /// `device.waitIdle()`). See `RenderDevice.readBack(_:offset:length:completion:)`.
+    public func readBack(_ buffer: GPUBuffer, offset: Int = 0, length: Int? = nil,
+                         completion: @escaping @MainActor ([UInt8]) -> Void) {
+        device.readBack(buffer, offset: offset, length: length ?? buffer.length - offset, completion: completion)
+    }
+
     /// Reads `target` back once this frame's passes ran (call it after rendering into it):
     /// `completion` gets its pixels (RGBA8, top row first) when the frame ends, after the CPU
     /// waited for the GPU to finish the frame. For screenshots and tests.
