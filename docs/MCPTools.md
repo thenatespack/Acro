@@ -381,7 +381,7 @@ Result:
 
 **Diagnostics** · _read-only_, _idempotent_
 
-Returns what is wrong: assets whose import failed (with the importer's message), how many are still importing, graphics validation messages in the console, and the latest console warnings and errors.
+Returns what is wrong: entities whose MeshRenderer names a mesh that doesn't exist (they draw nothing), assets whose import failed (with the importer's message), how many are still importing, graphics validation messages in the console, and the latest console warnings and errors.
 
 Arguments: none.
 
@@ -390,6 +390,7 @@ Result:
 - `backend?`: string
 - `importErrors`: [{message: string, path: string}]
 - `importing`: integer
+- `missingMeshes`: [{entity: entity id, mesh: string, name: string}]
 - `problems`: [{level: "info" \| "warning" \| "error", message: string, sequence: integer, time: number}]
 - `validation`: [{level: "info" \| "warning" \| "error", message: string, sequence: integer, time: number}]
 - `validationEnabled`: boolean

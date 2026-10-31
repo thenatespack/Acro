@@ -1,0 +1,43 @@
+{
+  "id": "level-with-crates",
+  "prompt": "Make a small level with a floor, three lit textured crates and a camera. Use the texture crate.png in the project.",
+  "fixtures": [{"generate": "crate-texture", "to": "crate.png"}],
+  "setup": [
+    {"tool": "project.new", "arguments": {"path": "."}},
+    {"tool": "scene.new", "arguments": {"confirm": true}},
+    {"tool": "scene.hierarchy", "arguments": {"depth": 0}},
+    {"tool": "entity.delete", "arguments": {"entities": "@2.entities.*.id"}, "note": "start from an empty scene"}
+  ],
+  "transcript": [
+    {"tool": "asset.import", "arguments": {"sources": ["crate.png"], "folder": ""}, "note": "relative to the project folder (the sandbox root)"},
+    {"tool": "asset.get", "arguments": {"path": "crate.png"}},
+    {"tool": "asset.newMaterial", "arguments": {"name": "Crate", "material": {"shading": "pbr", "texture": "@1.asset.objects.0.reference", "roughness": 0.8}}},
+    {"tool": "edit.batch", "arguments": {"label": "Build the level", "calls": [
+      {"command": "entity.create", "arguments": {"template": "plane", "name": "Floor", "position": [0, 0, 0]}},
+      {"command": "entity.create", "arguments": {"template": "cube", "name": "Crate 1", "position": [-1.5, 0.5, 0]}},
+      {"command": "entity.create", "arguments": {"template": "cube", "name": "Crate 2", "position": [0, 0.5, 0.5]}},
+      {"command": "entity.create", "arguments": {"template": "cube", "name": "Crate 3", "position": [1.4, 0.5, -0.4]}},
+      {"command": "asset.assign", "arguments": {"entity": "$1.entity", "asset": "asset:{@2.asset}", "kind": "material"}},
+      {"command": "asset.assign", "arguments": {"entity": "$2.entity", "asset": "asset:{@2.asset}", "kind": "material"}},
+      {"command": "asset.assign", "arguments": {"entity": "$3.entity", "asset": "asset:{@2.asset}", "kind": "material"}},
+      {"command": "entity.create", "arguments": {"template": "empty", "name": "Sun", "position": [0, 5, 0]}},
+      {"command": "component.add", "arguments": {"entity": "$7.entity", "component": "DirectionalLight"}},
+      {"command": "entity.create", "arguments": {"template": "empty", "name": "Camera", "position": [0, 3, 7]}},
+      {"command": "component.add", "arguments": {"entity": "$9.entity", "component": "Camera"}},
+      {"command": "component.setField", "arguments": {"entity": "$9.entity", "path": "Transform.rotation", "value": [-0.199, 0, 0, 0.98]}}
+    ]}, "note": "one undo step, \"AI: Build the level\""},
+    {"tool": "diagnostics.get", "arguments": {}},
+    {"tool": "view.screenshot", "arguments": {"source": "game", "maxSize": 800}, "requires": "window"}
+  ],
+  "checks": [
+    {"kind": "count", "description": "a floor", "find": {"name": "Floor"}, "min": 1},
+    {"kind": "entities", "description": "three crates: cubes with a material file", "find": {"name": "Crate"}, "min": 3,
+     "fields": {"MeshRenderer.mesh": {"equals": "cube"}, "MeshRenderer.material": {"startsWith": "asset:"}}},
+    {"kind": "material", "description": "the crates' material has a texture", "find": {"name": "Crate"}, "fields": {"texture": {"startsWith": "asset:"}}},
+    {"kind": "count", "description": "a light", "find": {"component": "DirectionalLight"}, "min": 1},
+    {"kind": "count", "description": "a camera", "find": {"component": "Camera"}, "min": 1},
+    {"kind": "tool", "description": "nothing is missing", "tool": "diagnostics.get", "expect": {"missingMeshes": [], "importErrors": []}},
+    {"kind": "undo", "description": "the build is one AI undo step", "label": "AI: Build the level"},
+    {"kind": "screenshot", "description": "the game camera sees three crates on a lit floor (graded by eye)", "arguments": {"source": "game"}, "requires": "window"}
+  ]
+}

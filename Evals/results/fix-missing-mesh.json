@@ -1,0 +1,106 @@
+{
+  "checks" : [
+    {
+      "description" : "no renderer names a missing mesh",
+      "kind" : "tool",
+      "outcome" : "pass"
+    },
+    {
+      "description" : "the Barrel is still there with a real mesh",
+      "kind" : "entities",
+      "outcome" : "pass"
+    },
+    {
+      "description" : "the fix is an AI undo step",
+      "kind" : "undo",
+      "outcome" : "pass"
+    }
+  ],
+  "id" : "fix-missing-mesh",
+  "mode" : "headless",
+  "prompt" : "Find and fix the entity with a missing mesh.",
+  "steps" : [
+    {
+      "arguments" : {
+        "confirm" : true
+      },
+      "outcome" : "ok",
+      "phase" : "setup",
+      "step" : 0,
+      "tool" : "scene.new"
+    },
+    {
+      "arguments" : {
+        "name" : "Barrel",
+        "position" : [
+          2,
+          0.5,
+          -2
+        ],
+        "template" : "cube"
+      },
+      "outcome" : "ok",
+      "phase" : "setup",
+      "step" : 1,
+      "tool" : "entity.create"
+    },
+    {
+      "arguments" : {
+        "entity" : "2776babbe0082087652466393be299ce",
+        "path" : "MeshRenderer.mesh",
+        "value" : "barrel_v2"
+      },
+      "outcome" : "ok",
+      "phase" : "setup",
+      "step" : 2,
+      "tool" : "component.setField"
+    },
+    {
+      "arguments" : {
+
+      },
+      "outcome" : "ok",
+      "phase" : "transcript",
+      "step" : 0,
+      "tool" : "diagnostics.get"
+    },
+    {
+      "arguments" : {
+        "entity" : "2776babbe0082087652466393be299ce"
+      },
+      "outcome" : "ok",
+      "phase" : "transcript",
+      "step" : 1,
+      "tool" : "entity.get"
+    },
+    {
+      "arguments" : {
+        "component" : "MeshRenderer"
+      },
+      "outcome" : "ok",
+      "phase" : "transcript",
+      "step" : 2,
+      "tool" : "component.types"
+    },
+    {
+      "arguments" : {
+        "entity" : "2776babbe0082087652466393be299ce",
+        "path" : "MeshRenderer.mesh",
+        "value" : "cube"
+      },
+      "outcome" : "ok",
+      "phase" : "transcript",
+      "step" : 3,
+      "tool" : "component.setField"
+    },
+    {
+      "arguments" : {
+
+      },
+      "outcome" : "ok",
+      "phase" : "transcript",
+      "step" : 4,
+      "tool" : "diagnostics.get"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "id": "fix-missing-mesh",
+  "prompt": "Find and fix the entity with a missing mesh.",
+  "setup": [
+    {"tool": "scene.new", "arguments": {"confirm": true}},
+    {"tool": "entity.create", "arguments": {"template": "cube", "name": "Barrel", "position": [2, 0.5, -2]}},
+    {"tool": "component.setField", "arguments": {"entity": "@1.entity", "path": "MeshRenderer.mesh", "value": "barrel_v2"}, "note": "a mesh key nothing provides"}
+  ],
+  "transcript": [
+    {"tool": "diagnostics.get", "arguments": {}, "note": "missingMeshes names the entity and the key"},
+    {"tool": "entity.get", "arguments": {"entity": "@0.missingMeshes.0.entity"}},
+    {"tool": "component.types", "arguments": {"component": "MeshRenderer"}, "note": "what the mesh field takes"},
+    {"tool": "component.setField", "arguments": {"entity": "@0.missingMeshes.0.entity", "path": "MeshRenderer.mesh", "value": "cube"}, "note": "a barrel-sized built-in until a real barrel mesh exists"},
+    {"tool": "diagnostics.get", "arguments": {}}
+  ],
+  "checks": [
+    {"kind": "tool", "description": "no renderer names a missing mesh", "tool": "diagnostics.get", "expect": {"missingMeshes": []}},
+    {"kind": "entities", "description": "the Barrel is still there with a real mesh", "find": {"name": "Barrel", "exact": true}, "min": 1,
+     "fields": {"MeshRenderer.mesh": {"equals": "cube"}}},
+    {"kind": "undo", "description": "the fix is an AI undo step", "prefix": "AI: "}
+  ]
+}

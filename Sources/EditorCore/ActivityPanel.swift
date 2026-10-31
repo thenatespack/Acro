@@ -70,7 +70,7 @@ public final class ActivityPanel {
         let history = session.undo.undoHistory
         for entry in entries {
             let text = "\(Self.time(entry.time))  \(entry.tool) \(Self.compact(entry.arguments))  →  \(entry.outcome.rawValue)"
-                + (entry.outcome == .ok ? "" : ": \(entry.summary)")
+                + (entry.outcome == .ok || entry.summary.isEmpty ? "" : ": \(entry.summary)")
             let line = Label(text, role: entry.outcome == .ok || entry.outcome == .running ? .body : .secondary,
                              name: "activity.\(entry.id)")
             line.style.grow = 1
