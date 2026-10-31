@@ -124,11 +124,11 @@ let package = Package(
             linkerSettings: [.linkedLibrary("dl", .when(platforms: [.linux])), .linkedLibrary("pthread", .when(platforms: [.linux])),
                              .linkedLibrary("m", .when(platforms: [.linux]))]
         ),
-        // Vendored texture block compression: bc7enc / bc7decomp (MIT or public domain) and Arm's
-        // astc-encoder 5.7.0 library sources (Apache-2.0). See Sources/CTextureCodec/LICENSES.md.
+        // Vendored texture block compression: bc7enc / bc7decomp (MIT or public domain), Convection
+        // Texture Tools' BC6H kernels (MIT) and Arm's astc-encoder 5.7.0 library sources (Apache-2.0). See Sources/CTextureCodec/LICENSES.md.
         .target(
             name: "CTextureCodec",
-            exclude: ["LICENSES.md", "vendor/bc7enc/LICENSE", "vendor/astcenc/LICENSE.txt"],
+            exclude: ["LICENSES.md", "vendor/bc7enc/LICENSE", "vendor/astcenc/LICENSE.txt", "vendor/cvtt/LICENSE.txt"],
             cSettings: textureCodecCFlags,
             // Only 4x4 blocks are used: smaller per-block working sets.
             cxxSettings: [.define("ASTCENC_BLOCK_MAX_TEXELS", to: "16")] + textureCodecCXXFlags

@@ -432,6 +432,8 @@ public final class GameMCP: MCPToolProvider {
         var gpuPasses: [String: Double]
         var drawCalls: Int
         var triangles: Int
+        /// Vulkan descriptor pools allocated so far.
+        var descriptorPools: Int?
         var backend: String
         var device: String
         var entities: Int?
@@ -446,6 +448,7 @@ public final class GameMCP: MCPToolProvider {
             gpuPasses = Dictionary(stats.gpuPassTimes.map { ($0.name, ms($0.seconds)) }, uniquingKeysWith: +)
             drawCalls = stats.drawCalls
             triangles = stats.triangles
+            descriptorPools = stats.descriptorPools
             self.backend = backend
             self.device = device
             self.entities = entities

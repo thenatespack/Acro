@@ -5,7 +5,9 @@ import Foundation
 /// plastic spheres from smooth to rough (left to right) on a small stage, reflecting either an
 /// HDR studio environment (an equirectangular image generated in code: softboxes over a dark
 /// room; `DEMO_HDR=<file.hdr>` loads a Radiance file instead) or the procedural sky, whose sun
-/// follows the directional light.
+/// follows the directional light. `DEMO_HDR_COMPRESSION=auto|bc6h|astc` block-compresses the map
+/// (BC6H or ASTC 4x4 HDR, an eighth of RGBA16F; `auto` picks per machine) before uploading it;
+/// a GPU without the format gets it decoded back to RGBA16F.
 ///
 /// Keys: **M** switches between the HDR map and the procedural sky, hold **R** to turn the
 /// environment (and the light with it), **I** toggles image-based lighting (off: hemisphere
@@ -26,17 +28,30 @@ final class SkyScene: DemoScene {
     /// Direction toward the light before `yaw`: the studio's key softbox, or a low sun in the left of the view.
     private let keyDirection: Vec3
     private static let sunDirection = normalize(Vec3(-0.6, 0.3, -0.75))
+    /// How the environment map was uploaded, for the status line.
+    private let mapFormat: String
 
     init(renderer: Renderer) throws {
         let device = renderer.device
         sceneRenderer = try SceneRenderer(device: device, quality: renderer.quality)
         try sceneRenderer.registerMesh(.sphere(radius: 0.5, segments: 64, rings: 32), key: "sphere-hi")
 
-        if let path = ProcessInfo.processInfo.environment["DEMO_HDR"] {
-            let image = try ImageDecoder.decodeFloat(Data(contentsOf: URL(fileURLWithPath: path)))
-            sceneRenderer.registerTexture(try device.makeTexture(image: image), key: "environment")
+        let image = try ProcessInfo.processInfo.environment["DEMO_HDR"].map {
+            try ImageDecoder.decodeFloat(Data(contentsOf: URL(fileURLWithPath: $0)))
+        } ?? Self.studio(width: 1024, height: 512)
+        if let format = Self.mapCompression {
+            let start = DispatchTime.now().uptimeNanoseconds
+            let levels = try TextureCodec.encode(image, format: format)
+            let milliseconds = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
+            let map = try device.makeTexture(compressedLevels: levels, format: format)
+            sceneRenderer.registerTexture(map, key: "environment")
+            let bytes = levels.reduce(0) { $0 + $1.pixels.count }
+            mapFormat = "\(format)\(map.format == format ? "" : " (decoded)"), \(bytes >> 10) KB"
+            print("sky: environment map \(image.width)x\(image.height) encoded as \(format) in "
+                  + String(format: "%.0f ms", milliseconds) + ": \(bytes >> 10) KB with mips (RGBA16F: \((bytes * 8) >> 10) KB)")
         } else {
-            sceneRenderer.registerTexture(try device.makeTexture(image: Self.studio(width: 1024, height: 512)), key: "environment")
+            sceneRenderer.registerTexture(try device.makeTexture(image: image), key: "environment")
+            mapFormat = "rgba16Float"
         }
         keyDirection = EnvironmentMath.equirectDirection(Self.keySoftbox)
 
@@ -94,7 +109,7 @@ final class SkyScene: DemoScene {
     var initialView: OrbitView { OrbitView(yaw: 0, pitch: 0.12, distance: 9.5, target: Vec3(0, 1.9, 0)) }
     var status: String {
         let e = environment
-        return "sky \(e.sky == .map ? "HDR map" : "procedural") [M], image-based lighting \(e.imageBasedLighting ? "on" : "off") [I], "
+        return "sky \(e.sky == .map ? "HDR map (\(mapFormat))" : "procedural") [M], image-based lighting \(e.imageBasedLighting ? "on" : "off") [I], "
             + String(format: "rotation %.0f° [hold R]", yaw * 180 / .pi)
     }
 
@@ -136,6 +151,19 @@ final class SkyScene: DemoScene {
 
     func draw(_ pass: RenderPass) throws {
         sceneRenderer.draw(pass)
+    }
+
+    /// `DEMO_HDR_COMPRESSION`: `bc6h`, `astc` or `auto` (`TextureCodec.autoHDRFormat`); nil
+    /// (RGBA16F) when unset or `none`.
+    private static var mapCompression: TextureFormat? {
+        switch ProcessInfo.processInfo.environment["DEMO_HDR_COMPRESSION"] {
+        case nil, "none": nil
+        case "auto": TextureCodec.autoHDRFormat
+        case "bc6h": .bc6hUfloat
+        case "astc": .astc4x4HDR
+        case let value?:
+            { print("DEMO_HDR_COMPRESSION=\(value) isn't none, auto, bc6h or astc; not compressing"); return nil }()
+        }
     }
 
     // MARK: - The studio environment

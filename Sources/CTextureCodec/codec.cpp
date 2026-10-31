@@ -1,6 +1,7 @@
 // The engine's side of the vendored block codecs (see include/CTextureCodec.h). bc7enc.c,
 // bc7decomp.cpp and the astc-encoder library sources in vendor/ are compiled as they are; this
-// file only adapts their APIs to whole RGBA8 levels.
+// file only adapts their APIs to whole RGBA8 (and, for ASTC HDR, half-float) levels. BC6H is in
+// bc6h.cpp.
 #include "CTextureCodec.h"
 
 #include <algorithm>
@@ -62,13 +63,34 @@ float astc_effort(tc_quality quality) {
     }
 }
 
-/// Decompress-only contexts, one per profile, shared under a lock.
+/// Decompress-only contexts, one per profile (LDR, LDR sRGB, HDR), shared under a lock.
 struct AstcDecoder {
     std::mutex lock;
     astcenc_context *context = nullptr;
     bool failed = false;
 };
-AstcDecoder astc_decoders[2];
+AstcDecoder astc_decoders[3];
+
+/// Decodes a level into `pixels` (`type` texels) with decoder `index` of `astc_decoders`.
+bool astc_decode(int index, astcenc_profile profile, const uint8_t *blocks, int width, int height, astcenc_type type,
+                 void *pixels) {
+    AstcDecoder &decoder = astc_decoders[index];
+    std::lock_guard<std::mutex> guard(decoder.lock);
+    if (!decoder.context && !decoder.failed) {
+        astcenc_config config;
+        decoder.failed = astcenc_config_init(profile, 4, 4, 1, ASTCENC_PRE_FAST, ASTCENC_FLG_DECOMPRESS_ONLY, &config)
+                != ASTCENC_SUCCESS
+            || astcenc_context_alloc(&config, 1, &decoder.context, nullptr) != ASTCENC_SUCCESS;
+    }
+    if (decoder.failed) return false;
+    void *slice = pixels;
+    astcenc_image image{(unsigned)width, (unsigned)height, 1, type, &slice};
+    const astcenc_swizzle swizzle{ASTCENC_SWZ_R, ASTCENC_SWZ_G, ASTCENC_SWZ_B, ASTCENC_SWZ_A};
+    const size_t length = (size_t)((width + 3) / 4) * ((height + 3) / 4) * 16;
+    const bool ok = astcenc_decompress_image(decoder.context, blocks, length, &image, &swizzle, 0) == ASTCENC_SUCCESS;
+    astcenc_decompress_reset(decoder.context);
+    return ok;
+}
 
 }  // namespace
 
@@ -114,9 +136,10 @@ struct tc_astc_encoder {
 
 namespace {
 
-tc_astc_encoder *make_astc_encoder(int srgb, unsigned flags, tc_quality quality, int thread_count, astcenc_swizzle swizzle) {
+tc_astc_encoder *make_astc_encoder(astcenc_profile profile, unsigned flags, tc_quality quality, int thread_count,
+                                   astcenc_swizzle swizzle) {
     astcenc_config config;
-    if (astcenc_config_init(srgb ? ASTCENC_PRF_LDR_SRGB : ASTCENC_PRF_LDR, 4, 4, 1, astc_effort(quality), flags, &config)
+    if (astcenc_config_init(profile, 4, 4, 1, astc_effort(quality), flags, &config)
         != ASTCENC_SUCCESS) {
         return nullptr;
     }
@@ -130,12 +153,19 @@ tc_astc_encoder *make_astc_encoder(int srgb, unsigned flags, tc_quality quality,
 }  // namespace
 
 extern "C" tc_astc_encoder *tc_astc_encoder_create(int srgb, tc_quality quality, int thread_count) {
-    return make_astc_encoder(srgb, srgb ? ASTCENC_FLG_USE_PERCEPTUAL : 0, quality, thread_count, identity_swizzle());
+    return make_astc_encoder(srgb ? ASTCENC_PRF_LDR_SRGB : ASTCENC_PRF_LDR, srgb ? ASTCENC_FLG_USE_PERCEPTUAL : 0, quality,
+                             thread_count, identity_swizzle());
 }
 
 extern "C" tc_astc_encoder *tc_astc_encoder_create_rg(tc_quality quality, int thread_count) {
     const astcenc_swizzle rrrg{ASTCENC_SWZ_R, ASTCENC_SWZ_R, ASTCENC_SWZ_R, ASTCENC_SWZ_G};
-    return make_astc_encoder(0, ASTCENC_FLG_MAP_NORMAL, quality, thread_count, rrrg);
+    return make_astc_encoder(ASTCENC_PRF_LDR, ASTCENC_FLG_MAP_NORMAL, quality, thread_count, rrrg);
+}
+
+extern "C" tc_astc_encoder *tc_astc_encoder_create_hdr(tc_quality quality, int thread_count) {
+    // HDR color with LDR alpha: environment maps are opaque, and an LDR alpha leaves the
+    // endpoint bits to the color.
+    return make_astc_encoder(ASTCENC_PRF_HDR_RGB_LDR_A, 0, quality, thread_count, identity_swizzle());
 }
 
 extern "C" void tc_astc_encoder_destroy(tc_astc_encoder *encoder) {
@@ -156,21 +186,19 @@ extern "C" void tc_astc_encoder_reset(tc_astc_encoder *encoder) {
     astcenc_compress_reset(encoder->context);
 }
 
+extern "C" int tc_astc_encode_hdr(tc_astc_encoder *encoder, const uint16_t *rgba_half, int width, int height,
+                                  uint8_t *blocks, size_t length, int thread_index) {
+    void *slice = const_cast<uint16_t *>(rgba_half);
+    astcenc_image image{(unsigned)width, (unsigned)height, 1, ASTCENC_TYPE_F16, &slice};
+    return astcenc_compress_image(encoder->context, &image, &encoder->swizzle, blocks, length, (unsigned)thread_index)
+        == ASTCENC_SUCCESS;
+}
+
 extern "C" int tc_astc_decode(const uint8_t *blocks, int width, int height, int srgb, uint8_t *rgba) {
-    AstcDecoder &decoder = astc_decoders[srgb ? 1 : 0];
-    std::lock_guard<std::mutex> guard(decoder.lock);
-    if (!decoder.context && !decoder.failed) {
-        astcenc_config config;
-        decoder.failed = astcenc_config_init(srgb ? ASTCENC_PRF_LDR_SRGB : ASTCENC_PRF_LDR, 4, 4, 1, ASTCENC_PRE_FAST,
-                                             ASTCENC_FLG_DECOMPRESS_ONLY, &config) != ASTCENC_SUCCESS
-            || astcenc_context_alloc(&config, 1, &decoder.context, nullptr) != ASTCENC_SUCCESS;
-    }
-    if (decoder.failed) return 0;
-    void *slice = rgba;
-    astcenc_image image{(unsigned)width, (unsigned)height, 1, ASTCENC_TYPE_U8, &slice};
-    const astcenc_swizzle swizzle = identity_swizzle();
-    const size_t length = (size_t)blocks_across(width) * blocks_across(height) * 16;
-    const bool ok = astcenc_decompress_image(decoder.context, blocks, length, &image, &swizzle, 0) == ASTCENC_SUCCESS;
-    astcenc_decompress_reset(decoder.context);
-    return ok;
+    return astc_decode(srgb ? 1 : 0, srgb ? ASTCENC_PRF_LDR_SRGB : ASTCENC_PRF_LDR, blocks, width, height, ASTCENC_TYPE_U8,
+                       rgba);
+}
+
+extern "C" int tc_astc_decode_hdr(const uint8_t *blocks, int width, int height, uint16_t *rgba_half) {
+    return astc_decode(2, ASTCENC_PRF_HDR, blocks, width, height, ASTCENC_TYPE_F16, rgba_half);
 }

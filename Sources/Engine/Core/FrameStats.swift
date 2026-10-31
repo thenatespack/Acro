@@ -15,6 +15,8 @@ public struct FrameStats: Sendable {
     /// Draw calls and triangles submitted by the game in all passes (excludes the debug overlay).
     public var drawCalls = 0
     public var triangles = 0
+    /// Descriptor pools allocated so far (`RenderDevice.descriptorPoolCount`; Vulkan only).
+    public var descriptorPools: Int?
 
     public init() {}
 }

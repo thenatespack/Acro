@@ -325,11 +325,13 @@ final class VulkanRenderDevice: RenderDevice {
         return offscreen?.hdr
     }
     private(set) var gpuFrameTime: Double?
+    /// The long-lived pools (sets 0 and 1) plus every frame slot's arena pools (set 2).
+    var descriptorPoolCount: Int? { descriptorPools.poolCount + frames.reduce(0) { $0 + $1.descriptors.poolCount } }
 
     private let instance: VkInstance
     private let surface: VkSurfaceKHR
     private let physicalDevice: VkPhysicalDevice
-    private let device: VkDevice
+    let device: VkDevice
     private let queue: VkQueue
     private let queueFamily: UInt32
     private let memoryProperties: VkPhysicalDeviceMemoryProperties
@@ -345,12 +347,13 @@ final class VulkanRenderDevice: RenderDevice {
     /// start of the next one (so sampling a target before its first pass is valid).
     private var pendingTargetLayouts: [VkImage] = []
     private let depthRenderPass: VkRenderPass
-    private let uniformSetLayout: VkDescriptorSetLayout
-    private let textureSetLayout: VkDescriptorSetLayout
+    let uniformSetLayout: VkDescriptorSetLayout
+    let textureSetLayout: VkDescriptorSetLayout
     private let userSetLayout: VkDescriptorSetLayout
     private let samplerCache = SamplerCache<VulkanSampler>()
     private let pipelineLayout: VkPipelineLayout
-    private let descriptorPool: VkDescriptorPool
+    /// Sets 0 and 1 (long-lived; grows on demand). Set 2 comes from each frame slot's arena.
+    let descriptorPools: VulkanDescriptorPools
     private let comparisonSampler: VkSampler
     private let linearSampler: VkSampler
     private var blitPipeline: VulkanPipeline!
@@ -379,9 +382,11 @@ final class VulkanRenderDevice: RenderDevice {
     private let storageImageExtendedFormats: Bool
     /// Shaders may write storage images declared without a format (FSR 3's clear pass).
     private let storageImageWriteWithoutFormat: Bool
-    /// The `textureCompressionBC` / `textureCompressionASTC_LDR` features (BC7 / ASTC 4x4 textures).
+    /// The `textureCompressionBC` / `textureCompressionASTC_LDR` features (BC7, BC5, BC6H / ASTC 4x4
+    /// textures) and `VK_EXT_texture_compression_astc_hdr`'s `textureCompressionASTC_HDR` (ASTC 4x4 HDR).
     private let textureCompressionBC: Bool
     private let textureCompressionASTC: Bool
+    private let textureCompressionASTCHDR: Bool
     /// FSR 3 (shared with Metal: it records compute passes through this device), made on first use.
     private var fsr3: FSR3Upscaler?
     /// Set 1 binding of FSR 3's output for the window pass, for the output texture it was made for.
@@ -440,13 +445,14 @@ final class VulkanRenderDevice: RenderDevice {
         vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProperties)
         self.memoryProperties = memoryProperties
 
-        let (device, features) = try Self.createDevice(physicalDevice: physicalDevice, queueFamily: family)
+        let (device, features, astcHDR) = try Self.createDevice(physicalDevice: physicalDevice, queueFamily: family)
         self.device = device
         independentBlend = features.independentBlend != 0
         storageImageExtendedFormats = features.shaderStorageImageExtendedFormats != 0
         storageImageWriteWithoutFormat = features.shaderStorageImageWriteWithoutFormat != 0
         textureCompressionBC = features.textureCompressionBC != 0
         textureCompressionASTC = features.textureCompressionASTC_LDR != 0
+        textureCompressionASTCHDR = astcHDR
         var queue: VkQueue?
         vkGetDeviceQueue(device, family, 0, &queue)
         self.queue = queue!
@@ -482,7 +488,7 @@ final class VulkanRenderDevice: RenderDevice {
             device: device, type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, stages: vkFlags(VK_SHADER_STAGE_FRAGMENT_BIT))
         userSetLayout = try VulkanDescriptorArena.makeLayout(device: device)
         pipelineLayout = try Self.createPipelineLayout(device: device, setLayouts: [uniformSetLayout, textureSetLayout, userSetLayout])
-        descriptorPool = try Self.createDescriptorPool(device: device)
+        descriptorPools = VulkanDescriptorPools(device: device)
         comparisonSampler = try Self.createComparisonSampler(device: device)
         linearSampler = try Self.createLinearSampler(device: device)
 
@@ -769,8 +775,9 @@ final class VulkanRenderDevice: RenderDevice {
 
     func supports(_ format: TextureFormat) -> Bool {
         let feature = switch format {
-        case .bc7Unorm, .bc7Srgb, .bc5Unorm: textureCompressionBC
+        case .bc7Unorm, .bc7Srgb, .bc5Unorm, .bc6hUfloat: textureCompressionBC
         case .astc4x4Unorm, .astc4x4Srgb, .astc4x4RG: textureCompressionASTC
+        case .astc4x4HDR: textureCompressionASTCHDR
         default: true
         }
         guard feature else { return false }
@@ -944,6 +951,8 @@ final class VulkanRenderDevice: RenderDevice {
         case .astc4x4Unorm, .astc4x4RG: VK_FORMAT_ASTC_4x4_UNORM_BLOCK
         case .astc4x4Srgb: VK_FORMAT_ASTC_4x4_SRGB_BLOCK
         case .bc5Unorm: VK_FORMAT_BC5_UNORM_BLOCK
+        case .bc6hUfloat: VK_FORMAT_BC6H_UFLOAT_BLOCK
+        case .astc4x4HDR: VK_FORMAT_ASTC_4x4_SFLOAT_BLOCK
         }
     }
 
@@ -1502,8 +1511,7 @@ final class VulkanRenderDevice: RenderDevice {
             if let current = fsr3Output, current.texture === output { return current.set }
             if let old = fsr3Output {
                 vkDeviceWaitIdle(device)  // earlier frames' window passes may still use the set
-                var set: VkDescriptorSet? = old.set
-                vkFreeDescriptorSets(device, descriptorPool, 1, &set)
+                descriptorPools.free(old.set)
                 fsr3Output = nil
             }
             let set = try makeTextureDescriptorSet(view: output.view, layout: output.layout)
@@ -1577,10 +1585,7 @@ final class VulkanRenderDevice: RenderDevice {
     }
 
     private func destroy(_ targets: UpscaleTargets) {
-        for set in targets.descriptorSets {
-            var set: VkDescriptorSet? = set
-            vkFreeDescriptorSets(device, descriptorPool, 1, &set)
-        }
+        for set in targets.descriptorSets { descriptorPools.free(set) }
         for framebuffer in targets.framebuffers { vkDestroyFramebuffer(device, framebuffer, nil) }
         for image in targets.images {
             vkDestroyImageView(device, image.view, nil)
@@ -1863,7 +1868,7 @@ final class VulkanRenderDevice: RenderDevice {
         vkDestroySampler(device, linearSampler, nil)
         for sampler in samplerCache.all { vkDestroySampler(device, sampler.sampler, nil) }
         samplerCache.removeAll()
-        vkDestroyDescriptorPool(device, descriptorPool, nil)
+        descriptorPools.destroy()
         vkDestroyPipelineLayout(device, pipelineLayout, nil)
         vkDestroyDescriptorSetLayout(device, uniformSetLayout, nil)
         vkDestroyDescriptorSetLayout(device, textureSetLayout, nil)
@@ -1970,9 +1975,10 @@ final class VulkanRenderDevice: RenderDevice {
         return (best.device, best.family)
     }
 
-    /// Also returns whether `independentBlend` (per-attachment blend state) is enabled.
-    /// Returns the device and the optional features it enabled.
-    private static func createDevice(physicalDevice: VkPhysicalDevice, queueFamily: UInt32) throws -> (VkDevice, VkPhysicalDeviceFeatures) {
+    /// Returns the device, the optional features it enabled and whether ASTC HDR textures are
+    /// enabled (`VK_EXT_texture_compression_astc_hdr`, when the device has it).
+    private static func createDevice(physicalDevice: VkPhysicalDevice,
+                                     queueFamily: UInt32) throws -> (VkDevice, VkPhysicalDeviceFeatures, astcHDR: Bool) {
         let arena = Arena()
         var extensions = ["VK_KHR_swapchain"]
         let available: [VkExtensionProperties] = try vkEnumerate("vkEnumerateDeviceExtensionProperties") {
@@ -1983,6 +1989,21 @@ final class VulkanRenderDevice: RenderDevice {
         if portabilitySubset {
             extensions.append("VK_KHR_portability_subset")
         }
+        // ASTC 4x4 HDR textures (`TextureFormat.astc4x4HDR`): an extension (core but optional in
+        // Vulkan 1.3); MoltenVK exposes it on Apple GPUs that have the format.
+        var astcHDR = VkPhysicalDeviceTextureCompressionASTCHDRFeatures()
+        astcHDR.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TEXTURE_COMPRESSION_ASTC_HDR_FEATURES
+        if available.contains(where: { vkString($0.extensionName) == "VK_EXT_texture_compression_astc_hdr" }) {
+            var query = VkPhysicalDeviceFeatures2()
+            query.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2
+            withUnsafeMutablePointer(to: &astcHDR) { pointer in
+                query.pNext = UnsafeMutableRawPointer(pointer)
+                vkGetPhysicalDeviceFeatures2(physicalDevice, &query)
+            }
+            astcHDR.pNext = nil
+            if astcHDR.textureCompressionASTC_HDR != 0 { extensions.append("VK_EXT_texture_compression_astc_hdr") }
+        }
+        let enablesASTCHDR = astcHDR.textureCompressionASTC_HDR != 0
 
         var queueInfo = VkDeviceQueueCreateInfo()
         queueInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO
@@ -2024,10 +2045,14 @@ final class VulkanRenderDevice: RenderDevice {
             info.pNext = UnsafeRawPointer(arena.store(portability))
         }
         #endif
+        if enablesASTCHDR {
+            astcHDR.pNext = UnsafeMutableRawPointer(mutating: info.pNext)
+            info.pNext = UnsafeRawPointer(arena.store(astcHDR))
+        }
 
         var device: VkDevice?
         try vkCheck(vkCreateDevice(physicalDevice, &info, nil, &device), "vkCreateDevice")
-        return (device!, features)
+        return (device!, features, enablesASTCHDR)
     }
 
     /// The scene pass. `offscreen` leaves the final image shader-readable (for the window pass
@@ -2285,25 +2310,6 @@ final class VulkanRenderDevice: RenderDevice {
         return layout!
     }
 
-    private static func createDescriptorPool(device: VkDevice) throws -> VkDescriptorPool {
-        let sizes = [
-            VkDescriptorPoolSize(type: VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, descriptorCount: 1024),
-            VkDescriptorPoolSize(type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, descriptorCount: 256),
-        ]
-        var info = VkDescriptorPoolCreateInfo()
-        info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO
-        info.flags = vkFlags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT)
-        info.maxSets = 1280
-        info.poolSizeCount = UInt32(sizes.count)
-        var pool: VkDescriptorPool?
-        let result = sizes.withUnsafeBufferPointer { sizes in
-            info.pPoolSizes = sizes.baseAddress
-            return vkCreateDescriptorPool(device, &info, nil, &pool)
-        }
-        try vkCheck(result, "vkCreateDescriptorPool")
-        return pool!
-    }
-
     /// Linear-filtered depth comparison (hardware PCF), white border = "lit" outside the map.
     private static func createComparisonSampler(device: VkDevice) throws -> VkSampler {
         var info = VkSamplerCreateInfo()
@@ -2338,18 +2344,7 @@ final class VulkanRenderDevice: RenderDevice {
     }
 
     private func allocateDescriptorSet(layout: VkDescriptorSetLayout) throws -> VkDescriptorSet {
-        var layout: VkDescriptorSetLayout? = layout
-        var info = VkDescriptorSetAllocateInfo()
-        info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO
-        info.descriptorPool = descriptorPool
-        info.descriptorSetCount = 1
-        var set: VkDescriptorSet?
-        let result = withUnsafePointer(to: &layout) { layouts in
-            info.pSetLayouts = layouts
-            return vkAllocateDescriptorSets(device, &info, &set)
-        }
-        try vkCheck(result, "vkAllocateDescriptorSets")
-        return set!
+        try descriptorPools.allocate(layout: layout)
     }
 
     private func createFrames() throws {
@@ -2395,7 +2390,7 @@ final class VulkanRenderDevice: RenderDevice {
             write.pBufferInfo = info
             vkUpdateDescriptorSets(device, 1, &write, 0, nil)
         }
-        // The set is freed with the pool at shutdown, alongside the chunk's buffer.
+        // The set is freed with the pools at shutdown, alongside the chunk's buffer.
         return VulkanTransientChunk(buffer: buffer, uniformSet: set)
     }
 
@@ -2609,10 +2604,7 @@ final class VulkanRenderDevice: RenderDevice {
     }
 
     private func destroy(_ targets: OffscreenTargets) {
-        for set in [targets.descriptorSet, targets.unormDescriptorSet].compactMap({ $0 }) {
-            var set: VkDescriptorSet? = set
-            vkFreeDescriptorSets(device, descriptorPool, 1, &set)
-        }
+        for set in [targets.descriptorSet, targets.unormDescriptorSet].compactMap({ $0 }) { descriptorPools.free(set) }
         if let unormView = targets.unormView { vkDestroyImageView(device, unormView, nil) }
         vkDestroyFramebuffer(device, targets.framebuffer, nil)
         if let outputFramebuffer = targets.outputFramebuffer { vkDestroyFramebuffer(device, outputFramebuffer, nil) }
@@ -2765,10 +2757,7 @@ final class VulkanRenderDevice: RenderDevice {
             case .pipeline(let pipeline):
                 vkDestroyPipeline(device, pipeline, nil)
             case .texture(let image, let memory, let view, let framebuffer, let set):
-                if let set {
-                    var set: VkDescriptorSet? = set
-                    vkFreeDescriptorSets(device, descriptorPool, 1, &set)
-                }
+                if let set { descriptorPools.free(set) }
                 if let framebuffer { vkDestroyFramebuffer(device, framebuffer, nil) }
                 vkDestroyImageView(device, view, nil)
                 vkDestroyImage(device, image, nil)

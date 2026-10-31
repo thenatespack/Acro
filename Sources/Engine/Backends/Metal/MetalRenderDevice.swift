@@ -472,8 +472,10 @@ final class MetalRenderDevice: RenderDevice {
 
     func supports(_ format: TextureFormat) -> Bool {
         switch format {
-        case .bc7Unorm, .bc7Srgb, .bc5Unorm: device.supportsBCTextureCompression
+        case .bc7Unorm, .bc7Srgb, .bc5Unorm, .bc6hUfloat: device.supportsBCTextureCompression
         case .astc4x4Unorm, .astc4x4Srgb, .astc4x4RG: device.supportsFamily(.apple2)
+        // ASTC HDR: Apple6 (A13) and later, so every Apple silicon Mac; no Intel / AMD GPU.
+        case .astc4x4HDR: device.supportsFamily(.apple6)
         default: true
         }
     }
@@ -488,6 +490,8 @@ final class MetalRenderDevice: RenderDevice {
         case .astc4x4Unorm, .astc4x4RG: .astc_4x4_ldr
         case .astc4x4Srgb: .astc_4x4_srgb
         case .bc5Unorm: .bc5_rgUnorm
+        case .bc6hUfloat: .bc6H_rgbuFloat
+        case .astc4x4HDR: .astc_4x4_hdr
         default: .rgba8Unorm
         }
     }

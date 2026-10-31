@@ -35,6 +35,120 @@ final class VulkanSampler: GPUSampler {
     }
 }
 
+/// Long-lived descriptor sets: set 0 (a dynamic uniform buffer per transient-ring chunk) and
+/// set 1 (a combined image sampler per depth texture, offscreen target and upscale image).
+///
+/// These live as long as the chunk or texture they describe and are freed one at a time, so
+/// per-frame pools that reset wholesale (`VulkanDescriptorArena`, for set 2) don't fit. Instead
+/// this is a list of free-able pools that grows on demand: an allocation tries the pool that
+/// last had room, then the others (freed sets leave holes), and only when every pool is out of
+/// memory (or too fragmented) adds a new one. `free` returns a set to the pool it came from.
+/// Allocation is rare (a new ring chunk or texture), so the search costs nothing per frame,
+/// and the device never runs out however many chunks a heavy frame needs (the `crowd` scene
+/// once exhausted a single fixed pool). Thread-safe: textures may be made off the main thread.
+final class VulkanDescriptorPools: @unchecked Sendable {
+    private let device: VkDevice
+    private let setsPerPool: Int
+    private let lock = NSLock()
+    private var pools: [VkDescriptorPool] = []
+    /// The pool each live set came from.
+    private var owners: [VkDescriptorSet: VkDescriptorPool] = [:]
+    /// The pool the last allocation came from (tried first).
+    private var current = 0
+    private var reportedGrowth = false
+
+    /// Each pool holds `setsPerPool` sets of the engine's single-descriptor layouts, of either type.
+    init(device: VkDevice, setsPerPool: Int = 256) {
+        self.device = device
+        self.setsPerPool = setsPerPool
+    }
+
+    var poolCount: Int { lock.withLock { pools.count } }
+    var liveSetCount: Int { lock.withLock { owners.count } }
+
+    func allocate(layout: VkDescriptorSetLayout) throws -> VkDescriptorSet {
+        try lock.withLock {
+            for attempt in 0..<pools.count {
+                let index = (current + attempt) % pools.count
+                if let set = try tryAllocate(layout: layout, from: pools[index]) {
+                    current = index
+                    owners[set] = pools[index]
+                    return set
+                }
+            }
+            let pool = try makePool()
+            pools.append(pool)
+            current = pools.count - 1
+            if pools.count > 1 && !reportedGrowth {
+                reportedGrowth = true
+                EngineLog.info("Vulkan: descriptor pool full, adding another (\(pools.count) pools of \(setsPerPool) sets; "
+                               + "\(owners.count) sets live). Further growth is not logged.", category: .rendering)
+            }
+            guard let set = try tryAllocate(layout: layout, from: pool) else {
+                throw GraphicsError("vkAllocateDescriptorSets failed in a new, empty descriptor pool")
+            }
+            owners[set] = pool
+            return set
+        }
+    }
+
+    /// Returns `set` to its pool. The GPU must be done with it.
+    func free(_ set: VkDescriptorSet) {
+        lock.withLock {
+            guard let pool = owners.removeValue(forKey: set) else { return }
+            var set: VkDescriptorSet? = set
+            vkFreeDescriptorSets(device, pool, 1, &set)
+        }
+    }
+
+    func destroy() {
+        lock.withLock {
+            for pool in pools { vkDestroyDescriptorPool(device, pool, nil) }
+            pools.removeAll()
+            owners.removeAll()
+        }
+    }
+
+    /// Nil when the pool is out of memory or fragmented.
+    private func tryAllocate(layout: VkDescriptorSetLayout, from pool: VkDescriptorPool) throws -> VkDescriptorSet? {
+        var layout: VkDescriptorSetLayout? = layout
+        var info = VkDescriptorSetAllocateInfo()
+        info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO
+        info.descriptorPool = pool
+        info.descriptorSetCount = 1
+        var set: VkDescriptorSet?
+        let result = withUnsafePointer(to: &layout) { layouts in
+            info.pSetLayouts = layouts
+            return vkAllocateDescriptorSets(device, &info, &set)
+        }
+        if result == VK_SUCCESS { return set! }
+        guard result == VK_ERROR_OUT_OF_POOL_MEMORY || result == VK_ERROR_FRAGMENTED_POOL else {
+            throw VulkanError(call: "vkAllocateDescriptorSets", result: result)
+        }
+        return nil
+    }
+
+    private func makePool() throws -> VkDescriptorPool {
+        let count = UInt32(setsPerPool)
+        let sizes = [
+            VkDescriptorPoolSize(type: VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, descriptorCount: count),
+            VkDescriptorPoolSize(type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, descriptorCount: count),
+        ]
+        var info = VkDescriptorPoolCreateInfo()
+        info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO
+        info.flags = vkFlags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT)
+        info.maxSets = count
+        info.poolSizeCount = UInt32(sizes.count)
+        var pool: VkDescriptorPool?
+        let result = sizes.withUnsafeBufferPointer { sizes in
+            info.pPoolSizes = sizes.baseAddress
+            return vkCreateDescriptorPool(device, &info, nil, &pool)
+        }
+        try vkCheck(result, "vkCreateDescriptorPool")
+        return pool!
+    }
+}
+
 /// Descriptor sets that live for one use of a frame slot.
 final class VulkanDescriptorArena {
     private let device: VkDevice
@@ -43,12 +157,15 @@ final class VulkanDescriptorArena {
     /// Pool new sets come from; earlier ones are full.
     private var current = 0
 
-    private static let setsPerPool = 256
+    private let setsPerPool: Int
 
-    init(device: VkDevice, layout: VkDescriptorSetLayout) {
+    init(device: VkDevice, layout: VkDescriptorSetLayout, setsPerPool: Int = 256) {
         self.device = device
         self.layout = layout
+        self.setsPerPool = setsPerPool
     }
+
+    var poolCount: Int { pools.count }
 
     /// Frees every set allocated so far. Call once the GPU has finished with them.
     func reset() {
@@ -84,7 +201,7 @@ final class VulkanDescriptorArena {
     }
 
     private func makePool() throws -> VkDescriptorPool {
-        let sets = UInt32(Self.setsPerPool)
+        let sets = UInt32(setsPerPool)
         let perSet = UInt32(slotCount)
         let sizes = [
             VkDescriptorPoolSize(type: VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, descriptorCount: sets * perSet),
