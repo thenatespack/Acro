@@ -1,0 +1,628 @@
+import Foundation
+
+// The asset database: which files a project's `Assets/` folder holds, their ids, and their
+// imported objects.
+//
+// ```swift
+// let project = try Project.open(at: url)
+// let assets = AssetDatabase(project: project)       // importers from AssetImporterRegistry.standard
+// let report = assets.refresh()                      // scan, fix sidecars, import what changed
+// sceneRenderer.assets = assets                      // MeshHandle(AssetReference(...)) now draws
+// ```
+//
+// ## Scanning (`scan()`)
+//
+// Walks `Assets/` (skipping hidden files and `*.meta`) and reconciles files with sidecars:
+// - a file without a sidecar gets one, with a new id, its importer and default settings;
+// - a sidecar whose file is gone is an orphan. If a new sidecar-less file has exactly the
+//   content the orphan's asset had (the file was moved without its sidecar), the sidecar is
+//   moved to it and the id kept. Otherwise the orphan is deleted (`orphanPolicy = .delete`, the
+//   default) or left alone and reported (`.report`);
+// - a file and sidecar moved together keep their id; the move is reported;
+// - several sidecars with the same id (a file copied with its sidecar): the one at the path
+//   the Library index knows keeps the id (the original), else the first path in sorted order;
+//   the copies get new ids, written to their sidecars;
+// - a sidecar that can't be read is reported and left untouched (the file is skipped), so a
+//   merge conflict never silently loses an id.
+//
+// ## Importing
+//
+// An asset is imported again only when its source content (hash; size and mtime short-cut
+// rehashing), its effective settings, its importer or that importer's `version` changed, or
+// its cache is missing. Otherwise its objects load from `Library/Artifacts/<id>/` on first use.
+// `refresh()` scans and imports everything out of date; `object(_:kind:)` imports or loads one
+// asset on demand. Imports run through `AssetImportJob`, whose `run()` is nonisolated and
+// touches no GPU, so it can move to a background thread: `importJob(for:)` on the main actor,
+// `run()` anywhere, `apply(_:)` back on the main actor.
+
+/// What a scan or refresh found and did.
+public struct AssetScanReport: Sendable {
+    /// Assets seen for the first time (new files, or files whose sidecar the index didn't know).
+    public var added: [AssetID] = []
+    /// Assets whose path changed (renamed or moved with their sidecar, or a sidecar re-attached).
+    public var moved: [(id: AssetID, from: String, to: String)] = []
+    /// Assets that are gone (their files deleted).
+    public var removed: [(id: AssetID, path: String)] = []
+    /// Sidecars created for files that had none (paths relative to `Assets/`).
+    public var createdSidecars: [String] = []
+    /// Copies whose duplicated id was replaced with a new one.
+    public var reassigned: [(path: String, old: AssetID, new: AssetID)] = []
+    /// Sidecars without a file: deleted (`.delete`) or just listed (`.report`).
+    public var orphanedSidecars: [String] = []
+    /// Assets imported (or reimported) by a `refresh`.
+    public var imported: [AssetID] = []
+    /// Assets whose cached import was still valid.
+    public var upToDate: Int = 0
+    /// Files or imports that failed, with the reason.
+    public var errors: [(path: String, message: String)] = []
+    public var warnings: [String] = []
+
+    public init() {}
+
+    /// Whether the set of assets, their paths or their imports changed.
+    public var hasChanges: Bool {
+        !added.isEmpty || !moved.isEmpty || !removed.isEmpty || !reassigned.isEmpty || !imported.isEmpty
+    }
+
+    /// One line for logs: "3 assets: 1 added, 2 imported".
+    public var summary: String {
+        var parts: [String] = []
+        if !added.isEmpty { parts.append("\(added.count) added") }
+        if !moved.isEmpty { parts.append("\(moved.count) moved") }
+        if !removed.isEmpty { parts.append("\(removed.count) removed") }
+        if !reassigned.isEmpty { parts.append("\(reassigned.count) duplicate ids replaced") }
+        if !orphanedSidecars.isEmpty { parts.append("\(orphanedSidecars.count) orphaned sidecars") }
+        if !imported.isEmpty { parts.append("\(imported.count) imported") }
+        if upToDate > 0 { parts.append("\(upToDate) up to date") }
+        if !errors.isEmpty { parts.append("\(errors.count) failed") }
+        return parts.isEmpty ? "no changes" : parts.joined(separator: ", ")
+    }
+
+    mutating func merge(_ other: AssetScanReport) {
+        added += other.added
+        moved += other.moved
+        removed += other.removed
+        createdSidecars += other.createdSidecars
+        reassigned += other.reassigned
+        orphanedSidecars += other.orphanedSidecars
+        imported += other.imported
+        upToDate += other.upToDate
+        errors += other.errors
+        warnings += other.warnings
+    }
+}
+
+/// One asset as the database knows it.
+public struct AssetRecord: Sendable, Equatable {
+    public var id: AssetID
+    /// Path relative to `Assets/`, "/" separators.
+    public var path: String
+    /// The importer's name, or nil for files no importer handles.
+    public var importer: String?
+    /// The objects of the last successful import (empty before the first).
+    public var objects: [AssetObjectInfo]
+    /// Why the last import failed, if it did.
+    public var importError: String?
+
+    /// The file name without folders.
+    public var fileName: String { String(path.split(separator: "/").last ?? Substring(path)) }
+
+    // Scan state.
+    var sidecar: AssetSidecar
+    var sourceHash: String
+    var size: Int64
+    var modified: Double
+}
+
+/// What `scan` does with sidecars whose file is gone.
+public enum OrphanSidecarPolicy: Sendable {
+    /// Delete them (after trying to re-attach them to a moved file).
+    case delete
+    /// Leave them and only report them.
+    case report
+}
+
+/// The asset database of one `Project`. See the notes above.
+@MainActor
+public final class AssetDatabase {
+    public let project: Project
+    /// The importers in use. Changing them doesn't reimport; call `refresh()` afterwards.
+    public var importers: AssetImporterRegistry
+    public var orphanPolicy: OrphanSidecarPolicy = .delete
+    /// Every asset found by the last scan, by id.
+    public private(set) var records: [AssetID: AssetRecord] = [:]
+    /// Bumped whenever an asset is imported again, added or removed. `SceneRenderer` compares
+    /// it to re-upload what changed.
+    public private(set) var revision = 0
+    /// Called after a scan or import changed something (the report says what).
+    public var onChange: ((AssetScanReport) -> Void)?
+
+    private var idsByPath: [String: AssetID] = [:]
+    private var index: LibraryIndex
+    private var loaded: [AssetID: ImportedAsset] = [:]
+    private var revisions: [AssetID: Int] = [:]
+
+    public init(project: Project, importers: AssetImporterRegistry? = nil) {
+        self.project = project
+        self.importers = importers ?? AssetImporterRegistry.standard
+        index = LibraryIndex.load(from: Self.indexURL(project))
+    }
+
+    /// Opens the project at `url` and returns its database after a `refresh()`.
+    public static func open(projectAt url: URL, importers: AssetImporterRegistry? = nil) throws -> (AssetDatabase, AssetScanReport) {
+        let database = AssetDatabase(project: try Project.open(at: url), importers: importers)
+        let report = database.refresh()
+        return (database, report)
+    }
+
+    // MARK: Queries
+
+    /// Every asset, sorted by path.
+    public var allRecords: [AssetRecord] { records.values.sorted { $0.path < $1.path } }
+
+    public func record(_ id: AssetID) -> AssetRecord? { records[id] }
+
+    /// The id of the asset at `path` (relative to `Assets/`, "/" separators).
+    public func id(forPath path: String) -> AssetID? { idsByPath[path] }
+
+    public func path(of id: AssetID) -> String? { records[id]?.path }
+
+    /// The revision `id` was last imported (or loaded) at; 0 if never.
+    public func revision(of id: AssetID) -> Int { revisions[id] ?? 0 }
+
+    /// References to every object of `kind`, sorted by asset path, then in import order.
+    /// Assets that were never imported are imported first.
+    public func references(of kind: AssetKind) -> [AssetReference] {
+        allRecords.flatMap { record in
+            record.objects.filter { $0.kind == kind }.map { AssetReference(record.id, subAsset: $0.id) }
+        }
+    }
+
+    /// A readable name for a reference: "Models/rock.obj › Rock", or the path alone when it
+    /// names the whole file or the file has a single object.
+    public func displayName(of reference: AssetReference) -> String {
+        guard let record = records[reference.asset] else { return "Missing asset \(reference.asset.description.prefix(8))" }
+        guard let sub = reference.subAsset else { return record.path }
+        guard let object = record.objects.first(where: { $0.id == sub }) else { return "\(record.path) › \(sub) (missing)" }
+        return record.objects.count == 1 ? record.path : "\(record.path) › \(object.name)"
+    }
+
+    /// The imported asset `id`: from memory, else from the Library cache, else imported now.
+    /// Nil if it has no importer or its import fails.
+    public func asset(_ id: AssetID) -> ImportedAsset? {
+        if let asset = loaded[id] { return asset }
+        guard let record = records[id], record.importer != nil else { return nil }
+        if !needsImport(record), let cached = AssetArtifacts.read(from: artifactsURL(id)) {
+            loaded[id] = cached
+            if revisions[id] == nil { revisions[id] = bumpRevision() }
+            return cached
+        }
+        var report = AssetScanReport()
+        importAsset(id, report: &report)
+        saveIndex(&report)
+        return loaded[id]
+    }
+
+    /// The object `reference` names, if it is of `kind` (see `AssetReference`).
+    public func object(_ reference: AssetReference, kind: AssetKind) -> ImportedObject? {
+        asset(reference.asset)?.object(reference.subAsset, kind: kind)
+    }
+
+    public func mesh(_ reference: AssetReference) -> MeshGeometry? {
+        if case .mesh(let mesh)? = object(reference, kind: .mesh)?.value { return mesh }
+        return nil
+    }
+
+    public func material(_ reference: AssetReference) -> MaterialAsset? {
+        if case .material(let material)? = object(reference, kind: .material)?.value { return material }
+        return nil
+    }
+
+    public func texture(_ reference: AssetReference) -> TextureAsset? {
+        if case .texture(let texture)? = object(reference, kind: .texture)?.value { return texture }
+        return nil
+    }
+
+    public func prefab(_ reference: AssetReference) -> PrefabAsset? {
+        if case .prefab(let prefab)? = object(reference, kind: .prefab)?.value { return prefab }
+        return nil
+    }
+
+    // MARK: Settings
+
+    /// The asset's effective import settings (sidecar values over the importer's defaults).
+    public func settings(of id: AssetID) -> JSONValue? {
+        guard let record = records[id], let importer = record.importer.flatMap(importers.importer(named:)) else { return nil }
+        return importer.effectiveSettings(record.sidecar.settings)
+    }
+
+    /// The asset's settings decoded as its importer's `Settings` type.
+    public func settings<S: Decodable>(of id: AssetID, as type: S.Type) -> S? {
+        settings(of: id).flatMap { try? AssetJSON.decode(S.self, from: $0) }
+    }
+
+    /// Writes new import settings to the asset's sidecar and reimports it.
+    public func setSettings<S: Encodable>(_ settings: S, for id: AssetID) throws {
+        guard var record = records[id] else { throw AssetError.noSuchAsset(id.description) }
+        record.sidecar.settings = try AssetJSON.value(settings)
+        try record.sidecar.write(to: AssetSidecar.url(for: project.url(forAssetPath: record.path)))
+        records[id] = record
+        var report = AssetScanReport()
+        importAsset(id, report: &report)
+        if report.hasChanges { onChange?(report) }
+    }
+
+    // MARK: Scan and import
+
+    /// Scans, then imports every asset that is out of date (see the notes above).
+    @discardableResult
+    public func refresh() -> AssetScanReport {
+        var report = scanFiles()
+        for record in allRecords where record.importer != nil {
+            let cached = FileManager.default.fileExists(atPath: artifactsURL(record.id).appendingPathComponent(AssetArtifacts.manifestName).path)
+            if needsImport(record) || !cached && index.assets[record.id.description]?.error == nil {
+                importAsset(record.id, report: &report)
+            } else {
+                report.upToDate += 1
+            }
+        }
+        saveIndex(&report)
+        if report.hasChanges { onChange?(report) }
+        return report
+    }
+
+    /// Scans `Assets/` and reconciles files with sidecars, without importing.
+    @discardableResult
+    public func scan() -> AssetScanReport {
+        var report = scanFiles()
+        saveIndex(&report)
+        if report.hasChanges { onChange?(report) }
+        return report
+    }
+
+    /// The entry point for file-change events (`FileWatcher`): rescans and reimports what
+    /// changed. Scanning re-hashes only files whose size or mtime changed, so it is cheap.
+    @discardableResult
+    public func reimport(changed: [FileChange]) -> AssetScanReport {
+        refresh()
+    }
+
+    /// Imports `id` again even if it is up to date.
+    @discardableResult
+    public func reimport(_ id: AssetID) -> AssetScanReport {
+        var report = AssetScanReport()
+        importAsset(id, report: &report)
+        saveIndex(&report)
+        if report.hasChanges { onChange?(report) }
+        return report
+    }
+
+    /// Whether `record`'s cached import is out of date (source, settings, importer or version changed).
+    func needsImport(_ record: AssetRecord) -> Bool {
+        guard let importer = record.importer.flatMap(importers.importer(named:)) else { return false }
+        guard let entry = index.assets[record.id.description] else { return true }
+        return entry.sourceHash != record.sourceHash || entry.importer != importer.name
+            || entry.importerVersion != importer.version
+            || entry.settings != AssetJSON.canonical(importer.effectiveSettings(record.sidecar.settings))
+    }
+
+    /// Prepares the import of `id` (main actor); run it with `job.run()` on any thread and
+    /// hand the result to `apply(_:)`.
+    public func importJob(for id: AssetID) -> AssetImportJob? {
+        guard let record = records[id], let importer = record.importer.flatMap(importers.importer(named:)) else { return nil }
+        let directory = artifactsURL(id)
+        let context = ImportContext(assetID: id, sourceURL: project.url(forAssetPath: record.path), assetPath: record.path,
+                                    artifactsDirectory: directory.appendingPathComponent("files", isDirectory: true),
+                                    assetsByPath: idsByPath)
+        return AssetImportJob(importer: importer, context: context, settings: record.sidecar.settings,
+                              cacheDirectory: directory, sourceHash: record.sourceHash)
+    }
+
+    /// Takes in a finished import: keeps its objects, updates the index and bumps the revision.
+    @discardableResult
+    public func apply(_ result: AssetImportResult) -> AssetScanReport {
+        var report = AssetScanReport()
+        record(result, into: &report)
+        saveIndex(&report)
+        if report.hasChanges { onChange?(report) }
+        return report
+    }
+
+    private func importAsset(_ id: AssetID, report: inout AssetScanReport) {
+        guard let job = importJob(for: id) else { return }
+        record(job.run(), into: &report)
+    }
+
+    private func record(_ result: AssetImportResult, into report: inout AssetScanReport) {
+        let id = result.id
+        guard var record = records[id] else { return }
+        report.warnings += result.warnings.map { "\(record.path): \($0)" }
+        let importer = importers.importer(named: result.importer)
+        var entry = LibraryIndex.Entry(
+            path: record.path, importer: result.importer, importerVersion: importer?.version ?? 0,
+            sourceHash: result.sourceHash, size: record.size, modified: record.modified,
+            settings: AssetJSON.canonical(importer?.effectiveSettings(result.settings) ?? .null),
+            objects: record.objects, error: nil)
+        switch result.outcome {
+        case .success(let asset):
+            loaded[id] = asset
+            record.objects = asset.objects.map { AssetObjectInfo(id: $0.id, name: $0.name, kind: $0.kind) }
+            record.importError = nil
+            entry.objects = record.objects
+            revisions[id] = bumpRevision()
+            report.imported.append(id)
+        case .failure(let message):
+            record.importError = message
+            entry.error = message
+            report.errors.append((record.path, message))
+        }
+        records[id] = record
+        index.assets[id.description] = entry
+    }
+
+    private func bumpRevision() -> Int {
+        revision += 1
+        return revision
+    }
+
+    private func saveIndex(_ report: inout AssetScanReport) {
+        do {
+            try index.save(to: Self.indexURL(project))
+        } catch {
+            report.warnings.append("Couldn't write the Library index: \(error)")
+        }
+    }
+
+    static func indexURL(_ project: Project) -> URL { project.libraryURL.appendingPathComponent("AssetDatabase.json") }
+
+    func artifactsURL(_ id: AssetID) -> URL {
+        project.libraryURL.appendingPathComponent("Artifacts", isDirectory: true).appendingPathComponent(id.description, isDirectory: true)
+    }
+
+    // MARK: Scanning
+
+    private struct FoundFile {
+        var path: String
+        var url: URL
+        var size: Int64
+        var modified: Double
+    }
+
+    /// Lists `Assets/`: asset files and sidecars, by relative path.
+    private func listAssets() -> (files: [String: FoundFile], sidecars: Set<String>) {
+        var files: [String: FoundFile] = [:]
+        var sidecars: Set<String> = []
+        let root = project.assetsURL.standardizedFileURL.resolvingSymlinksInPath()
+        let base = root.pathComponents
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys,
+                                                              options: [.skipsHiddenFiles]) else { return ([:], []) }
+        for case let url as URL in enumerator {
+            let name = url.lastPathComponent
+            guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true,
+                  !name.hasSuffix("~") else { continue }
+            let components = url.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+            guard components.count > base.count, Array(components.prefix(base.count)) == base else { continue }
+            let path = components.dropFirst(base.count).joined(separator: "/")
+            if name.hasSuffix("." + AssetSidecar.fileExtension) {
+                sidecars.insert(path)
+            } else {
+                files[path] = FoundFile(path: path, url: url, size: Int64(values.fileSize ?? 0),
+                                        modified: values.contentModificationDate?.timeIntervalSinceReferenceDate ?? 0)
+            }
+        }
+        return (files, sidecars)
+    }
+
+    private func scanFiles() -> AssetScanReport {
+        var report = AssetScanReport()
+        let (files, sidecarPaths) = listAssets()
+        let suffix = "." + AssetSidecar.fileExtension
+
+        // Read the sidecars of existing files; collect orphans.
+        var sidecars: [String: AssetSidecar] = [:]
+        var orphans: [(path: String, sidecar: AssetSidecar?)] = []
+        var unreadable: Set<String> = []
+        for sidecarPath in sidecarPaths.sorted() {
+            let filePath = String(sidecarPath.dropLast(suffix.count))
+            let url = project.url(forAssetPath: sidecarPath)
+            if files[filePath] == nil {
+                orphans.append((sidecarPath, try? AssetSidecar.read(from: url)))
+                continue
+            }
+            do {
+                sidecars[filePath] = try AssetSidecar.read(from: url)
+            } catch {
+                unreadable.insert(filePath)
+                report.errors.append((sidecarPath, "\(error)"))
+            }
+        }
+
+        // Hash every file (reusing the stored hash when size and mtime match).
+        var hashes: [String: String] = [:]
+        func hash(_ file: FoundFile, knownAs id: AssetID?) -> String {
+            if let h = hashes[file.path] { return h }
+            var h: String
+            if let id, let entry = index.assets[id.description], entry.size == file.size, entry.modified == file.modified {
+                h = entry.sourceHash
+            } else if let id, let record = records[id], record.path == file.path, record.size == file.size, record.modified == file.modified {
+                h = record.sourceHash
+            } else {
+                h = (try? ContentHash.hex(contentsOf: file.url)) ?? ""
+            }
+            hashes[file.path] = h
+            return h
+        }
+
+        // Orphans: re-attach to a sidecar-less file with the same content, else delete or report.
+        let sidecarless = files.keys.filter { sidecars[$0] == nil && !unreadable.contains($0) }.sorted()
+        var byHash: [String: [String]] = [:]
+        if !orphans.isEmpty {
+            for path in sidecarless { byHash[hash(files[path]!, knownAs: nil), default: []].append(path) }
+        }
+        for orphan in orphans {
+            let url = project.url(forAssetPath: orphan.path)
+            if let sidecar = orphan.sidecar, let entry = index.assets[sidecar.id.description],
+               let candidates = byHash[entry.sourceHash], candidates.count == 1, sidecars[candidates[0]] == nil {
+                let target = candidates[0]
+                do {
+                    try FileManager.default.moveItem(at: url, to: AssetSidecar.url(for: project.url(forAssetPath: target)))
+                    sidecars[target] = sidecar
+                    byHash[entry.sourceHash] = nil
+                    continue
+                } catch {
+                    report.errors.append((orphan.path, "Couldn't move the sidecar to \(target): \(error)"))
+                }
+            }
+            report.orphanedSidecars.append(orphan.path)
+            if orphanPolicy == .delete { try? FileManager.default.removeItem(at: url) }
+        }
+
+        // Duplicate ids: the path the index knows keeps the id, else the first path.
+        var pathsByID: [AssetID: [String]] = [:]
+        for (path, sidecar) in sidecars { pathsByID[sidecar.id, default: []].append(path) }
+        for (id, paths) in pathsByID where paths.count > 1 {
+            let known = index.assets[id.description]?.path ?? records[id]?.path
+            let keeper = paths.contains(where: { $0 == known }) ? known! : paths.sorted()[0]
+            for path in paths.sorted() where path != keeper {
+                var sidecar = sidecars[path]!
+                let old = sidecar.id
+                sidecar.id = freshID(avoiding: pathsByID)
+                do {
+                    try sidecar.write(to: AssetSidecar.url(for: project.url(forAssetPath: path)))
+                    sidecars[path] = sidecar
+                    report.reassigned.append((path, old, sidecar.id))
+                } catch {
+                    sidecars[path] = nil
+                    report.errors.append((path, "Couldn't write a new id to its sidecar: \(error)"))
+                }
+            }
+        }
+
+        // New files: create sidecars.
+        let taken = Set(sidecars.values.map(\.id))
+        for path in files.keys.sorted() where sidecars[path] == nil && !unreadable.contains(path) {
+            let ext = (path as NSString).pathExtension
+            let importer = importers.importer(forExtension: ext)
+            var id = AssetID.random()
+            while taken.contains(id) || records[id] != nil { id = .random() }
+            let sidecar = AssetSidecar(id: id, importer: importer?.name, settings: importer?.defaultSettings)
+            do {
+                try sidecar.write(to: AssetSidecar.url(for: files[path]!.url))
+                sidecars[path] = sidecar
+                report.createdSidecars.append(path)
+            } catch {
+                report.errors.append((path, "Couldn't write its sidecar: \(error)"))
+            }
+        }
+
+        // Rebuild the records; diff against the previous scan and the index.
+        var newRecords: [AssetID: AssetRecord] = [:]
+        for (path, sidecar) in sidecars {
+            let file = files[path]!
+            let id = sidecar.id
+            let previous = records[id]
+            let entry = index.assets[id.description]
+            let ext = (path as NSString).pathExtension
+            let importer = sidecar.importer.flatMap(importers.importer(named:)) ?? importers.importer(forExtension: ext)
+            let objects = previous?.objects ?? (entry?.importer == importer?.name ? entry?.objects : nil) ?? []
+            newRecords[id] = AssetRecord(
+                id: id, path: path, importer: importer?.name, objects: objects,
+                importError: previous?.importError ?? entry?.error, sidecar: sidecar,
+                sourceHash: hash(file, knownAs: id), size: file.size, modified: file.modified)
+            if let oldPath = previous?.path ?? entry?.path {
+                if oldPath != path { report.moved.append((id, oldPath, path)) }
+            } else {
+                report.added.append(id)
+            }
+        }
+        var gone = Set(records.keys).union(index.assets.keys.compactMap(AssetID.init))
+        gone.subtract(newRecords.keys)
+        for id in gone.sorted() {
+            let path = records[id]?.path ?? index.assets[id.description]?.path ?? ""
+            report.removed.append((id, path))
+            index.assets[id.description] = nil
+            loaded[id] = nil
+            revisions[id] = bumpRevision()
+            try? FileManager.default.removeItem(at: artifactsURL(id))
+        }
+        for (id, record) in newRecords {
+            let key = id.description
+            guard var entry = index.assets[key], entry.importer != nil else {
+                // Files without an importer are tracked too (by path and content), so their
+                // ids are known next session; no import state to protect.
+                index.assets[key] = LibraryIndex.Entry(
+                    path: record.path, importer: nil, importerVersion: 0, sourceHash: record.sourceHash, size: record.size,
+                    modified: record.modified, settings: "", objects: [], error: nil)
+                continue
+            }
+            // Keep the path current (so a later duplicate is told from the original), and the
+            // size and mtime when the content is what was imported (so it isn't rehashed again).
+            entry.path = record.path
+            if entry.sourceHash == record.sourceHash {
+                entry.size = record.size
+                entry.modified = record.modified
+            }
+            index.assets[key] = entry
+        }
+        records = newRecords
+        idsByPath = Dictionary(uniqueKeysWithValues: newRecords.values.map { ($0.path, $0.id) })
+        report.added.sort()
+        report.moved.sort { $0.to < $1.to }
+        return report
+    }
+
+    private func freshID(avoiding used: [AssetID: [String]]) -> AssetID {
+        var id = AssetID.random()
+        while used[id] != nil || records[id] != nil || index.assets[id.description] != nil { id = .random() }
+        return id
+    }
+}
+
+/// One import, ready to run on any thread (`AssetDatabase.importJob(for:)`).
+public struct AssetImportJob: Sendable {
+    public let importer: AnyAssetImporter
+    public var context: ImportContext
+    /// The sidecar's settings.
+    public let settings: JSONValue?
+    let cacheDirectory: URL
+    let sourceHash: String
+
+    /// Runs the importer and writes the result to the Library cache. Nonisolated and GPU-free.
+    public func run() -> AssetImportResult {
+        var context = self.context
+        let fm = FileManager.default
+        let outcome: AssetImportResult.Outcome
+        do {
+            try? fm.removeItem(at: context.artifactsDirectory)
+            try fm.createDirectory(at: context.artifactsDirectory, withIntermediateDirectories: true)
+            let asset = try importer.importAsset(&context, settings: settings)
+            // Replace the previous cache only now: a failed import keeps it.
+            let keep = context.artifactsDirectory.lastPathComponent
+            for name in (try? fm.contentsOfDirectory(atPath: cacheDirectory.path)) ?? [] where name != keep {
+                try? fm.removeItem(at: cacheDirectory.appendingPathComponent(name))
+            }
+            try AssetArtifacts.write(asset, to: cacheDirectory)
+            outcome = .success(asset)
+        } catch {
+            outcome = .failure("\(error)")
+        }
+        return AssetImportResult(id: context.assetID, importer: importer.name, settings: settings, sourceHash: sourceHash,
+                                 outcome: outcome, warnings: context.warnings)
+    }
+}
+
+/// The outcome of an `AssetImportJob`, to hand to `AssetDatabase.apply(_:)`.
+public struct AssetImportResult: Sendable {
+    public enum Outcome: Sendable {
+        case success(ImportedAsset)
+        case failure(String)
+    }
+
+    public let id: AssetID
+    let importer: String
+    let settings: JSONValue?
+    let sourceHash: String
+    public let outcome: Outcome
+    public let warnings: [String]
+}

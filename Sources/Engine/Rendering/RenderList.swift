@@ -116,12 +116,10 @@ public struct RenderPrep {
         items.removeAll(keepingCapacity: true)
         world.query(GlobalTransform.self, MeshRenderer.self) { entity, transform, renderer in
             guard renderer.isVisible else { return }
-            guard let mesh = meshes.id(of: renderer.mesh.key) else {
-                missingKeys.insert(renderer.mesh.key)
-                return
-            }
-            guard let material = materials.id(of: renderer.material.key) else {
-                missingKeys.insert(renderer.material.key)
+            let mesh = meshes.id(of: renderer.mesh.key), material = materials.id(of: renderer.material.key)
+            guard let mesh, let material else {
+                if mesh == nil { missingKeys.insert(renderer.mesh.key) }
+                if material == nil { missingKeys.insert(renderer.material.key) }
                 return
             }
             let model = transform.matrix

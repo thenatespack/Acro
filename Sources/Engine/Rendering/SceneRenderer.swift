@@ -116,6 +116,29 @@ public final class SceneRenderer {
     private var uploaded: TransientBuffer?
     private var previousViewProj: Mat4?
     private var reportedMissing: Set<String> = []
+
+    /// Resolves handles that name project assets (`MeshHandle(AssetReference)`, keys
+    /// `asset:<id>[#<sub-asset>]`): the first frame an entity uses one, its mesh or material
+    /// (and the material's texture) is taken from the database and uploaded, then registered
+    /// under that key like any other. Assets the database imports again are re-uploaded on the
+    /// next frame. Built-in and code-registered keys are unaffected. Nil (the default) leaves
+    /// asset keys unresolved (reported as missing, entities skipped).
+    public var assets: AssetDatabase? {
+        didSet { failedAssetKeys.removeAll(); seenAssetRevision = -1 }
+    }
+    /// Turns an imported texture into a GPU texture (RGBA8 in `texture.format`, with a mip chain
+    /// when `generatesMipmaps`). Replace it to upload other formats.
+    public var textureUploader: (TextureAsset, RenderDevice) throws -> GPUTexture = { texture, device in
+        try device.makeTexture(pixels: texture.image.pixels, width: texture.image.width, height: texture.image.height,
+                               format: texture.format, generateMipmaps: texture.generatesMipmaps)
+    }
+    /// Asset keys registered from `assets`, with the asset revision they were uploaded at.
+    var assetKeys: [String: Int] = [:]
+    /// Uploaded asset textures by reference text, with their revision.
+    var assetTextures: [String: (texture: GPUTexture, revision: Int)] = [:]
+    /// Asset keys that didn't resolve at `seenAssetRevision` (retried when the database changes).
+    var failedAssetKeys: Set<String> = []
+    var seenAssetRevision = -1
     /// What `draw` draws `debugDraw` for (from the last `prepare`).
     private var debugView: DebugView?
     private var debugRenderer: DebugDrawRenderer?
@@ -225,13 +248,19 @@ public final class SceneRenderer {
         return MaterialHandle(key)
     }
 
-    public func mesh(_ handle: MeshHandle) -> GPUMesh? { prep.meshes.contains(handle.key) ? meshes[prep.meshes.id(of: handle.key)!] : nil }
+    /// The GPU mesh registered under `handle`'s key (an asset handle is resolved and uploaded first).
+    public func mesh(_ handle: MeshHandle) -> GPUMesh? {
+        resolveAsset(handle.key, kind: .mesh)
+        return prep.meshes.contains(handle.key) ? meshes[prep.meshes.id(of: handle.key)!] : nil
+    }
     /// The vertices and indices registered under `handle`'s key (kept on the CPU for picking).
     public func geometry(_ handle: MeshHandle) -> MeshGeometry? {
-        prep.meshes.contains(handle.key) ? geometries[prep.meshes.id(of: handle.key)!] : nil
+        resolveAsset(handle.key, kind: .mesh)
+        return prep.meshes.contains(handle.key) ? geometries[prep.meshes.id(of: handle.key)!] : nil
     }
     public func material(_ handle: MaterialHandle) -> Material? {
-        prep.materials.contains(handle.key) ? materials[prep.materials.id(of: handle.key)!].material : nil
+        resolveAsset(handle.key, kind: .material)
+        return prep.materials.contains(handle.key) ? materials[prep.materials.id(of: handle.key)!].material : nil
     }
 
     // MARK: - Frame
@@ -290,9 +319,14 @@ public final class SceneRenderer {
                               projectionScale: camera.projection(aspect: engine.aspectRatio).c1.y)
     }
 
-    private func gather(_ world: World) {
+    func gather(_ world: World) {
+        syncAssets()
         prep.gather(world: world)
-        for key in prep.missingKeys where !reportedMissing.contains(key) {
+        // Upload assets entities started using, then gather again so they draw this frame
+        // (only on frames where something new resolved).
+        if resolveMissingAssets() { prep.gather(world: world) }
+        for key in prep.missingKeys where !reportedMissing.contains(key) && !prep.meshes.contains(key) && !prep.materials.contains(key)
+            && (assets == nil || AssetReference(key) == nil || failedAssetKeys.contains(key)) {
             reportedMissing.insert(key)
             print("SceneRenderer: no mesh or material registered as '\(key)'; entities using it are skipped")
         }
