@@ -769,8 +769,8 @@ final class VulkanRenderDevice: RenderDevice {
 
     func supports(_ format: TextureFormat) -> Bool {
         let feature = switch format {
-        case .bc7Unorm, .bc7Srgb: textureCompressionBC
-        case .astc4x4Unorm, .astc4x4Srgb: textureCompressionASTC
+        case .bc7Unorm, .bc7Srgb, .bc5Unorm: textureCompressionBC
+        case .astc4x4Unorm, .astc4x4Srgb, .astc4x4RG: textureCompressionASTC
         default: true
         }
         guard feature else { return false }
@@ -941,8 +941,9 @@ final class VulkanRenderDevice: RenderDevice {
         case .rgba8Unorm, .depth32Float: VK_FORMAT_R8G8B8A8_UNORM
         case .bc7Unorm: VK_FORMAT_BC7_UNORM_BLOCK
         case .bc7Srgb: VK_FORMAT_BC7_SRGB_BLOCK
-        case .astc4x4Unorm: VK_FORMAT_ASTC_4x4_UNORM_BLOCK
+        case .astc4x4Unorm, .astc4x4RG: VK_FORMAT_ASTC_4x4_UNORM_BLOCK
         case .astc4x4Srgb: VK_FORMAT_ASTC_4x4_SRGB_BLOCK
+        case .bc5Unorm: VK_FORMAT_BC5_UNORM_BLOCK
         }
     }
 

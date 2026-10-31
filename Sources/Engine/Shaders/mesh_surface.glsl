@@ -73,7 +73,7 @@ layout(set = 2, binding = 2, std140) uniform MaterialData {
     vec4 uvRow1;
     vec4 surface;    // x: metallic, y: perceptual roughness, z: normal scale, w: occlusion strength
     vec4 emissive;   // rgb: emissive color x strength (linear), w: 1 PBR, 0 Blinn-Phong
-    vec4 flags;      // x: alpha cutoff (mask), y: 1 when there is a normal map
+    vec4 flags;      // x: alpha cutoff (mask), y: 1 when there is a normal map, z: its layout (below)
 } material;
 
 // Point and spot lights, must match `LightClusters.GPUData` (uniform buffers 3-7).
@@ -97,7 +97,7 @@ layout(set = 1, binding = 0) uniform sampler2DShadow shadowMap;  // the shadow a
 // Textures 1-5 share sampler 1. Missing ones are a 1x1 white texture.
 layout(set = 2, binding = 9) uniform texture2D baseColorMap;          // sRGB color, alpha
 layout(set = 2, binding = 10) uniform texture2D metallicRoughnessMap; // linear: G roughness, B metallic
-layout(set = 2, binding = 11) uniform texture2D normalMap;            // linear tangent-space normal
+layout(set = 2, binding = 11) uniform texture2D normalMap;            // linear tangent-space normal (see main)
 layout(set = 2, binding = 12) uniform texture2D occlusionMap;         // linear: R occlusion
 layout(set = 2, binding = 13) uniform texture2D emissiveMap;          // sRGB color
 layout(set = 2, binding = 17) uniform sampler materialSampler;
@@ -244,7 +244,16 @@ void main() {
         if (dot(t, t) > 1e-12) {
             t = normalize(t);
             vec3 b = cross(n, t) * (vTangent.w < 0.0 ? -1.0 : 1.0);
-            vec3 m = texture(sampler2D(normalMap, materialSampler), uv).xyz * 2.0 - 1.0;
+            // flags.z: 0 XYZ in RGB; two-channel maps (Z = sqrt(1 - x² - y²)): 1 XY in RG
+            // (BC5), 2 XY in RA (two-channel ASTC, which samples as x, x, x, y).
+            vec4 s = texture(sampler2D(normalMap, materialSampler), uv);
+            vec3 m;
+            if (material.flags.z > 0.5) {
+                vec2 xy = (material.flags.z > 1.5 ? s.ra : s.rg) * 2.0 - 1.0;
+                m = vec3(xy, sqrt(clamp(1.0 - dot(xy, xy), 0.0, 1.0)));
+            } else {
+                m = s.xyz * 2.0 - 1.0;
+            }
             m.xy *= material.surface.z;
             n = normalize(t * m.x + b * m.y + n * m.z);
         }

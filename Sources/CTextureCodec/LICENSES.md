@@ -1,6 +1,6 @@
 # Vendored texture codecs
 
-Upstream sources; `codec.cpp` is the engine's adapter (`include/CTextureCodec.h`).
+Upstream sources; `codec.cpp` is the engine's adapter (`include/CTextureCodec.h`) and `bc5.cpp` the engine's own BC5 codec (not vendored, same license as the engine).
 
 | Files | Version | Upstream | License |
 |---|---|---|---|

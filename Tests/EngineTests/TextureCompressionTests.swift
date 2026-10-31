@@ -111,7 +111,8 @@ private func makeProject() throws -> Project {
 
     // MARK: Encoders and decoders
 
-    @Test(arguments: TextureFormat.compressedFormats)
+    /// Two-channel formats (`TwoChannelNormalMapTests`) keep only red and green.
+    @Test(arguments: TextureFormat.compressedFormats.filter { !$0.isTwoChannel })
     func roundTripStaysCloseToTheSource(format: TextureFormat) throws {
         let image = testImage(width: 64, height: 64)
         let levels = try TextureCodec.encode(image, format: format, mipmaps: true)

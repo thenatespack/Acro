@@ -278,16 +278,22 @@ public final class SceneRenderer {
         var surface: Vec4
         /// rgb: emissive color x strength, w: 1 for PBR
         var emissive: Vec4
-        /// x: alpha cutoff, y: has a normal map
+        /// x: alpha cutoff, y: has a normal map, z: its layout (0 XYZ in RGB; two channels, Z
+        /// rebuilt: 1 XY in RG (BC5), 2 XY in RA (two-channel ASTC))
         var flags: Vec4
 
-        init(_ material: Material) {
+        @MainActor init(_ material: Material) {
             baseColor = material.baseColor
             params = Vec4(material.checker ? 1 : 0, material.emissive, material.specular, material.shininess)
             (uvRow0, uvRow1) = material.uvTransformRows
             surface = Vec4(material.metallic, material.roughness, material.normalScale, material.occlusionStrength)
             emissive = Vec4(material.emissiveColor * material.emissiveStrength, material.shading == .pbr ? 1 : 0)
-            flags = Vec4(material.alphaCutoff, material.normalTexture != nil ? 1 : 0, 0, 0)
+            let normalLayout: Float = switch material.normalTexture?.format {
+            case .bc5Unorm: 1
+            case .astc4x4RG: 2
+            default: 0
+            }
+            flags = Vec4(material.alphaCutoff, material.normalTexture != nil ? 1 : 0, normalLayout, 0)
         }
     }
 

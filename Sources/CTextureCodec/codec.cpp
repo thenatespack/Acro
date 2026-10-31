@@ -109,11 +109,13 @@ extern "C" int tc_bc7_decode(const uint8_t *blocks, int width, int height, uint8
 
 struct tc_astc_encoder {
     astcenc_context *context;
+    astcenc_swizzle swizzle;
 };
 
-extern "C" tc_astc_encoder *tc_astc_encoder_create(int srgb, tc_quality quality, int thread_count) {
+namespace {
+
+tc_astc_encoder *make_astc_encoder(int srgb, unsigned flags, tc_quality quality, int thread_count, astcenc_swizzle swizzle) {
     astcenc_config config;
-    unsigned flags = srgb ? ASTCENC_FLG_USE_PERCEPTUAL : 0;
     if (astcenc_config_init(srgb ? ASTCENC_PRF_LDR_SRGB : ASTCENC_PRF_LDR, 4, 4, 1, astc_effort(quality), flags, &config)
         != ASTCENC_SUCCESS) {
         return nullptr;
@@ -122,7 +124,18 @@ extern "C" tc_astc_encoder *tc_astc_encoder_create(int srgb, tc_quality quality,
     if (astcenc_context_alloc(&config, (unsigned)std::max(thread_count, 1), &context, nullptr) != ASTCENC_SUCCESS) {
         return nullptr;
     }
-    return new tc_astc_encoder{context};
+    return new tc_astc_encoder{context, swizzle};
+}
+
+}  // namespace
+
+extern "C" tc_astc_encoder *tc_astc_encoder_create(int srgb, tc_quality quality, int thread_count) {
+    return make_astc_encoder(srgb, srgb ? ASTCENC_FLG_USE_PERCEPTUAL : 0, quality, thread_count, identity_swizzle());
+}
+
+extern "C" tc_astc_encoder *tc_astc_encoder_create_rg(tc_quality quality, int thread_count) {
+    const astcenc_swizzle rrrg{ASTCENC_SWZ_R, ASTCENC_SWZ_R, ASTCENC_SWZ_R, ASTCENC_SWZ_G};
+    return make_astc_encoder(0, ASTCENC_FLG_MAP_NORMAL, quality, thread_count, rrrg);
 }
 
 extern "C" void tc_astc_encoder_destroy(tc_astc_encoder *encoder) {
@@ -135,8 +148,7 @@ extern "C" int tc_astc_encode(tc_astc_encoder *encoder, const uint8_t *rgba, int
                               uint8_t *blocks, size_t length, int thread_index) {
     void *slice = const_cast<uint8_t *>(rgba);
     astcenc_image image{(unsigned)width, (unsigned)height, 1, ASTCENC_TYPE_U8, &slice};
-    const astcenc_swizzle swizzle = identity_swizzle();
-    return astcenc_compress_image(encoder->context, &image, &swizzle, blocks, length, (unsigned)thread_index)
+    return astcenc_compress_image(encoder->context, &image, &encoder->swizzle, blocks, length, (unsigned)thread_index)
         == ASTCENC_SUCCESS;
 }
 
