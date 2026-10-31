@@ -122,6 +122,75 @@ public enum CrashReporter {
 
     /// Re-arms `writeReport` (tests only).
     static func resetForTesting() { lock.withLock { reported = false; lastReport = nil } }
+
+    // MARK: Fatal hooks
+
+    nonisolated(unsafe) private static var fatalHooks: [(id: Int, run: () -> Void)] = []
+    nonisolated(unsafe) private static var nextHookID = 0
+
+    /// Adds `hook`, run on a fatal signal or `engineFatal` before the report is written: last
+    /// chance to save the user's work (the editor writes its recovery files). Same caveats as
+    /// the report (see the notes at the top): the process may be in any state, so a hook
+    /// should only write data it prepared beforehand. Returns an id for `removeFatalHook`.
+    @discardableResult
+    public static func addFatalHook(_ hook: @escaping () -> Void) -> Int {
+        lock.withLock {
+            nextHookID += 1
+            fatalHooks.append((nextHookID, hook))
+            return nextHookID
+        }
+    }
+
+    public static func removeFatalHook(_ id: Int) {
+        lock.withLock { fatalHooks.removeAll { $0.id == id } }
+    }
+
+    nonisolated(unsafe) private static var hooksRan = false
+
+    /// Runs the fatal hooks once per process (a fatal error usually ends in a signal too).
+    static func runFatalHooks() {
+        // Like `writeReport`: don't wait for the lock from a signal handler on another thread.
+        let acquired = lock.try()
+        if !acquired && !Thread.isMainThread { return }
+        let hooks: [() -> Void]
+        if hooksRan {
+            hooks = []
+        } else {
+            hooksRan = true
+            hooks = fatalHooks.map(\.run)
+        }
+        if acquired { lock.unlock() }
+        for hook in hooks { hook() }
+    }
+
+    // MARK: Exit watch
+
+    nonisolated(unsafe) private static var exitWatchArmed = false
+    nonisolated(unsafe) private static var exitWatchInstalled = false
+
+    /// From here until `disarmExitWatch`, a call to `exit()` (which ends the process without a
+    /// signal, so without a crash report) prints a loud line and a backtrace to standard error:
+    /// game code or a library calling exit while the engine runs. `Engine.run` arms it.
+    public static func armExitWatch() {
+        let install: Bool = lock.withLock {
+            exitWatchArmed = true
+            defer { exitWatchInstalled = true }
+            return !exitWatchInstalled
+        }
+        if install { atexit { CrashReporter.exitCalled() } }
+    }
+
+    public static func disarmExitWatch() {
+        lock.withLock { exitWatchArmed = false }
+    }
+
+    private static func exitCalled() {
+        guard exitWatchArmed else { return }
+        exitWatchArmed = false
+        var text = "Engine: exit() was called while the main loop was running (not a quit: the engine didn't shut down)\n"
+        for line in Thread.callStackSymbols { text += "  \(line)\n" }
+        FileHandle.standardError.write(Data(text.utf8))
+    }
 }
 
 /// `signal` handlers are C functions: no captures, so this forwards to `CrashReporter`.
@@ -142,6 +211,7 @@ private func crashSignalHandler(_ signalNumber: Int32) {
     #endif
     default: name = "signal \(signalNumber)"
     }
+    CrashReporter.runFatalHooks()
     CrashReporter.writeReport(reason: name)
     raise(signalNumber)
 }

@@ -267,6 +267,9 @@ public final class Engine {
     /// Seconds since `run` started.
     public private(set) var time: Double = 0
     public private(set) var frameCount = 0
+    /// Why the main loop ended ("the window's close button was clicked", "quit() was called"):
+    /// set when `run` returns, and printed to standard error then.
+    public private(set) var quitReason: String?
     /// Timing and draw statistics for the previous frame.
     public private(set) var stats = FrameStats()
     public var showDebugOverlay: Bool
@@ -494,7 +497,12 @@ public final class Engine {
 
     /// Runs the main loop until the window closes or `quit()` is called.
     public func run(_ game: Game) throws {
+        CrashReporter.armExitWatch()
         defer {
+            CrashReporter.disarmExitWatch()
+            let reason = quitReason ?? window.closeReason ?? "an error ended the main loop"
+            quitReason = reason
+            FileHandle.standardError.write(Data("Engine: quitting after \(frameCount) frames: \(reason)\n".utf8))
             if let url = profileTraceURL {
                 do {
                     try Profiler.finishTraceCapture(to: url)
@@ -539,7 +547,7 @@ public final class Engine {
             // MCP requests (they may inject input, pause or step), then this frame's injected input.
             if let mcp {
                 mcp.pump()
-                if mcp.stdioClientDisconnected { quit() }
+                if mcp.stdioClientDisconnected { quit(reason: "the MCP stdio client disconnected") }
             }
             let stepping = isPaused && pendingSteps > 0
             if stepping { pendingSteps -= 1 }
@@ -676,7 +684,7 @@ public final class Engine {
                     if let shot = automatedScreenshot, frameCount >= shot.frame {
                         print("Saved screenshot to \(shot.url.path)")
                         printScreenshotAverages()
-                        quit()
+                        quit(reason: "the ENGINE_SCREENSHOT frame was saved")
                     }
                 }
                 previousJitter = temporalInputs.jitter
@@ -747,8 +755,9 @@ public final class Engine {
         pendingCaptures.append(completion)
     }
 
-    public func quit() {
-        window.requestClose()
+    /// Ends the main loop after this frame; `reason` is printed when it does (see `quitReason`).
+    public func quit(reason: String = "quit() was called") {
+        window.requestClose(reason: reason)
     }
 
     private static func seconds(_ d: Duration) -> Double {

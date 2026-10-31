@@ -9,6 +9,7 @@ public func engineFatal(
 ) -> Never {
     let text = message()
     EngineLog.fault("\(text) (\(file):\(line))", category: category)
+    CrashReporter.runFatalHooks()
     CrashReporter.writeReport(reason: "engineFatal: \(text) (\(file):\(line))")
     fatalError(text, file: file, line: line)
 }
