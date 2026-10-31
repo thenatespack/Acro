@@ -47,12 +47,38 @@ public struct TextureImporter: AssetImporter {
 ///
 /// External `.bin` buffers are read relative to the model's folder and recorded as
 /// dependencies (`ImportContext.readDependency`): editing one reimports the model.
+/// `Settings.materialRemap` points the prefab's nodes at other material assets (extracted
+/// `.material` files).
 public struct GLTFImporter: AssetImporter {
     public struct Settings: Codable, Equatable, Sendable {
         /// Generate smooth (area-weighted) normals where the file has none, instead of flat.
         public var smoothNormals: Bool = false
+        /// Materials to use instead of the file's own, by material sub-asset id
+        /// (`"material/Rock"` → a `.material` asset, e.g. one written by the editor's Extract
+        /// Materials). The prefab's nodes reference the replacement; the file's material
+        /// sub-assets are still imported, so existing references keep working.
+        public var materialRemap: [SubAssetID: AssetReference] = [:]
 
-        public init(smoothNormals: Bool = false) { self.smoothNormals = smoothNormals }
+        public init(smoothNormals: Bool = false, materialRemap: [SubAssetID: AssetReference] = [:]) {
+            self.smoothNormals = smoothNormals
+            self.materialRemap = materialRemap
+        }
+
+        private enum CodingKeys: String, CodingKey { case smoothNormals, materialRemap }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            smoothNormals = try c.decodeIfPresent(Bool.self, forKey: .smoothNormals) ?? false
+            materialRemap = try c.decodeIfPresent([SubAssetID: AssetReference].self, forKey: .materialRemap) ?? [:]
+        }
+
+        /// An empty remap is left out, so sidecars (and cached imports) from before it existed
+        /// stay the same.
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(smoothNormals, forKey: .smoothNormals)
+            if !materialRemap.isEmpty { try c.encode(materialRemap, forKey: .materialRemap) }
+        }
     }
 
     public init() {}
@@ -108,12 +134,18 @@ public struct GLTFImporter: AssetImporter {
         }
         var defaultMaterial: AssetReference?
         func material(_ index: Int?) -> AssetReference {
-            if let index { return materials[index] }
-            if let defaultMaterial { return defaultMaterial }
-            let id = namer.id(kind: "material", name: "default", index: model.materials.count)
-            asset.add(id, name: "Default", .material(ImportedMaterial.gltfDefault.materialAsset()))
-            defaultMaterial = context.reference(id)
-            return defaultMaterial!
+            let reference: AssetReference
+            if let index {
+                reference = materials[index]
+            } else if let defaultMaterial {
+                reference = defaultMaterial
+            } else {
+                let id = namer.id(kind: "material", name: "default", index: model.materials.count)
+                asset.add(id, name: "Default", .material(ImportedMaterial.gltfDefault.materialAsset()))
+                defaultMaterial = context.reference(id)
+                reference = defaultMaterial!
+            }
+            return reference.subAsset.flatMap { settings.materialRemap[$0] } ?? reference
         }
 
         // Meshes are added as nodes use them, so meshes outside the scene aren't imported.

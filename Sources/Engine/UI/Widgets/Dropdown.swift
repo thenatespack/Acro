@@ -207,6 +207,19 @@ public final class Dropdown: Widget {
         }
     }
 
+    /// Where the selected option's title goes: left of the chevron. Longer titles end in "…".
+    var textRect: UIRect {
+        UIRect(x: frame.x + theme.controlPaddingX, y: frame.y, width: max(0, frame.width - 2 * theme.controlPaddingX - 14),
+               height: frame.height)
+    }
+
+    /// Its own `tooltip`, else the selected option's full title when it is cut off.
+    public override func tooltip(at point: Vec2) -> String? {
+        if let tooltip { return tooltip }
+        guard !isOpen, let option = selectedOption else { return nil }
+        return truncatedText(option, size: theme.fontSize, width: textRect.width)
+    }
+
     public override func draw(_ list: UIDrawList, theme: UITheme) {
         let enabled = isEffectivelyEnabled
         let fill = !enabled ? theme.controlBackground.withAlpha(0.5)
@@ -217,9 +230,7 @@ public final class Dropdown: Widget {
         let color = enabled ? theme.textColor : theme.disabledTextColor
         if let option = selectedOption {
             let layout = cache.get(option, font: theme.font, size: theme.fontSize)
-            let textRect = UIRect(x: frame.x + theme.controlPaddingX, y: frame.y, width: frame.width - 2 * theme.controlPaddingX - 14,
-                                  height: frame.height)
-            drawLine(layout, font: theme.font, in: textRect, color: color, list: list)
+            drawEllipsized(option, layout: layout, size: theme.fontSize, in: textRect, color: color, list: list)
         }
         // Chevron.
         let c = Vec2(frame.maxX - theme.controlPaddingX - 4, frame.center.y)

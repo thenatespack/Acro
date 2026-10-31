@@ -29,7 +29,7 @@ public struct PropertyEdit: Equatable, Sendable {
 /// |---|---|
 /// | `bool` | `Checkbox` |
 /// | `int` / `float` | `NumberField` (range / step hints; with `usesSlidersForRanges`, a `Slider` beside it when a finite range is hinted) |
-/// | `string` | `TextField` (commits on Enter or focus loss, Esc reverts); a `Dropdown` when `stringChoices` lists options for the field (e.g. mesh / material keys) |
+/// | `string` | `TextField` (commits on Enter or focus loss, Esc reverts); a `Dropdown` when `stringChoices` lists options for the field (e.g. mesh / material keys; for an optional, nil or "" shows as the "" option and picking "" sets nil) |
 /// | `vec2` / `vec3` / `vec4` | `VectorField`; `vec3` / `vec4` with the `color` hint: `ColorSwatch` (linear RGB, opens a `ColorPicker`; alpha is kept; HDR values above 1 are clamped by the picker) |
 /// | `quat` | `VectorField` of Euler degrees (`Quat.eulerDegrees`) |
 /// | `enumeration` | `Dropdown` |
@@ -390,7 +390,11 @@ public final class PropertyGrid: Stack {
             }
             return (label, true)
         }
-        if field.value == .null { return placeholder("—") }
+        // A nil optional string with choices (an unset asset reference) is a dropdown whose
+        // "" option means nil.
+        let nullChoice = field.value == .null && field.kind == .string && field.isOptional
+            && stringChoices?(b.component, b.path) != nil
+        if field.value == .null && !nullChoice { return placeholder("—") }
         switch field.kind {
         case .bool:
             let box = Checkbox("", isOn: field.value == .bool(true), name: name)
@@ -408,6 +412,7 @@ public final class PropertyGrid: Stack {
             if case .string(let s)? = field.value { initial = s }
             if var options = stringChoices?(b.component, b.path) {
                 if !options.contains(initial) { options.append(initial) }
+                let optional = field.isOptional
                 let component = b.component, path = b.path
                 let title: (String) -> String = stringChoiceTitle.map { f in { f(component, path, $0) } } ?? { $0 }
                 // The values behind the dropdown's titles, index for index.
@@ -415,11 +420,18 @@ public final class PropertyGrid: Stack {
                 let dropdown = Dropdown(options: options.map(title), selectedIndex: options.firstIndex(of: initial) ?? 0, name: name)
                 dropdown.onChange = { [weak self, weak b] i in
                     if let self, let b, values.values.indices.contains(i) {
-                        self.atomicEdit(b, .string(values.values[i]))
+                        let value = values.values[i]
+                        self.atomicEdit(b, optional && value.isEmpty ? .null : .string(value))
                     }
                 }
                 b.update = { [weak dropdown] f in
-                    guard case .string(let s)? = f.value, let dropdown else { return }
+                    guard let dropdown else { return }
+                    let s: String
+                    switch f.value {
+                    case .string(let v)?: s = v
+                    case .null? where optional: s = ""
+                    default: return
+                    }
                     if !values.values.contains(s) {
                         values.values.append(s)
                         dropdown.options.append(title(s))

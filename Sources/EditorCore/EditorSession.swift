@@ -72,6 +72,14 @@ public final class EditorSession {
     /// Called after a project was opened or created, or its assets changed.
     public var onAssetsChange: (() -> Void)?
 
+    /// The asset the inspector shows instead of the selected entity (picked in the asset
+    /// browser). Selecting entities clears it.
+    public var inspectedAsset: AssetItem? {
+        didSet { if inspectedAsset != oldValue { onInspectedAssetChange?() } }
+    }
+    /// Called after `inspectedAsset` changed.
+    public var onInspectedAssetChange: (() -> Void)?
+
     private var playSnapshot: WorldSnapshot?
 
     public var world: World { document.world }
@@ -82,8 +90,10 @@ public final class EditorSession {
         self.document = document
         self.log = log
         EditorComponentCatalog.registerBuiltins()
+        ImportSettingsForms.registerBuiltins()
         document.world.addEditorSystems()
         document.onReload = { [unowned self] in selection.prune(in: world) }
+        selection.observe { [unowned self] selection in if !selection.isEmpty { inspectedAsset = nil } }
     }
 
     /// Advances the world one frame: its systems in play mode, only transforms while editing.
@@ -204,6 +214,7 @@ public final class EditorSession {
         // `ENGINE_SCREENSHOT` runs wait so the picture is complete.
         let report = database.refreshAsync()
         assets = database
+        inspectedAsset = nil
         log.info("\(verb) project \(project.name) (\(database.records.count) assets: \(report.summary))")
         if database.isLoading { log.info("Importing \(database.pendingLoadCount) assets in the background") }
         logReport(report, prefix: nil)
