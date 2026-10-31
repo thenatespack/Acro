@@ -13,7 +13,9 @@ let usage = """
 
     Opens the scene file, or starts with a new scene; --project opens a project (Project.json,
     Assets/, Library/) and imports its assets. Environment: EDITOR_PREFS=<file> moves the
-    prefs file (dock layout, last scene); ENGINE_SCREENSHOT=<png> renders a deterministic frame and quits.
+    prefs file (dock layout, last scene, theme, uiScale); EDITOR_THEME=<Dark|Light|High Contrast|Game>
+    and EDITOR_UI_SCALE=<0.85…2> override the prefs; EDITOR_WINDOW_SIZE=<w>x<h> sizes the window;
+    ENGINE_SCREENSHOT=<png> renders a deterministic frame and quits.
 
     Game code: --game SampleGame builds that SwiftPM target (in the package at or above the working
     directory) and loads it as a game module: its components in Add Component, its systems in play
@@ -30,6 +32,12 @@ let usage = """
     """
 
 var config = EngineConfig(title: "Editor", width: 1440, height: 900, showDebugOverlay: false)
+// EDITOR_WINDOW_SIZE=<w>x<h> (points) opens the window at that size, even past the screen (UI reviews).
+if let size = ProcessInfo.processInfo.environment["EDITOR_WINDOW_SIZE"]?.split(separator: "x").compactMap({ Int($0) }), size.count == 2 {
+    config.width = size[0]
+    config.height = size[1]
+    config.allowsWindowLargerThanScreen = true
+}
 var scenePath: String?
 var projectPath: String?
 var mcpStdio = false

@@ -356,6 +356,7 @@ public final class AssetBrowserPanel {
         breadcrumb.style.width = 0
         breadcrumb.style.minWidth = 60
         let toolbar = HStack(spacing: 6, name: "assetToolbar", [breadcrumb, search, importButton, newFolder, newMaterial, rename, delete, viewToggle])
+        toolbar.wraps = true  // rows of buttons in a narrow panel, instead of buttons past its edge
 
         let renameOK = Button("Rename", role: .primary, name: "renameOK")
         let renameCancel = Button("Cancel", name: "renameCancel")

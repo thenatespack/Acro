@@ -214,7 +214,8 @@ import Testing
     v.onEditEnded = { log.append("ended \($0) \($1)") }
     place(v, in: d, width: 300)
     #expect(v.fields.count == 3 && v.fields[0].prefix == "X" && v.fields[2].prefix == "Z")
-    #expect(v.fields[0].prefixColor != v.fields[1].prefixColor)
+    // Each axis takes its color from the theme (`UITheme.axisColors`).
+    #expect(v.fields.map(\.prefixAxis) == [0, 1, 2] && v.fields[0].prefixColor == nil)
     #expect(abs(v.fields[0].frame.width - v.fields[1].frame.width) <= 1)
     let c = v.fields[1].frame.center
     d.press(at: c)

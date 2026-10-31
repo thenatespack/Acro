@@ -268,6 +268,8 @@ struct EditorUIDriver {
             let rows = elements().filter { $0.parentPath == element.parentPath && $0.itemKey?.hasPrefix("row:") == true }
             if let row = rows.firstIndex(where: { $0.path == element.path }) { list.revealRow(row) }
         }
+        // A menu cut short by the window scrolls its items.
+        if let menu = element.widget as? PopupMenu { _ = menu.scrollToReveal(element.frame) }
         ui.reveal(element.widget)
     }
 

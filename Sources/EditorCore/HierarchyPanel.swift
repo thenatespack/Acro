@@ -65,6 +65,7 @@ public final class HierarchyPanel {
         tree.itemCommands = ["row": SelectionSetCommand.id.rawValue, "toggle": SceneHierarchyCommand.id.rawValue]
         tree.command = EntityRenameCommand.id.rawValue  // its rename field
         let buttons = HStack(spacing: 6, [createButton, duplicateButton, deleteButton])
+        buttons.wraps = true  // a narrow panel puts them on two rows instead of cutting Delete off
         deleteButton.action = { [unowned self] in
             if let onDelete { onDelete() } else { session.run(EntityDeleteCommand.self, .init()) }
         }

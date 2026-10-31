@@ -31,6 +31,11 @@ Evals/run-window.py Evals/scenarios/01-level-with-crates.json --mcp /tmp/eval/mc
 Use a fresh folder (and editor) per scenario: a scenario that leaves the game playing or a
 project open changes the next one's start.
 
+`Evals/ui-audit.py` is a UI review rather than an agent eval: it starts the editor itself at
+each window size, UI zoom, theme and backend you list, walks it through 23 states over MCP,
+checks each `ui.snapshot` for controls outside the window, cut off by their panel, overlapping
+or too small, and saves window screenshots (`--out`). See docs/EditorUIReview.md.
+
 To evaluate a real agent instead of the reference transcript, give it the `prompt` with the
 editor attached as an MCP server (`claude mcp add …`, see the README), run `setup` first, then
 run only the `checks`.

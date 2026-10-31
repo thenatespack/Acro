@@ -304,7 +304,9 @@ public final class InspectorPanel {
             apply.command = PrefabApplyCommand.id.rawValue
             revert.command = PrefabRevertCommand.id.rawValue
             unpack.command = PrefabUnpackCommand.id.rawValue
-            prefabView.addChild(HStack(spacing: 6, [summary, apply, revert, unpack]))
+            let row = HStack(spacing: 6, [summary, apply, revert, unpack])
+            row.wraps = true
+            prefabView.addChild(row)
         }
         for (component, fields) in info.overriddenComponents {
             let label = Label("\(component): \(fields.joined(separator: ", "))", role: .secondary, name: "override.\(component)")
@@ -323,7 +325,9 @@ public final class InspectorPanel {
             apply.tooltip = info.canApply ? "Write \(component) into the prefab" : "A model's prefab can't be changed"
             apply.command = PrefabApplyCommand.id.rawValue
             revert.command = PrefabRevertCommand.id.rawValue
-            prefabView.addChild(HStack(spacing: 6, [label, revert, apply]))
+            let row = HStack(spacing: 6, [label, revert, apply])
+            row.wraps = true
+            prefabView.addChild(row)
         }
     }
 

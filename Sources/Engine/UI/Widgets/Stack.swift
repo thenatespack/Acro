@@ -69,10 +69,17 @@ public enum UILayout {
 /// Lays children out in a row or column: `spacing` between them, `padding` around, flex
 /// grow/shrink along the axis (`LayoutStyle.grow/shrink`, min/max), `alignment` across it and
 /// `justify` along it. Absolutely positioned children are placed by their anchors instead.
-/// With `background` / `borderColor` set it doubles as a panel.
+/// With `background` / `borderColor` set it doubles as a panel. A horizontal stack with `wraps`
+/// moves children that don't fit onto further rows (toolbars in narrow windows).
 open class Stack: Widget {
     public var axis: Axis { didSet { if axis != oldValue { setNeedsLayout() } } }
     public var spacing: Float { didSet { if spacing != oldValue { setNeedsLayout() } } }
+    /// Horizontal stacks only: children that don't fit start a new row (`spacing` apart), each
+    /// row laid out as a stack of its own (grow / shrink / justify per row). A child counts at its
+    /// natural width, or at its `minWidth` when it can shrink, so shrinking comes before wrapping.
+    /// Separators that would start or end a row are left out of it. The stack's measured height
+    /// counts every row, so a parent that knows the width gives it room.
+    public var wraps = false { didSet { if wraps != oldValue { setNeedsLayout() } } }
     public var alignment: CrossAlignment { didSet { if alignment != oldValue { setNeedsLayout() } } }
     public var justify: MainAlignment = .start { didSet { if justify != oldValue { setNeedsLayout() } } }
 
@@ -103,6 +110,16 @@ open class Stack: Widget {
             }
             return size
         case .horizontal:
+            if wraps, let width {
+                let rows = wrappedRows(items, width: width)
+                var size = Vec2(0, spacing * Float(max(rows.count - 1, 0)))
+                for row in rows {
+                    let widths = row.map { $0.measure(width: nil).x }
+                    size.x = max(size.x, min(width, widths.reduce(0, +) + spacing * Float(max(row.count - 1, 0))))
+                    size.y += row.map { $0.measure(width: nil).y }.max() ?? 0
+                }
+                return size
+            }
             var size = Vec2(gaps, 0)
             for child in items {
                 let s = child.measure(width: nil)
@@ -113,9 +130,54 @@ open class Stack: Widget {
         }
     }
 
+    /// `items` split into rows that fit `width` (at least one item per row), each item at its
+    /// natural width or, if it shrinks, its minimum; no separators at the start or end of a row.
+    func wrappedRows(_ items: [Widget], width: Float) -> [[Widget]] {
+        var rows: [[Widget]] = [[]]
+        var used: Float = 0
+        for child in items {
+            let natural = max(child.measure(width: nil).x, child.style.minWidth)
+            let w = child.style.shrink > 0 ? min(natural, child.style.minWidth) : natural
+            if !rows[rows.count - 1].isEmpty, used + spacing + w > width + 0.5 {
+                rows.append([])
+                used = 0
+            }
+            if rows[rows.count - 1].isEmpty && child is Separator { continue }
+            used += (rows[rows.count - 1].isEmpty ? 0 : spacing) + w
+            rows[rows.count - 1].append(child)
+        }
+        for i in rows.indices {
+            while let last = rows[i].last, last is Separator { rows[i].removeLast() }
+        }
+        return rows.filter { !$0.isEmpty }
+    }
+
     open override func layoutChildren() {
         let content = contentRect
-        let items = flowChildren
+        let flow = flowChildren
+        if wraps && axis == .horizontal {
+            let rows = wrappedRows(flow, width: content.width)
+            if rows.count > 1 {
+                let placed = Set(rows.joined().map(ObjectIdentifier.init))
+                for child in flow where !placed.contains(ObjectIdentifier(child)) {
+                    child.layout(in: UIRect(x: content.x, y: content.y, width: 0, height: 0))
+                }
+                var y = content.y
+                for row in rows {
+                    let height = row.map { $0.measure(width: nil).y }.max() ?? 0
+                    layoutRow(row, in: UIRect(x: content.x, y: y, width: content.width, height: height))
+                    y += height + spacing
+                }
+                layoutAbsoluteChildren(in: content)
+                return
+            }
+        }
+        layoutRow(flow, in: content)
+        layoutAbsoluteChildren(in: content)
+    }
+
+    /// Lays `items` out along the axis in `content` (one row of a wrapping stack, or all of them).
+    private func layoutRow(_ items: [Widget], in content: UIRect) {
         let vertical = axis == .vertical
         let mainLength = vertical ? content.height : content.width
         let crossLength = vertical ? content.width : content.height
@@ -171,7 +233,9 @@ open class Stack: Widget {
             child.layout(in: rect)
             cursor += main + spacing + extraGap
         }
+    }
 
+    private func layoutAbsoluteChildren(in content: UIRect) {
         for child in children where !child.isHidden {
             if case .absolute(let anchors) = child.style.position {
                 child.layout(in: Self.anchoredFrame(for: child, anchors: anchors, in: content, snap: snap))

@@ -11,6 +11,7 @@ import Foundation
 public final class VectorField: Stack {
     public static let axisNames = ["X", "Y", "Z", "W"]
     /// X red, Y green, Z blue, W gray.
+    /// The dark theme's `UITheme.axisColors` (fields use their theme's).
     public static let axisColors = [UIColor(hex: 0xe5484d), UIColor(hex: 0x46b86a), UIColor(hex: 0x4f8cff), UIColor(hex: 0x9aa1b2)]
 
     public let fields: [NumberField]
@@ -34,7 +35,7 @@ public final class VectorField: Stack {
             let field = NumberField(value: i < values.count ? values[i] : 0, range: range, step: step,
                                     name: name.isEmpty ? "" : "\(name).\(Self.axisNames[i].lowercased())")
             field.prefix = Self.axisNames[i]
-            field.prefixColor = Self.axisColors[i]
+            field.prefixAxis = i  // the theme's axisColors
             field.style.grow = 1
             field.style.width = 0  // equal shares: all width comes from grow
             field.preferredWidth = 40

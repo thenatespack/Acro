@@ -103,6 +103,8 @@ public final class PropertyGrid: Stack {
     public var usesSlidersForRanges = false
     /// Width of the label column of a top-level field, in points.
     public var labelWidth: Float = 140
+    /// Narrowest the label column gets when the grid is too narrow for `labelWidth` and the editors.
+    public var minLabelWidth: Float = 56
     /// Indentation per nesting level, in points.
     public var indentWidth: Float = 14
     /// Elements of an array shown (the rest are counted in the title).
@@ -324,6 +326,9 @@ public final class PropertyGrid: Stack {
     static func title(of field: FieldDescriptor) -> String {
         if let name = field.hints.displayName { return name }
         if !field.name.isEmpty, field.name.allSatisfy(\.isNumber) { return "[\(field.name)]" }
+        // Names like "sRGB" (one lowercase letter, then capitals) stay as written, not "S RGB".
+        let head = Array(field.name.prefix(3))
+        if head.count == 3, head[0].isLowercase, head[1].isUppercase, head[2].isUppercase { return field.name }
         var result = ""
         var previousLower = false
         for character in field.name {
@@ -346,6 +351,13 @@ public final class PropertyGrid: Stack {
         if fillsWidth {
             editor.style.grow = 1
             editor.style.width = 0
+            // In a narrow grid the label column gives way (down to `minLabelWidth`, ellipsized with
+            // its full title as tooltip) before the editor gets too small to show its value.
+            label.style.shrink = 1
+            label.style.minWidth = min(minLabelWidth, label.style.width ?? minLabelWidth)
+            if editor.style.minWidth == 0 {
+                editor.style.minWidth = (editor as? VectorField).map { Float($0.fields.count) * 32 + Float($0.fields.count - 1) * 4 } ?? 72
+            }
         }
         if readOnly { editor.isEnabled = false }
         let row = HStack(spacing: 6, padding: EdgeInsets(left: Float(depth) * indentWidth), name: "row.\(name)", [label, editor])
