@@ -107,14 +107,14 @@ let package = Package(
         .executableTarget(
             name: "Demo",
             dependencies: ["Engine"],
-            resources: [.copy("Shaders")],
+            resources: [.copy("Shaders"), .copy("Models")],
             linkerSettings: windowsLinkerSettings
         ),
         // The in-engine editor: all logic in EditorCore (unit-tested by EditorTests), and a
         // thin executable that runs it (`swift run Editor [scene.json]`).
         .target(name: "EditorCore", dependencies: ["Engine"], linkerSettings: windowsLinkerSettings),
         .executableTarget(name: "Editor", dependencies: ["EditorCore", "Engine"], linkerSettings: windowsLinkerSettings),
-        .testTarget(name: "EngineTests", dependencies: ["Engine", "CZlib"]),
+        .testTarget(name: "EngineTests", dependencies: ["Engine", "CZlib"], resources: [.copy("Resources")]),
         .testTarget(name: "EditorTests", dependencies: ["EditorCore", "Engine"]),
     ]
 )
