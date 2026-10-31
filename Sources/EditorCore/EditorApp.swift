@@ -17,6 +17,24 @@ public struct EditorOptions: Sendable {
     /// relative to `Assets/`: a folder opens it, a file selects it in its folder, and
     /// "file#sub-asset" expands the file and selects that object (`EDITOR_SELECT_ASSET`).
     public var selectAssetPath: String?
+    /// The MCP server's transports (see EditorMCP.swift).
+    public var mcp = MCPOptions()
+
+    /// Which MCP transports to start.
+    public struct MCPOptions: Sendable {
+        /// Serve a client on standard input / output (`--mcp`): the client launched the editor.
+        public var stdio = false
+        /// Serve Streamable HTTP on 127.0.0.1, so clients can attach to the running editor.
+        public var http = false
+        /// The HTTP port (the next free one if it is taken).
+        public var port: UInt16 = 7333
+
+        public init(stdio: Bool = false, http: Bool = false, port: UInt16 = 7333) {
+            self.stdio = stdio
+            self.http = http
+            self.port = port
+        }
+    }
 
     public init(scenePath: String? = nil, projectPath: String? = nil, deterministic: Bool = false, prefsURL: URL? = nil) {
         self.scenePath = scenePath
@@ -25,13 +43,16 @@ public struct EditorOptions: Sendable {
         self.prefsURL = prefsURL
     }
 
-    /// From the environment: deterministic with `ENGINE_SCREENSHOT`, prefs at `EditorPrefsStore.defaultURL`.
+    /// From the environment: deterministic with `ENGINE_SCREENSHOT`, prefs at `EditorPrefsStore.defaultURL`,
+    /// the MCP HTTP transport on unless deterministic or `EDITOR_MCP_HTTP=0` (port `EDITOR_MCP_PORT`).
     public static func fromEnvironment(scenePath: String?, projectPath: String? = nil) -> EditorOptions {
         let environment = ProcessInfo.processInfo.environment
         let deterministic = environment["ENGINE_SCREENSHOT"] != nil
         var options = EditorOptions(scenePath: scenePath, projectPath: projectPath, deterministic: deterministic,
                                     prefsURL: deterministic ? nil : EditorPrefsStore.defaultURL())
         options.selectAssetPath = environment["EDITOR_SELECT_ASSET"]
+        options.mcp.http = !deterministic && environment["EDITOR_MCP_HTTP"] != "0"
+        if let port = environment["EDITOR_MCP_PORT"].flatMap({ UInt16($0) }) { options.mcp.port = port }
         return options
     }
 }
@@ -83,6 +104,8 @@ public final class EditorApp: Game, EditorHost {
     private var prefs = EditorPrefs()
     private var prefsDirty = false
     private var captureRequested = false
+    /// The MCP server, when a transport is on (`EditorOptions.mcp`).
+    public private(set) var mcp: EditorMCP?
 
     public init(options: EditorOptions) {
         self.options = options
@@ -93,6 +116,13 @@ public final class EditorApp: Game, EditorHost {
         }
         session = EditorSession(document: document)
         session.host = self
+        if options.mcp.stdio || options.mcp.http {
+            let mcp = EditorMCP(session: session)
+            mcp.fallbackConfigURL = options.prefsURL?.deletingLastPathComponent().appendingPathComponent("mcp.json")
+            // Before the engine starts printing: stdout belongs to the protocol from here on.
+            if options.mcp.stdio { mcp.startStdio() }
+            self.mcp = mcp
+        }
     }
 
     // MARK: Setup
@@ -150,6 +180,13 @@ public final class EditorApp: Game, EditorHost {
         }
         if let path = options.selectAssetPath { assetBrowser.model.reveal(path) }
         session.log.info("Editor ready. Right-drag flies the camera, Alt-drag or middle-drag orbits, the wheel zooms.")
+        if options.mcp.http, let mcp {
+            do {
+                try mcp.startHTTP(port: options.mcp.port)
+            } catch {
+                session.log.warning("MCP HTTP server unavailable: \(error)")
+            }
+        }
         toolbar.refresh()
     }
 
@@ -274,6 +311,11 @@ public final class EditorApp: Game, EditorHost {
     public func update(engine: Engine, dt: Float) {
         let input = engine.input
         session.log.time = engine.time
+        // Requests from MCP clients run here, between frames, before the UI reads the session.
+        if let mcp {
+            mcp.pump()
+            if mcp.stdioClientDisconnected { engine.quit() }
+        }
 
         // What the UI does with the keyboard, before and after it handles this frame's input.
         func textEditing() -> Bool { ui.focusedWidget?.wantsTextInput == true || input.isTextInputActive }

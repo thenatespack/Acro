@@ -7,51 +7,83 @@ import Foundation
 
 let usage = """
     Usage: Editor [scene.json] [--project <folder>] [--backend metal|vulkan]
+                  [--mcp] [--headless] [--mcp-port <port>] [--mcp-http | --no-mcp-http]
 
     Opens the scene file, or starts with a new scene; --project opens a project (Project.json,
     Assets/, Library/) and imports its assets. Environment: EDITOR_PREFS=<file> moves the
     prefs file (dock layout, last scene); ENGINE_SCREENSHOT=<png> renders a deterministic frame and quits.
+
+    MCP (AI clients drive the editor; see README): the editor serves Streamable HTTP on
+    127.0.0.1:7333 (--mcp-port, EDITOR_MCP_PORT; the next free port if taken) with a bearer token
+    written to <project>/Library/mcp.json; --no-mcp-http or EDITOR_MCP_HTTP=0 turns it off.
+    --mcp serves a client on stdin/stdout instead (`claude mcp add swift-engine -- swift run Editor --mcp`);
+    add --mcp-http to serve HTTP too. --headless runs without a window (needs --mcp or --mcp-http).
     """
 
 var config = EngineConfig(title: "Editor", width: 1440, height: 900, showDebugOverlay: false)
 var scenePath: String?
 var projectPath: String?
+var mcpStdio = false
+var headless = false
+var mcpHTTP: Bool?
+var mcpPort: UInt16?
 var arguments = Array(CommandLine.arguments.dropFirst())
+
+func fail(_ message: String) -> Never {
+    FileHandle.standardError.write(Data((message + "\n").utf8))
+    exit(1)
+}
+
 while !arguments.isEmpty {
     let argument = arguments.removeFirst()
     switch argument {
     case "--backend":
         guard let name = arguments.first, let backend = GraphicsBackend(rawValue: name) else {
-            print("--backend needs one of: \(GraphicsBackend.available.map(\.rawValue).joined(separator: ", "))")
-            exit(1)
+            fail("--backend needs one of: \(GraphicsBackend.available.map(\.rawValue).joined(separator: ", "))")
         }
         arguments.removeFirst()
         config.backend = backend
     case "--project":
-        guard let path = arguments.first else {
-            print("--project needs a folder")
-            exit(1)
-        }
+        guard let path = arguments.first else { fail("--project needs a folder") }
         arguments.removeFirst()
         projectPath = path
+    case "--mcp":
+        mcpStdio = true
+    case "--headless":
+        headless = true
+    case "--mcp-http":
+        mcpHTTP = true
+    case "--no-mcp-http":
+        mcpHTTP = false
+    case "--mcp-port":
+        guard let port = arguments.first.flatMap({ UInt16($0) }) else { fail("--mcp-port needs a port number") }
+        arguments.removeFirst()
+        mcpPort = port
     case "--help", "-h":
         print(usage)
         exit(0)
     default:
-        if argument.hasPrefix("-") {
-            print("Unknown option '\(argument)'\n\n\(usage)")
-            exit(1)
-        }
+        if argument.hasPrefix("-") { fail("Unknown option '\(argument)'\n\n\(usage)") }
         scenePath = argument
     }
 }
 
+var options = EditorOptions.fromEnvironment(scenePath: scenePath, projectPath: projectPath)
+options.mcp.stdio = mcpStdio
+// With stdio the client launched the editor; HTTP only when asked (another editor may hold the port).
+options.mcp.http = mcpHTTP ?? (mcpStdio ? false : options.mcp.http)
+if let mcpPort { options.mcp.port = mcpPort }
+
+if headless {
+    exit(EditorHeadless.run(options: options))
+}
+
 do {
+    // The app first: with --mcp it claims stdout before the engine prints anything.
+    let app = EditorApp(options: options)
     let engine = try Engine(config: config)
-    let app = EditorApp(options: .fromEnvironment(scenePath: scenePath, projectPath: projectPath))
     try engine.run(app)
     app.savePrefs()
 } catch {
-    print("Fatal: \(error)")
-    exit(1)
+    fail("Fatal: \(error)")
 }

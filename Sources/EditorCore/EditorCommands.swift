@@ -56,6 +56,7 @@ public enum SceneNewCommand: EditorCommand {
     public static let id: CommandID = "scene.new"
     public static let title = "New Scene"
     public static let doc = "Replaces the open scene with the starter scene. Clears the undo history; unsaved changes are lost. Not while playing."
+    public static let isDestructive = true
     public static func isAvailable(in session: EditorSession) -> Bool { !session.isPlaying }
     public static func run(_ arguments: NoArguments, in session: EditorSession) throws -> NoResult {
         try session.commands.check(session.newDocument(), title)
@@ -73,6 +74,8 @@ public enum SceneOpenCommand: EditorCommand {
     public static let id: CommandID = "scene.open"
     public static let title = "Open Scene"
     public static let doc = "Replaces the open scene with the scene file at `path` and clears the undo history. Not while playing."
+    public static let isDestructive = true
+    public static let isIdempotent = true
     public static func isAvailable(in session: EditorSession) -> Bool { !session.isPlaying }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> PathResult {
         try session.commands.check(session.open(path: arguments.path), title)
@@ -90,6 +93,8 @@ public enum SceneSaveCommand: EditorCommand {
     public static let id: CommandID = "scene.save"
     public static let title = "Save Scene"
     public static let doc = "Saves the scene to its file, or to `path` when it has never been saved. Not while playing."
+    public static let isDestructive = true
+    public static let isIdempotent = true
     public static func isAvailable(in session: EditorSession) -> Bool { !session.isPlaying }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> PathResult {
         try session.commands.check(session.save(fallbackPath: arguments.path), title)
@@ -106,6 +111,8 @@ public enum SceneSaveAsCommand: EditorCommand {
     public static let id: CommandID = "scene.saveAs"
     public static let title = "Save Scene As"
     public static let doc = "Saves the scene to `path`, which becomes its file. Not while playing."
+    public static let isDestructive = true
+    public static let isIdempotent = true
     public static func isAvailable(in session: EditorSession) -> Bool { !session.isPlaying }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> PathResult {
         try session.commands.check(session.save(as: arguments.path), title)
@@ -120,6 +127,7 @@ public enum EditUndoCommand: EditorCommand {
     public static let title = "Undo"
     public static let doc = "Undoes the last recorded step (a whole command, gizmo drag or inspector gesture)."
     public static func isAvailable(in session: EditorSession) -> Bool { session.undo.canUndo }
+    public static func unavailableReason(in session: EditorSession) -> String? { "nothing to undo" }
     public static func run(_ arguments: NoArguments, in session: EditorSession) throws -> NoResult {
         try session.commands.check(session.performUndo(), title)
         return NoResult()
@@ -131,6 +139,7 @@ public enum EditRedoCommand: EditorCommand {
     public static let title = "Redo"
     public static let doc = "Redoes the last undone step."
     public static func isAvailable(in session: EditorSession) -> Bool { session.undo.canRedo }
+    public static func unavailableReason(in session: EditorSession) -> String? { "nothing to redo" }
     public static func run(_ arguments: NoArguments, in session: EditorSession) throws -> NoResult {
         try session.commands.check(session.performRedo(), title)
         return NoResult()
@@ -143,7 +152,9 @@ public enum PlayStartCommand: EditorCommand {
     public static let id: CommandID = "play.start"
     public static let title = "Play"
     public static let doc = "Snapshots the scene and runs its systems; edits while playing are discarded on stop."
+    public static let isIdempotent = true
     public static func isAvailable(in session: EditorSession) -> Bool { !session.isPlaying }
+    public static func unavailableReason(in session: EditorSession) -> String? { "already playing" }
     public static func run(_ arguments: NoArguments, in session: EditorSession) throws -> NoResult {
         session.play()
         return NoResult()
@@ -154,7 +165,9 @@ public enum PlayStopCommand: EditorCommand {
     public static let id: CommandID = "play.stop"
     public static let title = "Stop"
     public static let doc = "Leaves play mode, restoring the scene as it was when Play was pressed."
+    public static let isIdempotent = true
     public static func isAvailable(in session: EditorSession) -> Bool { session.isPlaying }
+    public static func unavailableReason(in session: EditorSession) -> String? { "not playing" }
     public static func run(_ arguments: NoArguments, in session: EditorSession) throws -> NoResult {
         session.stop()
         return NoResult()
@@ -183,6 +196,7 @@ public enum ToolSetCommand: EditorCommand {
     public static let id: CommandID = "tool.set"
     public static let title = "Select Tool"
     public static let doc = "Picks the viewport gizmo: `tool` is \"move\", \"rotate\" or \"scale\"."
+    public static let isIdempotent = true
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> NoResult {
         session.tool = arguments.tool
         return NoResult()
@@ -201,6 +215,7 @@ public enum ProjectOpenCommand: EditorCommand {
     public static let id: CommandID = "project.open"
     public static let title = "Open Project"
     public static let doc = "Opens the project at `path`, scans its assets and imports what changed (in the background). The scene stays open. Returns the project's root folder."
+    public static let isIdempotent = true
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> PathResult {
         try session.commands.check(session.openProject(path: arguments.path), title)
         return PathResult(path: session.project?.root.path ?? "")
@@ -229,7 +244,9 @@ public enum LayoutResetCommand: EditorCommand {
     public static let id: CommandID = "layout.reset"
     public static let title = "Reset Layout"
     public static let doc = "Restores the default panel layout. Needs the editor window."
+    public static let isIdempotent = true
     public static func isAvailable(in session: EditorSession) -> Bool { session.host != nil }
+    public static func unavailableReason(in session: EditorSession) -> String? { noWindowReason }
     public static func run(_ arguments: NoArguments, in session: EditorSession) throws -> NoResult {
         session.host?.resetLayout()
         return NoResult()
@@ -240,8 +257,12 @@ public enum ViewFrameSelectionCommand: EditorCommand {
     public static let id: CommandID = .focusSelection
     public static let title = "Frame Selection"
     public static let doc = "Moves the viewport camera to frame the selected entities. Needs the editor window."
+    public static let isIdempotent = true
     public static func isAvailable(in session: EditorSession) -> Bool {
         session.host != nil && !session.selection.entities(in: session.world).isEmpty
+    }
+    public static func unavailableReason(in session: EditorSession) -> String? {
+        session.host == nil ? noWindowReason : noSelectionReason
     }
     public static func run(_ arguments: NoArguments, in session: EditorSession) throws -> NoResult {
         session.host?.frameSelection()
@@ -265,6 +286,7 @@ public enum SelectionSetCommand: EditorCommand {
     public static let id: CommandID = "selection.set"
     public static let title = "Select"
     public static let doc = "Selects exactly `entities` (empty clears), with `primary` shown in the inspector."
+    public static let isIdempotent = true
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> NoResult {
         for id in arguments.entities + (arguments.primary.map { [$0] } ?? []) where session.world.entity(for: id) == nil {
             throw UndoError.entityNotFound(id)
@@ -278,6 +300,7 @@ public enum SelectionClearCommand: EditorCommand {
     public static let id: CommandID = .clearSelection
     public static let title = "Clear Selection"
     public static let doc = "Deselects everything."
+    public static let isIdempotent = true
     public static func run(_ arguments: NoArguments, in session: EditorSession) throws -> NoResult {
         session.selection.clear()
         return NoResult()
@@ -317,6 +340,7 @@ public enum EntityDuplicateCommand: EditorCommand {
     public static let doc = "Duplicates the selected entities with their children next to the originals and selects the copies. Returns the copies."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { !session.selection.entities(in: session.world).isEmpty }
+    public static func unavailableReason(in session: EditorSession) -> String? { noSelectionReason }
     public static func run(_ arguments: NoArguments, in session: EditorSession) throws -> EntitiesResult {
         let copies = session.duplicateSelection()
         try session.commands.check(!copies.isEmpty, title)
@@ -335,6 +359,7 @@ public enum EntityDeleteCommand: EditorCommand {
     public static let doc = "Deletes the selected entities with their children. The editor asks for confirmation before running it; the command itself doesn't."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { !session.selection.entities(in: session.world).isEmpty }
+    public static func unavailableReason(in session: EditorSession) -> String? { noSelectionReason }
     public static func run(_ arguments: NoArguments, in session: EditorSession) throws -> Result {
         let count = session.deleteSelection()
         try session.commands.check(count > 0, title)
@@ -355,6 +380,7 @@ public enum EntityRenameCommand: EditorCommand {
     public static let id: CommandID = "entity.rename"
     public static let title = "Rename"
     public static let doc = "Sets the entity's `Name` (adding one if it has none)."
+    public static let isIdempotent = true
     public static let isUndoable = true
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> NoResult {
         try session.commands.check(session.rename(arguments.entity, to: arguments.name), title)
@@ -424,6 +450,7 @@ public enum TransformSetCommand: EditorCommand {
     public static let id: CommandID = "transform.set"
     public static let title = "Set Transform"
     public static let doc = "Sets the local Transform (position, rotation as a quaternion [x, y, z, w], scale) of each entity in `changes`, as one undo step. The gizmo records its drags with it."
+    public static let isIdempotent = true
     public static let isUndoable = true
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> NoResult {
         let world = session.world
@@ -522,6 +549,7 @@ public enum ComponentSetFieldCommand: EditorCommand {
     public static let id: CommandID = "component.setField"
     public static let title = "Set Field"
     public static let doc = "Sets one field of a component by reflection path (what the inspector edits)."
+    public static let isIdempotent = true
     public static let isUndoable = true
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> NoResult {
         let world = session.world
@@ -549,6 +577,11 @@ public enum ComponentSetFieldCommand: EditorCommand {
 @MainActor
 private func hasProject(_ session: EditorSession) -> Bool { session.assets != nil }
 
+// Why commands are unavailable (`EditorCommand.unavailableReason(in:)`).
+private let noProjectReason = "no project is open (run project.open or project.new first)"
+private let noSelectionReason = "nothing is selected (run selection.set first)"
+private let noWindowReason = "it needs the editor window (the editor is running headless)"
+
 public enum AssetImportCommand: EditorCommand {
     public struct Arguments: Codable, Equatable, Sendable {
         /// Files or folders anywhere on disk.
@@ -570,6 +603,7 @@ public enum AssetImportCommand: EditorCommand {
     public static let title = "Import"
     public static let doc = "Copies files or folders into `folder` of the project and imports them in the background (a .gltf brings its .bin and images). Taken names get \" 2\". Not undoable."
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
+    public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
         let urls = arguments.sources.map { EditorSession.url(forPath: $0) }
         let paths = session.importAssets(urls, into: arguments.folder ?? "")
@@ -594,6 +628,7 @@ public enum AssetNewFolderCommand: EditorCommand {
     public static let title = "New Folder"
     public static let doc = "Creates a folder in `folder`. Returns its path."
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
+    public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> PathResult {
         let path = session.createAssetFolder(in: arguments.folder ?? "", name: arguments.name ?? "New Folder")
         return PathResult(path: try session.commands.require(path, title))
@@ -620,6 +655,7 @@ public enum AssetNewMaterialCommand: EditorCommand {
     public static let title = "New Material"
     public static let doc = "Writes a default .material file in `folder`. Returns its asset id and path."
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
+    public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
         let id = try session.commands.require(session.createMaterialAsset(in: arguments.folder ?? "",
                                                                           name: arguments.name ?? "New Material"), title)
@@ -643,6 +679,7 @@ public enum AssetRenameCommand: EditorCommand {
     public static let title = "Rename Asset"
     public static let doc = "Renames a file or folder in place. Asset ids, and so every reference, survive. Returns the new path. Not undoable."
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
+    public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> PathResult {
         PathResult(path: try session.commands.require(session.renameAsset(at: arguments.path, to: arguments.name), title))
     }
@@ -663,6 +700,7 @@ public enum AssetMoveCommand: EditorCommand {
     public static let title = "Move Asset"
     public static let doc = "Moves a file or folder into `folder`, keeping asset ids. Returns the new path. Not undoable."
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
+    public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> PathResult {
         PathResult(path: try session.commands.require(session.moveAsset(at: arguments.path, into: arguments.folder), title))
     }
@@ -677,7 +715,9 @@ public enum AssetDeleteCommand: EditorCommand {
     public static let id: CommandID = "asset.delete"
     public static let title = "Delete Asset"
     public static let doc = "Deletes a file (with its sidecar) or a folder. Not undoable; the editor asks first, the command doesn't."
+    public static let isDestructive = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
+    public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> NoResult {
         try session.commands.check(session.deleteAsset(at: arguments.path), title)
         return NoResult()
@@ -700,6 +740,7 @@ public enum AssetExtractMaterialsCommand: EditorCommand {
     public static let title = "Extract Materials"
     public static let doc = "Writes the model's materials to .material files in \"<model> Materials/\", remaps the model to them and points the scene's renderers at them. The scene edit is one undo step; the files stay."
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
+    public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
         let created = session.extractMaterials(of: arguments.asset)
         try session.commands.check(!created.isEmpty, title)
@@ -721,7 +762,10 @@ public enum AssetApplySettingsCommand: EditorCommand {
     public static let id: CommandID = "asset.applySettings"
     public static let title = "Apply Import Settings"
     public static let doc = "Writes the asset's import settings to its sidecar and reimports it. Not undoable."
+    public static let isDestructive = true
+    public static let isIdempotent = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
+    public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> NoResult {
         try session.commands.check(session.applyImportSettings(arguments.settings, to: arguments.asset), title)
         return NoResult()
@@ -747,6 +791,7 @@ public enum AssetInstantiateCommand: EditorCommand {
     public static let doc = "Places a model, prefab or mesh in the scene at `position`, under `parent` (default: a root), and selects it. Returns the new roots."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
+    public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> EntitiesResult {
         let roots = session.instantiate(AssetItem(arguments.asset), at: arguments.position ?? .zero, parent: arguments.parent)
         try session.commands.check(!roots.isEmpty, title)
@@ -771,8 +816,10 @@ public enum AssetAssignCommand: EditorCommand {
     public static let id: CommandID = "asset.assign"
     public static let title = "Assign Asset"
     public static let doc = "Sets the entity's MeshRenderer mesh or material to the asset (an entity without a MeshRenderer gets one for a mesh)."
+    public static let isIdempotent = true
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
+    public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> NoResult {
         guard let (reference, kind) = session.droppableKind(of: AssetItem(arguments.asset)) else {
             throw CommandError.failed("\(arguments.asset) isn't a mesh or a material")
@@ -808,8 +855,10 @@ public enum MaterialSetCommand: EditorCommand {
     public static let id: CommandID = "material.set"
     public static let title = "Edit Material"
     public static let doc = "Writes `material` to the .material file and reimports it (the viewport updates)."
+    public static let isIdempotent = true
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
+    public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> NoResult {
         guard session.isMaterialFile(arguments.asset) else {
             throw CommandError.failed("\(arguments.asset.description.prefix(8)) isn't a .material file")

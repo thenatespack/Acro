@@ -90,6 +90,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "Engine", targets: ["Engine"]),
+        .library(name: "EngineMCP", targets: ["EngineMCP"]),
         .executable(name: "Demo", targets: ["Demo"]),
         .executable(name: "Editor", targets: ["Editor"]),
     ],
@@ -120,11 +121,15 @@ let package = Package(
             resources: [.copy("Shaders"), .copy("Models")],
             linkerSettings: windowsLinkerSettings
         ),
+        // A Model Context Protocol server (JSON-RPC, stdio and Streamable HTTP transports, JSON
+        // Schemas from Codable types). Foundation only, so games can embed it too.
+        .target(name: "EngineMCP"),
         // The in-engine editor: all logic in EditorCore (unit-tested by EditorTests), and a
         // thin executable that runs it (`swift run Editor [scene.json]`).
-        .target(name: "EditorCore", dependencies: ["Engine"], linkerSettings: windowsLinkerSettings),
+        .target(name: "EditorCore", dependencies: ["Engine", "EngineMCP"], linkerSettings: windowsLinkerSettings),
         .executableTarget(name: "Editor", dependencies: ["EditorCore", "Engine"], linkerSettings: windowsLinkerSettings),
         .testTarget(name: "EngineTests", dependencies: ["Engine", "CZlib"], resources: [.copy("Resources")]),
-        .testTarget(name: "EditorTests", dependencies: ["EditorCore", "Engine"]),
+        .testTarget(name: "EditorTests", dependencies: ["EditorCore", "Engine", "EngineMCP"]),
+        .testTarget(name: "EngineMCPTests", dependencies: ["EngineMCP"]),
     ]
 )
