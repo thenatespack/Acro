@@ -8,11 +8,12 @@ import Foundation
 /// terminal whose UI is drawn into a render target shown on a quad, with the mouse mapped onto
 /// it through a ray hit (click its buttons).
 ///
-/// Esc or Start opens the pause menu (a `MenuStack`): arrows / D-pad / left stick move focus
+/// M or Start opens the pause menu (a `MenuStack`): arrows / D-pad / left stick move focus
 /// (spatially, wrapping), Enter / A activates, Esc / B goes back, Left / Right change sliders and
 /// option selectors. Options switch the theme (dark, light, high contrast, game) and the UI
-/// scale at runtime; "Reset" and "Quit" ask with a `ConfirmDialog`. The scene keeps the
-/// keyboard, so the demo's own keys are off here (Quit leaves the demo). Screenshot runs (or
+/// scale at runtime; "Reset" and "Quit" ask with a `ConfirmDialog`. The scene takes the
+/// keyboard only while the menu or a dialog is open, so the demo's own keys (scene switching,
+/// Esc to quit) work while playing. Screenshot runs (or
 /// `HUD_MENU=1`; `HUD_MENU=0` turns it off) start with the menu open on its options screen, so it is covered.
 final class HUDScene: DemoScene {
     static let name = "hud"
@@ -66,7 +67,7 @@ final class HUDScene: DemoScene {
         panel.clearColor = Vec4(0.012, 0.016, 0.026, 1)
 
         var bindings = InputBindings()
-        bindings.buttons.append(.init("pause", [.key(.escape), .gamepadButton(.start)]))
+        bindings.buttons.append(.init("pause", [.key(.m), .gamepadButton(.start)]))
         actions = InputActions(bindings: bindings)
 
         try sceneRenderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(0.5, 0.52, 0.5, 1), checker: true, specular: 0.1), key: "floor")
@@ -121,7 +122,9 @@ final class HUDScene: DemoScene {
     }
 
     var uiContext: UIContext? { ui }
-    var wantsKeyboard: Bool { true }
+    /// While the menu or a dialog is open, and on the frame the menu closed (so the Esc that
+    /// closed it doesn't also quit the demo).
+    var wantsKeyboard: Bool { isPaused || !ui.overlays.isEmpty || closedMenuThisFrame }
     var lighting: Lighting { Lighting(fogColor: Self.fogColor) }
     var initialView: OrbitView { OrbitView(yaw: 0.25, pitch: 0.42, distance: 24, target: Vec3(1, 2, 0)) }
     var status: String { pauseOverlay.isHidden ? "playing" : "paused: \(menu.top?.name ?? "")" }
@@ -183,7 +186,7 @@ final class HUDScene: DemoScene {
         ammo.fontSize = 34
         hud.add(ammo, at: .bottomRight)
 
-        let hint = IconLabel("Esc / Start  pause", fontSize: 15, name: "hint")
+        let hint = IconLabel("M / Start  pause", fontSize: 15, name: "hint")
         hint.color = UIColor(1, 1, 1, 0.7)
         hud.add(hint, at: .bottomLeft)
         hud.add(Crosshair(), at: .center)
