@@ -83,60 +83,135 @@ public enum AssetObject: Sendable {
     }
 }
 
-/// A `Material` as data: the same parameters, with the texture named by an `AssetReference`
-/// instead of held as a GPU texture. `SceneRenderer` turns it into a `Material` when it is
-/// first used (uploading the texture too). Codable, with every key optional, so it is also the
+/// A `Material` as data: the same parameters, with textures named by `AssetReference`s instead
+/// of held as GPU textures. `SceneRenderer` turns it into a `Material` when it is first used
+/// (uploading the textures too). Codable, with every key optional, so it is also the
 /// `.material` file format (see `MaterialFileImporter`).
+///
+/// Missing keys take the defaults of `init()`, except `shading`: a file without it was written
+/// before PBR existed and loads as `.blinnPhong`, so it keeps its look. Files written now always
+/// contain it. The old key `isTransparent` (true) still reads as `alphaMode` `blend`.
 public struct MaterialAsset: Equatable, Sendable, Codable {
+    public var shading: ShadingModel
     public var baseColor: Vec4
-    /// A `.texture` object: another asset's (`AssetReference(textureID)`) or one from the same
-    /// file (`ImportContext.reference(_:)`).
+    /// The base color texture, a `.texture` object: another asset's (`AssetReference(textureID)`)
+    /// or one from the same file (`ImportContext.reference(_:)`). sRGB.
     public var texture: AssetReference?
     public var filter: SamplerFilter
     public var mipFilter: SamplerMipFilter
     public var addressMode: SamplerAddressMode
     public var uvScale: Vec2
+    public var uvOffset: Vec2
+    public var uvRotation: Float
     public var checker: Bool
+    /// Unlit amount (see `Material.emissive`); the emitted light is `emissiveColor`.
     public var emissive: Float
     public var specular: Float
     public var shininess: Float
+    public var metallic: Float
+    public var roughness: Float
+    /// Linear: roughness in G, metalness in B.
+    public var metallicRoughnessTexture: AssetReference?
+    /// Linear tangent-space normal map.
+    public var normalTexture: AssetReference?
+    public var normalScale: Float
+    /// Linear: occlusion in R.
+    public var occlusionTexture: AssetReference?
+    public var occlusionStrength: Float
+    public var emissiveColor: Vec3
+    /// sRGB.
+    public var emissiveTexture: AssetReference?
+    public var emissiveStrength: Float
+    public var alphaMode: AlphaMode
+    public var alphaCutoff: Float
     public var doubleSided: Bool
-    public var isTransparent: Bool
 
-    public init(baseColor: Vec4 = Vec4(0.8, 0.8, 0.8, 1), texture: AssetReference? = nil, filter: SamplerFilter = .linear,
-                mipFilter: SamplerMipFilter = .linear, addressMode: SamplerAddressMode = .repeat, uvScale: Vec2 = Vec2(1, 1),
-                checker: Bool = false, emissive: Float = 0, specular: Float = 0.35, shininess: Float = 48,
-                doubleSided: Bool = false, isTransparent: Bool = false) {
+    public init(shading: ShadingModel = .pbr, baseColor: Vec4 = Vec4(0.8, 0.8, 0.8, 1), texture: AssetReference? = nil,
+                filter: SamplerFilter = .linear, mipFilter: SamplerMipFilter = .linear, addressMode: SamplerAddressMode = .repeat,
+                uvScale: Vec2 = Vec2(1, 1), uvOffset: Vec2 = .zero, uvRotation: Float = 0, checker: Bool = false,
+                emissive: Float = 0, specular: Float = 0.35, shininess: Float = 48, metallic: Float = 0, roughness: Float = 0.5,
+                metallicRoughnessTexture: AssetReference? = nil, normalTexture: AssetReference? = nil, normalScale: Float = 1,
+                occlusionTexture: AssetReference? = nil, occlusionStrength: Float = 1, emissiveColor: Vec3 = .zero,
+                emissiveTexture: AssetReference? = nil, emissiveStrength: Float = 1, alphaMode: AlphaMode = .opaque,
+                alphaCutoff: Float = 0.5, doubleSided: Bool = false) {
+        self.shading = shading
         self.baseColor = baseColor
         self.texture = texture
         self.filter = filter
         self.mipFilter = mipFilter
         self.addressMode = addressMode
         self.uvScale = uvScale
+        self.uvOffset = uvOffset
+        self.uvRotation = uvRotation
         self.checker = checker
         self.emissive = emissive
         self.specular = specular
         self.shininess = shininess
+        self.metallic = metallic
+        self.roughness = roughness
+        self.metallicRoughnessTexture = metallicRoughnessTexture
+        self.normalTexture = normalTexture
+        self.normalScale = normalScale
+        self.occlusionTexture = occlusionTexture
+        self.occlusionStrength = occlusionStrength
+        self.emissiveColor = emissiveColor
+        self.emissiveTexture = emissiveTexture
+        self.emissiveStrength = emissiveStrength
+        self.alphaMode = alphaMode
+        self.alphaCutoff = alphaCutoff
         self.doubleSided = doubleSided
-        self.isTransparent = isTransparent
     }
 
-    /// The `Material` with `texture` as its GPU texture.
+    /// `alphaMode == .blend`.
+    public var isTransparent: Bool {
+        get { alphaMode == .blend }
+        set { alphaMode = newValue ? .blend : (alphaMode == .blend ? .opaque : alphaMode) }
+    }
+
+    /// Every texture reference with its slot, base color first.
+    public var textureReferences: [(slot: TextureSlot, reference: AssetReference)] {
+        let all: [(TextureSlot, AssetReference?)] = [
+            (.baseColor, texture), (.metallicRoughness, metallicRoughnessTexture), (.normal, normalTexture),
+            (.occlusion, occlusionTexture), (.emissive, emissiveTexture),
+        ]
+        return all.compactMap { slot, reference in reference.map { (slot, $0) } }
+    }
+
+    /// The `Material` with GPU textures from `textures`, called once per texture reference
+    /// (nil draws without that texture).
+    public func material(textures: (AssetReference) throws -> GPUTexture?) rethrows -> Material {
+        func resolve(_ reference: AssetReference?) throws -> GPUTexture? { try reference.flatMap(textures) }
+        return Material(
+            shading: shading, baseColor: baseColor, texture: try resolve(texture),
+            sampler: SamplerDescriptor(filter: filter, mipFilter: mipFilter, addressMode: addressMode),
+            uvScale: uvScale, uvOffset: uvOffset, uvRotation: uvRotation, checker: checker, emissive: emissive,
+            specular: specular, shininess: shininess, metallic: metallic, roughness: roughness,
+            metallicRoughnessTexture: try resolve(metallicRoughnessTexture), normalTexture: try resolve(normalTexture),
+            normalScale: normalScale, occlusionTexture: try resolve(occlusionTexture), occlusionStrength: occlusionStrength,
+            emissiveColor: emissiveColor, emissiveTexture: try resolve(emissiveTexture), emissiveStrength: emissiveStrength,
+            alphaMode: alphaMode, alphaCutoff: alphaCutoff, doubleSided: doubleSided)
+    }
+
+    /// The `Material` with `texture` as its base color texture and no other textures.
     public func material(texture gpuTexture: GPUTexture?) -> Material {
-        Material(baseColor: baseColor, texture: gpuTexture,
-                 sampler: SamplerDescriptor(filter: filter, mipFilter: mipFilter, addressMode: addressMode),
-                 uvScale: uvScale, checker: checker, emissive: emissive, specular: specular, shininess: shininess,
-                 doubleSided: doubleSided, isTransparent: isTransparent)
+        var material = material(textures: { _ in nil })
+        material.texture = gpuTexture
+        return material
     }
 
     private enum CodingKeys: String, CodingKey {
-        case baseColor, texture, filter, mipFilter, addressMode, uvScale, checker, emissive, specular, shininess
+        case shading, baseColor, texture, filter, mipFilter, addressMode, uvScale, uvOffset, uvRotation, checker, emissive
+        case specular, shininess, metallic, roughness, metallicRoughnessTexture, normalTexture, normalScale
+        case occlusionTexture, occlusionStrength, emissiveColor, emissiveTexture, emissiveStrength, alphaMode, alphaCutoff
         case doubleSided, isTransparent
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = MaterialAsset()
+        // Files from before PBR have no `shading` key: keep their Blinn-Phong look.
+        shading = try c.decodeIfPresent(String.self, forKey: .shading).map { $0 == ShadingModel.pbr.rawValue ? .pbr : .blinnPhong }
+            ?? .blinnPhong
         baseColor = try c.decodeIfPresent(Vec4.self, forKey: .baseColor) ?? d.baseColor
         texture = try c.decodeIfPresent(AssetReference.self, forKey: .texture)
         filter = try c.decodeIfPresent(String.self, forKey: .filter).map { $0 == "nearest" ? .nearest : .linear } ?? d.filter
@@ -147,16 +222,35 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
             switch $0 { case "clampToEdge": .clampToEdge; case "mirrorRepeat": .mirrorRepeat; default: .repeat }
         } ?? d.addressMode
         uvScale = try c.decodeIfPresent(Vec2.self, forKey: .uvScale) ?? d.uvScale
+        uvOffset = try c.decodeIfPresent(Vec2.self, forKey: .uvOffset) ?? d.uvOffset
+        uvRotation = try c.decodeIfPresent(Float.self, forKey: .uvRotation) ?? d.uvRotation
         checker = try c.decodeIfPresent(Bool.self, forKey: .checker) ?? d.checker
         emissive = try c.decodeIfPresent(Float.self, forKey: .emissive) ?? d.emissive
         specular = try c.decodeIfPresent(Float.self, forKey: .specular) ?? d.specular
         shininess = try c.decodeIfPresent(Float.self, forKey: .shininess) ?? d.shininess
+        metallic = try c.decodeIfPresent(Float.self, forKey: .metallic) ?? d.metallic
+        roughness = try c.decodeIfPresent(Float.self, forKey: .roughness) ?? d.roughness
+        metallicRoughnessTexture = try c.decodeIfPresent(AssetReference.self, forKey: .metallicRoughnessTexture)
+        normalTexture = try c.decodeIfPresent(AssetReference.self, forKey: .normalTexture)
+        normalScale = try c.decodeIfPresent(Float.self, forKey: .normalScale) ?? d.normalScale
+        occlusionTexture = try c.decodeIfPresent(AssetReference.self, forKey: .occlusionTexture)
+        occlusionStrength = try c.decodeIfPresent(Float.self, forKey: .occlusionStrength) ?? d.occlusionStrength
+        emissiveColor = try c.decodeIfPresent(Vec3.self, forKey: .emissiveColor) ?? d.emissiveColor
+        emissiveTexture = try c.decodeIfPresent(AssetReference.self, forKey: .emissiveTexture)
+        emissiveStrength = try c.decodeIfPresent(Float.self, forKey: .emissiveStrength) ?? d.emissiveStrength
+        if let mode = try c.decodeIfPresent(String.self, forKey: .alphaMode) {
+            alphaMode = AlphaMode(rawValue: mode.uppercased()) ?? d.alphaMode
+        } else {
+            alphaMode = try c.decodeIfPresent(Bool.self, forKey: .isTransparent) == true ? .blend : d.alphaMode
+        }
+        alphaCutoff = try c.decodeIfPresent(Float.self, forKey: .alphaCutoff) ?? d.alphaCutoff
         doubleSided = try c.decodeIfPresent(Bool.self, forKey: .doubleSided) ?? d.doubleSided
-        isTransparent = try c.decodeIfPresent(Bool.self, forKey: .isTransparent) ?? d.isTransparent
     }
 
+    /// Writes every key except unset textures. `alphaMode` is written as "opaque", "mask" or "blend".
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(shading.rawValue, forKey: .shading)
         try c.encode(baseColor, forKey: .baseColor)
         try c.encodeIfPresent(texture, forKey: .texture)
         try c.encode(filter == .nearest ? "nearest" : "linear", forKey: .filter)
@@ -165,12 +259,25 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         let address = switch addressMode { case .repeat: "repeat"; case .clampToEdge: "clampToEdge"; case .mirrorRepeat: "mirrorRepeat" }
         try c.encode(address, forKey: .addressMode)
         try c.encode(uvScale, forKey: .uvScale)
+        try c.encode(uvOffset, forKey: .uvOffset)
+        try c.encode(uvRotation, forKey: .uvRotation)
         try c.encode(checker, forKey: .checker)
         try c.encode(emissive, forKey: .emissive)
         try c.encode(specular, forKey: .specular)
         try c.encode(shininess, forKey: .shininess)
+        try c.encode(metallic, forKey: .metallic)
+        try c.encode(roughness, forKey: .roughness)
+        try c.encodeIfPresent(metallicRoughnessTexture, forKey: .metallicRoughnessTexture)
+        try c.encodeIfPresent(normalTexture, forKey: .normalTexture)
+        try c.encode(normalScale, forKey: .normalScale)
+        try c.encodeIfPresent(occlusionTexture, forKey: .occlusionTexture)
+        try c.encode(occlusionStrength, forKey: .occlusionStrength)
+        try c.encode(emissiveColor, forKey: .emissiveColor)
+        try c.encodeIfPresent(emissiveTexture, forKey: .emissiveTexture)
+        try c.encode(emissiveStrength, forKey: .emissiveStrength)
+        try c.encode(alphaMode.rawValue.lowercased(), forKey: .alphaMode)
+        try c.encode(alphaCutoff, forKey: .alphaCutoff)
         try c.encode(doubleSided, forKey: .doubleSided)
-        try c.encode(isTransparent, forKey: .isTransparent)
     }
 }
 

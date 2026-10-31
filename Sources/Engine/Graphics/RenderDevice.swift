@@ -110,7 +110,8 @@ public struct DepthBias: Sendable {
 public enum PipelineTarget: Sendable {
     /// The main screen pass (swapchain color + depth, multisampled per `RenderDevice.sampleCount`).
     case screen
-    /// A depth-only offscreen pass (e.g. a shadow map). Only the vertex stage runs.
+    /// A depth-only offscreen pass (e.g. a shadow map). Only the vertex stage runs, unless the
+    /// pipeline sets `depthOnlyFragment`.
     case depthOnly
 }
 
@@ -137,6 +138,9 @@ public struct PipelineDescriptor: Sendable {
     /// upscaler is active; otherwise the output is discarded. Pipelines without this flag
     /// leave the attachment at 0 (no motion), as do those with `colorWrites` off. Never blended.
     public var writesMotionVectors: Bool = false
+    /// For `.depthOnly` pipelines: also run the shader's fragment stage. It has no color
+    /// outputs; use it to `discard` (alpha-tested shadow casters). Costs early depth testing.
+    public var depthOnlyFragment: Bool = false
 
     public init(shader: ShaderSource, vertexLayout: VertexLayout, instanceLayout: VertexLayout? = nil) {
         self.shader = shader

@@ -59,7 +59,8 @@ public struct GLTFImporter: AssetImporter {
 
     public var name: String { "gltf" }
     public var fileExtensions: [String] { ["gltf", "glb"] }
-    public var version: Int { 1 }
+    /// 2: PBR materials (every texture slot, metallic-roughness, emissive, alpha mask) and tangents.
+    public var version: Int { 2 }
     public var defaultSettings: Settings { Settings() }
 
     public func importAsset(_ context: inout ImportContext, settings: Settings) throws -> ImportedAsset {
@@ -98,9 +99,8 @@ public struct GLTFImporter: AssetImporter {
 
         var materials: [AssetReference] = []
         for (i, material) in model.materials.enumerated() {
-            let base = material.baseColorTexture
-            let value = material.materialAsset(baseColorTexture: base.flatMap { textures[$0.texture] },
-                                               sampler: base.map { model.textures[$0.texture].sampler })
+            let value = material.materialAsset(textures: { textures[$0.texture] },
+                                               sampler: material.primaryTexture.map { model.textures[$0.texture].sampler })
             let id = namer.id(kind: "material", name: material.name, index: i)
             asset.add(id, name: material.name ?? "Material \(i)", .material(value))
             materials.append(context.reference(id))

@@ -20,7 +20,7 @@ extension SceneRenderer {
                 return true
             case .material:
                 guard let material = assets.material(reference) else { break }
-                try registerMaterial(material.material(texture: try assetTexture(material.texture)), key: key)
+                try registerMaterial(material.material(textures: { try assetTexture($0) }), key: key)
                 assetKeys[key] = assets.revision(of: reference.asset)
                 return true
             case .texture, .prefab:
@@ -65,14 +65,13 @@ extension SceneRenderer {
             // Registering under the same key replaces the GPU data and keeps its id.
             if prep.meshes.contains(key), let geometry = assets.mesh(reference) { _ = try? registerMesh(geometry, key: key) }
             if prep.materials.contains(key), let material = assets.material(reference) {
-                let texture = (try? assetTexture(material.texture)) ?? nil
-                _ = try? registerMaterial(material.material(texture: texture), key: key)
+                _ = try? registerMaterial(material.material(textures: { (try? assetTexture($0)) ?? nil }), key: key)
             }
             assetKeys[key] = assets.revision(of: reference.asset)
         }
     }
 
-    /// The GPU texture for a material's texture reference (uploaded once per revision).
+    /// The GPU texture for one of a material's texture references (uploaded once per revision).
     private func assetTexture(_ reference: AssetReference?) throws -> GPUTexture? {
         guard let reference, let assets else { return nil }
         let key = reference.description

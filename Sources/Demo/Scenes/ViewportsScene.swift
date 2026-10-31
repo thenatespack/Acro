@@ -54,9 +54,9 @@ final class ViewportsScene: DemoScene {
         // Single-sampled (on an MSAA device the pipelines then use their 1x variants), so the
         // scene exercises both kinds of target.
         gameTarget = try RenderTarget(device: renderer.device, width: 480, height: 480, multisampled: false, label: "game")
-        try sceneRenderer.registerMaterial(Material(baseColor: Vec4(0.55, 0.53, 0.5, 1), checker: true, specular: 0.1), key: "floor")
-        try sceneRenderer.registerMaterial(Material(baseColor: Vec4(1, 1, 1, 1), specular: 0.4, shininess: 48), key: "paint")
-        try sceneRenderer.registerMaterial(Material(baseColor: Vec4(1, 0.85, 0.5, 1), emissive: 1), key: "glow")
+        try sceneRenderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(0.55, 0.53, 0.5, 1), checker: true, specular: 0.1), key: "floor")
+        try sceneRenderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(1, 1, 1, 1), specular: 0.4, shininess: 48), key: "paint")
+        try sceneRenderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(1, 0.85, 0.5, 1), emissive: 1), key: "glow")
 
         _ = world.spawn(SceneEnvironment(fogColor: Self.fogColor, fogDensity: 0.006))
         // A fixed shadow square covering the whole set, so both views get shadows from one map.

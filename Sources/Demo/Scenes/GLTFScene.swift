@@ -20,7 +20,7 @@ final class GLTFScene: DemoScene {
 
     init(renderer: Renderer) throws {
         sceneRenderer = try SceneRenderer(device: renderer.device, quality: renderer.quality)
-        try sceneRenderer.registerMaterial(Material(baseColor: Vec4(0.55, 0.53, 0.5, 1), checker: true, specular: 0.1), key: "floor")
+        try sceneRenderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(0.55, 0.53, 0.5, 1), checker: true, specular: 0.1), key: "floor")
 
         let url: URL
         if let path = ProcessInfo.processInfo.environment["DEMO_GLTF"] {

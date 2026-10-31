@@ -34,13 +34,13 @@ final class ECSScene: DemoScene {
         sceneRenderer = try SceneRenderer(device: renderer.device, quality: renderer.quality)
         let tiles = try renderer.device.makeTexture(
             pixels: Self.tilePixels(size: 64), width: 64, height: 64, format: .rgba8Srgb, generateMipmaps: true)
-        try sceneRenderer.registerMaterial(Material(baseColor: Vec4(0.55, 0.53, 0.5, 1), checker: true, specular: 0.1), key: "floor")
-        try sceneRenderer.registerMaterial(Material(baseColor: Vec4(1, 1, 1, 1), specular: 0.05), key: "matte")
-        try sceneRenderer.registerMaterial(Material(baseColor: Vec4(1, 1, 1, 1), specular: 0.8, shininess: 96), key: "glossy")
-        try sceneRenderer.registerMaterial(Material(baseColor: Vec4(1, 1, 1, 1), texture: tiles, uvScale: Vec2(2, 2)), key: "tiles")
-        try sceneRenderer.registerMaterial(Material(baseColor: Vec4(1, 0.85, 0.5, 1), emissive: 1), key: "glow")
+        try sceneRenderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(0.55, 0.53, 0.5, 1), checker: true, specular: 0.1), key: "floor")
+        try sceneRenderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(1, 1, 1, 1), specular: 0.05), key: "matte")
+        try sceneRenderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(1, 1, 1, 1), specular: 0.8, shininess: 96), key: "glossy")
+        try sceneRenderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(1, 1, 1, 1), texture: tiles, uvScale: Vec2(2, 2)), key: "tiles")
+        try sceneRenderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(1, 0.85, 0.5, 1), emissive: 1), key: "glow")
         try sceneRenderer.registerMaterial(
-            Material(baseColor: Vec4(1, 1, 1, 1), specular: 1, shininess: 128, doubleSided: true, isTransparent: true), key: "glass")
+            Material(shading: .blinnPhong, baseColor: Vec4(1, 1, 1, 1), specular: 1, shininess: 128, alphaMode: .blend, doubleSided: true), key: "glass")
 
         cameraEntity = world.spawn(
             Transform.looking(from: Vec3(20, 18, 24), at: Vec3(0, 2, 0)),

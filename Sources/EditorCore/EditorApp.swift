@@ -82,7 +82,7 @@ public final class EditorApp: Game {
 
     public func setup(engine: Engine) throws {
         sceneRenderer = try SceneRenderer(device: engine.device, quality: engine.quality)
-        try sceneRenderer.registerMaterial(Material(baseColor: Vec4(0.6, 0.6, 0.58, 1), checker: true, specular: 0.1),
+        try sceneRenderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(0.6, 0.6, 0.58, 1), checker: true, specular: 0.1),
                                            key: StarterScene.checkerMaterial.key)
         target = try RenderTarget(device: engine.device, width: 640, height: 360, label: "viewport")
         outline = try SelectionOutlineRenderer(device: engine.device)

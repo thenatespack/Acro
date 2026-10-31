@@ -28,6 +28,7 @@ layout(location = 9) in vec4 previous2;
 layout(location = 10) in vec4 previous3;
 layout(location = 11) in vec4 inColor;   // linear rgb, a: opacity
 layout(location = 12) in vec4 inParams;  // x: receives shadows
+layout(location = 13) in vec4 inTangent; // xyz: tangent (increasing U), w: bitangent sign (MeshVertex.tangent)
 
 layout(location = 0) out vec3 vWorldPos;
 layout(location = 1) out vec3 vNormal;
@@ -37,6 +38,7 @@ layout(location = 4) out vec4 vLightClip;
 layout(location = 5) out vec4 vParams;
 layout(location = 6) out vec4 vCurrentClip;   // unjittered, for motion vectors
 layout(location = 7) out vec4 vPreviousClip;
+layout(location = 8) out vec4 vTangent;       // world-space tangent, w: bitangent sign (mirroring included)
 
 void main() {
     mat4 model = mat4(model0, model1, model2, model3);
@@ -61,4 +63,6 @@ void main() {
     vLightClip = frame.lightViewProj * world;
     vCurrentClip = frame.currentViewProj * world;
     vPreviousClip = frame.previousViewProj * previousWorld;
+    // Tangents transform like positions; a mirroring model matrix flips the bitangent.
+    vTangent = vec4(mat3(a, b, c) * inTangent.xyz, inTangent.w * handedness);
 }
