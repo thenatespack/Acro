@@ -17,9 +17,14 @@ cd "$(dirname "$0")/.."
 shaders=()
 while IFS= read -r src; do shaders+=("$src"); done < <(find Sources Tests -type f \( -name '*.vert' -o -name '*.frag' -o -name '*.comp' \) | sort)
 
+# Vendored shader libraries include their own headers by paths relative to their root (e.g. the
+# FidelityFX SDK's "fsr1/ffx_fsr1.h"), so each such root is an include directory.
+includes=()
+while IFS= read -r dir; do includes+=(-I "$dir"); done < <(find Sources Tests -type d -name FidelityFX | sort)
+
 for src in "${shaders[@]}"; do
     echo "glslc $src -> $src.spv"
-    glslc --target-env=vulkan1.1 -O "$src" -o "$src.spv"
+    glslc --target-env=vulkan1.1 -O ${includes[@]+"${includes[@]}"} "$src" -o "$src.spv"
 done
 
 # Build the SPIR-V -> MSL driver (SPIRV-Cross C API; the spirv-cross CLI can't remap our

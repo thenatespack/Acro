@@ -221,13 +221,25 @@ public enum TextureFormat: Sendable, Equatable {
     /// 16-bit float RGBA (8 bytes per texel), linear: HDR images and data that needs range
     /// beyond 0...1. Uploaded as IEEE half floats, little-endian.
     case rgba16Float
+    /// Storage-only formats (`TextureDescriptor.storage`) for compute data: one or two channels,
+    /// sampled like the others (missing channels read as 0, alpha as 1). GLSL format qualifiers
+    /// `r8`, `r16f`, `rg16f`, `r32f`.
+    case r8Unorm, r16Float, rg16Float, r32Float
 
     var isDepth: Bool { self == .depth32Float }
 
-    /// Bytes per texel of a color format (depth formats are never uploaded from the CPU).
+    /// Formats `makeTexture(pixels:...)` / `makeTexture(levels:format:)` accept.
+    var isUploadable: Bool { self == .rgba8Unorm || self == .rgba8Srgb || self == .rgba16Float }
+
+    /// Formats a storage texture can have.
+    static let storageFormats: [TextureFormat] = [.rgba16Float, .rgba8Unorm, .r8Unorm, .r16Float, .rg16Float, .r32Float]
+
+    /// Bytes per texel.
     var bytesPerPixel: Int {
         switch self {
-        case .depth32Float, .rgba8Unorm, .rgba8Srgb: 4
+        case .r8Unorm: 1
+        case .r16Float: 2
+        case .depth32Float, .rgba8Unorm, .rgba8Srgb, .rg16Float, .r32Float: 4
         case .rgba16Float: 8
         }
     }
@@ -238,9 +250,10 @@ public struct TextureDescriptor: Sendable {
     public var height: Int
     public var format: TextureFormat
     /// A storage texture: written (and read) by compute shaders with `ComputePass.setStorageTexture`,
-    /// sampled like any texture with `setTexture(_:index:)`. Formats `.rgba16Float` and
-    /// `.rgba8Unorm`; contents start out undefined. Without it, the format must be `.depth32Float`
-    /// (a depth render target).
+    /// sampled like any texture with `setTexture(_:index:)`. Formats `.rgba16Float`, `.rgba8Unorm`,
+    /// `.r8Unorm`, `.r16Float`, `.rg16Float` and `.r32Float` (`TextureFormat.storageFormats`);
+    /// contents start out undefined. Without it, the format must be `.depth32Float` (a depth
+    /// render target).
     public var storage: Bool
 
     public init(width: Int, height: Int, format: TextureFormat, storage: Bool = false) {
@@ -252,8 +265,8 @@ public struct TextureDescriptor: Sendable {
 
     /// Checks a storage texture's format and size.
     func validateStorage(maxSize: Int) throws {
-        guard format == .rgba16Float || format == .rgba8Unorm else {
-            throw GraphicsError("Storage textures must be .rgba16Float or .rgba8Unorm, not \(format)")
+        guard TextureFormat.storageFormats.contains(format) else {
+            throw GraphicsError("Storage textures must be one of \(TextureFormat.storageFormats), not \(format)")
         }
         guard width > 0, height > 0, width <= maxSize, height <= maxSize else {
             throw GraphicsError("Storage texture of \(width)x\(height) is outside 1...\(maxSize)")
@@ -733,7 +746,7 @@ public struct GraphicsError: Error, CustomStringConvertible {
 /// GPU time of one pass: `depth` (`beginDepthPass`), `scene` (`beginScreenPass`), compute passes
 /// by their label (e.g. `particles`), post-processing
 /// passes by their label (`bloom`, `exposure`, `tonemap`), `upscale`
-/// (an upscaler's first stage: EASU, TAAU or MetalFX), `window` (`beginWindowPass` when
+/// (an upscaler's first stage: EASU, TAAU, FSR 3 or MetalFX), `window` (`beginWindowPass` when
 /// rendering offscreen) or a render target pass's label.
 public struct GPUPassTime: Sendable {
     public var name: String

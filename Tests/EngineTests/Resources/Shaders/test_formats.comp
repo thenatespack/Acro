@@ -1,0 +1,45 @@
+#version 450
+#extension GL_EXT_samplerless_texture_functions : require
+
+// ComputeTests: the one- and two-channel storage formats. Mode 0 writes a known value per texel
+// into an r8, r16f, rg16f and r32f storage texture; mode 1 reads them back with texelFetch (and
+// the r8 one with imageLoad too) and stores what it got in the buffer, six floats per texel.
+
+layout(set = 2, binding = 32, r8) uniform image2D r8Image;
+layout(set = 2, binding = 33, r16f) writeonly uniform image2D r16fImage;
+layout(set = 2, binding = 34, rg16f) writeonly uniform image2D rg16fImage;
+layout(set = 2, binding = 35, r32f) writeonly uniform image2D r32fImage;
+layout(set = 2, binding = 9) uniform texture2D r8Texture;
+layout(set = 2, binding = 10) uniform texture2D r16fTexture;
+layout(set = 2, binding = 11) uniform texture2D rg16fTexture;
+layout(set = 2, binding = 12) uniform texture2D r32fTexture;
+layout(set = 2, binding = 24, std430) buffer Results { float results[]; };
+
+layout(push_constant) uniform PushConstants {
+    uvec2 size;
+    uint mode;
+} pc;
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main()
+{
+    uvec2 p = gl_GlobalInvocationID.xy;
+    if (any(greaterThanEqual(p, pc.size))) return;
+    float i = float(p.y * pc.size.x + p.x);
+    if (pc.mode == 0) {
+        imageStore(r8Image, ivec2(p), vec4(i / 255.0));
+        imageStore(r16fImage, ivec2(p), vec4(i * 0.5));
+        imageStore(rg16fImage, ivec2(p), vec4(-i, i * 0.25, 0.0, 0.0));
+        imageStore(r32fImage, ivec2(p), vec4(i * 1000.0 + 0.125));
+    } else {
+        uint base = (p.y * pc.size.x + p.x) * 6;
+        ivec2 q = ivec2(p);
+        results[base] = texelFetch(r8Texture, q, 0).r;
+        results[base + 1] = texelFetch(r16fTexture, q, 0).r;
+        results[base + 2] = texelFetch(rg16fTexture, q, 0).r;
+        results[base + 3] = texelFetch(rg16fTexture, q, 0).g;
+        results[base + 4] = texelFetch(r32fTexture, q, 0).r;
+        results[base + 5] = imageLoad(r8Image, q).r;
+    }
+}

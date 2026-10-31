@@ -5,7 +5,7 @@ import Foundation
 ///
 /// Controls: 1–9 and 0 (scene 10) switch scenes, ] / [ step to the next / previous scene (wrapping, for
 /// scenes past 10), Tab / Shift-Tab cycle the render resolution, U cycles the
-/// upscaler (bilinear, FSR 1, MetalFX spatial/temporal on Metal, TAAU; the temporal ones only
+/// upscaler (bilinear, FSR 1, MetalFX spatial/temporal on Metal, TAAU, FSR 3; the temporal ones only
 /// without MSAA), V toggles vsync, Space pauses
 /// animation, arrows/WASD or left-drag orbit, Q/E zoom, Esc quits. Scenes add their own
 /// keys (see each scene's doc comment). While a scene's widgets want the pointer or keyboard
@@ -108,7 +108,7 @@ final class DemoGame: Game {
         if input.wasPressed(.space) { paused.toggle() }
         if input.wasPressed(.v) { engine.vsync.toggle() }
         if input.wasPressed(.u) {
-            let upscalers = [Upscaler.bilinear, .fsr1(), .metalFXSpatial, .metalFXTemporal, .taau()].filter { engine.supports($0) }
+            let upscalers = [Upscaler.bilinear, .fsr1(), .metalFXSpatial, .metalFXTemporal, .taau(), .fsr3()].filter { engine.supports($0) }
             let index = upscalers.firstIndex(of: engine.upscaler) ?? 0
             engine.upscaler = upscalers[(index + 1) % upscalers.count]
         }

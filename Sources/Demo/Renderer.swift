@@ -75,11 +75,16 @@ struct ViewCamera {
     /// with `.greater` depth compare and a depth clear of 0.
     var reversedZ = false
 
-    func viewProjection(aspect: Float) -> Mat4 {
-        let projection = reversedZ
+    func projection(aspect: Float) -> Mat4 {
+        reversedZ
             ? Mat4.perspective(fovY: fovY, aspect: aspect, near: far, far: near)
             : Mat4.perspective(fovY: fovY, aspect: aspect, near: near, far: far)
-        return projection * Mat4.lookAt(eye: eye, target: target)
+    }
+
+    var view: Mat4 { Mat4.lookAt(eye: eye, target: target) }
+
+    func viewProjection(aspect: Float) -> Mat4 {
+        projection(aspect: aspect) * view
     }
 }
 
@@ -216,7 +221,8 @@ final class Renderer {
         let previous = previousFrame ?? (viewProj, time)
         previousFrame = (viewProj, time)
         uniforms = SceneUniforms(
-            viewProj: jitter(viewProj),
+            // Jitter the projection itself: upscalers that need it (FSR 3) get it from `Engine.jittered`.
+            viewProj: jitter(camera.projection(aspect: aspect)) * camera.view,
             lightViewProj: lightProjection * lightView,
             lightDir: Vec4(light, lighting.intensity),
             cameraPos: Vec4(camera.eye, time),

@@ -158,6 +158,41 @@ import QuartzCore
         #endif
     }
 
+    /// r8, r16f, rg16f and r32f storage textures: written by one compute pass, read by the next
+    /// (sampled with texelFetch, and r8 also with imageLoad).
+    @Test func singleAndTwoChannelStorageFormatsRoundTrip() throws {
+        try TestDevices.forEachBackend { device, frames in
+            let pipeline = try device.makeComputePipeline(shader: shader(compute: "test_formats"))
+            let size = 12  // texel i holds i / 255 in r8: up to 143 fits
+            let textures = try [TextureFormat.r8Unorm, .r16Float, .rg16Float, .r32Float].map {
+                try device.makeTexture(TextureDescriptor(width: size, height: size, format: $0, storage: true))
+            }
+            #expect(textures.map(\.format) == [.r8Unorm, .r16Float, .rg16Float, .r32Float])
+            let results = try device.makeBuffer(length: size * size * 6 * 4, usage: .storage)
+            var values: [Float] = []
+            try frames.run { frame in
+                for mode: UInt32 in [0, 1] {
+                    frame.computePass(label: "formats") { pass in
+                        pass.setPipeline(pipeline)
+                        for (i, texture) in textures.enumerated() {
+                            pass.setStorageTexture(texture, index: i)
+                            pass.setTexture(texture, index: 1 + i)
+                        }
+                        pass.setStorageBuffer(results, index: 0)
+                        pass.setPushConstants(SIMD4<UInt32>(UInt32(size), UInt32(size), mode, 0))
+                        pass.dispatch(threads: ComputeSize(size, size), of: pipeline)
+                    }
+                }
+                frame.readBack(results) { bytes in values = bytes.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) } }
+            }
+            #expect(values.count == size * size * 6, "\(device.backend)")
+            for i in 0..<min(size * size, values.count / 6) {
+                let f = Float(i), got = Array(values[i * 6..<i * 6 + 6])
+                #expect(got == [f / 255, f * 0.5, -f, f * 0.25, f * 1000 + 0.125, f / 255], "\(device.backend) texel \(i)")
+            }
+        }
+    }
+
     @Test func storageTextureFormatsAreChecked() {
         #expect(throws: GraphicsError.self) {
             try TextureDescriptor(width: 4, height: 4, format: .rgba8Srgb, storage: true).validateStorage(maxSize: 16384)
@@ -165,9 +200,16 @@ import QuartzCore
         #expect(throws: GraphicsError.self) {
             try TextureDescriptor(width: 0, height: 4, format: .rgba16Float, storage: true).validateStorage(maxSize: 16384)
         }
-        #expect(throws: Never.self) {
-            try TextureDescriptor(width: 4, height: 4, format: .rgba8Unorm, storage: true).validateStorage(maxSize: 16384)
+        for format in TextureFormat.storageFormats {
+            #expect(throws: Never.self) {
+                try TextureDescriptor(width: 4, height: 4, format: format, storage: true).validateStorage(maxSize: 16384)
+            }
         }
+        // The storage-only formats can't be uploaded from the CPU.
+        #expect(throws: GraphicsError.self) {
+            try TextureFormat.r16Float.validateUpload(byteCount: 32, width: 4, height: 4, maxSize: 16384)
+        }
+        #expect([TextureFormat.r8Unorm, .r16Float, .rg16Float, .r32Float].map(\.bytesPerPixel) == [1, 2, 4, 4])
     }
 }
 

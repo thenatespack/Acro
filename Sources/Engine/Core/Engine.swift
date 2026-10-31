@@ -22,7 +22,7 @@ public struct EngineConfig: Sendable {
     /// Size the scene renders at (overridable with `ENGINE_RESOLUTION=720p|4k|16k|1920x1080|performance|native…`).
     public var renderResolution: RenderResolution
     /// Scales an offscreen scene into the window (overridable with
-    /// `ENGINE_UPSCALER=bilinear|fsr1|fsr1:<sharpness>|metalfx|metalfx-temporal|taau|taau:<sharpness>`).
+    /// `ENGINE_UPSCALER=bilinear|fsr1|fsr1:<sharpness>|metalfx|metalfx-temporal|taau|taau:<sharpness>|fsr3|fsr3:<sharpness>`).
     /// A temporal upscaler forces MSAA to 1x.
     public var upscaler: Upscaler
     /// Cap the frame rate at the display refresh rate (overridable with `ENGINE_VSYNC=0|1`).
@@ -238,10 +238,13 @@ public final class Engine {
     public private(set) var previousJitter: Vec2 = .zero
 
     /// `projection` (or a view-projection) shifted by this frame's `jitter`. Unchanged without
-    /// temporal upscaling. Compute motion vectors from the unjittered matrices.
+    /// temporal upscaling. Compute motion vectors from the unjittered matrices. The upscaler also
+    /// gets `projection` (`TemporalInputs.projection`; FSR 3 converts depth to distance with it),
+    /// so jitter the main camera's projection last.
     public func jittered(_ projection: Mat4) -> Mat4 {
         let jitter = jitter
         guard jitter != .zero else { return projection }
+        device.temporalInputs.projection = projection
         return projection.jittered(clipOffset: TemporalJitter.clipOffset(jitter, renderSize: renderSize))
     }
 

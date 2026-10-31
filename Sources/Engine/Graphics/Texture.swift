@@ -78,7 +78,7 @@ final class SamplerCache<Sampler: AnyObject> {
 extension TextureFormat {
     /// Checks a texture's size and the byte count of its first level.
     func validateUpload(byteCount: Int, width: Int, height: Int, maxSize: Int) throws {
-        guard !isDepth else { throw GraphicsError("Pixel data needs a color format, not \(self)") }
+        guard isUploadable else { throw GraphicsError("Pixel data needs .rgba8Unorm, .rgba8Srgb or .rgba16Float, not \(self)") }
         guard width > 0, height > 0, width <= maxSize, height <= maxSize else {
             throw GraphicsError("Texture size \(width)x\(height) is outside 1...\(maxSize)")
         }
@@ -110,7 +110,7 @@ extension TextureFormat {
     /// Checks the arguments of `RenderDevice.updateTexture`.
     func validateUpdate(_ region: TextureRegion, mipLevel: Int, byteCount: Int,
                         width: Int, height: Int, mipLevelCount: Int) throws {
-        guard !isDepth else { throw GraphicsError("Depth textures can't be updated from the CPU") }
+        guard isUploadable else { throw GraphicsError("\(self) textures can't be updated from the CPU") }
         guard mipLevel >= 0, mipLevel < mipLevelCount else {
             throw GraphicsError("Mip level \(mipLevel) is outside 0..<\(mipLevelCount)")
         }

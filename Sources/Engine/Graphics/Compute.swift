@@ -66,7 +66,7 @@ public struct ComputePipelineDescriptor: Sendable {
 /// Bindings follow the graphics table (see `ShaderSource`) plus storage resources:
 /// - storage buffer n (`storageBufferIndices`): GLSL `layout(set = 2, binding = 24 + n, std430) buffer`, MSL `[[buffer(20 + n)]]`
 /// - storage texture n (`storageTextureIndices`): GLSL `layout(set = 2, binding = 32 + n, rgba16f) uniform image2D`
-///   (or `rgba8`), MSL `[[texture(8 + n)]]`
+///   (or `rgba8`, `r8`, `r16f`, `rg16f`, `r32f`: the texture's format), MSL `[[texture(8 + n)]]`
 /// - uniform buffers 2...7, textures and samplers 1...7, push constants: as for render passes.
 ///   Sets 0 and 1 (`setUniformData(_:)`, the shadow map) are graphics-only.
 /// Bindings persist across dispatches until replaced; a shader must only use slots the pass has bound.

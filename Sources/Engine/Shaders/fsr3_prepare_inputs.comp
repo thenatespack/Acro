@@ -1,0 +1,6 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// FSR 3.1 prepare-inputs pass for standard depth (near 0); see fsr3_prepare_inputs.glsl.
+#define FFX_FSR3UPSCALER_OPTION_INVERTED_DEPTH 0
+#include "fsr3_prepare_inputs.glsl"

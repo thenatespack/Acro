@@ -1,0 +1,24 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// FSR 3.1 upscaler, pass 2 (SDK: ffx_fsr3upscaler_luma_pyramid_pass): SPD over 64x64 tiles of
+// luma and farthest depth. The SDK reduces to 1x1 for FSR's own auto exposure (frame info),
+// letting the last workgroup to finish (a global atomic counter) do the levels past 5. The
+// engine supplies exposure, so only level 0 is computed (cbSPD.mips = 1): the farthest depth at
+// half resolution that the later passes read. No atomics, no cross-workgroup reads.
+// See fsr3_callbacks.glsl for the bindings and FidelityFX/LICENSE.txt for the license.
+
+#define FSR3UPSCALER_BIND_SRV_CURRENT_LUMA                    9   // texture 1
+#define FSR3UPSCALER_BIND_SRV_FARTHEST_DEPTH                  10  // texture 2
+#define FSR3UPSCALER_BIND_UAV_FARTHEST_DEPTH_MIP1             32  // storage texture 0
+
+#include "fsr3_callbacks.glsl"
+#include "FidelityFX/fsr3upscaler/ffx_fsr3upscaler_common.h"
+#include "FidelityFX/fsr3upscaler/ffx_fsr3upscaler_luma_pyramid.h"
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    ComputeAutoExposure(gl_WorkGroupID, gl_LocalInvocationIndex);
+}
