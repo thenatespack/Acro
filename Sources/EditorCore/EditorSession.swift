@@ -431,8 +431,7 @@ public final class EditorSession {
 
     private func removePlaySystems() {
         if physics != nil {
-            world.removeSystem(named: "physics")
-            world.removeSystem(named: "physics.events")
+            world.removePhysics()
             physics = nil
         }
         world.removeSystem(named: Self.spriteSystem)

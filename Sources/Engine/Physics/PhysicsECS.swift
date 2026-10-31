@@ -46,6 +46,14 @@ extension World {
             physics.applyInterpolation(in: world)
         }
     }
+
+    /// The systems `addPhysics` adds.
+    public static let physicsSystemNames = ["physics.restore", "character", "physics", "physics.events", "physics.interpolate"]
+
+    /// Removes the systems added by `addPhysics` (the components stay).
+    public func removePhysics() {
+        for name in Self.physicsSystemNames { removeSystem(named: name) }
+    }
 }
 
 extension PhysicsWorld {
