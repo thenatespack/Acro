@@ -149,6 +149,9 @@ public struct FieldDescriptor: Equatable, Sendable {
     public var hints: FieldHints
     /// Fields of a structure, elements of an array.
     public var children: [FieldDescriptor]
+    /// The field is an `EntityRef`: an optional `string` holding the target's `EntityID` (nil:
+    /// no target), which editors show as an entity picker.
+    public var isEntityReference = false
 }
 
 extension Component {
@@ -244,6 +247,7 @@ final class ReflectionNode {
     var kind: FieldKind = .unknown
     var value: FieldValue?
     var isOptional = false
+    var isEntityReference = false
     var children: [(key: String, node: ReflectionNode)] = []
     /// For enums: the cases, to encode the one `setField` picks.
     var enumValues: [any Encodable] = []
@@ -261,7 +265,13 @@ final class ReflectionNode {
     }
 
     func fill<T: Encodable>(_ value: T) throws {
-        if let (kind, leaf) = Self.leaf(value) {
+        if let ref = value as? EntityRef {
+            // An optional string holding the id, so "" / null clears it.
+            kind = .string
+            self.value = ref.id.map { .string($0.description) } ?? .null
+            isOptional = true
+            isEntityReference = true
+        } else if let (kind, leaf) = Self.leaf(value) {
             self.kind = kind
             self.value = leaf
         } else if let (names, values) = Self.enumCases(of: T.self) {
@@ -278,6 +288,7 @@ final class ReflectionNode {
     func fillNil<T>(_: T.Type) {
         isOptional = true
         value = .null
+        isEntityReference = T.self == EntityRef.self
         if let kind = Self.leafKind(T.self) {
             self.kind = kind
         } else if let (names, values) = Self.enumCases(of: T.self) {
@@ -324,6 +335,7 @@ final class ReflectionNode {
         case is Entity.Type: .entity
         // Encodes as its text form, so a nil one is a string field that can be set.
         case is AssetReference.Type: .string
+        case is EntityRef.Type: .string
         default: nil
         }
     }
@@ -347,7 +359,8 @@ final class ReflectionNode {
                 name: key, path: childPath, kind: node.kind,
                 value: node.value, isOptional: node.isOptional,
                 hints: Self.hints(for: childPath, in: hints),
-                children: node.childDescriptors(path: childPath, hints: hints))
+                children: node.childDescriptors(path: childPath, hints: hints),
+                isEntityReference: node.isEntityReference)
         }
     }
 

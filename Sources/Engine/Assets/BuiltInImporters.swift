@@ -164,3 +164,38 @@ public struct MaterialFileImporter: AssetImporter {
         return asset
     }
 }
+
+/// Imports `.prefab` files: one entity subtree saved as a scene file (`World.save([root])`, the
+/// same JSON as scenes), written by the editor's Create Prefab and Apply to Prefab
+/// (`AssetDatabase.createPrefab`). One sub-asset, `prefab`, holding the file's data
+/// (`PrefabAsset(scene:)`); the entities are decoded when it is instantiated, on the main actor.
+/// Nested prefab instances inside it are resolved then too (see PrefabInstance.swift).
+public struct PrefabFileImporter: AssetImporter {
+    public typealias Settings = NoImportSettings
+
+    public init() {}
+
+    public var name: String { "prefab" }
+    public var fileExtensions: [String] { ["prefab"] }
+    public var version: Int { 1 }
+
+    public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
+        let data = try context.data()
+        // Only the header is checked here: components need the registry (main actor).
+        struct Header: Decodable {
+            var format: String
+            var version: Int
+            var entities: [Entity]
+            struct Entity: Decodable {}
+        }
+        guard let header = try? AssetJSON.decoder().decode(Header.self, from: data), header.format == SceneFile.format else {
+            throw AssetError.unreadable("not a prefab (scene file)")
+        }
+        guard header.version <= SceneFile.currentVersion else { throw AssetError.unreadable("written by a newer engine") }
+        guard !header.entities.isEmpty else { throw AssetError.unreadable("the prefab has no entities") }
+        var asset = ImportedAsset()
+        asset.add("prefab", name: ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension,
+                  .prefab(PrefabAsset(scene: data)))
+        return asset
+    }
+}

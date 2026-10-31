@@ -49,7 +49,10 @@ import Foundation
 //   one. Loading keeps the uid unless another entity in the world already has it (loading
 //   the same file twice), in which case the new entity gets a fresh one, or when asked to
 //   regenerate them all (`EntityIDPolicy`). Entities without a uid get one if the world
-//   has `assignsEntityIDs`.
+//   has `assignsEntityIDs`. When loaded entities get other ids than the file's, every
+//   `EntityRef` in the file that names one of them is remapped to its new id (see
+//   EntityRef.swift); this needs the ids before the components are decoded, so a file that
+//   contains `"$ref"` is read twice (once for the uids only).
 // - Unknown component names don't fail the load: see `UnresolvedComponents`.
 // - Systems are code and aren't saved; only data is. Neither are world timing and settings.
 // - `version` is bumped on incompatible format changes. Older versions are migrated in
@@ -66,6 +69,9 @@ public enum EntityIDPolicy: Sendable {
     /// Give every loaded entity a new id: for duplicating and instancing, where the copy
     /// must not be mistaken for the original.
     case regenerate
+    /// Give each entity whose file uid is a key the mapped id (when it is free), and every other
+    /// entity a new one: for rebuilding prefab instances, whose entities keep their ids.
+    case mapping([EntityID: EntityID])
 }
 
 /// Errors from saving, loading and editing scenes.
@@ -149,6 +155,16 @@ extension World {
         // then new slots, so predict that.
         let reusable = freeSlots.reversed().map { Entity(index: $0, generation: generations[Int($0)]) }
         let context = SceneDecodingContext(reusable: reusable, nextIndex: UInt32(generations.count))
+        // `EntityRef`s follow their targets to new ids, so those are decided before decoding.
+        var planned: [EntityID?]?
+        if data.range(of: Data("\"\(EntityRef.codingKey)\"".utf8)) != nil {
+            let header = try SceneCoder.decoder().decode(SceneUIDs.self, from: data)
+            let ids = planIDs(header.entities.map(\.uid), policy: policy)
+            for (record, id) in zip(header.entities, ids) {
+                if let old = record.uid, let id, id != old { context.uidRemap[old] = id }
+            }
+            planned = ids
+        }
         let decoder = SceneCoder.decoder()
         decoder.userInfo[.sceneDecoding] = context
         let file = try decoder.decode(SceneFile.self, from: data)
@@ -162,10 +178,9 @@ extension World {
         for (id, entity) in entities.enumerated() {
             precondition(entity == context.entity(id: id), "Scene load: spawn order changed")
         }
-        for (record, entity) in zip(file.entities, entities) {
-            if policy == .keepUnique, let uid = record.uid, setEntityID(uid, for: entity) { continue }
-            // New entity, or its id is taken: it counts as having had one, so it gets one.
-            if assignsEntityIDs || record.uid != nil { ensureID(of: entity) }
+        let ids = planned ?? planIDs(file.entities.map(\.uid), policy: policy)
+        for (entity, id) in zip(entities, ids) {
+            if let id { setEntityID(id, for: entity) }
         }
 
         var roots: [Entity] = []
@@ -194,6 +209,33 @@ extension World {
         }
         propagateTransforms()
         return roots
+    }
+
+    /// The id each entity of a file gets under `policy` (nil: none), in file order, given the
+    /// file's uids. Ids already in the world are never reused.
+    private func planIDs(_ uids: [EntityID?], policy: EntityIDPolicy) -> [EntityID?] {
+        var taken = Set<EntityID>()
+        func fresh() -> EntityID {
+            var id = entityIDGenerator()
+            while idLookup[id] != nil || taken.contains(id) { id = entityIDGenerator() }
+            return id
+        }
+        func free(_ id: EntityID) -> Bool { idLookup[id] == nil && !taken.contains(id) }
+        return uids.map { uid in
+            var id: EntityID?
+            switch policy {
+            case .keepUnique:
+                if let uid, free(uid) { id = uid }
+            case .regenerate:
+                break
+            case .mapping(let map):
+                if let wanted = uid.flatMap({ map[$0] }), free(wanted) { id = wanted }
+            }
+            // New entity, or its id is taken: it counts as having had one, so it gets one.
+            if id == nil, assignsEntityIDs || uid != nil { id = fresh() }
+            if let id { taken.insert(id) }
+            return id
+        }
     }
 
     /// The entities `save` writes, in file order.
@@ -317,6 +359,13 @@ struct SceneFile: Codable {
     }
 }
 
+/// Just the uids of a scene file's entities (read before the components when the file has
+/// `EntityRef`s, see `load`).
+private struct SceneUIDs: Decodable {
+    struct Record: Decodable { var uid: EntityID? }
+    var entities: [Record]
+}
+
 /// Encodes a component existential through its concrete type's `encode(to:)`.
 struct AnyComponent: Encodable {
     let value: any Component
@@ -346,6 +395,8 @@ final class SceneDecodingContext: @unchecked Sendable {
     /// The largest id an entity reference used, checked against the entity count after
     /// decoding (references may point forward, so it can't be checked while decoding).
     var maxReferencedID = -1
+    /// File uid → the id its entity gets, for the entities whose id changed (`EntityRef`s follow).
+    var uidRemap: [EntityID: EntityID] = [:]
 
     @MainActor init(reusable: [Entity], nextIndex: UInt32) {
         self.reusable = reusable

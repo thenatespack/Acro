@@ -17,7 +17,7 @@ public enum BuiltinCommands {
         PlaySetTimeScaleCommand.self, PlayStateCommand.self, ViewGameCameraCommand.self,
         InputInjectCommand.self, InputClearCommand.self, InputStateCommand.self,
         ToolSetCommand.self,
-        ProjectOpenCommand.self, ProjectNewCommand.self,
+        ProjectOpenCommand.self, ProjectNewCommand.self, ProjectCloseCommand.self,
         LayoutResetCommand.self, ViewFrameSelectionCommand.self,
         ViewScreenshotCommand.self, ViewPickCommand.self, SceneRaycastCommand.self,
         SelectionSetCommand.self, SelectionClearCommand.self, SelectionGetCommand.self,
@@ -28,6 +28,10 @@ public enum BuiltinCommands {
         AssetImportCommand.self, AssetNewFolderCommand.self, AssetNewMaterialCommand.self, AssetRenameCommand.self,
         AssetMoveCommand.self, AssetDeleteCommand.self, AssetExtractMaterialsCommand.self, AssetApplySettingsCommand.self,
         AssetInstantiateCommand.self, AssetAssignCommand.self, MaterialSetCommand.self,
+        AssetListCommand.self, AssetGetCommand.self, AssetReimportCommand.self, AssetWaitForImportsCommand.self,
+        AssetSelectCommand.self, MaterialGetCommand.self,
+        PrefabCreateCommand.self, PrefabOverridesCommand.self, PrefabApplyCommand.self, PrefabRevertCommand.self,
+        PrefabUnpackCommand.self,
         LogReadCommand.self, StatsGetCommand.self, DiagnosticsGetCommand.self,
     ]
 }
@@ -733,11 +737,11 @@ public enum TransformSpace: String, Codable, CaseIterable, Sendable {
 
 /// Commands on the open project's files: unavailable without a project.
 @MainActor
-private func hasProject(_ session: EditorSession) -> Bool { session.assets != nil }
+func hasProject(_ session: EditorSession) -> Bool { session.assets != nil }
 
 // Why commands are unavailable (`EditorCommand.unavailableReason(in:)`).
-private let noProjectReason = "no project is open (run project.open or project.new first)"
-private let noSelectionReason = "nothing is selected (run selection.set first)"
+let noProjectReason = "no project is open (run project.open or project.new first)"
+let noSelectionReason = "nothing is selected (run selection.set first)"
 private let noWindowReason = "it needs the editor window (the editor is running headless)"
 
 public enum AssetImportCommand: EditorCommand {
@@ -798,9 +802,12 @@ public enum AssetNewMaterialCommand: EditorCommand {
         public var folder: String?
         /// Default "New Material" (the file gets ".material").
         public var name: String?
-        public init(folder: String? = nil, name: String? = nil) {
+        /// Its parameters (default: a default PBR material).
+        public var material: MaterialAsset?
+        public init(folder: String? = nil, name: String? = nil, material: MaterialAsset? = nil) {
             self.folder = folder
             self.name = name
+            self.material = material
         }
     }
 
@@ -811,12 +818,13 @@ public enum AssetNewMaterialCommand: EditorCommand {
 
     public static let id: CommandID = "asset.newMaterial"
     public static let title = "New Material"
-    public static let doc = "Writes a default .material file in `folder`. Returns its asset id and path."
+    public static let doc = "Writes a .material file in `folder` (default parameters, or `material`). Returns its asset id and path."
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
         let id = try session.commands.require(session.createMaterialAsset(in: arguments.folder ?? "",
-                                                                          name: arguments.name ?? "New Material"), title)
+                                                                          name: arguments.name ?? "New Material",
+                                                                          material: arguments.material ?? MaterialAsset()), title)
         return Result(asset: id, path: session.assets?.path(of: id) ?? "")
     }
 }

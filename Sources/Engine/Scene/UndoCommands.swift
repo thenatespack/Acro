@@ -313,6 +313,41 @@ public struct DespawnCommand: UndoCommand {
     }
 }
 
+/// Replaces an entity's subtree with other scene-file data (one root) in the same place: same
+/// parent and sibling position. Both versions keep the ids in their data, so the entities of a
+/// subtree that is rebuilt with the same ids (a prefab instance reverted to its prefab) stay
+/// the same to every other command. Undo puts the old subtree back.
+public struct ReplaceSubtreeCommand: UndoCommand {
+    public var label: String
+    public let id: EntityID
+    private let before: Data
+    private let after: Data
+    private let parent: EntityID?
+    private let index: Int
+
+    /// Replaces `entity`'s subtree with `data`, whose root has `entity`'s id.
+    public init(_ entity: Entity, with data: Data, in world: World, label: String) throws {
+        id = try world.requireID(of: entity)
+        world.ensureIDs(inSubtreeOf: entity)
+        before = try world.save([entity])
+        after = data
+        parent = world.parent(of: entity).flatMap { world.id(of: $0) }
+        index = world.siblingIndex(of: entity) ?? 0
+        self.label = label
+    }
+
+    public mutating func perform(in world: World) throws { try replace(with: after, in: world) }
+    public mutating func revert(in world: World) throws { try replace(with: before, in: world) }
+
+    private func replace(with data: Data, in world: World) throws {
+        let entity = try world.resolve(id)
+        let parentEntity = try parent.map { try world.resolve($0) }
+        world.despawn(entity)
+        let roots = try world.load(data, under: parentEntity, ids: .keepUnique)
+        for root in roots { world.setParent(root, to: parentEntity, at: index) }
+    }
+}
+
 /// Changes an entity's parent and its position among the siblings. Undo restores the old
 /// parent, the old sibling index and, with `keepWorldTransform`, the old local `Transform`
 /// exactly (redo restores the one it computed, so no round-off accumulates).

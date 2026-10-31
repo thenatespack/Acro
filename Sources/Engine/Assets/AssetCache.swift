@@ -7,7 +7,8 @@ import Foundation
 //   AssetDatabase.json            index: per asset id its path, importer + version, source hash,
 //                                 size, mtime, settings and object list (decides what to reimport)
 //   Artifacts/<id>/import.json    the imported objects: materials and prefabs inline, meshes and
-//                                 textures in binary files next to it (mesh-N.bin, texture-N.bin)
+//                                 textures in binary files next to it (mesh-N.bin, texture-N.bin;
+//                                 a skinned mesh's joint influences follow its indices)
 //   Artifacts/<id>/files/         the importer's own artifacts (ImportContext.artifactsDirectory)
 // ```
 //
@@ -90,6 +91,8 @@ enum AssetArtifacts {
         var file: String?
         var vertexCount: Int?
         var indexCount: Int?
+        /// The mesh's file ends with one `SkinInfluence` per vertex (4 × UInt16 joints, 4 × Float weights).
+        var skinned: Bool?
         var width: Int?
         var height: Int?
         var srgb: Bool?
@@ -112,6 +115,13 @@ enum AssetArtifacts {
                 var data = Data()
                 geometry.vertices.withUnsafeBytes { data.append(contentsOf: $0) }
                 geometry.indices.withUnsafeBytes { data.append(contentsOf: $0) }
+                if let skin = geometry.skin {
+                    for influence in skin {
+                        withUnsafeBytes(of: influence.joints) { data.append(contentsOf: $0) }
+                        withUnsafeBytes(of: influence.weights) { data.append(contentsOf: $0.prefix(16)) }
+                    }
+                    entry.skinned = true
+                }
                 try data.write(to: directory.appendingPathComponent(file))
                 entry.file = file
                 entry.vertexCount = geometry.vertices.count
@@ -141,6 +151,9 @@ enum AssetArtifacts {
             .write(to: directory.appendingPathComponent(manifestName), options: .atomic)
     }
 
+    /// Bytes of one cached `SkinInfluence`: four UInt16 joints, four Float weights.
+    static let influenceBytes = 24
+
     /// The cached import, or nil if it is missing, from another format version or damaged.
     static func read(from directory: URL) -> ImportedAsset? {
         guard let data = FileManager.default.contents(atPath: directory.appendingPathComponent(manifestName).path),
@@ -154,14 +167,24 @@ enum AssetArtifacts {
                 guard let file = entry.file, let vertexCount = entry.vertexCount, let indexCount = entry.indexCount,
                       let bytes = FileManager.default.contents(atPath: directory.appendingPathComponent(file).path) else { return nil }
                 let vertexBytes = vertexCount * MemoryLayout<MeshVertex>.stride
-                guard bytes.count == vertexBytes + indexCount * 4 else { return nil }
+                let indexEnd = vertexBytes + indexCount * 4
+                let skinBytes = entry.skinned == true ? vertexCount * Self.influenceBytes : 0
+                guard bytes.count == indexEnd + skinBytes else { return nil }
                 var vertices = [MeshVertex](repeating: MeshVertex(position: .zero, normal: .zero), count: vertexCount)
                 var indices = [UInt32](repeating: 0, count: indexCount)
+                var skin: [SkinInfluence]?
                 bytes.withUnsafeBytes { raw in
                     vertices.withUnsafeMutableBytes { $0.copyMemory(from: UnsafeRawBufferPointer(rebasing: raw[0..<vertexBytes])) }
-                    indices.withUnsafeMutableBytes { $0.copyMemory(from: UnsafeRawBufferPointer(rebasing: raw[vertexBytes...])) }
+                    indices.withUnsafeMutableBytes { $0.copyMemory(from: UnsafeRawBufferPointer(rebasing: raw[vertexBytes..<indexEnd])) }
+                    guard skinBytes > 0 else { return }
+                    skin = (0..<vertexCount).map { v in
+                        let base = indexEnd + v * Self.influenceBytes
+                        let joints = SIMD4<UInt16>((0..<4).map { raw.loadUnaligned(fromByteOffset: base + $0 * 2, as: UInt16.self) })
+                        let weights = Vec4((0..<4).map { raw.loadUnaligned(fromByteOffset: base + 8 + $0 * 4, as: Float.self) })
+                        return SkinInfluence(joints: joints, weights: weights)
+                    }
                 }
-                value = .mesh(MeshGeometry(vertices: vertices, indices: indices))
+                value = .mesh(MeshGeometry(vertices: vertices, indices: indices, skin: skin))
             case .texture:
                 guard let file = entry.file, let width = entry.width, let height = entry.height,
                       let bytes = FileManager.default.contents(atPath: directory.appendingPathComponent(file).path) else { return nil }

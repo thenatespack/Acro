@@ -5,7 +5,11 @@ import Foundation
 /// `entity.rename`) and id, a reflection-driven `PropertyGrid` whose edits are recorded one undo
 /// step per gesture (`InspectorEditRecorder`, `component.setField`), a remove button per component
 /// (`component.remove`) and "Add Component" (`component.add` with the catalog's default value).
-/// With several entities selected it shows the primary one only.
+/// `EntityRef` fields are dropdowns of the scene's entities (None first). For an entity of a
+/// prefab instance, a prefab section names the prefab (Select shows it in the asset browser)
+/// and lists the overridden components with their fields, each with Revert and Apply
+/// (`prefab.revert` / `prefab.apply`); on the instance's root also Apply All, Revert All and
+/// Unpack. With several entities selected it shows the primary one only.
 /// Dropdown options for asset-key fields in the inspector: `MeshRenderer.mesh` lists the
 /// registered meshes, `MeshRenderer.material` the registered materials and every `TextureHandle`
 /// field (`SceneEnvironment.environmentMap`, found by reflection) "None" and the textures (with
@@ -96,11 +100,10 @@ public final class InspectorPanel {
     public let assetView: AssetInspectorView
     /// Turns asset-key fields into dropdowns of the registered keys (see `AssetChoices`).
     public var assetChoices: AssetChoices? {
-        didSet {
-            grid.stringChoiceTitle = assetChoices.map { choices in { _, _, value in value.isEmpty ? "None" : choices.title(value) } }
-            grid.stringChoices = assetChoices.map { choices in { choices.options(component: $0, path: $1) } }
-        }
+        didSet { installChoices() }
     }
+    /// The prefab section (see the type's notes), above the components.
+    public let prefabView = VStack(spacing: 4, name: "prefabSection")
 
     private let nameField = TextField(placeholder: "Name", name: "entityName")
     private let idLabel = Label("", role: .caption, name: "entityID")
@@ -111,6 +114,11 @@ public final class InspectorPanel {
     private let scroll: ScrollView
     private var shownEntity: Entity?
     private var shownID: EntityID?
+    /// The shown entity has `EntityRef` fields, whose options follow the scene's entities.
+    private var showsEntityRefs = false
+    private var shownEntityCount = -1
+    private var prefabKey: [Int] = []
+    private var shownPrefab: PrefabEntityInfo?
 
     public init(session: EditorSession) {
         self.session = session
@@ -123,7 +131,7 @@ public final class InspectorPanel {
         scroll = ScrollView(grid, name: "inspectorScroll")
 
         grid.appliesEditsToWorld = false
-        grid.componentFilter = { $0 != Name.componentName }
+        grid.componentFilter = { $0 != Name.componentName && $0 != PrefabInstance.componentName }
         grid.labelWidth = 104
         grid.padding = EdgeInsets(top: 0, left: 0, bottom: 0, right: 8)
         grid.entityName = { [unowned session] entity in session.displayName(of: entity) }
@@ -144,7 +152,9 @@ public final class InspectorPanel {
         let header = HStack(spacing: 6, [nameField])
         assetView.view.style.grow = 1
         assetView.view.style.shrink = 1
-        view.addChildren([header, idLabel, subtitle, separator, scroll, addButton, emptyLabel, assetView.view])
+        prefabView.isHidden = true
+        view.addChildren([header, idLabel, subtitle, prefabView, separator, scroll, addButton, emptyLabel, assetView.view])
+        installChoices()
         refresh()
     }
 
@@ -157,7 +167,7 @@ public final class InspectorPanel {
         assetView.show(asset)
         let entity = asset == nil ? session.selection.primaryEntity(in: world) : nil
         if asset != nil {
-            for widget in [nameField, idLabel, subtitle, scroll, addButton, emptyLabel] as [Widget] where !widget.isHidden {
+            for widget in [nameField, idLabel, subtitle, scroll, addButton, emptyLabel, prefabView] as [Widget] where !widget.isHidden {
                 widget.isHidden = true
             }
             if shownEntity != nil {
@@ -173,8 +183,15 @@ public final class InspectorPanel {
             recorder.finishGesture()
             shownEntity = entity
             shownID = entity.flatMap { world.id(of: $0) }
+            showsEntityRefs = entity.map { e in world.components(of: e).contains { Self.hasEntityRefs($0.fields()) } } ?? false
             grid.entity = entity
         }
+        // New or deleted entities change the options of `EntityRef` dropdowns.
+        if showsEntityRefs, world.entityCount != shownEntityCount, recorder.openGesture == nil {
+            shownEntityCount = world.entityCount
+            installChoices()
+        }
+        refreshPrefab()
         let hasEntity = entity != nil
         for widget in [nameField, idLabel, subtitle, scroll, addButton] as [Widget] where widget.isHidden == hasEntity {
             widget.isHidden = !hasEntity
@@ -195,6 +212,106 @@ public final class InspectorPanel {
         if subtitle.text != caption { subtitle.text = caption }
         subtitle.isHidden = caption.isEmpty
         grid.refresh()
+    }
+
+    // MARK: Entity references and asset keys
+
+    private static func hasEntityRefs(_ fields: [FieldDescriptor]) -> Bool {
+        fields.contains { $0.isEntityReference || hasEntityRefs($0.children) }
+    }
+
+    /// Whether `path` of the shown entity's `component` is an `EntityRef`.
+    private func isEntityRef(_ component: String, _ path: String) -> Bool {
+        guard showsEntityRefs, let entity = shownEntity else { return false }
+        return session.world.component(named: component, of: entity)?.field(at: path)?.isEntityReference == true
+    }
+
+    /// Dropdowns for `EntityRef` fields (None, then every entity in hierarchy order, by name) and
+    /// asset keys (`assetChoices`).
+    private func installChoices() {
+        let choices = assetChoices
+        grid.stringChoiceTitle = { [unowned self] component, path, value in
+            if value.isEmpty { return "None" }
+            if isEntityRef(component, path), let id = EntityID(value) {
+                return session.world.entity(for: id).map { session.displayName(of: $0) } ?? "Missing (\(value.prefix(8)))"
+            }
+            return choices?.title(value) ?? value
+        }
+        grid.stringChoices = { [unowned self] component, path in
+            if isEntityRef(component, path) {
+                let world = session.world
+                return [""] + world.roots.flatMap { world.subtreeOrder($0) }.compactMap { world.ensureID(of: $0)?.description }
+            }
+            return choices?.options(component: component, path: path)
+        }
+    }
+
+    // MARK: Prefab section
+
+    /// Rebuilds the prefab section when the entity, the undo history or the assets changed.
+    private func refreshPrefab() {
+        let id = shownID
+        let key = [id?.hashValue ?? 0, session.undo.changeCount, session.assets?.revision ?? -1, session.isPlaying ? 1 : 0,
+                   session.world.entityCount]
+        guard key != prefabKey else { return }
+        prefabKey = key
+        let info = session.isPlaying ? nil : id.flatMap { session.prefabInfo(of: $0) }
+        guard info != shownPrefab || prefabView.children.isEmpty != (info == nil) else { return }
+        shownPrefab = info
+        prefabView.removeAllChildren()
+        prefabView.isHidden = info == nil
+        guard let info, let id, let assets = session.assets else { return }
+
+        let title = Label("Prefab: " + assets.displayName(of: info.link.prefab), role: .caption, name: "prefabName")
+        title.style.grow = 1
+        title.style.shrink = 1
+        title.style.width = 0
+        title.tooltip = info.link.local == nil ? "Added to this instance of the prefab" : "Part of an instance of this prefab"
+        let select = Button("Select", name: "prefabSelect") { [unowned session] in
+            session.run(AssetSelectCommand.self, .init(asset: info.link.prefab))
+        }
+        select.tooltip = "Select the prefab asset in the Assets panel"
+        prefabView.addChild(HStack(spacing: 6, [title, select]))
+
+        if info.isRoot {
+            let rootID = info.root
+            var parts = ["\(info.overrides.count) override\(info.overrides.count == 1 ? "" : "s")"]
+            if info.addedEntities > 0 { parts.append("\(info.addedEntities) added") }
+            let summary = Label(parts.joined(separator: ", "), role: .caption, name: "prefabSummary")
+            summary.style.grow = 1
+            let apply = Button("Apply All", name: "prefabApplyAll") { [unowned session] in
+                session.run(PrefabApplyCommand.self, .init(entity: rootID))
+            }
+            apply.isEnabled = info.canApply && (!info.overrides.isEmpty || info.addedEntities > 0)
+            apply.tooltip = info.canApply ? "Write this instance's changes into the prefab" : "A model's prefab can't be changed"
+            let revert = Button("Revert All", name: "prefabRevertAll") { [unowned session] in
+                session.run(PrefabRevertCommand.self, .init(entity: rootID))
+            }
+            revert.isEnabled = !info.overrides.isEmpty || info.addedEntities > 0
+            revert.tooltip = "Remove every override and added entity"
+            let unpack = Button("Unpack", name: "prefabUnpack") { [unowned session] in
+                session.run(PrefabUnpackCommand.self, .init(entity: rootID))
+            }
+            unpack.tooltip = "Unlink this instance from the prefab"
+            prefabView.addChild(HStack(spacing: 6, [summary, apply, revert, unpack]))
+        }
+        for (component, fields) in info.overriddenComponents {
+            let label = Label("\(component): \(fields.joined(separator: ", "))", role: .secondary, name: "override.\(component)")
+            label.style.grow = 1
+            label.style.shrink = 1
+            label.style.width = 0
+            label.tooltip = "Overridden: \(component) " + fields.joined(separator: ", ")
+            let revert = Button("Revert", name: "revert.\(component)") { [unowned session] in
+                session.run(PrefabRevertCommand.self, .init(entity: id, component: component))
+            }
+            revert.tooltip = "Put \(component) back to the prefab's"
+            let apply = Button("Apply", name: "apply.\(component)") { [unowned session] in
+                session.run(PrefabApplyCommand.self, .init(entity: id, component: component))
+            }
+            apply.isEnabled = info.canApply
+            apply.tooltip = info.canApply ? "Write \(component) into the prefab" : "A model's prefab can't be changed"
+            prefabView.addChild(HStack(spacing: 6, [label, revert, apply]))
+        }
     }
 
     private func commitName(_ text: String) {

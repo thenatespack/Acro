@@ -44,6 +44,8 @@ public struct TextureImporter: AssetImporter {
 ///   instead, so editing it doesn't reimport the model;
 /// - `prefab/<file name>`, the main object: the scene's node tree, laid out like
 ///   `ImportedModel.instantiate` (multi-primitive meshes get one child node per primitive).
+///   Skinned meshes keep their joint influences (`MeshGeometry.skin`) and their nodes a
+///   `PrefabSkin`, so instances get a `Skin` and animate.
 ///
 /// External `.bin` buffers are read relative to the model's folder and recorded as
 /// dependencies (`ImportContext.readDependency`): editing one reimports the model.
@@ -86,7 +88,8 @@ public struct GLTFImporter: AssetImporter {
     public var name: String { "gltf" }
     public var fileExtensions: [String] { ["gltf", "glb"] }
     /// 2: PBR materials (every texture slot, metallic-roughness, emissive, alpha mask) and tangents.
-    public var version: Int { 2 }
+    /// 3: skins (joint influences in the mesh cache, `PrefabSkin` on the prefab's nodes).
+    public var version: Int { 3 }
     public var defaultSettings: Settings { Settings() }
 
     public func importAsset(_ context: inout ImportContext, settings: Settings) throws -> ImportedAsset {
@@ -165,8 +168,20 @@ public struct GLTFImporter: AssetImporter {
             return refs
         }
 
+        // Prefab node numbers (depth first, see `PrefabSkin`) of the glTF nodes, for skins.
+        // A wrapper root (several scene roots) is node 0.
+        var nodeNumbers: [Int: Int] = [:]
+        var nodeCount = model.roots.count == 1 ? 0 : 1
+        func skin(_ index: Int?, _ primitive: ImportedPrimitive) -> PrefabSkin? {
+            guard let index, primitive.geometry.skin != nil else { return nil }
+            // Joints hold glTF node indices until every node is numbered (see `numberJoints`).
+            return PrefabSkin(joints: model.skins[index].joints, inverseBindMatrices: model.skins[index].inverseBindMatrices)
+        }
+
         func node(_ index: Int) -> PrefabNode {
             let source = model.nodes[index]
+            nodeNumbers[index] = nodeCount
+            nodeCount += 1
             var result = PrefabNode(name: source.name ?? "Node \(index)", transform: source.transform)
             if let meshIndex = source.mesh {
                 let mesh = model.meshes[meshIndex]
@@ -175,22 +190,33 @@ public struct GLTFImporter: AssetImporter {
                     if let ref = refs[0] {
                         result.mesh = ref
                         result.material = material(mesh.primitives[0].material)
+                        result.skin = skin(source.skin, mesh.primitives[0])
                     }
                 } else {
                     for (p, primitive) in mesh.primitives.enumerated() {
                         guard let ref = refs[p] else { continue }
                         result.children.append(PrefabNode(name: "\(mesh.name ?? "Mesh \(meshIndex)") [\(p)]",
-                                                          mesh: ref, material: material(primitive.material)))
+                                                          mesh: ref, material: material(primitive.material),
+                                                          skin: skin(source.skin, primitive)))
+                        nodeCount += 1
                     }
                 }
             }
             result.children += source.children.map(node)
             return result
         }
+        func numberJoints(_ node: inout PrefabNode) {
+            if var skin = node.skin {
+                skin.joints = skin.joints.map { nodeNumbers[$0] ?? -1 }
+                node.skin = skin
+            }
+            for i in node.children.indices { numberJoints(&node.children[i]) }
+        }
 
         let stem = ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension
-        let roots = model.roots.map(node)
+        var roots = model.roots.map(node)
         guard !roots.isEmpty else { throw AssetError.unreadable("the scene has no nodes") }
+        for i in roots.indices { numberJoints(&roots[i]) }
         let root = roots.count == 1 ? roots[0] : PrefabNode(name: stem, children: roots)
         let prefab = namer.id(kind: "prefab", name: stem, index: 0)
         asset.add(prefab, name: stem, .prefab(PrefabAsset(roots: [root])))

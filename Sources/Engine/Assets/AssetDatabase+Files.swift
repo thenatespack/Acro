@@ -242,6 +242,35 @@ extension AssetDatabase {
         refresh()
     }
 
+    // MARK: Prefabs
+
+    /// Writes `scene` (`World.save` of one subtree, see `World.prefabData(from:…)`) to a new
+    /// `.prefab` file at `path` and imports it. Returns its id.
+    @discardableResult
+    public func createPrefab(_ scene: Data, at path: String) throws -> AssetID {
+        let path = try Self.validated(path)
+        let url = project.url(forAssetPath: path)
+        if FileManager.default.fileExists(atPath: url.path) { throw AssetFileError.exists(path) }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try scene.write(to: url, options: .atomic)
+        refresh()
+        guard let id = id(forPath: path) else { throw AssetError.noSuchAsset(path) }
+        return id
+    }
+
+    /// Overwrites the `.prefab` asset `id` with `scene` and reimports it.
+    public func writePrefab(_ scene: Data, to id: AssetID) throws {
+        guard let path = path(of: id) else { throw AssetError.noSuchAsset(id.description) }
+        try scene.write(to: project.url(forAssetPath: path), options: .atomic)
+        refresh()
+    }
+
+    /// The contents of the file of asset `id`.
+    public func fileData(of id: AssetID) throws -> Data {
+        guard let path = path(of: id) else { throw AssetError.noSuchAsset(id.description) }
+        return try Data(contentsOf: project.url(forAssetPath: path))
+    }
+
     /// `path` without surrounding slashes, refused when it is empty, leaves `Assets/` or
     /// names a sidecar.
     static func validated(_ path: String) throws -> String {

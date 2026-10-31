@@ -267,11 +267,14 @@ extension EditorSession {
             log.info("Extract Materials: \(record.path) has no materials left to extract")
             return []
         }
+        // The scene's instances are updated below, as one undo step, not rebuilt by the reimport.
+        suspendsPrefabSync = true
         do {
             try assets.setSettings(settings, for: id)
         } catch {
             log.error("Extract Materials: updating \(record.path)'s settings failed: \(error)")
         }
+        suspendsPrefabSync = false
         // The scene's existing instances.
         var edits: [(EntityID, String, String)] = []
         world.query(MeshRenderer.self) { entity, renderer in
@@ -288,6 +291,8 @@ extension EditorSession {
             undo.endGroup()
             changed()
         }
+        // The instances now match the remapped model: that is what they are built from.
+        prefabs.markBuilt(world, database: assets)
         log.info("Extracted \(created.count) material\(created.count == 1 ? "" : "s") from \(record.path) to \(folder)")
         return created
     }
@@ -324,7 +329,8 @@ extension EditorSession {
     }
 
     /// Spawns `item` into the scene as one undo step and selects the new root: a model or prefab
-    /// as its node tree (`World.instantiate`), a mesh as one entity drawing it. The root is
+    /// as a linked instance (`World.instantiatePrefab`; a prefab with several roots as a plain
+    /// copy, `World.instantiate`), a mesh as one entity drawing it. The root is
     /// placed at `position` (in `parent`'s space when a parent is given) and appended to
     /// `parent`'s children (or the roots). Returns the new roots' ids.
     @discardableResult
@@ -334,8 +340,14 @@ extension EditorSession {
         var roots: [Entity] = []
         var title = "Asset"
         if let reference = prefabReference(for: item), let prefab = assets.prefab(reference) {
-            roots = scratch.instantiate(prefab)
-            title = prefab.roots.count == 1 ? prefab.roots[0].name : (assets.path(of: reference.asset) ?? "Prefab")
+            if let template = prefabs.template(for: reference, in: assets),
+               let root = try? scratch.instantiatePrefab(template, reference: reference) {
+                roots = [root]
+                prefabs.didBuild(reference, from: template)
+            } else {
+                roots = scratch.instantiate(prefab)
+            }
+            title = roots.count == 1 ? (scratch.get(Name.self, for: roots[0])?.value ?? "Prefab") : (assets.path(of: reference.asset) ?? "Prefab")
         } else if let (reference, kind) = droppableKind(of: item), kind == .mesh {
             title = assets.record(reference.asset)?.objects.first { $0.id == reference.subAsset }?.name ?? "Mesh"
             roots = [scratch.spawn(Transform(), Name(title), MeshRenderer(mesh: MeshHandle(reference)))]

@@ -198,6 +198,10 @@ public final class EditorApp: Game, EditorHost {
             let sphere = world.roots.flatMap { [$0] + world.children(of: $0) }.first { session.displayName(of: $0) == "Blue Sphere" }
             session.selection.select(sphere.flatMap { world.id(of: $0) })
         }
+        session.onRevealAsset = { [unowned self] path in
+            assetBrowser.model.search = ""
+            assetBrowser.model.reveal(path)
+        }
         if let path = options.selectAssetPath { assetBrowser.model.reveal(path) }
         session.log.info("Editor ready. Right-drag flies the camera, Alt-drag or middle-drag orbits, the wheel zooms.")
         if options.mcp.http, let mcp {
@@ -281,7 +285,12 @@ public final class EditorApp: Game, EditorHost {
             inspector.assetChoices = makeAssetChoices()
         }
         assetBrowser.model.invalidate()
-        guard let project = session.project else { return }
+        guard let project = session.project else {
+            // The project was closed.
+            assetWatcher?.stop()
+            assetWatcher = nil
+            return
+        }
         if assetWatcher?.directory != project.assetsURL {
             assetWatcher?.stop()
             let watcher = FileWatcher(directory: project.assetsURL)
