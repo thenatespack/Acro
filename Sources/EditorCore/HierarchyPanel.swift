@@ -5,6 +5,10 @@ import Engine
 /// `EditorSelection` in both directions (`selection.set`). Rename in place (F2 / double click)
 /// runs `entity.rename`; drag and drop runs `entity.reparent`, which keeps world transforms; the
 /// buttons run `entity.create`, `entity.duplicate` and `entity.delete`, enabled by their availability.
+/// With a project open and an entity selected, the Create menu also has the prefab actions for
+/// the primary selection: Create Prefab (`prefab.create`), and for an entity of a prefab instance
+/// Select Prefab Asset (`asset.select`), Apply All, Revert All and Unpack (`prefab.apply`,
+/// `prefab.revert`, `prefab.unpack`).
 ///
 /// Sync: `sync()` (every frame) compares the world's structure (ids, parents, order, names)
 /// with what the tree shows and rebuilds the nodes only when it differs, e.g. after undo, redo,
@@ -50,7 +54,7 @@ public final class HierarchyPanel {
         duplicateButton = Button("Duplicate", name: "duplicate") { [unowned session] in session.run(EntityDuplicateCommand.self, .init()) }
         deleteButton = Button("Delete", name: "delete")
         let shortcuts = EditorShortcuts()
-        createButton.tooltip = "Create a new entity at the viewport camera's pivot"
+        createButton.tooltip = "Create a new entity at the viewport camera's pivot, or a prefab from the selection"
         duplicateButton.tooltip = shortcuts.tooltip("Duplicate the selection", for: .duplicate)
         deleteButton.tooltip = shortcuts.tooltip("Delete the selection", for: .delete)
         let buttons = HStack(spacing: 6, [createButton, duplicateButton, deleteButton])
@@ -87,6 +91,7 @@ public final class HierarchyPanel {
             let enabled = session.commands.isAvailable(command)
             if button.isEnabled != enabled { button.isEnabled = enabled }
         }
+
         guard force || (!tree.isDragging && tree.renamingNode == nil) else { return }
         let structure = Self.structure(of: session.world, name: session.displayName(of:))
         guard force || structure != shownStructure else { return }
@@ -151,13 +156,32 @@ public final class HierarchyPanel {
         session.run(SelectionSetCommand.self, .init(entities: ids, primary: tree.selectedNode?.userData as? EntityID))
     }
 
+    /// The prefab actions for the primary selection (none without a project or a selection).
+    private func prefabMenuItems() -> [(String, () -> Void)] {
+        guard session.commands.isAvailable(PrefabCreateCommand.id), let entity = session.selection.primaryEntity(in: session.world),
+              let id = session.world.id(of: entity) else { return [] }
+        var items: [(String, () -> Void)] = [
+            ("Create Prefab", { [unowned session] in session.run(PrefabCreateCommand.self, .init(entity: id)) }),
+        ]
+        if let link = session.world.prefabLink(of: entity) {
+            items.append(("Select Prefab Asset", { [unowned session] in session.run(AssetSelectCommand.self, .init(asset: link.prefab)) }))
+            if session.isPrefabFile(link.prefab.asset) {
+                items.append(("Apply All to Prefab", { [unowned session] in session.run(PrefabApplyCommand.self, .init(entity: id)) }))
+            }
+            items.append(("Revert All", { [unowned session] in session.run(PrefabRevertCommand.self, .init(entity: id)) }))
+            items.append(("Unpack Prefab", { [unowned session] in session.run(PrefabUnpackCommand.self, .init(entity: id)) }))
+        }
+        return items
+    }
+
     private func showCreateMenu() {
         guard let context = view.context else { return }
-        let templates = EntityTemplate.allCases
-        let menu = PopupMenu(items: templates.map(\.title), anchor: createButton)
-        menu.onSelect = { [unowned self] index in
-            session.run(EntityCreateCommand.self, .init(template: templates[index], position: spawnPosition()))
+        var items: [(String, () -> Void)] = EntityTemplate.allCases.map { template in
+            (template.title, { [unowned self] in session.run(EntityCreateCommand.self, .init(template: template, position: spawnPosition())) })
         }
+        items += prefabMenuItems()
+        let menu = PopupMenu(items: items.map(\.0), anchor: createButton)
+        menu.onSelect = { index in items[index].1() }
         context.presentOverlay(menu)
     }
 }

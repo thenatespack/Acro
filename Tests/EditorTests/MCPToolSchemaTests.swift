@@ -235,7 +235,7 @@ private enum GreetCommand: EditorCommand {
         #expect(resources == ["editor://scene", "editor://scene/file", "editor://assets", "editor://log", "editor://stats",
                               "editor://diagnostics"])
         let templates = client.call("resources/templates/list")["resourceTemplates"]?.arrayValue?.compactMap { $0["uriTemplate"]?.stringValue }
-        #expect(templates == ["editor://entity/{id}", "editor://log/{level}"])
+        #expect(templates == ["editor://entity/{id}", "editor://asset/{id}", "editor://log/{level}"])
         let scene = try client.resource("editor://scene")
         let names = scene["entities"]?.arrayValue?.compactMap { $0["name"]?.stringValue } ?? []
         #expect(names.contains("Main Camera"))

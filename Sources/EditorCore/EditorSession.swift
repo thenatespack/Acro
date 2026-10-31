@@ -86,6 +86,16 @@ public final class EditorSession {
     }
     /// Called after `inspectedAsset` changed.
     public var onInspectedAssetChange: (() -> Void)?
+    /// Shows an asset in the browser (a path under `Assets/`, `file#sub-asset` for an object;
+    /// the app reveals it). Set by the app; `selectAsset` calls it.
+    public var onRevealAsset: ((String) -> Void)?
+
+    /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
+    public let prefabs = PrefabSync()
+    /// A prefab changed while playing: instances are rebuilt on Stop.
+    var prefabSyncPending = false
+    /// Set while an action updates instances itself (Extract Materials).
+    var suspendsPrefabSync = false
 
     /// Every editor action by id (see EditorCommand.swift). The UI runs these, never the
     /// methods below directly.
@@ -143,7 +153,12 @@ public final class EditorSession {
         EditorComponentCatalog.registerBuiltins()
         ImportSettingsForms.registerBuiltins()
         document.world.addEditorSystems(input: gameInput)
-        document.onReload = { [unowned self] in selection.prune(in: world) }
+        document.onReload = { [unowned self] in
+            selection.prune(in: world)
+            // A scene was opened (or a new one made): its instances follow their prefabs as they are now.
+            prefabs.reset()
+            syncPrefabs(force: true)
+        }
         selection.observe { [unowned self] selection in if !selection.isEmpty { inspectedAsset = nil } }
     }
 
@@ -192,6 +207,7 @@ public final class EditorSession {
             return save(as: fallbackPath)
         }
         guard !refuseWhilePlaying("Save") else { return false }
+        refreshPrefabOverrides()
         do {
             try document.save()
             log.info("Saved \(document.displayName)")
@@ -207,6 +223,7 @@ public final class EditorSession {
     public func save(as path: String) -> Bool {
         guard !refuseWhilePlaying("Save As") else { return false }
         let url = Self.url(forPath: path)
+        refreshPrefabOverrides()
         do {
             try document.save(to: url)
             log.info("Saved \(url.path)")
@@ -253,6 +270,25 @@ public final class EditorSession {
         }
     }
 
+    /// Closes the open project (the scene stays open; asset references in it stay as they are).
+    /// Returns false when no project is open.
+    @discardableResult
+    public func closeProject() -> Bool {
+        guard let assets else {
+            log.warning("Close Project: no project is open")
+            return false
+        }
+        assets.stopWatching()
+        assets.onChange = nil
+        self.assets = nil
+        inspectedAsset = nil
+        prefabs.reset()
+        log.info("Closed project \(assets.project.name)")
+        onAssetsChange?()
+        changed()
+        return true
+    }
+
     /// Feeds file changes under `Assets/` (from a `FileWatcher`) to the database.
     public func assetsChanged(_ changes: [FileChange]) {
         guard let assets, !changes.isEmpty else { return }
@@ -263,6 +299,9 @@ public final class EditorSession {
     }
 
     private func setProject(_ project: Project, verb: String) {
+        assets?.stopWatching()
+        assets?.onChange = nil
+        prefabs.reset()
         let database = AssetDatabase(project: project)
         // Imports run in the background (the viewport draws placeholders until they finish);
         // `ENGINE_SCREENSHOT` runs wait so the picture is complete.
@@ -275,9 +314,12 @@ public final class EditorSession {
         database.onChange = { [unowned self, unowned database] report in
             logReport(report, prefix: nil)
             if report.hasChanges && !database.isLoading && report.imported.count > 0 { log.info("Assets ready: \(report.summary)") }
+            // Prefab instances follow reimported prefabs (and models).
+            if !report.imported.isEmpty || !report.removed.isEmpty { syncPrefabs() }
             onAssetsChange?()
         }
         if ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT"] != nil { database.waitForAll() }
+        syncPrefabs(force: true)
         onAssetsChange?()
         changed()
     }
@@ -367,6 +409,10 @@ public final class EditorSession {
         inputPlayer.clear()
         forwardedInput.removeAll()
         log.info("Stop: scene restored")
+        if prefabSyncPending {
+            prefabSyncPending = false
+            syncPrefabs()
+        }
         changed()
     }
 

@@ -364,12 +364,43 @@ public struct TextureAsset: Sendable {
     }
 }
 
-/// A node hierarchy (a model's scene graph, a prefab): nodes with a name, a local transform,
-/// optionally a mesh and material to draw, and children. Spawn it with `World.instantiate(_:)`.
+/// A prefab: entities to spawn as a unit. Two forms, one type:
+/// - a node tree (`roots`): what model importers produce (a glTF or OBJ file's scene graph),
+///   nodes with a name, a transform, optionally a mesh, material and skin;
+/// - a scene file (`scene`, `World.save` of one subtree): a `.prefab` file, any components.
+///
+/// Spawn either with `World.instantiate(_:under:)` (a plain copy) or, for a copy that stays
+/// linked to its asset and keeps overrides, `World.instantiatePrefab` (see PrefabInstance.swift).
 public struct PrefabAsset: Equatable, Sendable, Codable {
     public var roots: [PrefabNode]
+    /// A `.prefab` file's entities as scene-file data; when set, `roots` is empty.
+    public var scene: Data?
 
-    public init(roots: [PrefabNode]) { self.roots = roots }
+    public init(roots: [PrefabNode]) {
+        self.roots = roots
+        scene = nil
+    }
+
+    /// A prefab holding a scene file (`World.save` of its root).
+    public init(scene: Data) {
+        roots = []
+        self.scene = scene
+    }
+
+    private enum CodingKeys: String, CodingKey { case roots, scene }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        roots = try c.decodeIfPresent([PrefabNode].self, forKey: .roots) ?? []
+        scene = try c.decodeIfPresent(String.self, forKey: .scene).map { Data($0.utf8) }
+    }
+
+    /// The scene, when there is one, as text (it is JSON), so cached imports stay readable.
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(roots, forKey: .roots)
+        try c.encodeIfPresent(scene.map { String(decoding: $0, as: UTF8.self) }, forKey: .scene)
+    }
 }
 
 /// One node of a `PrefabAsset`. A node draws at most one mesh; a source node with several
@@ -379,33 +410,65 @@ public struct PrefabNode: Equatable, Sendable, Codable {
     public var transform: Transform
     public var mesh: AssetReference?
     public var material: AssetReference?
+    /// For a skinned mesh: the joints that pose it (instantiating adds a `Skin`).
+    public var skin: PrefabSkin?
     public var children: [PrefabNode]
 
     public init(name: String, transform: Transform = Transform(), mesh: AssetReference? = nil,
-                material: AssetReference? = nil, children: [PrefabNode] = []) {
+                material: AssetReference? = nil, skin: PrefabSkin? = nil, children: [PrefabNode] = []) {
         self.name = name
         self.transform = transform
         self.mesh = mesh
         self.material = material
+        self.skin = skin
         self.children = children
     }
 }
 
+/// A `PrefabNode`'s skin: its joints as node numbers (the nodes of the whole prefab in depth-first
+/// order, roots first, starting at 0; -1 for a joint outside the prefab, which stays in the
+/// bind pose) and their inverse bind matrices, as in `Skin`.
+public struct PrefabSkin: Equatable, Sendable, Codable {
+    public var joints: [Int]
+    public var inverseBindMatrices: [Mat4]
+
+    public init(joints: [Int], inverseBindMatrices: [Mat4]) {
+        self.joints = joints
+        self.inverseBindMatrices = inverseBindMatrices
+    }
+}
+
 extension World {
-    /// Spawns `prefab`'s nodes as entities (each with `Name` and `Transform`, plus a
-    /// `MeshRenderer` for nodes with a mesh; `.default` material when a node has none) under
-    /// `parent`, keeping the hierarchy. Returns the root entities.
+    /// Spawns a copy of `prefab` under `parent` and returns its root entities. A node tree's
+    /// nodes become entities with `Name` and `Transform`, plus a `MeshRenderer` for nodes with
+    /// a mesh (`.default` material when a node has none) and a `Skin` for skinned ones, keeping
+    /// the hierarchy. A scene-file prefab is loaded with new entity ids (nothing is spawned if it
+    /// doesn't load). The copy isn't linked to the asset; see `instantiatePrefab` for that.
     @discardableResult
     public func instantiate(_ prefab: PrefabAsset, under parent: Entity? = nil) -> [Entity] {
+        if let scene = prefab.scene {
+            guard let roots = try? load(scene, under: parent, ids: .regenerate) else { return [] }
+            return roots
+        }
+        var order: [Entity] = []
+        var skinned: [(Entity, PrefabSkin)] = []
         func spawn(_ node: PrefabNode, parent: Entity?) -> Entity {
             let entity = self.spawn(node.transform, Name(node.name))
+            order.append(entity)
             if let mesh = node.mesh {
                 add(MeshRenderer(mesh: MeshHandle(mesh), material: node.material.map { MaterialHandle($0) } ?? .default), to: entity)
             }
+            if let skin = node.skin { skinned.append((entity, skin)) }
             if let parent { setParent(entity, to: parent) }
             for child in node.children { _ = spawn(child, parent: entity) }
             return entity
         }
-        return prefab.roots.map { spawn($0, parent: parent) }
+        let roots = prefab.roots.map { spawn($0, parent: parent) }
+        // Joints may come after the meshes they pose, so skins are bound once every node exists.
+        for (entity, skin) in skinned {
+            add(Skin(joints: skin.joints.map { order.indices.contains($0) ? order[$0] : .invalid },
+                     inverseBindMatrices: skin.inverseBindMatrices), to: entity)
+        }
+        return roots
     }
 }

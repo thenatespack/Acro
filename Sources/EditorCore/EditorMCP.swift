@@ -33,7 +33,8 @@ import Foundation
 //
 // `editor://scene` (the entity tree, selection, file and play state), `editor://scene/file`
 // (the whole scene file, as `scene.save` would write it), `editor://entity/{id}`,
-// `editor://assets`, `editor://log` (and `editor://log/{level}`: warnings and errors, or only
+// `editor://assets` (and `editor://asset/{id}`: one asset's metadata, as `asset.get` returns it),
+// `editor://log` (and `editor://log/{level}`: warnings and errors, or only
 // errors), `editor://stats` and `editor://diagnostics`; all subscribable (checked for changes
 // five times a second while someone is subscribed).
 // The tool list is announced as changed when commands are registered or a project opens or
@@ -84,7 +85,8 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
         undo step, which edit.undo reverts. Wrap a multi-step change in edit.batch (or edit.beginBatch / \
         edit.endBatch) so it is one undo step named after its intent, rolled back if a step fails. Read the scene \
         with scene.hierarchy, entity.find, entity.get and component.types (or the editor://scene, \
-        editor://entity/{id} and editor://scene/file resources), the project's assets from editor://assets and the \
+        editor://entity/{id} and editor://scene/file resources), the project's assets from asset.list, asset.get, \
+        editor://assets and editor://asset/{id}, and the \
         console with log.read. See it with view.screenshot (viewport, game camera, any camera, window, panel, \
         asset thumbnail) and point at it with view.pick (a pixel of a screenshot) or scene.raycast. Playtest with \
         play.start {paused: true}, input.inject (keys, mouse, text over game time; the KeyboardMover component \
@@ -323,6 +325,8 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
         [
             MCPResourceTemplate(uriTemplate: "editor://entity/{id}", name: "entity", title: "Entity",
                                 description: "One entity: name, parent, children, world transform and every component's fields."),
+            MCPResourceTemplate(uriTemplate: "editor://asset/{id}", name: "asset", title: "Asset",
+                                description: "One asset (by id, or a path under Assets/): importer, kind, load state, import error, objects, import settings and revision (as asset.get returns them)."),
             MCPResourceTemplate(uriTemplate: "editor://log/{level}", name: "log-level", title: "Console (filtered)",
                                 description: "The console's latest entries at a level or above: info, warning or error."),
         ]
@@ -343,6 +347,14 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
             if uri.hasPrefix("editor://log/") {
                 guard let level = LogLevelName(rawValue: String(uri.dropFirst("editor://log/".count))) else { return nil }
                 json = logJSON(level.level)
+                break
+            }
+            let assetPrefix = "editor://asset/"
+            if uri.hasPrefix(assetPrefix) {
+                let key = String(uri.dropFirst(assetPrefix.count)).removingPercentEncoding ?? ""
+                guard let assets = session.assets, let id = AssetID(key) ?? assets.id(forPath: key),
+                      let details = session.assetDetails(id).flatMap({ try? JSON(encoding: $0) }) else { return nil }
+                json = details
                 break
             }
             let prefix = "editor://entity/"
