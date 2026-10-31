@@ -1,0 +1,31 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// Back-to-front sorting, step 2: one sort key per element of the sorted length n: the live
+// slots of the draw list (particle_compact.comp) with their distance's float bits, inverted so
+// far sorts first (positive floats order like their bits), and the slot to break ties, so the
+// order is fully determined. Elements past the live count are padding that sorts last.
+
+#include "particles.glsl"
+
+layout(local_size_x = 256) in;
+
+layout(set = 2, binding = 2, std140) uniform Params {
+    vec4 camera;  // xyz camera position
+} params;
+layout(set = 2, binding = 24, std430) readonly buffer Particles { Particle particles[]; };
+layout(set = 2, binding = 26, std430) readonly buffer DrawList { uint drawList[]; };
+layout(set = 2, binding = 30, std430) readonly buffer Args { uint args[]; };
+layout(set = 2, binding = 31, std430) writeonly buffer Keys { uvec2 keys[]; };
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= args[0]) return;
+    uvec2 key = uvec2(0xFFFFFFFFu);
+    if (i < args[1]) {
+        uint slot = drawList[i];
+        float distance = max(length(particles[slot].position.xyz - params.camera.xyz), 1e-6);
+        key = uvec2(~floatBitsToUint(distance), slot);
+    }
+    keys[i] = key;
+}

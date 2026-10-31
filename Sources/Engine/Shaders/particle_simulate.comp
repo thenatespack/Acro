@@ -3,8 +3,10 @@
 
 // One fixed simulation step of one emitter, one invocation per slot: slots in this step's
 // spawn range get a new particle, then every live particle is integrated (gravity, drag,
-// turbulence, attraction, ground collision) and aged; expired ones die. Each workgroup also
-// writes how many of its slots are alive, for particle_compact.comp.
+// turbulence, attraction), collides (ground plane, up to four analytic planes / spheres /
+// boxes, the scene's depth buffer) and ages; expired ones die. Each workgroup writes how many
+// of its slots are alive, died and collided this step, for particle_compact.comp and
+// particle_events.comp; with RECORD_EVENTS each slot also gets its event flags.
 
 #include "particles.glsl"
 
@@ -12,73 +14,113 @@ layout(local_size_x = 256) in;
 
 layout(set = 2, binding = 2, std140) uniform Params { EmitterParams emitter; };
 layout(set = 2, binding = 24, std430) buffer Particles { Particle particles[]; };
-// [0..3]: draw arguments, then one live count per workgroup.
+// [0..3]: draw arguments, then per workgroup: live counts, deaths this step, collisions this step.
 layout(set = 2, binding = 25, std430) buffer State { uint state[]; };
+// Per slot: bit 0 died this step, bit 1 collided this step (only with RECORD_EVENTS).
+layout(set = 2, binding = 27, std430) writeonly buffer Events { uint eventFlags[]; };
+// The scene's depth (COLLIDE_DEPTH), from a depth prepass (SceneRenderer).
+layout(set = 2, binding = 9) uniform texture2D sceneDepth;
+layout(set = 2, binding = 17) uniform sampler depthSampler;
 
-shared uint groupAlive;
+shared uint groupAlive, groupDied, groupCollided;
 
-const float TAU = 6.28318530718;
+#include "particle_spawn.glsl"
 
 // A smooth, divergence-free-looking swirl field: cheap sines, good enough for flames and smoke.
 vec3 turbulenceField(vec3 p, float t) {
     return vec3(sin(p.y * 1.7 + p.z * 0.9 + t), sin(p.z * 1.3 + p.x * 1.1 + t * 1.21), sin(p.x * 1.5 + p.y * 0.7 + t * 0.83));
 }
 
-Particle spawnParticle(uint spawnIndex) {
-    uint key = pcgHash(spawnIndex ^ pcgHash(emitter.spawn.w));
-    vec3 local = vec3(0.0);
-    vec3 axis = emitter.shape.yzw;
-    uint kind = uint(emitter.shape.x);
-    if (kind == 1u) {  // sphere: uniform in the volume
-        float z = particleRandom(key, 0u) * 2.0 - 1.0, phi = particleRandom(key, 1u) * TAU;
-        vec3 dir = vec3(sqrt(max(1.0 - z * z, 0.0)) * vec2(cos(phi), sin(phi)), z);
-        local = dir * axis.x * pow(particleRandom(key, 2u), 1.0 / 3.0);
-    } else if (kind == 2u) {  // box
-        local = (vec3(particleRandom(key, 0u), particleRandom(key, 1u), particleRandom(key, 2u)) * 2.0 - 1.0) * axis;
-    } else if (kind == 3u) {  // disc in the local XZ plane, optionally gathered into spiral arms
-        float r = axis.x * sqrt(particleRandom(key, 0u));
-        float angle = particleRandom(key, 1u) * TAU;
-        if (emitter.disc.x > 0.0) {
-            // Arms: denser toward the center (radius uniform rather than area-uniform), each arm
-            // a band of the given width that twists with the radius.
-            r = axis.x * particleRandom(key, 0u);
-            float arm = floor(particleRandom(key, 1u) * emitter.disc.x);
-            angle = arm * TAU / emitter.disc.x + emitter.arms.x + r * emitter.disc.y + (particleRandom(key, 3u) - 0.5) * emitter.disc.z;
-        }
-        local = vec3(cos(angle) * r, (particleRandom(key, 2u) - 0.5) * axis.y, sin(angle) * r);
-    }
+// Bounces off a surface with unit normal n: the velocity's normal part reverses × bounce (only
+// when moving into it), the tangential part loses `friction`.
+void reflectVelocity(inout vec3 velocity, vec3 n) {
+    float vn = dot(velocity, n);
+    if (vn >= 0.0) return;
+    vec3 normal = n * vn;
+    velocity = (velocity - normal) * (1.0 - emitter.ground.w) - normal * emitter.ground.z;
+}
 
-    // A direction in the cone of half-angle acos(direction.w) around the emitter's direction.
-    vec3 forward = normalize(emitter.direction.xyz);
-    vec3 helper = abs(forward.y) < 0.99 ? vec3(0, 1, 0) : vec3(1, 0, 0);
-    vec3 side = normalize(cross(helper, forward)), up = cross(forward, side);
-    float cosTheta = mix(emitter.direction.w, 1.0, particleRandom(key, 4u));
-    float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0)), phi = particleRandom(key, 5u) * TAU;
-    vec3 localDirection = forward * cosTheta + (side * cos(phi) + up * sin(phi)) * sinTheta;
-    float speed = mix(emitter.speedLife.x, emitter.speedLife.y, particleRandom(key, 6u));
-    vec3 localVelocity = localDirection * speed;
-    if (emitter.sizeSpin.w != 0.0) {
-        // Orbit around the local Y axis: × the circular speed for the attraction (a spring: v = sqrt(k) r,
-        // so everything circles in the same period), or a plain speed without one.
-        float r = length(local.xz);
-        vec3 tangent = r > 1e-4 ? vec3(-local.z, 0.0, local.x) / r : vec3(0.0);
-        float orbital = emitter.turbulence.w > 0.0 ? sqrt(emitter.turbulence.w) * r : 1.0;
-        localVelocity += tangent * emitter.sizeSpin.w * orbital;
-    }
+// A particle `depth` units inside a surface with unit normal n (moving into it) is pushed out
+// and bounces, as off the ground plane: it ends depth × bounce outside.
+bool collide(inout vec3 position, inout vec3 velocity, vec3 n, float depth) {
+    if (depth <= 0.0 || dot(velocity, n) >= 0.0) return false;
+    position = fma(n, vec3(depth * (1.0 + emitter.ground.z)), position);
+    reflectVelocity(velocity, n);
+    return true;
+}
 
-    Particle p;
-    p.position = vec4((emitter.transform * vec4(local, 1.0)).xyz, 0.0);
-    p.velocity = vec4((emitter.transform * vec4(localVelocity, 0.0)).xyz,
-                      max(mix(emitter.speedLife.z, emitter.speedLife.w, particleRandom(key, 7u)), 1e-3));
-    p.attributes = vec4(mix(emitter.sizeSpin.x, emitter.sizeSpin.y, particleRandom(key, 8u)), particleRandom(key, 9u) * TAU,
-                        (particleRandom(key, 10u) * 2.0 - 1.0) * emitter.sizeSpin.z, particleRandom(key, 11u));
-    return p;
+bool collideAnalytic(inout vec3 position, inout vec3 velocity, uint i) {
+    vec4 a = emitter.colliders[2u * i], b = emitter.colliders[2u * i + 1u];
+    uint kind = uint(a.w) & 3u;
+    bool inside = uint(a.w) >= 4u;
+    vec3 delta = position - a.xyz;
+    if (kind == 0u) return collide(position, velocity, b.xyz, -dot(delta, b.xyz));
+    if (kind == 1u) {
+        float distance = length(delta);
+        vec3 n = distance > 1e-6 ? delta / distance : vec3(0, 1, 0);
+        return inside ? collide(position, velocity, -n, distance - b.x) : collide(position, velocity, n, b.x - distance);
+    }
+    // Box (axis-aligned): outside, pushed out across the face of least penetration; inside,
+    // pushed back across every face it crossed.
+    vec3 penetration = b.xyz - abs(delta);
+    vec3 s = vec3(delta.x < 0.0 ? -1.0 : 1.0, delta.y < 0.0 ? -1.0 : 1.0, delta.z < 0.0 ? -1.0 : 1.0);
+    if (!inside) {
+        if (penetration.x <= 0.0 || penetration.y <= 0.0 || penetration.z <= 0.0) return false;
+        if (penetration.x <= penetration.y && penetration.x <= penetration.z) return collide(position, velocity, vec3(s.x, 0, 0), penetration.x);
+        if (penetration.y <= penetration.z) return collide(position, velocity, vec3(0, s.y, 0), penetration.y);
+        return collide(position, velocity, vec3(0, 0, s.z), penetration.z);
+    }
+    bool hit = collide(position, velocity, vec3(-s.x, 0, 0), -penetration.x);
+    hit = collide(position, velocity, vec3(0, -s.y, 0), -penetration.y) || hit;
+    return collide(position, velocity, vec3(0, 0, -s.z), -penetration.z) || hit;
+}
+
+// The world position the depth texture holds at texel t (clamped to the texture).
+vec3 depthPoint(ivec2 t) {
+    vec2 size = emitter.depthParams.yz;
+    t = clamp(t, ivec2(0), ivec2(size) - 1);
+    float z = texelFetch(sampler2D(sceneDepth, depthSampler), t, 0).r;
+    vec2 ndc = vec2((float(t.x) + 0.5) / size.x * 2.0 - 1.0, 1.0 - (float(t.y) + 0.5) / size.y * 2.0);
+    vec4 world = emitter.inverseViewProj * vec4(ndc, z, 1.0);
+    return world.xyz / world.w;
+}
+
+// Screen-space collision: a particle that moved less than `thickness` behind the surface the
+// depth texture saw is put back on it (along the view ray) and bounces off the surface's
+// normal, rebuilt from the neighboring texels (the smaller difference on each axis, so depth
+// edges don't bend it).
+bool collideDepth(inout vec3 position, inout vec3 velocity) {
+    vec4 clip = emitter.viewProj * vec4(position, 1.0);
+    if (clip.w <= 0.0) return false;
+    vec2 size = emitter.depthParams.yz;
+    vec2 pixel = vec2(clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5) * size;
+    if (pixel.x < 0.0 || pixel.y < 0.0 || pixel.x >= size.x || pixel.y >= size.y) return false;
+    ivec2 texel = ivec2(pixel);
+    float z = texelFetch(sampler2D(sceneDepth, depthSampler), texel, 0).r;
+    float behind = clip.w - emitter.depthLinear.x / (z + emitter.depthLinear.y);
+    if (behind <= 0.0 || behind >= emitter.depthParams.x) return false;
+    vec3 p0 = depthPoint(texel);
+    vec3 ax = depthPoint(texel + ivec2(1, 0)) - p0, bx = p0 - depthPoint(texel - ivec2(1, 0));
+    vec3 ay = depthPoint(texel + ivec2(0, 1)) - p0, by = p0 - depthPoint(texel - ivec2(0, 1));
+    vec3 n = cross(dot(ax, ax) < dot(bx, bx) ? ax : bx, dot(ay, ay) < dot(by, by) ? ay : by);
+    vec3 toCamera = emitter.camera.xyz - position;
+    if (dot(n, n) < 1e-20) n = toCamera;
+    n = normalize(n);
+    if (dot(n, toCamera) < 0.0) n = -n;
+    if (dot(velocity, n) >= 0.0) return false;
+    position = fma(normalize(toCamera), vec3(behind), position);
+    reflectVelocity(velocity, n);
+    return true;
 }
 
 void main() {
     uint slot = gl_GlobalInvocationID.x;
     uint capacity = emitter.info.x;
-    if (gl_LocalInvocationIndex == 0u) groupAlive = 0u;
+    if (gl_LocalInvocationIndex == 0u) {
+        groupAlive = 0u;
+        groupDied = 0u;
+        groupCollided = 0u;
+    }
     barrier();
 
     if (slot < capacity) {
@@ -91,6 +133,7 @@ void main() {
             p = spawnParticle(emitter.spawn.z + offset);
             dt *= (float(emitter.spawn.y - offset) - 0.5) / float(emitter.spawn.y);
         }
+        bool died = false, collided = false;
         if (p.velocity.w > 0.0) {
             // Multiply-adds are explicit fma()s, so their rounding doesn't depend on what the
             // compiler fuses: particles integrated for seconds amplify last-bit differences.
@@ -112,15 +155,30 @@ void main() {
                 position.y = fma(emitter.ground.y - position.y, emitter.ground.z, emitter.ground.y);
                 velocity.y = -velocity.y * emitter.ground.z;
                 velocity.xz *= 1.0 - emitter.ground.w;
+                collided = true;
             }
+            for (uint i = 0u; i < emitter.collision.y; i++) {
+                if (collideAnalytic(position, velocity, i)) collided = true;
+            }
+            if ((emitter.collision.x & COLLIDE_DEPTH) != 0u && collideDepth(position, velocity)) collided = true;
             float age = p.position.w + dt;
+            bool alive = age < p.velocity.w && !(collided && (emitter.collision.x & COLLIDE_KILLS) != 0u);
+            died = !alive;
             p.position = vec4(position, age);
-            p.velocity = vec4(velocity, age < p.velocity.w ? p.velocity.w : 0.0);
+            p.velocity = vec4(velocity, alive ? p.velocity.w : 0.0);
         }
         particles[slot] = p;
+        if ((emitter.collision.x & RECORD_EVENTS) != 0u) eventFlags[slot] = (died ? 1u : 0u) | (collided ? 2u : 0u);
         if (p.velocity.w > 0.0) atomicAdd(groupAlive, 1u);
+        if (died) atomicAdd(groupDied, 1u);
+        if (collided) atomicAdd(groupCollided, 1u);
     }
 
     barrier();
-    if (gl_LocalInvocationIndex == 0u) state[4u + gl_WorkGroupID.x] = groupAlive;
+    if (gl_LocalInvocationIndex == 0u) {
+        uint groups = emitter.info.y;
+        state[4u + gl_WorkGroupID.x] = groupAlive;
+        state[4u + groups + gl_WorkGroupID.x] = groupDied;
+        state[4u + 2u * groups + gl_WorkGroupID.x] = groupCollided;
+    }
 }

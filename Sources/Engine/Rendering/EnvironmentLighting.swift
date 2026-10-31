@@ -369,11 +369,11 @@ final class EnvironmentLighting {
 
     /// Binds the atlas (texture 6), the BRDF table (texture 7) and its sampler (7) for the mesh
     /// shaders, or placeholders when the sky doesn't light the scene.
-    func bindLighting(in pass: RenderPass) {
+    func bindLighting(in pass: RenderPass, stage: ShaderStage = .fragment) {
         let active = lighting.x > 0
-        pass.setTexture(active ? targets?.atlas.texture ?? placeholder : placeholder, index: 6)
-        pass.setTexture(active ? brdfTable ?? placeholder : placeholder, index: 7)
-        pass.setSampler(linearSampler, index: 7)
+        pass.setTexture(active ? targets?.atlas.texture ?? placeholder : placeholder, index: 6, stage: stage)
+        pass.setTexture(active ? brdfTable ?? placeholder : placeholder, index: 7, stage: stage)
+        pass.setSampler(linearSampler, index: 7, stage: stage)
     }
 
     /// Draws the sky where nothing nearer was drawn, for a view with `view` and `projection`

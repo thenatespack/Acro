@@ -1,0 +1,23 @@
+#version 450
+
+// Back-to-front sorting, one bitonic step across blocks (distance j >= 2048 of the merge of
+// width k), in device memory: one compare-exchange per invocation, n / 2 in all.
+
+layout(local_size_x = 256) in;
+
+layout(push_constant) uniform Push {
+    uvec4 merge;  // x merge width k, y distance j
+} push;
+layout(set = 2, binding = 31, std430) buffer Keys { uvec2 keys[]; };
+
+void main() {
+    uint p = gl_GlobalInvocationID.x, j = push.merge.y;
+    uint i = 2u * j * (p / j) + p % j, l = i + j;
+    uvec2 a = keys[i], b = keys[l];
+    bool ascending = (i & push.merge.x) == 0u;
+    bool bBefore = b.x < a.x || (b.x == a.x && b.y < a.y);
+    if (bBefore == ascending) {
+        keys[i] = b;
+        keys[l] = a;
+    }
+}

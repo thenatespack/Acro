@@ -1,0 +1,74 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// Sub-emitters, step 1: gathers a parent emitter's events of one kind this step (deaths or
+// collisions, flagged per slot by particle_simulate.comp) into an event list, in slot order
+// (a stable compaction like particle_compact.comp, so the result never depends on thread
+// timing), and sets up the child emitter's spawns: `count` particles per event into its ring
+// from its GPU-side cursor, with spawn indices from its GPU-side counter, and the workgroups
+// of particle_spawn.comp for dispatchIndirect.
+
+#include "particles.glsl"
+
+layout(local_size_x = 256) in;
+
+layout(push_constant) uniform Push {
+    uvec4 parent;  // x capacity, y workgroups, z event mask (1 death, 2 collision), w offset of the per-workgroup counts in `state`
+    uvec4 child;   // x most events kept, y particles per event, z child capacity
+} push;
+layout(set = 2, binding = 24, std430) readonly buffer Particles { Particle particles[]; };
+layout(set = 2, binding = 25, std430) readonly buffer State { uint state[]; };
+layout(set = 2, binding = 27, std430) readonly buffer Events { uint eventFlags[]; };
+// Two vec4 per event: position, velocity.
+layout(set = 2, binding = 28, std430) writeonly buffer EventList { vec4 events[]; };
+// The child's spawner: [0..2] dispatch arguments, [4] first slot, [5] count, [6] first spawn
+// index, [7] ring cursor, [8] particles spawned so far.
+layout(set = 2, binding = 29, std430) buffer Spawner { uint spawner[]; };
+
+shared uint sums[256];
+
+void main() {
+    uint local = gl_LocalInvocationIndex, group = gl_WorkGroupID.x;
+    uint slot = gl_GlobalInvocationID.x;
+
+    // How many events the earlier workgroups hold.
+    uint before = 0u;
+    for (uint g = local; g < group; g += 256u) before += state[push.parent.w + g];
+    sums[local] = before;
+    barrier();
+    for (uint stride = 128u; stride > 0u; stride >>= 1) {
+        if (local < stride) sums[local] += sums[local + stride];
+        barrier();
+    }
+    uint base = sums[0];
+    barrier();
+
+    uint matched = slot < push.parent.x && (eventFlags[slot] & push.parent.z) != 0u ? 1u : 0u;
+    sums[local] = matched;
+    barrier();
+    for (uint stride = 1u; stride < 256u; stride <<= 1) {
+        uint add = local >= stride ? sums[local - stride] : 0u;
+        barrier();
+        sums[local] += add;
+        barrier();
+    }
+    uint index = base + sums[local] - 1u;
+    if (matched == 1u && index < push.child.x) {
+        Particle p = particles[slot];
+        events[2u * index] = vec4(p.position.xyz, 0.0);
+        events[2u * index + 1u] = vec4(p.velocity.xyz, 0.0);
+    }
+    if (group == push.parent.y - 1u && local == 255u) {
+        uint total = min(base + sums[local], push.child.x);
+        uint count = min(total * push.child.y, push.child.z);
+        uint cursor = spawner[7];
+        spawner[0] = (count + 255u) / 256u;
+        spawner[1] = 1u;
+        spawner[2] = 1u;
+        spawner[4] = cursor;
+        spawner[5] = count;
+        spawner[6] = spawner[8];
+        spawner[7] = (cursor + count) % push.child.z;
+        spawner[8] += count;
+    }
+}

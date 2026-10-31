@@ -1,7 +1,7 @@
 // Generated from particle.vert by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
-// spirv-fnv1a64: a3781f0a01d7fe6b
-// glsl-fnv1a64: 5ec8cf158eeef8db
+// spirv-fnv1a64: bf25164f2de3afaa
+// glsl-fnv1a64: 79f4205eb434eb36
 
 #pragma clang diagnostic ignored "-Wmissing-prototypes"
 #pragma clang diagnostic ignored "-Wmissing-braces"
@@ -49,7 +49,14 @@ struct spvUnsafeArray
     }
 };
 
-struct _24
+// Implementation of the GLSL mod() function, which is slightly different than Metal fmod()
+template<typename Tx, typename Ty>
+inline Tx mod(Tx x, Ty y)
+{
+    return x - y * floor(x / y);
+}
+
+struct _31
 {
     float4x4 _m0;
     float4 _m1;
@@ -59,119 +66,176 @@ struct _24
     float4 _m5;
     float4 _m6;
     float4 _m7;
+    float4 _m8;
+    float4 _m9;
+    float4 _m10;
 };
 
-struct _160
+struct _190
 {
     float4 _m0;
     float4 _m1;
     float4 _m2;
 };
 
-struct _162
+struct _192
 {
-    _160 _m0[1];
+    _190 _m0[1];
 };
 
-struct _166
+struct _196
 {
     uint _m0[1];
 };
 
-constant spvUnsafeArray<float2, 6> _194 = spvUnsafeArray<float2, 6>({ float2(-1.0), float2(1.0, -1.0), float2(1.0), float2(-1.0), float2(1.0), float2(-1.0, 1.0) });
+constant spvUnsafeArray<float2, 6> _222 = spvUnsafeArray<float2, 6>({ float2(-1.0), float2(1.0, -1.0), float2(1.0), float2(-1.0), float2(1.0), float2(-1.0, 1.0) });
 
 struct vertex_main_out
 {
-    float2 m_371 [[user(locn0)]];
-    float4 m_374 [[user(locn1)]];
+    float2 m_399 [[user(locn0)]];
+    float4 m_402 [[user(locn1)]];
+    float4 m_404 [[user(locn2)]];
+    float m_407 [[user(locn3)]];
     float4 gl_Position [[position]];
 };
 
-vertex vertex_main_out vertex_main(constant _24& _26 [[buffer(2)]], const device _162& _164 [[buffer(20)]], const device _166& _168 [[buffer(21)]], uint gl_InstanceIndex [[instance_id]], uint gl_VertexIndex [[vertex_id]])
+vertex vertex_main_out vertex_main(constant _31& _33 [[buffer(2)]], const device _192& _194 [[buffer(20)]], const device _196& _198 [[buffer(21)]], uint gl_InstanceIndex [[instance_id]], uint gl_VertexIndex [[vertex_id]])
 {
     vertex_main_out out = {};
-    float _209 = fast::clamp(_164._m0[_168._m0[int(gl_InstanceIndex)]]._m0.w / fast::max(_164._m0[_168._m0[int(gl_InstanceIndex)]]._m1.w, 9.9999997473787516355514526367188e-06), 0.0, 1.0);
-    int _404 = int(_26._m7.y);
-    float _537;
-    _537 = _26._m4.x;
-    float _538;
-    for (int _534 = 1; _534 < 4; _534++, _537 = _538)
+    float _237 = fast::clamp(_194._m0[_198._m0[int(gl_InstanceIndex)]]._m0.w / fast::max(_194._m0[_198._m0[int(gl_InstanceIndex)]]._m1.w, 9.9999997473787516355514526367188e-06), 0.0, 1.0);
+    int _546 = int(_33._m7.y);
+    float _729;
+    _729 = _33._m4.x;
+    float _730;
+    for (int _726 = 1; _726 < 4; _726++, _729 = _730)
     {
-        if (_534 >= _404)
+        if (_726 >= _546)
         {
             break;
         }
-        int _418 = _534 - 1;
-        if (_209 > _26._m5[_418])
+        int _560 = _726 - 1;
+        if (_237 > _33._m5[_560])
         {
-            _538 = mix(_26._m4[_418], _26._m4[_534], fast::clamp((_209 - _26._m5[_418]) / fast::max(_26._m5[_534] - _26._m5[_418], 9.9999997473787516355514526367188e-06), 0.0, 1.0));
+            _730 = mix(_33._m4[_560], _33._m4[_726], fast::clamp((_237 - _33._m5[_560]) / fast::max(_33._m5[_726] - _33._m5[_560], 9.9999997473787516355514526367188e-06), 0.0, 1.0));
         }
         else
         {
-            _538 = _537;
+            _730 = _729;
         }
     }
-    float3 _228 = _26._m1.xyz - _164._m0[_168._m0[int(gl_InstanceIndex)]]._m0.xyz;
-    float3 _539;
-    if (dot(_228, _228) > 1.0000000133514319600180897396058e-10)
+    float3 _256 = _33._m1.xyz - _194._m0[_198._m0[int(gl_InstanceIndex)]]._m0.xyz;
+    float3 _731;
+    if (dot(_256, _256) > 1.0000000133514319600180897396058e-10)
     {
-        _539 = fast::normalize(_228);
+        _731 = fast::normalize(_256);
     }
     else
     {
-        _539 = float3(0.0, 0.0, 1.0);
+        _731 = float3(0.0, 0.0, 1.0);
     }
-    float3 _257 = fast::normalize(cross(select(float3(1.0, 0.0, 0.0), float3(0.0, 1.0, 0.0), bool3(abs(_539.y) < 0.999000012874603271484375)), _539));
-    float3 _261 = cross(_539, _257);
-    float3 _274 = _164._m0[_168._m0[int(gl_InstanceIndex)]]._m1.xyz - (_539 * dot(_164._m0[_168._m0[int(gl_InstanceIndex)]]._m1.xyz, _539));
-    float _277 = length(_274);
-    float3 _540;
-    float3 _541;
-    float _542;
-    if ((_26._m6.x > 0.0) && (_277 > 9.9999997473787516355514526367188e-05))
+    float3 _285 = fast::normalize(cross(select(float3(1.0, 0.0, 0.0), float3(0.0, 1.0, 0.0), bool3(abs(_731.y) < 0.999000012874603271484375)), _731));
+    float3 _289 = cross(_731, _285);
+    float3 _302 = _194._m0[_198._m0[int(gl_InstanceIndex)]]._m1.xyz - (_731 * dot(_194._m0[_198._m0[int(gl_InstanceIndex)]]._m1.xyz, _731));
+    float _305 = length(_302);
+    float3 _732;
+    float3 _733;
+    float _734;
+    if ((_33._m6.x > 0.0) && (_305 > 9.9999997473787516355514526367188e-05))
     {
-        float3 _291 = _274 / float3(_277);
-        _542 = 1.0 + (_26._m6.x * _277);
-        _541 = _291;
-        _540 = cross(_291, _539);
+        float3 _319 = _302 / float3(_305);
+        _734 = 1.0 + (_33._m6.x * _305);
+        _733 = _319;
+        _732 = cross(_319, _731);
     }
     else
     {
-        float _310 = _164._m0[_168._m0[int(gl_InstanceIndex)]]._m2.y + (_164._m0[_168._m0[int(gl_InstanceIndex)]]._m2.z * _164._m0[_168._m0[int(gl_InstanceIndex)]]._m0.w);
-        float _313 = cos(_310);
-        float _316 = sin(_310);
-        _542 = 1.0;
-        _541 = (_261 * _313) - (_257 * _316);
-        _540 = (_257 * _313) + (_261 * _316);
+        float _338 = _194._m0[_198._m0[int(gl_InstanceIndex)]]._m2.y + (_194._m0[_198._m0[int(gl_InstanceIndex)]]._m2.z * _194._m0[_198._m0[int(gl_InstanceIndex)]]._m0.w);
+        float _341 = cos(_338);
+        float _344 = sin(_338);
+        _734 = 1.0;
+        _733 = (_289 * _341) - (_285 * _344);
+        _732 = (_285 * _341) + (_289 * _344);
     }
-    int _460 = int(_26._m7.x);
-    float4 _546;
-    _546 = _26._m2[0];
-    float4 _547;
-    for (int _543 = 1; _543 < 4; _543++, _546 = _547)
+    int _602 = int(_33._m7.x);
+    float4 _738;
+    _738 = _33._m2[0];
+    float4 _739;
+    for (int _735 = 1; _735 < 4; _735++, _738 = _739)
     {
-        if (_543 >= _460)
+        if (_735 >= _602)
         {
             break;
         }
-        int _474 = _543 - 1;
-        if (_209 > _26._m3[_474])
+        int _616 = _735 - 1;
+        if (_237 > _33._m3[_616])
         {
-            _547 = mix(_26._m2[_474], _26._m2[_543], float4(fast::clamp((_209 - _26._m3[_474]) / fast::max(_26._m3[_543] - _26._m3[_474], 9.9999997473787516355514526367188e-06), 0.0, 1.0)));
+            _739 = mix(_33._m2[_616], _33._m2[_735], float4(fast::clamp((_237 - _33._m3[_616]) / fast::max(_33._m3[_735] - _33._m3[_616], 9.9999997473787516355514526367188e-06), 0.0, 1.0)));
         }
         else
         {
-            _547 = _546;
+            _739 = _738;
         }
     }
-    float3 _363 = _546.xyz * (_26._m6.y * mix(1.0, _164._m0[_168._m0[int(gl_InstanceIndex)]]._m2.w, _26._m6.z));
-    float4 _529 = _546;
-    _529.x = _363.x;
-    _529.y = _363.y;
-    _529.z = _363.z;
-    out.m_371 = _194[int(gl_VertexIndex)];
-    out.m_374 = _529;
-    out.gl_Position = _26._m0 * float4(_164._m0[_168._m0[int(gl_InstanceIndex)]]._m0.xyz + (((_540 * _194[int(gl_VertexIndex)].x) + ((_541 * _194[int(gl_VertexIndex)].y) * _542)) * (_164._m0[_168._m0[int(gl_InstanceIndex)]]._m2.x * _537)), 1.0);
+    float3 _391 = _738.xyz * (_33._m6.y * mix(1.0, _194._m0[_198._m0[int(gl_InstanceIndex)]]._m2.w, _33._m6.z));
+    float4 _717 = _738;
+    _717.x = _391.x;
+    _717.y = _391.y;
+    _717.z = _391.z;
+    out.m_399 = _222[int(gl_VertexIndex)];
+    out.m_402 = _717;
+    out.m_404 = float4(0.0);
+    out.m_407 = 0.0;
+    if (_33._m9.z > 0.5)
+    {
+        bool _421 = _33._m8.w > 0.0;
+        float _740;
+        if (_421)
+        {
+            _740 = _194._m0[_198._m0[int(gl_InstanceIndex)]]._m0.w * _33._m8.w;
+        }
+        else
+        {
+            _740 = _237 * _33._m8.z;
+        }
+        bool _437 = _33._m9.x > 0.5;
+        float _742;
+        if (_437)
+        {
+            _742 = _740 + floor(_194._m0[_198._m0[int(gl_InstanceIndex)]]._m2.w * _33._m8.z);
+        }
+        else
+        {
+            _742 = _740;
+        }
+        float _461 = floor(_742);
+        float _743;
+        if (_33._m9.y > 0.5)
+        {
+            _743 = _742 - _461;
+        }
+        else
+        {
+            _743 = 0.0;
+        }
+        out.m_407 = _743;
+        float _475 = _461 + 1.0;
+        float _745;
+        float _746;
+        if ((!_421) ? _437 : _421)
+        {
+            _746 = mod(_475, _33._m8.z);
+            _745 = mod(_461, _33._m8.z);
+        }
+        else
+        {
+            float _488 = _33._m8.z - 1.0;
+            _746 = fast::min(_475, _488);
+            _745 = fast::min(_461, _488);
+        }
+        float2 _503 = float2((_222[int(gl_VertexIndex)].x * 0.5) + 0.5, 0.5 - (_222[int(gl_VertexIndex)].y * 0.5));
+        out.m_404 = float4((float2(mod(_745, _33._m8.x), floor(_745 / _33._m8.x)) + _503) / _33._m8.xy, (float2(mod(_746, _33._m8.x), floor(_746 / _33._m8.x)) + _503) / _33._m8.xy);
+    }
+    out.gl_Position = _33._m0 * float4(_194._m0[_198._m0[int(gl_InstanceIndex)]]._m0.xyz + (((_732 * _222[int(gl_VertexIndex)].x) + ((_733 * _222[int(gl_VertexIndex)].y) * _734)) * (_194._m0[_198._m0[int(gl_InstanceIndex)]]._m2.x * _729)), 1.0);
     out.gl_Position.y = -out.gl_Position.y;
     out.gl_Position.y = -(out.gl_Position.y);    // Invert Y-axis for Metal
     return out;

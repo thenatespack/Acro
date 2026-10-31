@@ -1,0 +1,41 @@
+#version 450
+
+// Back-to-front sorting of an alpha-blended emitter's draw list, step 1 (one invocation):
+// from the live count particle_compact.comp wrote, picks the sorted length n (the next power
+// of two, at least one 2048-element block) and writes the indirect dispatch arguments of every
+// later sort pass, so their cost follows the live particles rather than the capacity: passes
+// of merge stages wider than n get zero workgroups.
+//
+// args (uints): [0] n, [1] live count, then 3-uint entries from [4]: 0 keys (n / 256),
+// 1 block sort (n / 2048), for each merge stage s (width 4096 << s): 2 + 2s global steps
+// (n / 512), 3 + 2s block merge (n / 2048); last (2 + 2 stages) the draw-list write.
+
+layout(local_size_x = 1) in;
+
+layout(push_constant) uniform Push {
+    uvec4 sizes;  // x sort capacity (a power of two >= 2048), y merge stages (log2(capacity) - 11)
+} push;
+layout(set = 2, binding = 25, std430) readonly buffer State { uint state[]; };
+layout(set = 2, binding = 30, std430) writeonly buffer Args { uint args[]; };
+
+void setGroups(uint entry, uint groups) {
+    args[4u + 3u * entry] = groups;
+    args[5u + 3u * entry] = 1u;
+    args[6u + 3u * entry] = 1u;
+}
+
+void main() {
+    uint count = min(state[1], push.sizes.x);
+    uint n = 2048u;
+    while (n < count) n <<= 1;
+    args[0] = n;
+    args[1] = count;
+    setGroups(0u, n / 256u);
+    setGroups(1u, n / 2048u);
+    for (uint s = 0u; s < push.sizes.y; s++) {
+        bool wide = (4096u << s) <= n;
+        setGroups(2u + 2u * s, wide ? n / 512u : 0u);
+        setGroups(3u + 2u * s, wide ? n / 2048u : 0u);
+    }
+    setGroups(2u + 2u * push.sizes.y, (count + 255u) / 256u);
+}

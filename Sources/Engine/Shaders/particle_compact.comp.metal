@@ -1,6 +1,6 @@
 // Generated from particle_compact.comp by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
-// spirv-fnv1a64: 28a77012f2101ae6
+// spirv-fnv1a64: 1e13b3ecd3d730b5
 // glsl-fnv1a64: bb641916ba5e9e44
 
 #pragma clang diagnostic ignored "-Wmissing-prototypes"
@@ -54,7 +54,7 @@ struct _36
     uint _m0[1];
 };
 
-struct _97
+struct _99
 {
     float4x4 _m0;
     float4 _m1;
@@ -68,87 +68,94 @@ struct _97
     uint4 _m9;
     uint4 _m10;
     float4 _m11;
+    uint4 _m12;
+    float4 _m13;
+    float4 _m14;
+    float4 _m15;
+    float4x4 _m16;
+    float4x4 _m17;
+    float4 _m18[8];
 };
 
-struct _98
+struct _100
 {
-    _97 _m0;
+    _99 _m0;
 };
 
-struct _108
+struct _110
 {
     float4 _m0;
     float4 _m1;
     float4 _m2;
 };
 
-struct _110
+struct _112
 {
-    _108 _m0[1];
+    _110 _m0[1];
 };
 
-struct _161
+struct _163
 {
     uint _m0[1];
 };
 
 constant uint3 gl_WorkGroupSize [[maybe_unused]] = uint3(256u, 1u, 1u);
 
-kernel void compute_main(constant _98& _100 [[buffer(2)]], device _110& _112 [[buffer(20)]], device _36& _38 [[buffer(21)]], device _161& _163 [[buffer(22)]], uint gl_LocalInvocationIndex [[thread_index_in_threadgroup]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
+kernel void compute_main(constant _100& _102 [[buffer(2)]], device _112& _114 [[buffer(20)]], device _36& _38 [[buffer(21)]], device _163& _165 [[buffer(22)]], uint gl_LocalInvocationIndex [[thread_index_in_threadgroup]], uint3 gl_WorkGroupID [[threadgroup_position_in_grid]], uint3 gl_GlobalInvocationID [[thread_position_in_grid]])
 {
     threadgroup spvUnsafeArray<uint, 256> _54;
-    uint _197;
-    _197 = 0u;
-    for (uint _196 = gl_LocalInvocationIndex; _196 < gl_WorkGroupID.x; )
+    uint _199;
+    _199 = 0u;
+    for (uint _198 = gl_LocalInvocationIndex; _198 < gl_WorkGroupID.x; )
     {
-        _197 += _38._m0[4u + _196];
-        _196 += 256u;
+        _199 += _38._m0[4u + _198];
+        _198 += 256u;
         continue;
     }
-    _54[gl_LocalInvocationIndex] = _197;
+    _54[gl_LocalInvocationIndex] = _199;
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint _198 = 128u; _198 > 0u; _198 = _198 >> uint(1))
+    for (uint _200 = 128u; _200 > 0u; _200 = _200 >> uint(1))
     {
-        if (gl_LocalInvocationIndex < _198)
+        if (gl_LocalInvocationIndex < _200)
         {
-            _54[gl_LocalInvocationIndex] += _54[gl_LocalInvocationIndex + _198];
+            _54[gl_LocalInvocationIndex] += _54[gl_LocalInvocationIndex + _200];
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
     uint _90 = _54[0];
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    bool _105 = gl_GlobalInvocationID.x < _100._m0._m10.x;
-    bool _120;
-    if (_105)
+    bool _107 = gl_GlobalInvocationID.x < _102._m0._m10.x;
+    bool _122;
+    if (_107)
     {
-        _120 = ((device float*)&_112._m0[gl_GlobalInvocationID.x]._m1)[3u] > 0.0;
+        _122 = ((device float*)&_114._m0[gl_GlobalInvocationID.x]._m1)[3u] > 0.0;
     }
     else
     {
-        _120 = _105;
+        _122 = _107;
     }
-    _54[gl_LocalInvocationIndex] = uint(_120);
+    _54[gl_LocalInvocationIndex] = uint(_122);
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint _199 = 1u; _199 < 256u; _199 = _199 << uint(1))
+    for (uint _201 = 1u; _201 < 256u; _201 = _201 << uint(1))
     {
-        uint _200;
-        if (gl_LocalInvocationIndex >= _199)
+        uint _202;
+        if (gl_LocalInvocationIndex >= _201)
         {
-            _200 = _54[gl_LocalInvocationIndex - _199];
+            _202 = _54[gl_LocalInvocationIndex - _201];
         }
         else
         {
-            _200 = 0u;
+            _202 = 0u;
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
-        _54[gl_LocalInvocationIndex] += _200;
+        _54[gl_LocalInvocationIndex] += _202;
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
-    if (_120)
+    if (_122)
     {
-        _163._m0[(_90 + _54[gl_LocalInvocationIndex]) - 1u] = gl_GlobalInvocationID.x;
+        _165._m0[(_90 + _54[gl_LocalInvocationIndex]) - 1u] = gl_GlobalInvocationID.x;
     }
-    if ((gl_WorkGroupID.x == (_100._m0._m10.y - 1u)) && (gl_LocalInvocationIndex == 255u))
+    if ((gl_WorkGroupID.x == (_102._m0._m10.y - 1u)) && (gl_LocalInvocationIndex == 255u))
     {
         _38._m0[0] = 6u;
         _38._m0[1] = _90 + _54[gl_LocalInvocationIndex];

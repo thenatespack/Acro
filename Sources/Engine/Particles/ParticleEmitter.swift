@@ -64,6 +64,69 @@ public struct ParticleBurst: Codable, Sendable, Equatable {
     }
 }
 
+/// A shape particles bounce off (`ParticleEmitter.colliders`), in world space.
+public struct ParticleCollider: Codable, Sendable, Equatable {
+    public enum Kind: String, Codable, Sendable, CaseIterable {
+        /// An infinite plane through `center` with normal `size` (particles stay on its side).
+        case plane
+        /// A sphere of radius `size.x` around `center`.
+        case sphere
+        /// An axis-aligned box of half extents `size` around `center`.
+        case box
+    }
+
+    public var kind: Kind
+    public var center: Vec3
+    /// Plane: the normal; sphere: x the radius; box: the half extents.
+    public var size: Vec3
+    /// Sphere and box: keep particles inside instead of outside.
+    public var inside: Bool
+
+    public init(_ kind: Kind, center: Vec3, size: Vec3, inside: Bool = false) {
+        self.kind = kind
+        self.center = center
+        self.size = size
+        self.inside = inside
+    }
+
+    public static func plane(point: Vec3, normal: Vec3) -> ParticleCollider { ParticleCollider(.plane, center: point, size: normal) }
+    public static func sphere(center: Vec3, radius: Float, inside: Bool = false) -> ParticleCollider {
+        ParticleCollider(.sphere, center: center, size: Vec3(radius, radius, radius), inside: inside)
+    }
+    public static func box(center: Vec3, halfExtents: Vec3, inside: Bool = false) -> ParticleCollider {
+        ParticleCollider(.box, center: center, size: halfExtents, inside: inside)
+    }
+}
+
+/// What makes a parent's particle fire its sub-emitter.
+public enum ParticleSubEmitterTrigger: String, Codable, Sendable, CaseIterable {
+    /// The particle's life ended (its lifetime, or a collision with `killOnCollision`).
+    case death
+    /// It bounced off the ground, a collider or the depth buffer.
+    case collision
+}
+
+/// Spawns particles of another emitter where this emitter's particles die or collide
+/// (`ParticleEmitter.subEmitters`), entirely on the GPU: the child's own rate, bursts, prewarm
+/// and position are ignored; its shape and cone (turned by its entity's rotation and scale)
+/// are centered on each event.
+public struct ParticleSubEmitter: Codable, Sendable, Equatable {
+    public var trigger: ParticleSubEmitterTrigger
+    /// The entity whose `ParticleEmitter` spawns (not this one, and not itself a parent).
+    public var emitter: EntityRef
+    /// Particles per event (at most `ParticleEmitter.maxSubEmitterCount`).
+    public var count: Int
+    /// Fraction of the parent particle's velocity added to the new ones.
+    public var inheritVelocity: Float
+
+    public init(_ trigger: ParticleSubEmitterTrigger, emitter: EntityRef, count: Int = 8, inheritVelocity: Float = 0) {
+        self.trigger = trigger
+        self.emitter = emitter
+        self.count = count
+        self.inheritVelocity = inheritVelocity
+    }
+}
+
 /// GPU particles emitted from the entity's `GlobalTransform`, simulated in compute and drawn
 /// by `SceneRenderer` (see `ParticleSystem`). Plain data: change any field at runtime; a new
 /// `capacity`, `blend` or `seed` restarts the emitter.
@@ -73,9 +136,15 @@ public struct ParticleBurst: Codable, Sendable, Equatable {
 public struct ParticleEmitter: Component, Codable, Equatable, Sendable {
     public static let componentName = "ParticleEmitter"
     /// Most particles an alpha-blended (sorted) emitter can hold.
-    public static let maxSortedCapacity = 2048
+    public static let maxSortedCapacity = 1 << 18
     /// Most particles any emitter can hold.
     public static let maxCapacity = 1 << 20
+    /// Most analytic `colliders` per emitter (more are ignored).
+    public static let maxColliders = 4
+    /// Most `subEmitters` per emitter (more are ignored).
+    public static let maxSubEmitters = 2
+    /// Most particles a sub-emitter spawns per event.
+    public static let maxSubEmitterCount = 1024
 
     public static var fieldHints: [String: FieldHints] {
         ["capacity": FieldHints(range: 1...Double(maxCapacity), step: 256, tooltip: "Most live particles; spawning wraps around and replaces the oldest"),
@@ -86,12 +155,18 @@ public struct ParticleEmitter: Component, Codable, Equatable, Sendable {
          "bounce": FieldHints(range: 0...1, step: 0.01), "friction": FieldHints(range: 0...1, step: 0.01),
          "stretch": FieldHints(range: 0...2, step: 0.01, tooltip: "Elongates particles along their velocity (seconds)"),
          "intensity": FieldHints(range: 0...1000, step: 0.1, tooltip: "Multiplies the color: HDR glow with bloom"),
-         "brightnessVariation": FieldHints(range: 0...1, step: 0.01, tooltip: "Random per-particle dimming")]
+         "brightnessVariation": FieldHints(range: 0...1, step: 0.01, tooltip: "Random per-particle dimming"),
+         "atlasColumns": FieldHints(range: 1...64, step: 1), "atlasRows": FieldHints(range: 1...64, step: 1),
+         "frameCount": FieldHints(range: 0...4096, step: 1, tooltip: "Frames of the flipbook (0: columns × rows)"),
+         "frameRate": FieldHints(range: 0...240, step: 1, tooltip: "Frames per second, looping (0: once over each particle's life)"),
+         "softness": FieldHints(range: 0...10, step: 0.01, tooltip: "Fade near opaque geometry over this distance (0: off)"),
+         "depthThickness": FieldHints(range: 0...10, step: 0.01, tooltip: "How far behind a depth-buffer surface particles still collide")]
     }
 
     public var isEmitting: Bool
     /// Most live particles (rounded up to a multiple of 256; at most `maxSortedCapacity` when
-    /// `blend` is `.alpha`). New particles reuse the oldest slots once it is full.
+    /// `blend` is `.alpha`). New particles reuse the oldest slots once it is full (a sub-emitter's
+    /// too: events beyond its capacity in one step are dropped).
     public var capacity: Int
     /// Particles per second while `isEmitting`.
     public var rate: Float
@@ -145,6 +220,37 @@ public struct ParticleEmitter: Component, Codable, Equatable, Sendable {
     public var bounce: Float
     /// Fraction of the tangential speed lost on impact.
     public var friction: Float
+    /// Also bounce off the scene's opaque surfaces as the camera sees them (screen-space, from a
+    /// depth prepass): particles off screen or hidden more than `depthThickness` behind a
+    /// surface pass through. Only in `SceneRenderer.prepare` / `renderOffscreen` frames.
+    public var collidesWithDepth: Bool
+    public var depthThickness: Float
+    /// Planes, spheres and boxes to bounce off (world space, at most `maxColliders`).
+    public var colliders: [ParticleCollider]
+    /// A collision (ground, collider or depth) ends the particle's life.
+    public var killOnCollision: Bool
+    /// Emitters spawned where this one's particles die or collide (at most `maxSubEmitters`).
+    public var subEmitters: [ParticleSubEmitter]
+    /// A texture atlas (flipbook) of `atlasColumns` × `atlasRows` cells, row by row from the top
+    /// left; its RGBA multiplies the color. nil: a soft round disc.
+    public var texture: TextureHandle?
+    public var atlasColumns: Int
+    public var atlasRows: Int
+    /// Frames used (0: every cell).
+    public var frameCount: Int
+    /// Frames per second, looping; 0 plays the frames once over each particle's life.
+    public var frameRate: Float
+    /// Each particle starts at a random frame (and loops).
+    public var randomStartFrame: Bool
+    /// Cross-fades each frame into the next.
+    public var frameBlending: Bool
+    /// Fades particles out within this distance in front of opaque surfaces instead of cutting
+    /// them off (soft particles, from a depth prepass; 0: off).
+    public var softness: Float
+    /// Lit by the ambient light, the sun and the point / spot lights (`color` is then an albedo).
+    public var lit: Bool
+    /// Lit particles: darkened by the sun's shadow.
+    public var receivesShadows: Bool
     /// Random seed: emitters with the same seed and settings produce the same particles.
     public var seed: UInt32
 
@@ -158,7 +264,11 @@ public struct ParticleEmitter: Component, Codable, Equatable, Sendable {
                 color: [ParticleColorKey] = [ParticleColorKey(0, Vec4(1, 1, 1, 1)), ParticleColorKey(1, Vec4(1, 1, 1, 0))],
                 intensity: Float = 1, brightnessVariation: Float = 0, blend: ParticleBlend = .additive, stretch: Float = 0,
                 collidesWithGround: Bool = false, groundHeight: Float = 0, bounce: Float = 0.4, friction: Float = 0.2,
-                seed: UInt32 = 1, isEmitting: Bool = true) {
+                collidesWithDepth: Bool = false, depthThickness: Float = 0.5, colliders: [ParticleCollider] = [],
+                killOnCollision: Bool = false, subEmitters: [ParticleSubEmitter] = [],
+                texture: TextureHandle? = nil, atlasColumns: Int = 1, atlasRows: Int = 1, frameCount: Int = 0, frameRate: Float = 0,
+                randomStartFrame: Bool = false, frameBlending: Bool = false, softness: Float = 0, lit: Bool = false,
+                receivesShadows: Bool = false, seed: UInt32 = 1, isEmitting: Bool = true) {
         self.isEmitting = isEmitting
         self.capacity = capacity
         self.rate = rate
@@ -191,6 +301,21 @@ public struct ParticleEmitter: Component, Codable, Equatable, Sendable {
         self.groundHeight = groundHeight
         self.bounce = bounce
         self.friction = friction
+        self.collidesWithDepth = collidesWithDepth
+        self.depthThickness = depthThickness
+        self.colliders = colliders
+        self.killOnCollision = killOnCollision
+        self.subEmitters = subEmitters
+        self.texture = texture
+        self.atlasColumns = atlasColumns
+        self.atlasRows = atlasRows
+        self.frameCount = frameCount
+        self.frameRate = frameRate
+        self.randomStartFrame = randomStartFrame
+        self.frameBlending = frameBlending
+        self.softness = softness
+        self.lit = lit
+        self.receivesShadows = receivesShadows
         self.seed = seed
     }
 
@@ -231,8 +356,32 @@ public struct ParticleEmitter: Component, Codable, Equatable, Sendable {
         groundHeight = try value(.groundHeight, d.groundHeight)
         bounce = try value(.bounce, d.bounce)
         friction = try value(.friction, d.friction)
+        collidesWithDepth = try value(.collidesWithDepth, d.collidesWithDepth)
+        depthThickness = try value(.depthThickness, d.depthThickness)
+        colliders = try value(.colliders, d.colliders)
+        killOnCollision = try value(.killOnCollision, d.killOnCollision)
+        subEmitters = try value(.subEmitters, d.subEmitters)
+        texture = try c.decodeIfPresent(TextureHandle.self, forKey: .texture)
+        atlasColumns = try value(.atlasColumns, d.atlasColumns)
+        atlasRows = try value(.atlasRows, d.atlasRows)
+        frameCount = try value(.frameCount, d.frameCount)
+        frameRate = try value(.frameRate, d.frameRate)
+        randomStartFrame = try value(.randomStartFrame, d.randomStartFrame)
+        frameBlending = try value(.frameBlending, d.frameBlending)
+        softness = try value(.softness, d.softness)
+        lit = try value(.lit, d.lit)
+        receivesShadows = try value(.receivesShadows, d.receivesShadows)
         seed = try value(.seed, d.seed)
     }
+
+    /// The flipbook's frames: `frameCount`, or every cell (at least 1, at most the cells).
+    public var effectiveFrameCount: Int {
+        let cells = max(atlasColumns, 1) * max(atlasRows, 1)
+        return frameCount > 0 ? min(frameCount, cells) : cells
+    }
+
+    /// Needs the scene's depth (`SceneRenderer`'s depth prepass): soft particles or depth collisions.
+    public var needsSceneDepth: Bool { softness > 0 || collidesWithDepth }
 
     /// `capacity` as allocated: a multiple of the 256-slot workgroup, within the blend mode's limit.
     public var effectiveCapacity: Int {
