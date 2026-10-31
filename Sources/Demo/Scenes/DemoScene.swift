@@ -94,4 +94,5 @@ extension DemoScene {
     PostScene.self,
     SpritesScene.self,
     SkyScene.self,
+    PhysicsScene.self,
 ]
