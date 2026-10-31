@@ -3,14 +3,15 @@ import Foundation
 
 /// A CPU stress test for the job system (`JobSystem`, `ENGINE_JOB_THREADS`): 144 skinned foxes
 /// in a 12 x 12 crowd (each with its own `Animator`, clip and start time: animator updates and
-/// skin palettes run in parallel), 640 rigid bodies dropped into a walled pen (pair search and
-/// narrowphase in parallel; the solver stays serial), and 2500 shadow-casting posts around them
-/// (camera and shadow-caster culling in parallel). The title shows the CPU time of the world
-/// update and of render prep, averaged over the last 30 frames, and the job thread count.
+/// skin palettes run in parallel), 640 rigid bodies dropped into a pen of four walled bays
+/// (pair search, narrowphase and the four piles' solver islands in parallel), and 2500
+/// shadow-casting posts around them (camera and shadow-caster culling in parallel). The title
+/// shows the CPU time of the world update and of render prep, averaged over the last 30
+/// frames, and the job thread count.
 /// Results are the same for any thread count, so screenshots match `ENGINE_JOB_THREADS=1`.
 final class CrowdScene: DemoScene {
     static let name = "crowd"
-    static let summary = "job system stress: 144 animated skinned foxes, 640 rigid bodies in a pen, 2500 culled shadow casters"
+    static let summary = "job system stress: 144 animated skinned foxes, 640 rigid bodies in four bays (four solver islands), 2500 culled shadow casters"
 
     private var world = World()
     private var physics = PhysicsWorld()
@@ -81,9 +82,17 @@ final class CrowdScene: DemoScene {
             }
         }
 
-        // The pen: four walls around a 10 x 10 m floor, 640 bodies in a lattice above it.
-        for (center, half) in [(Vec3(8, 1.5, -5.25), Vec3(5.5, 1.5, 0.25)), (Vec3(8, 1.5, 5.25), Vec3(5.5, 1.5, 0.25)),
-                               (Vec3(2.75, 1.5, 0), Vec3(0.25, 1.5, 5)), (Vec3(13.25, 1.5, 0), Vec3(0.25, 1.5, 5))] {
+        // The pen: a 13 x 13 m floor walled in and split into four 5.25 m bays by double walls
+        // (a body on a divider can't touch both sides), so the bodies settle into four piles:
+        // four solver islands. 160 bodies in a lattice above each bay.
+        let wall: Float = 1.75
+        var walls = [(Vec3(8, wall, -6.5), Vec3(6.75, wall, 0.25)), (Vec3(8, wall, 6.5), Vec3(6.75, wall, 0.25)),
+                     (Vec3(1.5, wall, 0), Vec3(0.25, wall, 6.25)), (Vec3(14.5, wall, 0), Vec3(0.25, wall, 6.25))]
+        for d: Float in [-0.75, 0.75] {
+            walls.append((Vec3(8 + d, wall, 0), Vec3(0.25, wall, 6.25)))
+            walls.append((Vec3(8, wall, d), Vec3(6.25, wall, 0.25)))
+        }
+        for (center, half) in walls {
             _ = world.spawn(
                 Transform(position: center, scale: half * 2),
                 MeshRenderer(mesh: .cube, material: MaterialHandle("matte"), tint: Vec3(0.55, 0.55, 0.6)),
@@ -93,10 +102,13 @@ final class CrowdScene: DemoScene {
             for z in 0..<8 {
                 for x in 0..<8 {
                     let k = (layer * 8 + z) * 8 + x
-                    let p = Vec3(3.9 + Float(x) * 1.15 + rng.next() * 0.2, 1 + Float(layer) * 1.2, -4 + Float(z) * 1.15 + rng.next() * 0.2)
+                    // Four per row in each bay (bays span 1.75...7 and 9...14.25 in x, ±1...±6.25 in z).
+                    let bx: Float = x < 4 ? 2.5 : 9.75, bz: Float = z < 4 ? -5.5 : 1.75
+                    let p = Vec3(bx + Float(x % 4) * 1.2 + rng.next() * 0.15, 1 + Float(layer) * 1.2,
+                                 bz + Float(z % 4) * 1.2 + rng.next() * 0.15)
                     let rotation = Quat(angle: rng.next() * 3, axis: normalize(Vec3(rng.next() - 0.5, 1, rng.next() - 0.5)))
                     let sphere = k % 3 == 0
-                    let size: Vec3 = sphere ? Vec3(repeating: 0.8) : Vec3(0.9, 0.5 + 0.4 * rng.next(), 0.7)
+                    let size: Vec3 = sphere ? Vec3(repeating: 0.7) : Vec3(0.75, 0.45 + 0.3 * rng.next(), 0.6)
                     _ = world.spawn(
                         Transform(position: p, rotation: rotation, scale: size),
                         MeshRenderer(mesh: sphere ? .sphere : .cube, material: MaterialHandle(sphere ? "gloss" : "matte"),

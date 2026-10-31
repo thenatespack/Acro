@@ -2286,13 +2286,13 @@ final class VulkanRenderDevice: RenderDevice {
 
     private static func createDescriptorPool(device: VkDevice) throws -> VkDescriptorPool {
         let sizes = [
-            VkDescriptorPoolSize(type: VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, descriptorCount: 256),
+            VkDescriptorPoolSize(type: VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, descriptorCount: 1024),
             VkDescriptorPoolSize(type: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, descriptorCount: 256),
         ]
         var info = VkDescriptorPoolCreateInfo()
         info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO
         info.flags = vkFlags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT)
-        info.maxSets = 512
+        info.maxSets = 1280
         info.poolSizeCount = UInt32(sizes.count)
         var pool: VkDescriptorPool?
         let result = sizes.withUnsafeBufferPointer { sizes in

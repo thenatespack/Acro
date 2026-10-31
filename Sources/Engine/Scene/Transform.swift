@@ -79,7 +79,11 @@ extension World {
     /// Otherwise (no parent, or a parent without one) the entity is a root and its world
     /// matrix is its local one. Only dirty subtrees do matrix work; clean entities cost a
     /// comparison of their `Transform` against the cached copy.
-    public func propagateTransforms() {
+    ///
+    /// Root subtrees are independent (each entity is written by its own root's walk only), so
+    /// they are walked in parallel on `jobs`, in batches of roots; every matrix is the same
+    /// product whichever thread computes it, so results don't depend on the thread count.
+    public func propagateTransforms(jobs: JobSystem = .shared) {
         precondition(!isIterating, "propagateTransforms() can't run inside a query")
         guard let transforms = existingStore(Transform.self) else { return }
         let globals = store(GlobalTransform.self)
@@ -90,28 +94,34 @@ extension World {
         // Nothing below changes the stores' layout or the hierarchy, so loop over snapshots.
         let locals = transforms.view, globalsView = globals.view
         let parents = parents, childLists = childLists
+        var roots: [Int] = []
+        for (dense, entity) in locals.entities.enumerated() {
+            if let parent = parents[Int(entity.index)], locals.denseIndex(of: parent) != nil { continue }
+            roots.append(dense)
+        }
 
         // Depth-first from each root with an explicit stack, so deep chains can't overflow.
-        var stack: [(entity: Entity, dense: Int, parent: Entity?, parentMatrix: Mat4, parentDirty: Bool)] = []
-        for (rootDense, root) in locals.entities.enumerated() {
-            if let parent = parents[Int(root.index)], locals.denseIndex(of: parent) != nil { continue }
-            stack.append((root, rootDense, nil, .identity, false))
-            while let (entity, dense, parent, parentMatrix, parentDirty) = stack.popLast() {
-                let local = locals.values[dense]
-                let g = globalsView.values + globalsView.denseIndex(of: entity)!
-                let dirty = parentDirty || !g.pointee.isValid || g.pointee.parent != parent || g.pointee.local != local
-                if dirty {
-                    g.pointee.matrix = parentMatrix * local.matrix
-                    g.pointee.local = local
-                    g.pointee.parent = parent
-                    g.pointee.isValid = true
-                }
-                let children = childLists[Int(entity.index)]
-                if children.isEmpty { continue }
-                let matrix = g.pointee.matrix
-                for child in children {
-                    if let childDense = locals.denseIndex(of: child) {
-                        stack.append((child, childDense, entity, matrix, dirty))
+        jobs.parallelFor(roots.indices, batchSize: 256, name: "transform roots") { range in
+            var stack: [(entity: Entity, dense: Int, parent: Entity?, parentMatrix: Mat4, parentDirty: Bool)] = []
+            for rootDense in roots[range] {
+                stack.append((locals.entities[rootDense], rootDense, nil, .identity, false))
+                while let (entity, dense, parent, parentMatrix, parentDirty) = stack.popLast() {
+                    let local = locals.values[dense]
+                    let g = globalsView.values + globalsView.denseIndex(of: entity)!
+                    let dirty = parentDirty || !g.pointee.isValid || g.pointee.parent != parent || g.pointee.local != local
+                    if dirty {
+                        g.pointee.matrix = parentMatrix * local.matrix
+                        g.pointee.local = local
+                        g.pointee.parent = parent
+                        g.pointee.isValid = true
+                    }
+                    let children = childLists[Int(entity.index)]
+                    if children.isEmpty { continue }
+                    let matrix = g.pointee.matrix
+                    for child in children {
+                        if let childDense = locals.denseIndex(of: child) {
+                            stack.append((child, childDense, entity, matrix, dirty))
+                        }
                     }
                 }
             }

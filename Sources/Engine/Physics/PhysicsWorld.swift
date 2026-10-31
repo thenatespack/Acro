@@ -9,9 +9,10 @@ import Foundation
 ///
 /// The simulation is deterministic: bodies, contacts and joints live in arrays in creation
 /// order, new pairs are sorted, and nothing iterates a dictionary or reads a clock, so the
-/// same calls give bit-identical results. Steps 1 and 2 run on `jobs` (each moved body's
-/// query and each contact's narrowphase on its own, merged in a fixed order), so the thread
-/// count doesn't change them either.
+/// same calls give bit-identical results. Steps 1, 2 and 4 run on `jobs` (each moved body's
+/// query and each contact's narrowphase on its own, merged in a fixed order; independent
+/// islands solved apart, see ContactSolver.swift), so the thread count doesn't change them
+/// either.
 ///
 /// One step (`step(_:)`):
 /// 1. New pairs: every body whose fat box moved queries the tree; new pairs become contacts.
@@ -52,8 +53,8 @@ public final class PhysicsWorld {
     public var speculativeDistance: Float = 0.04
     /// Approach speeds below this don't bounce.
     public var restitutionThreshold: Float = 1
-    /// Runs the pair search and the narrowphase in parallel (the solver stays on the calling
-    /// thread). Results are the same for any thread count.
+    /// Runs the pair search, the narrowphase and the solver's islands in parallel. Results
+    /// are the same for any thread count.
     public var jobs = JobSystem.shared
 
     /// Events of the steps since the last `clearEvents()` (`advance(by:)` and the ECS

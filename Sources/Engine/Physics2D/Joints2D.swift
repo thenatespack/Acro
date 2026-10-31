@@ -131,9 +131,6 @@ private func wrapAngle(_ a: Float) -> Float {
 }
 
 extension PhysicsWorld2D {
-    /// How quickly a held body's spin is damped, per second.
-    static let mouseAngularDamping: Float = 4
-
     @discardableResult
     public func addJoint(_ d: Joint2DDescriptor) -> Joint2DID? {
         guard let a = index(of: d.bodyA) else { return nil }
@@ -275,9 +272,15 @@ extension PhysicsWorld2D {
         wake(joints[j].b)
     }
 
-    // MARK: - Solver
+}
 
-    func prepareJoints(h: Float) {
+// MARK: - Solver
+
+extension SolverIsland2D {
+    /// How quickly a held body's spin is damped, per second.
+    static let mouseAngularDamping: Float = 4
+
+    mutating func prepareJoints(h: Float) {
         for j in joints.indices where joints[j].isAlive {
             let a = bodies[joints[j].a], b = bodies[joints[j].b]
             guard a.isSolverActive || b.isSolverActive else { continue }
@@ -312,7 +315,7 @@ extension PhysicsWorld2D {
         }
     }
 
-    func warmStartJoints() {
+    mutating func warmStartJoints() {
         for j in joints.indices where joints[j].isAlive {
             let joint = joints[j]
             guard bodies[joint.a].isSolverActive || bodies[joint.b].isSolverActive else { continue }
@@ -332,7 +335,7 @@ extension PhysicsWorld2D {
         }
     }
 
-    func solveJoints(h: Float, softness: Softness2D, useBias: Bool) {
+    mutating func solveJoints(h: Float, softness: Softness2D, useBias: Bool) {
         for j in joints.indices where joints[j].isAlive {
             var joint = joints[j]
             guard bodies[joint.a].isSolverActive || bodies[joint.b].isSolverActive else { continue }
@@ -350,13 +353,13 @@ extension PhysicsWorld2D {
     }
 
     /// A pure angular impulse (+ on B, - on A).
-    private func applyAngular(_ impulse: Float, _ a: Int, _ b: Int) {
+    private mutating func applyAngular(_ impulse: Float, _ a: Int, _ b: Int) {
         bodies[a].angularVelocity -= bodies[a].invInertia * impulse
         bodies[b].angularVelocity += bodies[b].invInertia * impulse
     }
 
     /// The two rows that keep the anchors together.
-    private func solvePoint(_ joint: inout JointData2D, softness: Softness2D, useBias: Bool) {
+    private mutating func solvePoint(_ joint: inout JointData2D, softness: Softness2D, useBias: Bool) {
         let dv = relativeVelocity(joint.a, joint.rA, joint.b, joint.rB)
         var bias = Vec2.zero, massScale: Float = 1, impulseScale: Float = 0
         if useBias {
@@ -372,7 +375,7 @@ extension PhysicsWorld2D {
         apply(impulse, joint.a, joint.rA, joint.b, joint.rB)
     }
 
-    private func solveRevolute(_ joint: inout JointData2D, h: Float, softness: Softness2D, useBias: Bool) {
+    private mutating func solveRevolute(_ joint: inout JointData2D, h: Float, softness: Softness2D, useBias: Bool) {
         let a = joint.a, b = joint.b
         if joint.enableMotor {
             let cdot = bodies[b].angularVelocity - bodies[a].angularVelocity - joint.motorSpeed
@@ -416,7 +419,7 @@ extension PhysicsWorld2D {
         solvePoint(&joint, softness: softness, useBias: useBias)
     }
 
-    private func solveWeld(_ joint: inout JointData2D, softness: Softness2D, useBias: Bool) {
+    private mutating func solveWeld(_ joint: inout JointData2D, softness: Softness2D, useBias: Bool) {
         var bias: Float = 0, massScale: Float = 1, impulseScale: Float = 0
         if useBias {
             bias = softness.biasRate * joint.jointAngle
@@ -430,7 +433,7 @@ extension PhysicsWorld2D {
         solvePoint(&joint, softness: softness, useBias: useBias)
     }
 
-    private func solveDistance(_ joint: inout JointData2D, h: Float, softness: Softness2D, useBias: Bool) {
+    private mutating func solveDistance(_ joint: inout JointData2D, h: Float, softness: Softness2D, useBias: Bool) {
         let a = joint.a, b = joint.b
         let isSpring = joint.hertz > 0
         // The rod, or the spring along the axis.
@@ -485,7 +488,7 @@ extension PhysicsWorld2D {
         }
     }
 
-    private func solveMouse(_ joint: inout JointData2D, h: Float) {
+    private mutating func solveMouse(_ joint: inout JointData2D, h: Float) {
         let soft = Softness2D(hertz: joint.hertz, dampingRatio: joint.dampingRatio, h: h)
         let b = joint.b
         let dv = bodies[b].linearVelocity + cross2(bodies[b].angularVelocity, joint.rB)
