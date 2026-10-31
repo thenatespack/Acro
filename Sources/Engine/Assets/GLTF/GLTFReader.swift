@@ -43,10 +43,13 @@ public enum GLTFError: Error, Equatable, CustomStringConvertible {
 /// `NORMAL`, `TANGENT`, `TEXCOORD_0`, `TEXCOORD_1`, `COLOR_0`; 8/16/32-bit or no indices;
 /// metallic-roughness materials with all their textures, samplers, `KHR_texture_transform`,
 /// `KHR_materials_unlit`, `KHR_materials_emissive_strength` and `KHR_mesh_quantization`;
-/// node trees with TRS or matrix transforms; multiple scenes.
+/// node trees with TRS or matrix transforms; multiple scenes; skins (`JOINTS_0` / `WEIGHTS_0`,
+/// inverse bind matrices) and animations of translation, rotation and scale with linear, step
+/// and cubic-spline samplers.
 ///
-/// Ignored (with a warning where it matters): points and lines, skins, morph targets,
-/// animations, cameras, lights, other extensions. Images are not decoded (see `ImportedImage`).
+/// Ignored (with a warning where it matters): points and lines, morph targets and their weight
+/// animations, more than four joints per vertex (`JOINTS_1`), cameras, lights, other
+/// extensions. Images are not decoded (see `ImportedImage`).
 public enum GLTFReader {
     /// What to do for primitives without normals.
     public enum NormalGeneration: Sendable {
@@ -294,8 +297,10 @@ struct GLTFParser {
         }
         model.meshes = try (document.meshes ?? []).enumerated().map { try mesh($0.offset, $0.element, materialCount: model.materials.count) }
         try buildNodes(into: &model)
+        model.skins = try (document.skins ?? []).enumerated().map { try skin($0.offset, $0.element, nodeCount: model.nodes.count) }
+        try checkSkinnedNodes(model)
+        model.animations = try (document.animations ?? []).enumerated().map { try animation($0.offset, $0.element, nodeCount: model.nodes.count) }
         flipMirroredMeshes(&model)
-        if document.nodes?.contains(where: { $0.skin != nil }) == true { warn("Skins are not supported and were ignored") }
         if document.nodes?.contains(where: { $0.camera != nil }) == true { warn("Cameras are not imported") }
         model.warnings = warnings
         return model
@@ -681,9 +686,11 @@ struct GLTFParser {
         let uv1 = try attribute("TEXCOORD_1", [.vec2])
         let tangents = try attribute("TANGENT", [.vec4])
         let colors = try attribute("COLOR_0", [.vec3, .vec4])
-        if desc.attributes.keys.contains(where: { $0.hasPrefix("JOINTS_") || $0.hasPrefix("WEIGHTS_") }) {
-            warn("Skinning attributes (JOINTS_n / WEIGHTS_n) are ignored")
+        var skin = try skinInfluences(desc, what: what, vertexCount: vertexCount)
+        if desc.attributes.keys.contains(where: { ($0.hasPrefix("JOINTS_") || $0.hasPrefix("WEIGHTS_")) && !$0.hasSuffix("_0") }) {
+            warn("\(what): joints beyond the first four per vertex (JOINTS_1, WEIGHTS_1, …) are ignored")
         }
+        if desc.targets?.isEmpty == false { warn("\(what): morph targets are not supported and were ignored") }
 
         var indices: [UInt32]
         if let indexAccessor = desc.indices {
@@ -733,6 +740,7 @@ struct GLTFParser {
             extraTangents = unweld(extraTangents)
             extraUV1 = unweld(extraUV1)
             extraColors = unweld(extraColors)
+            skin = unweld(skin)
             indices = (0..<UInt32(vertices.count)).map { $0 }
             for t in stride(from: 0, to: vertices.count, by: 3) {
                 let n = Self.faceNormal(vertices[t].position, vertices[t + 1].position, vertices[t + 2].position)
@@ -743,8 +751,34 @@ struct GLTFParser {
         }
 
         return ImportedPrimitive(
-            geometry: MeshGeometry(vertices: vertices, indices: indices), tangents: extraTangents, texCoords1: extraUV1,
+            geometry: MeshGeometry(vertices: vertices, indices: indices, skin: skin), tangents: extraTangents, texCoords1: extraUV1,
             colors: extraColors, material: desc.material, generatedNormals: normals == nil)
+    }
+
+    /// `JOINTS_0` and `WEIGHTS_0` as one influence per vertex, weights normalized to sum to 1
+    /// (vertices without weight are bound fully to joint 0); nil without them.
+    private mutating func skinInfluences(_ desc: GLTFDocument.Primitive, what: String, vertexCount: Int) throws -> [SkinInfluence]? {
+        let jointsAccessor = desc.attributes["JOINTS_0"], weightsAccessor = desc.attributes["WEIGHTS_0"]
+        guard let jointsAccessor, let weightsAccessor else {
+            if jointsAccessor != nil || weightsAccessor != nil { warn("\(what): JOINTS_0 without WEIGHTS_0 (or the reverse) is ignored") }
+            return nil
+        }
+        let (accessor, type, _) = try accessorDescription(jointsAccessor)
+        guard [.unsignedByte, .unsignedShort].contains(type), accessor.normalized != true else {
+            throw GLTFError.invalidData("\(what) JOINTS_0 must be unsigned byte or short, not normalized")
+        }
+        let joints = try readFloats(jointsAccessor, allowed: [.vec4], what: "\(what) JOINTS_0").values
+        let weights = try readFloats(weightsAccessor, allowed: [.vec4], what: "\(what) WEIGHTS_0").values
+        guard joints.count == vertexCount * 4, weights.count == vertexCount * 4 else {
+            throw GLTFError.invalidData("\(what) JOINTS_0 / WEIGHTS_0 don't have one element per vertex (\(vertexCount))")
+        }
+        return (0..<vertexCount).map { i in
+            var w = Vec4(weights[i * 4], weights[i * 4 + 1], weights[i * 4 + 2], weights[i * 4 + 3])
+            w = pointwiseMax(w, .zero)
+            let sum = w.sum()
+            let j = SIMD4<UInt16>(UInt16(joints[i * 4]), UInt16(joints[i * 4 + 1]), UInt16(joints[i * 4 + 2]), UInt16(joints[i * 4 + 3]))
+            return sum > 0 && sum.isFinite ? SkinInfluence(joints: j, weights: w / sum) : SkinInfluence(joint: 0)
+        }
     }
 
     /// Triangle strips and fans to a triangle list, keeping counter-clockwise winding.
@@ -810,8 +844,11 @@ struct GLTFParser {
             if let mesh = node.mesh, mesh < 0 || mesh >= model.meshes.count {
                 throw GLTFError.invalidData("node \(i) uses mesh \(mesh), which doesn't exist")
             }
+            if let skin = node.skin, skin < 0 || skin >= (document.skins?.count ?? 0) {
+                throw GLTFError.invalidData("node \(i) uses skin \(skin), which doesn't exist")
+            }
             nodes.append(ImportedNode(name: node.name, transform: try Self.transform(node, index: i), mesh: node.mesh,
-                                      children: node.children ?? []))
+                                      skin: node.skin, children: node.children ?? []))
         }
         for i in nodes.indices {
             for child in nodes[i].children {
@@ -853,6 +890,106 @@ struct GLTFParser {
         } else {
             model.roots = nodes.indices.filter { nodes[$0].parent == nil }
         }
+    }
+
+    // MARK: Skins and animations
+
+    private mutating func skin(_ index: Int, _ desc: GLTFDocument.Skin, nodeCount: Int) throws -> ImportedSkin {
+        guard !desc.joints.isEmpty else { throw GLTFError.invalidData("skin \(index) has no joints") }
+        for joint in desc.joints where joint < 0 || joint >= nodeCount {
+            throw GLTFError.invalidData("skin \(index) uses joint node \(joint), which doesn't exist")
+        }
+        if let root = desc.skeleton, root < 0 || root >= nodeCount {
+            throw GLTFError.invalidData("skin \(index) has skeleton node \(root), which doesn't exist")
+        }
+        var matrices = Array(repeating: Mat4.identity, count: desc.joints.count)
+        if let accessor = desc.inverseBindMatrices {
+            let m = try readFloats(accessor, allowed: [.mat4], what: "skin \(index) inverseBindMatrices").values
+            guard m.count >= desc.joints.count * 16 else {
+                throw GLTFError.invalidData("skin \(index) has \(m.count / 16) inverse bind matrices for \(desc.joints.count) joints")
+            }
+            for j in matrices.indices {
+                let o = j * 16
+                matrices[j] = Mat4(Vec4(m[o], m[o + 1], m[o + 2], m[o + 3]), Vec4(m[o + 4], m[o + 5], m[o + 6], m[o + 7]),
+                                   Vec4(m[o + 8], m[o + 9], m[o + 10], m[o + 11]), Vec4(m[o + 12], m[o + 13], m[o + 14], m[o + 15]))
+            }
+        }
+        return ImportedSkin(name: desc.name, joints: desc.joints, inverseBindMatrices: matrices, skeleton: desc.skeleton)
+    }
+
+    /// Every vertex of a skinned node's mesh must name one of its skin's joints.
+    private mutating func checkSkinnedNodes(_ model: ImportedModel) throws {
+        for (i, node) in model.nodes.enumerated() {
+            guard let mesh = node.mesh else { continue }
+            let primitives = model.meshes[mesh].primitives
+            guard let skinIndex = node.skin else {
+                if primitives.contains(where: { $0.geometry.skin != nil }) {
+                    warn("Node \(i) draws a mesh with joints but has no skin; it is drawn in its bind pose")
+                }
+                continue
+            }
+            let count = model.skins[skinIndex].joints.count
+            for primitive in primitives {
+                guard let skin = primitive.geometry.skin else {
+                    warn("Node \(i) has a skin, but its mesh \(mesh) has primitives without JOINTS_0 / WEIGHTS_0")
+                    continue
+                }
+                if let bad = skin.first(where: { s in (0..<4).contains { s.weights[$0] > 0 && Int(s.joints[$0]) >= count } }) {
+                    throw GLTFError.invalidData("node \(i): mesh \(mesh) uses joint \(bad.joints.max()), but skin \(skinIndex) has \(count) joints")
+                }
+            }
+        }
+    }
+
+    private mutating func animation(_ index: Int, _ desc: GLTFDocument.Animation, nodeCount: Int) throws -> AnimationClip {
+        let what = "animation \(index)"
+        var samplers: [AnimationSampler?] = Array(repeating: nil, count: desc.samplers.count)
+        var channels: [AnimationChannel] = []
+        for (c, channel) in desc.channels.enumerated() {
+            guard channel.sampler >= 0, channel.sampler < desc.samplers.count else {
+                throw GLTFError.invalidData("\(what) channel \(c) uses sampler \(channel.sampler), which doesn't exist")
+            }
+            guard let node = channel.target.node else { continue }  // targets an extension's object
+            guard node >= 0, node < nodeCount else {
+                throw GLTFError.invalidData("\(what) channel \(c) targets node \(node), which doesn't exist")
+            }
+            guard let path = AnimationPath(rawValue: channel.target.path) else {
+                if channel.target.path == "weights" { warn("Morph target weight animations are not supported and were ignored") }
+                else { warn("\(what): unknown channel path \(channel.target.path) was ignored") }
+                continue
+            }
+            if samplers[channel.sampler] == nil {
+                samplers[channel.sampler] = try sampler(desc.samplers[channel.sampler], what: "\(what) sampler \(channel.sampler)",
+                                                        components: path == .rotation ? 4 : 3)
+            }
+            let sampler = samplers[channel.sampler]!
+            let perKey = (path == .rotation ? 4 : 3) * (sampler.interpolation == .cubicSpline ? 3 : 1)
+            guard sampler.values.count == sampler.times.count * perKey else {
+                throw GLTFError.invalidData("\(what) channel \(c): its sampler's output doesn't match a \(path.rawValue) channel")
+            }
+            channels.append(AnimationChannel(target: node, path: path, sampler: sampler))
+        }
+        return AnimationClip(name: desc.name ?? "Animation \(index)", channels: channels)
+    }
+
+    private mutating func sampler(_ desc: GLTFDocument.Animation.Sampler, what: String, components: Int) throws -> AnimationSampler {
+        let interpolation: SamplerInterpolation
+        switch desc.interpolation {
+        case nil: interpolation = .linear
+        case let name?:
+            guard let known = SamplerInterpolation(rawValue: name) else { throw GLTFError.invalidData("\(what) has unknown interpolation \(name)") }
+            interpolation = known
+        }
+        let times = try readFloats(desc.input, allowed: [.scalar], what: "\(what) input").values
+        let values = try readFloats(desc.output, allowed: components == 4 ? [.vec4] : [.vec3], what: "\(what) output").values
+        guard !times.isEmpty else { throw GLTFError.invalidData("\(what) has no keyframes") }
+        for k in 1..<times.count where !(times[k] > times[k - 1]) {
+            throw GLTFError.invalidData("\(what): keyframe times must increase")
+        }
+        if interpolation == .cubicSpline && times.count < 2 {
+            throw GLTFError.invalidData("\(what): a cubic spline needs at least two keyframes")
+        }
+        return AnimationSampler(interpolation: interpolation, times: times, values: values)
     }
 
     /// A node whose world matrix mirrors (negative determinant) turns its triangles clockwise

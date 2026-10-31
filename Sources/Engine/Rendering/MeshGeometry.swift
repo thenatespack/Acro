@@ -28,6 +28,46 @@ public struct MeshVertex: Equatable, Sendable, BitwiseCopyable {
         ])
 }
 
+/// The vertex format of skinned `SceneRenderer` meshes: `MeshVertex` followed by four joint
+/// indices (as floats, indices into the mesh's joint palette) and their weights, attributes 14
+/// and 15 (96 bytes). Pipelines that read only the `MeshVertex` attributes can draw it with this
+/// stride.
+public struct SkinnedMeshVertex: Equatable, Sendable, BitwiseCopyable {
+    public var vertex: MeshVertex
+    public var joints: Vec4
+    public var weights: Vec4
+
+    public init(_ vertex: MeshVertex, skin: SkinInfluence) {
+        self.vertex = vertex
+        joints = Vec4(Float(skin.joints.x), Float(skin.joints.y), Float(skin.joints.z), Float(skin.joints.w))
+        weights = skin.weights
+    }
+
+    static let layout = VertexLayout(
+        stride: MemoryLayout<SkinnedMeshVertex>.stride,
+        attributes: MeshVertex.layout.attributes + [
+            VertexAttribute(location: 14, format: .float4, offset: MemoryLayout<SkinnedMeshVertex>.offset(of: \.joints)!),
+            VertexAttribute(location: 15, format: .float4, offset: MemoryLayout<SkinnedMeshVertex>.offset(of: \.weights)!),
+        ])
+}
+
+/// How a vertex follows a skeleton: up to four joints (indices into its skin's joint list,
+/// glTF `JOINTS_0`) and their weights (`WEIGHTS_0`, summing to 1; unused slots weigh 0).
+public struct SkinInfluence: Equatable, Sendable {
+    public var joints: SIMD4<UInt16>
+    public var weights: Vec4
+
+    public init(joints: SIMD4<UInt16>, weights: Vec4) {
+        self.joints = joints
+        self.weights = weights
+    }
+
+    /// Fully bound to one joint.
+    public init(joint: UInt16) {
+        self.init(joints: SIMD4(joint, 0, 0, 0), weights: Vec4(1, 0, 0, 0))
+    }
+}
+
 /// An axis-aligned box as center and half-extent.
 public struct Bounds: Equatable, Sendable {
     public var center: Vec3
@@ -65,14 +105,39 @@ public struct Bounds: Equatable, Sendable {
 public struct MeshGeometry: Sendable {
     public var vertices: [MeshVertex]
     public var indices: [UInt32]
+    /// One `SkinInfluence` per vertex for a skinned mesh (uploaded as `SkinnedMeshVertex`es and
+    /// drawn with the skinning shaders, posed by an entity's `Skin`), nil for a rigid one.
+    public var skin: [SkinInfluence]?
 
-    public init(vertices: [MeshVertex], indices: [UInt32]) {
+    public init(vertices: [MeshVertex], indices: [UInt32], skin: [SkinInfluence]? = nil) {
         self.vertices = vertices
         self.indices = indices
+        self.skin = skin
     }
 
     /// Bounds of the vertex positions.
     public var bounds: Bounds { Bounds(enclosing: vertices.lazy.map(\.position)) }
+
+    /// For a skinned mesh, the bounds of the vertices each joint moves (indexed by joint; nil
+    /// for joints no vertex weighs), in mesh space. A skinned vertex is a weighted average of
+    /// its joints' matrices applied to it, so the union of these boxes transformed by their
+    /// joint matrices contains the posed mesh (`Skin.bounds`).
+    public var jointBounds: [Bounds?] {
+        guard let skin else { return [] }
+        var lo: [Vec3] = [], hi: [Vec3] = []
+        for (vertex, influence) in zip(vertices, skin) {
+            for k in 0..<4 where influence.weights[k] > 0 {
+                let j = Int(influence.joints[k])
+                if j >= lo.count {
+                    lo += Array(repeating: Vec3(repeating: .infinity), count: j + 1 - lo.count)
+                    hi += Array(repeating: Vec3(repeating: -.infinity), count: j + 1 - hi.count)
+                }
+                lo[j] = pointwiseMin(lo[j], vertex.position)
+                hi[j] = pointwiseMax(hi[j], vertex.position)
+            }
+        }
+        return zip(lo, hi).map { lo, hi in lo.x <= hi.x ? Bounds(center: (lo + hi) / 2, halfExtent: (hi - lo) / 2) : nil }
+    }
 
     /// A cube of size `size` centered on the origin, with per-face normals and 0–1 UVs on each face.
     public static func cube(size: Float = 1) -> MeshGeometry {

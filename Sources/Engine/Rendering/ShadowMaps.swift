@@ -393,12 +393,13 @@ public struct ShadowCasterBatches {
                 let material = item.alphaTested ? item.material : -1
                 let key = item.mesh << 32 | (material & 0xffff_ffff)
                 let slot: Int
-                if let existing = slots[key] {
+                if item.skin < 0, let existing = slots[key] {
                     slot = existing
                 } else {
+                    // Skinned casters get a batch each (their joint matrices differ).
                     slot = batches.count
-                    slots[key] = slot
-                    batches.append(RenderBatch(mesh: item.mesh, material: material, first: 0, count: 0))
+                    if item.skin < 0 { slots[key] = slot }
+                    batches.append(RenderBatch(mesh: item.mesh, material: material, first: 0, count: 0, skin: item.skin))
                 }
                 batches[slot].count += 1
                 members.append((Int32(slot), Int32(i)))

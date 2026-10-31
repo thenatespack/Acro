@@ -1,8 +1,8 @@
 import Foundation
 
 /// The glTF 2.0 JSON document, decoded with `Codable`. Only the parts the importer reads are
-/// modelled; unknown properties (skins, animations, cameras, `extras`, unknown extensions)
-/// are ignored by the decoder. Field names follow the specification.
+/// modelled; unknown properties (cameras, `extras`, unknown extensions) are ignored by the
+/// decoder. Field names follow the specification.
 struct GLTFDocument: Decodable {
     struct Asset: Decodable {
         var version: String
@@ -55,6 +55,8 @@ struct GLTFDocument: Decodable {
         var indices: Int?
         var material: Int?
         var mode: Int?
+        /// Morph targets (not imported; only their presence is noted).
+        var targets: [[String: Int]]?
     }
 
     struct Mesh: Decodable {
@@ -72,6 +74,32 @@ struct GLTFDocument: Decodable {
         var scale: [Float]?
         var camera: Int?
         var skin: Int?
+    }
+
+    struct Skin: Decodable {
+        var inverseBindMatrices: Int?
+        var joints: [Int]
+        var skeleton: Int?
+        var name: String?
+    }
+
+    struct Animation: Decodable {
+        struct Target: Decodable {
+            var node: Int?
+            var path: String
+        }
+        struct Channel: Decodable {
+            var sampler: Int
+            var target: Target
+        }
+        struct Sampler: Decodable {
+            var input: Int
+            var output: Int
+            var interpolation: String?
+        }
+        var channels: [Channel]
+        var samplers: [Sampler]
+        var name: String?
     }
 
     struct Scene: Decodable {
@@ -166,4 +194,6 @@ struct GLTFDocument: Decodable {
     var textures: [Texture]?
     var images: [Image]?
     var samplers: [Sampler]?
+    var skins: [Skin]?
+    var animations: [Animation]?
 }

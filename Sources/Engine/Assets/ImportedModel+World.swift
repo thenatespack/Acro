@@ -36,7 +36,9 @@ extension ImportedModel {
     /// name, or "Node <i>") and the same parent-child structure. A node whose mesh has one
     /// primitive gets the `MeshRenderer` itself; for a mesh with several primitives, each one
     /// becomes a child entity named "<mesh> [<i>]" with an identity `Transform` and its own
-    /// `MeshRenderer`, because a `MeshRenderer` draws one mesh with one material.
+    /// `MeshRenderer`, because a `MeshRenderer` draws one mesh with one material. The renderers
+    /// of a node with a skin also get a `Skin` naming the joints' entities (joints outside the
+    /// instantiated scene are `Entity.invalid` and stay in the bind pose).
     ///
     /// `mesh(meshIndex, primitiveIndex)` and `material(materialIndex)` supply the handles
     /// (`material(nil)` for primitives without a material); a nil mesh handle skips the primitive.
@@ -45,6 +47,7 @@ extension ImportedModel {
                             mesh: (_ mesh: Int, _ primitive: Int) -> MeshHandle?,
                             material: (_ material: Int?) -> MaterialHandle) -> InstantiatedModel {
         var result = InstantiatedModel(roots: [], nodes: [:], renderers: [])
+        var skinned: [(entity: Entity, skin: Int)] = []
         // Depth first with an explicit stack, children in file order.
         var stack: [(node: Int, parent: Entity?)] = roots.reversed().map { ($0, parent) }
         while let (index, parentEntity) = stack.popLast() {
@@ -67,11 +70,37 @@ extension ImportedModel {
                         world.setParent(child, to: entity)
                         result.renderers.append(child)
                     }
+                    if let skin = node.skin, primitive.geometry.skin != nil { skinned.append((result.renderers.last!, skin)) }
                 }
             }
             stack += node.children.reversed().map { ($0, entity) }
         }
+        // Joints may come after the meshes they pose, so skins are bound once every node exists.
+        for (entity, skin) in skinned {
+            world.add(Skin(joints: skins[skin].joints.map { result.nodes[$0] ?? .invalid },
+                           inverseBindMatrices: skins[skin].inverseBindMatrices), to: entity)
+        }
         return result
+    }
+
+    /// Registers every animation with `library` under "<keyPrefix>/<name>" (the clip's name,
+    /// or its index when names repeat) and returns their handles in file order. Channel
+    /// targets are node indices: drive them with `animationTargets(of:)`.
+    @discardableResult
+    public func registerAnimations(in library: AnimationLibrary, keyPrefix: String) -> [AnimationClipHandle] {
+        var used = Set<String>()
+        return animations.enumerated().map { i, clip in
+            var key = "\(keyPrefix)/\(clip.name)"
+            if !used.insert(key).inserted { key = "\(keyPrefix)/\(i)" }
+            return library.register(clip, key: key)
+        }
+    }
+
+    /// The `Animator` targets for an instance of this model: the entity of every node by node
+    /// index (`Entity.invalid` for nodes that weren't instantiated) and the nodes' file
+    /// transforms as the rest pose.
+    public func animationTargets(of instance: InstantiatedModel) -> (targets: [Entity], restPose: [Transform]) {
+        (nodes.indices.map { instance.nodes[$0] ?? .invalid }, nodes.map(\.transform))
     }
 
     /// `instantiate(in:under:mesh:material:)` with handles from `handles`.

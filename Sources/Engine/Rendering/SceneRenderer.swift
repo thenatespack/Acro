@@ -1,12 +1,15 @@
 import Foundation
 
-/// A mesh uploaded to the GPU (vertex buffer 0 in `MeshVertex` layout, 32-bit indices).
+/// A mesh uploaded to the GPU (vertex buffer 0 in `MeshVertex` layout, or `SkinnedMeshVertex`
+/// for a skinned mesh; 32-bit indices).
 public struct GPUMesh {
     public var vertexBuffer: GPUBuffer
     public var indexBuffer: GPUBuffer
     public var indexCount: Int
-    /// Local-space bounds of the vertices, used for culling.
+    /// Local-space bounds of the vertices, used for culling (the bind pose for a skinned mesh).
     public var bounds: Bounds
+    /// The vertices are `SkinnedMeshVertex`es.
+    public var isSkinned = false
 }
 
 /// A camera to render a world from with `SceneRenderer.renderView`: an explicit view and
@@ -121,9 +124,15 @@ public final class SceneRenderer {
     private let shader: ShaderSource
     /// `shader` with mesh_mask.frag (alpha-tested), loaded with the first masked material.
     private var maskShader: ShaderSource?
+    /// The skinning variants of `shader` and `maskShader` (mesh_skinned.vert), loaded with the first skinned mesh.
+    private var skinnedShaders: [Bool: ShaderSource] = [:]
     private let shadowPipeline: RenderPipeline
     /// The shadow pipeline for alpha-tested casters (mesh_shadow_mask), created on first use.
     private var shadowMaskPipeline: RenderPipeline?
+    /// Shadow pipelines for skinned casters, plain and alpha-tested, created on first use.
+    private var skinnedShadowPipelines: [Bool: RenderPipeline] = [:]
+    /// Scratch for the skinning uniform block (`SkinPose.uniformBlock`).
+    private var skinBlock: [Vec4] = []
     private var pipelines: [PipelineKey: RenderPipeline] = [:]
     /// The shadow atlas: every cascade, spot-light map and point-light face of the frame in
     /// one depth texture (`ShadowAtlasLayout`). Recreated when the layout's size changes.
@@ -282,6 +291,8 @@ public final class SceneRenderer {
         var reversedZ: Bool
         /// The alpha-tested shader variant (mesh_mask.frag).
         var alphaTested: Bool = false
+        /// The skinning vertex shader (mesh_skinned.vert) and `SkinnedMeshVertex` layout.
+        var skinned: Bool = false
     }
 
     /// The pipeline variant a batch of `material` draws with, in the transparent pass when `blending`.
@@ -323,15 +334,34 @@ public final class SceneRenderer {
 
     /// Uploads `geometry` and registers it under `key` (replacing an earlier mesh with that key).
     /// Tangents are generated first unless every vertex has one (`MeshGeometry.hasTangents`).
+    /// A skinned geometry (`skin` set, one influence per vertex, joints below
+    /// `SkinPose.maxJoints`) is drawn posed by its entity's `Skin`.
     @discardableResult
     public func registerMesh(_ geometry: MeshGeometry, key: String) throws -> MeshHandle {
         let geometry = geometry.withTangents()
+        var skinInfo: SkinnedMeshInfo?
+        let vertexBuffer: GPUBuffer
+        if let skin = geometry.skin {
+            guard skin.count == geometry.vertices.count else {
+                throw GraphicsError("Mesh '\(key)' has \(skin.count) skin influences for \(geometry.vertices.count) vertices")
+            }
+            let info = SkinnedMeshInfo(jointBounds: geometry.jointBounds)
+            guard info.jointCount <= SkinPose.maxJoints else {
+                throw GraphicsError("Mesh '\(key)' uses \(info.jointCount) joints; at most \(SkinPose.maxJoints) are supported")
+            }
+            skinInfo = info
+            vertexBuffer = try device.makeBuffer(zip(geometry.vertices, skin).map { SkinnedMeshVertex($0, skin: $1) }, usage: .vertex)
+        } else {
+            vertexBuffer = try device.makeBuffer(geometry.vertices, usage: .vertex)
+        }
         let mesh = GPUMesh(
-            vertexBuffer: try device.makeBuffer(geometry.vertices, usage: .vertex),
+            vertexBuffer: vertexBuffer,
             indexBuffer: try device.makeBuffer(geometry.indices, usage: .index),
             indexCount: geometry.indices.count,
-            bounds: geometry.bounds)
+            bounds: geometry.bounds,
+            isSkinned: skinInfo != nil)
         let id = prep.meshes.register(mesh.bounds, key: key)
+        prep.skinnedMeshes[id] = skinInfo
         if id == meshes.count {
             meshes.append(mesh)
             geometries.append(geometry)
@@ -377,6 +407,7 @@ public final class SceneRenderer {
     func unregisterMesh(key: String) {
         guard let id = prep.meshes.id(of: key) else { return }
         prep.meshes.remove(key)
+        prep.skinnedMeshes[id] = nil
         if vanishedMesh == nil {
             vanishedMesh = try? GPUMesh(vertexBuffer: device.makeBuffer([MeshVertex(position: .zero, normal: .zero)], usage: .vertex),
                                         indexBuffer: device.makeBuffer([UInt32(0)], usage: .index), indexCount: 0, bounds: Bounds(center: .zero, halfExtent: .zero))
@@ -691,9 +722,24 @@ public final class SceneRenderer {
     }
 
     /// Shadow batches: depth only, except alpha-tested ones, which sample their material's alpha.
+    /// Skinned casters use the skinning variants with their joint matrices.
     private func drawShadows(_ pass: RenderPass, _ batches: ArraySlice<RenderBatch>, instances: TransientBuffer) {
         var masked = false
+        var skinned = false
         for batch in batches {
+            if batch.skin >= 0 {
+                guard let pipeline = skinnedShadowPipeline(alphaTested: batch.material >= 0) else { continue }
+                pass.setPipeline(pipeline)
+                if batch.material >= 0 { bindMaterial(batch.material, in: pass, skin: batch.skin) } else { bindSkin(batch.skin, material: nil, in: pass) }
+                skinned = true
+                draw(pass, batch, instances: instances)
+                continue
+            }
+            if skinned {
+                // Back to the pipeline the batches below expect.
+                pass.setPipeline(masked ? maskedShadowPipeline() ?? shadowPipeline : shadowPipeline)
+                skinned = false
+            }
             if batch.material >= 0, let pipeline = maskedShadowPipeline() {
                 if !masked { pass.setPipeline(pipeline) }
                 masked = true
@@ -703,6 +749,28 @@ public final class SceneRenderer {
                 masked = false
             }
             draw(pass, batch, instances: instances)
+        }
+        if skinned { pass.setPipeline(masked ? maskedShadowPipeline() ?? shadowPipeline : shadowPipeline) }
+    }
+
+    private func skinnedShadowPipeline(alphaTested: Bool) -> RenderPipeline? {
+        if let pipeline = skinnedShadowPipelines[alphaTested] { return pipeline }
+        do {
+            var descriptor = PipelineDescriptor(
+                shader: alphaTested
+                    ? try ShaderSource.load(vertex: "mesh_shadow_mask_skinned", fragment: "mesh_shadow_mask", bundle: .module)
+                    : try ShaderSource.load(named: "mesh_shadow_skinned", bundle: .module),
+                vertexLayout: SkinnedMeshVertex.layout, instanceLayout: MeshInstance.layout)
+            descriptor.target = .depthOnly
+            descriptor.depthOnlyFragment = alphaTested
+            descriptor.cullMode = .none
+            descriptor.depthBias = DepthBias(constant: 1.5, slopeScale: 2.5)
+            let pipeline = try device.makePipeline(descriptor)
+            skinnedShadowPipelines[alphaTested] = pipeline
+            return pipeline
+        } catch {
+            print("SceneRenderer: skinned shadow pipeline creation failed: \(error)")
+            return nil
         }
     }
 
@@ -738,10 +806,23 @@ public final class SceneRenderer {
         lights.indices.withUnsafeBytes { pass.setUniformData($0, index: 7, stage: .fragment) }
     }
 
-    /// Binds a material's uniforms (buffer 2), textures 1-5 and sampler 1.
-    private func bindMaterial(_ index: Int, in pass: RenderPass) {
+    /// Binds the skinning uniform block of `prep.skins[skin]` (buffer 2, both stages), with
+    /// `material`'s uniforms as its prefix (zeros for nil).
+    func bindSkin(_ skin: Int, material: Int?, in pass: RenderPass) {
+        let pose = skin < prep.skins.count ? prep.skins[skin] : nil
+        SkinPose.uniformBlock(material: material.map { MaterialUniforms(materials[$0].material) }, pose: pose, into: &skinBlock)
+        skinBlock.withUnsafeBytes { pass.setUniformData($0, index: 2, stage: .all) }
+    }
+
+    /// Binds a material's uniforms (buffer 2), textures 1-5 and sampler 1. For a skinned batch,
+    /// buffer 2 is the skinning block with the material's uniforms as its prefix.
+    private func bindMaterial(_ index: Int, in pass: RenderPass, skin: Int = -1) {
         let (material, sampler) = materials[index]
-        pass.setUniformData(MaterialUniforms(material), index: 2, stage: .fragment)
+        if skin >= 0 {
+            bindSkin(skin, material: index, in: pass)
+        } else {
+            pass.setUniformData(MaterialUniforms(material), index: 2, stage: .fragment)
+        }
         pass.setTexture(material.texture ?? whiteTexture, index: 1)
         pass.setTexture(material.metallicRoughnessTexture ?? whiteTexture, index: 2)
         pass.setTexture(material.normalTexture ?? whiteTexture, index: 3)
@@ -758,7 +839,7 @@ public final class SceneRenderer {
         pass.setTexture(shadowMap)
         bindLights(lights, in: pass)
         environmentLighting.bindLighting(in: pass)
-        var current: (pipeline: PipelineKey, material: Int)?
+        var current: (pipeline: PipelineKey, material: Int, skin: Int)?
         for (batches, blending) in [(list.opaque, false), (list.transparent, true)] {
             if blending, let sky {
                 environmentLighting.drawSky(in: pass, view: sky.view, projection: sky.projection, reversedZ: reversedZ)
@@ -766,13 +847,16 @@ public final class SceneRenderer {
             }
             guard let uploaded else { continue }
             for batch in batches {
-                let key = Self.pipelineKey(for: materials[batch.material].material, blending: blending, reversedZ: reversedZ)
+                var key = Self.pipelineKey(for: materials[batch.material].material, blending: blending, reversedZ: reversedZ)
+                key.skinned = batch.skin >= 0
                 if current?.pipeline != key {
                     guard let pipeline = pipeline(key) else { continue }
                     pass.setPipeline(pipeline)
                 }
-                if current?.material != batch.material { bindMaterial(batch.material, in: pass) }
-                current = (key, batch.material)
+                if current?.material != batch.material || batch.skin >= 0 || (current?.skin ?? -1) >= 0 {
+                    bindMaterial(batch.material, in: pass, skin: batch.skin)
+                }
+                current = (key, batch.material, batch.skin)
                 draw(pass, batch, instances: uploaded)
             }
         }
@@ -796,7 +880,17 @@ public final class SceneRenderer {
                 return nil
             }
         }
-        var descriptor = PipelineDescriptor(shader: key.alphaTested ? maskShader! : shader, vertexLayout: MeshVertex.layout,
+        if key.skinned && skinnedShaders[key.alphaTested] == nil {
+            do {
+                skinnedShaders[key.alphaTested] = try ShaderSource.load(
+                    vertex: "mesh_skinned", fragment: key.alphaTested ? "mesh_mask" : "mesh", bundle: .module)
+            } catch {
+                print("SceneRenderer: skinning shader unavailable: \(error)")
+                return nil
+            }
+        }
+        let shader = key.skinned ? skinnedShaders[key.alphaTested]! : key.alphaTested ? maskShader! : shader
+        var descriptor = PipelineDescriptor(shader: shader, vertexLayout: key.skinned ? SkinnedMeshVertex.layout : MeshVertex.layout,
                                             instanceLayout: MeshInstance.layout)
         descriptor.cullMode = key.doubleSided ? .none : .back
         descriptor.alphaBlending = key.blending

@@ -83,9 +83,11 @@ public struct RenderItem: Sendable {
     public var transparent: Bool
     /// The material is alpha-tested (`MaterialTraits.alphaTested`), so its shadow batch keeps it.
     public var alphaTested: Bool
+    /// Index into `RenderPrep.skins` for a skinned mesh (drawn in a batch of its own), else -1.
+    public var skin: Int
 
     public init(entity: Entity, mesh: Int, material: Int, instance: MeshInstance, bounds: Bounds,
-                castsShadows: Bool, transparent: Bool, alphaTested: Bool = false) {
+                castsShadows: Bool, transparent: Bool, alphaTested: Bool = false, skin: Int = -1) {
         self.entity = entity
         self.mesh = mesh
         self.material = material
@@ -94,18 +96,26 @@ public struct RenderItem: Sendable {
         self.castsShadows = castsShadows
         self.transparent = transparent
         self.alphaTested = alphaTested
+        self.skin = skin
     }
 }
 
 /// Collects a world's `MeshRenderer`s into `RenderItem`s and finds its camera, light and
 /// environment. Mesh and material handles resolve through `meshes` (local bounds) and
 /// `materials` (whether the material blends or is alpha-tested); entities naming unknown keys are skipped.
+/// Entities drawing a mesh in `skinnedMeshes` get this frame's joint matrices (`skins`, from
+/// their `Skin`) and bounds around the posed mesh.
 @MainActor
 public struct RenderPrep {
     public var meshes = AssetRegistry<Bounds>()
     public var materials = AssetRegistry<MaterialTraits>()
+    /// Skinned meshes by mesh id.
+    public var skinnedMeshes: [Int: SkinnedMeshInfo] = [:]
     public var motion = MotionHistory()
+    public var skinHistory = SkinHistory()
     public private(set) var items: [RenderItem] = []
+    /// The joint matrices of this frame's skinned items (`RenderItem.skin`).
+    public private(set) var skins: [SkinPose] = []
     /// Keys entities referenced that aren't registered (reported once by the renderer).
     public private(set) var missingKeys: Set<String> = []
     /// The same, split by what the entity wanted the key for.
@@ -119,6 +129,7 @@ public struct RenderPrep {
     public mutating func gather(world: World) {
         motion.beginFrame()
         items.removeAll(keepingCapacity: true)
+        skins.removeAll(keepingCapacity: true)
         world.query(GlobalTransform.self, MeshRenderer.self) { entity, transform, renderer in
             guard renderer.isVisible else { return }
             let mesh = meshes.id(of: renderer.mesh.key), material = materials.id(of: renderer.material.key)
@@ -135,14 +146,26 @@ public struct RenderPrep {
             }
             let model = transform.matrix
             let previous = motion.previousMatrix(for: entity, current: model)
+            var localBounds = meshes[mesh]
+            var skin = -1
+            if !skinnedMeshes.isEmpty, let info = skinnedMeshes[mesh] {
+                let joints = SkinPose.joints(of: world.get(Skin.self, for: entity), meshWorld: model, jointCount: info.jointCount) {
+                    world.get(GlobalTransform.self, for: $0)?.matrix
+                }
+                let previousJoints = skinHistory.previousJoints(for: entity, current: joints, frame: motion.frame)
+                if let posed = SkinPose.bounds(info.jointBounds, joints: joints) { localBounds = posed }
+                skin = skins.count
+                skins.append(SkinPose(joints: joints, previousJoints: previousJoints))
+            }
             items.append(RenderItem(
                 entity: entity, mesh: mesh, material: material,
                 instance: MeshInstance(model: model, previousModel: previous, color: Vec4(renderer.tint, renderer.opacity),
                                        params: Vec4(renderer.receivesShadows ? 1 : 0, 0, 0, 0)),
-                bounds: meshes[mesh].transformed(by: model),
+                bounds: localBounds.transformed(by: model),
                 castsShadows: renderer.castsShadows,
                 transparent: renderer.opacity < 1 || materials[material].blends,
-                alphaTested: materials[material].alphaTested))
+                alphaTested: materials[material].alphaTested,
+                skin: skin))
         }
     }
 
@@ -216,12 +239,15 @@ public struct RenderBatch: Equatable, Sendable {
     public var material: Int
     public var first: Int
     public var count: Int
+    /// The skinned item's `RenderItem.skin` (its batch has one instance), else -1.
+    public var skin: Int
 
-    public init(mesh: Int, material: Int, first: Int, count: Int) {
+    public init(mesh: Int, material: Int, first: Int, count: Int, skin: Int = -1) {
         self.mesh = mesh
         self.material = material
         self.first = first
         self.count = count
+        self.skin = skin
     }
 }
 
@@ -246,7 +272,7 @@ public struct RenderListStats: Equatable, Sendable {
 /// transparent instances are sorted back to front by the distance from the camera to their
 /// bounds' center (ties by entity index), and consecutive ones sharing mesh and material
 /// share a batch. Shadow batches group casters by mesh, and alpha-tested ones by mesh and
-/// material (their batch keeps the material, others have -1).
+/// material (their batch keeps the material, others have -1). Skinned items get a batch each.
 public struct RenderList {
     public private(set) var instances: [MeshInstance] = []
     public private(set) var opaque: [RenderBatch] = []
@@ -289,12 +315,12 @@ public struct RenderList {
                     // Alpha-tested casters need their material; the rest share a depth-only batch per mesh.
                     let material = item.alphaTested ? item.material : -1
                     let key = item.mesh << 32 | (material & 0xffff_ffff)
-                    if let existing = shadowSlots[key] {
+                    if item.skin < 0, let existing = shadowSlots[key] {
                         slot = existing
                     } else {
                         slot = shadow.count
-                        shadowSlots[key] = slot
-                        shadow.append(RenderBatch(mesh: item.mesh, material: material, first: 0, count: 0))
+                        if item.skin < 0 { shadowSlots[key] = slot }
+                        shadow.append(RenderBatch(mesh: item.mesh, material: material, first: 0, count: 0, skin: item.skin))
                     }
                     shadow[slot].count += 1
                     shadowSlotOfItem[i] = Int32(slot)
@@ -313,16 +339,16 @@ public struct RenderList {
                 transparentItems.append((Int32(i), dot(d, d)))
                 continue
             }
-            let key = item.mesh << 32 | item.material
+            let key = item.skin < 0 ? item.mesh << 32 | item.material : Int.min
             let slot: Int
-            if key == lastKey {
+            if key == lastKey && item.skin < 0 {
                 slot = lastSlot
-            } else if let existing = opaqueSlots[key] {
+            } else if item.skin < 0, let existing = opaqueSlots[key] {
                 slot = existing
             } else {
                 slot = opaque.count
-                opaqueSlots[key] = slot
-                opaque.append(RenderBatch(mesh: item.mesh, material: item.material, first: 0, count: 0))
+                if item.skin < 0 { opaqueSlots[key] = slot }
+                opaque.append(RenderBatch(mesh: item.mesh, material: item.material, first: 0, count: 0, skin: item.skin))
             }
             lastKey = key
             lastSlot = slot
@@ -370,10 +396,11 @@ public struct RenderList {
             for (n, entry) in transparentItems.enumerated() {
                 let item = items[Int(entry.item)]
                 out[transparentStart + n] = item.instance
-                if let last = transparent.last, last.mesh == item.mesh, last.material == item.material {
+                if let last = transparent.last, last.mesh == item.mesh, last.material == item.material, last.skin < 0, item.skin < 0 {
                     transparent[transparent.count - 1].count += 1
                 } else {
-                    transparent.append(RenderBatch(mesh: item.mesh, material: item.material, first: transparentStart + n, count: 1))
+                    transparent.append(RenderBatch(mesh: item.mesh, material: item.material, first: transparentStart + n, count: 1,
+                                                   skin: item.skin))
                 }
             }
         }
