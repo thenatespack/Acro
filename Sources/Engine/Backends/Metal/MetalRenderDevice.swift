@@ -472,8 +472,8 @@ final class MetalRenderDevice: RenderDevice {
 
     func supports(_ format: TextureFormat) -> Bool {
         switch format {
-        case .bc7Unorm, .bc7Srgb: device.supportsBCTextureCompression
-        case .astc4x4Unorm, .astc4x4Srgb: device.supportsFamily(.apple2)
+        case .bc7Unorm, .bc7Srgb, .bc5Unorm: device.supportsBCTextureCompression
+        case .astc4x4Unorm, .astc4x4Srgb, .astc4x4RG: device.supportsFamily(.apple2)
         default: true
         }
     }
@@ -485,8 +485,9 @@ final class MetalRenderDevice: RenderDevice {
         case .rgba16Float: .rgba16Float
         case .bc7Unorm: .bc7_rgbaUnorm
         case .bc7Srgb: .bc7_rgbaUnorm_srgb
-        case .astc4x4Unorm: .astc_4x4_ldr
+        case .astc4x4Unorm, .astc4x4RG: .astc_4x4_ldr
         case .astc4x4Srgb: .astc_4x4_srgb
+        case .bc5Unorm: .bc5_rgUnorm
         default: .rgba8Unorm
         }
     }

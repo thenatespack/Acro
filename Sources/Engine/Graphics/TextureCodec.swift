@@ -12,14 +12,22 @@ public enum TextureCompression: String, Codable, Sendable, CaseIterable {
     case bc7
     /// ASTC 4x4 (`.astc4x4Srgb` / `.astc4x4Unorm`).
     case astc
+    /// BC5 (`.bc5Unorm`, two channels) for normal maps, BC7 for everything else.
+    case bc5
+    /// Two-channel ASTC 4x4 (`.astc4x4RG`) for normal maps, ASTC 4x4 for everything else.
+    case astcRG
 
     /// The compressed format for 8-bit pixels that are sRGB color or linear data; nil for `none`.
-    public func format(srgb: Bool) -> TextureFormat? {
+    /// Normal maps (`normalMap`) get a two-channel format under `auto`, `bc5` and `astcRG` (the
+    /// mesh shader rebuilds Z), an RGB one under `bc7` and `astc`.
+    public func format(srgb: Bool, normalMap: Bool = false) -> TextureFormat? {
         switch self {
         case .none: nil
-        case .auto: TextureCodec.autoFormat(srgb: srgb)
+        case .auto: normalMap ? TextureCodec.autoNormalMapFormat : TextureCodec.autoFormat(srgb: srgb)
         case .bc7: srgb ? .bc7Srgb : .bc7Unorm
         case .astc: srgb ? .astc4x4Srgb : .astc4x4Unorm
+        case .bc5: normalMap ? .bc5Unorm : srgb ? .bc7Srgb : .bc7Unorm
+        case .astcRG: normalMap ? .astc4x4RG : srgb ? .astc4x4Srgb : .astc4x4Unorm
         }
     }
 }
@@ -59,6 +67,16 @@ public enum TextureCodec {
         #endif
     }
 
+    /// What `TextureCompression.auto` picks for normal maps: two-channel ASTC 4x4 on Apple GPUs,
+    /// BC5 elsewhere.
+    public static var autoNormalMapFormat: TextureFormat {
+        #if canImport(Darwin) && arch(arm64)
+        .astc4x4RG
+        #else
+        .bc5Unorm
+        #endif
+    }
+
     /// Bumped when the encoders' output changes, so cached encodings are redone.
     static let version = 1
 
@@ -80,8 +98,8 @@ public enum TextureCodec {
             throw GraphicsError("A \(level.width)x\(level.height) level needs \(max(level.width * level.height * 4, 0)) RGBA8 bytes")
         }
         switch format {
-        case .bc7Unorm, .bc7Srgb:
-            return levels.map { encodeBC7($0, format: format, quality: quality) }
+        case .bc7Unorm, .bc7Srgb, .bc5Unorm:
+            return levels.map { encodeBlockRows($0, format: format, quality: quality) }
         default:
             return try encodeASTC(levels, format: format, quality: quality)
         }
@@ -99,6 +117,8 @@ public enum TextureCodec {
                 switch format {
                 case .bc7Unorm, .bc7Srgb:
                     tc_bc7_decode(blocks.baseAddress, Int32(level.width), Int32(level.height), out.baseAddress) != 0
+                case .bc5Unorm:
+                    { tc_bc5_decode(blocks.baseAddress, Int32(level.width), Int32(level.height), out.baseAddress); return true }()
                 default:
                     tc_astc_decode(blocks.baseAddress, Int32(level.width), Int32(level.height), format.isSRGB ? 1 : 0,
                                    out.baseAddress) != 0
@@ -117,9 +137,52 @@ public enum TextureCodec {
         }
     }
 
+    // MARK: - Normal maps
+
+    /// A tangent-space normal map (RGB = XYZ * 0.5 + 0.5) with every texel's vector rescaled to
+    /// unit length, so X and Y alone determine it. Done before two-channel encoding, since the
+    /// shader rebuilds Z as sqrt(1 - x² - y²). Alpha is kept; zero vectors become (0, 0, 1).
+    public static func normalized(normalMap image: Image) -> Image {
+        var pixels = image.pixels
+        for i in stride(from: 0, to: pixels.count, by: 4) {
+            var n = Vec3(Float(pixels[i]), Float(pixels[i + 1]), Float(pixels[i + 2])) * (2 / 255) - Vec3(1, 1, 1)
+            let size = length(n)
+            n = size > 1e-6 ? n / size : Vec3(0, 0, 1)
+            for c in 0..<3 { pixels[i + c] = UInt8(((n[c] * 0.5 + 0.5) * 255).rounded()) }
+        }
+        return Image(width: image.width, height: image.height, pixels: pixels)
+    }
+
+    /// The unit normal a texel of a texture in `format`, decoded to RGBA8 (`decode`), stands
+    /// for, as the mesh shader reads it: XYZ from RGB, or for the two-channel formats X and Y
+    /// from red and green (BC5) or red and alpha (two-channel ASTC) with Z = sqrt(1 - x² - y²).
+    public static func normal(_ pixels: [UInt8], at texel: Int, format: TextureFormat) -> Vec3 {
+        let i = texel * 4
+        func channel(_ c: Int) -> Float { Float(pixels[i + c]) / 255 * 2 - 1 }
+        guard format.isTwoChannel else {
+            let n = Vec3(channel(0), channel(1), channel(2))
+            return length(n) > 1e-6 ? normalize(n) : Vec3(0, 0, 1)
+        }
+        let x = channel(0), y = channel(format == .astc4x4RG ? 3 : 1)
+        return Vec3(x, y, max(1 - x * x - y * y, 0).squareRoot())
+    }
+
+    /// An RGBA8 normal map (X, Y, rebuilt Z, alpha 1) from a decoded two-channel level: what a
+    /// GPU without the format gets instead (`makeTexture(compressedLevels:format:)`).
+    static func expandTwoChannel(_ image: Image, format: TextureFormat) -> Image {
+        var pixels = image.pixels
+        for texel in 0..<image.width * image.height {
+            let n = normal(image.pixels, at: texel, format: format)
+            for c in 0..<3 { pixels[texel * 4 + c] = UInt8(((n[c] * 0.5 + 0.5) * 255).rounded()) }
+            pixels[texel * 4 + 3] = 255
+        }
+        return Image(width: image.width, height: image.height, pixels: pixels)
+    }
+
     // MARK: - Encoders
 
-    private static func encodeBC7(_ level: TextureMipLevel, format: TextureFormat, quality: TextureCompressionQuality) -> TextureMipLevel {
+    /// BC7 or BC5: bands of block rows on every core.
+    private static func encodeBlockRows(_ level: TextureMipLevel, format: TextureFormat, quality: TextureCompressionQuality) -> TextureMipLevel {
         var blocks = [UInt8](repeating: 0, count: format.byteCount(width: level.width, height: level.height))
         let rows = (level.height + 3) / 4
         // Bands of block rows, a few per core so uneven bands even out.
@@ -131,8 +194,13 @@ public enum TextureCodec {
                 let p = LevelPointers(source: source.baseAddress!, out: out.baseAddress!, count: out.count, encoder: nil)
                 DispatchQueue.concurrentPerform(iterations: bands) { band in
                     let first = rows * band / bands, last = rows * (band + 1) / bands
-                    tc_bc7_encode(p.source, Int32(level.width), Int32(level.height), Int32(first), Int32(last - first),
-                                  quality.level, perceptual, p.out)
+                    if format == .bc5Unorm {
+                        tc_bc5_encode(p.source, Int32(level.width), Int32(level.height), Int32(first), Int32(last - first),
+                                      quality.level, p.out)
+                    } else {
+                        tc_bc7_encode(p.source, Int32(level.width), Int32(level.height), Int32(first), Int32(last - first),
+                                      quality.level, perceptual, p.out)
+                    }
                 }
             }
         }
@@ -142,7 +210,10 @@ public enum TextureCodec {
     private static func encodeASTC(_ levels: [TextureMipLevel], format: TextureFormat,
                                    quality: TextureCompressionQuality) throws -> [TextureMipLevel] {
         let threads = ProcessInfo.processInfo.activeProcessorCount
-        guard let encoder = tc_astc_encoder_create(format.isSRGB ? 1 : 0, quality.level, Int32(threads)) else {
+        let made = format == .astc4x4RG
+            ? tc_astc_encoder_create_rg(quality.level, Int32(threads))
+            : tc_astc_encoder_create(format.isSRGB ? 1 : 0, quality.level, Int32(threads))
+        guard let encoder = made else {
             throw GraphicsError("The ASTC encoder couldn't be set up")
         }
         defer { tc_astc_encoder_destroy(encoder) }
@@ -190,13 +261,23 @@ private final class Atomic: @unchecked Sendable {
 extension RenderDevice {
     /// A texture from compressed mip levels (`TextureCodec.encode`). When the GPU can't sample
     /// `format` (`supports(_:)`), the levels are decoded on the CPU and uploaded as
-    /// `format.decompressedFormat` instead, logged once per format and backend.
+    /// `format.decompressedFormat` instead, logged once per format and backend. A two-channel
+    /// normal map then becomes an RGBA8 one with Z rebuilt (x, y, z, 1), which the mesh shader
+    /// reads like any other.
     public func makeTexture(compressedLevels levels: [TextureMipLevel], format: TextureFormat) throws -> GPUTexture {
         if !format.isCompressed || supports(format) { return try makeTexture(levels: levels, format: format) }
         if reportedTextureFallbacks.insert("\(backend) \(format)").inserted {
             EngineLog.info("\(deviceName) (\(backend)) can't sample \(format) textures; decoding them to \(format.decompressedFormat)",
                            category: .rendering)
         }
-        return try makeTexture(levels: TextureCodec.decode(levels: levels, format: format), format: format.decompressedFormat)
+        var decoded = try TextureCodec.decode(levels: levels, format: format)
+        if format.isTwoChannel {
+            // The mesh shader reads an RGBA8 normal map's Z from blue: rebuild it here.
+            decoded = decoded.map {
+                let image = TextureCodec.expandTwoChannel(Image(width: $0.width, height: $0.height, pixels: $0.pixels), format: format)
+                return TextureMipLevel(width: image.width, height: image.height, pixels: image.pixels)
+            }
+        }
+        return try makeTexture(levels: decoded, format: format.decompressedFormat)
     }
 }

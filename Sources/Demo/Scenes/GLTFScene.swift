@@ -4,7 +4,8 @@ import Foundation
 /// A glTF model imported with `GLTFReader` and drawn by `SceneRenderer`: by default the
 /// Khronos OrientationTest model (every arrow must point into its matching target; a mirrored
 /// or inside-out import breaks that), or any `.gltf` / `.glb` named by `DEMO_GLTF=<path>`.
-/// Images are decoded with `ImageDecoder` and every texture of the PBR materials is used.
+/// Images are decoded with `ImageDecoder` and every texture of the PBR materials is used
+/// (block-compressed by role with `DEMO_TEXTURE_COMPRESSION=auto|bc7|astc|bc5|astcRG`).
 /// The model is scaled to fit and stood on the floor; the window title shows what was imported.
 final class GLTFScene: DemoScene {
     static let name = "gltf"
@@ -33,7 +34,9 @@ final class GLTFScene: DemoScene {
         }
         let model = try GLTFReader.read(contentsOf: url)
         for warning in model.warnings { print("glTF: \(warning)") }
-        let (textures, failures) = model.makeTextures(device: renderer.device) { data, _ in try ImageDecoder.decode(data) }
+        let (textures, failures) = model.makeTextures(device: renderer.device, compression: .demoSetting) { data, _ in
+            try ImageDecoder.decode(data)
+        }
         for failure in failures { print("glTF: \(failure)") }
         let handles = try model.register(with: sceneRenderer, keyPrefix: url.lastPathComponent, textures: textures)
 

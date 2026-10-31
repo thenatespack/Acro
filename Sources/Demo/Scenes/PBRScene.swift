@@ -5,7 +5,9 @@ import Foundation
 /// (bottom to top) and smooth to rough (left to right), a normal-mapped brick slab, an
 /// emissive panel, an alpha-tested plant (cutout leaves, also in its shadow) and the Khronos
 /// BoomBox glTF model with base color, metallic-roughness, normal, occlusion and emissive maps.
-/// Every texture except the model's is generated in code.
+/// Every texture except the model's is generated in code. `DEMO_TEXTURE_COMPRESSION=auto`
+/// (or `bc7`, `astc`, `bc5`, `astcRG`) block-compresses the BoomBox's textures by role (its
+/// normal map in two channels under `auto`, `bc5` and `astcRG`); off by default.
 final class PBRScene: DemoScene {
     static let name = "pbr"
     static let summary = "PBR materials: metallic x roughness spheres, normal map, emissive, alpha-mask cutouts, textured glTF (BoomBox)"
@@ -117,7 +119,9 @@ final class PBRScene: DemoScene {
         }
         let model = try GLTFReader.read(contentsOf: url)
         for warning in model.warnings { print("glTF: \(warning)") }
-        let (textures, failures) = model.makeTextures(device: device) { data, _ in try ImageDecoder.decode(data) }
+        let (textures, failures) = model.makeTextures(device: device, compression: .demoSetting) { data, _ in
+            try ImageDecoder.decode(data)
+        }
         for failure in failures { print("glTF: \(failure)") }
         let handles = try model.register(with: sceneRenderer, keyPrefix: "BoomBox", textures: textures)
         let bounds = model.sceneBounds ?? Bounds(center: .zero, halfExtent: Vec3(repeating: 0.01))

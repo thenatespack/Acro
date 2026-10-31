@@ -231,6 +231,12 @@ public enum TextureFormat: String, Sendable, Equatable {
     case bc7Unorm, bc7Srgb
     /// ASTC 4x4 LDR block compression (Apple and mobile GPUs): 4x4 texels in 16 bytes, like BC7.
     case astc4x4Unorm, astc4x4Srgb
+    /// Two-channel block compression for normal maps (`isTwoChannel`; the mesh shader rebuilds Z),
+    /// 16 bytes per 4x4 block too. BC5: red and green, each with its own endpoints (samples as
+    /// (x, y, 0, 1)). `astc4x4RG`: ASTC 4x4 LDR with red as luminance and green as alpha
+    /// (astc-encoder's normal-map mode), so it samples as (x, x, x, y); the same GPU format as
+    /// `astc4x4Unorm`, a different channel layout.
+    case bc5Unorm, astc4x4RG
 
     var isDepth: Bool { self == .depth32Float }
 
@@ -241,7 +247,10 @@ public enum TextureFormat: String, Sendable, Equatable {
     static let storageFormats: [TextureFormat] = [.rgba16Float, .rgba8Unorm, .r8Unorm, .r16Float, .rg16Float, .r32Float]
 
     /// The block-compressed formats.
-    public static let compressedFormats: [TextureFormat] = [.bc7Unorm, .bc7Srgb, .astc4x4Unorm, .astc4x4Srgb]
+    public static let compressedFormats: [TextureFormat] = [.bc7Unorm, .bc7Srgb, .astc4x4Unorm, .astc4x4Srgb, .bc5Unorm, .astc4x4RG]
+
+    /// Stores two channels, a normal map's X and Y (`.bc5Unorm`, `.astc4x4RG`).
+    public var isTwoChannel: Bool { self == .bc5Unorm || self == .astc4x4RG }
 
     /// Stored as 4x4 blocks (`blockSize`) rather than texels.
     public var isCompressed: Bool { blockSize > 1 }
@@ -249,7 +258,8 @@ public enum TextureFormat: String, Sendable, Equatable {
     /// Color channels are sRGB-encoded (sampling returns linear values).
     public var isSRGB: Bool { self == .rgba8Srgb || self == .bc7Srgb || self == .astc4x4Srgb }
 
-    /// The 8-bit format a compressed one decodes to (itself for the others).
+    /// The 8-bit format a compressed one decodes to (itself for the others). Two-channel formats
+    /// fall back to a full normal map (see `RenderDevice.makeTexture(compressedLevels:format:)`).
     public var decompressedFormat: TextureFormat {
         guard isCompressed else { return self }
         return isSRGB ? .rgba8Srgb : .rgba8Unorm
@@ -258,7 +268,7 @@ public enum TextureFormat: String, Sendable, Equatable {
     /// Width and height of a block in texels: 4 for the compressed formats, else 1.
     public var blockSize: Int {
         switch self {
-        case .bc7Unorm, .bc7Srgb, .astc4x4Unorm, .astc4x4Srgb: 4
+        case .bc7Unorm, .bc7Srgb, .astc4x4Unorm, .astc4x4Srgb, .bc5Unorm, .astc4x4RG: 4
         default: 1
         }
     }
@@ -273,7 +283,7 @@ public enum TextureFormat: String, Sendable, Equatable {
         case .r16Float: 2
         case .depth32Float, .rgba8Unorm, .rgba8Srgb, .rg16Float, .r32Float: 4
         case .rgba16Float: 8
-        case .bc7Unorm, .bc7Srgb, .astc4x4Unorm, .astc4x4Srgb: 1
+        case .bc7Unorm, .bc7Srgb, .astc4x4Unorm, .astc4x4Srgb, .bc5Unorm, .astc4x4RG: 1
         }
     }
 

@@ -138,9 +138,17 @@ extension ImportedModel {
     /// Decodes each texture's image with `decoder` and uploads it: `.rgba8Srgb` for color
     /// textures, `.rgba8Unorm` for data, with mipmaps when the sampler uses them. Textures
     /// whose image is missing or fails to decode are nil, with a message in `failures`.
-    public func makeTextures(device: RenderDevice, decoder: (Data, String?) throws -> Image)
+    ///
+    /// With `compression`, each texture is block-compressed by role first (`TextureCodec`, at
+    /// `quality`; normal maps in two channels under `auto`, `bc5` and `astcRG`, see
+    /// `TextureCompression.format(srgb:normalMap:)`) and uploaded with
+    /// `makeTexture(compressedLevels:format:)`. That encodes on every call: the asset pipeline
+    /// (`GLTFImporter.Settings.compression`) caches encodings instead.
+    public func makeTextures(device: RenderDevice, compression: TextureCompression = .none,
+                             quality: TextureCompressionQuality = .normal, decoder: (Data, String?) throws -> Image)
         -> (textures: [GPUTexture?], failures: [String]) {
         var decoded: [Int: Image] = [:]
+        var encoded: [String: [TextureMipLevel]] = [:]
         var failures: [String] = []
         let result: [GPUTexture?] = textures.enumerated().map { i, texture in
             guard let imageIndex = texture.image else { return nil }
@@ -153,9 +161,18 @@ extension ImportedModel {
                     image = try decoder(source.data, source.mimeType)
                     decoded[imageIndex] = image
                 }
+                let srgb = texture.colorSpace == .sRGB, mipmaps = texture.sampler.usesMipmaps
+                if let format = compression.format(srgb: srgb, normalMap: texture.slots == [.normal]) {
+                    let key = "\(imageIndex) \(format) \(mipmaps)"
+                    let levels = try encoded[key] ?? TextureCodec.encode(
+                        format.isTwoChannel ? TextureCodec.normalized(normalMap: image) : image,
+                        format: format, mipmaps: mipmaps, quality: quality)
+                    encoded[key] = levels
+                    return try device.makeTexture(compressedLevels: levels, format: format)
+                }
                 return try device.makeTexture(
                     pixels: image.pixels, width: image.width, height: image.height,
-                    format: texture.colorSpace == .sRGB ? .rgba8Srgb : .rgba8Unorm, generateMipmaps: texture.sampler.usesMipmaps)
+                    format: srgb ? .rgba8Srgb : .rgba8Unorm, generateMipmaps: mipmaps)
             } catch {
                 failures.append("Texture \(i) (image \(imageIndex)): \(error)")
                 return nil

@@ -9,7 +9,8 @@ import Foundation
 /// built and block-compressed here (`TextureCodec`), so the Library caches the compressed
 /// levels. The encodings are also kept in `ImportContext.cacheDirectory`, keyed by the source's
 /// hash, the format, quality and mipmaps, so a reimport with the same inputs (a forced one, or
-/// switching compression back) doesn't encode again.
+/// switching compression back) doesn't encode again. Normal maps (`normalMap`) can be stored in
+/// two channels (`.bc5Unorm`, `.astc4x4RG`; the mesh shader rebuilds Z).
 public struct TextureImporter: AssetImporter {
     public struct Settings: Codable, Equatable, Sendable {
         /// Color data (true) or linear data such as normals and masks (false).
@@ -20,16 +21,20 @@ public struct TextureImporter: AssetImporter {
         public var compression: TextureCompression = .none
         /// Encoder effort when compressing.
         public var compressionQuality: TextureCompressionQuality = .normal
+        /// A tangent-space normal map (use with `sRGB: false`): `compression` `auto`, `bc5` and
+        /// `astcRG` store only its X and Y (two-channel formats; the mesh shader rebuilds Z).
+        public var normalMap: Bool = false
 
         public init(sRGB: Bool = true, mipmaps: Bool = true, compression: TextureCompression = .none,
-                    compressionQuality: TextureCompressionQuality = .normal) {
+                    compressionQuality: TextureCompressionQuality = .normal, normalMap: Bool = false) {
             self.sRGB = sRGB
             self.mipmaps = mipmaps
             self.compression = compression
             self.compressionQuality = compressionQuality
+            self.normalMap = normalMap
         }
 
-        private enum CodingKeys: String, CodingKey { case sRGB, mipmaps, compression, compressionQuality }
+        private enum CodingKeys: String, CodingKey { case sRGB, mipmaps, compression, compressionQuality, normalMap }
 
         /// Every key is optional, so sidecars from before `compression` existed decode. All of
         /// them are encoded, so the editor's inspector lists them.
@@ -39,6 +44,7 @@ public struct TextureImporter: AssetImporter {
             mipmaps = try c.decodeIfPresent(Bool.self, forKey: .mipmaps) ?? true
             compression = try c.decodeIfPresent(TextureCompression.self, forKey: .compression) ?? .none
             compressionQuality = try c.decodeIfPresent(TextureCompressionQuality.self, forKey: .compressionQuality) ?? .normal
+            normalMap = try c.decodeIfPresent(Bool.self, forKey: .normalMap) ?? false
         }
     }
 
@@ -53,10 +59,12 @@ public struct TextureImporter: AssetImporter {
         let data = try context.data()
         let image = try ImageDecoder.decodeAny(data)
         var texture = TextureAsset(decoded: image, isSRGB: settings.sRGB, generatesMipmaps: settings.mipmaps)
-        if let format = settings.compression.format(srgb: settings.sRGB) {
+        if let format = settings.compression.format(srgb: settings.sRGB, normalMap: settings.normalMap) {
             if case .rgba8(let pixels) = texture.pixels {
-                texture = TextureAsset(compressedLevels: try Self.compress(
-                    pixels, format: format, settings: settings, sourceHash: ContentHash.hex(data), context: context), format: format)
+                texture = TextureAsset(compressedLevels: try CompressedTextureCache.levels(
+                    pixels, format: format, quality: settings.compressionQuality, mipmaps: settings.mipmaps,
+                    sourceHash: ContentHash.hex(data), file: context.cacheDirectory?.appendingPathComponent("\(format.rawValue).bin"),
+                    label: context.assetPath), format: format)
             } else {
                 context.warnings.append("\(context.assetPath): HDR textures aren't compressed; compression \(settings.compression) ignored")
             }
@@ -66,31 +74,32 @@ public struct TextureImporter: AssetImporter {
                   .texture(texture))
         return asset
     }
-
-    /// The compressed mip chain from `context.cacheDirectory` when one was made from the same
-    /// inputs, else freshly encoded (and cached).
-    static func compress(_ image: Image, format: TextureFormat, settings: Settings, sourceHash: String,
-                         context: ImportContext) throws -> [TextureMipLevel] {
-        let key = "\(sourceHash) \(format) \(settings.compressionQuality) mipmaps:\(settings.mipmaps) codec:\(TextureCodec.version)"
-        let file = context.cacheDirectory?.appendingPathComponent("\(format.rawValue).bin")
-        if let file, let levels = CompressedTextureCache.read(file, key: key, format: format,
-                                                              width: image.width, height: image.height) {
-            return levels
-        }
-        let start = DispatchTime.now().uptimeNanoseconds
-        let levels = try TextureCodec.encode(image, format: format, mipmaps: settings.mipmaps, quality: settings.compressionQuality)
-        let milliseconds = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
-        EngineLog.debug("Encoded \(context.assetPath) (\(image.width)x\(image.height), \(levels.count) levels) as \(format) in "
-                        + String(format: "%.0f ms", milliseconds), category: .assets)
-        if let file { CompressedTextureCache.write(levels, key: key, to: file) }
-        return levels
-    }
 }
 
 /// One cached encoding: "TXC1", the key's length (UInt32) and UTF-8 bytes, the level count
 /// (UInt32), then every level's blocks (their sizes follow from the image size and format).
 enum CompressedTextureCache {
     private static let magic = Array("TXC1".utf8)
+
+    /// The compressed mip chain of `image` from `file` (in an `ImportContext.cacheDirectory`)
+    /// when one was made from the same inputs (source hash, format, quality, mipmaps, codec
+    /// version), else freshly encoded and written there. Two-channel formats encode the image
+    /// as a normal map, normalized first (`TextureCodec.normalized(normalMap:)`).
+    static func levels(_ image: Image, format: TextureFormat, quality: TextureCompressionQuality, mipmaps: Bool,
+                       sourceHash: String, file: URL?, label: String) throws -> [TextureMipLevel] {
+        let key = "\(sourceHash) \(format) \(quality) mipmaps:\(mipmaps) codec:\(TextureCodec.version)"
+        if let file, let levels = read(file, key: key, format: format, width: image.width, height: image.height) {
+            return levels
+        }
+        let start = DispatchTime.now().uptimeNanoseconds
+        let source = format.isTwoChannel ? TextureCodec.normalized(normalMap: image) : image
+        let levels = try TextureCodec.encode(source, format: format, mipmaps: mipmaps, quality: quality)
+        let milliseconds = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
+        EngineLog.debug("Encoded \(label) (\(image.width)x\(image.height), \(levels.count) levels) as \(format) in "
+                        + String(format: "%.0f ms", milliseconds), category: .assets)
+        if let file { write(levels, key: key, to: file) }
+        return levels
+    }
 
     static func read(_ url: URL, key: String, format: TextureFormat, width: Int, height: Int) -> [TextureMipLevel]? {
         guard let data = FileManager.default.contents(atPath: url.path), data.count >= 12,
@@ -141,6 +150,8 @@ enum CompressedTextureCache {
 ///
 /// External `.bin` buffers are read relative to the model's folder and recorded as
 /// dependencies (`ImportContext.readDependency`): editing one reimports the model.
+/// `Settings.compression` block-compresses the imported textures by role (normal maps in two
+/// channels under `auto`), cached in `ImportContext.cacheDirectory` like `TextureImporter`'s.
 /// `Settings.materialRemap` points the prefab's nodes at other material assets (extracted
 /// `.material` files).
 public struct GLTFImporter: AssetImporter {
@@ -152,26 +163,41 @@ public struct GLTFImporter: AssetImporter {
         /// Materials). The prefab's nodes reference the replacement; the file's material
         /// sub-assets are still imported, so existing references keep working.
         public var materialRemap: [SubAssetID: AssetReference] = [:]
+        /// Block compression of the textures the file embeds (or references outside the
+        /// project), by role: base color and emissive as sRGB color, metallic-roughness and
+        /// occlusion as linear data, normal maps as normal maps (two channels under `auto`,
+        /// `bc5` and `astcRG`), as `TextureImporter.Settings.compression` does. Images that are
+        /// project assets keep their own importer settings.
+        public var compression: TextureCompression = .none
+        /// Encoder effort when compressing.
+        public var compressionQuality: TextureCompressionQuality = .normal
 
-        public init(smoothNormals: Bool = false, materialRemap: [SubAssetID: AssetReference] = [:]) {
+        public init(smoothNormals: Bool = false, materialRemap: [SubAssetID: AssetReference] = [:],
+                    compression: TextureCompression = .none, compressionQuality: TextureCompressionQuality = .normal) {
             self.smoothNormals = smoothNormals
             self.materialRemap = materialRemap
+            self.compression = compression
+            self.compressionQuality = compressionQuality
         }
 
-        private enum CodingKeys: String, CodingKey { case smoothNormals, materialRemap }
+        private enum CodingKeys: String, CodingKey { case smoothNormals, materialRemap, compression, compressionQuality }
 
         public init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             smoothNormals = try c.decodeIfPresent(Bool.self, forKey: .smoothNormals) ?? false
             materialRemap = try c.decodeIfPresent([SubAssetID: AssetReference].self, forKey: .materialRemap) ?? [:]
+            compression = try c.decodeIfPresent(TextureCompression.self, forKey: .compression) ?? .none
+            compressionQuality = try c.decodeIfPresent(TextureCompressionQuality.self, forKey: .compressionQuality) ?? .normal
         }
 
         /// An empty remap is left out, so sidecars (and cached imports) from before it existed
-        /// stay the same.
+        /// stay the same. The compression keys are always written, so the editor lists them.
         public func encode(to encoder: any Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(smoothNormals, forKey: .smoothNormals)
             if !materialRemap.isEmpty { try c.encode(materialRemap, forKey: .materialRemap) }
+            try c.encode(compression, forKey: .compression)
+            try c.encode(compressionQuality, forKey: .compressionQuality)
         }
     }
 
@@ -210,8 +236,18 @@ public struct GLTFImporter: AssetImporter {
                 let pixels = try ImageDecoder.decode(image.data)
                 let name = texture.name ?? image.name
                 let id = namer.id(kind: "texture", name: name, index: i)
-                asset.add(id, name: name ?? "Texture \(i)", .texture(TextureAsset(
-                    image: pixels, isSRGB: texture.colorSpace == .sRGB, generatesMipmaps: texture.sampler.usesMipmaps)))
+                let srgb = texture.colorSpace == .sRGB, mipmaps = texture.sampler.usesMipmaps
+                var value = TextureAsset(image: pixels, isSRGB: srgb, generatesMipmaps: mipmaps)
+                if let format = settings.compression.format(srgb: srgb, normalMap: texture.slots == [.normal]) {
+                    // Cached per texture (its image's hash, format, quality, mipmaps), so a
+                    // reimport doesn't encode again.
+                    value = TextureAsset(compressedLevels: try CompressedTextureCache.levels(
+                        pixels, format: format, quality: settings.compressionQuality, mipmaps: mipmaps,
+                        sourceHash: ContentHash.hex(image.data),
+                        file: context.cacheDirectory?.appendingPathComponent("texture\(i)-\(format.rawValue).bin"),
+                        label: "\(context.assetPath) texture \(i)"), format: format)
+                }
+                asset.add(id, name: name ?? "Texture \(i)", .texture(value))
                 textures.append(context.reference(id))
             } catch {
                 context.warn("texture \(i) (image \(imageIndex)): \(error)")
