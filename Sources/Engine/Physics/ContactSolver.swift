@@ -1,0 +1,289 @@
+// The solver: sequential impulses with soft contacts and substepping (after Box2D v3's "soft
+// step"). Each step's contact manifolds are solved over `substeps` substeps; each substep
+// integrates velocities, warm starts, solves contacts and joints `velocityIterations` times
+// with a soft push-out bias, integrates positions, then relaxes (solves again without the
+// bias, so the push-out adds no energy). Restitution is a final pass using the approach
+// speed from before the step.
+//
+// Per contact point there is a normal impulse (no pulling; a speculative point, still
+// apart, lets the bodies approach up to the gap). Friction acts per manifold at its center:
+// two tangent impulses and a twist impulse about the normal, clamped by the friction cone of
+// the summed normal impulses (per-point friction can lock opposing impulses between points,
+// which makes stacks creep). Separations are recomputed every substep from the bodies' poses
+// and the points' anchors. All impulses accumulate and carry over to the next step (warm
+// starting).
+
+struct ContactConstraintPoint {
+    /// Anchors in each body's frame (relative to its center of mass) and their world offsets.
+    var localA: Vec3, localB: Vec3
+    var rA = Vec3.zero, rB = Vec3.zero
+    var normal: Vec3
+    var normalMass: Float = 0
+    var normalImpulse: Float
+    /// Normal speed before the step, for restitution.
+    var approachSpeed: Float
+    var maxNormalImpulse: Float = 0
+}
+
+struct ContactConstraint {
+    var contact: Int
+    var a: Int, b: Int
+    var friction: Float
+    var restitution: Float
+    var points: [ContactConstraintPoint]
+    // Friction at the manifold's center (anchored on each body).
+    var centerA: Vec3, centerB: Vec3
+    var rA = Vec3.zero, rB = Vec3.zero
+    var normal: Vec3
+    var tangent1: Vec3, tangent2: Vec3
+    var tangentMass = Vec2.zero
+    var twistMass: Float = 0
+    /// The average distance of the points from the center: twist friction's lever arm.
+    var twistRadius: Float
+    var tangentImpulse: Vec2
+    var twistImpulse: Float
+}
+
+/// Soft constraint coefficients for a spring of `hertz` and `dampingRatio`, at step `h`.
+struct Softness {
+    var biasRate: Float
+    var massScale: Float
+    var impulseScale: Float
+
+    init(hertz: Float, dampingRatio: Float, h: Float) {
+        let omega = 2 * Float.pi * hertz
+        let a1 = 2 * dampingRatio + h * omega
+        let a2 = h * omega * a1
+        let a3 = 1 / (1 + a2)
+        biasRate = omega / a1
+        massScale = a2 * a3
+        impulseScale = a3
+    }
+}
+
+extension PhysicsWorld {
+    /// The fastest push-out of overlapping bodies, m/s.
+    static let maxPushOut: Float = 3
+
+    func solve(_ dt: Float) {
+        var constraints = makeContactConstraints()
+        let n = max(substeps, 1)
+        let h = dt / Float(n)
+        let softness = Softness(hertz: min(contactHertz, 0.25 / h), dampingRatio: contactDampingRatio, h: h)
+        for _ in 0..<n {
+            integrateVelocities(h)
+            for k in constraints.indices { updateAnchors(&constraints[k]) }
+            prepareJoints(dt: h)
+            warmStart(constraints)
+            warmStartJoints()
+            for iteration in 0..<velocityIterations {
+                solveJoints()
+                // Alternate the order (symmetric Gauss-Seidel), so the order's bias cancels out.
+                let reversed = iteration % 2 == 1
+                for k in constraints.indices {
+                    let index = reversed ? constraints.count - 1 - k : k
+                    solveContact(&constraints[index], softness: softness, h: h, reversed: reversed)
+                }
+            }
+            integratePositions(h)
+            // Relax: remove the velocity the push-out added.
+            for k in constraints.indices {
+                updateAnchors(&constraints[k], massesToo: false)
+                solveContact(&constraints[k], softness: nil, h: h, reversed: false)
+            }
+        }
+        applyRestitution(&constraints)
+        finishKinematicMoves()
+
+        for c in constraints {
+            for (j, p) in c.points.enumerated() { contacts[c.contact].points[j].normalImpulse = p.normalImpulse }
+            contacts[c.contact].tangentImpulse = c.tangentImpulse
+            contacts[c.contact].twistImpulse = c.twistImpulse
+        }
+    }
+
+    func integrateVelocities(_ dt: Float) {
+        for i in bodies.indices where bodies[i].isAlive && bodies[i].isSolverActive {
+            var b = bodies[i]
+            b.linearVelocity += (gravity * b.gravityScale + b.force * b.invMass) * dt
+            b.angularVelocity += b.invInertiaWorld * b.torque * dt
+            b.linearVelocity *= 1 / (1 + dt * b.linearDamping)
+            b.angularVelocity *= 1 / (1 + dt * b.angularDamping)
+            // Keep a single step's rotation sane.
+            let maxAngular: Float = 0.5 * .pi / dt
+            let w2 = lengthSquared(b.angularVelocity)
+            if w2 > maxAngular * maxAngular { b.angularVelocity *= maxAngular / w2.squareRoot() }
+            bodies[i] = b
+        }
+    }
+
+    private func makeContactConstraints() -> [ContactConstraint] {
+        var constraints: [ContactConstraint] = []
+        for (ci, c) in contacts.enumerated() where !c.isTrigger && !c.points.isEmpty {
+            let a = bodies[c.a], b = bodies[c.b]
+            guard a.isSolverActive || b.isSolverActive else { continue }
+            var points: [ContactConstraintPoint] = []
+            points.reserveCapacity(c.points.count)
+            var center = Vec3.zero, normalSum = Vec3.zero
+            for m in c.points {
+                let rA = a.pose.rotation * m.localA, rB = b.pose.rotation * m.localB
+                let dv = b.linearVelocity + cross(b.angularVelocity, rB) - a.linearVelocity - cross(a.angularVelocity, rA)
+                points.append(ContactConstraintPoint(localA: m.localA, localB: m.localB, normal: m.normal,
+                                                     normalImpulse: m.normalImpulse, approachSpeed: dot(dv, m.normal)))
+                center += m.position
+                normalSum += m.normal
+            }
+            center /= Float(c.points.count)
+            let n = normalize(normalSum)
+            let (t1, t2) = tangentBasis(n)
+            constraints.append(ContactConstraint(
+                contact: ci, a: c.a, b: c.b, friction: c.friction, restitution: c.restitution, points: points,
+                centerA: a.pose.rotation.conjugate * (center - a.center), centerB: b.pose.rotation.conjugate * (center - b.center),
+                normal: n, tangent1: t1, tangent2: t2,
+                twistRadius: c.points.reduce(0) { $0 + length($1.position - center) } / Float(c.points.count),
+                tangentImpulse: c.tangentImpulse, twistImpulse: c.twistImpulse))
+        }
+        return constraints
+    }
+
+    /// Anchor offsets (and effective masses) from the bodies' current rotations.
+    private func updateAnchors(_ c: inout ContactConstraint, massesToo: Bool = true) {
+        let a = bodies[c.a], b = bodies[c.b]
+        func mass(_ rA: Vec3, _ rB: Vec3, _ d: Vec3) -> Float {
+            let ca = cross(rA, d), cb = cross(rB, d)
+            let k = a.invMass + b.invMass + dot(ca, a.invInertiaWorld * ca) + dot(cb, b.invInertiaWorld * cb)
+            return k > 0 ? 1 / k : 0
+        }
+        for j in c.points.indices {
+            c.points[j].rA = a.pose.rotation * c.points[j].localA
+            c.points[j].rB = b.pose.rotation * c.points[j].localB
+            if massesToo { c.points[j].normalMass = mass(c.points[j].rA, c.points[j].rB, c.points[j].normal) }
+        }
+        c.rA = a.pose.rotation * c.centerA
+        c.rB = b.pose.rotation * c.centerB
+        if massesToo {
+            c.tangentMass = Vec2(mass(c.rA, c.rB, c.tangent1), mass(c.rA, c.rB, c.tangent2))
+            let k = dot(c.normal, a.invInertiaWorld * c.normal) + dot(c.normal, b.invInertiaWorld * c.normal)
+            c.twistMass = k > 0 ? 1 / k : 0
+        }
+    }
+
+    private func warmStart(_ constraints: [ContactConstraint]) {
+        for c in constraints {
+            for p in c.points { apply(p.normal * p.normalImpulse, c.a, p.rA, c.b, p.rB) }
+            apply(c.tangent1 * c.tangentImpulse.x + c.tangent2 * c.tangentImpulse.y, c.a, c.rA, c.b, c.rB)
+            applyAngular(c.normal * c.twistImpulse, c.a, c.b)
+        }
+    }
+
+    /// One pass over a manifold. With `softness`, overlapping points get a soft push-out bias;
+    /// without (the relax pass), only the velocity constraints.
+    private func solveContact(_ c: inout ContactConstraint, softness: Softness?, h: Float, reversed: Bool) {
+        // Friction first, bounded by the current normal impulses.
+        let total = c.points.reduce(0) { $0 + $1.normalImpulse }
+        let limit = c.friction * total
+        let dv = relativeVelocity(c.a, c.rA, c.b, c.rB)
+        let old = c.tangentImpulse
+        var t = old - Vec2(dot(dv, c.tangent1), dot(dv, c.tangent2)) * c.tangentMass
+        // Clamp to the cone (a circle), not a square.
+        let len = (t.x * t.x + t.y * t.y).squareRoot()
+        if len > limit { t *= limit / len }
+        c.tangentImpulse = t
+        let delta = t - old
+        apply(c.tangent1 * delta.x + c.tangent2 * delta.y, c.a, c.rA, c.b, c.rB)
+
+        if c.twistRadius > 0 {
+            let spin = dot(bodies[c.b].angularVelocity - bodies[c.a].angularVelocity, c.normal)
+            let twistLimit = limit * c.twistRadius
+            let twist = min(max(c.twistImpulse - spin * c.twistMass, -twistLimit), twistLimit)
+            applyAngular(c.normal * (twist - c.twistImpulse), c.a, c.b)
+            c.twistImpulse = twist
+        }
+
+        let a = c.a, b = c.b
+        for k in c.points.indices {
+            let j = reversed ? c.points.count - 1 - k : k
+            var p = c.points[j]
+            // The current separation, from the anchors (surface points) on the moved bodies.
+            let s = dot(bodies[b].center + p.rB - bodies[a].center - p.rA, p.normal)
+            var bias: Float = 0, massScale: Float = 1, impulseScale: Float = 0
+            if s > 0 {
+                bias = s / h  // speculative: may close the gap, no more
+            } else if let softness {
+                bias = max(softness.biasRate * min(s + linearSlop, 0), -Self.maxPushOut)
+                massScale = softness.massScale
+                impulseScale = softness.impulseScale
+            }
+            let vn = dot(relativeVelocity(a, p.rA, b, p.rB), p.normal)
+            let impulse = -p.normalMass * massScale * (vn + bias) - impulseScale * p.normalImpulse
+            let total = max(p.normalImpulse + impulse, 0)
+            apply(p.normal * (total - p.normalImpulse), a, p.rA, b, p.rB)
+            p.normalImpulse = total
+            p.maxNormalImpulse = max(p.maxNormalImpulse, total)
+            c.points[j] = p
+        }
+    }
+
+    /// Bounces points that were approaching fast and got pushed apart.
+    private func applyRestitution(_ constraints: inout [ContactConstraint]) {
+        for k in constraints.indices where constraints[k].restitution > 0 {
+            let c = constraints[k]
+            for j in c.points.indices {
+                let p = c.points[j]
+                guard p.approachSpeed < -restitutionThreshold, p.maxNormalImpulse > 0 else { continue }
+                let vn = dot(relativeVelocity(c.a, p.rA, c.b, p.rB), p.normal)
+                let lambda = -p.normalMass * (vn + c.restitution * p.approachSpeed)
+                let total = max(p.normalImpulse + lambda, 0)
+                apply(p.normal * (total - p.normalImpulse), c.a, p.rA, c.b, p.rB)
+                constraints[k].points[j].normalImpulse = total
+            }
+        }
+    }
+
+    @inline(__always)
+    private func relativeVelocity(_ a: Int, _ rA: Vec3, _ b: Int, _ rB: Vec3) -> Vec3 {
+        bodies[b].linearVelocity + cross(bodies[b].angularVelocity, rB) - bodies[a].linearVelocity - cross(bodies[a].angularVelocity, rA)
+    }
+
+    /// `impulse` pushes B and pulls A.
+    @inline(__always)
+    private func apply(_ impulse: Vec3, _ a: Int, _ rA: Vec3, _ b: Int, _ rB: Vec3) {
+        bodies[a].linearVelocity -= impulse * bodies[a].invMass
+        bodies[a].angularVelocity -= bodies[a].invInertiaWorld * cross(rA, impulse)
+        bodies[b].linearVelocity += impulse * bodies[b].invMass
+        bodies[b].angularVelocity += bodies[b].invInertiaWorld * cross(rB, impulse)
+    }
+
+    @inline(__always)
+    private func applyAngular(_ impulse: Vec3, _ a: Int, _ b: Int) {
+        bodies[a].angularVelocity -= bodies[a].invInertiaWorld * impulse
+        bodies[b].angularVelocity += bodies[b].invInertiaWorld * impulse
+    }
+
+    func integratePositions(_ dt: Float) {
+        for i in bodies.indices where bodies[i].isAlive && bodies[i].isAwake && bodies[i].motion != .static {
+            var b = bodies[i]
+            b.center += b.linearVelocity * dt
+            b.pose.rotation = b.pose.rotation.integrated(b.angularVelocity, dt)
+            b.pose.position = b.center - b.pose.rotation * b.localCenter
+            b.updateDerived()
+            bodies[i] = b
+        }
+    }
+
+    /// Kinematic bodies moved with `moveKinematic` land exactly on their target and stop until
+    /// moved again; forces are cleared.
+    private func finishKinematicMoves() {
+        for i in bodies.indices where bodies[i].isAlive && bodies[i].motion != .static {
+            bodies[i].force = .zero
+            bodies[i].torque = .zero
+            if bodies[i].motion == .kinematic, let target = bodies[i].kinematicTarget {
+                bodies[i].pose = target
+                bodies[i].kinematicTarget = nil
+                bodies[i].linearVelocity = .zero
+                bodies[i].angularVelocity = .zero
+                bodies[i].updateDerived()
+            }
+        }
+    }
+}
