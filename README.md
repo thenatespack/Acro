@@ -7,6 +7,7 @@ Sources/
   Engine/
     Core/            Engine loop, Game protocol, math (Mat4/Vec*), Input, TextInput, FrameStats, Image/PNGEncoder (compressed PNG writer)
     Debug/           Performance overlay + built-in 5x7 bitmap font
+    Assets/          Model import: ImportedModel (CPU-side meshes, materials, textures, nodes), GLTFReader (glTF 2.0 / GLB)
     Scene/           World (entities, sparse-set components, queries), Transform hierarchy, staged systems
     Rendering/       SceneRenderer: draws ECS entities (Camera, DirectionalLight, MeshRenderer components)
     UI/              2D UI draw list (UIDrawList) and its renderer; Widgets/ (retained widget tree)
@@ -124,6 +125,18 @@ sceneRenderer.draw(pass)                                                        
 - **Motion vectors:** the renderer remembers each entity's previous world matrix (keyed by entity, checked against its generation), so moving and animated entities don't ghost under TAAU / MetalFX temporal. Call `sceneRenderer.resetMotion()` together with `engine.resetTemporalHistory()` on camera cuts.
 - **Limits:** one directional light, no point/spot lights or cascades.
 - **Cost:** gathering, culling and batching 10k entities takes about 0.8 ms of CPU time in release on an M5. `sceneRenderer.stats` reports counts and prepare time.
+
+### Model import (glTF 2.0)
+`GLTFReader.read(contentsOf: url)` (or `read(data:baseURL:options:loadResource:)`) reads `.gltf` (external files and `data:` URIs) and `.glb` into an `ImportedModel`. It is CPU-only and touches no shared state, so it can run on a background thread.
+- **Reads:** buffer views with strides; accessors of every component type, normalized or not, and sparse ones; triangle lists, strips and fans (points and lines are skipped with a warning); `POSITION`, `NORMAL`, `TEXCOORD_0/1`, `TANGENT`, `COLOR_0`; 8/16/32-bit indices or none; nodes with TRS or a matrix (decomposed); multiple scenes (`scene`, else the first; `Options.scene` overrides).
+- **Output:** `meshes[m].primitives[p]` hold a `MeshGeometry` plus the attributes `MeshVertex` has no slot for (tangents, `TEXCOORD_1`, colors) and a material index. `materials` keep the whole metallic-roughness material (all five textures with texCoord and `KHR_texture_transform`, factors, normal scale, occlusion strength, emissive and `KHR_materials_emissive_strength`, alpha mode and cutoff, double-sided, `KHR_materials_unlit`). `textures` have an image index, an `ImportedSampler` (separate U/V wrap) and the slots that use them; `colorSpace` is `.sRGB` for base color and emissive, `.linear` for normal, metallic-roughness and occlusion. Also `nodes` (parent/children), `scenes`, `roots`, `warnings`.
+- **Images are not decoded:** `images[i]` is the encoded bytes and MIME type. `model.makeTextures(device:decoder:)` decodes with a caller-supplied `(Data, String?) throws -> Image` and uploads with the right format and mipmaps; `decodeImages(using:)` only decodes.
+- **Into a world:** `model.register(with: sceneRenderer, keyPrefix:, textures:)` uploads meshes and materials and returns `ModelHandles`; `model.instantiate(in: world, under: parent, handles:)` (or with `mesh:`/`material:` closures for handles from elsewhere) spawns an entity per node with `Transform`, `Name` and the file's hierarchy. A node whose mesh has one primitive gets the `MeshRenderer` itself; a mesh with several primitives gets one child entity per primitive ("<mesh> [i]"), since a `MeshRenderer` draws one mesh with one material.
+- **Conventions:** glTF matches the engine (right-handed, +Y up, CCW front faces, UV origin top-left), so data passes through unchanged. Missing normals are generated flat (the spec's rule; `Options(normals: .smooth)` averages instead). Nodes that mirror (negative determinant) get a copy of their mesh with reversed winding.
+- **Mapping to `Material`:** base color factor and texture, scale-only texture transforms as `uvScale`, roughness/metalness approximated as specular and shininess, `BLEND` as transparent, `OPAQUE` forces alpha 1, unlit as emissive 1. The other textures, emissive color, alpha cutoff, texture offsets/rotation and the second UV set wait for a PBR shader.
+- **Errors:** malformed containers, JSON, out-of-range indices and offsets, cycles and unsupported `extensionsRequired` throw `GLTFError`; unknown optional extensions, skins, animations and cameras are ignored with a warning.
+- **Not supported yet:** skins, morph targets, animations, cameras, lights, Draco/meshopt compression, KTX2/WebP decoding, `TEXCOORD_2+`.
+- **Test data:** Khronos sample models (CC BY 4.0 / CC0, attribution in `Tests/EngineTests/Resources/glTF/LICENSE.md`).
 
 ### Render targets and multiple views
 `RenderTarget(device:width:height:multisampled:label:)` is an offscreen color + depth target that game code renders into and then samples. Its color uses the window's sRGB format, with the device's MSAA resolved into the texture, or 1x when `multisampled` is false. Depth only exists during the pass. Every `.screen` pipeline can draw into it. In `renderOffscreen`, call `frame.renderPass(into: target, clearColor:) { pass in … }`. Any later pass of the frame can then sample `target.texture`, e.g. `engine.ui.drawImage(target.texture, in: panel)` in the window pass. `target.resize(toPoints: panel.size, scale: engine.ui.scale)` recreates the target only when its size changes. On Vulkan the old one is freed through the deletion queue, and a texture already queued in a draw list stays valid. Target passes have no motion vectors and no occlusion queries, and they are timed under the target's `label`. On Vulkan they use the offscreen scene pass, whose subpass dependencies order them after the previous frame's reads and before later fragment-shader reads; on Metal, hazard tracking does the same.
@@ -368,6 +381,7 @@ swift run -c release Demo --scene shadows --quality ultra --resolution 4k   # --
 | 14 | `inspector` | Editor panels: hierarchy TreeView (multi-select, rename, drag to reparent) and a reflection-driven PropertyGrid | mouse/keyboard; F2 renames |
 | 15 | `viewports` | One world rendered into two render targets (editor camera with grid and debug gizmos, game camera) shown side by side in the UI | right-drag flies the editor camera (mouse captured); drag the divider |
 | 16 | `gizmos` | Picking, selection outline, translate/rotate/scale gizmos with snapping and undo | click/shift-click select; W/E/R modes; X space; C pivot; hold Cmd/Ctrl to snap; Esc cancels; Cmd/Ctrl+Z undo |
+| 17 | `gltf` | glTF 2.0 import (Khronos OrientationTest: arrows must point into their targets), or any file via `DEMO_GLTF=<path>` | |
 
 Everywhere: **1–9** and **0** (scene 10) switch scenes, **]** / **[** next / previous scene, **F2** toggles a text-input test mode (echoes typing in the window title), **Tab / Shift-Tab** cycle the render resolution (native, quality, performance, 144p … 16k), **U** cycles the upscaler (temporal ones only without MSAA), **V** toggles vsync, **Space** pauses animation, arrows/WASD or left-drag orbit, **Q/E** zoom, **Esc** quits. The window title shows the scene, its state, the render size, the quality and the backend.
 
@@ -378,4 +392,4 @@ Everywhere: **1–9** and **0** (scene 10) switch scenes, **]** / **[** next / p
 The full roadmap (ECS, assets, physics, audio, UI, in-engine editor) lives on the project task board.
 
 - Static buffers and textures are immutable after creation (use `setVertexData` / `setUniformData` for dynamic data), and creating them on Vulkan blocks on the upload.
-- Textures are RGBA8 2D only: no compressed formats, cube maps, arrays, or image loading from files yet.
+- Textures are RGBA8 2D only: no compressed formats, cube maps, arrays, or image loading from files yet (glTF images are passed through encoded).
