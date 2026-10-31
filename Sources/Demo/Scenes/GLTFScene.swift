@@ -4,7 +4,7 @@ import Foundation
 /// A glTF model imported with `GLTFReader` and drawn by `SceneRenderer`: by default the
 /// Khronos OrientationTest model (every arrow must point into its matching target; a mirrored
 /// or inside-out import breaks that), or any `.gltf` / `.glb` named by `DEMO_GLTF=<path>`.
-/// Images are decoded with `ImageDecoder`; until PBR materials land only the base color texture is used.
+/// Images are decoded with `ImageDecoder` and every texture of the PBR materials is used.
 /// The model is scaled to fit and stood on the floor; the window title shows what was imported.
 final class GLTFScene: DemoScene {
     static let name = "gltf"

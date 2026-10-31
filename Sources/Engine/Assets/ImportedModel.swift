@@ -60,11 +60,13 @@ public struct ImportedMesh: Sendable {
 }
 
 /// One drawable part of a mesh: triangles in the engine's vertex format plus the vertex
-/// attributes `MeshVertex` has no slot for yet. All per-vertex arrays have
+/// attributes `MeshVertex` has no slot for. All per-vertex arrays have
 /// `geometry.vertices.count` entries.
 public struct ImportedPrimitive: Sendable {
-    /// Positions, normals (generated when the file has none) and `TEXCOORD_0` (zero when
-    /// missing), as an indexed triangle list with counter-clockwise front faces.
+    /// Positions, normals (generated when the file has none), `TEXCOORD_0` (zero when missing)
+    /// and the file's tangents (only together with its normals, as glTF requires; otherwise
+    /// zero, and `SceneRenderer.registerMesh` generates them), as an indexed triangle list with
+    /// counter-clockwise front faces.
     public var geometry: MeshGeometry
     /// `TANGENT`: xyz is the tangent, w (±1) the bitangent sign. nil when the file has none.
     public var tangents: [Vec4]?

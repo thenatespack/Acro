@@ -85,7 +85,7 @@ public struct SceneRenderStats: Sendable {
 /// What gets drawn comes from components: the active `Camera`, the first `DirectionalLight`,
 /// the first `SceneEnvironment` and every entity with a `MeshRenderer` and a
 /// `GlobalTransform`. Meshes and materials are registered under string keys; the built-in
-/// meshes `MeshHandle.cube`, `.plane`, `.sphere` and `MaterialHandle.default` exist from the start.
+/// meshes `MeshHandle.cube`, `.plane`, `.sphere` and `MaterialHandle.default` (Blinn-Phong, the pre-PBR look) exist from the start.
 @MainActor
 public final class SceneRenderer {
     public let device: RenderDevice
@@ -123,7 +123,7 @@ public final class SceneRenderer {
 
     /// Resolves handles that name project assets (`MeshHandle(AssetReference)`, keys
     /// `asset:<id>[#<sub-asset>]`): the first frame an entity uses one, its mesh or material
-    /// (and the material's texture) is taken from the database and uploaded, then registered
+    /// (and the material's textures) is taken from the database and uploaded, then registered
     /// under that key like any other. Assets the database imports again are re-uploaded on the
     /// next frame. Built-in and code-registered keys are unaffected. Nil (the default) leaves
     /// asset keys unresolved (reported as missing, entities skipped).

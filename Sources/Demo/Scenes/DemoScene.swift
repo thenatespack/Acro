@@ -80,4 +80,5 @@ extension DemoScene {
     GizmosScene.self,
     ImagesScene.self,
     GLTFScene.self,
+    PBRScene.self,
 ]
