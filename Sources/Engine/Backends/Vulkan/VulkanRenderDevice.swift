@@ -343,9 +343,6 @@ final class VulkanRenderDevice: RenderDevice {
     /// `offscreenRenderPass` at 1x, for single-sample render targets when the device is
     /// multisampled (nil when it isn't: `offscreenRenderPass` is 1x then).
     private let singleSampleTargetPass: VkRenderPass?
-    /// Render target images created outside a frame, moved to the shader-read layout at the
-    /// start of the next one (so sampling a target before its first pass is valid).
-    private var pendingTargetLayouts: [VkImage] = []
     private let depthRenderPass: VkRenderPass
     let uniformSetLayout: VkDescriptorSetLayout
     let textureSetLayout: VkDescriptorSetLayout
@@ -407,6 +404,13 @@ final class VulkanRenderDevice: RenderDevice {
     /// Serial of the frame currently being recorded (increments every submitted frame).
     private var frameSerial: UInt64 = 0
     private let deletionQueue = VulkanDeletionQueue()
+    /// Copies filling new static buffers and textures, submitted ahead of the frame (see `VulkanUploadQueue`).
+    private(set) var uploads: VulkanUploadQueue!
+    /// One-off submits the CPU waited for (`submitAndWait`): `updateTexture` and a few rare
+    /// target set-ups. Creating resources doesn't add to it.
+    private(set) var blockingSubmitCount = 0
+    /// Resources alive and released-but-not-destroyed (for tests).
+    var deletionQueueCounts: (live: Int, pending: Int) { (deletionQueue.liveCount, deletionQueue.pendingCount) }
     private var readbackBuffer: VulkanBuffer?
     /// `timestampsPerFrame` timestamps per frame slot; nil when the queue can't time.
     private var timestampPool: VkQueryPool?
@@ -509,6 +513,7 @@ final class VulkanRenderDevice: RenderDevice {
         self.occlusionPool = occlusionPool!
 
         try createFrames()
+        uploads = VulkanUploadQueue(device: device, queueFamily: family, memoryProperties: memoryProperties)
         if canTime {
             var queryInfo = VkQueryPoolCreateInfo()
             queryInfo.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO
@@ -575,13 +580,18 @@ final class VulkanRenderDevice: RenderDevice {
             buffer.mapped!.copyMemory(from: bytes.baseAddress!, byteCount: length)
             return buffer
         }
+        // The copy runs ahead of the next submitted frame (see `VulkanUploadQueue`); nothing waits.
         do {
-            let staging = try createRawBuffer(
-                length: length, usage: vkFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT),
-                properties: vkFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT), mapped: true)
-            defer { destroy(staging) }
-            staging.mapped!.copyMemory(from: bytes.baseAddress!, byteCount: length)
-            try submitCopy(from: staging.buffer, to: raw.buffer, length: length)
+            let staging = try uploads.stage(length) { $0.copyMemory(from: bytes.baseAddress!, byteCount: length) }
+            do {
+                try uploads.record(staging) { cmd in
+                    var region = VkBufferCopy(srcOffset: VkDeviceSize(staging.offset), dstOffset: 0, size: VkDeviceSize(length))
+                    vkCmdCopyBuffer(cmd, staging.buffer, raw.buffer, 1, &region)
+                }
+            } catch {
+                uploads.discard(staging)
+                throw error
+            }
         } catch {
             destroy(raw)
             throw error
@@ -601,7 +611,7 @@ final class VulkanRenderDevice: RenderDevice {
         return usageFlags | vkFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT)
     }
 
-    /// Device-local and zeroed with `vkCmdFillBuffer` (blocking, like `makeBuffer(bytes:)`).
+    /// Device-local and zeroed with `vkCmdFillBuffer`, recorded like `makeBuffer(bytes:)`'s copy (no wait).
     func makeBuffer(length: Int, usage: BufferUsage) throws -> GPUBuffer {
         guard length > 0 else { throw GraphicsError("Cannot create an empty buffer") }
         let usageFlags = Self.bufferUsage(usage)
@@ -613,14 +623,13 @@ final class VulkanRenderDevice: RenderDevice {
             memset(buffer.mapped!, 0, length)
             return buffer
         }
-        let buffer = VulkanBuffer(buffer: raw.buffer, memory: raw.memory, length: length, mapped: nil, deletionQueue: deletionQueue)
-        try submitAndWait { cmd in
-            vkCmdFillBuffer(cmd, raw.buffer, 0, VkDeviceSize.max, 0)  // VK_WHOLE_SIZE
-            Self.recordMemoryBarrier(cmd, from: vkFlags(VK_PIPELINE_STAGE_TRANSFER_BIT), vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT),
-                                     to: vkFlags(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT),
-                                     vkFlags(VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_MEMORY_WRITE_BIT))
+        do {
+            try uploads.record(nil) { cmd in vkCmdFillBuffer(cmd, raw.buffer, 0, VkDeviceSize.max, 0) }  // VK_WHOLE_SIZE
+        } catch {
+            destroy(raw)
+            throw error
         }
-        return buffer
+        return VulkanBuffer(buffer: raw.buffer, memory: raw.memory, length: length, mapped: nil, deletionQueue: deletionQueue)
     }
 
     /// A global memory barrier: everything before at `sourceStages` (its `sourceAccess` writes
@@ -632,48 +641,6 @@ final class VulkanRenderDevice: RenderDevice {
         barrier.srcAccessMask = sourceAccess
         barrier.dstAccessMask = destinationAccess
         vkCmdPipelineBarrier(cmd, sourceStages, destinationStages, 0, 1, &barrier, 0, nil, 0, nil)
-    }
-
-    /// Records and submits a one-shot copy and waits for it. Uploads happen at load time and are
-    /// rare mid-frame, so a synchronous submit (rather than batching into the frame's command
-    /// buffer) is the simplest correct option: it also makes the buffer usable by the frame being
-    /// recorded, and lets the caller free the staging buffer right after.
-    private func submitCopy(from source: VkBuffer, to destination: VkBuffer, length: Int) throws {
-        var allocInfo = VkCommandBufferAllocateInfo()
-        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO
-        allocInfo.commandPool = commandPool
-        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY
-        allocInfo.commandBufferCount = 1
-        var cmd: VkCommandBuffer?
-        try vkCheck(vkAllocateCommandBuffers(device, &allocInfo, &cmd), "vkAllocateCommandBuffers")
-        defer { vkFreeCommandBuffers(device, commandPool, 1, &cmd) }
-
-        var beginInfo = VkCommandBufferBeginInfo()
-        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO
-        beginInfo.flags = vkFlags(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT)
-        try vkCheck(vkBeginCommandBuffer(cmd, &beginInfo), "vkBeginCommandBuffer")
-        var region = VkBufferCopy(srcOffset: 0, dstOffset: 0, size: VkDeviceSize(length))
-        vkCmdCopyBuffer(cmd, source, destination, 1, &region)
-        // Make the copy visible to every later use in later submissions (vertex input, uniform and
-        // storage reads, indirect arguments, compute writes).
-        Self.recordMemoryBarrier(cmd!, from: vkFlags(VK_PIPELINE_STAGE_TRANSFER_BIT), vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT),
-                                 to: vkFlags(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT),
-                                 vkFlags(VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_MEMORY_WRITE_BIT))
-        try vkCheck(vkEndCommandBuffer(cmd), "vkEndCommandBuffer")
-
-        var fenceInfo = VkFenceCreateInfo()
-        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO
-        var fence: VkFence?
-        try vkCheck(vkCreateFence(device, &fenceInfo, nil, &fence), "vkCreateFence")
-        defer { vkDestroyFence(device, fence, nil) }
-        var submit = VkSubmitInfo()
-        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO
-        submit.commandBufferCount = 1
-        try withUnsafePointer(to: &cmd) { buffers in
-            submit.pCommandBuffers = buffers
-            try vkCheck(vkQueueSubmit(queue, 1, &submit, fence), "vkQueueSubmit")
-        }
-        try vkCheck(vkWaitForFences(device, 1, &fence, VkBool32(VK_TRUE), UInt64.max), "vkWaitForFences")
     }
 
     /// Records a copy from this frame's transient memory into the frame's command buffer, between
@@ -756,7 +723,7 @@ final class VulkanRenderDevice: RenderDevice {
         let texture = VulkanTexture(
             width: descriptor.width, height: descriptor.height, format: descriptor.format, image: allocation.image,
             memory: allocation.memory, view: allocation.view, isStorage: true, deletionQueue: deletionQueue)
-        try submitAndWait { cmd in
+        try uploads.record(nil) { cmd in
             var barrier = VkImageMemoryBarrier()
             barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER
             barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED
@@ -864,16 +831,9 @@ final class VulkanRenderDevice: RenderDevice {
     }
 
     /// Moves a new render target's texture to the shader-read layout, where every pass into it
-    /// leaves it: right away in the frame's command buffer between passes, at the start of the
-    /// next frame when created between frames, or with a blocking submit inside a pass.
+    /// leaves it, in the upload batch submitted ahead of the next frame (at any time, even inside a pass).
     private func makeTargetShaderReadable(_ image: VkImage) throws {
-        if current == nil {
-            pendingTargetLayouts.append(image)
-        } else if !inRenderPass {
-            recordShaderReadable([image], cmd: frames[frameIndex].commandBuffer)
-        } else {
-            try makeShaderReadable([image])
-        }
+        try uploads.record(nil) { cmd in recordShaderReadable([image], cmd: cmd) }
     }
 
     func makeTexture(levels: [TextureMipLevel], format: TextureFormat) throws -> GPUTexture {
@@ -891,13 +851,19 @@ final class VulkanRenderDevice: RenderDevice {
             width: width, height: height, format: format, mipLevelCount: levels.count, image: allocation.image,
             memory: allocation.memory, view: allocation.view, deletionQueue: deletionQueue)
 
-        // Every level goes through one staging buffer; the upload blocks until the GPU is done.
-        let staging = try createHostBuffer(
-            length: levels.reduce(0) { $0 + $1.pixels.count }, usage: vkFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT))
+        // Every level goes through one staging region, copied ahead of the next submitted frame
+        // (see `VulkanUploadQueue`); nothing waits. Level sizes are multiples of the texel or
+        // block size, so each level's offset stays aligned to it.
+        let staging = try uploads.stage(levels.reduce(0) { $0 + $1.pixels.count }) { base in
+            var offset = 0
+            for mip in levels {
+                mip.pixels.withUnsafeBytes { (base + offset).copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+                offset += mip.pixels.count
+            }
+        }
         var regions: [VkBufferImageCopy] = []
-        var offset = 0
+        var offset = staging.offset
         for (level, mip) in levels.enumerated() {
-            mip.pixels.withUnsafeBytes { (staging.mapped! + offset).copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
             var region = VkBufferImageCopy()
             region.bufferOffset = VkDeviceSize(offset)
             region.imageSubresource = VkImageSubresourceLayers(
@@ -909,30 +875,37 @@ final class VulkanRenderDevice: RenderDevice {
         let range = VkImageSubresourceRange(
             aspectMask: vkFlags(VK_IMAGE_ASPECT_COLOR_BIT), baseMipLevel: 0, levelCount: UInt32(levels.count),
             baseArrayLayer: 0, layerCount: 1)
-        try submitAndWait { cmd in
-            func barrier(from: VkImageLayout, to: VkImageLayout, srcAccess: VkAccessFlags, dstAccess: VkAccessFlags,
-                         srcStage: VkPipelineStageFlags, dstStage: VkPipelineStageFlags) {
-                var barrier = VkImageMemoryBarrier()
-                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER
-                barrier.oldLayout = from
-                barrier.newLayout = to
-                barrier.srcAccessMask = srcAccess
-                barrier.dstAccessMask = dstAccess
-                barrier.srcQueueFamilyIndex = UInt32.max  // VK_QUEUE_FAMILY_IGNORED
-                barrier.dstQueueFamilyIndex = UInt32.max
-                barrier.image = allocation.image
-                barrier.subresourceRange = range
-                vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, nil, 0, nil, 1, &barrier)
+        do {
+            try uploads.record(staging) { cmd in
+                func barrier(from: VkImageLayout, to: VkImageLayout, srcAccess: VkAccessFlags, dstAccess: VkAccessFlags,
+                             srcStage: VkPipelineStageFlags, dstStage: VkPipelineStageFlags) {
+                    var barrier = VkImageMemoryBarrier()
+                    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER
+                    barrier.oldLayout = from
+                    barrier.newLayout = to
+                    barrier.srcAccessMask = srcAccess
+                    barrier.dstAccessMask = dstAccess
+                    barrier.srcQueueFamilyIndex = UInt32.max  // VK_QUEUE_FAMILY_IGNORED
+                    barrier.dstQueueFamilyIndex = UInt32.max
+                    barrier.image = allocation.image
+                    barrier.subresourceRange = range
+                    vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, nil, 0, nil, 1, &barrier)
+                }
+                barrier(from: VK_IMAGE_LAYOUT_UNDEFINED, to: VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        srcAccess: 0, dstAccess: vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT),
+                        srcStage: vkFlags(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT), dstStage: vkFlags(VK_PIPELINE_STAGE_TRANSFER_BIT))
+                vkCmdCopyBufferToImage(
+                    cmd, staging.buffer, allocation.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, UInt32(regions.count), regions)
+                // Sampled by later submissions: the frame's passes, compute ones included.
+                barrier(from: VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, to: VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                        srcAccess: vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT), dstAccess: vkFlags(VK_ACCESS_SHADER_READ_BIT),
+                        srcStage: vkFlags(VK_PIPELINE_STAGE_TRANSFER_BIT),
+                        dstStage: vkFlags(VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT))
             }
-            barrier(from: VK_IMAGE_LAYOUT_UNDEFINED, to: VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                    srcAccess: 0, dstAccess: vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT),
-                    srcStage: vkFlags(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT), dstStage: vkFlags(VK_PIPELINE_STAGE_TRANSFER_BIT))
-            vkCmdCopyBufferToImage(
-                cmd, staging.buffer, allocation.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, UInt32(regions.count), regions)
-            barrier(from: VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, to: VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                    srcAccess: vkFlags(VK_ACCESS_TRANSFER_WRITE_BIT), dstAccess: vkFlags(VK_ACCESS_SHADER_READ_BIT),
-                    srcStage: vkFlags(VK_PIPELINE_STAGE_TRANSFER_BIT),
-                    dstStage: vkFlags(VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT))
+        } catch {
+            uploads.discard(staging)
+            throw error
         }
         return texture
     }
@@ -1003,9 +976,12 @@ final class VulkanRenderDevice: RenderDevice {
         }
     }
 
-    /// Records `body` into a one-off command buffer, submits it and waits. For rare uploads
-    /// (texture creation); per-frame work goes through the frame's command buffer.
+    /// Records `body` into a one-off command buffer, submits it (after pending uploads, which it
+    /// may depend on) and waits for the queue. For `updateTexture` and rare set-ups; creating
+    /// resources and per-frame work don't wait.
     private func submitAndWait(_ body: (VkCommandBuffer) -> Void) throws {
+        try submitUploads()
+        blockingSubmitCount += 1
         var allocInfo = VkCommandBufferAllocateInfo()
         allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO
         allocInfo.commandPool = commandPool
@@ -1031,6 +1007,21 @@ final class VulkanRenderDevice: RenderDevice {
             try vkCheck(vkQueueSubmit(queue, 1, &submit, nil), "vkQueueSubmit")
         }
         try vkCheck(vkQueueWaitIdle(queue), "vkQueueWaitIdle")
+        uploads.complete(through: nil)
+    }
+
+    /// Submits the open upload batch, if any (on the render thread, like every queue submission).
+    /// Its staging memory is given back once frame `frameSerial` has completed.
+    private func submitUploads() throws {
+        guard let cmd = try uploads.close(serial: frameSerial) else { return }
+        var buffers: VkCommandBuffer? = cmd
+        var submit = VkSubmitInfo()
+        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO
+        submit.commandBufferCount = 1
+        try withUnsafePointer(to: &buffers) { buffers in
+            submit.pCommandBuffers = buffers
+            try vkCheck(vkQueueSubmit(queue, 1, &submit, nil), "vkQueueSubmit")
+        }
     }
 
     func makeSampler(_ descriptor: SamplerDescriptor) throws -> GPUSampler {
@@ -1268,6 +1259,7 @@ final class VulkanRenderDevice: RenderDevice {
         // This slot's fence covers frame (serial - maxFramesInFlight), so every earlier frame is done too.
         if frameSerial >= UInt64(maxFramesInFlight) {
             destroy(deletionQueue.collect(completedThrough: frameSerial - UInt64(maxFramesInFlight)))
+            uploads.complete(through: frameSerial - UInt64(maxFramesInFlight))
         }
         deletionQueue.setCurrentSerial(frameSerial)
         if let timestampPool, frame.timestampsWritten {
@@ -1309,11 +1301,6 @@ final class VulkanRenderDevice: RenderDevice {
         if frame.occlusionQueriesToReset > 0 {
             vkCmdResetQueryPool(cmd, occlusionPool, occlusionQueryBase, UInt32(frame.occlusionQueriesToReset))
             frames[frameIndex].occlusionQueriesToReset = 0
-        }
-        if !pendingTargetLayouts.isEmpty {
-            // Targets released since are still alive: the deletion queue frees them after this frame at the earliest.
-            recordShaderReadable(pendingTargetLayouts, cmd: cmd)
-            pendingTargetLayouts.removeAll()
         }
         frame.transient.reset()
         frame.descriptors.reset()
@@ -1762,6 +1749,8 @@ final class VulkanRenderDevice: RenderDevice {
         }
         frames[frameIndex].occlusionQueriesToReset = frame.occlusion.count
         try vkCheck(vkEndCommandBuffer(cmd), "vkEndCommandBuffer")
+        // Uploads of resources this frame may use go first in submission order.
+        try submitUploads()
 
         var waitSemaphore: VkSemaphore? = frame.imageAvailable
         var waitStage = vkFlags(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
@@ -1828,7 +1817,10 @@ final class VulkanRenderDevice: RenderDevice {
     }
 
     func waitIdle() {
+        // Released resources may still have copies in the open batch: run it before freeing them.
+        do { try submitUploads() } catch { print("Vulkan: submitting uploads failed: \(error)") }
         vkDeviceWaitIdle(device)
+        uploads.complete(through: nil)
         destroy(deletionQueue.collect(completedThrough: nil))
         // The frame being recorded (if any) hasn't been submitted; its readbacks wait for endFrame.
         for slot in frames.indices where current == nil || slot != frameIndex { deliverBufferReadbacks(slot: slot) }
@@ -1836,6 +1828,7 @@ final class VulkanRenderDevice: RenderDevice {
 
     func shutdown() {
         vkDeviceWaitIdle(device)
+        uploads.destroy()
         readbackBuffer = nil
         // Destroys everything: released resources and ones the game still references
         // (those wrappers become inert; their deinit is a no-op after this).

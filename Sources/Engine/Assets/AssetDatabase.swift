@@ -37,13 +37,17 @@ import Foundation
 //
 // ## Background loading and hot reload
 //
-// `request(_:)` queues a background import (or a read of the Library cache) for one asset and
-// `refreshAsync()` does it for everything out of date; both return at once. A small worker pool
-// (`AssetLoadQueue`) runs the jobs; their results wait in a mailbox until the main actor calls
-// `pump()` (`SceneRenderer` does every frame), which applies them, bumps revisions and calls
-// `onChange`. `loadState(of:)`, `pendingLoadCount` and `loadProgress` report what is in flight;
-// `waitForAll()` blocks (pumping) until everything has been applied. Importers never see the
-// main thread and the database is only touched on it.
+// `request(_:priority:)` queues a background import (or a read of the Library cache) for one
+// asset and `refreshAsync()` does it for everything out of date; both return at once. The jobs
+// run as background jobs on the engine's `JobSystem` (`AssetLoadQueue`: a few at a time, `.high`
+// requests first, never on a thread waiting for frame work); their results wait in a mailbox
+// until the main actor calls `pump()` (`SceneRenderer` does every frame), which applies them,
+// bumps revisions and calls `onChange`. `loadState(of:)`, `pendingLoadCount`, `loadProgress`
+// and `onLoadProgress` report what is in flight; `cancelLoading(_:)` / `cancelAllLoading()` drop
+// loads that are no longer wanted; `waitForAll()` blocks (pumping) until everything has been
+// applied. Importers never see the main thread and the database is only touched on it. GPU
+// uploads happen on the render thread (`SceneRenderer`), which builds texture mip chains on job
+// workers first.
 //
 // `startWatching()` (or `ENGINE_HOT_RELOAD=1`) polls `Assets/` and reimports changed files in
 // the background, so edits show up in a running game. An import also depends on the other files
@@ -166,14 +170,22 @@ public final class AssetDatabase {
     private var rerun: Set<AssetID> = []
     /// Finished jobs taken from the queue but not applied yet (`pump` stopped on its time budget).
     private var ready: [AssetImportResult] = []
-    private let loadQueue = AssetLoadQueue()
+    let loadQueue: AssetLoadQueue
+    /// Loads cancelled while their job runs: the result is dropped when it arrives (one job per
+    /// asset at a time, so a new request waits for it and keeps its result instead).
+    private var cancelledJobs: Set<AssetID> = []
+    /// Called by `pump()` and the cancel calls when `loadProgress` changed.
+    public var onLoadProgress: ((AssetLoadProgress) -> Void)?
     /// Jobs submitted and applied since the database was last idle.
     public private(set) var loadProgress = AssetLoadProgress()
     private var watcher: FileWatcher?
     /// Whether the watcher started by `startWatching` prints what it reloaded.
     public var logsHotReloads = true
 
-    public init(project: Project, importers: AssetImporterRegistry? = nil) {
+    /// Background loads run on `jobs` (the engine's shared job system by default), at most
+    /// `maxConcurrentLoads` at once (default: up to 4, one fewer than its workers).
+    public init(project: Project, importers: AssetImporterRegistry? = nil, jobs: JobSystem? = nil, maxConcurrentLoads: Int? = nil) {
+        loadQueue = AssetLoadQueue(jobs: jobs ?? .shared, maxRunning: maxConcurrentLoads)
         self.project = project
         self.importers = importers ?? AssetImporterRegistry.standard
         pack = nil
@@ -185,6 +197,7 @@ public final class AssetDatabase {
     /// pack, with no importers, sources or `Library/`. Scanning, importing, settings and
     /// watching do nothing; an id the pack lacks is `.missing` (see AssetDatabase+Pack.swift).
     public init(mounting pack: AssetPack) {
+        loadQueue = AssetLoadQueue()
         self.pack = pack
         project = Project(root: pack.url.deletingLastPathComponent(), settings: ProjectSettings(name: pack.manifest.name))
         importers = AssetImporterRegistry()
@@ -674,25 +687,52 @@ extension AssetDatabase {
         guard let record = records[id] else { return .missing }
         if loaded[id] != nil { return .loaded }
         if pack != nil { return packLoadFailures.contains(id) ? .failed : .unloaded }
-        if pendingJobs[id] != nil { return .loading }
+        if pendingJobs[id] != nil && !cancelledJobs.contains(id) { return .loading }
         if record.importer == nil { return .failed }
         if record.importError != nil && !needsImport(record) { return .failed }
         return .unloaded
     }
 
     /// Starts importing (or reading the cache of) `id` in the background unless it is loaded or
-    /// already loading. Returns its state afterwards.
+    /// already loading; `.high` puts it ahead of the `.normal` loads that haven't started (also
+    /// when it is already waiting). Returns its state afterwards.
     @discardableResult
-    public func request(_ id: AssetID) -> AssetLoadState {
+    public func request(_ id: AssetID, priority: AssetLoadPriority = .normal) -> AssetLoadState {
         let state = loadState(of: id)
         if pack != nil, state == .unloaded {
             // Reading a pack entry is a copy out of the mapped file: done at once.
             _ = packAsset(id)
             return loadState(of: id)
         }
+        if state == .loading, priority == .high { loadQueue.prioritize(id) }
         guard state == .unloaded, let record = records[id] else { return state }
-        submit(id, cacheOnly: !needsImport(record))
+        submit(id, cacheOnly: !needsImport(record), priority: priority)
         return .loading
+    }
+
+    /// Stops loading `id`: a load that hasn't started is dropped, one that is running finishes
+    /// on its worker and its result is discarded. Its state goes back to `.unloaded` (a later
+    /// `request` starts it again) and it counts as completed (and cancelled) in `loadProgress`.
+    /// Returns whether it was loading.
+    @discardableResult
+    public func cancelLoading(_ id: AssetID) -> Bool {
+        guard pendingJobs[id] != nil, !cancelledJobs.contains(id) else { return false }
+        if loadQueue.cancel(id) {
+            pendingJobs[id] = nil
+        } else {
+            cancelledJobs.insert(id)
+        }
+        rerun.remove(id)
+        loadProgress.completed += 1
+        loadProgress.cancelled += 1
+        onLoadProgress?(loadProgress)
+        return true
+    }
+
+    /// `cancelLoading` for every load in flight (e.g. when leaving a level). Returns how many.
+    @discardableResult
+    public func cancelAllLoading() -> Int {
+        pendingJobs.keys.sorted { $0.description < $1.description }.reduce(0) { $0 + (cancelLoading($1) ? 1 : 0) }
     }
 
     /// Jobs queued, running or waiting for `pump()`.
@@ -720,8 +760,9 @@ extension AssetDatabase {
             let result = ready[applied]
             applied += 1
             let id = result.id
-            loadProgress.completed += 1
             pendingJobs[id] = nil
+            if cancelledJobs.remove(id) != nil { continue }  // counted when it was cancelled
+            loadProgress.completed += 1
             guard let record = records[id] else { rerun.remove(id); continue }  // deleted meanwhile
             if rerun.remove(id) != nil || record.sourceHash != result.sourceHash {
                 submit(id, cacheOnly: false)  // changed again while it ran: this result is stale
@@ -730,6 +771,7 @@ extension AssetDatabase {
             self.record(result, into: &report)
         }
         ready.removeFirst(applied)
+        onLoadProgress?(loadProgress)
         if loadProgress.pending == 0 { loadProgress = AssetLoadProgress() }
         saveIndex(&report)
         if report.hasChanges {
@@ -765,7 +807,7 @@ extension AssetDatabase {
         if pack != nil { return AssetScanReport() }
         var report = scanFiles()
         for record in allRecords where record.importer != nil {
-            if pendingJobs[record.id] == record.sourceHash { continue }
+            if pendingJobs[record.id] == record.sourceHash && !cancelledJobs.contains(record.id) { continue }
             let cached = FileManager.default.fileExists(atPath: artifactsURL(record.id).appendingPathComponent(AssetArtifacts.manifestName).path)
             if needsImport(record) || !cached && index.assets[record.id.description]?.error == nil {
                 submit(record.id, cacheOnly: false)
@@ -802,9 +844,17 @@ extension AssetDatabase {
         watcher = nil
     }
 
-    private func submit(_ id: AssetID, cacheOnly: Bool) {
-        guard pendingJobs[id] == nil else {
-            rerun.insert(id)  // one job per asset at a time: they share its cache folder
+    private func submit(_ id: AssetID, cacheOnly: Bool, priority: AssetLoadPriority = .normal) {
+        if let running = pendingJobs[id] {
+            // One job per asset at a time: they share its cache folder.
+            if cancelledJobs.remove(id) != nil {
+                // Wanted again while its cancelled job still runs: keep that job's result.
+                if loadProgress.pending == 0 { loadProgress = AssetLoadProgress() }
+                loadProgress.total += 1
+                if running != records[id]?.sourceHash { rerun.insert(id) }
+            } else {
+                rerun.insert(id)
+            }
             return
         }
         guard var job = importJob(for: id) else { return }
@@ -812,7 +862,7 @@ extension AssetDatabase {
         if loadProgress.pending == 0 { loadProgress = AssetLoadProgress() }
         loadProgress.total += 1
         pendingJobs[id] = job.sourceHash
-        loadQueue.submit(job)
+        loadQueue.submit(job, priority: priority)
     }
 }
 

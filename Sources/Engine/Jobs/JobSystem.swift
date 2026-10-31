@@ -1,9 +1,20 @@
 import Foundation
 
+/// Which queue a job waits in (`JobSystem.schedule(_:priority:after:in:_:)`).
+public enum JobPriority: Sendable {
+    /// Frame work: run by workers first, and by threads waiting in `wait` or `parallelFor`.
+    case normal
+    /// Long work that may span frames (asset imports): run only by workers, and only when no
+    /// normal job is queued, so a frame's `parallelFor` or `wait` never picks one up. Waiting
+    /// for a background job (`wait(_ job:)`) still helps with it.
+    case background
+}
+
 /// A job scheduled on a `JobSystem`: wait for it with `JobSystem.wait(_:)`, or name it as a
 /// dependency of later jobs.
 public final class JobHandle: @unchecked Sendable {
     public let name: String
+    public let priority: JobPriority
     // All guarded by the system's lock.
     fileprivate var body: (@Sendable () -> Void)?
     fileprivate var pendingDependencies = 0
@@ -12,8 +23,10 @@ public final class JobHandle: @unchecked Sendable {
     fileprivate let group: JobGroup?
     fileprivate let system: JobSystem
 
-    fileprivate init(name: String, body: @escaping @Sendable () -> Void, group: JobGroup?, system: JobSystem) {
+    fileprivate init(name: String, priority: JobPriority, body: @escaping @Sendable () -> Void, group: JobGroup?,
+                     system: JobSystem) {
         self.name = name
+        self.priority = priority
         self.body = body
         self.group = group
         self.system = system
@@ -61,6 +74,8 @@ public final class JobGroup: @unchecked Sendable {
 /// - **Profiler:** workers are named "job worker N" in the CPU profiler (their own lanes in
 ///   the overlay timeline and the Chrome trace), and every job and each worker's share of a
 ///   loop records a scope under the job's or loop's name.
+/// - **Priorities:** `.background` jobs (asset imports) wait in a queue of their own that only
+///   workers take from, after the normal queue is empty; see `JobPriority`.
 /// - **Main thread:** any thread may schedule, wait and loop, including the main thread
 ///   (`@MainActor` code). A `parallelFor` body runs on several threads at once, so it must only
 ///   read shared state and write its own slots; it must not mutate a `World`, `PhysicsWorld` or
@@ -84,6 +99,9 @@ public final class JobSystem: @unchecked Sendable {
     private let condition = NSCondition()
     private var queue: [Work] = []
     private var queueHead = 0
+    /// `.background` jobs, oldest first (from `backgroundHead`).
+    private var background: [JobHandle] = []
+    private var backgroundHead = 0
     private var stopping = false
     private var runningWorkers = 0
 
@@ -140,7 +158,15 @@ public final class JobSystem: @unchecked Sendable {
     @discardableResult
     public func schedule(_ name: String, after dependencies: [JobHandle] = [], in group: JobGroup? = nil,
                          _ body: @escaping @Sendable () -> Void) -> JobHandle {
-        let job = JobHandle(name: name, body: body, group: group, system: self)
+        schedule(name, priority: .normal, after: dependencies, in: group, body)
+    }
+
+    /// `schedule(_:after:in:_:)` in the queue for `priority`. Inline (no workers), a background
+    /// job runs before this returns too.
+    @discardableResult
+    public func schedule(_ name: String, priority: JobPriority, after dependencies: [JobHandle] = [], in group: JobGroup? = nil,
+                         _ body: @escaping @Sendable () -> Void) -> JobHandle {
+        let job = JobHandle(name: name, priority: priority, body: body, group: group, system: self)
         condition.lock()
         group?.unfinished += 1
         for dependency in dependencies where !dependency.finished {
@@ -150,7 +176,7 @@ public final class JobSystem: @unchecked Sendable {
         }
         let ready = job.pendingDependencies == 0
         let inline = isInline || stopping
-        if ready && !inline { push(.job(job)) }
+        if ready && !inline { enqueue(job) }
         condition.unlock()
         if ready && inline { run(job) }
         // Inline, a job with pending dependencies can only wait for jobs that run later by
@@ -158,12 +184,14 @@ public final class JobSystem: @unchecked Sendable {
         return job
     }
 
-    /// Returns once `job` has finished, running other jobs meanwhile.
+    /// Returns once `job` has finished, running other jobs meanwhile (background ones too when
+    /// `job` is one).
     public func wait(_ job: JobHandle) {
-        waitHelping { job.finished }
+        waitHelping(background: job.priority == .background) { job.finished }
     }
 
-    /// Returns once every job scheduled in `group` has finished, running jobs meanwhile.
+    /// Returns once every job scheduled in `group` has finished, running normal jobs meanwhile
+    /// (background jobs in the group are left to the workers).
     public func wait(_ group: JobGroup) {
         waitHelping { group.unfinished == 0 }
     }
@@ -172,6 +200,30 @@ public final class JobSystem: @unchecked Sendable {
     private func push(_ work: Work) {
         queue.append(work)
         condition.signal()
+    }
+
+    /// Queues a ready job by its priority. Caller holds the lock.
+    private func enqueue(_ job: JobHandle) {
+        guard job.priority == .background else { return push(.job(job)) }
+        background.append(job)
+        // A waiter that can't take it may get a signal; wake everyone so a worker sees it.
+        condition.broadcast()
+    }
+
+    /// Normal work first, then (if `background`) the oldest background job. Caller holds the lock.
+    private func pop(background includesBackground: Bool) -> Work? {
+        if let work = pop() { return work }
+        guard includesBackground, backgroundHead < background.count else { return nil }
+        let job = background[backgroundHead]
+        backgroundHead += 1
+        if backgroundHead == background.count {
+            background.removeAll(keepingCapacity: true)
+            backgroundHead = 0
+        } else if backgroundHead >= 256, backgroundHead * 2 >= background.count {
+            background.removeFirst(backgroundHead)
+            backgroundHead = 0
+        }
+        return .job(job)
     }
 
     /// Caller holds the lock.
@@ -211,18 +263,18 @@ public final class JobSystem: @unchecked Sendable {
         for dependent in dependents {
             dependent.pendingDependencies -= 1
             guard dependent.pendingDependencies == 0 else { continue }
-            if isInline || stopping { inlineReady.append(dependent) } else { push(.job(dependent)) }
+            if isInline || stopping { inlineReady.append(dependent) } else { enqueue(dependent) }
         }
         condition.broadcast()
         condition.unlock()
         for dependent in inlineReady { run(dependent) }
     }
 
-    /// Runs queued work until `done` (read under the lock) holds.
-    private func waitHelping(until done: () -> Bool) {
+    /// Runs queued work (normal only, unless `background`) until `done` (read under the lock) holds.
+    private func waitHelping(background: Bool = false, until done: () -> Bool) {
         condition.lock()
         while !done() {
-            if let work = pop() {
+            if let work = pop(background: background) {
                 condition.unlock()
                 perform(work)
                 condition.lock()
@@ -236,7 +288,7 @@ public final class JobSystem: @unchecked Sendable {
     private func workerLoop() {
         condition.lock()
         while true {
-            if let work = pop() {
+            if let work = pop(background: true) {
                 condition.unlock()
                 perform(work)
                 condition.lock()

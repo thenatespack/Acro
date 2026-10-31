@@ -601,9 +601,13 @@ public struct DrawIndexedIndirectArguments: Sendable, BitwiseCopyable, Equatable
     /// for backends without them).
     var descriptorPoolCount: Int? { get }
 
+    /// A static buffer holding a copy of `bytes`. Never waits for the GPU: on Vulkan (device-local
+    /// memory) the copy from a staging buffer is recorded into an upload batch that is submitted
+    /// ahead of the next frame, so passes recorded after this call (in this frame, even one
+    /// already begun, or later) see the data; on Metal the buffer is shared memory filled at once.
     func makeBuffer(bytes: UnsafeRawBufferPointer, usage: BufferUsage) throws -> GPUBuffer
     /// A buffer of `length` zero bytes, typically `.storage` for a compute pass to fill. Like
-    /// `makeBuffer(bytes:)`, blocks on Vulkan until it is ready.
+    /// `makeBuffer(bytes:)`, it doesn't wait for the GPU (zeroed on the GPU ahead of the next frame on Vulkan).
     func makeBuffer(length: Int, usage: BufferUsage) throws -> GPUBuffer
     /// Replaces `bytes.count` bytes of a buffer from `makeBuffer`, starting at `offset`.
     ///
@@ -627,8 +631,10 @@ public struct DrawIndexedIndirectArguments: Sendable, BitwiseCopyable, Equatable
     func makeTexture(_ descriptor: TextureDescriptor) throws -> GPUTexture
     /// A 2D color texture from explicit mip levels (`TextureMipLevel`, level 0 first, each half
     /// the size of the previous, at least one). The data is copied; the texture is freed like
-    /// a `GPUBuffer`. Most code wants `makeTexture(pixels:...)` or `makeTexture(image:...)`,
-    /// which build the levels.
+    /// a `GPUBuffer`. Like `makeBuffer(bytes:)` it doesn't wait for the GPU (Vulkan copies it in
+    /// the upload batch ahead of the next frame, Metal on the CPU), and it can be sampled by
+    /// every pass recorded after the call. Most code wants `makeTexture(pixels:...)` or
+    /// `makeTexture(image:...)`, which build the levels.
     func makeTexture(levels: [TextureMipLevel], format: TextureFormat) throws -> GPUTexture
     /// Overwrites a sub-rectangle of one mip level of a texture from `makeTexture` with tightly
     /// packed texels in the texture's format (`region.width * region.height * bytesPerPixel`
@@ -747,8 +753,10 @@ extension RenderDevice {
     /// (albedo, emissive, UI), which samples as linear light and is averaged in linear light
     /// when building mips; false for data (normal, roughness, metalness, masks).
     ///
-    /// Decoding is CPU-only and can run on any thread, but this creates the GPU texture, so call
-    /// it on the main thread; on Vulkan it blocks until the upload has finished.
+    /// Decoding (and `MipChain` building) is CPU-only and can run on any thread or a job, but this
+    /// creates the GPU texture, so call it on the main thread. It doesn't wait for the GPU, but
+    /// building mips here costs main-thread time for big images (`SceneRenderer` builds asset
+    /// textures' mips on job workers and calls `makeTexture(levels:format:)`).
     public func makeTexture(image: Image, srgb: Bool, generateMipmaps: Bool = true) throws -> GPUTexture {
         try makeTexture(pixels: image.pixels, width: image.width, height: image.height,
                         format: srgb ? .rgba8Srgb : .rgba8Unorm, generateMipmaps: generateMipmaps)
