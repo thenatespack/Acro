@@ -40,7 +40,7 @@ public struct KeyboardMover: Component, Equatable, Sendable {
 ///
 /// Built in: Transform, Camera, the lights, SceneEnvironment, PostProcess, MeshRenderer (a cube),
 /// the physics components (a unit box Collider, a dynamic RigidBody, a ball Joint to the world,
-/// a CharacterController), AudioListener and AudioEmitter (no sound until one is picked), Sprite (atlas "sprites", frame 0), SpriteAnimator (one looping "idle" clip), Spin and
+/// a CharacterController), AudioListener and AudioEmitter (no sound until one is picked), ParticleEmitter, Sprite (atlas "sprites", frame 0), SpriteAnimator (one looping "idle" clip), Spin and
 /// KeyboardMover. `Name` is left out on purpose: the inspector header edits it. Games register their own
 /// with `register(_:make:)`, or `register(_:)` for types with a no-argument initializer.
 @MainActor
@@ -81,6 +81,8 @@ public enum EditorComponentCatalog {
         AudioSystem.registerComponents()
         register(AudioListener.self) { AudioListener() }
         register(AudioEmitter.self) { AudioEmitter() }
+        ParticleSystem.registerComponents()
+        register(ParticleEmitter.self) { ParticleEmitter() }
         register(Sprite.self) { Sprite(atlas: SpriteAtlasHandle("sprites")) }
         register(SpriteAnimator.self) { SpriteAnimator(clips: [SpriteClip("idle", frames: [0], fps: 12)]) }
         register(Spin.self) { Spin() }

@@ -195,7 +195,7 @@ import Testing
         #expect((EditorComponentCatalog.makeDefault(named: "Sprite") as? Sprite)?.atlas == SpriteAtlasHandle("sprites"))
         #expect((EditorComponentCatalog.makeDefault(named: "SpriteAnimator") as? SpriteAnimator)?.current == "idle")
         #expect((EditorComponentCatalog.makeDefault(named: "KeyboardMover") as? KeyboardMover)?.speed == 3)
-        for name in ["Collider", "RigidBody", "Joint", "CharacterController", "AudioListener", "AudioEmitter",
+        for name in ["Collider", "RigidBody", "Joint", "CharacterController", "AudioListener", "AudioEmitter", "ParticleEmitter",
                      "Sprite", "SpriteAnimator", "KeyboardMover"] {
             #expect(EditorComponentCatalog.addableNames.contains(name), "\(name)")
             #expect(ComponentRegistry.type(named: name) != nil, "\(name)")
@@ -203,8 +203,8 @@ import Testing
         // They round-trip through a scene file.
         let session = makeSession()
         let id = try #require(session.create(.sphere))
-        for name in ["Collider", "RigidBody", "CharacterController", "AudioListener", "AudioEmitter", "Sprite", "SpriteAnimator",
-                     "KeyboardMover"] {
+        for name in ["Collider", "RigidBody", "CharacterController", "AudioListener", "AudioEmitter", "ParticleEmitter", "Sprite",
+                     "SpriteAnimator", "KeyboardMover"] {
             #expect(session.addComponent(named: name, to: id), "\(name)")
         }
         let data = try session.world.save()
