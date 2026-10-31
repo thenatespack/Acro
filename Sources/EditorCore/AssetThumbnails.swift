@@ -11,7 +11,8 @@ import Foundation
 ///   `render(frame:)` (in `renderOffscreen`) draws one view per thumbnail.
 ///
 /// A thumbnail is made again when its asset's database revision changes (it is reimported);
-/// the old image stays on screen until then.
+/// the old image stays on screen until then. Assets that aren't loaded yet are requested in
+/// the background (`AssetDatabase.request`) and queued once they are.
 @MainActor
 public final class AssetThumbnails {
     /// Edge length in pixels.
@@ -58,6 +59,9 @@ public final class AssetThumbnails {
         let key = reference.description
         let revision = assets.revision(of: reference.asset)
         let entry = cache[key]
+        // Not imported yet: start a background load (its completion bumps the revision, and
+        // the next call queues the thumbnail) instead of importing on the main thread.
+        guard assets.request(reference.asset) == .loaded else { return entry?.texture }
         if entry?.revision != revision, !queued.contains(key) {
             queued.insert(key)
             queue.append((reference, kind))

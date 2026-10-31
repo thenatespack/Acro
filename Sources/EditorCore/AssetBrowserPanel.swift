@@ -395,13 +395,15 @@ public final class AssetBrowserPanel {
         if noProject.isHidden != !hasProject { noProject.isHidden = hasProject }
         let entries = model.entries
         let folders = model.folders
+        let pending = model.session.assets?.pendingLoadCount ?? 0
+        let crumbBase = model.search.isEmpty ? model.breadcrumb.map(\.title).joined(separator: " › ") : "Search results"
+        let crumb = crumbBase + (pending > 0 ? " · importing \(pending)…" : "")
+        if breadcrumb.text != crumb { breadcrumb.text = crumb }
         if folders != shownFolders { rebuildTree(folders) }
         guard model.version != shownVersion else { return }
         shownVersion = model.version
         grid.entries = entries
         grid.selected = model.selection
-        let crumb = model.search.isEmpty ? model.breadcrumb.map(\.title).joined(separator: " › ") : "Search results"
-        if breadcrumb.text != crumb { breadcrumb.text = crumb }
         if search.text != model.search, !search.isFocused { search.text = model.search }
         applyingTree = true
         if let node = folderNodes[model.folder] {

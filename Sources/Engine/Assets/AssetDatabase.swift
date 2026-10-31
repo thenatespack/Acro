@@ -34,6 +34,20 @@ import Foundation
 // asset on demand. Imports run through `AssetImportJob`, whose `run()` is nonisolated and
 // touches no GPU, so it can move to a background thread: `importJob(for:)` on the main actor,
 // `run()` anywhere, `apply(_:)` back on the main actor.
+//
+// ## Background loading and hot reload
+//
+// `request(_:)` queues a background import (or a read of the Library cache) for one asset and
+// `refreshAsync()` does it for everything out of date; both return at once. A small worker pool
+// (`AssetLoadQueue`) runs the jobs; their results wait in a mailbox until the main actor calls
+// `pump()` (`SceneRenderer` does every frame), which applies them, bumps revisions and calls
+// `onChange`. `loadState(of:)`, `pendingLoadCount` and `loadProgress` report what is in flight;
+// `waitForAll()` blocks (pumping) until everything has been applied. Importers never see the
+// main thread and the database is only touched on it.
+//
+// `startWatching()` (or `ENGINE_HOT_RELOAD=1`) polls `Assets/` and reimports changed files in
+// the background, so edits show up in a running game. An import also depends on the other files
+// it read (`ImportContext.readDependency`): changing one of those reimports it too.
 
 /// What a scan or refresh found and did.
 public struct AssetScanReport: Sendable {
@@ -141,11 +155,24 @@ public final class AssetDatabase {
     private var index: LibraryIndex
     private var loaded: [AssetID: ImportedAsset] = [:]
     private var revisions: [AssetID: Int] = [:]
+    /// Background jobs not applied yet, with the source hash they were started for.
+    private var pendingJobs: [AssetID: String] = [:]
+    /// Assets that changed again while their job ran: reimported when it finishes.
+    private var rerun: Set<AssetID> = []
+    /// Finished jobs taken from the queue but not applied yet (`pump` stopped on its time budget).
+    private var ready: [AssetImportResult] = []
+    private let loadQueue = AssetLoadQueue()
+    /// Jobs submitted and applied since the database was last idle.
+    public private(set) var loadProgress = AssetLoadProgress()
+    private var watcher: FileWatcher?
+    /// Whether the watcher started by `startWatching` prints what it reloaded.
+    public var logsHotReloads = true
 
     public init(project: Project, importers: AssetImporterRegistry? = nil) {
         self.project = project
         self.importers = importers ?? AssetImporterRegistry.standard
         index = LibraryIndex.load(from: Self.indexURL(project))
+        if ProcessInfo.processInfo.environment["ENGINE_HOT_RELOAD"].map({ $0 != "0" && !$0.isEmpty }) == true { startWatching() }
     }
 
     /// Opens the project at `url` and returns its database after a `refresh()`.
@@ -304,6 +331,22 @@ public final class AssetDatabase {
         return entry.sourceHash != record.sourceHash || entry.importer != importer.name
             || entry.importerVersion != importer.version
             || entry.settings != AssetJSON.canonical(importer.effectiveSettings(record.sidecar.settings))
+            || dependenciesChanged(entry.dependencies ?? [])
+    }
+
+    /// Whether any file an import read (`ImportContext.readDependency`) differs from what it read.
+    private func dependenciesChanged(_ dependencies: [LibraryIndex.Dependency]) -> Bool {
+        let keys: Set<URLResourceKey> = [.fileSizeKey, .contentModificationDateKey]
+        for dependency in dependencies {
+            let url = project.url(forAssetPath: dependency.path)
+            guard let values = try? url.resourceValues(forKeys: keys), let size = values.fileSize else {
+                if dependency.hash.isEmpty { continue }  // it was missing then and still is
+                return true
+            }
+            if Int64(size) == dependency.size, values.contentModificationDate?.timeIntervalSinceReferenceDate == dependency.modified { continue }
+            if (try? ContentHash.hex(contentsOf: url)) != dependency.hash { return true }
+        }
+        return false
     }
 
     /// Prepares the import of `id` (main actor); run it with `job.run()` on any thread and
@@ -315,7 +358,7 @@ public final class AssetDatabase {
                                     artifactsDirectory: directory.appendingPathComponent("files", isDirectory: true),
                                     assetsByPath: idsByPath)
         return AssetImportJob(importer: importer, context: context, settings: record.sidecar.settings,
-                              cacheDirectory: directory, sourceHash: record.sourceHash)
+                              cacheDirectory: directory, sourceHash: record.sourceHash, cacheOnly: false)
     }
 
     /// Takes in a finished import: keeps its objects, updates the index and bumps the revision.
@@ -342,7 +385,15 @@ public final class AssetDatabase {
             path: record.path, importer: result.importer, importerVersion: importer?.version ?? 0,
             sourceHash: result.sourceHash, size: record.size, modified: record.modified,
             settings: AssetJSON.canonical(importer?.effectiveSettings(result.settings) ?? .null),
-            objects: record.objects, error: nil)
+            objects: record.objects, error: nil, dependencies: result.dependencies)
+        if result.fromCache, case .success(let asset) = result.outcome {
+            // A cache read: the index entry is already right; just keep the objects.
+            loaded[id] = asset
+            record.importError = nil
+            revisions[id] = bumpRevision()
+            records[id] = record
+            return
+        }
         switch result.outcome {
         case .success(let asset):
             loaded[id] = asset
@@ -579,6 +630,149 @@ public final class AssetDatabase {
     }
 }
 
+// MARK: Background loading and hot reload
+
+extension AssetDatabase {
+    /// Where `id` is in loading. Doesn't start anything (`request(_:)` does).
+    public func loadState(of id: AssetID) -> AssetLoadState {
+        guard let record = records[id] else { return .missing }
+        if loaded[id] != nil { return .loaded }
+        if pendingJobs[id] != nil { return .loading }
+        if record.importer == nil { return .failed }
+        if record.importError != nil && !needsImport(record) { return .failed }
+        return .unloaded
+    }
+
+    /// Starts importing (or reading the cache of) `id` in the background unless it is loaded or
+    /// already loading. Returns its state afterwards.
+    @discardableResult
+    public func request(_ id: AssetID) -> AssetLoadState {
+        let state = loadState(of: id)
+        guard state == .unloaded, let record = records[id] else { return state }
+        submit(id, cacheOnly: !needsImport(record))
+        return .loading
+    }
+
+    /// Jobs queued, running or waiting for `pump()`.
+    public var pendingLoadCount: Int { loadProgress.pending }
+
+    /// Whether any background job hasn't been applied yet.
+    public var isLoading: Bool { loadProgress.pending > 0 }
+
+    /// Applies finished background jobs on the main actor: keeps their objects, updates the
+    /// index, bumps revisions and calls `onChange` once with everything that changed. Stops
+    /// taking more once `timeBudget` seconds have passed (at least one is applied per call).
+    @discardableResult
+    public func pump(timeBudget: Double = 0.004) -> AssetScanReport {
+        var report = AssetScanReport()
+        if let changes = watcher?.takeChanges(), !changes.isEmpty {
+            let scan = reimportAsync(changed: changes)
+            if logsHotReloads { print("AssetDatabase: \(changes.count) file change(s) in \(project.name): \(scan.summary)") }
+        }
+        ready += loadQueue.takeFinished()
+        guard !ready.isEmpty else { return report }
+        let start = DispatchTime.now().uptimeNanoseconds
+        var applied = 0
+        while applied < ready.count {
+            if applied > 0, Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9 > timeBudget { break }
+            let result = ready[applied]
+            applied += 1
+            let id = result.id
+            loadProgress.completed += 1
+            pendingJobs[id] = nil
+            guard let record = records[id] else { rerun.remove(id); continue }  // deleted meanwhile
+            if rerun.remove(id) != nil || record.sourceHash != result.sourceHash {
+                submit(id, cacheOnly: false)  // changed again while it ran: this result is stale
+                continue
+            }
+            self.record(result, into: &report)
+        }
+        ready.removeFirst(applied)
+        if loadProgress.pending == 0 { loadProgress = AssetLoadProgress() }
+        saveIndex(&report)
+        if report.hasChanges {
+            if logsHotReloads && watcher != nil {
+                for path in report.imported.compactMap({ records[$0]?.path }) { print("AssetDatabase: reloaded \(path)") }
+                for (path, message) in report.errors { print("AssetDatabase: \(path): \(message)") }
+            }
+            onChange?(report)
+        }
+        return report
+    }
+
+    /// Blocks the calling (main) thread, applying results as they arrive, until no background
+    /// job is left or `timeout` seconds pass. Returns whether everything finished. For tests,
+    /// screenshots and tools that need fully loaded assets.
+    @discardableResult
+    public func waitForAll(timeout: TimeInterval = 300) -> Bool {
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        while true {
+            pump(timeBudget: .infinity)
+            if loadProgress.pending == 0 { return true }
+            if Date() >= deadline { return false }
+            loadQueue.waitForFinished(timeout: 0.05)
+        }
+    }
+
+    /// `refresh()` without waiting for the imports: scans now (hashing only files whose size or
+    /// mtime changed) and queues background jobs for everything out of date. The returned
+    /// report has the scan's results; imports show up in `onChange` reports as `pump()` applies
+    /// them. Use `waitForAll()` to block until they are done.
+    @discardableResult
+    public func refreshAsync() -> AssetScanReport {
+        var report = scanFiles()
+        for record in allRecords where record.importer != nil {
+            if pendingJobs[record.id] == record.sourceHash { continue }
+            let cached = FileManager.default.fileExists(atPath: artifactsURL(record.id).appendingPathComponent(AssetArtifacts.manifestName).path)
+            if needsImport(record) || !cached && index.assets[record.id.description]?.error == nil {
+                submit(record.id, cacheOnly: false)
+            } else {
+                report.upToDate += 1
+            }
+        }
+        saveIndex(&report)
+        if report.hasChanges { onChange?(report) }
+        return report
+    }
+
+    /// The file-change entry point for background reloading (`FileWatcher`): like `refreshAsync()`.
+    @discardableResult
+    public func reimportAsync(changed: [FileChange]) -> AssetScanReport { refreshAsync() }
+
+    /// Whether `startWatching` is active.
+    public var isWatching: Bool { watcher != nil }
+
+    /// Hot reload: polls `Assets/` in the background (every `interval` seconds, stretched when
+    /// a poll is slow) and reimports changed files, their dependents and new files in the
+    /// background. The changes and the results are picked up by `pump()`, which `SceneRenderer`
+    /// calls every frame (call it yourself when no renderer uses the database). Also started
+    /// by `ENGINE_HOT_RELOAD=1`.
+    public func startWatching(interval: Double = 0.5) {
+        guard watcher == nil else { return }
+        let watcher = FileWatcher(directory: project.assetsURL)
+        watcher.startCollecting(interval: interval)  // `pump()` collects the changes
+        self.watcher = watcher
+    }
+
+    public func stopWatching() {
+        watcher?.stop()
+        watcher = nil
+    }
+
+    private func submit(_ id: AssetID, cacheOnly: Bool) {
+        guard pendingJobs[id] == nil else {
+            rerun.insert(id)  // one job per asset at a time: they share its cache folder
+            return
+        }
+        guard var job = importJob(for: id) else { return }
+        job.cacheOnly = cacheOnly
+        if loadProgress.pending == 0 { loadProgress = AssetLoadProgress() }
+        loadProgress.total += 1
+        pendingJobs[id] = job.sourceHash
+        loadQueue.submit(job)
+    }
+}
+
 /// One import, ready to run on any thread (`AssetDatabase.importJob(for:)`).
 public struct AssetImportJob: Sendable {
     public let importer: AnyAssetImporter
@@ -587,9 +781,15 @@ public struct AssetImportJob: Sendable {
     public let settings: JSONValue?
     let cacheDirectory: URL
     let sourceHash: String
+    /// Read the Library cache instead of importing, when it is valid.
+    var cacheOnly: Bool
 
     /// Runs the importer and writes the result to the Library cache. Nonisolated and GPU-free.
     public func run() -> AssetImportResult {
+        if cacheOnly, let cached = AssetArtifacts.read(from: cacheDirectory) {
+            return AssetImportResult(id: context.assetID, importer: importer.name, settings: settings, sourceHash: sourceHash,
+                                     outcome: .success(cached), warnings: [], dependencies: nil, fromCache: true)
+        }
         var context = self.context
         let fm = FileManager.default
         let outcome: AssetImportResult.Outcome
@@ -608,7 +808,8 @@ public struct AssetImportJob: Sendable {
             outcome = .failure("\(error)")
         }
         return AssetImportResult(id: context.assetID, importer: importer.name, settings: settings, sourceHash: sourceHash,
-                                 outcome: outcome, warnings: context.warnings)
+                                 outcome: outcome, warnings: context.warnings, dependencies: context.dependencyLog.all,
+                                 fromCache: false)
     }
 }
 
@@ -625,4 +826,7 @@ public struct AssetImportResult: Sendable {
     let sourceHash: String
     public let outcome: Outcome
     public let warnings: [String]
+    let dependencies: [LibraryIndex.Dependency]?
+    /// The objects came from the Library cache (nothing was imported).
+    let fromCache: Bool
 }
