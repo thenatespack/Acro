@@ -151,6 +151,33 @@ import Testing
         #expect(try session.world.save() == before)
     }
 
+    @Test func physics2DRunsInPlayAndItsFieldsAreEditable() throws {
+        let client = Client()
+        let session = client.session
+        let id = try #require(session.create(.cube, at: Vec3(0, 5, 0), name: "Box2D"))
+        #expect(session.addComponent(named: "Collider2D", to: id) && session.addComponent(named: "RigidBody2D", to: id))
+        // The inspector's reflection reaches the Vec2 and enum-payload fields.
+        let collider = try #require(client.tool("component.types", ["component": "Collider2D"])["components"]?.arrayValue?.first)
+        let paths = collider["fields"]?.arrayValue?.compactMap { $0["path"]?.stringValue } ?? []
+        #expect(paths.contains("offset"), "\(paths)")
+        client.tool("component.setField", ["entity": .string(id.description), "path": "Collider2D.offset.x", "value": 0.25])
+        let entity = try #require(session.world.entity(for: id))
+        #expect(session.world.get(Collider2D.self, for: entity)?.offset.x == 0.25)
+        let before = try session.world.save()
+        let systems = SystemStage.allCases.map { session.world.systemNames(in: $0) }
+
+        session.play()
+        #expect(session.physics2D != nil)
+        for _ in 0..<30 { session.tick(dt: 1.0 / 60) }
+        let y = try #require(session.world.get(Transform.self, for: entity)?.position.y)
+        #expect(y < 4.9, "the box falls: \(y)")
+        session.stop()
+
+        #expect(session.physics2D == nil)
+        #expect(SystemStage.allCases.map { session.world.systemNames(in: $0) } == systems)
+        #expect(try session.world.save() == before)
+    }
+
     @Test func playtestOverMCP() throws {
         let client = Client()
         let session = client.session
@@ -196,14 +223,14 @@ import Testing
         #expect((EditorComponentCatalog.makeDefault(named: "SpriteAnimator") as? SpriteAnimator)?.current == "idle")
         #expect((EditorComponentCatalog.makeDefault(named: "KeyboardMover") as? KeyboardMover)?.speed == 3)
         for name in ["Collider", "RigidBody", "Joint", "CharacterController", "AudioListener", "AudioEmitter", "ParticleEmitter",
-                     "Sprite", "SpriteAnimator", "KeyboardMover"] {
+                     "RigidBody2D", "Collider2D", "Joint2D", "Sprite", "SpriteAnimator", "KeyboardMover"] {
             #expect(EditorComponentCatalog.addableNames.contains(name), "\(name)")
             #expect(ComponentRegistry.type(named: name) != nil, "\(name)")
         }
         // They round-trip through a scene file.
         let session = makeSession()
         let id = try #require(session.create(.sphere))
-        for name in ["Collider", "RigidBody", "CharacterController", "AudioListener", "AudioEmitter", "ParticleEmitter", "Sprite",
+        for name in ["Collider", "RigidBody", "CharacterController", "AudioListener", "AudioEmitter", "ParticleEmitter", "RigidBody2D", "Collider2D", "Sprite",
                      "SpriteAnimator", "KeyboardMover"] {
             #expect(session.addComponent(named: name, to: id), "\(name)")
         }

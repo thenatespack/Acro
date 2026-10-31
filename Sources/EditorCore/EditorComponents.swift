@@ -40,7 +40,8 @@ public struct KeyboardMover: Component, Equatable, Sendable {
 ///
 /// Built in: Transform, Camera, the lights, SceneEnvironment, PostProcess, MeshRenderer (a cube),
 /// the physics components (a unit box Collider, a dynamic RigidBody, a ball Joint to the world,
-/// a CharacterController), AudioListener and AudioEmitter (no sound until one is picked), ParticleEmitter, Sprite (atlas "sprites", frame 0), SpriteAnimator (one looping "idle" clip), Spin and
+/// a CharacterController), AudioListener and AudioEmitter (no sound until one is picked), the 2D physics components (a dynamic RigidBody2D, a unit
+/// box Collider2D, a revolute Joint2D to the world), ParticleEmitter, Sprite (atlas "sprites", frame 0), SpriteAnimator (one looping "idle" clip), Spin and
 /// KeyboardMover. `Name` is left out on purpose: the inspector header edits it. Games register their own
 /// with `register(_:make:)`, or `register(_:)` for types with a no-argument initializer.
 @MainActor
@@ -81,6 +82,10 @@ public enum EditorComponentCatalog {
         AudioSystem.registerComponents()
         register(AudioListener.self) { AudioListener() }
         register(AudioEmitter.self) { AudioEmitter() }
+        PhysicsWorld2D.registerComponents()
+        register(RigidBody2D.self) { RigidBody2D(.dynamic) }
+        register(Collider2D.self) { Collider2D(.box(halfExtents: Vec2(0.5, 0.5))) }
+        register(Joint2D.self) { Joint2D(.revolute) }
         ParticleSystem.registerComponents()
         register(ParticleEmitter.self) { ParticleEmitter() }
         register(Sprite.self) { Sprite(atlas: SpriteAtlasHandle("sprites")) }

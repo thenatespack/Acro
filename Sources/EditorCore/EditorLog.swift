@@ -92,7 +92,7 @@ public final class EngineMessageInbox: @unchecked Sendable {
             return pending
         }
         for (level, message) in messages {
-            log.log(level == .error ? .error : level == .warning ? .warning : .info, message)
+            log.log(level >= .error ? .error : level == .warning ? .warning : .info, message)
         }
     }
 }

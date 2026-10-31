@@ -140,6 +140,8 @@ public final class EditorSession {
     public var showsGameCamera = true { didSet { if showsGameCamera != oldValue { changed() } } }
     /// The play session's physics, when the scene has colliders (see `addPlaySystems`).
     public private(set) var physics: PhysicsWorld?
+    /// The play session's 2D physics, when the scene has `Collider2D`s.
+    public private(set) var physics2D: PhysicsWorld2D?
     /// Tweens for the play session, updated after the world each game frame.
     public private(set) var tweens: TweenSystem?
 
@@ -462,7 +464,7 @@ public final class EditorSession {
         playTime += dt
     }
 
-    /// The play session's systems: physics when the scene has colliders, sprite animation when
+    /// The play session's systems: physics (3D, 2D) when the scene has colliders, sprite animation when
     /// it has animators. Systems are code, not data, so the snapshot doesn't hold them: they
     /// are added on play and removed on stop, with a new `PhysicsWorld` each time.
     private func addPlaySystems() {
@@ -470,6 +472,11 @@ public final class EditorSession {
             let physics = PhysicsWorld()
             world.addPhysics(physics)
             self.physics = physics
+        }
+        if world.count(of: Collider2D.self) > 0 {
+            let physics = PhysicsWorld2D()
+            world.addPhysics2D(physics)
+            physics2D = physics
         }
         if world.count(of: SpriteAnimator.self) > 0 { world.addSpriteAnimationSystem(name: Self.spriteSystem) }
         tweens = TweenSystem()
@@ -479,6 +486,10 @@ public final class EditorSession {
         if physics != nil {
             world.removePhysics()
             physics = nil
+        }
+        if physics2D != nil {
+            world.removePhysics2D()
+            physics2D = nil
         }
         world.removeSystem(named: Self.spriteSystem)
         tweens = nil
