@@ -7,32 +7,65 @@ import Foundation
 /// (`component.remove`) and "Add Component" (`component.add` with the catalog's default value).
 /// With several entities selected it shows the primary one only.
 /// Dropdown options for asset-key fields in the inspector: `MeshRenderer.mesh` lists the
-/// registered meshes and `MeshRenderer.material` the registered materials (with a project open,
-/// its assets too, as `asset:` keys shown by `title`).
+/// registered meshes, `MeshRenderer.material` the registered materials and every `TextureHandle`
+/// field (`SceneEnvironment.environmentMap`, found by reflection) "None" and the textures (with
+/// a project open, its assets too, as `asset:` keys shown by `title`).
 @MainActor
 public struct AssetChoices {
     public var meshes: () -> [String]
     public var materials: () -> [String]
-    /// What the dropdown shows for a key (the key itself by default).
+    public var textures: () -> [String]
+    /// What the dropdown shows for a key (the key itself by default; "" is "None").
     public var title: (String) -> String
 
-    public init(meshes: @escaping () -> [String], materials: @escaping () -> [String],
+    public init(meshes: @escaping () -> [String], materials: @escaping () -> [String], textures: @escaping () -> [String] = { [] },
                 title: @escaping (String) -> String = { $0 }) {
         self.meshes = meshes
         self.materials = materials
+        self.textures = textures
         self.title = title
     }
 
-    /// The registered keys, followed by every mesh / material of `assets` (titled by path and
-    /// object name, e.g. "Models/rock.obj › Rock").
-    public init(meshes: @escaping () -> [String], materials: @escaping () -> [String], assets: @escaping () -> AssetDatabase?) {
+    /// The registered keys, followed by every mesh / material / texture of `assets` (titled by
+    /// path and object name, e.g. "Models/rock.obj › Rock").
+    public init(meshes: @escaping () -> [String], materials: @escaping () -> [String], textures: @escaping () -> [String] = { [] },
+                assets: @escaping () -> AssetDatabase?) {
         self.init(
             meshes: { meshes() + Self.assetKeys(assets(), .mesh, excluding: meshes()) },
             materials: { materials() + Self.assetKeys(assets(), .material, excluding: materials()) },
+            textures: { textures() + Self.assetKeys(assets(), .texture, excluding: textures()) },
             title: { key in
                 guard let reference = AssetReference(key), let assets = assets() else { return key }
                 return assets.displayName(of: reference)
             })
+    }
+
+    /// Paths of `component`'s `TextureHandle` fields (optional or not), from the catalog's
+    /// default value by reflection; cached per component.
+    static func textureFields(of component: String) -> Set<String> {
+        if let cached = textureFieldCache[component] { return cached }
+        var paths = Set<String>()
+        func scan(_ value: Any, prefix: String) {
+            for child in Mirror(reflecting: value).children {
+                guard let label = child.label else { continue }
+                let type = Swift.type(of: child.value)
+                if type == TextureHandle.self || type == TextureHandle?.self {
+                    paths.insert(prefix + label)
+                } else if Mirror(reflecting: child.value).displayStyle == .struct {
+                    scan(child.value, prefix: prefix + label + ".")
+                }
+            }
+        }
+        if let value = EditorComponentCatalog.makeDefault(named: component) { scan(value, prefix: "") }
+        textureFieldCache[component] = paths
+        return paths
+    }
+
+    private static var textureFieldCache: [String: Set<String>] = [:]
+
+    /// Whether `path` of `component` is a `TextureHandle` (its dropdown starts with "None").
+    public static func isTextureField(component: String, path: String) -> Bool {
+        textureFields(of: component).contains(path)
     }
 
     private static func assetKeys(_ assets: AssetDatabase?, _ kind: AssetKind, excluding registered: [String]) -> [String] {
@@ -43,6 +76,7 @@ public struct AssetChoices {
 
     /// The options for a field, or nil when it isn't an asset key (it stays a text field).
     public func options(component: String, path: String) -> [String]? {
+        if Self.isTextureField(component: component, path: path) { return [""] + textures() }
         guard component == MeshRenderer.componentName else { return nil }
         switch path {
         case "mesh": return meshes()
@@ -63,7 +97,7 @@ public final class InspectorPanel {
     /// Turns asset-key fields into dropdowns of the registered keys (see `AssetChoices`).
     public var assetChoices: AssetChoices? {
         didSet {
-            grid.stringChoiceTitle = assetChoices.map { choices in { _, _, value in choices.title(value) } }
+            grid.stringChoiceTitle = assetChoices.map { choices in { _, _, value in value.isEmpty ? "None" : choices.title(value) } }
             grid.stringChoices = assetChoices.map { choices in { choices.options(component: $0, path: $1) } }
         }
     }

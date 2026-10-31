@@ -112,6 +112,16 @@ public final class Input {
     private(set) var capture = MouseCapture()
     /// Esc released the capture and is down: its press and repeats are not reported.
     private var escapeSwallowed = false
+    /// Keys and buttons held down by injected events (InputInjection.swift): the platform
+    /// reporting them up doesn't release them, only an injected release does.
+    var injectedKeys = Set<Key>()
+    var injectedButtons = Set<MouseButton>()
+    /// The cursor position an injected move left, kept over the platform's until released.
+    var injectedPointer: Vec2?
+
+    /// An input no window fills yet: `Engine` has one (`engine.input`); make others for input
+    /// that only injected events drive (the editor's play mode, tests).
+    public init() {}
 
     /// The cursor's shape over the window this frame. Reset to `.arrow` at the start of every
     /// frame, so set it every frame while it should differ (e.g. while hovering a splitter).
@@ -241,7 +251,10 @@ public final class Input {
         (isDown(positive) ? 1 : 0) - (isDown(negative) ? 1 : 0)
     }
 
-    func beginFrame() {
+    /// Starts a frame: clears the previous frame's presses, releases, text, scroll and gamepad
+    /// events. `Engine` calls it before polling the window; call it yourself (then events, then
+    /// `endEvents()`) for an `Input` no window drives, such as the editor's play-mode input.
+    public func beginFrame() {
         cursor = .arrow
         keysPressed.removeAll(keepingCapacity: true)
         keysReleased.removeAll(keepingCapacity: true)
@@ -274,7 +287,9 @@ public final class Input {
         }
     }
 
-    func endEvents() {
+    /// Ends a frame's events: derives `mouseDelta` (see `beginFrame()`).
+    public func endEvents() {
+        if let injectedPointer { mousePosition = injectedPointer }
         mouseDelta = motion.endFrame(position: mousePosition, captured: capture.isActive)
     }
 
@@ -303,7 +318,7 @@ public final class Input {
             if swallowsEscape(key) { return }
             if isTextInputActive && !key.isModifier { return }  // owned by text input (see startTextInput)
             if keysDown.insert(key).inserted { keysPressed.insert(key) }
-        } else if keysDown.remove(key) != nil {
+        } else if !injectedKeys.contains(key), keysDown.remove(key) != nil {
             keysReleased.insert(key)
         }
     }
@@ -321,7 +336,7 @@ public final class Input {
     func setButton(_ button: MouseButton, down: Bool) {
         if down {
             if buttonsDown.insert(button).inserted { buttonsPressed.insert(button) }
-        } else if buttonsDown.remove(button) != nil {
+        } else if !injectedButtons.contains(button), buttonsDown.remove(button) != nil {
             buttonsReleased.insert(button)
         }
     }

@@ -1,3 +1,4 @@
+import Engine
 import Foundation
 
 /// Severity of an `EditorLog` entry.
@@ -66,4 +67,32 @@ public final class EditorLog {
     }
 
     public func count(of level: LogLevel) -> Int { entries.reduce(0) { $0 + ($1.level == level ? 1 : 0) } }
+}
+
+/// Moves `EngineLog` messages (Vulkan validation, posted from driver threads) into an
+/// `EditorLog`, so the console, `log.read` and `diagnostics.get` see them. The app installs it
+/// at startup and drains it every frame.
+public final class EngineMessageInbox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending: [(EngineLog.Level, String)] = []
+
+    public init() {}
+
+    /// Becomes `EngineLog`'s handler (the engine no longer prints them; the editor log echoes them).
+    public func install() {
+        EngineLog.setHandler { [self] level, message in
+            lock.withLock { pending.append((level, message)) }
+        }
+    }
+
+    /// Logs what arrived since the last call.
+    @MainActor public func drain(into log: EditorLog) {
+        let messages = lock.withLock {
+            defer { pending.removeAll() }
+            return pending
+        }
+        for (level, message) in messages {
+            log.log(level == .error ? .error : level == .warning ? .warning : .info, message)
+        }
+    }
 }

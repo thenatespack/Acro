@@ -54,6 +54,12 @@ public enum EntityTemplate: String, CaseIterable, Codable, Sendable {
 /// not recorded, and they are lost on stop. `stop()` restores the snapshot and turns recording
 /// back on, so the undo history is exactly as before. The selection stores `EntityID`s, which
 /// the snapshot keeps, so it survives. Saving, New and Open are refused while playing.
+///
+/// While playing, `isPaused` stops the world (`setPaused`), `step(frames:dt:)` runs frames at a
+/// fixed dt, and `timeScale` scales real dt. Game systems read `gameInput`, fed by the app (the
+/// keyboard and mouse over the game view) and by `inputPlayer` scripts (`input.inject`), never
+/// the window's input. The session's systems (physics for colliders, sprite animation, tweens)
+/// are added on play and removed on stop (see EditorPlayCommands.swift).
 @MainActor
 public final class EditorSession {
     public let document: EditorDocument
@@ -99,6 +105,34 @@ public final class EditorSession {
 
     private var playSnapshot: WorldSnapshot?
 
+    /// Play mode is paused: the world doesn't update and scheduled input waits (`setPaused`, `step`).
+    public private(set) var isPaused = false
+    /// Multiplies play mode's dt (0 to 100; 1 is real time). Steps ignore it.
+    public var timeScale: Double = 1 {
+        didSet {
+            timeScale = min(max(timeScale.isFinite ? timeScale : 1, 0), 100)
+            if timeScale != oldValue { changed() }
+        }
+    }
+    /// Game frames and seconds of game time run in this play session.
+    public private(set) var playFrame = 0
+    public private(set) var playTime: Double = 0
+    /// What game systems read in play mode instead of the window's input, so the editor's own
+    /// keys and clicks never reach them. It is fed by `inputPlayer` (`input.inject`) and by
+    /// the real keyboard and mouse the app forwards while the viewport shows the game camera.
+    /// Capture it in your systems: `world.addSystem("player") { [session] world in session.gameInput.isDown(.w) … }`.
+    public let gameInput = Input()
+    /// Scripted input for `gameInput`, over game time; a new one each play session.
+    public private(set) var inputPlayer = InputPlayer()
+    private var forwardedInput: [InputEvent] = []
+    /// Whether the viewport shows the scene's Camera entity while playing (`view.gameCamera`);
+    /// the editor camera otherwise. On by default.
+    public var showsGameCamera = true { didSet { if showsGameCamera != oldValue { changed() } } }
+    /// The play session's physics, when the scene has colliders (see `addPlaySystems`).
+    public private(set) var physics: PhysicsWorld?
+    /// Tweens for the play session, updated after the world each game frame.
+    public private(set) var tweens: TweenSystem?
+
     public var world: World { document.world }
     public var undo: UndoStack { document.undo }
     public var isPlaying: Bool { playState == .playing }
@@ -108,15 +142,16 @@ public final class EditorSession {
         self.log = log
         EditorComponentCatalog.registerBuiltins()
         ImportSettingsForms.registerBuiltins()
-        document.world.addEditorSystems()
+        document.world.addEditorSystems(input: gameInput)
         document.onReload = { [unowned self] in selection.prune(in: world) }
         selection.observe { [unowned self] selection in if !selection.isEmpty { inspectedAsset = nil } }
     }
 
-    /// Advances the world one frame: its systems in play mode, only transforms while editing.
+    /// Advances the world one frame: its systems in play mode (dt times `timeScale`; nothing
+    /// while paused), only transforms while editing.
     public func tick(dt: Double) {
-        if isPlaying {
-            world.update(dt: dt)
+        if isPlaying && !isPaused {
+            advanceGame(dt: dt * timeScale)
         } else {
             world.propagateTransforms()
         }
@@ -300,29 +335,111 @@ public final class EditorSession {
 
     // MARK: Play mode
 
-    public func play() {
+    /// Enters play mode (`paused`: paused before the first frame, for stepping from the start).
+    public func play(paused: Bool = false) {
         guard !isPlaying else { return }
         onWillReplaceWorld?()
         playSnapshot = world.snapshot()
         undo.isRecording = false
         playState = .playing
-        log.info("Play")
+        isPaused = paused
+        playFrame = 0
+        playTime = 0
+        gameInput.reset()
+        inputPlayer = InputPlayer()
+        forwardedInput.removeAll()
+        addPlaySystems()
+        log.info(paused ? "Play (paused)" : "Play")
         changed()
     }
 
     public func stop() {
         guard isPlaying, let snapshot = playSnapshot else { return }
         onWillReplaceWorld?()
+        removePlaySystems()
         world.restore(snapshot)
         world.propagateTransforms()
         playSnapshot = nil
         undo.isRecording = true
         playState = .editing
+        isPaused = false
+        gameInput.reset()
+        inputPlayer.clear()
+        forwardedInput.removeAll()
         log.info("Stop: scene restored")
         changed()
     }
 
     public func togglePlay() { if isPlaying { stop() } else { play() } }
+
+    /// Pauses or resumes play mode. Paused, the world doesn't update (edits still apply) and
+    /// scheduled input waits.
+    public func setPaused(_ paused: Bool) {
+        guard isPlaying, paused != isPaused else { return }
+        isPaused = paused
+        log.info(paused ? "Paused at frame \(playFrame)" : "Resumed")
+        changed()
+    }
+
+    /// Pauses and runs `frames` game frames now, each `dt` seconds (default the world's fixed
+    /// step), with the input scheduled for them. Deterministic: the same scene, script and
+    /// steps give the same world. Returns false when not playing.
+    @discardableResult
+    public func step(frames: Int = 1, dt: Double? = nil) -> Bool {
+        guard isPlaying else { return false }
+        isPaused = true
+        let dt = dt ?? world.fixedTimestep
+        for _ in 0..<max(frames, 0) { advanceGame(dt: dt) }
+        changed()
+        return true
+    }
+
+    /// Real input to hand the game in its next frame (the app forwards the keyboard and the
+    /// mouse over the game view).
+    public func forwardToGame(_ events: [InputEvent]) {
+        guard isPlaying else { return }
+        forwardedInput += events
+    }
+
+    /// One game frame: `gameInput` gets this frame's forwarded and scheduled events, the world
+    /// updates by `dt`, then the input script's clock moves on.
+    private func advanceGame(dt: Double) {
+        gameInput.beginFrame()
+        for event in forwardedInput { gameInput.inject(event) }
+        forwardedInput.removeAll()
+        inputPlayer.apply(to: gameInput)
+        gameInput.endEvents()
+        world.update(dt: dt)
+        tweens?.update(dt: Float(dt))
+        inputPlayer.advance(by: dt)
+        playFrame += 1
+        playTime += dt
+    }
+
+    /// The play session's systems: physics when the scene has colliders, sprite animation when
+    /// it has animators. Systems are code, not data, so the snapshot doesn't hold them: they
+    /// are added on play and removed on stop, with a new `PhysicsWorld` each time.
+    private func addPlaySystems() {
+        if world.count(of: Collider.self) > 0 {
+            let physics = PhysicsWorld()
+            world.addPhysics(physics)
+            self.physics = physics
+        }
+        if world.count(of: SpriteAnimator.self) > 0 { world.addSpriteAnimationSystem(name: Self.spriteSystem) }
+        tweens = TweenSystem()
+    }
+
+    private func removePlaySystems() {
+        if physics != nil {
+            world.removeSystem(named: "physics")
+            world.removeSystem(named: "physics.events")
+            physics = nil
+        }
+        world.removeSystem(named: Self.spriteSystem)
+        tweens = nil
+    }
+
+    private static let spriteSystem = "editor.spriteAnimation"
 
     // MARK: Entities
 

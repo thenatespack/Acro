@@ -17,12 +17,31 @@ public struct Spin: Component, Equatable, Sendable {
     }
 }
 
+/// Moves its entity with the keyboard in play mode: W / S (or up / down) along -Z / +Z, A / D
+/// (or left / right) along -X / +X, at `speed` units per second, reading the session's
+/// `gameInput`, so injected input (`input.inject`) drives it. A dynamic `RigidBody` gets the
+/// horizontal velocity instead, so physics stays in charge. The simplest playable character.
+public struct KeyboardMover: Component, Equatable, Sendable {
+    public static let componentName = "KeyboardMover"
+    public static var fieldHints: [String: FieldHints] {
+        ["speed": FieldHints(range: 0...100, step: 0.1, tooltip: "Units per second")]
+    }
+
+    public var speed: Float
+
+    public init(speed: Float = 3) {
+        self.speed = speed
+    }
+}
+
 /// The components the editor knows how to create from nothing ("Add Component"): every entry
 /// pairs a registered component type with a factory for its default value. Components without
 /// a factory can still be loaded, inspected, edited and removed, just not added from the menu.
 ///
-/// Built in: Transform, Camera, DirectionalLight, SceneEnvironment, MeshRenderer (a cube) and
-/// Spin. `Name` is left out on purpose: the inspector header edits it. Games register their own
+/// Built in: Transform, Camera, the lights, SceneEnvironment, PostProcess, MeshRenderer (a cube),
+/// the physics components (a unit box Collider, a dynamic RigidBody, a ball Joint to the world),
+/// Sprite (atlas "sprites", frame 0), SpriteAnimator (one looping "idle" clip), Spin and
+/// KeyboardMover. `Name` is left out on purpose: the inspector header edits it. Games register their own
 /// with `register(_:make:)`, or `register(_:)` for types with a no-argument initializer.
 @MainActor
 public enum EditorComponentCatalog {
@@ -54,7 +73,14 @@ public enum EditorComponentCatalog {
         register(SceneEnvironment.self) { SceneEnvironment() }
         register(PostProcessSettings.self) { PostProcessSettings() }
         register(MeshRenderer.self) { MeshRenderer(mesh: .cube) }
+        PhysicsWorld.registerComponents()
+        register(Collider.self) { Collider(.box(halfExtents: Vec3(0.5, 0.5, 0.5))) }
+        register(RigidBody.self) { RigidBody(.dynamic) }
+        register(Joint.self) { Joint(.ball) }
+        register(Sprite.self) { Sprite(atlas: SpriteAtlasHandle("sprites")) }
+        register(SpriteAnimator.self) { SpriteAnimator(clips: [SpriteClip("idle", frames: [0], fps: 12)]) }
         register(Spin.self) { Spin() }
+        register(KeyboardMover.self) { KeyboardMover() }
     }
 
     /// A new default value of the component registered as `name`, or nil if it has no factory.
@@ -82,10 +108,36 @@ extension Spin: DefaultConstructibleComponent {
     public init() { self.init(axis: Vec3(0, 1, 0), speed: 1) }
 }
 
+extension KeyboardMover: DefaultConstructibleComponent {
+    public init() { self.init(speed: 3) }
+}
+
 extension World {
-    /// Adds the editor's systems (`Spin`). They run only when the world updates, which the
-    /// editor does in play mode.
-    @MainActor public func addEditorSystems() {
+    /// Adds the editor's systems (`Spin`, and `KeyboardMover` reading `input`). They run only
+    /// when the world updates, which the editor does in play mode.
+    @MainActor public func addEditorSystems(input: Input? = nil) {
+        if let input, !systemNames(in: .update).contains("editor.keyboardMover") {
+            addSystem("editor.keyboardMover", stage: .update) { world in
+                let move = Vec3(input.axis(negative: .a, positive: .d) + input.axis(negative: .left, positive: .right), 0,
+                                input.axis(negative: .w, positive: .s) + input.axis(negative: .up, positive: .down))
+                let direction = length(move) > 0 ? normalize(move) : .zero
+                let dt = world.time.delta
+                var bodies: [(Entity, Vec3)] = []
+                world.queryMutating(Transform.self, KeyboardMover.self) { entity, transform, mover in
+                    if let body = world.get(RigidBody.self, for: entity), body.motion == .dynamic {
+                        bodies.append((entity, direction * mover.speed))
+                    } else {
+                        transform.position += direction * mover.speed * dt
+                    }
+                }
+                // A dynamic body keeps its fall; the mover sets the horizontal velocity.
+                for (entity, velocity) in bodies {
+                    world.modify(RigidBody.self, for: entity) { body in
+                        body.linearVelocity = Vec3(velocity.x, body.linearVelocity.y, velocity.z)
+                    }
+                }
+            }
+        }
         guard !systemNames(in: .update).contains("editor.spin") else { return }
         addSystem("editor.spin", stage: .update) { world in
             let dt = world.time.delta
