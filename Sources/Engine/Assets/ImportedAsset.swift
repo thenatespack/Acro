@@ -174,24 +174,87 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
     }
 }
 
-/// A texture as pixels: RGBA8 rows top to bottom (`Image`), how to interpret them and whether
-/// the GPU copy gets a mip chain. `SceneRenderer` uploads it with
-/// `RenderDevice.makeTexture(pixels:width:height:format:generateMipmaps:)` unless
-/// `SceneRenderer.textureUploader` says otherwise.
+/// The pixels of a `TextureAsset`.
+public enum TexturePixels: Sendable {
+    /// 8-bit RGBA rows top to bottom (PNG, JPEG, TGA).
+    case rgba8(Image)
+    /// Linear float RGBA (Radiance HDR), uploaded as `.rgba16Float`.
+    case rgbaFloat(FloatImage)
+}
+
+/// A texture as pixels (RGBA8 `Image` or linear `FloatImage`), how to interpret them and
+/// whether the GPU copy gets a mip chain. `SceneRenderer` uploads it with
+/// `RenderDevice.makeTexture(image:srgb:generateMipmaps:)` (`.rgba16Float` for float pixels)
+/// unless `SceneRenderer.textureUploader` says otherwise.
 public struct TextureAsset: Sendable {
-    public var image: Image
+    public var pixels: TexturePixels
     /// Color data (albedo) is sRGB-encoded (`.rgba8Srgb`); data such as normal maps and masks
-    /// is linear (`.rgba8Unorm`).
+    /// is linear (`.rgba8Unorm`). Ignored for float pixels, which are always linear.
     public var isSRGB: Bool
     public var generatesMipmaps: Bool
 
     public init(image: Image, isSRGB: Bool = true, generatesMipmaps: Bool = true) {
-        self.image = image
+        pixels = .rgba8(image)
         self.isSRGB = isSRGB
         self.generatesMipmaps = generatesMipmaps
     }
 
-    public var format: TextureFormat { isSRGB ? .rgba8Srgb : .rgba8Unorm }
+    public init(floatImage: FloatImage, generatesMipmaps: Bool = true) {
+        pixels = .rgbaFloat(floatImage)
+        isSRGB = false
+        self.generatesMipmaps = generatesMipmaps
+    }
+
+    public init(decoded: DecodedImage, isSRGB: Bool = true, generatesMipmaps: Bool = true) {
+        switch decoded {
+        case .rgba8(let image): self.init(image: image, isSRGB: isSRGB, generatesMipmaps: generatesMipmaps)
+        case .rgba32F(let image): self.init(floatImage: image, generatesMipmaps: generatesMipmaps)
+        }
+    }
+
+    /// The 8-bit pixels. For a float texture this is a clamped 0...1 conversion (not sRGB
+    /// encoded); use `floatImage` to read the real values.
+    public var image: Image {
+        get {
+            switch pixels {
+            case .rgba8(let image): return image
+            case .rgbaFloat(let image):
+                return Image(width: image.width, height: image.height,
+                             pixels: image.pixels.map { UInt8((min(max($0, 0), 1) * 255).rounded()) })
+            }
+        }
+        set { pixels = .rgba8(newValue) }
+    }
+
+    /// The float pixels, or nil for an 8-bit texture.
+    public var floatImage: FloatImage? {
+        if case .rgbaFloat(let image) = pixels { return image }
+        return nil
+    }
+
+    public var isHDR: Bool { floatImage != nil }
+
+    public var width: Int {
+        switch pixels {
+        case .rgba8(let image): image.width
+        case .rgbaFloat(let image): image.width
+        }
+    }
+
+    public var height: Int {
+        switch pixels {
+        case .rgba8(let image): image.height
+        case .rgbaFloat(let image): image.height
+        }
+    }
+
+    public var format: TextureFormat { isHDR ? .rgba16Float : isSRGB ? .rgba8Srgb : .rgba8Unorm }
+
+    /// Approximate GPU bytes (with a mip chain's third), for upload budgets.
+    public var gpuByteCount: Int {
+        let base = width * height * (isHDR ? 8 : 4)
+        return generatesMipmaps ? base + base / 3 : base
+    }
 }
 
 /// A node hierarchy (a model's scene graph, a prefab): nodes with a name, a local transform,

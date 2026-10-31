@@ -44,7 +44,8 @@ public struct FileChange: Equatable, Hashable, Sendable, CustomStringConvertible
 /// ```
 ///
 /// Polling costs one directory listing per interval; a few thousand files take a few
-/// milliseconds, off the main thread when started.
+/// milliseconds, off the main thread when started. When a poll is slow the interval stretches
+/// to 20 times its cost (up to 10 s), so a huge tree never keeps a core busy.
 public final class FileWatcher: @unchecked Sendable {
     public let directory: URL
 
@@ -58,6 +59,7 @@ public final class FileWatcher: @unchecked Sendable {
     private let queue = DispatchQueue(label: "FileWatcher", qos: .utility)
     private var snapshot: [String: Entry]
     private var timer: DispatchSourceTimer?
+    private var collected: [FileChange] = []
 
     /// Takes the initial listing: changes are reported relative to it.
     public init(directory: URL) {
@@ -75,13 +77,44 @@ public final class FileWatcher: @unchecked Sendable {
     /// Polls every `interval` seconds on a background queue and calls `handler` on the main
     /// actor with each non-empty batch. Replaces an earlier `start`.
     public func start(interval: Double = 0.5, handler: @escaping @MainActor @Sendable ([FileChange]) -> Void) {
+        startTimer(interval: interval) { changes in
+            DispatchQueue.main.async { MainActor.assumeIsolated { handler(changes) } }
+        }
+    }
+
+    /// Polls like `start`, but keeps the changes until `takeChanges()` collects them, so a
+    /// frame loop can pick them up without relying on the main dispatch queue.
+    public func startCollecting(interval: Double = 0.5) {
+        startTimer(interval: interval) { [weak self] changes in self?.collected.append(contentsOf: changes) }
+    }
+
+    /// The changes found since the last call (`startCollecting`), oldest first.
+    public func takeChanges() -> [FileChange] {
+        queue.sync {
+            defer { collected.removeAll() }
+            return collected
+        }
+    }
+
+    /// `deliver` runs on the watcher's queue.
+    private func startTimer(interval: Double, deliver: @escaping @Sendable ([FileChange]) -> Void) {
         queue.sync {
             timer?.cancel()
             let timer = DispatchSource.makeTimerSource(queue: queue)
             timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .milliseconds(Int(interval * 100)))
-            timer.setEventHandler { [weak self] in
-                guard let changes = self?.pollOnQueue(), !changes.isEmpty else { return }
-                DispatchQueue.main.async { MainActor.assumeIsolated { handler(changes) } }
+            var current = interval
+            timer.setEventHandler { [weak self, weak timer] in
+                guard let self, let timer else { return }
+                let started = DispatchTime.now().uptimeNanoseconds
+                let changes = pollOnQueue()
+                // Back off when polling is expensive (a big tree): at least 20 polls' worth of idle time.
+                let cost = Double(DispatchTime.now().uptimeNanoseconds - started) / 1e9
+                let wanted = min(max(interval, cost * 20), 10)
+                if abs(wanted - current) > current * 0.25 {
+                    current = wanted
+                    timer.schedule(deadline: .now() + wanted, repeating: wanted, leeway: .milliseconds(Int(wanted * 100)))
+                }
+                if !changes.isEmpty { deliver(changes) }
             }
             timer.resume()
             self.timer = timer
