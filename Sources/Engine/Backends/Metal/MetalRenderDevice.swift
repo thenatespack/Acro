@@ -466,7 +466,28 @@ final class MetalRenderDevice: RenderDevice {
         case .r16Float: .r16Float
         case .rg16Float: .rg16Float
         case .r32Float: .r32Float
-        case .rgba8Unorm, .rgba8Srgb, .depth32Float: .rgba8Unorm
+        default: .rgba8Unorm
+        }
+    }
+
+    func supports(_ format: TextureFormat) -> Bool {
+        switch format {
+        case .bc7Unorm, .bc7Srgb: device.supportsBCTextureCompression
+        case .astc4x4Unorm, .astc4x4Srgb: device.supportsFamily(.apple2)
+        default: true
+        }
+    }
+
+    /// The pixel format of sampled textures of `format`.
+    private static func sampledPixelFormat(_ format: TextureFormat) -> MTLPixelFormat {
+        switch format {
+        case .rgba8Srgb: .rgba8Unorm_srgb
+        case .rgba16Float: .rgba16Float
+        case .bc7Unorm: .bc7_rgbaUnorm
+        case .bc7Srgb: .bc7_rgbaUnorm_srgb
+        case .astc4x4Unorm: .astc_4x4_ldr
+        case .astc4x4Srgb: .astc_4x4_srgb
+        default: .rgba8Unorm
         }
     }
 
@@ -496,12 +517,9 @@ final class MetalRenderDevice: RenderDevice {
 
     func makeTexture(levels: [TextureMipLevel], format: TextureFormat) throws -> GPUTexture {
         try format.validateLevels(levels, maxSize: maxTextureSize)
+        guard supports(format) else { throw GraphicsError("This GPU can't sample \(format) textures") }
         let (width, height) = (levels[0].width, levels[0].height)
-        let pixelFormat: MTLPixelFormat = switch format {
-        case .rgba8Srgb: .rgba8Unorm_srgb
-        case .rgba16Float: .rgba16Float
-        default: .rgba8Unorm
-        }
+        let pixelFormat = Self.sampledPixelFormat(format)
         let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: pixelFormat, width: width, height: height, mipmapped: false)
         textureDescriptor.mipmapLevelCount = levels.count
@@ -513,7 +531,7 @@ final class MetalRenderDevice: RenderDevice {
             mip.pixels.withUnsafeBytes {
                 texture.replace(
                     region: MTLRegionMake2D(0, 0, mip.width, mip.height), mipmapLevel: level, withBytes: $0.baseAddress!,
-                    bytesPerRow: mip.width * format.bytesPerPixel)
+                    bytesPerRow: format.bytesPerRow(width: mip.width))
             }
         }
         return MetalTexture(texture, format: format)
@@ -532,7 +550,7 @@ final class MetalRenderDevice: RenderDevice {
               let blit = commandBuffer.makeBlitCommandEncoder() else {
             throw GraphicsError("Failed to encode a texture update")
         }
-        blit.copy(from: staging, sourceOffset: 0, sourceBytesPerRow: region.width * target.format.bytesPerPixel,
+        blit.copy(from: staging, sourceOffset: 0, sourceBytesPerRow: target.format.bytesPerRow(width: region.width),
                   sourceBytesPerImage: bytes.count, sourceSize: MTLSize(width: region.width, height: region.height, depth: 1),
                   to: target.texture, destinationSlice: 0, destinationLevel: mipLevel,
                   destinationOrigin: MTLOrigin(x: region.x, y: region.y, z: 0))

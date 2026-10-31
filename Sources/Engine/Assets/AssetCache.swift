@@ -10,6 +10,8 @@ import Foundation
 //                                 textures in binary files next to it (mesh-N.bin, texture-N.bin;
 //                                 a skinned mesh's joint influences follow its indices)
 //   Artifacts/<id>/files/         the importer's own artifacts (ImportContext.artifactsDirectory)
+//   Artifacts/<id>/cache/         the importer's cache that outlives reimports (ImportContext.cacheDirectory;
+//                                 e.g. the texture importer's compressed mip chains)
 // ```
 //
 // Everything in `Library/` can be deleted; it is rebuilt by importing again. Binary files are
@@ -99,6 +101,10 @@ enum AssetArtifacts {
         var mipmaps: Bool?
         /// The texture's file holds 32-bit float RGBA.
         var hdr: Bool?
+        /// The texture's file holds this compressed format's mip chain (`TextureFormat` raw
+        /// value), `mipLevels` levels from level 0 down, each `format.byteCount` bytes.
+        var compressedFormat: String?
+        var mipLevels: Int?
         var material: MaterialAsset?
         var prefab: PrefabAsset?
     }
@@ -134,6 +140,12 @@ enum AssetArtifacts {
                 case .rgbaFloat(let image):
                     try image.pixels.withUnsafeBytes { try Data($0).write(to: directory.appendingPathComponent(file)) }
                     entry.hdr = true
+                case .compressed(let format, let levels):
+                    var data = Data(capacity: texture.gpuByteCount)
+                    for level in levels { data.append(contentsOf: level.pixels) }
+                    try data.write(to: directory.appendingPathComponent(file))
+                    entry.compressedFormat = format.rawValue
+                    entry.mipLevels = levels.count
                 }
                 entry.file = file
                 entry.width = texture.width
@@ -188,7 +200,22 @@ enum AssetArtifacts {
             case .texture:
                 guard let file = entry.file, let width = entry.width, let height = entry.height,
                       let bytes = FileManager.default.contents(atPath: directory.appendingPathComponent(file).path) else { return nil }
-                if entry.hdr == true {
+                if let name = entry.compressedFormat {
+                    guard let format = TextureFormat(rawValue: name), format.isCompressed, let count = entry.mipLevels,
+                          count >= 1, count <= MipChain.levelCount(width: width, height: height) else { return nil }
+                    var levels: [TextureMipLevel] = []
+                    var offset = 0
+                    for level in 0..<count {
+                        let size = MipChain.size(width: width, height: height, level: level)
+                        let length = format.byteCount(width: size.width, height: size.height)
+                        guard offset + length <= bytes.count else { return nil }
+                        levels.append(TextureMipLevel(width: size.width, height: size.height,
+                                                      pixels: [UInt8](bytes[offset..<offset + length])))
+                        offset += length
+                    }
+                    guard offset == bytes.count else { return nil }
+                    value = .texture(TextureAsset(compressedLevels: levels, format: format))
+                } else if entry.hdr == true {
                     guard bytes.count == width * height * 16 else { return nil }
                     var pixels = [Float](repeating: 0, count: width * height * 4)
                     bytes.withUnsafeBytes { source in pixels.withUnsafeMutableBytes { $0.copyMemory(from: source) } }

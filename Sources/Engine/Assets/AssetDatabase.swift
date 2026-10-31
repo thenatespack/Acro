@@ -356,6 +356,7 @@ public final class AssetDatabase {
         let directory = artifactsURL(id)
         let context = ImportContext(assetID: id, sourceURL: project.url(forAssetPath: record.path), assetPath: record.path,
                                     artifactsDirectory: directory.appendingPathComponent("files", isDirectory: true),
+                                    cacheDirectory: directory.appendingPathComponent("cache", isDirectory: true),
                                     assetsByPath: idsByPath)
         return AssetImportJob(importer: importer, context: context, settings: record.sidecar.settings,
                               cacheDirectory: directory, sourceHash: record.sourceHash, cacheOnly: false)
@@ -798,8 +799,8 @@ public struct AssetImportJob: Sendable {
             try fm.createDirectory(at: context.artifactsDirectory, withIntermediateDirectories: true)
             let asset = try importer.importAsset(&context, settings: settings)
             // Replace the previous cache only now: a failed import keeps it.
-            let keep = context.artifactsDirectory.lastPathComponent
-            for name in (try? fm.contentsOfDirectory(atPath: cacheDirectory.path)) ?? [] where name != keep {
+            let keep = [context.artifactsDirectory.lastPathComponent, context.cacheDirectory?.lastPathComponent]
+            for name in (try? fm.contentsOfDirectory(atPath: cacheDirectory.path)) ?? [] where !keep.contains(name) {
                 try? fm.removeItem(at: cacheDirectory.appendingPathComponent(name))
             }
             try AssetArtifacts.write(asset, to: cacheDirectory)

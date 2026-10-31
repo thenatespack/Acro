@@ -342,8 +342,9 @@ public final class AssetInspectorView {
             idLabel.text = reference.description
             if object.kind == .material { addMaterialForm(reference) }
             if object.kind == .texture, let texture = assets.texture(reference) {
-                content.addChild(note("\(texture.image.width) × \(texture.image.height), \(texture.isSRGB ? "sRGB" : "linear")"
-                    + (texture.generatesMipmaps ? ", mipmaps" : "")))
+                content.addChild(note("\(texture.width) × \(texture.height), \(texture.isSRGB ? "sRGB" : "linear")"
+                    + (texture.generatesMipmaps ? ", mipmaps" : "")
+                    + (texture.format.isCompressed ? ", \(texture.format), \(texture.gpuByteCount / 1024) KiB" : "")))
             }
             if object.kind == .mesh, let mesh = assets.mesh(reference) {
                 content.addChild(note("\(mesh.vertices.count) vertices, \(mesh.indices.count / 3) triangles"))

@@ -163,13 +163,16 @@ public final class SceneRenderer {
         didSet { failedAssetKeys.removeAll(); seenAssetRevision = -1 }
     }
     /// Turns an imported texture into a GPU texture (RGBA8 in `texture.format`, or `.rgba16Float`
-    /// for HDR images, with a mip chain when `generatesMipmaps`). Replace it to upload other formats.
+    /// for HDR images, with a mip chain when `generatesMipmaps`; compressed ones as they are, or
+    /// decoded to RGBA8 on a GPU without their format). Replace it to upload other formats.
     public var textureUploader: (TextureAsset, RenderDevice) throws -> GPUTexture = { texture, device in
         switch texture.pixels {
         case .rgba8(let image):
             try device.makeTexture(image: image, srgb: texture.isSRGB, generateMipmaps: texture.generatesMipmaps)
         case .rgbaFloat(let image):
             try device.makeTexture(image: image, generateMipmaps: texture.generatesMipmaps)
+        case .compressed(let format, let levels):
+            try device.makeTexture(compressedLevels: levels, format: format)
         }
     }
     /// How many bytes of asset meshes and textures `gather` uploads per frame before it leaves the
