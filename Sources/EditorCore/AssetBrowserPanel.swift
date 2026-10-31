@@ -321,6 +321,7 @@ public final class AssetBrowserPanel {
         breadcrumb.style.grow = 1
         breadcrumb.style.shrink = 1
         breadcrumb.style.width = 0
+        breadcrumb.style.minWidth = 90
         let toolbar = HStack(spacing: 6, name: "assetToolbar", [breadcrumb, search, newFolder, newMaterial, rename, delete, viewToggle])
 
         let renameOK = Button("Rename", role: .primary, name: "renameOK")
