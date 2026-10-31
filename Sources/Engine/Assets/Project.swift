@@ -123,7 +123,14 @@ public struct Project: Sendable {
     /// Creates `Assets/` and `Library/` if they are missing (a fresh clone has no `Library/`).
     public static func open(at url: URL) throws -> Project {
         var root = url.standardizedFileURL
-        if root.lastPathComponent == fileName { root.deleteLastPathComponent() }
+        if root.lastPathComponent == fileName {
+            root.deleteLastPathComponent()
+            #if os(Linux)
+            // swift-corelibs-foundation leaves a trailing slash, and its URLs then don't equal
+            // the folder's own (`open(at: folder)`).
+            root = URL(fileURLWithPath: root.path, isDirectory: false)
+            #endif
+        }
         let file = root.appendingPathComponent(fileName)
         guard let data = FileManager.default.contents(atPath: file.path) else { throw AssetError.notAProject(root.path) }
         let settings = try AssetJSON.decoder().decode(ProjectSettings.self, from: data)
