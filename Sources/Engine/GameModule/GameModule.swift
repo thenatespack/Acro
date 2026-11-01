@@ -42,7 +42,8 @@ import Foundation
 // modules keep loading: `register` records the minor version the module was compiled
 // against (`GameModule.abiMinorVersion`, 0 for modules from before minor versions).
 // 1.1 added the reload hooks (`willUnload` / `didLoad`, below); 1.2 component icons for the
-// editor (`icon(_:for:)`; modules without them get the editor's fallback icon).
+// editor (`icon(_:for:)`; modules without them get the editor's fallback icon); 1.3 the world
+// for networked runs (`networkedWorld(_:)`, `GameRunner --server` / `--connect`).
 //
 // ## State across reloads
 //
@@ -77,7 +78,7 @@ public enum GameModuleABI {
     @inlinable public static var version: Int32 { 1 }
     /// Optional additions within the major version (see "Versions" above); recorded in
     /// `GameModule.abiMinorVersion` by `register`, compiled into the module like `version`.
-    @inlinable public static var minorVersion: Int32 { 2 }
+    @inlinable public static var minorVersion: Int32 { 3 }
     /// A symbol only Engine defines; a module that defines it too carries its own Engine.
     public static let engineMarker = "swift_game_engine_host_marker"
 }
@@ -113,6 +114,8 @@ public final class GameModule {
     public private(set) var saveState: (@MainActor () throws -> Data)?
     /// Takes the previous version's state (nil: none). Set with `didLoad(_:_:)`.
     public private(set) var restoreState: (@MainActor (Data?) -> Void)?
+    /// Fills the world a networked run starts from. Set with `networkedWorld(_:)`.
+    public private(set) var populateNetworkedWorld: (@MainActor (World) -> Void)?
 
     public init() {}
 
@@ -131,6 +134,16 @@ public final class GameModule {
     /// it doesn't decode) (ABI 1.1).
     public func didLoad<State: Decodable>(_ type: State.Type, _ restore: @escaping @MainActor (State?) -> Void) {
         restoreState = { data in restore(data.flatMap { try? JSONDecoder().decode(State.self, from: $0) }) }
+    }
+
+    /// The world a networked run starts from, built without a renderer (ABI 1.3): `GameRunner
+    /// --server` simulates it with the module's systems, and `GameRunner --connect` clients
+    /// build the same one and show what the server replicates into it. The host numbers the
+    /// entities' ids in spawn order on both sides, so spawn the same entities in the same order
+    /// (no randomness) and they are matched by id. Mark what the server sends with `Replicated`
+    /// (without any, every entity with a Transform is replicated). Used when no scene file is given.
+    public func networkedWorld(_ populate: @escaping @MainActor (World) -> Void) {
+        populateNetworkedWorld = populate
     }
 
     /// Registers a component type, created with `make` by the editor's Add Component. Give it

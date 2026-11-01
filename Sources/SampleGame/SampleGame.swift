@@ -5,7 +5,9 @@ import Foundation
 // components, their systems and a standalone `Game`. The editor loads it with
 // `swift run Editor --game SampleGame`, offers Bobber and Orbiter in Add Component and runs
 // the systems in play mode; "Reload Game Code" rebuilds and reloads it with the scene kept.
-// `swift run GameRunner SampleGame` runs it without the editor.
+// `swift run GameRunner SampleGame` runs it without the editor; `GameRunner SampleGame --server`
+// runs it headless as a UDP server and `GameRunner SampleGame --connect 127.0.0.1:7777` shows a
+// client (both build the world with `SampleGameScene.populate`).
 
 /// Bobs its entity up and down around where it was when play started.
 public struct Bobber: Component, Equatable, Sendable {
@@ -85,6 +87,8 @@ public func registerSampleGame(_ module: UnsafeMutableRawPointer) -> Int32 {
         }
         game.system("sample.orbit") { world, _ in SampleGameSystems.orbit(world) }
         game.makeGame = { SampleGameApp() }
+        // Networked runs (GameRunner --server / --connect): the same world, the props replicated.
+        game.networkedWorld { SampleGameScene.populate($0) }
         // Carry the stats across reloads.
         game.willUnload { SampleGameState.stats }
         game.didLoad(SampleGameStats.self) { [unowned game] saved in
@@ -131,19 +135,7 @@ final class SampleGameApp: Game {
         renderer = try SceneRenderer(engine: engine)
         try renderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(0.6, 0.6, 0.58, 1), checker: true, specular: 0.1),
                                       key: "checker")
-        _ = world.spawn(Transform.looking(from: Vec3(0, 5, 10), at: Vec3(0, 1, 0)),
-                        Camera(fovY: .pi / 3.4, near: 0.1, far: 200, clearColor: Vec4(0.55, 0.62, 0.74, 1)))
-        _ = world.spawn(Transform(rotation: .lookRotation(forward: -Vec3(0.45, 0.8, 0.35))), DirectionalLight(intensity: 1.3, shadowExtent: 14))
-        _ = world.spawn(Transform(position: Vec3(0, -0.5, 0), scale: Vec3(20, 1, 20)),
-                        MeshRenderer(mesh: .cube, material: MaterialHandle("checker"), castsShadows: false))
-        for i in 0..<5 {
-            let x = Float(i) * 1.6 - 3.2
-            _ = world.spawn(Transform(position: Vec3(x, 0.8, 0), scale: Vec3(repeating: 0.7)),
-                            MeshRenderer(mesh: i % 2 == 0 ? .cube : .sphere, tint: Vec3(0.3 + Float(i) * 0.15, 0.5, 0.9 - Float(i) * 0.15)),
-                            Bobber(amplitude: 0.4, speed: 2, phase: Float(i)))
-        }
-        _ = world.spawn(Transform(position: Vec3(2, 2.2, -2), scale: Vec3(repeating: 0.5)),
-                        MeshRenderer(mesh: .sphere, tint: Vec3(0.95, 0.75, 0.25)), Orbiter(radius: 2, speed: 1.2))
+        SampleGameScene.populate(world)
         world.addSystem("sample.bob") { SampleGameSystems.bob($0) }
         world.addSystem("sample.orbit") { SampleGameSystems.orbit($0) }
         engine.world = world
@@ -157,5 +149,26 @@ final class SampleGameApp: Game {
 
     func render(engine: Engine, pass: RenderPass) {
         renderer.draw(pass)
+    }
+}
+
+/// SampleGame's world: a camera, a light, a floor and the moving props (replicated in
+/// networked runs). Deterministic, so a server and its clients build the same entities.
+@MainActor
+enum SampleGameScene {
+    static func populate(_ world: World) {
+        _ = world.spawn(Transform.looking(from: Vec3(0, 5, 10), at: Vec3(0, 1, 0)),
+                        Camera(fovY: .pi / 3.4, near: 0.1, far: 200, clearColor: Vec4(0.55, 0.62, 0.74, 1)))
+        _ = world.spawn(Transform(rotation: .lookRotation(forward: -Vec3(0.45, 0.8, 0.35))), DirectionalLight(intensity: 1.3, shadowExtent: 14))
+        _ = world.spawn(Transform(position: Vec3(0, -0.5, 0), scale: Vec3(20, 1, 20)),
+                        MeshRenderer(mesh: .cube, material: MaterialHandle("checker"), castsShadows: false))
+        for i in 0..<5 {
+            let x = Float(i) * 1.6 - 3.2
+            _ = world.spawn(Transform(position: Vec3(x, 0.8, 0), scale: Vec3(repeating: 0.7)),
+                            MeshRenderer(mesh: i % 2 == 0 ? .cube : .sphere, tint: Vec3(0.3 + Float(i) * 0.15, 0.5, 0.9 - Float(i) * 0.15)),
+                            Bobber(amplitude: 0.4, speed: 2, phase: Float(i)), Replicated())
+        }
+        _ = world.spawn(Transform(position: Vec3(2, 2.2, -2), scale: Vec3(repeating: 0.5)),
+                        MeshRenderer(mesh: .sphere, tint: Vec3(0.95, 0.75, 0.25)), Orbiter(radius: 2, speed: 1.2), Replicated())
     }
 }

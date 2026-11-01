@@ -85,6 +85,57 @@ private let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathCompon
         #expect(info.loaded && info.module == "SampleGame" && info.components == ["Bobber", "Orbiter"])
     }
 
+    /// SampleGame's networked world (ABI 1.3), built on both sides with ids numbered in spawn
+    /// order as `GameRunner --server` / `--connect` do: the client's entities are matched, not
+    /// duplicated, and follow the server's systems.
+    @Test func sampleModuleNetworkedWorld() throws {
+        let session = makeSession()
+        defer { unload(session) }
+        try load("SampleGame", into: session)
+        let module = try #require(session.gameModule.loaded?.module)
+        #expect(module.abiMinorVersion >= 3)
+        let populate = try #require(module.populateNetworkedWorld)
+        func makeWorld() -> World {
+            let world = World()
+            var next: UInt64 = 0
+            world.entityIDGenerator = {
+                next += 1
+                return EntityID(high: 1, low: next)
+            }
+            world.assignsEntityIDs = true
+            populate(world)
+            world.assignsEntityIDs = false
+            return world
+        }
+        let serverWorld = makeWorld(), clientWorld = makeWorld()
+        let count = clientWorld.entityCount
+        module.addSystems(to: serverWorld, context: GameContext(input: Input()))
+        let network = LoopbackNetwork(conditions: LinkConditions(latency: 0.03, loss: 0.05), seed: 3)
+        let serverEnd = network.makeEndpoint(), clientEnd = network.makeEndpoint()
+        let server = NetServer(world: serverWorld, transport: serverEnd, secret: 1)
+        let client = NetClient(world: clientWorld, transport: clientEnd, server: serverEnd.id, salt: 2)
+        var time = 0.0
+        for _ in 0..<120 {
+            network.now = time
+            serverWorld.update(dt: 1.0 / 60)
+            server.update(time: time)
+            client.update(dt: 1.0 / 60)
+            time += 1.0 / 60
+        }
+        #expect(client.replicatedEntityCount == serverWorld.count(of: Replicated.self))
+        #expect(client.replicatedEntityCount == 6)
+        #expect(clientWorld.entityCount == count)
+        // The props moved on the client as on the server (bobbing).
+        var moved = 0
+        clientWorld.query(Replicated.self) { entity, _ in
+            let id = clientWorld.id(of: entity)!
+            let a = clientWorld.get(Transform.self, for: entity)!.position
+            let b = serverWorld.get(Transform.self, for: serverWorld.entity(for: id)!)!.position
+            if length(a - b) < 0.5 && a.y != 0.8 { moved += 1 }
+        }
+        #expect(moved >= 5)
+    }
+
     @Test func reloadingAChangedModuleWhilePlayingKeepsTheScene() throws {
         let session = makeSession()
         defer { unload(session) }
