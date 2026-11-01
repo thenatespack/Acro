@@ -273,3 +273,29 @@ except #27 (decided in #659) and #31 (accepted then).
    overflow ("…") menu for the project group would keep one row.
 5. **Prefab variant thumbnails** (R21), and whether the asset browser should drop its
    highlight when the inspector goes back to an entity (today the cell stays selected).
+
+## Decisions on the remaining issues (follow-up)
+
+The user decided the five items above:
+
+1. **Game theme: removed from the editor.** `EditorApp.themes` is Dark, Light and High
+   Contrast. `view.appearance` refuses Game with a message naming them; prefs or `EDITOR_THEME`
+   that say Game (allowed before) start in Dark and log one warning. Game stays an engine
+   preset for game HUDs (the `hud` demo is unchanged).
+2. **24-pt rows: kept.**
+3. **Four-diamond prefab mark: kept.**
+4. **Toolbar overflow menu.** The toolbar is one row at any width (`ToolbarRow`): when it
+   doesn't fit, buttons leave it least-used first (New / Open Project, Save As, New, Open,
+   Snap, Step, Redo, Game View, Pause, Undo, Save, the tools; Build / Reload Game and Play
+   last) into a More (») menu at its end, with their icons and commands. Overflowed buttons
+   stay in `ui.snapshot` as `editorRoot/toolbar/overflow:<name>` items (label, command,
+   enabled state) on the More button, and `ui.click` on one opens the menu and clicks its entry.
+   At 800x600 with a project open the toolbar is one row with Build Game in it
+   (`EditorLayoutTests.toolbarOverflowsIntoAMoreMenu`); at 1440 nothing overflows.
+5. **Prefab variant thumbnails** are rendered from the variant's resolved template (its base
+   with its overrides), like its instances (`AssetThumbnails.spawnPrefab`), and remade when
+   the variant or any base in its chain changes.
+6. **Asset highlight.** When the inspector goes back to an entity (or the asset goes away),
+   the asset browser drops its selected cell.
+
+`Evals/ui-audit.py` at 800x600 and 1280x720 after these changes (Dark and Light, 25 states each): 0 findings in 100 states. The UI demo scenes are unchanged (Metal and Vulkan identical; `hud` too).

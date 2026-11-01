@@ -12,7 +12,7 @@ public struct EditorPrefs: Codable, Equatable, Sendable {
     public var lastProjectPath: String?
     /// What AI clients may do (nil: the defaults); see `AISettings`.
     public var ai: AISettings?
-    /// The UI theme preset's name ("Dark", "Light", "High Contrast", "Game"; nil: Dark).
+    /// The UI theme's name ("Dark", "Light", "High Contrast"; nil or anything else: Dark).
     public var theme: String?
     /// UI zoom on top of the display's backing scale (nil: 1; clamped to `EditorApp.uiScaleRange`).
     public var uiScale: Float?

@@ -1612,7 +1612,7 @@ Result:
 
 **Appearance** · _idempotent_
 
-The editor's theme and UI zoom (the toolbar's View menu): sets `theme` (Dark, Light, High Contrast; Game previews the game UI preset) and / or `uiScale` (0.85-2) when given and saves them in the prefs, then returns them. A zoom the window is too small for is lowered while it lasts (`effectiveUIScale`). Needs the editor window.
+The editor's theme and UI zoom (the toolbar's View menu): sets `theme` (Dark, Light or High Contrast; the engine's Game preset is for game UI and is refused) and / or `uiScale` (0.85-2) when given and saves them in the prefs, then returns them. A zoom the window is too small for is lowered while it lasts (`effectiveUIScale`). Needs the editor window.
 
 Arguments:
 

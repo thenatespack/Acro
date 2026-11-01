@@ -57,7 +57,7 @@ public final class AssetThumbnails {
     public func thumbnail(_ reference: AssetReference, kind: AssetKind) -> GPUTexture? {
         guard let assets else { return nil }
         let key = reference.description
-        let revision = assets.revision(of: reference.asset)
+        let revision = Self.revision(of: reference, in: assets)
         let entry = cache[key]
         // Not imported yet: start a background load (its completion bumps the revision, and
         // the next call queues the thumbnail) instead of importing on the main thread.
@@ -75,7 +75,7 @@ public final class AssetThumbnails {
     /// The rendered preview of `reference` (a mesh, material or prefab) if it is made for the
     /// asset's current revision, else nil (call `thumbnail` to queue it).
     public func currentTarget(for reference: AssetReference) -> RenderTarget? {
-        guard let assets, let entry = cache[reference.description], entry.revision == assets.revision(of: reference.asset) else {
+        guard let assets, let entry = cache[reference.description], entry.revision == Self.revision(of: reference, in: assets) else {
             return nil
         }
         return entry.target
@@ -92,7 +92,7 @@ public final class AssetThumbnails {
             let (reference, kind) = queue.removeFirst()
             let key = reference.description
             queued.remove(key)
-            let revision = assets.revision(of: reference.asset)
+            let revision = Self.revision(of: reference, in: assets)
             made += 1
             switch kind {
             case .texture:
@@ -123,6 +123,39 @@ public final class AssetThumbnails {
         batch.removeAll()
     }
 
+    /// The revision a thumbnail is made for: the asset's, and for a prefab variant also those of
+    /// its chain of bases, so editing a base remakes its variants' thumbnails.
+    static func revision(of reference: AssetReference, in assets: AssetDatabase) -> Int {
+        var revision = assets.revision(of: reference.asset)
+        // Only bases already loaded (a thumbnail never imports on the main thread).
+        func loadedBase(of reference: AssetReference) -> AssetReference? {
+            assets.loadState(of: reference.asset) == .loaded ? assets.prefab(reference)?.variant?.base : nil
+        }
+        var next = loadedBase(of: reference)
+        var depth = 0
+        while let base = next, depth < 16 {
+            revision = revision &* 31 &+ assets.revision(of: base.asset)
+            next = loadedBase(of: base)
+            depth += 1
+        }
+        return revision
+    }
+
+    /// Spawns a copy of the prefab `reference` under `root` for its preview; a variant (whose
+    /// file holds only its base and overrides, so it used to preview empty) through its
+    /// resolved template, as its instances are built. False when it isn't available.
+    @discardableResult
+    static func spawnPrefab(_ reference: AssetReference, under root: Entity, in world: World, assets: AssetDatabase) -> Bool {
+        guard let prefab = assets.prefab(reference) else { return false }
+        guard prefab.variant != nil else {
+            world.instantiate(prefab, under: root)
+            return true
+        }
+        guard let template = try? prefab.template(prefabs: { assets.prefab($0) }),
+              let roots = try? world.load(template.data, under: root, ids: .regenerate) else { return false }
+        return !roots.isEmpty
+    }
+
     /// Spawns the object at slot `slot` (100 units apart), scaled to a unit sphere, with a view
     /// looking at it.
     private func layOut(_ reference: AssetReference, kind: AssetKind, key: String, revision: Int, slot: Int, assets: AssetDatabase) {
@@ -137,8 +170,7 @@ public final class AssetThumbnails {
             let child = world.spawn(Transform(), MeshRenderer(mesh: .sphere, material: MaterialHandle(reference), castsShadows: false))
             world.setParent(child, to: root)
         default:
-            guard let prefab = assets.prefab(reference) else { return }
-            world.instantiate(prefab, under: root)
+            guard Self.spawnPrefab(reference, under: root, in: world, assets: assets) else { return }
         }
         // Bounds of everything under the root, in the root's space.
         world.propagateTransforms()

@@ -223,22 +223,38 @@ public final class EditorApp: Game, EditorHost {
         if ui.uiScale != zoom { ui.uiScale = zoom }
     }
 
-    /// The theme and UI zoom from the options, else the prefs, else Dark at 100%.
+    /// The theme and UI zoom from the options, else the prefs, else Dark at 100%. A theme the
+    /// editor doesn't use (Game, an unknown name) falls back to Dark with one warning.
     private func appearance() -> (theme: UITheme, uiScale: Float) {
         let name = options.theme ?? prefs.theme
-        var theme = name.flatMap(UITheme.named) ?? .dark()
-        if let name, UITheme.named(name) == nil {
-            session.log.warning("Unknown theme '\(name)' (\(UITheme.presets.map(\.name).joined(separator: ", "))); using Dark")
+        var theme = UITheme.dark()
+        if let name {
+            do {
+                theme = try Self.editorTheme(named: name)
+            } catch {
+                session.log.warning("\(error); using Dark")
+            }
         }
         if options.deterministic { theme.caretBlinkPeriod = 0 }
         let zoom = options.uiScale ?? prefs.uiScale ?? 1
         return (theme, min(max(zoom.isFinite ? zoom : 1, Self.uiScaleRange.lowerBound), Self.uiScaleRange.upperBound))
     }
 
-    /// The themes the toolbar's View menu offers. Game is left out: it is a preset for game
-    /// menus and HUDs (44-point controls, 18-point text), too coarse for a dense tool UI; it stays
-    /// reachable through the prefs, `EDITOR_THEME` and `view.appearance` to preview a game's UI.
-    public static let menuThemes = ["Dark", "Light", "High Contrast"]
+    /// The editor's themes (the View menu's, `view.appearance`, the prefs, `EDITOR_THEME`). The
+    /// engine's Game preset isn't one: it is made for game menus and HUDs (44-point controls,
+    /// 18-point text), too coarse for a dense tool UI.
+    public static let themes = ["Dark", "Light", "High Contrast"]
+    /// The themes the toolbar's View menu offers (all of `themes`).
+    public static let menuThemes = themes
+
+    /// The editor theme called `name` (case-insensitive); throws for Game and unknown names.
+    public static func editorTheme(named name: String) throws -> UITheme {
+        guard let theme = UITheme.named(name), themes.contains(theme.name) else {
+            let why = UITheme.named(name) == nil ? "Unknown theme" : "The \(UITheme.named(name)!.name) theme is for game UI, not the editor:"
+            throw CommandError.failed("\(why) '\(name)' (the editor's themes: \(themes.joined(separator: ", ")))")
+        }
+        return theme
+    }
     /// The zooms the View menu offers.
     public static let menuZooms: [Float] = [0.85, 1, 1.25, 1.5, 2]
 
@@ -246,9 +262,7 @@ public final class EditorApp: Game, EditorHost {
     public func appearance(theme name: String?, uiScale: Float?) throws -> EditorAppearance? {
         guard ui != nil else { return nil }
         if let name {
-            guard var theme = UITheme.named(name) else {
-                throw CommandError.failed("Unknown theme '\(name)' (\(UITheme.presets.map(\.name).joined(separator: ", ")))")
-            }
+            var theme = try Self.editorTheme(named: name)
             if options.deterministic { theme.caretBlinkPeriod = 0 }
             if theme.name != ui.theme.name { apply(theme) }
             prefs.theme = theme.name
@@ -268,7 +282,7 @@ public final class EditorApp: Game, EditorHost {
             prefsDirty = true
         }
         return EditorAppearance(theme: ui.theme.name, uiScale: preferredUIScale, effectiveUIScale: ui.uiScale,
-                                themes: UITheme.presets.map(\.name))
+                                themes: Self.themes)
     }
 
     /// Restyles the running editor: the context's theme, plus what was colored when it was built.
@@ -1275,10 +1289,11 @@ final class ViewportWidget: Widget {
 ///
 /// Every button is icon-only: its title stays its accessibility label (`ui.snapshot`, `ui.click
 /// {label}`) and its tooltip says what it does, with the shortcut. That keeps the toolbar one row
-/// down to about 800 points (the path fields and the title give way first); narrower, it wraps.
+/// down to about 800 points (the path fields and the title give way first); narrower, the least
+/// used buttons go into a More (») menu at its end (`ToolbarRow`), so it never takes two rows.
 @MainActor
 final class Toolbar {
-    let view: HStack
+    let view: ToolbarRow
     let path = TextField(placeholder: "path/to/scene.json", name: "scenePath")
     let projectPath = TextField(placeholder: "path/to/project", name: "projectPath")
     private unowned let app: EditorApp
@@ -1376,9 +1391,13 @@ final class Toolbar {
         for (widget, id) in tagged { widget.command = id.rawValue }
         // Undo / redo titles name the step ("Undo AI: Set Transform.position on Crate…"); the
         // buttons show the icon and the tooltip the whole title.
-        view = HStack(spacing: 4, padding: EdgeInsets(horizontal: 8, vertical: 5), name: "toolbar")
-        // Rows that don't fit the window wrap onto a second (third…) row instead of running off the edge.
-        view.wraps = true
+        view = ToolbarRow(spacing: 4, padding: EdgeInsets(horizontal: 8, vertical: 5), name: "toolbar")
+        // One row: what doesn't fit the window goes into the More (») menu at the end, least used
+        // first; the scene and project actions people reach for (Play, the tools, Build / Reload
+        // Game, View) go last.
+        view.overflowOrder = [newProjectButton, openProjectButton, saveAsButton, newButton, openButton, snapButton,
+                              stepButton, redoButton, gameViewButton, pauseButton, undoButton, saveButton]
+            + toolButtons.map(\.1).reversed() + [reloadGameButton, buildGameButton, playButton]
         view.background = (app.ui?.theme ?? UITheme()).panelBackground
         // Vertical rules between the groups (a bare Separator measures 0 points tall in a row).
         func separator() -> Separator {
@@ -1463,13 +1482,13 @@ final class Toolbar {
         if gameViewButton.role != gameRole { gameViewButton.role = gameRole }
         if let index = Self.timeScales.firstIndex(of: session.timeScale), timeScale.selectedIndex != index { timeScale.select(index) }
         let game = session.gameModule
-        if reloadGameButton.isHidden == game.isConfigured { reloadGameButton.isHidden = !game.isConfigured }
+        view.setAvailable(reloadGameButton, game.isConfigured)
         set(reloadGameButton, title: game.isBusy ? "Building…" : "Reload Game", enabled: session.commands.isAvailable(GameReloadCommand.self))
         let reloadTip = game.lastError.map { "Rebuild and reload the game code, keeping the scene. Last error: \($0)" }
             ?? "Rebuild and reload the game code (\(game.loaded?.module.name ?? "not loaded")), keeping the scene"
         if reloadGameButton.tooltip != reloadTip { reloadGameButton.tooltip = reloadTip }
         let export = session.gameExport
-        if buildGameButton.isHidden == (session.project != nil) { buildGameButton.isHidden = session.project == nil }
+        view.setAvailable(buildGameButton, session.project != nil)
         set(buildGameButton, title: export.isBusy ? "Building…" : "Build Game", enabled: session.commands.isAvailable(GameBuildCommand.self))
         let buildTip = export.lastError.map { "Export the game (cook the assets, build a standalone app). Last error: \($0)" }
             ?? export.lastResult.map { "Export the game again (last: \($0.outputPath))" }

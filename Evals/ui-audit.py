@@ -306,7 +306,7 @@ def main():
     parser.add_argument("--editor", default=os.path.join(REPOSITORY, ".build/debug/Editor"))
     parser.add_argument("--sizes", default="800x600,1280x720,2560x1440,2560x600,800x1400")
     parser.add_argument("--scales", default="1", help="UI scales (EDITOR_UI_SCALE), e.g. 0.85,1,2")
-    parser.add_argument("--themes", default="Dark", help="Dark,Light,High Contrast,Game")
+    parser.add_argument("--themes", default="Dark", help="Dark,Light,High Contrast")
     parser.add_argument("--states", default="", help="only these states (comma-separated names)")
     parser.add_argument("--backend", default="")
     parser.add_argument("--port", type=int, default=7391)

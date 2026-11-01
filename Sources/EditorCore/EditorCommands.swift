@@ -332,7 +332,7 @@ public enum LayoutResetCommand: EditorCommand {
 
 public enum ViewAppearanceCommand: EditorCommand {
     public struct Arguments: Codable, Equatable, Sendable {
-        /// A theme: Dark, Light, High Contrast or Game (case-insensitive).
+        /// A theme: Dark, Light or High Contrast (case-insensitive).
         public var theme: String?
         /// The UI zoom, 0.85...2 (1 = 100%).
         public var uiScale: Float?
@@ -345,9 +345,9 @@ public enum ViewAppearanceCommand: EditorCommand {
     public static let id: CommandID = "view.appearance"
     public static let title = "Appearance"
     public static let doc = """
-        The editor's theme and UI zoom (the toolbar's View menu): sets `theme` (Dark, Light, High Contrast; Game \
-        previews the game UI preset) and / or `uiScale` (0.85-2) when given and saves them in the prefs, then returns \
-        them. A zoom the window is too small for is lowered while it lasts (`effectiveUIScale`). Needs the editor window.
+        The editor's theme and UI zoom (the toolbar's View menu): sets `theme` (Dark, Light or High Contrast; the \
+        engine's Game preset is for game UI and is refused) and / or `uiScale` (0.85-2) when given and saves them in \
+        the prefs, then returns them. A zoom the window is too small for is lowered while it lasts (`effectiveUIScale`). Needs the editor window.
         """
     public static let isIdempotent = true
     public static func isAvailable(in session: EditorSession) -> Bool { session.host != nil }

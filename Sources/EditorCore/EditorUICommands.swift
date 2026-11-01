@@ -294,7 +294,18 @@ struct EditorUIDriver {
     }
 
     func click(_ target: UITarget, button: MouseButton, count: Int, modifiers: KeyModifiers, _ title: String) throws -> UIActionResult {
-        let (element, point) = try resolve(target, title)
+        var (element, point) = try resolve(target, title)
+        // A toolbar button in the More menu: open the menu, then click its entry.
+        if let found = element, let row = found.widget as? ToolbarRow, let key = found.itemKey, key.hasPrefix("overflow:"),
+           let name = key.split(separator: ":", maxSplits: 1).last,
+           let index = row.overflowed.firstIndex(where: { $0.name == name }), let menu = row.showOverflowMenu() {
+            ui.layoutIfNeeded()
+            let items = elements().filter { $0.widget === menu && $0.role == .menuItem }
+            guard items.indices.contains(index) else { throw fail("\(title): the More menu didn't open") }
+            if !items[index].isOnScreen { _ = menu.scrollToReveal(items[index].frame) }
+            element = elements().first { $0.path == items[index].path } ?? items[index]
+            point = element!.clickPoint
+        }
         if app.isViewportPoint(point) {
             return try act(element, at: point, viewport: true) {
                 var frames: [EditorApp.ViewportFrame] = []

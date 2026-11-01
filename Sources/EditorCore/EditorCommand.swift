@@ -262,7 +262,7 @@ public struct EditorAppearance: Codable, Equatable, Sendable {
     public var uiScale: Float
     /// The zoom in use: lower than `uiScale` when the window is too small for it.
     public var effectiveUIScale: Float
-    /// Themes to pick from (the settings menu offers `menuThemes`; Game is for previewing game UI).
+    /// The editor's themes (`EditorApp.themes`).
     public var themes: [String]
 }
 

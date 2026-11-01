@@ -78,6 +78,8 @@ public enum EditorIcons {
         "mesh-cylinder": #"<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/>"#,
         // A circle half hatched (light and dark): the View menu (layout, theme and zoom).
         "appearance": #"<circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 1 0 20Z"/><path d="M12 7h5"/><path d="M12 12h7"/><path d="M12 17h5"/>"#,
+        // Two chevrons: the toolbar's More menu (Lucide's chevrons-right).
+        "overflow": #"<path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/>"#,
         // A subdivided triangle: any other mesh (imported models, meshes games register).
         "mesh-custom": #"<path d="M12 3.5 21 19.5H3Z"/><path d="M7.5 11.5h9"/><path d="m7.5 11.5 4.5 8"/><path d="m16.5 11.5-4.5 8"/>"#,
     ]

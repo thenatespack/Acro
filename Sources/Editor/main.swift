@@ -13,7 +13,7 @@ let usage = """
 
     Opens the scene file, or starts with a new scene; --project opens a project (Project.json,
     Assets/, Library/) and imports its assets. Environment: EDITOR_PREFS=<file> moves the
-    prefs file (dock layout, last scene, theme, uiScale); EDITOR_THEME=<Dark|Light|High Contrast|Game>
+    prefs file (dock layout, last scene, theme, uiScale); EDITOR_THEME=<Dark|Light|High Contrast>
     and EDITOR_UI_SCALE=<0.85…2> override the prefs; EDITOR_WINDOW_SIZE=<w>x<h> sizes the window;
     ENGINE_SCREENSHOT=<png> renders a deterministic frame and quits.
 

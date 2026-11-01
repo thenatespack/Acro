@@ -439,6 +439,9 @@ public final class AssetBrowserPanel {
         let crumb = crumbBase + (pending > 0 ? " · importing \(pending)…" : "")
         if breadcrumb.text != crumb { breadcrumb.text = crumb }
         if folders != shownFolders { rebuildTree(folders) }
+        // The inspector went back to an entity (or the asset went away): the cell isn't
+        // highlighted any more, so the highlight never disagrees with the inspector.
+        if model.session.inspectedAsset == nil, model.selection != nil { model.selection = nil }
         guard model.version != shownVersion else { return }
         shownVersion = model.version
         grid.entries = entries

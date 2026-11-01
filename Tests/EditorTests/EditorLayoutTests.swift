@@ -140,7 +140,7 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
     }
 
     @Test func everyThemeLaysOut() throws {
-        for theme in UITheme.presets {
+        for theme in EditorApp.themes.compactMap(UITheme.named) {
             let app = layoutApp(Vec2(1280, 720), theme: theme.name)
             #expect(app.ui.theme.name == theme.name)
             // The dividers between panels are the theme's (they were the dark theme's in every
@@ -153,9 +153,10 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
     }
 
     @Test func auditCatchesBrokenLayouts() throws {
-        // A toolbar that doesn't wrap: its right end runs off a 700-point window.
+        // A toolbar that can't move anything into its More menu: its right end runs off a 700-point window.
         let app = layoutApp(Vec2(700, 600))
-        app.toolbar.view.wraps = false
+        app.toolbar.view.overflowOrder = []
+        app.ui.layoutIfNeeded()
         let kinds = Set(app.ui.layoutAudit().map(\.kind))
         #expect(kinds.contains(.outsideWindow))
 
@@ -235,7 +236,7 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
     /// Tab close buttons, tree disclosure triangles and checkboxes take clicks over at least
     /// 24x24 points (WCAG 2.2 target size, #24), whatever their glyph's size.
     @Test func smallControlsHaveTwentyFourPointHitTargets() throws {
-        for theme in ["Dark", "Game"] {
+        for theme in ["Dark", "High Contrast"] {
             let app = layoutApp(Vec2(1280, 720), theme: theme)
             let client = LayoutClient(app)
             let holder = client.call("entity.create", ["template": "cube", "name": "Holder"])["entity"] ?? nil
@@ -297,16 +298,68 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
         let menu = try #require(app.ui.overlays.compactMap { $0 as? PopupMenu }.last)
         #expect(menu.checkedIndices == [2, 1 + EditorApp.menuThemes.count + 2])
         client.call("ui.key", ["keys": ["escape"]])
-        // Game stays reachable for previewing a game's UI.
-        #expect(client.call("view.appearance", ["theme": "game"])["theme"] == "Game")
-        expectClean(app, "Game at 125%")
+        // The engine's Game preset is for game UI: refused, with the editor's themes named.
+        #expect(throws: CommandError.self) { try app.session.commands.run(ViewAppearanceCommand.self, .init(theme: "game")) }
+        do {
+            _ = try app.session.commands.run(ViewAppearanceCommand.self, .init(theme: "Game"))
+        } catch {
+            #expect("\(error)".contains("Dark, Light, High Contrast"), "\(error)")
+        }
+        #expect(app.ui.theme.name == "Light" && app.prefs.theme == "Light")
     }
 
-    /// Panel content taller than its panel scrolls with the panel (#33): in the Game theme at
-    /// zoom 2 the prefab variant rows filled the inspector and pushed Add Component below the
-    /// window.
+    /// Prefs or `EDITOR_THEME` saying Game (allowed before) start the editor in Dark, with one warning.
+    @Test func gameThemeFallsBackToDark() {
+        let app = layoutApp(Vec2(1280, 720), theme: "game")
+        #expect(app.ui.theme.name == "Dark")
+        let warnings = app.session.log.entries.filter { $0.level == .warning && $0.message.contains("Game") }
+        #expect(warnings.count == 1, "\(warnings.map(\.message))")
+        app.syncPanels()
+        #expect(app.session.log.entries.filter { $0.level == .warning && $0.message.contains("Game") }.count == 1)
+        #expect(throws: CommandError.self) { try EditorApp.editorTheme(named: "Game") }
+        #expect((try? EditorApp.editorTheme(named: "high contrast"))?.name == "High Contrast")
+    }
+
+    /// One toolbar row at 800 points with a project open (#661 follow-up): what doesn't fit goes
+    /// into the More menu, Build Game stays, the overflowed buttons keep their labels in
+    /// ui.snapshot, and ui.click on one opens the menu and clicks its entry.
+    @Test func toolbarOverflowsIntoAMoreMenu() throws {
+        let app = layoutApp(Vec2(800, 600), uiScale: 1)
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("EditorLayoutTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try #require(app.session.run(ProjectNewCommand.self, .init(path: folder.path)) != nil)
+        app.syncPanels()
+        let toolbar = app.toolbar.view
+        let rowHeight = app.ui.theme.controlHeight + toolbar.padding.vertical
+        #expect(toolbar.frame.height <= rowHeight + 0.5)
+        let build = try #require(toolbar.descendant(named: "buildGame") as? Button)
+        #expect(!build.isHidden && build.frame.maxX <= 800)
+        #expect(!toolbar.overflowed.isEmpty && !toolbar.moreButton.isHidden)
+        expectClean(app, "800x600 with a project")
+        let elements = app.ui.accessibilityElements()
+        for button in toolbar.overflowed {
+            let item = try #require(elements.first { $0.path == "editorRoot/toolbar/overflow:\(button.name)" })
+            #expect(item.label == button.title && item.command == button.command && item.isOnScreen)
+        }
+        // ui.click on an overflowed button: put Snap in the menu, click it by its label.
+        let snap = try #require(toolbar.descendant(named: "snapping") as? Button)
+        toolbar.overflowOrder = [snap] + toolbar.overflowOrder.filter { $0 !== snap }
+        app.syncPanels()
+        #expect(toolbar.overflowed.contains { $0 === snap })
+        let before = app.session.snapping
+        let client = LayoutClient(app)
+        client.call("ui.click", ["label": "Snap", "role": "button"])
+        #expect(app.session.snapping != before)
+        #expect(!app.ui.overlays.contains { $0 is PopupMenu })
+        // Wide windows need no menu.
+        app.resizeWithoutWindow(size: Vec2(1440, 900))
+        #expect(toolbar.overflowed.isEmpty && toolbar.moreButton.isHidden)
+    }
+
+    /// Panel content taller than its panel scrolls with the panel (#33): prefab variant rows in
+    /// a short inspector pushed Add Component below the window.
     @Test func panelContentScrollsWhenTallerThanThePanel() throws {
-        let app = layoutApp(Vec2(1280, 720), uiScale: 2, theme: "Game")
+        let app = layoutApp(Vec2(1280, 720))
         let session = app.session
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("EditorLayoutTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -319,11 +372,13 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
         try #require(session.run(PrefabCreateVariantCommand.self, .init(entity: cube.entity, name: "Crate Variant")) != nil)
         client.call("component.setField", ["entity": id, "path": "MeshRenderer.receivesShadows", "value": false])
         session.run(SelectionSetCommand.self, .init(entities: [cube.entity], primary: cube.entity))
+        // A short inspector: the console takes most of its column.
+        client.call("panel.dock", ["panel": "console", "edge": "bottom", "beside": "inspector", "fraction": 0.8])
         app.syncPanels()
         let group = try #require(app.inspector.view.parent as? TabView)
         let add = try #require(app.inspector.view.descendant(named: "addComponent"))
         #expect(group.contentOverflow > 0, "inspector \(group.contentArea), Add Component \(add.frame)")
-        expectClean(app, "Game zoom 2, prefab variant in the inspector")
+        expectClean(app, "prefab variant in a short inspector")
         // Scrolling the panel brings Add Component into view.
         app.ui.synthesizeScroll(at: group.contentArea.center, by: Vec2(0, -1000))
         app.syncPanels()
@@ -344,8 +399,41 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
         session.run(SelectionSetCommand.self, .init(entities: [cube.entity]))
         try #require(session.run(AssetSelectCommand.self, .init(asset: AssetReference(material.asset))) != nil)
         #expect(session.inspectedAsset != nil)
+        app.syncPanels()
+        #expect(app.assetBrowser.model.selection != nil)
         session.run(SelectionSetCommand.self, .init(entities: [cube.entity]))
         #expect(session.inspectedAsset == nil)
+        // The asset browser drops its highlight with it.
+        app.syncPanels()
+        #expect(app.assetBrowser.model.selection == nil && app.assetBrowser.grid.selected == nil)
+    }
+
+    /// A prefab variant's thumbnail shows what it resolves to (its file holds only the base and
+    /// overrides, so it previewed empty).
+    @Test func prefabVariantThumbnailsShowTheirBase() throws {
+        let app = layoutApp(Vec2(1280, 720))
+        let session = app.session
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("EditorLayoutTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try #require(session.run(ProjectNewCommand.self, .init(path: folder.path)) != nil)
+        let cube = try #require(session.run(EntityCreateCommand.self, .init(template: .cube, name: "Crate")))
+        let prefab = try #require(session.run(PrefabCreateCommand.self, .init(entity: cube.entity)))
+        let variant = try #require(session.run(PrefabCreateVariantCommand.self, .init(asset: prefab.prefab, name: "Crate Variant")))
+        let assets = try #require(session.assets)
+        _ = assets.waitForAll(timeout: 30)
+        #expect(assets.prefab(variant.prefab)?.variant != nil)
+        let world = World()
+        let root = world.spawn(Transform())
+        #expect(AssetThumbnails.spawnPrefab(variant.prefab, under: root, in: world, assets: assets))
+        var meshes = 0
+        func visit(_ entity: Entity) {
+            if world.has(MeshRenderer.self, for: entity) { meshes += 1 }
+            for child in world.children(of: entity) { visit(child) }
+        }
+        visit(root)
+        #expect(meshes == 1)
+        // Its thumbnail is remade when the base changes too.
+        #expect(AssetThumbnails.revision(of: variant.prefab, in: assets) != assets.revision(of: variant.prefab.asset))
     }
 
     /// The viewport's caption sits in its tab bar, where it can't cover scene labels (#30);
