@@ -231,7 +231,7 @@ struct EditorIconTests {
         #expect(EditorIcons.entityIcon(floor, in: world).name == "mesh-plane")
         #expect(EditorIcons.entityIcon(crate, in: world).name == "box")
         // The Create menu shows the same shapes.
-        #expect(EntityTemplate.allCases.map { EditorIcons.template($0).name } == ["circle-dashed", "box", "mesh-sphere", "mesh-plane"])
+        #expect(EntityTemplate.allCases.map { EditorIcons.template($0).name } == ["circle-dashed", "box", "mesh-sphere", "mesh-plane", "mesh-cylinder", "mesh-cylinder", "mesh-custom", "mesh-custom"])
 
         let names = ["box", "mesh-sphere", "mesh-plane", "mesh-cylinder", "mesh-custom", EditorIcons.prefabIconName]
         let masks = names.map { EditorIcons.named($0).rasterize(pixels: 16).map { Float($0) / 255 } }

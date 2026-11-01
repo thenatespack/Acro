@@ -209,12 +209,7 @@ public final class AssetThumbnails {
     }
 
     private func builtinGeometry(_ handle: MeshHandle) -> MeshGeometry? {
-        switch handle {
-        case .sphere: MeshGeometry.sphere()
-        case .cube: MeshGeometry.cube()
-        case .plane: MeshGeometry.plane()
-        default: nil
-        }
+        MeshGeometry.builtin(handle)
     }
 
     /// `image` box-filtered down so its longer side is at most `size` (unchanged if smaller).

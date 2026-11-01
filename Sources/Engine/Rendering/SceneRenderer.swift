@@ -200,6 +200,8 @@ public final class SceneRenderer {
     var reportedTextures: Set<String> = []
     /// Replaces the buffers of a mesh whose asset was deleted.
     var vanishedMesh: GPUMesh?
+    /// The mesh built for each `LineRenderer` entity and the spec it was built from.
+    var lineMeshes: [Entity: LineRenderer.Spec] = [:]
     /// Asset keys registered from `assets`, with the asset revision they were uploaded at.
     var assetKeys: [String: Int] = [:]
     /// Uploaded asset textures by reference text, with their revision.
@@ -356,6 +358,9 @@ public final class SceneRenderer {
         try registerMesh(.cube(), key: MeshHandle.cube.key)
         try registerMesh(.plane(), key: MeshHandle.plane.key)
         try registerMesh(.sphere(), key: MeshHandle.sphere.key)
+        for handle in [MeshHandle.cylinder, .capsule, .cone, .torus] {
+            try registerMesh(MeshGeometry.builtin(handle)!, key: handle.key)
+        }
         // Blinn-Phong, so scenes made before PBR keep their look.
         try registerMaterial(Material(shading: .blinnPhong), key: MaterialHandle.default.key)
     }
@@ -548,6 +553,7 @@ public final class SceneRenderer {
 
     func gather(_ world: World) {
         syncAssets()
+        syncLineMeshes(world)
         prep.gather(world: world)
         // Upload assets entities started using, then gather again so they draw this frame
         // (only on frames where something new resolved).

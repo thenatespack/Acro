@@ -17,6 +17,14 @@ public struct MeshHandle: Hashable, Codable, Sendable, CustomStringConvertible {
     public static let plane = MeshHandle("plane")
     /// A UV sphere of radius 0.5 centered on the origin.
     public static let sphere = MeshHandle("sphere")
+    /// A capped cylinder along Y, radius 0.5, height 1, centered on the origin.
+    public static let cylinder = MeshHandle("cylinder")
+    /// A capsule along Y, radius 0.25, height 1 overall, centered on the origin.
+    public static let capsule = MeshHandle("capsule")
+    /// A cone along Y, base radius 0.5, height 1, centered on the origin (apex up).
+    public static let cone = MeshHandle("cone")
+    /// A torus around Y in the XZ plane, outer diameter 1 (major radius 0.35, tube radius 0.15).
+    public static let torus = MeshHandle("torus")
 
     public init(from decoder: Decoder) throws { key = try decoder.singleValueContainer().decode(String.self) }
     public func encode(to encoder: Encoder) throws {

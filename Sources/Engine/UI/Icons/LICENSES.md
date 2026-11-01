@@ -1,5 +1,4 @@
 # Vendored icon data
-
 `LucideIcons.swift` holds the SVG elements of a subset of [Lucide](https://lucide.dev) icons
 (version 0.475.0, from the `lucide-react` package's icon nodes), keyed by their Lucide names.
 Only the path data is vendored; the rasterizer (`VectorIcon.swift`) is the engine's own.

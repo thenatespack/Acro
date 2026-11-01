@@ -87,6 +87,7 @@ extension DemoScene {
     ImagesScene.self,
     GLTFScene.self,
     PBRScene.self,
+    PrimitivesScene.self,
     InputScene.self,
     LightsScene.self,
     AudioScene.self,

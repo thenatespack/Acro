@@ -21,7 +21,7 @@ public enum PlayState: Sendable, Equatable {
 
 /// What the "Create" menu makes.
 public enum EntityTemplate: String, CaseIterable, Codable, Sendable {
-    case empty, cube, sphere, plane
+    case empty, cube, sphere, plane, cylinder, capsule, cone, torus
 
     public var title: String {
         switch self {
@@ -29,6 +29,10 @@ public enum EntityTemplate: String, CaseIterable, Codable, Sendable {
         case .cube: "Cube"
         case .sphere: "Sphere"
         case .plane: "Plane"
+        case .cylinder: "Cylinder"
+        case .capsule: "Capsule"
+        case .cone: "Cone"
+        case .torus: "Torus"
         }
     }
 
@@ -39,6 +43,10 @@ public enum EntityTemplate: String, CaseIterable, Codable, Sendable {
         case .cube: return [transform, MeshRenderer(mesh: .cube)]
         case .sphere: return [transform, MeshRenderer(mesh: .sphere)]
         case .plane: return [Transform(position: position, scale: Vec3(4, 1, 4)), MeshRenderer(mesh: .plane)]
+        case .cylinder: return [transform, MeshRenderer(mesh: .cylinder)]
+        case .capsule: return [transform, MeshRenderer(mesh: .capsule)]
+        case .cone: return [transform, MeshRenderer(mesh: .cone)]
+        case .torus: return [transform, MeshRenderer(mesh: .torus)]
         }
     }
 }

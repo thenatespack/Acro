@@ -29,6 +29,7 @@ extension SceneRenderer: PickMeshSource {
         register(.cube(), key: MeshHandle.cube.key)
         register(.plane(), key: MeshHandle.plane.key)
         register(.sphere(), key: MeshHandle.sphere.key)
+        for handle in [MeshHandle.cylinder, .capsule, .cone, .torus] { register(MeshGeometry.builtin(handle)!, key: handle.key) }
     }
 
     public func register(_ geometry: MeshGeometry, key: String) {

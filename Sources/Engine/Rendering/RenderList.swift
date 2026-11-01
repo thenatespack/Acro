@@ -166,7 +166,34 @@ public struct RenderPrep {
                 alphaTested: materials[material].alphaTested,
                 skin: skin))
         }
+        gatherLines(world: world)
         poseSkins(world: world)
+    }
+
+    /// Adds an item for every visible `LineRenderer` whose generated mesh is registered under
+    /// `LineRenderer.meshKey(for:)` (`SceneRenderer.syncLineMeshes`).
+    private mutating func gatherLines(world: World) {
+        world.query(GlobalTransform.self, LineRenderer.self) { entity, transform, line in
+            guard line.isVisible, let mesh = meshes.id(of: LineRenderer.meshKey(for: entity)),
+                  let material = materials.id(of: line.material.key) else {
+                if !materials.contains(line.material.key) {
+                    missingKeys.insert(line.material.key)
+                    missingMaterialKeys.insert(line.material.key)
+                }
+                return
+            }
+            let model = transform.matrix
+            let previous = motion.previousMatrix(for: entity, current: model)
+            items.append(RenderItem(
+                entity: entity, mesh: mesh, material: material,
+                instance: MeshInstance(model: model, previousModel: previous, color: Vec4(line.tint, line.opacity),
+                                       params: Vec4(line.receivesShadows ? 1 : 0, 0, 0, 0)),
+                bounds: meshes[mesh].transformed(by: model),
+                castsShadows: line.castsShadows,
+                transparent: line.opacity < 1 || materials[material].blends,
+                alphaTested: materials[material].alphaTested,
+                skin: -1))
+        }
     }
 
     /// A skinned item waiting for its joint matrices.
