@@ -504,7 +504,7 @@ Arguments:
 - `name?`: string
 - `parent?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
 - `position?`: number[3] — [x, y, z]
-- `template`: "empty" \| "cube" \| "sphere" \| "plane"
+- `template`: "empty" \| "cube" \| "sphere" \| "plane" \| "cylinder" \| "capsule" \| "cone" \| "torus"
 
 Result:
 
