@@ -132,6 +132,7 @@ public struct RenderPrep {
         motion.beginFrame()
         items.removeAll(keepingCapacity: true)
         skins.removeAll(keepingCapacity: true)
+        let hasArrays = world.existingStore(MeshArray.self) != nil
         world.query(GlobalTransform.self, MeshRenderer.self) { entity, transform, renderer in
             guard renderer.isVisible else { return }
             let mesh = meshes.id(of: renderer.mesh.key), material = materials.id(of: renderer.material.key)
@@ -148,6 +149,25 @@ public struct RenderPrep {
             }
             let model = transform.matrix
             let previous = motion.previousMatrix(for: entity, current: model)
+            if hasArrays, let array = world.get(MeshArray.self, for: entity) {
+                // One item per copy; copies don't skin.
+                let local = meshes[mesh]
+                let transparent = renderer.opacity < 1 || materials[material].blends
+                let alphaTested = materials[material].alphaTested
+                let receives = Vec4(renderer.receivesShadows ? 1 : 0, 0, 0, 0)
+                let placements = array.placements()
+                items.reserveCapacity(items.count + placements.count)
+                for placement in placements {
+                    let m = MeshArray.offset(model, by: placement.offset)
+                    items.append(RenderItem(
+                        entity: entity, mesh: mesh, material: material,
+                        instance: MeshInstance(model: m, previousModel: MeshArray.offset(previous, by: placement.offset),
+                                               color: Vec4(renderer.tint * placement.tint, renderer.opacity), params: receives),
+                        bounds: local.transformed(by: m), castsShadows: renderer.castsShadows,
+                        transparent: transparent, alphaTested: alphaTested))
+                }
+                return
+            }
             var skin = -1
             if !skinnedMeshes.isEmpty, let info = skinnedMeshes[mesh] {
                 // Posed below, in parallel.

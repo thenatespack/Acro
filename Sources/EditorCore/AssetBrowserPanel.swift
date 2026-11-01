@@ -551,6 +551,7 @@ public final class AssetBrowserPanel {
             ("Import…", AssetImportCommand.id, { [unowned self] in beginImport() }),
             ("New Folder", AssetNewFolderCommand.id, { [unowned self] in model.newFolder(); sync() }),
             ("New Material", AssetNewMaterialCommand.id, { [unowned self] in model.newMaterial(); sync() }),
+            ("New Procedural Texture", AssetNewProceduralTextureCommand.id, { [unowned self] in model.newProceduralTexture(); sync() }),
         ]
         if let entry {
             if case .folder = entry.item {

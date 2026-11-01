@@ -109,4 +109,5 @@ extension DemoScene {
     RainScene.self,
     AnimationLifeScene.self,
     Text3DScene.self,
+    FacadesScene.self,
 ]

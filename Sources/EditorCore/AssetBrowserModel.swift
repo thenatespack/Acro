@@ -194,6 +194,15 @@ public final class AssetBrowserModel {
         return id
     }
 
+    /// Creates a procedural texture in the current folder (`asset.newProceduralTexture`) and selects it.
+    @discardableResult
+    public func newProceduralTexture() -> AssetID? {
+        guard let id = session.run(AssetNewProceduralTextureCommand.self, .init(folder: targetFolder))?.asset else { return nil }
+        invalidate()
+        selection = .asset(id)
+        return id
+    }
+
     /// Copies files or folders from outside the project into the current folder, imports them
     /// (`asset.import`) and selects the first one. Returns the new paths.
     @discardableResult
