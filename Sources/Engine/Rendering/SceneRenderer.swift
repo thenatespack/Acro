@@ -225,6 +225,9 @@ public final class SceneRenderer {
     /// GPU particles of the world's `ParticleEmitter`s (see `SceneRenderer+Particles.swift`),
     /// created with the first emitter; nil until then.
     public internal(set) var particles: ParticleSystem?
+    /// Decals of the world's `Decal` components (see `SceneRenderer+Decals.swift`), created with
+    /// the first one; nil until then.
+    var decals: DecalRenderer?
     /// The `prepare` camera, for the particles' depth prepass (`renderParticleDepth`).
     var particleView: (viewProjection: Mat4, projection: Mat4, eye: Vec3, size: (width: Int, height: Int), reversedZ: Bool)?
     /// This frame's depth prepass of the `prepare` camera, when particles need it.
@@ -553,6 +556,7 @@ public final class SceneRenderer {
         // (only on frames where something new resolved).
         if resolveMissingAssets() { prep.gather(world: world) }
         PunctualLight.gather(in: world, into: &punctualLights)
+        gatherDecals(world: world)
         for key in prep.missingKeys where !reportedMissing.contains(key) && !prep.meshes.contains(key) && !prep.materials.contains(key)
             && (assets == nil || AssetReference(key) == nil || failedAssetKeys.contains(key)) {
             reportedMissing.insert(key)
@@ -961,6 +965,10 @@ public final class SceneRenderer {
         environmentLighting.bindLighting(in: pass)
         var current: (pipeline: PipelineKey, material: Int, skin: Int)?
         for (batches, blending) in [(list.opaque, false), (list.transparent, true)] {
+            if blending {
+                // Decals paint the opaque surfaces only: after them, before the sky and glass.
+                if drawDecals(in: pass, uniforms: uniforms, reversedZ: reversedZ, depth: particleDepth) { current = nil }
+            }
             if blending, let sky {
                 environmentLighting.drawSky(in: pass, view: sky.view, projection: sky.projection, reversedZ: reversedZ)
                 current = nil  // the sky replaced the pipeline and the material's bindings

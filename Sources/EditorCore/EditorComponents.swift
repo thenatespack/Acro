@@ -88,6 +88,7 @@ public enum EditorComponentCatalog {
         register(Joint2D.self) { Joint2D(.revolute) }
         ParticleSystem.registerComponents()
         register(ParticleEmitter.self) { ParticleEmitter() }
+        register(Decal.self) { Decal() }
         register(Sprite.self) { Sprite(atlas: SpriteAtlasHandle("sprites")) }
         register(SpriteAnimator.self) { SpriteAnimator(clips: [SpriteClip("idle", frames: [0], fps: 12)]) }
         register(Saveable.self) { Saveable() }

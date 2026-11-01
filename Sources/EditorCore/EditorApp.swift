@@ -1136,6 +1136,16 @@ public final class EditorApp: Game, EditorHost {
             draw.text(session.displayName(of: entity), at: labelPosition(start), color: yellow, size: labelSize, shadow: labelShadow)
         }
 
+        // A selected decal's projector box, with an arrow along its projection axis.
+        for entity in session.selection.entities(in: world) where world.has(Decal.self, for: entity) {
+            let matrix = world.get(GlobalTransform.self, for: entity)?.matrix ?? world.worldMatrix(of: entity)
+            let orange = Vec4(1, 0.72, 0.42, 1)
+            draw.box(matrix * Mat4.scale(Vec3(repeating: 0.5)), color: orange, style: DebugDraw.Style(width: 1.5, depth: .onTop))
+            let forward = -Vec3(matrix.c2.x, matrix.c2.y, matrix.c2.z)
+            draw.arrow(from: matrix.translation, to: matrix.translation + forward * 0.5, color: orange, headSize: 0.12,
+                       style: DebugDraw.Style(width: 2, depth: .onTop))
+        }
+
         for entity in session.selection.entities(in: world) where context.worldBounds(of: entity) == nil {
             let matrix = world.get(GlobalTransform.self, for: entity)?.matrix ?? world.worldMatrix(of: entity)
             draw.axes(matrix, length: 0.6, style: DebugDraw.Style(width: 2, depth: .onTop))

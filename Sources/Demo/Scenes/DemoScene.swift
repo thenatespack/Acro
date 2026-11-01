@@ -99,6 +99,7 @@ extension DemoScene {
     CharacterScene.self,
     SkinningScene.self,
     ParticlesScene.self,
+    DecalsScene.self,
     Physics2DScene.self,
     HUDScene.self,
     CompressionScene.self,
