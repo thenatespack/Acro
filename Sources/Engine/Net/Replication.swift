@@ -18,10 +18,18 @@
 // time, Transforms interpolated between the snapshots around it. Entities are matched by
 // `EntityID`: the client world's entities get the server's ids. Entities in
 // `predictedEntities` are left to client-side prediction (see NetPrediction.swift).
+//
+// Hierarchy and references (card 671): each replicated entity's parent travels as the
+// pseudo-component `NetHierarchy.parentKey` (the parent's id), so it is delta-encoded like any
+// other component. The client attaches entities to their parents after spawning everything in
+// the state (a child listed before its parent is fine); a parent that hasn't arrived leaves the
+// child a root until it does. `Entity` fields in components map to the client's entities (see
+// NetEntityMapping.swift). Entities the client already has with the server's ids (the same
+// scene loaded on both sides) are matched instead of spawned again; replicated entities the
+// client has but the server doesn't are despawned once a complete snapshot arrived.
 
 /// Marks an entity for replication and names the components sent (by `componentName`).
-/// Only root entities are meaningful for now: Transforms replicate as local transforms and
-/// the hierarchy isn't sent.
+/// Transforms replicate as local transforms; the parent link is always sent (see above).
 public struct Replicated: Component, Equatable, Sendable {
     public static let componentName = "Replicated"
     public var components: [String]
@@ -139,6 +147,9 @@ public final class NetServer {
         var compressionRatio: Double = 1
         var pendingInputs: [UInt32: [UInt8]] = [:]
         var lastProcessedInput: UInt32 = 0
+        var snapshotsSent = 0
+        var snapshotBytesSent = 0
+        var rates = NetRateMeter()
 
         init(id: NetClientID, peer: PeerID, now: Double) {
             self.id = id
@@ -184,7 +195,23 @@ public final class NetServer {
             } else if time - state.connection.lastSendTime >= keepAliveInterval || state.connection.hasMessagesDue(now: time) {
                 sendConnected(.keepAlive, to: state, budget: NetLimits.maxDatagramSize - NetPacket.headerSize)
             }
+            let stats = state.connection.stats
+            state.rates.record(time: time, bytesIn: stats.bytesReceived, bytesOut: stats.bytesSent)
         }
+    }
+
+    /// `client`'s numbers as the server sees them (nil: not connected).
+    public func statsReport(for client: NetClientID) -> NetStatsReport? {
+        guard let state = clientStates[client] else { return nil }
+        let stats = state.connection.stats
+        let rates = state.rates.rates
+        var report = NetStatsReport(
+            name: "server → client \(client.value)", connected: true, rttMs: stats.rtt.map { $0 * 1000 }, lossPercent: stats.loss * 100,
+            bytesInPerSecond: rates.bytesIn, bytesOutPerSecond: rates.bytesOut, bytesIn: stats.bytesReceived, bytesOut: stats.bytesSent,
+            packetsIn: stats.packetsReceived, packetsOut: stats.packetsSent, snapshots: state.snapshotsSent)
+        report.lastSnapshotBytes = lastSnapshotWireBytes[client] ?? 0
+        report.deferredEntities = lastSnapshotDeferred[client] ?? 0
+        return report
     }
 
     /// Events since the last call: connections, disconnections, messages.
@@ -347,16 +374,20 @@ public final class NetServer {
         var priorities: [EntityID: Float] = [:]
         var replicatedEntities: [(Entity, Replicated)] = []
         world.query(Replicated.self) { replicatedEntities.append(($0, $1)) }
+        let mapping = NetEntityMapping(world: world)
         for (entity, replicated) in replicatedEntities {
             guard let id = world.ensureID(of: entity) else { continue }
             var components: [String: [UInt8]] = [:]
-            for name in replicated.components {
+            for name in replicated.components where name != NetHierarchy.parentKey {
                 guard let component = world.component(named: name, of: entity) else { continue }
                 do {
-                    components[name] = try NetComponentCoder.encode(component, transform: replicated.transform)
+                    components[name] = try NetComponentCoder.encode(component, transform: replicated.transform, entities: mapping)
                 } catch {
                     if encodeFailures.insert(name).inserted { EngineLog.warning("can't encode \(name): \(error)", category: "net") }
                 }
+            }
+            if let parent = world.parent(of: entity), let parentID = world.ensureID(of: parent) {
+                components[NetHierarchy.parentKey] = NetHierarchy.encode(parentID)
             }
             state[id] = components
             priorities[id] = replicated.priority
@@ -383,7 +414,8 @@ public final class NetServer {
             }
             if tick > UInt32(historyLength) { c.sent[tick - UInt32(historyLength)] = nil }
             let raw = snapshot.encoded(baseline: baseline)
-            var flags: UInt8 = 0
+            // Bit 0: zlib; bit 1: complete (nothing deferred: the client has the whole state).
+            var flags: UInt8 = deferred == 0 ? 2 : 0
             var body = raw
             let compress = compression == .all || (compression == .fullSnapshots && snapshot.baselineTick == nil)
             if compress, raw.count > 64 {
@@ -401,6 +433,8 @@ public final class NetServer {
             lastSnapshotBytes[client] = raw.count
             lastSnapshotWireBytes[client] = body.count
             lastSnapshotDeferred[client] = deferred
+            c.snapshotsSent += 1
+            c.snapshotBytesSent += w.data.count
             sendFragments(w.data, tick: tick, to: c)
         }
     }
@@ -424,6 +458,16 @@ public final class NetServer {
             chosen[candidate.id] = snapshot.changed[candidate.id]
             client.priority[candidate.id] = nil
             size += candidate.cost
+        }
+        // A parent new to the client goes with the children that refer to it, so entities
+        // arrive with their hierarchy (over budget if need be).
+        var pending = Array(chosen.keys)
+        while let id = pending.popLast() {
+            guard let bytes = chosen[id]?[NetHierarchy.parentKey] ?? nil, let parent = NetHierarchy.decode(bytes),
+                  chosen[parent] == nil, baseline?[parent] == nil, let diff = snapshot.changed[parent] else { continue }
+            chosen[parent] = diff
+            client.priority[parent] = nil
+            pending.append(parent)
         }
         var limited = snapshot
         limited.changed = chosen
@@ -496,6 +540,10 @@ public final class NetClient {
     /// `predictedComponents` are left alone (see `NetCharacterPrediction`).
     public var predictedEntities: Set<EntityID> = []
     public var predictedComponents: Set<String> = [Transform.componentName, CharacterController.componentName]
+    /// When the first complete snapshot arrives, despawn the entities with a `Replicated` that the
+    /// server doesn't replicate: the client loaded the same scene, and the server removed them
+    /// before this client connected. Entities the server does have are matched by id.
+    public var despawnsUnmatchedEntities = true
 
     public struct Stats: Equatable, Sendable {
         /// Snapshots decoded and stored.
@@ -532,11 +580,21 @@ public final class NetClient {
         var time: Double
         var inputAck: UInt32
         var state: NetWorldState
+        /// The server deferred nothing: this is all it replicates.
+        var complete: Bool
     }
     /// Sorted by tick.
     private var states: [ReceivedState] = []
     private var fragments: [UInt32: [Int: [UInt8]]] = [:]
     private var applied: [EntityID: [String: [UInt8]]] = [:]
+    /// Components holding `Entity` handles: the ids they refer to and what each resolved to.
+    private var entityReferences: [EntityID: [String: [EntityID: Entity?]]] = [:]
+    /// Entities whose parent hasn't arrived (they are roots meanwhile).
+    public private(set) var unresolvedParents: Set<EntityID> = []
+    private var hierarchyTick: UInt32?
+    /// A complete snapshot was applied (replicated entities the server lacks were removed).
+    private var matchedScene = false
+    var rates = NetRateMeter()
     private let salt: UInt64
     private var token: UInt64?
     private var lastHandshake: Double = 0
@@ -615,7 +673,17 @@ public final class NetClient {
         advanceClock(dt: dt)
         apply()
         flush()
+        if let stats = connection?.stats { rates.record(time: time, bytesIn: stats.bytesReceived, bytesOut: stats.bytesSent) }
     }
+
+    /// Received snapshots newer than the render time (what interpolation can still use).
+    public var bufferedSnapshotCount: Int {
+        guard let renderTime else { return 0 }
+        return states.reduce(0) { $0 + ($1.time > renderTime ? 1 : 0) }
+    }
+
+    /// Entities replication created or matched in `world`.
+    public var replicatedEntityCount: Int { applied.count }
 
     /// Sends what is due now: a client update when there are inputs, a snapshot ack or
     /// messages, a keep-alive after `keepAliveInterval` of silence.
@@ -762,7 +830,8 @@ public final class NetClient {
             baseline = base.state
         }
         let snapshot = try NetSnapshot(decoding: body, baseline: baseline)
-        insert(ReceivedState(tick: snapshot.tick, time: snapshot.serverTime, inputAck: inputAck, state: snapshot.applied(to: baseline)))
+        insert(ReceivedState(tick: snapshot.tick, time: snapshot.serverTime, inputAck: inputAck, state: snapshot.applied(to: baseline),
+                             complete: flags & 2 != 0))
         stats.snapshots += 1
         if let newest = states.last?.inputAck { inputs.removeAll { $0.sequence <= newest } }
         return snapshot.tick
@@ -800,26 +869,39 @@ public final class NetClient {
         let b = bIndex.map { states[$0] }
         let t: Float = b.map { b in b.time > a.time ? Float((time - a.time) / (b.time - a.time)) : 0 } ?? 0
 
-        // Sorted: spawn order (and so storage and draw order) the same in every run.
-        for id in a.state.keys.sorted() {
-            let components = a.state[id]!
-            let entity: Entity
-            var spawned = false
-            if let existing = world.entity(for: id) {
-                entity = existing
-            } else {
-                entity = world.spawn()
+        // Sorted: spawn order (and so storage and draw order) the same in every run. Everything
+        // is spawned first, so components and parents can refer to entities listed after them.
+        // An entity the client already has with the id (the same scene loaded) is used as is.
+        let ids = a.state.keys.sorted()
+        var fresh: Set<EntityID> = []
+        for id in ids where world.entity(for: id) == nil || applied[id] == nil {
+            if world.entity(for: id) == nil {
+                let entity = world.spawn()
                 world.setEntityID(id, for: entity)
-                spawned = true
+                // (Despawned behind replication's back: everything is applied again.)
+                entityReferences[id] = nil
             }
+            applied[id] = [:]
+            fresh.insert(id)
+        }
+        for id in ids {
+            let components = a.state[id]!
+            guard let entity = world.entity(for: id) else { continue }
+            let first = fresh.contains(id)
             let predicted = predictedEntities.contains(id)
             var previous = applied[id] ?? [:]
-            for (name, bytes) in components where name != Transform.componentName && previous[name] != bytes {
-                if predicted && !spawned && predictedComponents.contains(name) { continue }
+            for (name, bytes) in components where name != Transform.componentName && name != NetHierarchy.parentKey {
+                if predicted && !first && predictedComponents.contains(name) { continue }
+                // Again when an entity it refers to arrived or was replaced since.
+                let references = entityReferences[id]?[name]
+                let stale = references?.contains { world.entity(for: $0.key) != $0.value } ?? false
+                guard previous[name] != bytes || stale else { continue }
+                let mapping = NetEntityMapping(world: world)
                 do {
-                    let component = try NetComponentCoder.decode(bytes, as: name)
+                    let component = try NetComponentCoder.decode(bytes, as: name, entities: mapping)
                     world.add(component, to: entity)
                     previous[name] = bytes
+                    entityReferences[id, default: [:]][name] = mapping.referenced.isEmpty ? nil : mapping.referenced
                 } catch {
                     EngineLog.warning("can't decode \(name): \(error)", category: "net")
                 }
@@ -827,9 +909,10 @@ public final class NetClient {
             for name in previous.keys where components[name] == nil {
                 if let type = ComponentRegistry.type(named: name) { world.remove(type, from: entity) }
                 previous[name] = nil
+                entityReferences[id]?[name] = nil
             }
             applied[id] = previous
-            if predicted && !spawned && predictedComponents.contains(Transform.componentName) { continue }
+            if predicted && !first && predictedComponents.contains(Transform.componentName) { continue }
             if let bytes = components[Transform.componentName], let from = try? NetComponentCoder.decodeTransform(bytes) {
                 var transform = from
                 // (Unchanged: exactly the snapshot's value; slerp would renormalize it.)
@@ -839,10 +922,58 @@ public final class NetClient {
                 world.add(transform, to: entity)
             }
         }
-        for id in applied.keys.sorted() where a.state[id] == nil {
-            if let entity = world.entity(for: id) { world.despawn(entity) }
-            applied[id] = nil
+        if hierarchyTick != a.tick || !fresh.isEmpty || !unresolvedParents.isEmpty {
+            hierarchyTick = a.tick
+            applyHierarchy(a.state, ids: ids)
         }
+        for id in applied.keys.sorted() where a.state[id] == nil {
+            if let entity = world.entity(for: id) {
+                // Replicated children still in the state stay (they were moved, or will be).
+                for child in world.children(of: entity) where world.id(of: child).map({ a.state[$0] != nil }) == true {
+                    world.setParent(child, to: nil)
+                }
+                world.despawn(entity)
+            }
+            applied[id] = nil
+            entityReferences[id] = nil
+            unresolvedParents.remove(id)
+        }
+        if a.complete && !matchedScene {
+            matchedScene = true
+            removeUnmatched(a.state)
+        }
+    }
+
+    /// Gives every entity in `state` the parent the server gave it: after every entity of the
+    /// state exists, so the order entities are listed in doesn't matter. A parent the client
+    /// doesn't have (yet) leaves the entity a root until it arrives.
+    private func applyHierarchy(_ state: NetWorldState, ids: [EntityID]) {
+        var moves: [(child: Entity, parent: Entity?)] = []
+        for id in ids {
+            guard let entity = world.entity(for: id) else { continue }
+            let wanted = state[id]?[NetHierarchy.parentKey].flatMap(NetHierarchy.decode)
+            let parent = wanted.flatMap { world.entity(for: $0) }
+            if wanted != nil && parent == nil { unresolvedParents.insert(id) } else { unresolvedParents.remove(id) }
+            if world.parent(of: entity) != parent { moves.append((entity, parent)) }
+        }
+        // A move refused because it would make a cycle (two entities swapped places) succeeds
+        // once the other one moved; the final arrangement is the server's, so it has none.
+        while !moves.isEmpty {
+            let before = moves.count
+            moves.removeAll { world.setParent($0.child, to: $0.parent) }
+            if moves.count == before { break }
+        }
+    }
+
+    /// Replicated entities the client has (its copy of the scene) that the server's complete
+    /// state doesn't: the server removed them before this client joined.
+    private func removeUnmatched(_ state: NetWorldState) {
+        guard despawnsUnmatchedEntities else { return }
+        var doomed: [Entity] = []
+        world.query(Replicated.self) { entity, _ in
+            if let id = world.id(of: entity), state[id] == nil, !predictedEntities.contains(id) { doomed.append(entity) }
+        }
+        for entity in doomed { world.despawn(entity) }
     }
 }
 

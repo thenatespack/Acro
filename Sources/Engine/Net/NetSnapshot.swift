@@ -259,8 +259,8 @@ public protocol NetCustomEncoding {
 /// Encodes replicated components to bytes and back. Transform, which changes every tick for
 /// anything moving, has its own encoding (quantized or exact, see `NetTransformEncoding`);
 /// types conforming to `NetCustomEncoding` theirs; other components use their Codable
-/// conformance through `NetBinaryEncoder`. Components holding `Entity` handles don't replicate
-/// meaningfully (handles are per world): refer to `EntityID`s.
+/// conformance through `NetBinaryEncoder`. `Entity` handles inside them are sent as `EntityID`s
+/// and become the client's handles (see NetEntityMapping.swift); `EntityRef`s are ids already.
 public enum NetComponentCoder {
     /// Position quantization step (metres) of `.quantized` Transforms.
     public static let positionStep: Float = 1.0 / 1024
@@ -268,19 +268,32 @@ public enum NetComponentCoder {
     static let quantizedRange: Float = 1_048_576
 
     public static func encode(_ component: any Component, transform encoding: NetTransformEncoding = .quantized) throws -> [UInt8] {
+        try encode(component, transform: encoding, entities: nil)
+    }
+
+    /// With `entities`, `Entity` handles are written as their targets' ids.
+    static func encode(_ component: any Component, transform encoding: NetTransformEncoding, entities: NetEntityMapping?) throws -> [UInt8] {
         if let transform = component as? Transform { return encodeTransform(transform, encoding) }
         if let custom = component as? any NetCustomEncoding { return custom.netEncoded() }
-        return try NetBinaryEncoder().encode(component)
+        var encoder = NetBinaryEncoder()
+        if let entities { encoder.userInfo[.netEntities] = entities }
+        return try encoder.encode(component)
     }
 
     @MainActor
     public static func decode(_ bytes: [UInt8], as name: String) throws -> any Component {
+        try decode(bytes, as: name, entities: nil)
+    }
+
+    /// With `entities`, ids written for `Entity` handles become that world's handles.
+    @MainActor
+    static func decode(_ bytes: [UInt8], as name: String, entities: NetEntityMapping?) throws -> any Component {
         if name == Transform.componentName { return try decodeTransform(bytes) }
         guard let type = ComponentRegistry.type(named: name) else { throw NetError.unknownComponent(name) }
         if let custom = type as? any NetCustomEncoding.Type, let component = try custom.netDecoded(bytes) as? any Component {
             return component
         }
-        return try decode(type, bytes)
+        return try decode(type, bytes, entities: entities)
     }
 
     public static func encodeTransform(_ t: Transform, _ encoding: NetTransformEncoding = .quantized) -> [UInt8] {
@@ -326,8 +339,10 @@ public enum NetComponentCoder {
     }
 
     @MainActor
-    private static func decode<C: Component>(_ type: C.Type, _ bytes: [UInt8]) throws -> any Component {
-        try NetBinaryDecoder().decode(type, from: bytes)
+    private static func decode<C: Component>(_ type: C.Type, _ bytes: [UInt8], entities: NetEntityMapping?) throws -> any Component {
+        var decoder = NetBinaryDecoder()
+        if let entities { decoder.userInfo[.netEntities] = entities }
+        return try decoder.decode(type, from: bytes)
     }
 }
 

@@ -637,6 +637,7 @@ public final class EditorApp: Game, EditorHost {
         buildGizmos()
         viewportWidget.texture = target.texture
         viewportWidget.billboards = transformTool.billboards
+        viewportWidget.overlayLines = session.netPlay.map { $0.showsOverlay ? $0.overlayLines() : [] } ?? []
         updateViewportCaption()
         viewportWidget.isPlaying = session.isPlaying
         ui.draw(into: engine.ui)
@@ -744,17 +745,20 @@ public final class EditorApp: Game, EditorHost {
         guard session.isPlaying else { return "Perspective · \(session.tool.title)" }
         let state = session.isPaused ? "Paused · frame \(session.playFrame)" : "Playing"
             + (session.timeScale != 1 ? " · \(Toolbar.timeScaleTitle(session.timeScale))" : "")
-        guard gameViewActive, let camera = RenderPrep.findCamera(in: session.world)?.entity else {
+        let world = session.gameWorld
+        guard gameViewActive, let camera = RenderPrep.findCamera(in: world)?.entity else {
             return "Perspective · \(session.tool.title) · \(state)"
         }
-        return "Game · \(session.displayName(of: camera)) · \(state)"
+        let source = session.netPlay.map { $0.viewedClient.map { "Client \($0) · " } ?? "Server · " } ?? ""
+        let name = world === session.world ? session.displayName(of: camera) : world.get(Name.self, for: camera)?.value ?? "Camera"
+        return "Game · \(source)\(name) · \(state)"
     }
 
     /// The scene's game camera view at the viewport's aspect, when the viewport should show it.
     private func gameView(aspect: Float) -> SceneView? {
-        guard session.isPlaying, session.showsGameCamera,
-              let camera = RenderPrep.findCamera(in: session.world)?.entity else { return nil }
-        return SceneView(camera: camera, in: session.world, aspect: aspect)
+        let world = session.gameWorld
+        guard session.isPlaying, session.showsGameCamera, let camera = RenderPrep.findCamera(in: world)?.entity else { return nil }
+        return SceneView(camera: camera, in: world, aspect: aspect)
     }
 
     /// Game view: the keyboard (unless the UI is typing) and the mouse over the viewport go to
@@ -939,7 +943,7 @@ public final class EditorApp: Game, EditorHost {
         thumbnails?.render(frame: frame)
         renderCaptures(frame: frame)
         guard let view = currentView, sizer.width > 0 else { return }
-        sceneRenderer.beginViews(world: session.world, frame: frame, shadowFocus: view)
+        sceneRenderer.beginViews(world: gameViewActive ? session.gameWorld : session.world, frame: frame, shadowFocus: view)
         let world = session.world
         guard !gameViewActive else {
             sceneRenderer.renderView(view, into: target, frame: frame, debugDraw: gizmos)
@@ -1174,7 +1178,8 @@ extension EditorApp {
     }
 
     private func renderCapture(_ view: SceneView, into shot: RenderTarget, request: ScreenshotRequest, frame: Frame) {
-        let world = session.world
+        // The Game View's world (a network play client's) for the game and the viewport showing it.
+        let world = request.source == .game || (request.view == nil && gameViewActive) ? session.gameWorld : session.world
         sceneRenderer.beginViews(world: world, frame: frame, shadowFocus: view)
         // The viewport's own view gets the tools' overlays too (they are sized for it).
         let isViewport = request.view == nil
@@ -1252,6 +1257,8 @@ final class ViewportWidget: Widget {
     var billboards: ViewportBillboards?
     /// How an entity is selected, for its billboard.
     var selectionState: (Entity) -> ViewportBillboards.SelectionState = { _ in .none }
+    /// The network stats overlay's lines (EditorNetPlay.swift), top right; empty: none.
+    var overlayLines: [String] = [] { didSet { if overlayLines != oldValue { setNeedsDisplay() } } }
 
     init() {
         super.init(name: "viewport")
@@ -1276,6 +1283,9 @@ final class ViewportWidget: Widget {
             // Dark in every theme (it sits on the scene), with light text.
             list.fillRect(badge, color: UIColor(0, 0, 0, 0.6), radii: UICornerRadii(4))
             list.drawText(layout, font: theme.font, at: Vec2(snap(badge.x + 8), snap(badge.y + 4)), color: UIColor(hex: 0xf2f4f8))
+        }
+        if !overlayLines.isEmpty {
+            list.withClip(frame) { EditorNetPlay.drawOverlay(overlayLines, in: frame, list: list, theme: theme, context: context) }
         }
         if isPlaying {
             list.strokeRect(frame, color: UIColor(hex: 0x3fbf6f), width: 2)
@@ -1303,6 +1313,8 @@ final class Toolbar {
     private let pauseButton: Button
     private let stepButton: Button
     private let gameViewButton: Button
+    /// Opens the Network menu (EditorNetPlay.swift): play with clients, the Game View's world, conditions, the overlay.
+    private let netButton: Button
     /// Reload Game Code; shown when the editor has game code (`--game`, Project.json).
     private let reloadGameButton: Button
     /// Build Game; shown when a project is open.
@@ -1327,6 +1339,7 @@ final class Toolbar {
         pauseButton = Button("Pause", name: "pause") { session.run(PlayPauseCommand.self, .init()) }
         stepButton = Button("Step", name: "step") { session.run(PlayStepCommand.self, .init()) }
         gameViewButton = Button("Game", name: "gameView") { session.run(ViewGameCameraCommand.self, .init()) }
+        netButton = Button("Network", name: "network")
         reloadGameButton = Button("Reload Game", name: "reloadGame") { _ = try? session.commands.start(GameReloadCommand.self, .init()) }
         buildGameButton = Button("Build Game", name: "buildGame") { _ = try? session.commands.start(GameBuildCommand.self, .init()) }
         timeScale = Dropdown(options: Self.timeScales.map(Self.timeScaleTitle), selectedIndex: Self.timeScales.firstIndex(of: 1) ?? 0,
@@ -1335,6 +1348,7 @@ final class Toolbar {
         }
         timeScale.tooltip = "Play speed (time scale)"
         gameViewButton.tooltip = "Show the scene's camera in the viewport while playing, and send it the keyboard and mouse"
+        netButton.tooltip = "Play with network clients in this editor, pick the world the Game View shows, simulate latency and loss"
         toolButtons = EditorTool.allCases.map { tool in
             (tool, Button(tool.title, name: tool.rawValue) { session.run(ToolSetCommand.self, .init(tool: tool)) })
         }
@@ -1369,7 +1383,7 @@ final class Toolbar {
         let icons: [(Button, String)] = [
             (newButton, "file-plus"), (openButton, "folder-open"), (saveButton, "save"), (saveAsButton, "save-all"),
             (undoButton, "undo-2"), (redoButton, "redo-2"), (playButton, "play"), (pauseButton, "pause"),
-            (stepButton, "step-forward"), (gameViewButton, "gamepad-2"), (reloadGameButton, "refresh-cw"),
+            (stepButton, "step-forward"), (gameViewButton, "gamepad-2"), (netButton, "network"), (reloadGameButton, "refresh-cw"),
             (buildGameButton, "hammer"), (snapButton, "magnet"), (openProjectButton, "folder-input"),
             (newProjectButton, "folder-plus"), (viewButton, "appearance"),
         ] + toolButtons.map { ($0.1, EditorIcons.tool($0.0).name) }
@@ -1383,6 +1397,7 @@ final class Toolbar {
         let tagged: [(Widget, CommandID)] = commandButtons.map { ($0.1, $0.0) } + [
             (undoButton, EditUndoCommand.id), (redoButton, EditRedoCommand.id), (playButton, PlayToggleCommand.id),
             (pauseButton, PlayPauseCommand.id), (stepButton, PlayStepCommand.id), (gameViewButton, ViewGameCameraCommand.id),
+            (netButton, NetStartCommand.id),
             (reloadGameButton, GameReloadCommand.id), (buildGameButton, GameBuildCommand.id),
             (timeScale, PlaySetTimeScaleCommand.id), (path, SceneOpenCommand.id), (projectPath, ProjectOpenCommand.id),
             (openProjectButton, ProjectOpenCommand.id), (newProjectButton, ProjectNewCommand.id),
@@ -1396,7 +1411,7 @@ final class Toolbar {
         // first; the scene and project actions people reach for (Play, the tools, Build / Reload
         // Game, View) go last.
         view.overflowOrder = [newProjectButton, openProjectButton, saveAsButton, newButton, openButton, snapButton,
-                              stepButton, redoButton, gameViewButton, pauseButton, undoButton, saveButton]
+                              stepButton, redoButton, netButton, gameViewButton, pauseButton, undoButton, saveButton]
             + toolButtons.map(\.1).reversed() + [reloadGameButton, buildGameButton, playButton]
         view.background = (app.ui?.theme ?? UITheme()).panelBackground
         // Vertical rules between the groups (a bare Separator measures 0 points tall in a row).
@@ -1417,7 +1432,7 @@ final class Toolbar {
             separator(),
             undoButton, redoButton,
             separator(),
-            playButton, pauseButton, stepButton, timeScale, gameViewButton, reloadGameButton,
+            playButton, pauseButton, stepButton, timeScale, gameViewButton, netButton, reloadGameButton,
             separator(),
         ] + toolButtons.map(\.1) + [
             snapButton,
@@ -1429,6 +1444,7 @@ final class Toolbar {
         ])
         self.viewButton = viewButton
         viewButton.action = { [unowned self] in showViewMenu() }
+        netButton.action = { [unowned self, unowned app] in EditorNetMenu.show(anchor: netButton, session: app.session) }
         refresh()
     }
 
@@ -1480,6 +1496,8 @@ final class Toolbar {
         stepButton.tooltip = shortcuts.tooltip("Pause and run one frame", for: .step)
         let gameRole: Button.Role = session.showsGameCamera ? .primary : .normal
         if gameViewButton.role != gameRole { gameViewButton.role = gameRole }
+        let netRole: Button.Role = session.netPlay != nil ? .primary : .normal
+        if netButton.role != netRole { netButton.role = netRole }
         if let index = Self.timeScales.firstIndex(of: session.timeScale), timeScale.selectedIndex != index { timeScale.select(index) }
         let game = session.gameModule
         view.setAvailable(reloadGameButton, game.isConfigured)

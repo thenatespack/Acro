@@ -5,10 +5,14 @@ import Foundation
 // `swift run GameRunner SampleGame [scene.json]` builds the SampleGame target, links it into a
 // module (GameModuleBuilder) and runs it; a path to a .dylib / .so loads that instead. A
 // module with a `Game` (`makeGame`) runs it; otherwise the scene file is loaded and drawn by a
-// SceneRenderer with the module's systems running.
+// SceneRenderer with the module's systems running. `--server` runs it headless as a UDP server
+// and `--connect host:port` as a client of one (NetRun.swift).
 
 let usage = """
     Usage: GameRunner <target | module.dylib> [scene.json] [--package <folder>] [--no-build] [--backend metal|vulkan]
+           GameRunner <target | module.dylib> [scene.json] --server [--port 7777] [--host 0.0.0.0]
+           GameRunner <target | module.dylib> [scene.json] --connect <host:port> [--headless]
+      Networked runs: [--duration <seconds>] [--replicate auto|all|marked]
     """
 
 func fail(_ message: String) -> Never {
@@ -20,7 +24,18 @@ var config = EngineConfig(title: "Game", width: 1280, height: 720)
 var positional: [String] = []
 var packagePath: String?
 var build = true
+var server = false
+var connect: (host: String, port: UInt16)?
+var port: UInt16 = 7777
+var host = "0.0.0.0"
+var headless = false
+var duration: Double?
+var replication = "auto"
 var arguments = Array(CommandLine.arguments.dropFirst())
+@MainActor func value(_ option: String) -> String {
+    guard !arguments.isEmpty else { fail("\(option) needs a value") }
+    return arguments.removeFirst()
+}
 while !arguments.isEmpty {
     let argument = arguments.removeFirst()
     switch argument {
@@ -33,6 +48,27 @@ while !arguments.isEmpty {
         guard let name = arguments.first, let backend = GraphicsBackend(rawValue: name) else { fail("--backend needs metal or vulkan") }
         arguments.removeFirst()
         config.backend = backend
+    case "--server":
+        server = true
+    case "--port":
+        guard let number = UInt16(value("--port")) else { fail("--port needs a port number") }
+        port = number
+    case "--host":
+        host = value("--host")
+    case "--connect":
+        let address = value("--connect")
+        guard let colon = address.lastIndex(of: ":"), let number = UInt16(address[address.index(after: colon)...]) else {
+            fail("--connect needs host:port")
+        }
+        connect = (String(address[..<colon]), number)
+    case "--headless":
+        headless = true
+    case "--duration":
+        guard let seconds = Double(value("--duration")), seconds > 0 else { fail("--duration needs seconds") }
+        duration = seconds
+    case "--replicate":
+        replication = value("--replicate")
+        guard ["auto", "all", "marked"].contains(replication) else { fail("--replicate is auto, all or marked") }
     case "--help", "-h":
         print(usage)
         exit(0)
@@ -43,6 +79,8 @@ while !arguments.isEmpty {
 }
 guard let moduleArgument = positional.first else { fail(usage) }
 let scenePath = positional.dropFirst().first
+if server && connect != nil { fail("--server and --connect exclude each other") }
+if headless && connect == nil { fail("--headless goes with --connect (--server is always headless)") }
 
 /// Loads the module: builds and links a target, or loads a library file.
 @MainActor func loadModule() throws -> LoadedGameModule {
@@ -97,6 +135,33 @@ MainActor.assumeIsolated {
         // Scenes name components by their registered names.
         for component in module.components { ComponentRegistry.register(component.type) }
         print("Loaded \(module.name): \(module.componentNames.joined(separator: ", "))")
+        let sceneURL = scenePath.map { URL(fileURLWithPath: $0) }
+        if server || connect != nil {
+            #if canImport(Darwin) || canImport(Glibc)
+            var options = NetRunOptions(role: connect.map { .client(host: $0.host, port: $0.port) } ?? .server)
+            options.port = port
+            options.host = host
+            options.headless = headless
+            options.duration = duration
+            options.replication = NetRunOptions.Replication(rawValue: replication) ?? .auto
+            if server {
+                try NetRun.runServer(module: module, sceneURL: sceneURL, options: options)
+                exit(0)
+            }
+            if let connect, headless {
+                try NetRun.runHeadlessClient(module: module, sceneURL: sceneURL, host: connect.host, port: connect.port, options: options)
+                exit(0)
+            }
+            if let connect {
+                config.title = "\(module.name) (client of \(connect.host):\(connect.port))"
+                let engine = try Engine(config: config)
+                try engine.run(NetClientGame(module: module, sceneURL: sceneURL, host: connect.host, port: connect.port, options: options))
+                exit(0)
+            }
+            #else
+            fail("Networked runs need UDP sockets (macOS or Linux)")
+            #endif
+        }
         let game: any Game
         if let scenePath {
             game = SceneHost(module: module, sceneURL: URL(fileURLWithPath: scenePath))

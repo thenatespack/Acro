@@ -419,7 +419,8 @@ extension Entity: Codable {
         init?(intValue: Int) { nil }
     }
 
-    /// In a scene file, `{"$entity": id}` or `null` (see World+Serialization.swift);
+    /// In a scene file, `{"$entity": id}` or `null` (see World+Serialization.swift); in a
+    /// replicated component `{"$entity": "<EntityID>"}` or `null` (see NetEntityMapping.swift);
     /// elsewhere `{"$entity": [index, generation]}`.
     public init(from decoder: any Decoder) throws {
         if try decoder.singleValueContainer().decodeNil() {
@@ -427,7 +428,13 @@ extension Entity: Codable {
             return
         }
         let container = try decoder.container(keyedBy: Key.self)
-        if let context = decoder.userInfo[.sceneDecoding] as? SceneDecodingContext {
+        if let mapping = decoder.userInfo[.netEntities] as? NetEntityMapping {
+            let text = try container.decode(String.self, forKey: Key())
+            guard let id = EntityID(text) else {
+                throw DecodingError.dataCorruptedError(forKey: Key(), in: container, debugDescription: "Bad entity id '\(text)'")
+            }
+            self = mapping.entity(for: id)
+        } else if let context = decoder.userInfo[.sceneDecoding] as? SceneDecodingContext {
             let id = try container.decode(Int.self, forKey: Key())
             guard id >= 0 && id < Int(Int32.max) else {
                 throw DecodingError.dataCorruptedError(forKey: Key(), in: container, debugDescription: "Bad entity id \(id)")
@@ -441,7 +448,15 @@ extension Entity: Codable {
     }
 
     public func encode(to encoder: any Encoder) throws {
-        if let context = encoder.userInfo[.sceneEncoding] as? SceneEncodingContext {
+        if let mapping = encoder.userInfo[.netEntities] as? NetEntityMapping {
+            guard let id = mapping.id(of: self) else {
+                var container = encoder.singleValueContainer()
+                try container.encodeNil()
+                return
+            }
+            var container = encoder.container(keyedBy: Key.self)
+            try container.encode(id.description, forKey: Key())
+        } else if let context = encoder.userInfo[.sceneEncoding] as? SceneEncodingContext {
             guard let id = context.ids[self] else {
                 var container = encoder.singleValueContainer()
                 try container.encodeNil()

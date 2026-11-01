@@ -435,6 +435,8 @@ public final class EditorGameModule {
     /// Removes `module`'s systems and moves its components into JSON everywhere; unregisters
     /// its types. On failure (a component that doesn't encode) nothing changes.
     private func detach(_ module: LoadedGameModule) throws {
+        // Client worlds hold the module's types too: network play ends first.
+        session.endNetPlay(reason: "game code reloaded")
         let names = Set(registeredNames)
         // Encode everything before changing anything.
         let world = session.world

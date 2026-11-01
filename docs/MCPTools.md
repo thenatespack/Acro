@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Editor › AI control). 100 tools.
+named by its id (see README › Editor › AI control). 106 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -24,6 +24,7 @@ optional arguments.
 | `layout` | [`layout.reset`](#layoutreset) |
 | `log` | [`log.clear`](#logclear), [`log.read`](#logread) |
 | `material` | [`material.get`](#materialget), [`material.set`](#materialset) |
+| `net` | [`net.overlay`](#netoverlay), [`net.setConditions`](#netsetconditions), [`net.start`](#netstart), [`net.stats`](#netstats), [`net.stop`](#netstop), [`net.view`](#netview) |
 | `panel` | [`panel.close`](#panelclose), [`panel.dock`](#paneldock), [`panel.focus`](#panelfocus), [`panel.list`](#panellist), [`panel.open`](#panelopen) |
 | `play` | [`play.pause`](#playpause), [`play.setTimeScale`](#playsettimescale), [`play.start`](#playstart), [`play.state`](#playstate), [`play.step`](#playstep), [`play.stop`](#playstop), [`play.toggle`](#playtoggle) |
 | `prefab` | [`prefab.apply`](#prefabapply), [`prefab.create`](#prefabcreate), [`prefab.createVariant`](#prefabcreatevariant), [`prefab.overrides`](#prefaboverrides), [`prefab.revert`](#prefabrevert), [`prefab.unpack`](#prefabunpack) |
@@ -817,6 +818,121 @@ Arguments:
 - `previous?`: {addressMode?: "repeat" \| "clampToEdge" \| "mirrorRepeat", alphaCutoff?: number, alphaMode?: "opaque" \| "mask" \| "blend", baseColor?: number[4], checker?: boolean, doubleSided?: boolean, emissive?: number, emissiveColor?: number[3], emissiveStrength?: number, emissiveTexture?: asset id, filter?: "linear" \| "nearest", metallic?: number, metallicRoughnessTexture?: asset id, mipFilter?: "linear" \| "nearest" \| "none", normalScale?: number, normalTexture?: asset id, occlusionStrength?: number, occlusionTexture?: asset id, roughness?: number, shading?: "pbr" \| "blinnPhong", shininess?: number, specular?: number, texture?: asset id, uvOffset?: number[2], uvRotation?: number, uvScale?: number[2]}
 - `reset?`: boolean
 - `transient?`: boolean
+
+## net
+
+### `net.overlay`
+
+**Network Stats Overlay**
+
+Whether the viewport shows the network stats overlay during network play (RTT, loss, kbit/s, interpolation buffer per client). On by default.
+
+Arguments:
+
+- `enabled?`: boolean
+
+Result:
+
+- `active`: boolean
+- `clients`: [{connected: boolean, down: object, entities: integer, index: integer, up: object}]
+- `overlay`: boolean
+- `replicatesAll`: boolean
+- `view`: string
+
+### `net.setConditions`
+
+**Set Network Conditions** · _idempotent_
+
+Simulated link between the server and `client` (omitted: every client), `direction` "both" (default), "down" (server to client) or "up": `latencyMs` one way (0-5000), `jitterMs` (extra delay, uniform, so packets reorder), `loss` and `duplicate` (fractions 0-1). Omitted fields keep their value. Applies to packets sent from now on. Returns the network play state with every client's conditions.
+
+Arguments:
+
+- `client?`: integer
+- `direction?`: string
+- `duplicate?`: number
+- `jitterMs?`: number
+- `latencyMs?`: number
+- `loss?`: number
+
+Result:
+
+- `active`: boolean
+- `clients`: [{connected: boolean, down: object, entities: integer, index: integer, up: object}]
+- `overlay`: boolean
+- `replicatesAll`: boolean
+- `view`: string
+
+### `net.start`
+
+**Play with Clients**
+
+Plays the scene as a server with `clients` client worlds (1-8, default 2) in this process, on a simulated network (`latencyMs` one way, `jitterMs`, `loss` and `duplicate` fractions; default perfect). Starts play mode if needed; each client loaded the scene as play started, so entities are matched by id, and what the server does reaches them as snapshots (30 Hz, interpolated 100 ms behind). Clients only display: systems, physics and input run on the server. `replicate`: "marked" sends entities with a Replicated component; "all" gives every entity with a Transform one (Transform, MeshRenderer, Name), also ones spawned later; "auto" (default) is "marked" when the scene has Replicated components, else "all". Restarts network play when it runs. Then: net.view, net.setConditions, net.stats; play.stop ends it.
+
+Arguments:
+
+- `clients?`: integer
+- `duplicate?`: number
+- `jitterMs?`: number
+- `latencyMs?`: number
+- `loss?`: number
+- `replicate?`: string
+
+Result:
+
+- `active`: boolean
+- `clients`: [{connected: boolean, down: object, entities: integer, index: integer, up: object}]
+- `overlay`: boolean
+- `replicatesAll`: boolean
+- `view`: string
+
+### `net.stats`
+
+**Network Stats** · _read-only_, _idempotent_
+
+Every connection's numbers during network play: for each client as the server sees it and as the client does, RTT (ms), loss (%), bytes in / out per second (last second) and in total, packets, snapshots, the last snapshot's size and deferred entities (server), the interpolation delay, what is buffered and starved frames (client), its replicated entities and those waiting for their parent; plus the simulated network's totals.
+
+Arguments: none.
+
+Result:
+
+- `clients`: [{bufferedMs?: number, bufferedSnapshots?: integer, bytesIn: integer, bytesInPerSecond: number, bytesOut: integer, bytesOutPerSecond: number, connected: boolean, corrections?: integer, deferredEntities?: integer, entities?: integer, interpolationDelayMs?: number, lastCorrection?: number, lastSnapshotBytes?: integer, lossPercent: number, missingBaseline?: integer, name: string, packetsIn: integer, packetsOut: integer, reconciliations?: integer, rttMs?: number, snapshots: integer, starvedFrames?: integer, unresolvedParents?: integer}]
+- `network`: {bytesSent: integer, packetsDelivered: integer, packetsDropped: integer, packetsSent: integer}
+- `server`: [{bufferedMs?: number, bufferedSnapshots?: integer, bytesIn: integer, bytesInPerSecond: number, bytesOut: integer, bytesOutPerSecond: number, connected: boolean, corrections?: integer, deferredEntities?: integer, entities?: integer, interpolationDelayMs?: number, lastCorrection?: number, lastSnapshotBytes?: integer, lossPercent: number, missingBaseline?: integer, name: string, packetsIn: integer, packetsOut: integer, reconciliations?: integer, rttMs?: number, snapshots: integer, starvedFrames?: integer, unresolvedParents?: integer}]
+- `time`: number
+
+### `net.stop`
+
+**Stop Network Play**
+
+Disconnects the clients and drops their worlds; play mode goes on with the server's world alone (play.stop ends both).
+
+Arguments: none.
+
+Result:
+
+- `active`: boolean
+- `clients`: [{connected: boolean, down: object, entities: integer, index: integer, up: object}]
+- `overlay`: boolean
+- `replicatesAll`: boolean
+- `view`: string
+
+### `net.view`
+
+**Game View Source** · _idempotent_
+
+Which world the Game View (view.gameCamera) and view.screenshot {source: "game"} show during network play: "server" (the scene's world) or a client ("client 2", or "2"), through that world's Camera entity. The scene view (Game View off) always shows the server.
+
+Arguments:
+
+- `target`: string
+
+Result:
+
+- `active`: boolean
+- `clients`: [{connected: boolean, down: object, entities: integer, index: integer, up: object}]
+- `overlay`: boolean
+- `replicatesAll`: boolean
+- `view`: string
 
 ## panel
 
