@@ -263,4 +263,26 @@ import Testing
         let selected = ui.accessibilityElements().filter { $0.role == .menuItem && $0.isSelected }.map(\.label)
         #expect(selected == ["Light", "200%"])
     }
+
+    /// A disabled item is reported disabled, skipped by the keys and can't be chosen.
+    @Test func popupMenuDisabledItemsCantBePicked() {
+        let menu = PopupMenu(items: ["A", "B", "C"])
+        menu.disabledIndices = [1]
+        var chosen: [Int] = []
+        menu.onSelect = { chosen.append($0) }
+        let ui = context(Vec2(300, 300), VStack([]))
+        ui.presentOverlay(menu)
+        ui.layoutIfNeeded()
+        let enabled = ui.accessibilityElements().filter { $0.role == .menuItem }.map(\.isEnabled)
+        #expect(enabled == [true, false, true])
+        menu.moveHighlight(by: 1)
+        menu.moveHighlight(by: 1)
+        #expect(menu.highlightedIndex == 2)
+        menu.moveHighlight(by: -1)
+        #expect(menu.highlightedIndex == 0)
+        menu.choose(1)
+        #expect(chosen.isEmpty && ui.overlays.contains { $0 === menu })
+        menu.choose(2)
+        #expect(chosen == [2])
+    }
 }

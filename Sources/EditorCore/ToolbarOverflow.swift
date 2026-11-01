@@ -22,6 +22,8 @@ final class ToolbarRow: Stack {
         moreButton.icon = EditorIcons.named("overflow")
         moreButton.showsTitle = false
         moreButton.tooltip = "More: the toolbar buttons the window has no room for"
+        // A UI-only affordance: an agent clicks the overflowed entries themselves (ui.click).
+        moreButton.command = UIClickCommand.id.rawValue
         moreButton.isHidden = true
         moreButton.action = { [unowned self] in showOverflowMenu() }
     }
@@ -91,6 +93,7 @@ final class ToolbarRow: Stack {
         let menu = PopupMenu(items: buttons.map(\.title), anchor: moreButton, name: "overflowMenu")
         menu.itemCommandIDs = buttons.map(\.command)
         menu.itemIcons = buttons.map(\.icon)
+        menu.disabledIndices = Set(buttons.indices.filter { !buttons[$0].isEffectivelyEnabled })
         menu.onSelect = { index in
             let button = buttons[index]
             if button.isEffectivelyEnabled { button.action?() }

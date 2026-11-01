@@ -537,6 +537,7 @@ private func database(_ project: Project, counter: CountingImporter.Counter? = n
               "version" : 1
             }
             """
+        ComponentRegistry.register(MeshRenderer.self)   // not built in: scene loading resolves it by name
         let world = World()
         let roots = try world.load(Data(old.utf8))
         let renderer = try #require(world.get(MeshRenderer.self, for: roots[0]))

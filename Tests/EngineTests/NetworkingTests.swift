@@ -13,7 +13,7 @@ import Testing
     }
 
     init() {
-        ComponentRegistry.register(NetworkingTestsHealth.self)
+        ComponentRegistry.register(NetworkingTestsHealth.self, CharacterController.self)
     }
 
     /// A server world with `count` replicated entities (Transform and Health), and a client

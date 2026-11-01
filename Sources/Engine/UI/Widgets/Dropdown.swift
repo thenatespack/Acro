@@ -15,6 +15,16 @@ public final class PopupMenu: Widget {
     /// More items with a check mark (a menu of several choices: a theme and a zoom).
     public var checkedIndices: Set<Int> = [] { didSet { setNeedsDisplay() } }
 
+    /// Items that can't be picked: drawn in the theme's disabled colour, skipped by the keys,
+    /// ignored by the pointer and reported disabled by `ui.snapshot`.
+    public var disabledIndices: Set<Int> = [] {
+        didSet {
+            setNeedsDisplay()
+            if let i = highlightedIndex, disabledIndices.contains(i) { highlightedIndex = nil }
+        }
+    }
+
+    private func isEnabled(_ i: Int) -> Bool { items.indices.contains(i) && !disabledIndices.contains(i) }
     private func isChecked(_ i: Int) -> Bool { i == checkedIndex || checkedIndices.contains(i) }
     /// The widget the menu hangs from (its frame is re-read on every layout, so it follows scrolling).
     public weak var anchor: Widget?
@@ -108,7 +118,7 @@ public final class PopupMenu: Widget {
         return items.enumerated().map { i, item in
             UIAccessibilityItem(key: "item:\(item)", role: .menuItem, label: item,
                                 frame: rowRect(i),
-                                isSelected: isChecked(i),
+                                isSelected: isChecked(i), isEnabled: isEnabled(i),
                                 command: itemCommandIDs.indices.contains(i) ? itemCommandIDs[i] ?? effectiveCommand : effectiveCommand)
         }
     }
@@ -123,7 +133,7 @@ public final class PopupMenu: Widget {
 
     /// Picks `index`: closes the menu and calls `onSelect`.
     public func choose(_ index: Int) {
-        guard items.indices.contains(index) else { return }
+        guard isEnabled(index) else { return }
         let select = onSelect
         context?.dismissOverlay(self)
         select?(index)
@@ -132,14 +142,17 @@ public final class PopupMenu: Widget {
     /// Moves the highlight by `step` (wrapping).
     public func moveHighlight(by step: Int) {
         guard !items.isEmpty else { return }
-        let current = highlightedIndex ?? (step > 0 ? -1 : items.count)
-        highlightedIndex = ((current + step) % items.count + items.count) % items.count
+        var current = highlightedIndex ?? (step > 0 ? -1 : items.count)
+        for _ in 0..<items.count {
+            current = ((current + step) % items.count + items.count) % items.count
+            if isEnabled(current) { highlightedIndex = current; return }
+        }
     }
 
     public override func handleEvent(_ event: UIEvent) -> Bool {
         switch event {
         case .pointerMove(let e), .pointerDrag(let e):
-            if let index = item(at: e.position) { highlightedIndex = index }
+            highlightedIndex = item(at: e.position).flatMap { isEnabled($0) ? $0 : nil }
             return true
         case .pointerDown:
             return true
@@ -154,8 +167,8 @@ public final class PopupMenu: Widget {
             switch e.key {
             case .up: moveHighlight(by: -1)
             case .down: moveHighlight(by: 1)
-            case .home: highlightedIndex = items.isEmpty ? nil : 0
-            case .end: highlightedIndex = items.isEmpty ? nil : items.count - 1
+            case .home: highlightedIndex = items.indices.first(where: isEnabled)
+            case .end: highlightedIndex = items.indices.last(where: isEnabled)
             case .enter, .space: if let index = highlightedIndex { choose(index) }
             case .escape: context?.dismissOverlay(self)
             default: return false
@@ -182,11 +195,13 @@ public final class PopupMenu: Widget {
         for (i, item) in items.enumerated() {
             let row = rowRect(i)
             guard row.maxY > content.y, row.y < content.maxY else { continue }
-            let highlighted = i == highlightedIndex
+            let enabled = isEnabled(i)
+            let highlighted = enabled && i == highlightedIndex
+            let plain = enabled ? theme.textColor : theme.disabledTextColor
             if highlighted { list.fillRect(row, color: theme.accent, radii: UICornerRadii(theme.cornerRadius - 1)) }
             if isChecked(i) {
                 let c = Vec2(row.x + 9, row.center.y)
-                let color = highlighted ? theme.accentText : theme.textColor
+                let color = highlighted ? theme.accentText : plain
                 list.drawLine(from: c + Vec2(-3.5, 0), to: c + Vec2(-1, 2.5), width: theme.iconStrokeWidth, color: color, cap: .round)
                 list.drawLine(from: c + Vec2(-1, 2.5), to: c + Vec2(4, -3), width: theme.iconStrokeWidth, color: color, cap: .round)
             }
@@ -194,11 +209,11 @@ public final class PopupMenu: Widget {
             if column > 0, itemIcons.indices.contains(i), let icon = itemIcons[i] {
                 let edge = theme.iconSize
                 list.drawIcon(icon, in: UIRect(x: row.x + 18, y: row.center.y - edge / 2, width: edge, height: edge),
-                              color: highlighted ? theme.accentText : theme.secondaryTextColor)
+                              color: highlighted ? theme.accentText : enabled ? theme.secondaryTextColor : theme.disabledTextColor)
             }
             let layout = cachedLayout(item, size: theme.fontSize)
             let textRect = UIRect(x: row.x + 18 + column, y: row.y, width: row.width - 18 - column, height: row.height)
-            drawLine(layout, font: theme.font, in: textRect, color: highlighted ? theme.accentText : theme.textColor, list: list)
+            drawLine(layout, font: theme.font, in: textRect, color: highlighted ? theme.accentText : plain, list: list)
         }
     }
 }

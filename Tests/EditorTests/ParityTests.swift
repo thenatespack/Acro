@@ -103,6 +103,31 @@ private func temporaryDirectory() -> URL {
         #expect(seen.count > 60, "only \(seen.count) interactive elements were seen")
     }
 
+    /// At 1440 wide the toolbar's More (») button is hidden, so its entries aren't walked above:
+    /// at a narrow window every More-menu entry must run a registered MCP command too.
+    @Test func everyMoreMenuEntryRunsACommandThatIsATool() throws {
+        let app = EditorApp(options: EditorOptions(deterministic: true))
+        app.setupWithoutWindow()
+        let session = app.session
+        let ui = app.ui!
+        let project = temporaryDirectory().appendingPathComponent("Game")
+        try session.commands.run(ProjectNewCommand.self, .init(path: project.path))
+        app.resizeWithoutWindow(size: Vec2(800, 600))
+        app.syncPanels()
+        let tools = toolNames(session)
+        let row = app.toolbar.view
+        #expect(!row.overflowed.isEmpty, "800 wide should overflow some toolbar buttons")
+        let menu = try #require(row.showOverflowMenu())
+        #expect(menu.items.count == row.overflowed.count)
+        #expect(menu.itemCommandIDs.count == menu.items.count)
+        for (title, command) in zip(menu.items, menu.itemCommandIDs) {
+            let id = try #require(command, "More-menu entry '\(title)' has no command")
+            #expect(tools.contains(id), "More-menu entry '\(title)': '\(id)' isn't an MCP tool")
+        }
+        let issues = problems(ui.accessibilityElements(), tools: tools)
+        #expect(issues.isEmpty, "the narrow window: \(issues.joined(separator: "; "))")
+    }
+
     @Test func uiWithoutACommandIsCaught() {
         let app = EditorApp(options: EditorOptions(deterministic: true))
         app.setupWithoutWindow()
