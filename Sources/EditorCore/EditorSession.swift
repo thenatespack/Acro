@@ -166,6 +166,8 @@ public final class EditorSession {
     public private(set) var physics2D: PhysicsWorld2D?
     /// Tweens for the play session, updated after the world each game frame.
     public private(set) var tweens: TweenSystem?
+    /// Network play: this world as a server plus client worlds (`net.start`, EditorNetPlay.swift).
+    public internal(set) var netPlay: EditorNetPlay?
 
     public var world: World { document.world }
     public var undo: UndoStack { document.undo }
@@ -426,6 +428,7 @@ public final class EditorSession {
     public func stop() {
         guard isPlaying, let snapshot = playSnapshot else { return }
         onWillReplaceWorld?()
+        endNetPlay(reason: nil)
         removePlaySystems()
         world.restore(snapshot)
         world.propagateTransforms()
@@ -500,6 +503,7 @@ public final class EditorSession {
         inputPlayer.apply(to: gameInput)
         gameInput.endEvents()
         world.update(dt: dt)
+        netPlay?.advance(dt: dt)
         tweens?.update(dt: Float(dt))
         inputPlayer.advance(by: dt)
         playFrame += 1

@@ -124,6 +124,8 @@ extension EditorSession {
             }
             return ResolvedView(view: viewport.view, width: viewport.width, height: viewport.height)
         case .game:
+            // During network play, the world the Game View shows (net.view).
+            let world = gameWorld
             let entity: Entity
             if let id = spec.camera {
                 entity = try world.require(id)

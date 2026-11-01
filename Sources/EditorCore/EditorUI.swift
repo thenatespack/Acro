@@ -60,7 +60,7 @@ extension EditorApp {
     /// Feeds `frames` to the viewport (`ViewportController.update`, its tools and camera) as
     /// real input would arrive, one frame each. Refused while the viewport shows the game.
     public func viewportPointer(_ frames: [ViewportFrame], modifiers: KeyModifiers) throws {
-        if session.isPlaying, session.showsGameCamera, RenderPrep.findCamera(in: session.world) != nil {
+        if session.isPlaying, session.showsGameCamera, RenderPrep.findCamera(in: session.gameWorld) != nil {
             throw CommandError.failed("The viewport shows the game while playing (Game View): use input.inject, or view.gameCamera {enabled: false}")
         }
         viewport.rect = viewportWidget.frame
