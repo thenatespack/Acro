@@ -23,7 +23,21 @@ public struct NetSnapshot: Equatable, Sendable {
     /// Entities that are new or changed, with only their changed components (all of them for
     /// new entities). A component name mapped to nil was removed.
     public var changed: [EntityID: [String: [UInt8]?]]
+    /// Entities that went away: ids in the baseline, or (rarely) ones the client may have from a
+    /// snapshot that wasn't acknowledged yet (sent with their full id).
     public var removed: [EntityID]
+    /// Acknowledged snapshots (older than `baselineTick`) whose entities are merged into the
+    /// baseline, each entity taking its newest value (see `NetVersionedState`): what the client
+    /// acknowledged besides the baseline. Empty unless a byte budget defers changes.
+    public var mergedTicks: [UInt32] = []
+    /// The state after this snapshot has every entity the server replicates (values may lag
+    /// under a budget, never the set of entities).
+    public var complete = true
+    /// When not `complete`: the positions among the state's sorted ids (0: before the first)
+    /// where the server has entities the state lacks yet; nil when unknown (too many). A client
+    /// can remove an entity of its own that the server doesn't have once its position is not
+    /// one of these (see `NetClient.despawnsUnmatchedEntities`).
+    public var pendingGaps: [Int]?
 
     /// The delta that turns `baseline` (nil: an empty world) into `state`.
     public init(tick: UInt32, serverTime: Double, state: NetWorldState, baseline: NetWorldState?, baselineTick: UInt32?) {
@@ -47,14 +61,6 @@ public struct NetSnapshot: Equatable, Sendable {
         removed = base.keys.filter { state[$0] == nil }.sorted()
     }
 
-    init(tick: UInt32, baselineTick: UInt32?, serverTime: Double, changed: [EntityID: [String: [UInt8]?]], removed: [EntityID]) {
-        self.tick = tick
-        self.baselineTick = baselineTick
-        self.serverTime = serverTime
-        self.changed = changed
-        self.removed = removed
-    }
-
     /// `baseline` with this delta applied: the full state at `tick`.
     public func applied(to baseline: NetWorldState?) -> NetWorldState {
         var state = baseline ?? [:]
@@ -68,11 +74,13 @@ public struct NetSnapshot: Equatable, Sendable {
     }
 
 
-    // MARK: Wire format
+    // MARK: Wire format (packet version 3, card 672)
     //
-    // tick u32, baseline u32 (0xFFFFFFFF: none), serverTime f64, name table (count, strings),
-    // changed entities (count; reference, component count; components), removed entities
-    // (count, index gaps).
+    // tick u32, the baseline as tick - baseline (varint, 0: none), serverTime f64, a sections
+    // byte (bit 0 merged ticks, 1 removed ids, 2 incomplete with gaps, 3 incomplete without),
+    // [merged ticks: count, tick - merged each], name table (count, strings), changed entities
+    // (count; reference, component count; components), removed entities (count, index gaps),
+    // [removed ids: count, ids], [gaps: count, differences].
     //
     // A reference is 0 followed by the 16-byte id for an entity the baseline doesn't have, or
     // the gap to the entity's index among the baseline's ids in sorted order (both sides have
@@ -81,21 +89,36 @@ public struct NetSnapshot: Equatable, Sendable {
     // (0 removed; 1 bytes; 2 a Transform delta against the baseline's, see
     // `NetComponentCoder.transformDelta`), then for kinds 1 and 2 a length and the bytes.
     // Counts and lengths are LEB128 varints; numbers little-endian. Entities are sorted by id
-    // so encoding is deterministic.
+    // so encoding is deterministic. The baseline given to the coder is the state at
+    // `baselineTick` with `mergedTicks` merged in (server and client build the same one).
+
+    /// Gaps a snapshot lists at most (more: incomplete, without them).
+    static let maxPendingGaps = 64
 
     /// The wire bytes. A delta refers to entities by their index in `baseline`, which must be
-    /// the state at `baselineTick` (the decoder passes the same one).
+    /// the state at `baselineTick` with `mergedTicks` merged (the decoder passes the same one).
     public func encoded(baseline: NetWorldState? = nil) -> [UInt8] {
         var w = ByteWriter()
         w.u32(tick)
-        w.u32(baselineTick ?? .max)
+        w.varint(baselineTick.map { Int(tick &- $0) } ?? 0)
         w.f64(serverTime)
+        let base = baselineTick == nil ? nil : baseline
+        let baseIndex = Self.indexTable(base)
+        let removedIndices = removed.compactMap { baseIndex[$0] }.sorted()
+        let removedIDs = removed.filter { baseIndex[$0] == nil }.sorted()
+        let gaps = complete ? nil : pendingGaps.map { Array(Set($0)).sorted() }.flatMap { $0.count <= Self.maxPendingGaps ? $0 : nil }
+        var sections: UInt8 = mergedTicks.isEmpty ? 0 : 1
+        if !removedIDs.isEmpty { sections |= 2 }
+        if !complete { sections |= gaps == nil ? 8 : 4 }
+        w.u8(sections)
+        if !mergedTicks.isEmpty {
+            w.varint(mergedTicks.count)
+            for t in mergedTicks { w.varint(Int(tick &- t)) }
+        }
         let names = Array(Set(changed.values.flatMap(\.keys))).sorted()
         let nameIndex = Dictionary(uniqueKeysWithValues: names.enumerated().map { ($1, $0) })
         w.varint(names.count)
         for name in names { w.string(name) }
-        let base = baselineTick == nil ? nil : baseline
-        let baseIndex = Self.indexTable(base)
         w.varint(changed.count)
         var previous = -1
         for id in changed.keys.sorted() {
@@ -126,33 +149,67 @@ public struct NetSnapshot: Equatable, Sendable {
                 }
             }
         }
-        // Removed ids come from the baseline, so they always have an index.
-        let removedIndices = removed.compactMap { baseIndex[$0] }.sorted()
         w.varint(removedIndices.count)
         previous = -1
         for index in removedIndices {
             w.varint(index - previous - 1)
             previous = index
         }
+        if !removedIDs.isEmpty {
+            w.varint(removedIDs.count)
+            for id in removedIDs { w.entityID(id) }
+        }
+        if let gaps {
+            w.varint(gaps.count)
+            previous = 0
+            for gap in gaps {
+                w.varint(gap - previous)
+                previous = gap
+            }
+        }
         return w.data
     }
 
     /// The tick and baseline tick of an encoded snapshot (to find the baseline before decoding).
     public static func header(of bytes: [UInt8]) throws -> (tick: UInt32, baselineTick: UInt32?) {
-        var r = ByteReader(bytes)
-        let tick = try r.u32()
-        let baseline = try r.u32()
-        return (tick, baseline == .max ? nil : baseline)
+        let prefix = try references(of: bytes)
+        return (prefix.tick, prefix.baselineTick)
     }
 
-    /// Decodes a snapshot; a delta needs the state at its `baselineTick` (entities are referred
-    /// to by their index in it).
+    /// The tick, baseline tick and merged ticks of an encoded snapshot: the states a client
+    /// needs to build the baseline before decoding.
+    public static func references(of bytes: [UInt8]) throws -> (tick: UInt32, baselineTick: UInt32?, mergedTicks: [UInt32]) {
+        var r = ByteReader(bytes)
+        let prefix = try readPrefix(&r)
+        return (prefix.tick, prefix.baselineTick, prefix.mergedTicks)
+    }
+
+    private static func readPrefix(_ r: inout ByteReader) throws
+        -> (tick: UInt32, baselineTick: UInt32?, serverTime: Double, sections: UInt8, mergedTicks: [UInt32]) {
+        let tick = try r.u32()
+        let offset = try r.varint(max: Int(tick))
+        let time = try r.f64()
+        let sections = try r.u8()
+        guard sections & 0xF0 == 0, sections & 12 != 12 else { throw NetError.malformed("snapshot sections") }
+        let baselineTick: UInt32? = offset == 0 ? nil : tick - UInt32(offset)
+        var merged: [UInt32] = []
+        if sections & 1 != 0 {
+            guard baselineTick != nil else { throw NetError.malformed("merged ticks without a baseline") }
+            for _ in 0..<(try r.varint(max: 64)) {
+                let back = try r.varint(max: Int(tick))
+                guard back > 0 else { throw NetError.malformed("merged tick") }
+                merged.append(tick - UInt32(back))
+            }
+        }
+        return (tick, baselineTick, time, sections, merged)
+    }
+
+    /// Decodes a snapshot; a delta needs the state at its `baselineTick` with its `mergedTicks`
+    /// merged (entities are referred to by their index in it).
     public init(decoding bytes: [UInt8], baseline: NetWorldState? = nil) throws {
         var r = ByteReader(bytes)
-        let tick = try r.u32()
-        let baselineRaw = try r.u32()
-        let time = try r.f64()
-        let baselineTick: UInt32? = baselineRaw == .max ? nil : baselineRaw
+        let prefix = try Self.readPrefix(&r)
+        let baselineTick = prefix.baselineTick
         if baselineTick != nil, baseline == nil { throw NetError.malformed("delta without its baseline") }
         let base = baselineTick == nil ? [:] : baseline ?? [:]
         let baseIDs = base.keys.sorted()
@@ -194,8 +251,28 @@ public struct NetSnapshot: Equatable, Sendable {
             guard previous < baseIDs.count else { throw NetError.malformed("removed index") }
             removed.append(baseIDs[previous])
         }
+        if prefix.sections & 2 != 0 {
+            for _ in 0..<(try r.varint(max: 1 << 20)) { removed.append(try r.entityID()) }
+        }
+        var gaps: [Int]?
+        if prefix.sections & 4 != 0 {
+            var list: [Int] = []
+            var gap = 0
+            for _ in 0..<(try r.varint(max: Self.maxPendingGaps)) {
+                gap += try r.varint(max: 1 << 20)
+                list.append(gap)
+            }
+            gaps = list
+        }
         guard r.isAtEnd else { throw NetError.malformed("trailing bytes") }
-        self.init(tick: tick, baselineTick: baselineTick, serverTime: time, changed: changed, removed: removed)
+        tick = prefix.tick
+        self.baselineTick = baselineTick
+        serverTime = prefix.serverTime
+        self.changed = changed
+        self.removed = removed
+        mergedTicks = prefix.mergedTicks
+        complete = prefix.sections & 12 == 0
+        pendingGaps = gaps
     }
 
     private static func indexTable(_ baseline: NetWorldState?) -> [EntityID: Int] {

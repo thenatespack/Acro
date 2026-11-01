@@ -55,7 +55,7 @@ public struct NetConnectionStats: Equatable, Sendable {
 
 enum NetPacket {
     static let magic: [UInt8] = [0x53, 0x4E] // "SN"
-    static let version: UInt8 = 2
+    static let version: UInt8 = 3
     static let headerSize = 4
     /// Requests are padded to this size so the server's answers (challenge, denied) are never
     /// bigger than what an unverified address sent (no reflection amplification).

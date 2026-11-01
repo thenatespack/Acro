@@ -1,7 +1,7 @@
-# Networking and multiplayer (cards 624, 662, 671)
+# Networking and multiplayer (cards 624, 662, 671, 672)
 
 Research notes, a recommendation and a phased plan, plus the implementation that backs the measurements
-(`Sources/Engine/Net`; `NetworkingTests`, `NetConnectionTests`, `NetPredictionTests`, `NetHierarchyTests`, `EditorNetPlayTests`;
+(`Sources/Engine/Net`; `NetworkingTests`, `NetConnectionTests`, `NetPredictionTests`, `NetHierarchyTests`, `NetBacklogTests`, `EditorNetPlayTests`;
 the `net` and `netcharacter` demo scenes; editor network play; `GameRunner --server` / `--connect`).
 
 ## What the engine's games need
@@ -174,24 +174,74 @@ Snapshot efficiency (card 662, phase 3), what is implemented:
 - **Priority and budget**: `NetServer.bandwidthLimit` (snapshot payload bytes per second per
   client); each snapshot carries the changed entities with the highest accumulated
   `Replicated.priority` that fit, the rest wait and gain priority. The server tracks what each
-  client actually has (per-client sent states) so deltas stay correct.
+  client actually has (per-client sent states) so deltas stay correct, per entity since card 672
+  (see "Budget backlogs" below).
 
 Measured (`NetworkingTests`, macOS arm64; bytes the server sends one client including packet and
 fragment headers, 30 Hz, 300 entities each with a rotated Transform and a small component):
 
-| Case | kbit/s |
-|---|---|
-| Nothing moving (keep-alive cost: empty deltas, headers) | 11.5 |
-| 30 of 300 moving and turning | 92 |
-| All 300 moving and turning, no budget | 804 |
-| The same with zlib on every snapshot | 367 |
-| All 300 moving, `bandwidthLimit` 30,000 B/s, zlib | 244 (175 entities per snapshot: each updated at least every 57 ms) |
+| Case | kbit/s (card 662) | kbit/s (card 672) |
+|---|---|---|
+| Nothing moving (keep-alive cost: empty deltas, headers) | 11.5 | 11.0 |
+| 30 of 300 moving and turning | 92 | 91.3 |
+| All 300 moving and turning, no budget | 804 | 804 |
+| The same with zlib on every snapshot | 367 | 367 |
+| All 300 moving, `bandwidthLimit` 30,000 B/s, zlib | 244 (175 entities per snapshot: each updated at least every 57 ms) | 247 (188 per snapshot, every 53 ms) |
 
-The 200-entity full snapshot is now 10,333 bytes (4,819 with zlib, vs 18,342), 10 moved 99 bytes
-(vs 629), nothing changed 19. A join of 300 entities is ~35 KB over the first second and a half.
+The 200-entity full snapshot is now 10,331 bytes (4,814 with zlib, vs 18,342), 10 moved 97 bytes
+(vs 629), nothing changed 17. A join of 300 entities is ~35 KB over the first second and a half.
 So the 256 kbit/s target holds for a few hundred entities with a typical fraction moving, and when
-everything moves the budget keeps it under the target by updating each entity at ~18 Hz instead
-of 30. The `net` scene's 14 movers are ~236 bytes per snapshot (~57 kbit/s, was ~210).
+everything moves the budget keeps it under the target by updating each entity at ~19 Hz instead
+of 30. The `net` scene's 14 movers are ~234 bytes per snapshot (~57 kbit/s, was ~210).
+
+### Budget backlogs (card 672)
+
+Deltas were against the newest snapshot the client acknowledged. Under a budget each snapshot
+carries only some changes, so the snapshots in flight carry different entities, and only the
+acknowledged one's made it into the next baseline: a large backlog drained at about one entity per
+round trip, and entities appeared and vanished on the client as snapshots with and without them
+were shown. What is implemented (`NetVersionedState.swift`, `Replication.swift`):
+
+- **Versioned states**: every state the server tracks for a client (and the client rebuilds) records,
+  per entity, the tick of the snapshot that set its value or removed it (tombstones are kept while
+  they can matter: 32 ticks behind the baseline).
+- **Acks of every snapshot**: the client acks the newest tick plus a varint field of the 32 before it
+  that it doesn't have (one byte when none is missing).
+- **Merged baselines**: the next snapshot's baseline is the newest acknowledged state with the
+  entities of the other acknowledged snapshots (within 32 ticks) merged where they are newer. The
+  snapshot lists the merged ticks that changed something (`NetSnapshot.mergedTicks`); both sides
+  merge the same states the same way. Nothing backlogged: nothing to merge, nothing listed.
+- **In-flight entities wait**: an entity whose current value went out in a snapshot not yet
+  acknowledged comes after everything else and gains no priority until the ack, or until a later ack
+  shows that snapshot missing (or ~1.5 RTT pass): then it goes again. Without a budget everything
+  changed is still sent every snapshot until acknowledged, as before.
+- **Display states on the client**: each received snapshot's world is the newest value of every
+  entity among the snapshots received so far (by tick), so an entity from an unacknowledged snapshot
+  stays. The server sends an empty entry (the newest-version marker) when a value the client may
+  show from an unacknowledged snapshot differs from the current one while the baseline agrees, and
+  a removal by id for an entity removed before any snapshot carrying it was acknowledged.
+- **Cleanup under a tight budget**: snapshots say whether their state has every entity the server
+  replicates (values may lag; the old flag needed nothing deferred), and if not, where the missing
+  ones sort among the state's ids (up to 64 positions). The client despawns its own unmatched
+  scene entity once no missing entity sorts next to it.
+- **Wire**: packet version 3. The baseline is a varint offset and a sections byte follows (merged
+  ticks, removals by id, gaps): 2 bytes smaller than the old u32 baseline when no section is used.
+
+Measured (`NetBacklogTests`, 50 ms + 40 ms jitter, 15% loss and 5% duplication each way):
+
+| Case | Before | After |
+|---|---|---|
+| 36 new entities at 600 B/s (the #671 repro), time until all are on the client | 6.5-6.6 s, ~5,000 frames of entities vanishing | 1.4-1.8 s (30 seeds: 1.47-2.0 s), none |
+| 120 new entities at 6,000 B/s | 7.2 s, ~18,600 vanishing | 1.9 s (5,990 B/s sent including headers), none |
+| 20 scene entities + 100 new at 600 B/s | not drained after 8 s, the unmatched scene entity never removed | drained after 5.2 s, unmatched entity removed after 1.0 s |
+| 40 always-moving entities at 1,500 B/s (every snapshot defers) | the unmatched entity never removed | removed after 1.3 s |
+| 200 idle entities, 10% loss: largest delta | 19 B | 17 B |
+
+The bound the test derives: at 600 B/s a snapshot has 20 B, less than one 71-byte new entity, so
+each carries the budget's minimum of one: 36 snapshots, 1.2 s, divided by the 0.85 delivery chance,
+plus a few round trips for the last losses (< 2.4 s). That minimum of one entity per snapshot is
+over such a small budget (about 3.3 kB/s goes out while it drains); at 6,000 B/s the rate is the
+budget's (several entities per snapshot, 5,990 B/s sent).
 
 ## Security basics
 
@@ -301,8 +351,9 @@ Card 671 (phases 4 and 6) added:
 - **Scene entities matched by id:** a client that loaded the same scene (or built the same world with
   the same ids) already has the server's replicated entities; they are updated in place (their handles
   and non-replicated components kept) instead of spawned again. Replicated entities the client has but
-  the server's state lacks (removed before the client joined) are despawned when the first complete
-  snapshot (nothing deferred; a flag in the snapshot header) is applied (`despawnsUnmatchedEntities`).
+  the server's state lacks (removed before the client joined) are despawned once a snapshot shows the
+  server lacks them (`despawnsUnmatchedEntities`; since card 672 this works under a budget that always
+  defers something, see "Budget backlogs").
 - Tests (`NetHierarchyTests`, 15% loss, 40 ms jitter, 5% duplication): children before parents, a 90°
   turned parent moving its subtree (positions within 1 cm), reparenting with a swap, parents despawned
   with and without their children, unresolved parents and the budget rule, `Entity` / `[Entity]` /
@@ -329,12 +380,10 @@ Measured (phase 6):
 | Editor, starter scene + a spinner with two arms (11 entities), client 1 at 60 ms + 10 ms jitter + 2% loss, client 2 at 150 ms + 40 ms jitter + 8% loss | RTT 165 ms and 373 ms (both ends agree within 5 ms), measured loss 1.6-2.3% and 7-9%, ~15 kbit/s to each client, 38-byte snapshots, buffer 89-131 ms; the slow client starved 7-11 frames in 30 s (its jitter is close to the 100 ms buffer) |
 | `EditorNetPlayTests` (2 clients, one at 150 ms + 20 ms jitter + 10% loss, 300 frames) | fast client RTT < 60 ms, slow 300-420 ms, loss > 2%, > 1 kB/s, > 100 snapshots |
 
-A finding from the budget work (phase 3, not changed here): deltas are always against the newest
-acknowledged state, so when a budget allows only about one entity per snapshot and the round trip spans
-several snapshots, the entities chosen in the snapshots in flight aren't in the next baseline, and
-delivery of a large backlog progresses about one entity per acknowledgement round (36 new entities at
-600 B/s and 15% loss weren't all there after 6 s). Typical budgets carry dozens of entities per
-snapshot, where it doesn't matter; preferring entities already in flight would fix it.
+A finding from the budget work (phase 3): deltas were always against the newest acknowledged state,
+so when a budget allowed only about one entity per snapshot and the round trip spanned several
+snapshots, a large backlog progressed about one entity per acknowledgement round (36 new entities at
+600 B/s and 15% loss took 6.5 s). Fixed by card 672: 1.4-1.8 s, see "Budget backlogs" above.
 
 Not done yet: encryption, sibling order in replicated hierarchies, client input in editor network play
 and GameRunner clients (they only display; a game sends its own input commands),
@@ -360,7 +409,7 @@ moving: fine for co-op, a speed / freeze exploit to bound in versus games.
 4. **Net: hierarchy and references** - **done (card 671)**: parent links by `EntityID` (18 bytes per link in
    full snapshots, none in deltas), any spawn order, reparenting, despawned parents, new parents sent with
    their children under a budget; `Entity` fields mapped to the client's entities once their targets
-   arrive; scene entities matched by id, unmatched replicated ones removed after the first complete snapshot.
+   arrive; scene entities matched by id, unmatched replicated ones removed once a snapshot shows the server lacks them (card 672: also under a budget that always defers).
 5. **Net: Windows sockets and an encrypted transport** - Winsock in `UDPTransport`; MsQuic datagrams
    or GameNetworkingSockets behind `NetTransport`; connect tokens.
 6. **Net: editor and tooling** - **done (card 671)**: play with N clients in the editor (`net.start`, Game View

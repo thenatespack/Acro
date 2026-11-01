@@ -6,14 +6,17 @@
 // delta against the newest state that client acknowledged (a full snapshot until it has
 // acknowledged one). With a `bandwidthLimit`, a snapshot carries the changed entities with the
 // highest accumulated priority that fit; the rest wait (their priority grows), so what each
-// client has is tracked per client. Full snapshots (or all, see `compression`) are zlib
+// client has is tracked per client, per entity (card 672, NetVersionedState.swift): the baseline
+// merges every acknowledged snapshot, entities in snapshots still in flight wait for their ack
+// (sent again when a later ack shows the snapshot lost) while others go, and a backlog drains
+// at the budget's rate. Full snapshots (or all, see `compression`) are zlib
 // compressed when that is smaller. Snapshots larger than a datagram are split into fragments;
 // losing one fragment loses the snapshot, which only means the next delta is against an older
 // baseline. Clients' input commands are queued per client for the game to apply on its fixed
 // tick (`takeInputs`); each snapshot tells the client the newest input applied.
 //
 // Client: reassembles and decodes snapshots, rebuilds each full state from its baseline,
-// acknowledges the newest tick, and shows the world `interpolationDelay` seconds behind the
+// acknowledges the newest tick (and which of the 32 before it it has), and shows the world `interpolationDelay` seconds behind the
 // newest snapshot: entities, components and spawns / despawns as of the snapshot before that
 // time, Transforms interpolated between the snapshots around it. Entities are matched by
 // `EntityID`: the client world's entities get the server's ids. Entities in
@@ -26,7 +29,8 @@
 // child a root until it does. `Entity` fields in components map to the client's entities (see
 // NetEntityMapping.swift). Entities the client already has with the server's ids (the same
 // scene loaded on both sides) are matched instead of spawned again; replicated entities the
-// client has but the server doesn't are despawned once a complete snapshot arrived.
+// client has but the server doesn't are despawned once a snapshot shows the server lacks them
+// (complete, or listing where its entities still missing on the client would sort).
 
 /// Marks an entity for replication and names the components sent (by `componentName`).
 /// Transforms replicate as local transforms; the parent link is always sent (see above).
@@ -139,9 +143,14 @@ public final class NetServer {
         /// The client sent a connected packet (it has its `accepted`).
         var confirmed = false
         var lastAcceptedSent = -Double.infinity
+        /// The newest snapshot the client acknowledged, and every acknowledged one in the history.
         var ackedTick: UInt32?
-        /// What the client has after each snapshot sent to it.
-        var sent: [UInt32: NetWorldState] = [:]
+        var acked: Set<UInt32> = []
+        /// What the client has after each snapshot sent to it (if it arrives).
+        var sent: [UInt32: Sent] = [:]
+        /// Per entity, the newest snapshot that carried it and what it carried (nil: removed):
+        /// what the client may be showing, acknowledged or not.
+        var latest: [EntityID: (tick: UInt32, value: [String: [UInt8]]?)] = [:]
         var priority: [EntityID: Float] = [:]
         /// Wire / raw size of recent snapshots (for the budget).
         var compressionRatio: Double = 1
@@ -155,6 +164,23 @@ public final class NetServer {
             self.id = id
             self.peer = peer
             connection = NetConnection(now: now)
+        }
+
+        struct Sent {
+            var state: NetVersionedState
+            /// Acknowledged snapshots whose entities `state` already has (as its baseline, merged,
+            /// or through those): merging them again changes nothing.
+            var covers: Set<UInt32>
+            var time: Double
+        }
+
+        /// Snapshot `tick` is taken as lost: not acknowledged, and either a newer one was, or
+        /// it is older than a round trip and a bit.
+        func lost(_ tick: UInt32, now: Double, interval: Double) -> Bool {
+            if acked.contains(tick) { return false }
+            guard let sent = sent[tick] else { return true }
+            if let ackedTick, tick < ackedTick { return true }
+            return now - sent.time > max(4 * interval, (connection.stats.rtt ?? 0.25) * 1.5 + 2 * interval)
         }
     }
     private var clientStates: [NetClientID: ClientState] = [:]
@@ -328,6 +354,8 @@ public final class NetServer {
 
     private func readClientUpdate(_ r: inout ByteReader, _ state: ClientState) throws {
         let ack = try r.u32()
+        let missing = try r.varint64()
+        guard missing <= UInt64(UInt32.max) else { throw NetError.malformed("ack field") }
         let newest = try r.u32()
         let count = try r.varint(max: NetLimitsInternal.maxInputsPerPacket)
         guard UInt32(count) <= newest else { throw NetError.malformed("input count") }
@@ -336,8 +364,16 @@ public final class NetServer {
             inputs.append((newest - UInt32(count - 1 - i), try r.bytes(r.varint(max: NetLimitsInternal.maxInputSize))))
         }
         guard r.isAtEnd else { throw NetError.malformed("trailing bytes") }
-        // Acks can arrive out of order: keep the newest that is still a baseline.
-        if ack > 0, ack <= tick, ack > (state.ackedTick ?? 0), state.sent[ack] != nil { state.ackedTick = ack }
+        // Acks can arrive out of order: keep the newest that is still a baseline, and every
+        // snapshot the client has among the 32 before it (bits set: missing).
+        if ack > 0, ack <= tick, state.sent[ack] != nil {
+            if ack > (state.ackedTick ?? 0) { state.ackedTick = ack }
+            state.acked.insert(ack)
+            for i in 0..<32 where missing & (1 << UInt64(i)) == 0 && ack > UInt32(i + 1) {
+                let t = ack - UInt32(i + 1)
+                if state.sent[t] != nil { state.acked.insert(t) }
+            }
+        }
         for (sequence, bytes) in inputs where sequence > state.lastProcessedInput && state.pendingInputs[sequence] == nil {
             guard state.pendingInputs.count < NetLimitsInternal.maxQueuedInputs else { break }
             state.pendingInputs[sequence] = bytes
@@ -402,20 +438,59 @@ public final class NetServer {
         let (state, priorities) = capture()
         for client in clients {
             guard let c = clientStates[client] else { continue }
-            let baseline = c.ackedTick.flatMap { c.sent[$0] }
-            var snapshot = NetSnapshot(tick: tick, serverTime: time, state: state, baseline: baseline, baselineTick: c.ackedTick)
+            let (base, baselineTick, covers, merged) = baseline(for: c)
+            let baseline = baselineTick == nil ? nil : base.state
+            var snapshot = NetSnapshot(tick: tick, serverTime: time, state: state, baseline: baseline, baselineTick: baselineTick)
+            snapshot.mergedTicks = merged
+            // Entities the client may show newer than the baseline (from a snapshot not
+            // acknowledged yet) with something other than the current value: an empty entry
+            // (or a removal by id) makes the current value the newest again.
+            var waiting: Set<EntityID> = []
+            for (id, latest) in c.latest {
+                let target = state[id]
+                let known = base.versions[id] ?? 0
+                if target == nil, base.state[id] == nil, latest.value == nil, latest.tick <= known || c.acked.contains(latest.tick) {
+                    c.latest[id] = nil // its removal arrived
+                    continue
+                }
+                guard latest.tick > known else { continue } // the baseline has it, or newer
+                if latest.value == target {
+                    // In flight with the current value: it waits for its ack, and goes again
+                    // once its snapshot is taken as lost (a change is in the delta then).
+                    if !c.lost(latest.tick, now: time, interval: sendInterval) {
+                        waiting.insert(id)
+                    } else if target == nil, base.state[id] == nil {
+                        snapshot.removed.append(id)
+                    }
+                    continue
+                }
+                if target != nil {
+                    if snapshot.changed[id] == nil { snapshot.changed[id] = [:] }
+                } else if base.state[id] == nil {
+                    snapshot.removed.append(id)
+                }
+            }
             var deferred = 0
             if let limit = bandwidthLimit {
                 let budget = Int(Double(limit) * sendInterval / max(0.2, c.compressionRatio))
-                (snapshot, deferred) = prioritized(snapshot, baseline: baseline, priorities: priorities, client: c, budget: budget)
-                c.sent[tick] = snapshot.applied(to: baseline)
-            } else {
-                c.sent[tick] = state
+                (snapshot, deferred) = prioritized(snapshot, baseline: baseline, priorities: priorities, waiting: waiting, client: c, budget: budget)
             }
-            if tick > UInt32(historyLength) { c.sent[tick - UInt32(historyLength)] = nil }
+            let next = base.advanced(by: snapshot)
+            if state.keys.contains(where: { next.state[$0] == nil }) {
+                snapshot.complete = false
+                snapshot.pendingGaps = pendingGaps(server: state, client: next.state)
+            }
+            for id in snapshot.changed.keys { c.latest[id] = (tick, state[id]) }
+            for id in snapshot.removed { c.latest[id] = (tick, nil) }
+            c.sent[tick] = ClientState.Sent(state: next, covers: covers, time: time)
+            if tick > UInt32(historyLength) {
+                let old = tick - UInt32(historyLength)
+                c.sent[old] = nil
+                c.acked.remove(old)
+            }
             let raw = snapshot.encoded(baseline: baseline)
-            // Bit 0: zlib; bit 1: complete (nothing deferred: the client has the whole state).
-            var flags: UInt8 = deferred == 0 ? 2 : 0
+            // Bit 0: zlib.
+            var flags: UInt8 = 0
             var body = raw
             let compress = compression == .all || (compression == .fullSnapshots && snapshot.baselineTick == nil)
             if compress, raw.count > 64 {
@@ -439,22 +514,66 @@ public final class NetServer {
         }
     }
 
+    /// The baseline of the next snapshot to `c`: the newest state it acknowledged with the
+    /// entities of its other acknowledged snapshots merged where newer; the acknowledged ticks
+    /// that state then covers, and the ones merged that changed something (sent in the snapshot).
+    private func baseline(for c: ClientState) -> (state: NetVersionedState, tick: UInt32?, covers: Set<UInt32>, merged: [UInt32]) {
+        guard let acked = c.ackedTick, let sent = c.sent[acked] else { return (NetVersionedState(), nil, [], []) }
+        var state = sent.state
+        var covers = sent.covers
+        covers.insert(acked)
+        var merged: [UInt32] = []
+        for t in c.acked.sorted() where t < acked && t + NetVersionedState.mergeWindow >= acked && !covers.contains(t) {
+            guard let other = c.sent[t] else { continue }
+            if state.merge(carriedBy: other.state, tick: t) { merged.append(t) }
+            covers.insert(t)
+        }
+        if tick > UInt32(historyLength) {
+            let horizon = tick - UInt32(historyLength)
+            covers = covers.filter { $0 > horizon }
+        }
+        return (state, acked, covers, merged)
+    }
+
+    /// Where the server's entities missing from `client` sort among its ids (see `NetSnapshot.pendingGaps`).
+    private func pendingGaps(server: NetWorldState, client: NetWorldState) -> [Int]? {
+        let missing = server.keys.filter { client[$0] == nil }
+        let ids = client.keys.sorted()
+        var gaps: Set<Int> = []
+        for id in missing {
+            var low = 0, high = ids.count
+            while low < high {
+                let mid = (low + high) / 2
+                if ids[mid] < id { low = mid + 1 } else { high = mid }
+            }
+            gaps.insert(low)
+            if gaps.count > NetSnapshot.maxPendingGaps { return nil }
+        }
+        return gaps.sorted()
+    }
+
     /// The part of `snapshot` that fits `budget` bytes: removals, then changed entities by
-    /// accumulated priority (ties by id), skipping ones that don't fit; at least one.
-    private func prioritized(_ snapshot: NetSnapshot, baseline: NetWorldState?, priorities: [EntityID: Float],
+    /// accumulated priority (ties by id), skipping ones that don't fit; at least one. Entities
+    /// `waiting` for the ack of a snapshot that carried their current value come last and don't
+    /// gain priority meanwhile, so a backlog moves on while they are in flight.
+    private func prioritized(_ snapshot: NetSnapshot, baseline: NetWorldState?, priorities: [EntityID: Float], waiting: Set<EntityID>,
                              client: ClientState, budget: Int) -> (NetSnapshot, deferred: Int) {
         for id in client.priority.keys where snapshot.changed[id] == nil { client.priority[id] = nil }
-        var candidates: [(id: EntityID, priority: Float, cost: Int)] = []
+        var candidates: [(id: EntityID, priority: Float, cost: Int, waiting: Bool)] = []
         for (id, diff) in snapshot.changed {
-            let priority = client.priority[id, default: 0] + (priorities[id] ?? 1)
+            let isWaiting = waiting.contains(id)
+            let priority = client.priority[id, default: 0] + (isWaiting ? 0 : priorities[id] ?? 1)
             client.priority[id] = priority
-            candidates.append((id, priority, NetSnapshot.entrySize(diff, base: baseline?[id])))
+            candidates.append((id, priority, NetSnapshot.entrySize(diff, base: baseline?[id]), isWaiting))
         }
-        candidates.sort { $0.priority != $1.priority ? $0.priority > $1.priority : $0.id < $1.id }
+        candidates.sort {
+            if $0.waiting != $1.waiting { return !$0.waiting }
+            return $0.priority != $1.priority ? $0.priority > $1.priority : $0.id < $1.id
+        }
         let names = Set(snapshot.changed.values.flatMap(\.keys)).reduce(0) { $0 + $1.utf8.count + 1 }
         var size = 20 + names + snapshot.removed.count * 2
         var chosen: [EntityID: [String: [UInt8]?]] = [:]
-        for candidate in candidates where chosen.isEmpty || size + candidate.cost <= budget {
+        for candidate in candidates where (chosen.isEmpty && !candidate.waiting) || size + candidate.cost <= budget {
             chosen[candidate.id] = snapshot.changed[candidate.id]
             client.priority[candidate.id] = nil
             size += candidate.cost
@@ -540,9 +659,11 @@ public final class NetClient {
     /// `predictedComponents` are left alone (see `NetCharacterPrediction`).
     public var predictedEntities: Set<EntityID> = []
     public var predictedComponents: Set<String> = [Transform.componentName, CharacterController.componentName]
-    /// When the first complete snapshot arrives, despawn the entities with a `Replicated` that the
-    /// server doesn't replicate: the client loaded the same scene, and the server removed them
-    /// before this client connected. Entities the server does have are matched by id.
+    /// Despawn the entities with a `Replicated` the client had when the first snapshot arrived
+    /// that the server doesn't replicate: the client loaded the same scene, and the server removed
+    /// them before this client connected. Each goes once a snapshot shows the server lacks it (a
+    /// complete one, or one listing where the entities still on their way sort: works under a
+    /// budget that always defers something). Entities the server does have are matched by id.
     public var despawnsUnmatchedEntities = true
 
     public struct Stats: Equatable, Sendable {
@@ -579,9 +700,17 @@ public final class NetClient {
         var tick: UInt32
         var time: Double
         var inputAck: UInt32
-        var state: NetWorldState
-        /// The server deferred nothing: this is all it replicates.
+        /// The state after the snapshot, as the server tracks it (what later deltas build on).
+        var state: NetVersionedState
+        var baselineTick: UInt32?
+        /// What the world shows: each entity's newest value among the snapshots received up to
+        /// this one (one not acknowledged yet carries entities `state` lacks), and its tick.
+        var display: NetWorldState = [:]
+        var displayVersions: [EntityID: UInt32] = [:]
+        /// The snapshot said the state has every entity the server replicates, or where the
+        /// ones it lacks sort (nil: unknown); see `NetSnapshot.pendingGaps`.
         var complete: Bool
+        var pendingGaps: [Int]?
     }
     /// Sorted by tick.
     private var states: [ReceivedState] = []
@@ -592,8 +721,9 @@ public final class NetClient {
     /// Entities whose parent hasn't arrived (they are roots meanwhile).
     public private(set) var unresolvedParents: Set<EntityID> = []
     private var hierarchyTick: UInt32?
-    /// A complete snapshot was applied (replicated entities the server lacks were removed).
-    private var matchedScene = false
+    /// Replicated entities the client had when the first snapshot was applied that replication
+    /// hasn't matched (nil: not looked yet); despawned once a snapshot shows the server lacks them.
+    private var unmatched: Set<EntityID>?
     var rates = NetRateMeter()
     private let salt: UInt64
     private var token: UInt64?
@@ -649,7 +779,7 @@ public final class NetClient {
 
     /// The newest snapshot's state of entity `id`.
     public func newestState(of id: EntityID) -> NetReceivedEntity? {
-        guard let last = states.last, let components = last.state[id] else { return nil }
+        guard let last = states.last, let components = last.display[id] else { return nil }
         return NetReceivedEntity(tick: last.tick, serverTime: last.time, inputAck: last.inputAck, components: components)
     }
 
@@ -692,8 +822,15 @@ public final class NetClient {
         if inputsDue || ackDue || connection.hasMessagesDue(now: time) {
             let pending = inputs.suffix(min(inputsPerPacket, NetLimitsInternal.maxInputsPerPacket))
             let inputBytes = pending.reduce(0) { $0 + $1.bytes.count + 2 }
-            sendConnected(.clientUpdate, connection, budget: NetLimits.maxDatagramSize - NetPacket.headerSize - 16 - inputBytes) { w in
-                w.u32(self.latestTick ?? 0)
+            // The newest snapshot, and which of the 32 before it are missing (bits set): the
+            // server merges the others into its baselines.
+            let newest = latestTick ?? 0
+            let have = Set(states.map(\.tick))
+            var missing: UInt64 = 0
+            for i in 0..<32 where newest > UInt32(i + 1) && !have.contains(newest - UInt32(i + 1)) { missing |= 1 << UInt64(i) }
+            sendConnected(.clientUpdate, connection, budget: NetLimits.maxDatagramSize - NetPacket.headerSize - 21 - inputBytes) { w in
+                w.u32(newest)
+                w.varint64(missing)
                 w.u32(pending.last?.sequence ?? 0)
                 w.varint(pending.count)
                 for input in pending {
@@ -820,18 +957,26 @@ public final class NetClient {
         var body = payload.rest()
         if flags & 1 != 0 { body = try NetCompression.inflate(body) }
         stats.snapshotBytes += payload.data.count
-        let header = try NetSnapshot.header(of: body)
-        var baseline: NetWorldState?
-        if let baseTick = header.baselineTick {
-            guard let base = states.first(where: { $0.tick == baseTick }) else {
+        let references = try NetSnapshot.references(of: body)
+        // The baseline: the state at the baseline tick, with the merged snapshots' entities.
+        var base = NetVersionedState()
+        if let baseTick = references.baselineTick {
+            guard let state = states.first(where: { $0.tick == baseTick })?.state else {
                 stats.missingBaseline += 1
                 return nil
             }
-            baseline = base.state
+            base = state
+            for t in references.mergedTicks {
+                guard let other = states.first(where: { $0.tick == t })?.state else {
+                    stats.missingBaseline += 1
+                    return nil
+                }
+                base.merge(carriedBy: other, tick: t)
+            }
         }
-        let snapshot = try NetSnapshot(decoding: body, baseline: baseline)
-        insert(ReceivedState(tick: snapshot.tick, time: snapshot.serverTime, inputAck: inputAck, state: snapshot.applied(to: baseline),
-                             complete: flags & 2 != 0))
+        let snapshot = try NetSnapshot(decoding: body, baseline: references.baselineTick == nil ? nil : base.state)
+        insert(ReceivedState(tick: snapshot.tick, time: snapshot.serverTime, inputAck: inputAck, state: base.advanced(by: snapshot),
+                             baselineTick: snapshot.baselineTick, complete: snapshot.complete, pendingGaps: snapshot.pendingGaps))
         stats.snapshots += 1
         if let newest = states.last?.inputAck { inputs.removeAll { $0.sequence <= newest } }
         return snapshot.tick
@@ -840,7 +985,32 @@ public final class NetClient {
     private func insert(_ received: ReceivedState) {
         let index = states.firstIndex { $0.tick > received.tick } ?? states.count
         states.insert(received, at: index)
+        // Display states from here on (more than one when a snapshot arrived out of order).
+        for i in index..<states.count { updateDisplay(i) }
         if states.count > historyLength { states.removeFirst(states.count - historyLength) }
+    }
+
+    /// The display state of `states[i]`: the one before it, with each entity of its state that
+    /// is newer (or removed later) than what that showed.
+    private func updateDisplay(_ i: Int) {
+        let source = states[i].state
+        guard i > 0 else {
+            states[i].display = source.state
+            states[i].displayVersions = source.versions
+            return
+        }
+        var display = states[i - 1].display
+        var versions = states[i - 1].displayVersions
+        for (id, version) in source.versions where version > versions[id] ?? 0 {
+            display[id] = source.state[id]
+            versions[id] = version
+        }
+        // Removals shown long enough ago can go (snapshots that old aren't merged any more).
+        if let base = states[i].baselineTick, base > 64, versions.count > display.count {
+            versions = versions.filter { $0.value + 64 >= base || display[$0.key] != nil }
+        }
+        states[i].display = display
+        states[i].displayVersions = versions
     }
 
     private func advanceClock(dt: Double) {
@@ -872,7 +1042,7 @@ public final class NetClient {
         // Sorted: spawn order (and so storage and draw order) the same in every run. Everything
         // is spawned first, so components and parents can refer to entities listed after them.
         // An entity the client already has with the id (the same scene loaded) is used as is.
-        let ids = a.state.keys.sorted()
+        let ids = a.display.keys.sorted()
         var fresh: Set<EntityID> = []
         for id in ids where world.entity(for: id) == nil || applied[id] == nil {
             if world.entity(for: id) == nil {
@@ -885,7 +1055,7 @@ public final class NetClient {
             fresh.insert(id)
         }
         for id in ids {
-            let components = a.state[id]!
+            let components = a.display[id]!
             guard let entity = world.entity(for: id) else { continue }
             let first = fresh.contains(id)
             let predicted = predictedEntities.contains(id)
@@ -916,7 +1086,7 @@ public final class NetClient {
             if let bytes = components[Transform.componentName], let from = try? NetComponentCoder.decodeTransform(bytes) {
                 var transform = from
                 // (Unchanged: exactly the snapshot's value; slerp would renormalize it.)
-                if let next = b?.state[id]?[Transform.componentName], next != bytes, let to = try? NetComponentCoder.decodeTransform(next) {
+                if let next = b?.display[id]?[Transform.componentName], next != bytes, let to = try? NetComponentCoder.decodeTransform(next) {
                     transform = Transform.interpolated(from, to, t)
                 }
                 world.add(transform, to: entity)
@@ -924,12 +1094,12 @@ public final class NetClient {
         }
         if hierarchyTick != a.tick || !fresh.isEmpty || !unresolvedParents.isEmpty {
             hierarchyTick = a.tick
-            applyHierarchy(a.state, ids: ids)
+            applyHierarchy(a.display, ids: ids)
         }
-        for id in applied.keys.sorted() where a.state[id] == nil {
+        for id in applied.keys.sorted() where a.display[id] == nil {
             if let entity = world.entity(for: id) {
                 // Replicated children still in the state stay (they were moved, or will be).
-                for child in world.children(of: entity) where world.id(of: child).map({ a.state[$0] != nil }) == true {
+                for child in world.children(of: entity) where world.id(of: child).map({ a.display[$0] != nil }) == true {
                     world.setParent(child, to: nil)
                 }
                 world.despawn(entity)
@@ -938,10 +1108,7 @@ public final class NetClient {
             entityReferences[id] = nil
             unresolvedParents.remove(id)
         }
-        if a.complete && !matchedScene {
-            matchedScene = true
-            removeUnmatched(a.state)
-        }
+        removeUnmatched(a)
     }
 
     /// Gives every entity in `state` the parent the server gave it: after every entity of the
@@ -965,15 +1132,36 @@ public final class NetClient {
         }
     }
 
-    /// Replicated entities the client has (its copy of the scene) that the server's complete
-    /// state doesn't: the server removed them before this client joined.
-    private func removeUnmatched(_ state: NetWorldState) {
-        guard despawnsUnmatchedEntities else { return }
-        var doomed: [Entity] = []
-        world.query(Replicated.self) { entity, _ in
-            if let id = world.id(of: entity), state[id] == nil, !predictedEntities.contains(id) { doomed.append(entity) }
+    /// Replicated entities the client had (its copy of the scene) that the server doesn't: the
+    /// server removed them before this client joined. Each goes once `received` shows the server
+    /// lacks it: the state is complete, or the entity sorts where the state misses nothing.
+    private func removeUnmatched(_ received: ReceivedState) {
+        if unmatched == nil {
+            var ids: Set<EntityID> = []
+            world.query(Replicated.self) { entity, _ in
+                if let id = world.id(of: entity), applied[id] == nil { ids.insert(id) }
+            }
+            unmatched = ids
         }
-        for entity in doomed { world.despawn(entity) }
+        guard var remaining = unmatched, !remaining.isEmpty else { return }
+        remaining = remaining.filter { applied[$0] == nil && world.entity(for: $0) != nil }
+        defer { unmatched = remaining }
+        guard despawnsUnmatchedEntities, received.complete || received.pendingGaps != nil else { return }
+        let state = received.state.state
+        let gaps = Set(received.pendingGaps ?? [])
+        let ids = gaps.isEmpty ? [] : state.keys.sorted()
+        for id in remaining.sorted() where state[id] == nil && !predictedEntities.contains(id) {
+            if !gaps.isEmpty {
+                var low = 0, high = ids.count
+                while low < high {
+                    let mid = (low + high) / 2
+                    if ids[mid] < id { low = mid + 1 } else { high = mid }
+                }
+                if gaps.contains(low) { continue } // the server may have it, still on its way
+            }
+            if let entity = world.entity(for: id) { world.despawn(entity) }
+            remaining.remove(id)
+        }
     }
 }
 
