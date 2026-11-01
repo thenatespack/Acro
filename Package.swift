@@ -161,6 +161,8 @@ let package = Package(
         // link its own copy of Engine) and linked into a shared library by GameModuleBuilder,
         // which the editor (`--game SampleGame`) and GameRunner load. See README "Game modules".
         .target(name: "SampleGame", dependencies: ["Engine"]),
+        // Orbfall: a peg-clearing arcade game (the project at ~/Games/Peggle).
+        .target(name: "Orbfall", dependencies: ["Engine"]),
         // Runs a game module standalone: `swift run GameRunner SampleGame [scene.json]`.
         .executableTarget(name: "GameRunner", dependencies: ["Engine"], linkerSettings: windowsLinkerSettings + exportsSymbols),
         // A changed version of SampleGame for GameModuleTests' reload test (linked like it).
