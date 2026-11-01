@@ -378,13 +378,14 @@ final class EnvironmentLighting {
 
     /// Draws the sky where nothing nearer was drawn, for a view with `view` and `projection`
     /// (jittered like the scene). Binds uniform buffer 2, texture 1 and sampler 1.
-    func drawSky(in pass: RenderPass, view: Mat4, projection: Mat4, reversedZ: Bool) {
+    /// `encoded` stores c / (1 + c), for the planar reflection pass's 8-bit target.
+    func drawSky(in pass: RenderPass, view: Mat4, projection: Mat4, reversedZ: Bool, encoded: Bool = false) {
         guard let sky, let pipeline = skyPipeline(reversedZ: reversedZ) else { return }
         var rotation = view
         rotation.c3 = Vec4(0, 0, 0, 1)
         var u = sky.uniforms
         u.inverseViewProj = (projection * rotation).inverse
-        u.extra = Vec4(reversedZ ? 0 : 1, 0, 0, 0)
+        u.extra = Vec4(reversedZ ? 0 : 1, encoded ? 1 : 0, 0, 0)
         pass.setPipeline(pipeline)
         pass.setUniformData(u, index: 2)
         pass.setTexture(sky.map ?? placeholder, index: 1)

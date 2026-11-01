@@ -144,11 +144,13 @@ public final class SceneRenderer {
     /// with `ENGINE_SHOW_CASCADES=1`.
     public var showsShadowCascades = ProcessInfo.processInfo.environment["ENGINE_SHOW_CASCADES"] == "1"
 
-    private var uniforms: FrameUniforms?
-    private var reversedZ = false
-    private var shadowsActive = false
+    var uniforms: FrameUniforms?
+    var reversedZ = false
+    var shadowsActive = false
     /// The shadows `prepare` set up for `renderShadows`.
-    private var shadowSetup: ShadowSetup?
+    var shadowSetup: ShadowSetup?
+    /// The planar reflection (`PlanarReflections.swift`); idle without a `PlanarReflection`.
+    var reflections = ReflectionState()
     var uploaded: TransientBuffer?
     private var previousViewProj: Mat4?
     private var reportedMissing: Set<String> = []
@@ -216,7 +218,7 @@ public final class SceneRenderer {
     private var viewList = RenderList()
     /// This frame's point and spot lights (`gather`), binned for the `prepare` camera and for
     /// each `renderView`, and the uniform data they're uploaded from.
-    private var punctualLights: [PunctualLight] = []
+    var punctualLights: [PunctualLight] = []
     public private(set) var clusters = LightClusters()
     private var viewClusters = LightClusters()
     private var lightData = LightClusters.GPUData()
@@ -273,6 +275,12 @@ public final class SceneRenderer {
         var shadows = ShadowUniforms()
         /// Image-based lighting: x 1 when on, y intensity, z, w cos / sin of the environment's rotation.
         var environment = Vec4.zero
+        /// Planar reflection (see `PlanarReflections.swift`, mesh_surface.glsl): the image's view-projection, the
+        /// plane, parameters and flags. Zeros without a `PlanarReflection`.
+        var reflectionViewProj = Mat4.identity
+        var reflectionPlane = Vec4.zero
+        var reflectionParams = Vec4.zero
+        var reflectionExtra = Vec4.zero
 
         /// Points the shader's cluster lookup at `clusters`, binned for `view` and a target of `size` pixels.
         mutating func setClusters(_ clusters: LightClusters, view: Mat4, size: (width: Int, height: Int)) {
@@ -300,7 +308,8 @@ public final class SceneRenderer {
         /// rebuilt: 1 XY in RG (BC5), 2 XY in RA (two-channel ASTC))
         var flags: Vec4
 
-        @MainActor init(_ material: Material) {
+        /// `reflected`: the occlusion slot holds the planar reflection (`flags.w`).
+        @MainActor init(_ material: Material, reflected: Bool = false) {
             baseColor = material.baseColor
             params = Vec4(material.checker ? 1 : 0, material.emissive, material.specular, material.shininess)
             (uvRow0, uvRow1) = material.uvTransformRows
@@ -311,7 +320,7 @@ public final class SceneRenderer {
             case .astc4x4RG: 2
             default: 0
             }
-            flags = Vec4(material.alphaCutoff, material.normalTexture != nil ? 1 : 0, normalLayout, 0)
+            flags = Vec4(material.alphaCutoff, material.normalTexture != nil ? 1 : 0, normalLayout, reflected ? 1 : 0)
         }
     }
 
@@ -538,6 +547,8 @@ public final class SceneRenderer {
                               projectionScale: camera.projection(aspect: engine.aspectRatio).c1.y)
         particleView = (jittered, jitteredProjection, eye, size, camera.reversedZ)
         prepareParticles(world: world, cameraPosition: eye)
+        prepareReflection(view: view, projection: camera.projection(aspect: engine.aspectRatio), reversedZ: camera.reversedZ, eye: eye,
+                          size: size, clearColor: camera.clearColor)
     }
 
     /// Sets up the sky and image-based lighting of `environment` for this frame.
@@ -549,6 +560,7 @@ public final class SceneRenderer {
     func gather(_ world: World) {
         syncAssets()
         prep.gather(world: world)
+        reflections.find(in: world)
         // Upload assets entities started using, then gather again so they draw this frame
         // (only on frames where something new resolved).
         if resolveMissingAssets() { prep.gather(world: world) }
@@ -635,6 +647,7 @@ public final class SceneRenderer {
         uploaded = list.instances.isEmpty ? nil : frame.upload(list.instances)
         environmentLighting.render()
         renderShadowAtlas(shadowsActive ? shadowSetup : nil, frame: frame)
+        renderReflection(frame: frame)
         renderParticleDepth(frame: frame)
         particles?.simulate(frame: frame)
     }
@@ -680,7 +693,7 @@ public final class SceneRenderer {
     public func draw(_ pass: RenderPass) {
         guard let uniforms else { return }
         draw(pass, list: list, uniforms: uniforms, instances: uploaded, reversedZ: reversedZ, lights: clusters.isEmpty ? nil : lightData,
-             sky: skyView, particleDepth: particleDepth)
+             sky: skyView, particleDepth: particleDepth, reflection: reflections.mainTexture)
         if let debugDraw, let debugView { drawDebug(debugDraw, in: pass, view: debugView) }
     }
 
@@ -743,9 +756,11 @@ public final class SceneRenderer {
         let lights = viewClusters.isEmpty ? nil : lightData
         let particleDepth = renderViewParticleDepth(list: viewList, instances: instances, view: view,
                                                     size: (target.width, target.height), frame: frame)
+        let reflection = renderViewReflection(view, uniforms: &uniforms, size: (target.width, target.height), shadows: views.light.shadows,
+                                              frame: frame)
         frame.renderPass(into: target, clearColor: view.clearColor, clearDepth: view.reversedZ ? 0 : 1) { pass in
             draw(pass, list: viewList, uniforms: uniforms, instances: instances, reversedZ: view.reversedZ, lights: lights,
-                 sky: (view.view, view.projection), particleDepth: particleDepth)
+                 sky: (view.view, view.projection), particleDepth: particleDepth, reflection: reflection)
             if let debugDraw {
                 drawDebug(debugDraw, in: pass, view: DebugView(
                     view: view.view, projection: view.projection, viewportSize: (target.width, target.height),
@@ -935,26 +950,30 @@ public final class SceneRenderer {
 
     /// Binds a material's uniforms (buffer 2), textures 1-5 and sampler 1. For a skinned batch,
     /// buffer 2 is the skinning block with the material's uniforms as its prefix.
-    private func bindMaterial(_ index: Int, in pass: RenderPass, skin: Int = -1) {
+    private func bindMaterial(_ index: Int, in pass: RenderPass, skin: Int = -1, reflection: GPUTexture? = nil) {
         let (material, sampler) = materials[index]
+        // PBR materials without an occlusion map receive the planar reflection in that texture slot.
+        let reflected = reflection != nil && skin < 0 && material.shading == .pbr && material.occlusionTexture == nil
         if skin >= 0 {
             bindSkin(skin, material: index, in: pass)
         } else {
-            pass.setUniformData(MaterialUniforms(material), index: 2, stage: .fragment)
+            pass.setUniformData(MaterialUniforms(material, reflected: reflected), index: 2, stage: .fragment)
         }
         pass.setTexture(material.texture ?? whiteTexture, index: 1)
         pass.setTexture(material.metallicRoughnessTexture ?? whiteTexture, index: 2)
         pass.setTexture(material.normalTexture ?? whiteTexture, index: 3)
-        pass.setTexture(material.occlusionTexture ?? whiteTexture, index: 4)
+        pass.setTexture(reflected ? reflection! : material.occlusionTexture ?? whiteTexture, index: 4)
         pass.setTexture(material.emissiveTexture ?? whiteTexture, index: 5)
         pass.setSampler(sampler, index: 1)
     }
 
     /// Opaque batches, then the sky (seen from `sky`'s view and projection, if the environment
     /// has one), then transparent batches back to front.
-    private func draw(_ pass: RenderPass, list: RenderList, uniforms: FrameUniforms, instances uploaded: TransientBuffer?,
-                      reversedZ: Bool, lights: LightClusters.GPUData?, sky: (view: Mat4, projection: Mat4)?,
-                      particleDepth: ParticleSceneDepth?) {
+    /// `reflection` is the planar reflection image receivers sample; `drawsParticles: false` leaves the particles out.
+    func draw(_ pass: RenderPass, list: RenderList, uniforms: FrameUniforms, instances uploaded: TransientBuffer?,
+              reversedZ: Bool, lights: LightClusters.GPUData?, sky: (view: Mat4, projection: Mat4)?,
+              particleDepth: ParticleSceneDepth?, reflection: GPUTexture? = nil, drawsParticles: Bool = true,
+              encodesSky: Bool = false) {
         pass.setUniforms(uniforms)
         pass.setTexture(shadowMap)
         bindLights(lights, in: pass)
@@ -962,7 +981,8 @@ public final class SceneRenderer {
         var current: (pipeline: PipelineKey, material: Int, skin: Int)?
         for (batches, blending) in [(list.opaque, false), (list.transparent, true)] {
             if blending, let sky {
-                environmentLighting.drawSky(in: pass, view: sky.view, projection: sky.projection, reversedZ: reversedZ)
+                environmentLighting.drawSky(in: pass, view: sky.view, projection: sky.projection, reversedZ: reversedZ,
+                                            encoded: encodesSky)
                 current = nil  // the sky replaced the pipeline and the material's bindings
             }
             guard let uploaded else { continue }
@@ -974,12 +994,13 @@ public final class SceneRenderer {
                     pass.setPipeline(pipeline)
                 }
                 if current?.material != batch.material || batch.skin >= 0 || (current?.skin ?? -1) >= 0 {
-                    bindMaterial(batch.material, in: pass, skin: batch.skin)
+                    bindMaterial(batch.material, in: pass, skin: batch.skin, reflection: reflection)
                 }
                 current = (key, batch.material, batch.skin)
                 draw(pass, batch, instances: uploaded)
             }
         }
+        guard drawsParticles else { return }
         if particles?.hasLitEmitters == true {
             // Lit particles are lit per vertex: the vertex stage reads what the meshes' fragments did.
             bindLights(lights, in: pass, stage: .vertex)
