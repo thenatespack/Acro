@@ -10,11 +10,14 @@
 
 /// Encodes `Encodable` values to the compact binary format `NetBinaryDecoder` reads.
 public struct NetBinaryEncoder {
+    /// Handed to the values' `encode(to:)` (replication maps `Entity` handles to ids through it).
+    public var userInfo: [CodingUserInfoKey: Any] = [:]
+
     public init() {}
 
     public func encode<T: Encodable>(_ value: T) throws -> [UInt8] {
         let root = NetValueBox()
-        try NetValueBox.encode(value, into: root, codingPath: [])
+        try NetValueBox.encode(value, into: root, codingPath: [], userInfo: userInfo)
         var w = ByteWriter()
         root.write(to: &w)
         return w.data
@@ -25,6 +28,8 @@ public struct NetBinaryEncoder {
 /// `DecodingError`), never traps; nesting is limited to `maxDepth`.
 public struct NetBinaryDecoder {
     public static let maxDepth = 64
+    /// Handed to the values' `init(from:)` (replication maps entity ids to handles through it).
+    public var userInfo: [CodingUserInfoKey: Any] = [:]
 
     public init() {}
 
@@ -32,7 +37,7 @@ public struct NetBinaryDecoder {
         var r = ByteReader(bytes)
         let value = try NetValue.read(&r, depth: 0)
         guard r.isAtEnd else { throw NetError.malformed("trailing bytes") }
-        return try T(from: NetValueDecoder(value: value, codingPath: []))
+        return try T(from: NetValueDecoder(value: value, codingPath: [], userInfo: userInfo))
     }
 }
 
@@ -144,7 +149,7 @@ final class NetValueBox {
     }
 
     /// Primitives directly; anything else through its own `encode(to:)`.
-    static func encode<T: Encodable>(_ value: T, into box: NetValueBox, codingPath: [any CodingKey]) throws {
+    static func encode<T: Encodable>(_ value: T, into box: NetValueBox, codingPath: [any CodingKey], userInfo: [CodingUserInfoKey: Any]) throws {
         switch value {
         case let v as Bool: box.content = .bool(v)
         case let v as Float: box.content = .f32(v)
@@ -160,7 +165,7 @@ final class NetValueBox {
         case let v as UInt16: box.content = .uint(UInt64(v))
         case let v as UInt32: box.content = .uint(UInt64(v))
         case let v as UInt64: box.content = .uint(v)
-        default: try value.encode(to: NetValueEncoder(box: box, codingPath: codingPath))
+        default: try value.encode(to: NetValueEncoder(box: box, codingPath: codingPath, userInfo: userInfo))
         }
     }
 }
@@ -168,23 +173,24 @@ final class NetValueBox {
 private struct NetValueEncoder: Encoder {
     let box: NetValueBox
     var codingPath: [any CodingKey]
-    var userInfo: [CodingUserInfoKey: Any] { [:] }
+    let userInfo: [CodingUserInfoKey: Any]
 
     func container<Key: CodingKey>(keyedBy type: Key.Type) -> KeyedEncodingContainer<Key> {
         if case .map = box.content {} else { box.content = .map([:]) }
-        return KeyedEncodingContainer(KeyedContainer<Key>(box: box, codingPath: codingPath))
+        return KeyedEncodingContainer(KeyedContainer<Key>(box: box, codingPath: codingPath, userInfo: userInfo))
     }
 
     func unkeyedContainer() -> any UnkeyedEncodingContainer {
         if case .array = box.content {} else { box.content = .array([]) }
-        return UnkeyedContainer(box: box, codingPath: codingPath)
+        return UnkeyedContainer(box: box, codingPath: codingPath, userInfo: userInfo)
     }
 
-    func singleValueContainer() -> any SingleValueEncodingContainer { SingleContainer(box: box, codingPath: codingPath) }
+    func singleValueContainer() -> any SingleValueEncodingContainer { SingleContainer(box: box, codingPath: codingPath, userInfo: userInfo) }
 
     struct KeyedContainer<Key: CodingKey>: KeyedEncodingContainerProtocol {
         let box: NetValueBox
         var codingPath: [any CodingKey]
+        let userInfo: [CodingUserInfoKey: Any]
 
         private func child(_ key: Key) -> NetValueBox {
             let child = NetValueBox()
@@ -197,21 +203,22 @@ private struct NetValueEncoder: Encoder {
         }
         mutating func encodeNil(forKey key: Key) throws { child(key).content = .null }
         mutating func encode<T: Encodable>(_ value: T, forKey key: Key) throws {
-            try NetValueBox.encode(value, into: child(key), codingPath: codingPath + [key])
+            try NetValueBox.encode(value, into: child(key), codingPath: codingPath + [key], userInfo: userInfo)
         }
         mutating func nestedContainer<NestedKey: CodingKey>(keyedBy keyType: NestedKey.Type, forKey key: Key) -> KeyedEncodingContainer<NestedKey> {
-            NetValueEncoder(box: child(key), codingPath: codingPath + [key]).container(keyedBy: keyType)
+            NetValueEncoder(box: child(key), codingPath: codingPath + [key], userInfo: userInfo).container(keyedBy: keyType)
         }
         mutating func nestedUnkeyedContainer(forKey key: Key) -> any UnkeyedEncodingContainer {
-            NetValueEncoder(box: child(key), codingPath: codingPath + [key]).unkeyedContainer()
+            NetValueEncoder(box: child(key), codingPath: codingPath + [key], userInfo: userInfo).unkeyedContainer()
         }
-        mutating func superEncoder() -> any Encoder { NetValueEncoder(box: child(Key(stringValue: "super")!), codingPath: codingPath) }
-        mutating func superEncoder(forKey key: Key) -> any Encoder { NetValueEncoder(box: child(key), codingPath: codingPath + [key]) }
+        mutating func superEncoder() -> any Encoder { NetValueEncoder(box: child(Key(stringValue: "super")!), codingPath: codingPath, userInfo: userInfo) }
+        mutating func superEncoder(forKey key: Key) -> any Encoder { NetValueEncoder(box: child(key), codingPath: codingPath + [key], userInfo: userInfo) }
     }
 
     struct UnkeyedContainer: UnkeyedEncodingContainer {
         let box: NetValueBox
         var codingPath: [any CodingKey]
+        let userInfo: [CodingUserInfoKey: Any]
         var count: Int {
             if case .array(let items) = box.content { return items.count }
             return 0
@@ -227,21 +234,22 @@ private struct NetValueEncoder: Encoder {
             return child
         }
         mutating func encodeNil() throws { append().content = .null }
-        mutating func encode<T: Encodable>(_ value: T) throws { try NetValueBox.encode(value, into: append(), codingPath: codingPath) }
+        mutating func encode<T: Encodable>(_ value: T) throws { try NetValueBox.encode(value, into: append(), codingPath: codingPath, userInfo: userInfo) }
         mutating func nestedContainer<NestedKey: CodingKey>(keyedBy keyType: NestedKey.Type) -> KeyedEncodingContainer<NestedKey> {
-            NetValueEncoder(box: append(), codingPath: codingPath).container(keyedBy: keyType)
+            NetValueEncoder(box: append(), codingPath: codingPath, userInfo: userInfo).container(keyedBy: keyType)
         }
         mutating func nestedUnkeyedContainer() -> any UnkeyedEncodingContainer {
-            NetValueEncoder(box: append(), codingPath: codingPath).unkeyedContainer()
+            NetValueEncoder(box: append(), codingPath: codingPath, userInfo: userInfo).unkeyedContainer()
         }
-        mutating func superEncoder() -> any Encoder { NetValueEncoder(box: append(), codingPath: codingPath) }
+        mutating func superEncoder() -> any Encoder { NetValueEncoder(box: append(), codingPath: codingPath, userInfo: userInfo) }
     }
 
     struct SingleContainer: SingleValueEncodingContainer {
         let box: NetValueBox
         var codingPath: [any CodingKey]
+        let userInfo: [CodingUserInfoKey: Any]
         mutating func encodeNil() throws { box.content = .null }
-        mutating func encode<T: Encodable>(_ value: T) throws { try NetValueBox.encode(value, into: box, codingPath: codingPath) }
+        mutating func encode<T: Encodable>(_ value: T) throws { try NetValueBox.encode(value, into: box, codingPath: codingPath, userInfo: userInfo) }
     }
 }
 
@@ -250,7 +258,7 @@ private struct NetValueEncoder: Encoder {
 private struct NetValueDecoder: Decoder {
     let value: NetValue
     var codingPath: [any CodingKey]
-    var userInfo: [CodingUserInfoKey: Any] { [:] }
+    let userInfo: [CodingUserInfoKey: Any]
 
     func mismatch(_ expected: String) -> DecodingError {
         .typeMismatch(Any.self, .init(codingPath: codingPath, debugDescription: "expected \(expected), found \(value.kind)"))
@@ -258,18 +266,19 @@ private struct NetValueDecoder: Decoder {
 
     func container<Key: CodingKey>(keyedBy type: Key.Type) throws -> KeyedDecodingContainer<Key> {
         guard case .map(let items) = value else { throw mismatch("a map") }
-        return KeyedDecodingContainer(KeyedContainer<Key>(items: items, codingPath: codingPath))
+        return KeyedDecodingContainer(KeyedContainer<Key>(items: items, codingPath: codingPath, userInfo: userInfo))
     }
 
     func unkeyedContainer() throws -> any UnkeyedDecodingContainer {
         guard case .array(let items) = value else { throw mismatch("an array") }
-        return UnkeyedContainer(items: items, codingPath: codingPath)
+        return UnkeyedContainer(items: items, codingPath: codingPath, userInfo: userInfo)
     }
 
     func singleValueContainer() throws -> any SingleValueDecodingContainer { self }
 
-    static func decode<T: Decodable>(_ type: T.Type, from value: NetValue, codingPath: [any CodingKey]) throws -> T {
-        let d = NetValueDecoder(value: value, codingPath: codingPath)
+    static func decode<T: Decodable>(_ type: T.Type, from value: NetValue, codingPath: [any CodingKey],
+                                     userInfo: [CodingUserInfoKey: Any]) throws -> T {
+        let d = NetValueDecoder(value: value, codingPath: codingPath, userInfo: userInfo)
         switch type {
         case is Bool.Type:
             guard case .bool(let b) = value else { throw d.mismatch("a bool") }
@@ -319,6 +328,7 @@ private struct NetValueDecoder: Decoder {
     struct KeyedContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
         let items: [String: NetValue]
         var codingPath: [any CodingKey]
+        let userInfo: [CodingUserInfoKey: Any]
         var allKeys: [Key] { items.keys.sorted().compactMap { Key(stringValue: $0) } }
 
         func contains(_ key: Key) -> Bool { items[key.stringValue] != nil }
@@ -333,32 +343,34 @@ private struct NetValueDecoder: Decoder {
             return false
         }
         func decode<T: Decodable>(_ type: T.Type, forKey key: Key) throws -> T {
-            try NetValueDecoder.decode(type, from: value(key), codingPath: codingPath + [key])
+            try NetValueDecoder.decode(type, from: value(key), codingPath: codingPath + [key], userInfo: userInfo)
         }
         func nestedContainer<NestedKey: CodingKey>(keyedBy type: NestedKey.Type, forKey key: Key) throws -> KeyedDecodingContainer<NestedKey> {
-            try NetValueDecoder(value: value(key), codingPath: codingPath + [key]).container(keyedBy: type)
+            try NetValueDecoder(value: value(key), codingPath: codingPath + [key], userInfo: userInfo).container(keyedBy: type)
         }
         func nestedUnkeyedContainer(forKey key: Key) throws -> any UnkeyedDecodingContainer {
-            try NetValueDecoder(value: value(key), codingPath: codingPath + [key]).unkeyedContainer()
+            try NetValueDecoder(value: value(key), codingPath: codingPath + [key], userInfo: userInfo).unkeyedContainer()
         }
         func superDecoder() throws -> any Decoder {
-            NetValueDecoder(value: items["super"] ?? .null, codingPath: codingPath)
+            NetValueDecoder(value: items["super"] ?? .null, codingPath: codingPath, userInfo: userInfo)
         }
         func superDecoder(forKey key: Key) throws -> any Decoder {
-            NetValueDecoder(value: items[key.stringValue] ?? .null, codingPath: codingPath + [key])
+            NetValueDecoder(value: items[key.stringValue] ?? .null, codingPath: codingPath + [key], userInfo: userInfo)
         }
     }
 
     struct UnkeyedContainer: UnkeyedDecodingContainer {
         let items: [NetValue]
         var codingPath: [any CodingKey]
+        let userInfo: [CodingUserInfoKey: Any]
         var currentIndex = 0
         var count: Int? { items.count }
         var isAtEnd: Bool { currentIndex >= items.count }
 
-        init(items: [NetValue], codingPath: [any CodingKey]) {
+        init(items: [NetValue], codingPath: [any CodingKey], userInfo: [CodingUserInfoKey: Any]) {
             self.items = items
             self.codingPath = codingPath
+            self.userInfo = userInfo
         }
 
         private mutating func next() throws -> NetValue {
@@ -377,15 +389,15 @@ private struct NetValueDecoder: Decoder {
             return false
         }
         mutating func decode<T: Decodable>(_ type: T.Type) throws -> T {
-            try NetValueDecoder.decode(type, from: next(), codingPath: codingPath)
+            try NetValueDecoder.decode(type, from: next(), codingPath: codingPath, userInfo: userInfo)
         }
         mutating func nestedContainer<NestedKey: CodingKey>(keyedBy type: NestedKey.Type) throws -> KeyedDecodingContainer<NestedKey> {
-            try NetValueDecoder(value: next(), codingPath: codingPath).container(keyedBy: type)
+            try NetValueDecoder(value: next(), codingPath: codingPath, userInfo: userInfo).container(keyedBy: type)
         }
         mutating func nestedUnkeyedContainer() throws -> any UnkeyedDecodingContainer {
-            try NetValueDecoder(value: next(), codingPath: codingPath).unkeyedContainer()
+            try NetValueDecoder(value: next(), codingPath: codingPath, userInfo: userInfo).unkeyedContainer()
         }
-        mutating func superDecoder() throws -> any Decoder { NetValueDecoder(value: try next(), codingPath: codingPath) }
+        mutating func superDecoder() throws -> any Decoder { NetValueDecoder(value: try next(), codingPath: codingPath, userInfo: userInfo) }
     }
 }
 
@@ -394,5 +406,5 @@ extension NetValueDecoder: SingleValueDecodingContainer {
         if case .null = value { return true }
         return false
     }
-    func decode<T: Decodable>(_ type: T.Type) throws -> T { try NetValueDecoder.decode(type, from: value, codingPath: codingPath) }
+    func decode<T: Decodable>(_ type: T.Type) throws -> T { try NetValueDecoder.decode(type, from: value, codingPath: codingPath, userInfo: userInfo) }
 }

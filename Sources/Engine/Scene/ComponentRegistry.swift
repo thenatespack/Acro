@@ -19,6 +19,7 @@ public enum ComponentRegistry {
         Transform.componentName: Transform.self,
         GlobalTransform.componentName: GlobalTransform.self,
         Name.componentName: Name.self,
+        Replicated.componentName: Replicated.self,
     ]
 
     /// Registers `types` under their `componentName`. Registering a type again is a no-op;

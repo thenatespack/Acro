@@ -283,6 +283,10 @@ public final class Engine {
     public private(set) var stats = FrameStats()
     public var showDebugOverlay: Bool
     public var debugOverlayKey: Key?
+    /// Extra lines for the debug overlay, under the frame stats (refreshed with them, four times
+    /// a second): a game's own numbers, such as a network connection's
+    /// (`{ client.statsReport().overlayLines }`, see NetStats.swift).
+    public var debugOverlayLines: (@MainActor () -> [String])?
     public var profilerKey: Key?
     public var profilerExportKey: Key?
     /// Set via ENGINE_PROFILE_TRACE=<path.json>: the whole run's profile is written there at exit.
@@ -684,7 +688,7 @@ public final class Engine {
                         overlay.render(
                             pass: windowPass, stats: stats, time: time, framebufferSize: framebufferSize,
                             renderSize: renderSize, upscaler: upscaler, vsync: device.vsync, contentScale: window.contentScale,
-                            backend: device.backend, deviceName: device.deviceName)
+                            backend: device.backend, deviceName: device.deviceName, extraLines: debugOverlayLines)
                     }
                 }
                 Profiler.begin("present")

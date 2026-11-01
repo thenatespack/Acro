@@ -54,11 +54,12 @@ final class DebugOverlay {
     func render(
         pass: RenderPass, stats: FrameStats, time: Double, framebufferSize: (width: Int, height: Int),
         renderSize: (width: Int, height: Int)?, upscaler: Upscaler, vsync: Bool, contentScale: Float,
-        backend: GraphicsBackend, deviceName: String
+        backend: GraphicsBackend, deviceName: String, extraLines: (@MainActor () -> [String])? = nil
     ) {
         if time - lastRefresh >= Self.textRefreshInterval || lines.isEmpty {
             refreshText(stats: stats, framebufferSize: framebufferSize, renderSize: renderSize, upscaler: upscaler,
                         vsync: vsync, backend: backend, deviceName: deviceName)
+            if let extraLines { lines += extraLines() }
             lastRefresh = time
         }
 
