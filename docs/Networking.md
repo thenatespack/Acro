@@ -1,7 +1,8 @@
-# Networking and multiplayer (cards 624, 662)
+# Networking and multiplayer (cards 624, 662, 671)
 
 Research notes, a recommendation and a phased plan, plus the implementation that backs the measurements
-(`Sources/Engine/Net`; `NetworkingTests`, `NetConnectionTests`, `NetPredictionTests`; the `net` and `netcharacter` demo scenes).
+(`Sources/Engine/Net`; `NetworkingTests`, `NetConnectionTests`, `NetPredictionTests`, `NetHierarchyTests`, `EditorNetPlayTests`;
+the `net` and `netcharacter` demo scenes; editor network play; `GameRunner --server` / `--connect`).
 
 ## What the engine's games need
 
@@ -274,8 +275,69 @@ Card 662 (phases 1-3) added:
 - **Snapshot efficiency**: see "Serialization" above.
 - Demo: `netcharacter` (scene 37), two players with predicted characters over the link above.
 
-Not done yet: encryption, hierarchy (only root entities; Transforms replicate as local),
-`Entity` references inside replicated components (handles are per world; use `EntityID`),
+Card 671 (phases 4 and 6) added:
+
+- **Hierarchy** (`NetEntityMapping.swift`, `Replication.swift`): every replicated entity's parent travels as
+  the pseudo-component `NetHierarchy.parentKey` (`"$parent"`, the parent's 16-byte `EntityID`), so it is
+  delta-encoded like a component: 18 bytes per link in a full snapshot, nothing in a delta until it changes
+  (`hierarchyCost`: 200 entities as 100 roots with a child each cost 1,808 bytes more in full than 200
+  roots, the same 19 bytes when idle, and moving the 100 roots costs 729 bytes instead of 1,430 for
+  moving 200 flat entities). Transforms stay local. The client spawns every entity of the state first,
+  then attaches each to its parent, so a child listed before its parent (ids sort that way) is fine; a
+  parent the client doesn't have (not replicated, or not arrived) leaves the child a root until it
+  arrives (`NetClient.unresolvedParents`); swaps that would make a cycle in between (A under B and B under
+  A in one tick) are retried after the other move; replicated children of a despawned entity that are
+  still in the state are detached first. Under a byte budget, a parent new to the client goes in the
+  same snapshot as the children that refer to it (over budget if need be): with ~1 entity per snapshot,
+  12 new three-level subtrees arrive with no frame where a child waits for its parent (without that rule
+  the hierarchy hadn't converged after 6 s at 15% loss, see below). Sibling order isn't replicated.
+- **Entity references:** while the server encodes a replicated component, every `Entity` in it (fields,
+  optionals, arrays) is written as its target's `EntityID` (through `NetBinaryEncoder.userInfo`, which
+  `Entity`'s Codable conformance reads); the client decodes it to its entity with that id, or
+  `Entity.invalid` while the target hasn't arrived, remembers what each id resolved to, and decodes the
+  component again when that changes, so a reference resolves the frame its target arrives and goes stale
+  when the target is despawned. `EntityRef` already names its target by id and resolves through
+  `World.resolve`.
+- **Scene entities matched by id:** a client that loaded the same scene (or built the same world with
+  the same ids) already has the server's replicated entities; they are updated in place (their handles
+  and non-replicated components kept) instead of spawned again. Replicated entities the client has but
+  the server's state lacks (removed before the client joined) are despawned when the first complete
+  snapshot (nothing deferred; a flag in the snapshot header) is applied (`despawnsUnmatchedEntities`).
+- Tests (`NetHierarchyTests`, 15% loss, 40 ms jitter, 5% duplication): children before parents, a 90°
+  turned parent moving its subtree (positions within 1 cm), reparenting with a swap, parents despawned
+  with and without their children, unresolved parents and the budget rule, `Entity` / `[Entity]` /
+  `Entity?` / `EntityRef` fields resolving late and going stale, the same scene loaded on both sides.
+- **Stats** (`NetStats.swift`): `NetClient.statsReport(prediction:)` and `NetServer.statsReport(for:)` give
+  a `NetStatsReport`: RTT, loss, bytes per second in / out over the last second (`NetRateMeter`) and in
+  total, packets, snapshots, the last snapshot's size and deferred entities (server), the interpolation
+  delay, what is buffered (time and snapshots) and starved frames (client), replicated entities and
+  unresolved parents, and with a prediction its reconciliations and corrections. `overlayLines` formats
+  it; `Engine.debugOverlayLines` puts any lines under the debug overlay's frame stats.
+- **Editor network play** (`EditorNetPlay.swift`, `EditorNetCommands.swift`): `net.start {clients}` makes
+  the scene's world the server and N client worlds copies of the scene as play started, on a
+  `LoopbackNetwork`; the Game View shows the server or a client (`net.view`), the scene view the server;
+  `net.setConditions` per client and direction; `net.stats`; the viewport's overlay (`net.overlay`);
+  the toolbar's Network menu. Clients only display (game input and systems run on the server).
+- **`GameRunner --server` / `--connect`** (`Sources/GameRunner/NetRun.swift`, GameModule ABI 1.3
+  `networkedWorld`): a game module headless as a UDP server, and clients with a window (or `--headless`).
+
+Measured (phase 6):
+
+| Setup | Result |
+|---|---|
+| `GameRunner SampleGame --server` + `--connect 127.0.0.1` (UDP, same Mac, debug) | 6 moving props: snapshots 61-67 B, 22.9 kbit/s to the client, 6.5 kbit/s back, RTT 16-22 ms (60 Hz cadence), 0% loss, buffer ~100 ms (3-4 snapshots), 0 starved frames; the client's world has the 9 entities `networkedWorld` builds (6 matched replicas), none duplicated |
+| Editor, starter scene + a spinner with two arms (11 entities), client 1 at 60 ms + 10 ms jitter + 2% loss, client 2 at 150 ms + 40 ms jitter + 8% loss | RTT 165 ms and 373 ms (both ends agree within 5 ms), measured loss 1.6-2.3% and 7-9%, ~15 kbit/s to each client, 38-byte snapshots, buffer 89-131 ms; the slow client starved 7-11 frames in 30 s (its jitter is close to the 100 ms buffer) |
+| `EditorNetPlayTests` (2 clients, one at 150 ms + 20 ms jitter + 10% loss, 300 frames) | fast client RTT < 60 ms, slow 300-420 ms, loss > 2%, > 1 kB/s, > 100 snapshots |
+
+A finding from the budget work (phase 3, not changed here): deltas are always against the newest
+acknowledged state, so when a budget allows only about one entity per snapshot and the round trip spans
+several snapshots, the entities chosen in the snapshots in flight aren't in the next baseline, and
+delivery of a large backlog progresses about one entity per acknowledgement round (36 new entities at
+600 B/s and 15% loss weren't all there after 6 s). Typical budgets carry dozens of entities per
+snapshot, where it doesn't matter; preferring entities already in flight would fix it.
+
+Not done yet: encryption, sibling order in replicated hierarchies, client input in editor network play
+and GameRunner clients (they only display; a game sends its own input commands),
 interest management (priority exists, distance-based priority is up to the game), clock sync
 beyond the interpolation clock, prediction of anything but a `CharacterController` (and of a
 character on moving platforms or blocked by other players: those show up as corrections; the
@@ -295,13 +357,16 @@ moving: fine for co-op, a speed / freeze exploit to bound in versus games.
    Codable encoder, compact entity references, per-entity priority and a byte budget, zlib. 300
    entities: 92 kbit/s with 30 moving; all moving 804 kbit/s raw, 367 with zlib, 244 under a
    30,000 B/s budget (each entity updated every 57 ms or sooner).
-4. **Net: hierarchy and references** - replicate parents (by `EntityID`) and `EntityRef` fields,
-   scene-entities matched by id instead of spawned (both sides load the same scene).
+4. **Net: hierarchy and references** - **done (card 671)**: parent links by `EntityID` (18 bytes per link in
+   full snapshots, none in deltas), any spawn order, reparenting, despawned parents, new parents sent with
+   their children under a budget; `Entity` fields mapped to the client's entities once their targets
+   arrive; scene entities matched by id, unmatched replicated ones removed after the first complete snapshot.
 5. **Net: Windows sockets and an encrypted transport** - Winsock in `UDPTransport`; MsQuic datagrams
    or GameNetworkingSockets behind `NetTransport`; connect tokens.
-6. **Net: editor and tooling** - play with N clients in the editor (one process, several worlds, like
-   the `net` scene), a network stats overlay (bytes, loss, RTT, interpolation buffer), MCP tools to
-   set simulated conditions, `swift run GameRunner --server` headless.
+6. **Net: editor and tooling** - **done (card 671)**: play with N clients in the editor (`net.start`, Game View
+   on the server or any client), a stats overlay in the editor and `Engine.debugOverlayLines` for games,
+   `net.setConditions` / `net.stats` MCP tools, `GameRunner --server` headless over UDP and `--connect`
+   (localhost: 22.9 kbit/s for 6 movers, RTT ~20 ms).
 7. **Determinism (only if rollback is wanted)** - engine-owned transcendental math for simulation
    code, desync hashing, a cross-platform determinism CI job (the fingerprint test on Linux x86_64 /
    arm64 and macOS).

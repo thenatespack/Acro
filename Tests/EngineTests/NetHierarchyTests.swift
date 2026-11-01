@@ -298,6 +298,39 @@ import Testing
         for (label, position) in expected { #expect(length(actual[label]! - position) < 0.01, "\(label)") }
     }
 
+    /// What parent links cost on the wire: 200 entities flat vs 100 roots with a child each.
+    /// A link is 18 bytes in full snapshots (the id, a header and a length) and nothing in deltas until it changes.
+    @Test func hierarchyCost() {
+        func sizes(nested: Bool) -> (full: Int, idle: Int, moving: Int) {
+            let world = World()
+            var next: UInt64 = 0
+            world.entityIDGenerator = {
+                next += 1
+                return EntityID(high: 7, low: next)
+            }
+            var roots: [Entity] = []
+            for i in 0..<200 {
+                let entity = world.spawn(Transform(position: Vec3(Float(i), 1, 0)), Replicated())
+                world.ensureID(of: entity)
+                if nested && i % 2 == 1 { world.setParent(entity, to: roots.last!) } else { roots.append(entity) }
+            }
+            let server = NetServer(world: world, transport: LoopbackNetwork().makeEndpoint())
+            let state = server.captureState()
+            let full = NetSnapshot(tick: 1, serverTime: 0, state: state, baseline: nil, baselineTick: nil).encoded()
+            let idle = NetSnapshot(tick: 2, serverTime: 0, state: server.captureState(), baseline: state, baselineTick: 1).encoded(baseline: state)
+            for root in roots { world.modify(Transform.self, for: root) { $0.position.y += 0.5 } }
+            let moving = NetSnapshot(tick: 3, serverTime: 0, state: server.captureState(), baseline: state, baselineTick: 1).encoded(baseline: state)
+            return (full.count, idle.count, moving.count)
+        }
+        let flat = sizes(nested: false), nested = sizes(nested: true)
+        print("hierarchyCost: flat \(flat), nested \(nested)")
+        // 100 links of 18 bytes (and the name once) in the full snapshot; deltas carry none.
+        #expect(nested.full - flat.full == 100 * 18 + 8)
+        #expect(nested.idle == flat.idle)
+        // Moving 100 roots moves their children for free (flat: 200 roots moved, nested: 100).
+        #expect(nested.moving < flat.moving)
+    }
+
     /// A client that keeps `despawnsUnmatchedEntities` off keeps its scene copies.
     @Test func unmatchedEntitiesCanBeKept() throws {
         let scene = World()

@@ -71,8 +71,7 @@ enum NetRun {
     }
 
     static func log(_ line: String) {
-        print(line)
-        fflush(stdout)
+        FileHandle.standardOutput.write(Data((line + "\n").utf8))
     }
 
     // MARK: Server
