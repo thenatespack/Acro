@@ -43,6 +43,9 @@ public enum EditorIcons {
         UnresolvedComponents.componentName: "puzzle",
         Spin.componentName: "rotate-cw",
         KeyboardMover.componentName: "keyboard",
+        FieldAnimator.componentName: "sliders-horizontal",
+        LightFlicker.componentName: "gauge",
+        CameraPath.componentName: "orbit",
     ]
 
     /// The icon of component types without one of their own (games' components, unknown data).

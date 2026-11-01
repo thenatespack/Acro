@@ -1,22 +1,5 @@
 import Engine
 
-/// Rotates its entity about `axis` at `speed` radians per second while the world's systems run
-/// (play mode). The starter scene uses it so that pressing Play visibly does something.
-public struct Spin: Component, Equatable, Sendable {
-    public static let componentName = "Spin"
-    public static var fieldHints: [String: FieldHints] {
-        ["speed": FieldHints(step: 0.05, tooltip: "Radians per second"), "axis": FieldHints(step: 0.1)]
-    }
-
-    public var axis: Vec3
-    public var speed: Float
-
-    public init(axis: Vec3 = Vec3(0, 1, 0), speed: Float = 1) {
-        self.axis = axis
-        self.speed = speed
-    }
-}
-
 /// Moves its entity with the keyboard in play mode: W / S (or up / down) along -Z / +Z, A / D
 /// (or left / right) along -X / +X, at `speed` units per second, reading the session's
 /// `gameInput`, so injected input (`input.inject`) drives it. A dynamic `RigidBody` gets the
@@ -65,7 +48,7 @@ public enum EditorComponentCatalog {
         guard !registeredBuiltins else { return }
         registeredBuiltins = true
         ComponentRegistry.register(Transform.self, Name.self, Camera.self, DirectionalLight.self, SceneEnvironment.self,
-                                   MeshRenderer.self, Spin.self)
+                                   MeshRenderer.self, Spin.self, FieldAnimator.self, LightFlicker.self, CameraPath.self)
         register(Transform.self) { Transform() }
         register(Camera.self) { Camera() }
         register(DirectionalLight.self) { DirectionalLight() }
@@ -93,6 +76,9 @@ public enum EditorComponentCatalog {
         register(Saveable.self) { Saveable() }
         register(Spin.self) { Spin() }
         register(KeyboardMover.self) { KeyboardMover() }
+        register(FieldAnimator.self) { FieldAnimator(tracks: [.wave("Transform.position.y", amplitude: 0.25, frequency: 0.5)]) }
+        register(LightFlicker.self) { LightFlicker() }
+        register(CameraPath.self) { CameraPath() }
     }
 
     /// Makes the component type registered as `name` addable, created by `make` (game modules,
@@ -137,7 +123,7 @@ extension KeyboardMover: DefaultConstructibleComponent {
 }
 
 extension World {
-    /// Adds the editor's systems (`Spin`, and `KeyboardMover` reading `input`). They run only
+    /// Adds the editor's systems (`KeyboardMover` reading `input`, plus the engine's `addBuiltinAnimationSystems`: `Spin`, `FieldAnimator`, `LightFlicker`, `CameraPath`). They run only
     /// when the world updates, which the editor does in play mode.
     @MainActor public func addEditorSystems(input: Input? = nil) {
         if let input, !systemNames(in: .update).contains("editor.keyboardMover") {
@@ -162,13 +148,6 @@ extension World {
                 }
             }
         }
-        guard !systemNames(in: .update).contains("editor.spin") else { return }
-        addSystem("editor.spin", stage: .update) { world in
-            let dt = world.time.delta
-            world.queryMutating(Transform.self, Spin.self) { _, transform, spin in
-                guard spin.speed != 0, length(spin.axis) > 0 else { return }
-                transform.rotation = (Quat(angle: spin.speed * dt, axis: normalize(spin.axis)) * transform.rotation).normalized
-            }
-        }
+        addBuiltinAnimationSystems()
     }
 }

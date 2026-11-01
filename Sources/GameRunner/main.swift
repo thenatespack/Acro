@@ -118,6 +118,7 @@ if headless && connect == nil { fail("--headless goes with --connect (--server i
         renderer = try SceneRenderer(engine: engine)
         try renderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(0.6, 0.6, 0.58, 1), checker: true, specular: 0.1),
                                       key: "checker")
+        world.addBuiltinAnimationSystems()
         try world.load(Data(contentsOf: sceneURL))
         for warning in module.addSystems(to: world, context: GameContext(input: engine.input)) { print(warning) }
         engine.world = world
@@ -134,6 +135,7 @@ MainActor.assumeIsolated {
         let module = loaded.module
         // Scenes name components by their registered names.
         for component in module.components { ComponentRegistry.register(component.type) }
+        ComponentRegistry.register(Spin.self, FieldAnimator.self, LightFlicker.self, CameraPath.self)
         print("Loaded \(module.name): \(module.componentNames.joined(separator: ", "))")
         let sceneURL = scenePath.map { URL(fileURLWithPath: $0) }
         if server || connect != nil {
