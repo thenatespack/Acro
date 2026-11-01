@@ -85,7 +85,7 @@ public enum GamePlayer {
     /// the same through its component catalog).
     public static func registerEngineComponents() {
         ComponentRegistry.register(Transform.self, Name.self, Camera.self, DirectionalLight.self, PointLight.self, SpotLight.self,
-                                   SceneEnvironment.self, PostProcessSettings.self, MeshRenderer.self, LineRenderer.self, MeshArray.self, Saveable.self,
+                                   SceneEnvironment.self, PostProcessSettings.self, MeshRenderer.self, LineRenderer.self, MeshArray.self, Decal.self, Saveable.self,
                                    Sprite.self, SpriteAnimator.self, PrefabInstance.self, Spin.self, FieldAnimator.self, LightFlicker.self,
                                    CameraPath.self)
         PhysicsWorld.registerComponents()

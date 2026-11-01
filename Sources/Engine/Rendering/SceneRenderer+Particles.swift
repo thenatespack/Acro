@@ -31,20 +31,21 @@ extension SceneRenderer {
     func renderParticleDepth(frame: Frame) {
         particleDepth = nil
         particles?.sceneDepth = nil
-        guard let particles, particles.needsSceneDepth, let view = particleView,
+        let forParticles = particles?.needsSceneDepth == true
+        guard forParticles || needsDecalDepth, let view = particleView,
               let texture = depthTexture(&particleDepthTexture, size: view.size) else { return }
         renderDepthPrepass(into: texture, list: list, instances: uploaded, viewProjection: view.viewProjection,
                            reversedZ: view.reversedZ, frame: frame)
         let depth = ParticleSceneDepth(texture: texture, viewProjection: view.viewProjection, projection: view.projection,
                                        cameraPosition: view.eye)
         particleDepth = depth
-        particles.sceneDepth = depth
+        if forParticles { particles?.sceneDepth = depth }
     }
 
     /// `renderView`'s depth prepass for `view`, if an emitter needs it.
     func renderViewParticleDepth(list: RenderList, instances: TransientBuffer?, view: SceneView, size: (width: Int, height: Int),
                                  frame: Frame) -> ParticleSceneDepth? {
-        guard let particles, particles.needsSceneDepth else { return nil }
+        guard particles?.needsSceneDepth == true || needsDecalDepth else { return nil }
         var texture = viewParticleDepthTextures[[size.width, size.height]]
         if texture == nil, viewParticleDepthTextures.count >= 4 { viewParticleDepthTextures.removeAll() }
         guard let texture = depthTexture(&texture, size: size) else { return nil }

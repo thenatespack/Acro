@@ -75,6 +75,7 @@ public enum EditorComponentCatalog {
         register(ParticleEmitter.self) { ParticleEmitter() }
         TextMeshComponents.registerComponents()
         register(TextMesh.self) { TextMesh("Neon", emissiveStrength: 4) }
+        register(Decal.self) { Decal() }
         register(Sprite.self) { Sprite(atlas: SpriteAtlasHandle("sprites")) }
         register(SpriteAnimator.self) { SpriteAnimator(clips: [SpriteClip("idle", frames: [0], fps: 12)]) }
         register(Saveable.self) { Saveable() }

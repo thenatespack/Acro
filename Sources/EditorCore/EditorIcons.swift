@@ -35,6 +35,7 @@ public enum EditorIcons {
         AudioEmitter.componentName: "volume-2",
         ParticleEmitter.componentName: "sparkles",
         TextMesh.componentName: "type",
+        Decal.componentName: "palette",
         Sprite.componentName: "image",
         SpriteAnimator.componentName: "images",
         Animator.componentName: "film",
@@ -166,12 +167,13 @@ public enum EditorIcons {
     public enum EntityKind: String, Sendable, CaseIterable {
         case camera, directionalLight, pointLight, spotLight, particles, audioEmitter, audioListener, mesh, sprite
         case character, trigger, physics, environment, postProcess, prefab, game, group, empty
+        case decal
 
         /// Kinds without anything to see or click on in the scene view: they get a billboard
         /// there when the entity has no mesh.
         public var hasBillboard: Bool {
             switch self {
-            case .camera, .directionalLight, .pointLight, .spotLight, .particles, .audioEmitter, .audioListener, .trigger, .sprite: true
+            case .camera, .directionalLight, .pointLight, .spotLight, .particles, .audioEmitter, .audioListener, .trigger, .sprite, .decal: true
             default: false
             }
         }
@@ -185,6 +187,7 @@ public enum EditorIcons {
             case .audioEmitter, .audioListener: UIColor(hex: 0x5fd4c4)
             case .trigger: UIColor(hex: 0x86e08a)
             case .sprite: UIColor(hex: 0xb0bcff)
+            case .decal: UIColor(hex: 0xffb86b)
             default: UIColor(hex: 0xe8ecf4)
             }
         }
@@ -205,6 +208,7 @@ public enum EditorIcons {
         if world.has(PrefabInstance.self, for: entity) { return (.prefab, PrefabInstance.componentName) }
         if world.has(MeshRenderer.self, for: entity) { return (.mesh, MeshRenderer.componentName) }
         if world.has(Sprite.self, for: entity) { return (.sprite, Sprite.componentName) }
+        if world.has(Decal.self, for: entity) { return (.decal, Decal.componentName) }
         if world.has(CharacterController.self, for: entity) { return (.character, CharacterController.componentName) }
         if let collider = world.get(Collider.self, for: entity), collider.isTrigger { return (.trigger, Collider.componentName) }
         if let collider = world.get(Collider2D.self, for: entity), collider.isTrigger { return (.trigger, Collider2D.componentName) }
