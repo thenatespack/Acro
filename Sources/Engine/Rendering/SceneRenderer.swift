@@ -227,6 +227,8 @@ public final class SceneRenderer {
     /// GPU particles of the world's `ParticleEmitter`s (see `SceneRenderer+Particles.swift`),
     /// created with the first emitter; nil until then.
     public internal(set) var particles: ParticleSystem?
+    /// World-space text of the world's `TextMesh`es (see `SceneRenderer+Text.swift`), created with the first one.
+    var worldText: WorldTextRenderer?
     /// The `prepare` camera, for the particles' depth prepass (`renderParticleDepth`).
     var particleView: (viewProjection: Mat4, projection: Mat4, eye: Vec3, size: (width: Int, height: Int), reversedZ: Bool)?
     /// This frame's depth prepass of the `prepare` camera, when particles need it.
@@ -543,6 +545,7 @@ public final class SceneRenderer {
                               projectionScale: camera.projection(aspect: engine.aspectRatio).c1.y)
         particleView = (jittered, jitteredProjection, eye, size, camera.reversedZ)
         prepareParticles(world: world, cameraPosition: eye)
+        prepareWorldText(world: world)
     }
 
     /// Sets up the sky and image-based lighting of `environment` for this frame.
@@ -722,6 +725,7 @@ public final class SceneRenderer {
         renderShadowAtlas(light.shadows, frame: frame)
         prepareParticles(world: world, cameraPosition: shadowFocus?.eye ?? Vec3(focus.view.inverse.c3.x, focus.view.inverse.c3.y,
                                                                                 focus.view.inverse.c3.z))
+        prepareWorldText(world: world)
         particles?.sceneDepth = nil  // no single camera: no depth collisions
         particles?.simulate(frame: frame)
     }
@@ -993,6 +997,7 @@ public final class SceneRenderer {
             pass.setTexture(shadowMap, index: 3, stage: .vertex)
         }
         drawParticles(in: pass, uniforms: uniforms, reversedZ: reversedZ, depth: particleDepth)
+        drawWorldText(in: pass, uniforms: uniforms, view: sky?.view, reversedZ: reversedZ)
     }
 
     private func draw(_ pass: RenderPass, _ batch: RenderBatch, instances: TransientBuffer) {

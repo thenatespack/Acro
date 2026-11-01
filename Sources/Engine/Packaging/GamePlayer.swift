@@ -92,6 +92,7 @@ public enum GamePlayer {
         PhysicsWorld2D.registerComponents()
         AudioSystem.registerComponents()
         ParticleSystem.registerComponents()
+        TextMeshComponents.registerComponents()
     }
 
     /// Calls a statically linked module's entry point (`GameModuleABI.entryPoint`) and checks

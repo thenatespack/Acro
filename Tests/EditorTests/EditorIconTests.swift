@@ -102,7 +102,7 @@ struct EditorIconTests {
         }
         for name in ["Transform", "Name", "Camera", "DirectionalLight", "PointLight", "SpotLight", "SceneEnvironment", "PostProcess",
                      "MeshRenderer", "Collider", "RigidBody", "Joint", "CharacterController", "RigidBody2D", "Collider2D", "Joint2D",
-                     "AudioListener", "AudioEmitter", "ParticleEmitter", "Sprite", "SpriteAnimator", "Animator", "Skin", "Saveable",
+                     "AudioListener", "AudioEmitter", "ParticleEmitter", "TextMesh", "Sprite", "SpriteAnimator", "Animator", "Skin", "Saveable",
                      "Replicated", "Unpickable", "PrefabInstance", "Spin", "KeyboardMover"] {
             #expect(EditorIcons.hasIcon(forComponent: name), "\(name)")
         }
