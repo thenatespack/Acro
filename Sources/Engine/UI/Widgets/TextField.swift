@@ -246,7 +246,13 @@ public final class TextField: Widget {
     }
 
     /// Scrolls horizontally so the caret stays inside the field.
+    /// While not being edited, the field shows the start of its text (a long name's beginning,
+    /// not its end where the caret was left).
     private func updateScroll(caretX: Float, textWidth: Float) {
+        guard isFocused else {
+            scrollX = 0
+            return
+        }
         let visible = max(contentRect.width - 1, 0)
         if caretX - scrollX > visible { scrollX = caretX - visible }
         if caretX - scrollX < 0 { scrollX = caretX }
@@ -370,7 +376,7 @@ public final class TextField: Widget {
         let enabled = isEffectivelyEnabled
         let focused = isFocused
         let radii = UICornerRadii(theme.cornerRadius)
-        list.fillRect(frame, color: enabled ? theme.fieldBackground : theme.fieldBackground.withAlpha(0.5), radii: radii)
+        list.fillRect(frame, color: enabled ? theme.fieldBackground : theme.fieldBackground.fading(0.5), radii: radii)
         list.strokeRect(frame, color: focused ? theme.accent : isHovered ? theme.controlBorder.mixed(with: .white, 0.15)
                         : theme.controlBorder, width: focused ? theme.borderWidth + 0.5 : theme.borderWidth, radii: radii)
 
@@ -386,7 +392,9 @@ public final class TextField: Widget {
         list.pushClip(UIRect(x: content.x - 1, y: frame.y, width: content.width + 2, height: frame.height))
         if d.text.isEmpty && !placeholder.isEmpty && d.composition == nil {
             let layout = placeholderCache.get(placeholder, font: theme.font, size: size)
-            list.drawText(layout, font: theme.font, at: Vec2(content.x, textY), color: theme.placeholderColor)
+            // Ellipsized like the text when the field is narrower ("path/to/pro…", not "path/to/proje").
+            drawEllipsized(placeholder, layout: layout, size: size, in: UIRect(x: content.x, y: frame.y, width: content.width,
+                                                                                height: frame.height), color: theme.placeholderColor, list: list)
         }
         // Selection behind the text.
         if focused, d.composition == nil, buffer.hasSelection {
@@ -402,8 +410,14 @@ public final class TextField: Widget {
         }
         if !d.text.isEmpty {
             let layout = layoutCache.get(d.text, font: theme.font, size: size)
-            list.drawText(layout, font: theme.font, at: Vec2(textX, textY),
-                          color: enabled ? theme.textColor : theme.disabledTextColor)
+            let color = enabled ? theme.textColor : theme.disabledTextColor
+            if !focused, overflows(layout, width: content.width) {
+                // Not being edited and too long: the start, ending in "…" (the whole text is the tooltip).
+                drawEllipsized(d.text, layout: layout, size: size, in: UIRect(x: content.x, y: frame.y, width: content.width,
+                                                                              height: frame.height), color: color, list: list)
+            } else {
+                list.drawText(layout, font: theme.font, at: Vec2(textX, textY), color: color)
+            }
         }
         // IME composition: underlined, with its own selection thicker.
         if let composition = d.composition {
@@ -420,6 +434,11 @@ public final class TextField: Widget {
             list.fillRect(caret, color: theme.caret)
         }
         list.popClip()
+    }
+
+    /// An explicit `tooltip`, else the whole text while it is cut off (not while editing).
+    public override func tooltip(at point: Vec2) -> String? {
+        tooltip ?? (isFocused ? nil : truncatedText(text, size: theme.fontSize, width: contentRect.width))
     }
 
     private func caretVisible(_ theme: UITheme) -> Bool {

@@ -111,7 +111,9 @@ public final class HierarchyPanel {
 
         guard force || (!tree.isDragging && tree.renamingNode == nil) else { return }
         let world = session.world
-        let structure = Self.structure(of: world, name: session.displayName(of:), icon: { EditorIcons.entityKind($0, in: world) })
+        let structure = Self.structure(of: world, name: session.displayName(of:), icon: {
+            (EditorIcons.entityKind($0, in: world).kind, EditorIcons.entityIcon($0, in: world))
+        })
         guard force || structure != shownStructure else { return }
         shownStructure = structure
         rebuild(structure)
@@ -119,13 +121,12 @@ public final class HierarchyPanel {
 
     /// The world's tree as depth-first rows.
     static func structure(of world: World, name: (Entity) -> String,
-                          icon: ((Entity) -> (kind: EditorIcons.EntityKind, component: String?))? = nil) -> [Row] {
+                          icon: ((Entity) -> (kind: EditorIcons.EntityKind, icon: VectorIcon))? = nil) -> [Row] {
         var rows: [Row] = []
         func visit(_ entity: Entity, _ depth: Int) {
             guard let id = world.ensureID(of: entity) else { return }
             let main = icon?(entity)
-            rows.append(Row(id: id, depth: depth, title: name(entity), icon: main.map { EditorIcons.entityIcon(kind: $0.kind, component: $0.component) },
-                            isPrefab: main?.kind == .prefab))
+            rows.append(Row(id: id, depth: depth, title: name(entity), icon: main?.icon, isPrefab: main?.kind == .prefab))
             for child in world.children(of: entity) { visit(child, depth + 1) }
         }
         for root in world.roots { visit(root, 0) }

@@ -115,6 +115,12 @@ def audit(snapshot, min_hit=12):
     for e in shown:
         r = e["full"]
         scrolled = any(e["path"].startswith(s + "/") for s in scrollers)
+        # A panel scrolls content taller than itself (TabView.contentOverflow): what runs past
+        # its top or bottom, but not its sides, can be scrolled to, as long as the panel is on screen.
+        group = max((p for p in groups if e["path"].startswith(p + "/")), key=len, default=None)
+        if not scrolled and group and e["role"] != "tab" and inside(groups[group], window) \
+                and r[0] >= groups[group][0] - 1 and r[0] + r[2] <= groups[group][0] + groups[group][2] + 1:
+            scrolled = True
         if not scrolled and not inside(r, window):
             issues.append({"kind": "outsideWindow", "path": e["path"], "rect": r})
         elif not scrolled and e["role"] != "tab" and not e["path"].split("/")[-1].startswith(("tab:", "close:")):
@@ -256,6 +262,22 @@ def states(client, workspace):
         seen.add(kind)
         client.call("asset.select", {"asset": asset["id"]})
         yield f"asset-{kind}", f"the asset inspector for a {kind} asset ({os.path.basename(asset['path'])})"
+
+    # Prefab variant rows: an overridden instance turned into a variant, selected.
+    source = first_entity(client, "Prefab Source")
+    if source:
+        client.call("component.setField", {"entity": source, "path": "Transform.position", "value": [0, 2, 0]})
+        client.call("prefab.createVariant", {"entity": source, "name": "Crate Variant"})
+        client.call("component.setField", {"entity": source, "path": "MeshRenderer.receivesShadows", "value": False})
+        client.call("selection.set", {"entities": [source], "primary": source})
+        client.call("panel.focus", {"panel": "inspector"})
+        yield "prefab-variant", "the inspector of a prefab variant instance with overrides"
+    # One entity of each mesh kind and a prefab instance next to each other in the hierarchy.
+    client.call("layout.reset")
+    client.call("selection.clear")
+    for template in ("cube", "sphere", "plane"):
+        client.call("entity.create", {"template": template, "name": f"A {template.title()}"})
+    yield "mesh-kinds", "cube, sphere and plane entities and a prefab instance in the hierarchy"
 
 
 def launch(editor, size, scale, theme, backend, workspace, port):

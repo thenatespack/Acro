@@ -60,6 +60,12 @@ public final class ConsolePanel {
         lines.children.compactMap { ($0 as? Label)?.text }
     }
 
+    /// Rebuilds the lines in the current theme's warning and error colors (after a theme change).
+    func recolor() {
+        shownChange = -1
+        refresh()
+    }
+
     public func refresh() {
         if scrollToEnd {
             scrollToEnd = false

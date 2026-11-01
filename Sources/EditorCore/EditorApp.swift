@@ -115,7 +115,7 @@ public final class EditorApp: Game, EditorHost {
 
     private var shownAssetKeys: [AssetReference] = []
     private weak var shownAssets: AssetDatabase?
-    private var prefs = EditorPrefs()
+    private(set) var prefs = EditorPrefs()
     /// The UI zoom asked for (prefs, `EDITOR_UI_SCALE`); `ui.uiScale` is lower in a small window.
     public private(set) var preferredUIScale: Float = 1
     private var prefsDirty = false
@@ -206,6 +206,10 @@ public final class EditorApp: Game, EditorHost {
     /// The smallest UI, in points, a zoom above 100% may leave: a window with less room zooms less.
     public static let minimumZoomedUISize = Vec2(800, 500)
 
+    /// The smallest editor window (points; `EngineConfig.minimumWindowSize`): the default layout's
+    /// panels at their minimum sizes plus a one-row toolbar fit, with the zoom at 100%.
+    public static let minimumWindowSize = Vec2(800, 500)
+
     /// `preferred` lowered (not below 1, or below `preferred` when that is under 1) so a window
     /// of `window` points keeps at least `minimumZoomedUISize` points of UI.
     public static func fittedUIScale(_ preferred: Float, window: Vec2) -> Float {
@@ -229,6 +233,53 @@ public final class EditorApp: Game, EditorHost {
         if options.deterministic { theme.caretBlinkPeriod = 0 }
         let zoom = options.uiScale ?? prefs.uiScale ?? 1
         return (theme, min(max(zoom.isFinite ? zoom : 1, Self.uiScaleRange.lowerBound), Self.uiScaleRange.upperBound))
+    }
+
+    /// The themes the toolbar's View menu offers. Game is left out: it is a preset for game
+    /// menus and HUDs (44-point controls, 18-point text), too coarse for a dense tool UI; it stays
+    /// reachable through the prefs, `EDITOR_THEME` and `view.appearance` to preview a game's UI.
+    public static let menuThemes = ["Dark", "Light", "High Contrast"]
+    /// The zooms the View menu offers.
+    public static let menuZooms: [Float] = [0.85, 1, 1.25, 1.5, 2]
+
+    /// The current theme and zoom, after applying `theme` and / or `uiScale` (`view.appearance`).
+    public func appearance(theme name: String?, uiScale: Float?) throws -> EditorAppearance? {
+        guard ui != nil else { return nil }
+        if let name {
+            guard var theme = UITheme.named(name) else {
+                throw CommandError.failed("Unknown theme '\(name)' (\(UITheme.presets.map(\.name).joined(separator: ", ")))")
+            }
+            if options.deterministic { theme.caretBlinkPeriod = 0 }
+            if theme.name != ui.theme.name { apply(theme) }
+            prefs.theme = theme.name
+            prefsDirty = true
+        }
+        if let uiScale {
+            guard uiScale.isFinite else { throw CommandError.failed("uiScale must be a number in 0.85...2") }
+            let zoom = min(max(uiScale, Self.uiScaleRange.lowerBound), Self.uiScaleRange.upperBound)
+            if zoom != preferredUIScale {
+                // The window's size in points and its backing scale, before the change.
+                let window = Vec2(ui.viewport.width, ui.viewport.height) * ui.uiScale
+                let backing = ui.scale / ui.uiScale
+                preferredUIScale = zoom
+                if window.x > 0 { resizeWithoutWindow(size: window, scale: backing) }
+            }
+            prefs.uiScale = zoom
+            prefsDirty = true
+        }
+        return EditorAppearance(theme: ui.theme.name, uiScale: preferredUIScale, effectiveUIScale: ui.uiScale,
+                                themes: UITheme.presets.map(\.name))
+    }
+
+    /// Restyles the running editor: the context's theme, plus what was colored when it was built.
+    private func apply(_ theme: UITheme) {
+        ui.theme = theme
+        dock.background = theme.fieldBackground
+        toolbar.view.background = theme.panelBackground
+        statusBar.view.background = theme.panelBackground
+        console.recolor()
+        hierarchy.sync(force: true)
+        syncPanels()
     }
 
     /// One frame without a window: what `update` does apart from rendering and real input.
@@ -369,9 +420,6 @@ public final class EditorApp: Game, EditorHost {
         dock.addPanel(DockPanel(id: EditorLayout.assets, title: "Assets", content: assetBrowser.view, minSize: Vec2(240, 120)))
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
         for (id, icon) in EditorIcons.panelIconNames { dock.panel(id)?.icon = EditorIcons.named(icon) }
-        // The gaps between panels: the dock builds its splits before it is in the context, so
-        // without this they would take the default (dark) theme's field color in every theme.
-        if ui.theme.name != UITheme.dark().name { dock.gapColor = ui.theme.fieldBackground }
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
         // Layouts saved before the Assets panel existed get it next to the console.
         if !dock.isOpen(EditorLayout.assets) {
@@ -575,7 +623,7 @@ public final class EditorApp: Game, EditorHost {
         buildGizmos()
         viewportWidget.texture = target.texture
         viewportWidget.billboards = transformTool.billboards
-        viewportWidget.caption = playCaption()
+        updateViewportCaption()
         viewportWidget.isPlaying = session.isPlaying
         ui.draw(into: engine.ui)
         engine.ui.withTransform(scale: ui.uiScale) { drawAssetDrag(into: engine.ui) }
@@ -667,6 +715,17 @@ public final class EditorApp: Game, EditorHost {
     // MARK: Viewport
 
     /// The viewport's caption: the camera and tool, and the play state.
+    /// The viewport's caption goes in its panel's tab bar (it covered scene labels as a badge
+    /// over the image); the badge only shows when the bar has no room for it.
+    func updateViewportCaption() {
+        let caption = playCaption()
+        viewportWidget.caption = caption
+        guard let panel = dock.panel(EditorLayout.viewport) else { return }
+        panel.caption = caption
+        let inBar = panel.owner?.captionIsShown ?? false
+        if viewportWidget.drawsCaption == inBar { viewportWidget.drawsCaption = !inBar }
+    }
+
     private func playCaption() -> String {
         guard session.isPlaying else { return "Perspective · \(session.tool.title)" }
         let state = session.isPaused ? "Paused · frame \(session.playFrame)" : "Playing"
@@ -830,6 +889,8 @@ public final class EditorApp: Game, EditorHost {
         }
         guard gizmos else { return }
         let labelSize = 12 * ui.scale
+        // Names read over the bright sky and dark ground alike.
+        let labelShadow = Vec4(0, 0, 0, 0.85)
         // Names go just above the billboard (a constant distance on screen), else 0.45 units up.
         let projection = ViewportProjection(context.view, size: context.viewportSize, pixelScale: context.pixelScale)
         func labelPosition(_ position: Vec3) -> Vec3 {
@@ -843,14 +904,15 @@ public final class EditorApp: Game, EditorHost {
             let white = Vec4(0.92, 0.92, 0.95, 1)
             draw.frustum(viewProjection: viewProjection, color: white, farFraction: min(1.5 / camera.far, 1),
                          style: DebugDraw.Style(width: 1.5))
-            draw.text(session.displayName(of: entity), at: labelPosition(matrix.translation), color: white, size: labelSize)
+            draw.text(session.displayName(of: entity), at: labelPosition(matrix.translation), color: white, size: labelSize,
+                      shadow: labelShadow)
         }
         world.query(DirectionalLight.self) { entity, light in
             let matrix = world.get(GlobalTransform.self, for: entity)?.matrix ?? world.worldMatrix(of: entity)
             let start = matrix.translation, yellow = Vec4(1, 0.85, 0.3, 1)
             draw.arrow(from: start, to: start + light.travelDirection(world: matrix) * 1.5, color: yellow, headSize: 0.35,
                        style: DebugDraw.Style(width: 2))
-            draw.text(session.displayName(of: entity), at: labelPosition(start), color: yellow, size: labelSize)
+            draw.text(session.displayName(of: entity), at: labelPosition(start), color: yellow, size: labelSize, shadow: labelShadow)
         }
 
         for entity in session.selection.entities(in: world) where context.worldBounds(of: entity) == nil {
@@ -1169,6 +1231,8 @@ final class ViewportWidget: Widget {
 
     var texture: GPUTexture?
     var caption = "" { didSet { if caption != oldValue { setNeedsDisplay() } } }
+    /// Whether the caption is drawn as a badge over the image (when the tab bar can't show it).
+    var drawsCaption = true { didSet { if drawsCaption != oldValue { setNeedsDisplay() } } }
     var isPlaying = false
     /// The icons of cameras, lights and other entities without a mesh, over the image.
     var billboards: ViewportBillboards?
@@ -1192,10 +1256,13 @@ final class ViewportWidget: Widget {
     }
 
     override func drawForeground(_ list: UIDrawList, theme: UITheme) {
-        let layout = context?.textLayout(caption, size: theme.smallFontSize) ?? TextLayout(caption, font: theme.font, size: theme.smallFontSize)
-        let badge = UIRect(x: frame.x + 8, y: frame.y + 8, width: snap(layout.width + 16), height: snap(layout.height + 8))
-        list.fillRect(badge, color: UIColor(0, 0, 0, 0.45), radii: UICornerRadii(4))
-        list.drawText(layout, font: theme.font, at: Vec2(snap(badge.x + 8), snap(badge.y + 4)), color: theme.textColor)
+        if drawsCaption && !caption.isEmpty {
+            let layout = context?.textLayout(caption, size: theme.smallFontSize) ?? TextLayout(caption, font: theme.font, size: theme.smallFontSize)
+            let badge = UIRect(x: frame.x + 8, y: frame.y + 8, width: snap(layout.width + 16), height: snap(layout.height + 8))
+            // Dark in every theme (it sits on the scene), with light text.
+            list.fillRect(badge, color: UIColor(0, 0, 0, 0.6), radii: UICornerRadii(4))
+            list.drawText(layout, font: theme.font, at: Vec2(snap(badge.x + 8), snap(badge.y + 4)), color: UIColor(hex: 0xf2f4f8))
+        }
         if isPlaying {
             list.strokeRect(frame, color: UIColor(hex: 0x3fbf6f), width: 2)
         }
@@ -1230,7 +1297,8 @@ final class Toolbar {
     static let timeScales: [Double] = [0.1, 0.25, 0.5, 1, 2, 4]
     private let toolButtons: [(EditorTool, Button)]
     private let snapButton: Button
-    private let resetButton: Button
+    /// Opens the View menu: Reset Layout, the themes and the UI zooms.
+    private var viewButton: Button!
     /// Buttons enabled by their command's availability.
     private var commandButtons: [(CommandID, Button)] = []
     private let titleLabel = Label("", role: .secondary, name: "documentTitle")
@@ -1265,7 +1333,6 @@ final class Toolbar {
         let openButton = Button("Open", name: "open") { [unowned app] in app.open() }
         let saveButton = Button("Save", name: "save") { [unowned app] in app.save() }
         let saveAsButton = Button("Save As", name: "saveAs") { [unowned app] in app.saveAs() }
-        resetButton = Button("Reset Layout", name: "resetLayout") { [unowned app] in app.resetLayout() }
         let openProjectButton = Button("Open Project", name: "openProject") { [unowned app] in app.openProject() }
         let newProjectButton = Button("New Project", name: "newProject") { [unowned app] in app.newProject() }
         openProjectButton.tooltip = "Open the project folder at the project path and import its assets"
@@ -1279,7 +1346,8 @@ final class Toolbar {
         saveButton.tooltip = shortcuts.tooltip("Save the scene", for: .save)
         saveAsButton.tooltip = "Save the scene to the path"
         path.tooltip = "Scene file path, used by Open, Save and Save As"
-        resetButton.tooltip = "Restore the default panel layout"
+        let viewButton = Button("View", name: "view")
+        viewButton.tooltip = "Reset the panel layout, pick the theme and the UI zoom"
         for (tool, button) in toolButtons { button.tooltip = "\(tool.title) tool" }
         snapButton.tooltip = "Snap gizmo drags to 0.5 units, 15° and 0.1 scale steps (hold \(KeyModifiers.shortcut == .command ? "⌘" : "Ctrl") to invert)"
         // Icon-only buttons: the titles stay their accessibility labels and default tooltips.
@@ -1288,14 +1356,14 @@ final class Toolbar {
             (undoButton, "undo-2"), (redoButton, "redo-2"), (playButton, "play"), (pauseButton, "pause"),
             (stepButton, "step-forward"), (gameViewButton, "gamepad-2"), (reloadGameButton, "refresh-cw"),
             (buildGameButton, "hammer"), (snapButton, "magnet"), (openProjectButton, "folder-input"),
-            (newProjectButton, "folder-plus"), (resetButton, "layout-dashboard"),
+            (newProjectButton, "folder-plus"), (viewButton, "appearance"),
         ] + toolButtons.map { ($0.1, EditorIcons.tool($0.0).name) }
         for (button, icon) in icons {
             button.icon = EditorIcons.named(icon)
             button.showsTitle = false
         }
         commandButtons = [(SceneNewCommand.id, newButton), (SceneOpenCommand.id, openButton), (SceneSaveCommand.id, saveButton),
-                          (SceneSaveAsCommand.id, saveAsButton), (LayoutResetCommand.id, resetButton)]
+                          (SceneSaveAsCommand.id, saveAsButton)]
         // What each control runs, for introspection (`ui.snapshot`) and the parity test.
         let tagged: [(Widget, CommandID)] = commandButtons.map { ($0.1, $0.0) } + [
             (undoButton, EditUndoCommand.id), (redoButton, EditRedoCommand.id), (playButton, PlayToggleCommand.id),
@@ -1303,7 +1371,7 @@ final class Toolbar {
             (reloadGameButton, GameReloadCommand.id), (buildGameButton, GameBuildCommand.id),
             (timeScale, PlaySetTimeScaleCommand.id), (path, SceneOpenCommand.id), (projectPath, ProjectOpenCommand.id),
             (openProjectButton, ProjectOpenCommand.id), (newProjectButton, ProjectNewCommand.id),
-            (snapButton, ToolSnappingCommand.id),
+            (snapButton, ToolSnappingCommand.id), (viewButton, ViewAppearanceCommand.id),
         ] + toolButtons.map { ($0.1, ToolSetCommand.id) }
         for (widget, id) in tagged { widget.command = id.rawValue }
         // Undo / redo titles name the step ("Undo AI: Set Transform.position on Crate…"); the
@@ -1321,6 +1389,9 @@ final class Toolbar {
         // The document title gives way (ending in "…", whole in its tooltip) before the row wraps.
         titleLabel.style.shrink = 1
         titleLabel.style.minWidth = 0
+        // Squeezed to a few letters ("U…") it says nothing: then it hides (the window title and
+        // the label's tooltip still name the document).
+        titleLabel.minimumTruncatedWidth = 64
         view.addChildren([
             newButton, openButton, saveButton, saveAsButton,
             path,
@@ -1335,9 +1406,35 @@ final class Toolbar {
             projectPath, openProjectButton, newProjectButton, buildGameButton,
             Spacer(),
             titleLabel,
-            resetButton,
+            viewButton,
         ])
+        self.viewButton = viewButton
+        viewButton.action = { [unowned self] in showViewMenu() }
         refresh()
+    }
+
+    /// The View menu: Reset Layout, then the themes (`EditorApp.menuThemes`) and the zooms, the
+    /// current ones checked.
+    func showViewMenu() {
+        guard let context = view.context else { return }
+        let themes = EditorApp.menuThemes, zooms = EditorApp.menuZooms
+        let items = ["Reset Layout"] + themes.map { "\($0) Theme" } + zooms.map { "Zoom \(Int(($0 * 100).rounded()))%" }
+        let menu = PopupMenu(items: items, anchor: viewButton, name: "viewMenu")
+        menu.itemCommandIDs = [LayoutResetCommand.id.rawValue] + items.dropFirst().map { _ in ViewAppearanceCommand.id.rawValue }
+        menu.itemIcons = [EditorIcons.named("layout-dashboard")]
+        var checked = Set<Int>()
+        if let theme = themes.firstIndex(of: context.theme.name) { checked.insert(1 + theme) }
+        if let zoom = zooms.firstIndex(of: app.preferredUIScale) { checked.insert(1 + themes.count + zoom) }
+        menu.checkedIndices = checked
+        let session = app.session
+        menu.onSelect = { [unowned app] index in
+            switch index {
+            case 0: app.resetLayout()
+            case 1...themes.count: session.run(ViewAppearanceCommand.self, .init(theme: themes[index - 1]))
+            default: session.run(ViewAppearanceCommand.self, .init(uiScale: zooms[index - 1 - themes.count]))
+            }
+        }
+        context.presentOverlay(menu)
     }
 
     func refresh() {

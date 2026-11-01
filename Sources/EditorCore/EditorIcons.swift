@@ -39,7 +39,7 @@ public enum EditorIcons {
         Saveable.componentName: "archive",
         Replicated.componentName: "network",
         Unpickable.componentName: "mouse-pointer-ban",
-        PrefabInstance.componentName: "package",
+        PrefabInstance.componentName: EditorIcons.prefabIconName,
         UnresolvedComponents.componentName: "puzzle",
         Spin.componentName: "rotate-cw",
         KeyboardMover.componentName: "keyboard",
@@ -51,13 +51,73 @@ public enum EditorIcons {
     /// Icons games registered, by component name.
     private static var registered: [String: VectorIcon] = [:]
 
-    /// A built-in icon by Lucide name; a missing one is a programming error, so it falls back
-    /// to `fallbackComponent` (tests check every name the editor uses exists).
+    /// A built-in icon by Lucide name, or one of the editor's own (`editorIconSVG`); a missing
+    /// one is a programming error, so it falls back to `fallbackComponent` (tests check every
+    /// name the editor uses exists).
     public static func named(_ name: String) -> VectorIcon {
         if let icon = VectorIcon.named(name) { return icon }
+        if let icon = editorIcon(name) { return icon }
         assertionFailure("No built-in icon named \(name)")
         return VectorIcon.named(fallbackComponent)!
     }
+
+    // MARK: The editor's own icons
+
+    /// Prefab files and instances: four diamonds (the "component / instance" mark of design
+    /// tools), so a prefab never looks like a mesh's cube.
+    public static let prefabIconName = "prefab"
+
+    /// Icons drawn for the editor where Lucide has none: mesh shapes and the prefab mark. Same
+    /// conventions as Lucide (24x24 view box, 2-unit round strokes).
+    public static let editorIconSVG: [String: String] = [
+        prefabIconName: #"<path d="M12 2.5 15.5 6 12 9.5 8.5 6Z"/><path d="M6 8.5 9.5 12 6 15.5 2.5 12Z"/><path d="M18 8.5 21.5 12 18 15.5 14.5 12Z"/><path d="M12 14.5 15.5 18 12 21.5 8.5 18Z"/>"#,
+        // A ball with its front equator and a meridian.
+        "mesh-sphere": #"<circle cx="12" cy="12" r="10"/><path d="M2 12a10 3.5 0 0 0 20 0"/><path d="M12 2a3.5 10 0 0 0 0 20"/>"#,
+        // A flat quad seen at an angle, with a 2x2 grid.
+        "mesh-plane": #"<path d="M2 16 7 8h15l-5 8Z"/><path d="M4.5 12h15"/><path d="M14.5 8l-5 8"/>"#,
+        "mesh-cylinder": #"<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/>"#,
+        // A circle half hatched (light and dark): the View menu (layout, theme and zoom).
+        "appearance": #"<circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 1 0 20Z"/><path d="M12 7h5"/><path d="M12 12h7"/><path d="M12 17h5"/>"#,
+        // A subdivided triangle: any other mesh (imported models, meshes games register).
+        "mesh-custom": #"<path d="M12 3.5 21 19.5H3Z"/><path d="M7.5 11.5h9"/><path d="m7.5 11.5 4.5 8"/><path d="m16.5 11.5-4.5 8"/>"#,
+    ]
+
+    private static var editorIconCache: [String: VectorIcon] = [:]
+
+    /// One of `editorIconSVG`, parsed once.
+    public static func editorIcon(_ name: String) -> VectorIcon? {
+        if let cached = editorIconCache[name] { return cached }
+        guard let svg = editorIconSVG[name], let icon = try? VectorIcon(name: name, svg: svg) else { return nil }
+        editorIconCache[name] = icon
+        return icon
+    }
+
+    /// The icon of a mesh by its key: the built-in cube, sphere and plane (and code-registered
+    /// meshes named like them: "sphere-hi", "floor", "capsule"), else the generic mesh mark.
+    public static func meshIconName(_ mesh: MeshHandle) -> String {
+        let key = mesh.key.lowercased()
+        if AssetReference(mesh.key) != nil { return "mesh-custom" }
+        if key.contains("sphere") || key.contains("ball") { return "mesh-sphere" }
+        if key.contains("plane") || key.contains("floor") || key.contains("ground") || key.contains("quad") { return "mesh-plane" }
+        if key.contains("cylinder") || key.contains("capsule") || key.contains("pillar") { return "mesh-cylinder" }
+        if key.contains("cube") || key.contains("box") { return "box" }
+        return "mesh-custom"
+    }
+
+    /// `color`, mixed toward `toward` (the theme's text color) in steps until it has `minimum`
+    /// contrast with `background`: icon tints that read in every theme (WCAG 1.4.11 asks 3:1).
+    public static func readable(_ color: UIColor, on background: UIColor, toward: UIColor, minimum: Float = 3) -> UIColor {
+        var mixed = color
+        var amount: Float = 0
+        while mixed.contrastRatio(with: background) < minimum && amount < 1 {
+            amount = min(1, amount + 0.1)
+            mixed = color.mixed(with: toward, amount)
+        }
+        return mixed
+    }
+
+    /// A theme surface as drawn: translucent ones (the Game theme's) over black.
+    static func opaque(_ color: UIColor) -> UIColor { color.a < 1 ? color.composited(over: .black) : color }
 
     // MARK: Components
 
@@ -161,14 +221,16 @@ public enum EditorIcons {
         }
     }
 
-    /// The color of prefab instance icons (the accent, lifted toward the text to read on panels and selected rows).
+    /// The color of prefab instance icons: the accent, lifted toward the text until it has 3:1
+    /// on the panel (selected rows draw icons in the text color).
     public static func prefabColor(theme: UITheme) -> UIColor {
-        theme.accent.mixed(with: theme.textColor, 0.3)
+        readable(theme.accent.mixed(with: theme.textColor, 0.3), on: opaque(theme.panelBackground), toward: theme.textColor)
     }
 
-    /// The icon for `entity` (its main component's).
+    /// The icon for `entity`: its main component's; a mesh's by its shape (`meshIconName`).
     public static func entityIcon(_ entity: Entity, in world: World) -> VectorIcon {
         let (kind, component) = entityKind(entity, in: world)
+        if kind == .mesh, let renderer = world.get(MeshRenderer.self, for: entity) { return named(meshIconName(renderer.mesh)) }
         return entityIcon(kind: kind, component: component)
     }
 
@@ -223,7 +285,7 @@ public enum EditorIcons {
         case .mesh: named("box")
         case .texture: named("image")
         case .material: named("palette")
-        case .prefab: named("package")
+        case .prefab: named(prefabIconName)
         case .scene: named("clapperboard")
         case .audio: named("music")
         case .shader: named("file-code")
@@ -234,10 +296,11 @@ public enum EditorIcons {
         }
     }
 
-    /// The tint of an asset kind's big icon in the browser (cells without a thumbnail).
+    /// The tint of an asset kind's big icon in the browser (cells without a thumbnail): folders
+    /// amber (darkened where the panel is light), the rest the secondary text color.
     public static func assetColor(_ kind: AssetIconKind, theme: UITheme) -> UIColor {
         switch kind {
-        case .folder: UIColor(hex: 0xd9a646)
+        case .folder: readable(UIColor(hex: 0xd9a646), on: opaque(theme.panelBackground), toward: theme.textColor)
         default: theme.secondaryTextColor
         }
     }
@@ -268,9 +331,9 @@ public enum EditorIcons {
     public static func template(_ template: EntityTemplate) -> VectorIcon {
         switch template {
         case .empty: named("circle-dashed")
-        case .cube: named("box")
-        case .sphere: named("circle")
-        case .plane: named("square")
+        case .cube: named(meshIconName(.cube))
+        case .sphere: named(meshIconName(.sphere))
+        case .plane: named(meshIconName(.plane))
         }
     }
 

@@ -22,6 +22,10 @@ public final class DockPanel {
     public var tooltip: String?
     /// An icon before the tab's title.
     public var icon: VectorIcon? { didSet { if icon != oldValue { owner?.setNeedsLayout() } } }
+    /// A short status shown at the right end of the tab bar while this panel is selected
+    /// ("Perspective · Move"), in small secondary text, when the bar has room for it; never over
+    /// the content.
+    public var caption: String? { didSet { if caption != oldValue { owner?.setNeedsDisplay() } } }
     /// Called after the user closes the panel (close button, middle click, `DockSpace.closePanel`).
     public var onClose: (() -> Void)?
     /// The tab view currently showing it.
@@ -62,6 +66,11 @@ public final class TabView: Widget {
     public var onClose: ((DockPanel) -> Void)?
     /// How far the tab strip is scrolled when the tabs overflow the bar (points).
     public private(set) var barOffset: Float = 0
+    /// How much taller the selected panel's content is than the content area (0 when it fits): a
+    /// wrapped toolbar in a short panel. The content then scrolls with the wheel by `contentOffset`.
+    public private(set) var contentOverflow: Float = 0
+    /// How far the overflowing content is scrolled up (0...`contentOverflow`).
+    public private(set) var contentOffset: Float = 0
 
     /// Set by the dock space that owns this tab group.
     weak var dock: DockSpace?
@@ -220,8 +229,17 @@ public final class TabView: Widget {
         return tabRects.firstIndex { $0.contains(point) }
     }
 
-    /// The close button of tab `index`.
+    /// The close button of tab `index`: where it takes clicks, at least the theme's
+    /// `minimumHitSize` (as far as the tab's height allows) around its 16-point glyph.
     public func closeButtonRect(_ index: Int) -> UIRect? {
+        guard let glyph = closeGlyphRect(index) else { return nil }
+        let r = tabRects[index]
+        let s = max(glyph.width, min(theme.minimumHitSize, r.height))
+        return UIRect(x: snap(glyph.center.x - s / 2), y: snap(r.y + (r.height - s) / 2), width: s, height: s)
+    }
+
+    /// The 16-point square the close cross is drawn in.
+    private func closeGlyphRect(_ index: Int) -> UIRect? {
         guard tabs.indices.contains(index), tabs[index].isClosable, index < tabWidths.count else { return nil }
         let r = tabRects[index]
         let s: Float = 16
@@ -274,8 +292,54 @@ public final class TabView: Widget {
         }
         barOffset = offset
         let area = contentArea
-        for tab in tabs where !tab.content.isHidden { tab.content.layout(in: area) }
+        contentOverflow = 0
+        for tab in tabs where !tab.content.isHidden { layoutContent(tab.content, in: area) }
+        if contentOverflow == 0 { contentOffset = 0 }
     }
+
+    /// Lays `content` out in `area`; when what it holds runs past the bottom (a toolbar wrapped
+    /// onto more rows than a short panel has room for, anywhere in it), lays it out that much
+    /// taller, scrolled by `contentOffset`, so every part can be scrolled to.
+    private func layoutContent(_ content: Widget, in area: UIRect) {
+        content.layout(in: area)
+        let overflow = Self.bottom(of: content) - area.maxY
+        guard overflow > 0.5 else { return }
+        contentOverflow = overflow
+        contentOffset = min(max(contentOffset, 0), overflow)
+        content.layout(in: UIRect(x: area.x, y: area.y - contentOffset, width: area.width, height: area.height + overflow))
+    }
+
+    /// The lowest edge of `widget` and what it lays out in the flow: not the content of scroll
+    /// views and other tab views (they keep it inside themselves), nor hidden or absolutely
+    /// placed widgets.
+    private static func bottom(of widget: Widget) -> Float {
+        var bottom = widget.frame.maxY
+        guard !(widget is ScrollView), !(widget is TabView) else { return bottom }
+        for child in widget.children where !child.isHidden && child.style.position == .flow {
+            bottom = max(bottom, self.bottom(of: child))
+        }
+        return bottom
+    }
+
+    /// Scrolls overflowing content so `rect` (window points) shows, as far as it can.
+    public override func scrollToReveal(_ rect: UIRect) -> Bool {
+        guard contentOverflow > 0 else { return false }
+        let area = contentArea
+        var offset = contentOffset
+        if rect.maxY > area.maxY {
+            offset += min(rect.maxY - area.maxY, rect.y - area.y)
+        } else if rect.y < area.y {
+            offset -= area.y - rect.y
+        }
+        offset = min(max(offset, 0), contentOverflow)
+        guard offset != contentOffset else { return false }
+        contentOffset = offset
+        setNeedsLayout()
+        return true
+    }
+
+    /// Children are clipped to the content area, so scrolled content never covers the tab bar.
+    override var childClipRect: UIRect { contentArea }
 
     // MARK: Events
 
@@ -367,6 +431,12 @@ public final class TabView: Widget {
             if current.phase == .docking { dock?.endTabDrag(at: e.position, commit: true) }
             return true
         case .scroll(let delta, let position):
+            if contentOverflow > 0, contentArea.contains(position), delta.y != 0 {
+                let old = contentOffset
+                contentOffset = min(max(contentOffset - delta.y, 0), contentOverflow)
+                if contentOffset != old { setNeedsLayout() }
+                return contentOffset != old
+            }
             guard barRect.contains(position) else { return false }
             let strip = tabWidths.reduce(0, +)
             let old = barOffset
@@ -435,6 +505,9 @@ public final class TabView: Widget {
             }
             // Fades where more tabs are scrolled out of view.
             let strip = tabWidths.reduce(0, +)
+            if let caption = selectedTab?.caption, !caption.isEmpty, dragged == nil {
+                drawCaption(caption, after: bar.x - barOffset + strip, in: bar, theme: theme, list: list)
+            }
             let fade: Float = 16
             if barOffset > 0 {
                 list.fillRect(UIRect(x: bar.x, y: bar.y, width: fade, height: bar.height - 1),
@@ -447,10 +520,41 @@ public final class TabView: Widget {
         }
     }
 
+    /// The selected panel's caption, right-aligned in the bar's free space past the tabs (`x`),
+    /// ellipsized when tight, left out when there is almost no room.
+    private func drawCaption(_ caption: String, after x: Float, in bar: UIRect, theme: UITheme, list: UIDrawList) {
+        let size = theme.smallFontSize
+        let room = UIRect(x: x + theme.controlPaddingX, y: bar.y, width: bar.maxX - theme.controlPaddingX - x - theme.controlPaddingX,
+                          height: bar.height - 1)
+        guard room.width >= 48 else { return }
+        let layout = cachedLayout(caption, size: size)
+        let alignment: TextAlignment = overflows(layout, width: room.width) ? .left : .right
+        drawEllipsized(caption, layout: layout, size: size, in: room, alignment: alignment, color: theme.secondaryTextColor, list: list)
+    }
+
+    /// The selected panel's caption when the bar shows it, for introspection and tests.
+    public var captionIsShown: Bool {
+        guard let caption = selectedTab?.caption, !caption.isEmpty else { return false }
+        let strip = tabWidths.reduce(0, +)
+        return barRect.maxX - 2 * theme.controlPaddingX - (barRect.x - barOffset + strip) >= 48
+    }
+
+    /// A scroll indicator along the right edge while the content overflows.
+    public override func drawForeground(_ list: UIDrawList, theme: UITheme) {
+        guard contentOverflow > 0 else { return }
+        let area = contentArea
+        guard area.height > 0 else { return }
+        let length = max(20, area.height * area.height / (area.height + contentOverflow))
+        let y = area.y + (area.height - length) * contentOffset / contentOverflow
+        let width = theme.scrollbarWidth
+        list.fillRect(UIRect(x: area.maxX - width - 2, y: snap(y), width: width, height: snap(length)), color: theme.scrollbarThumb,
+                      radii: UICornerRadii(width / 2))
+    }
+
     /// Where tab `i`'s title goes inside `rect`, leaving room for the close button when it shows.
     private func titleRect(_ i: Int, in rect: UIRect, showClose: Bool) -> UIRect {
         let theme = theme
-        let textRight = showClose ? (closeButtonRect(i)?.x ?? rect.maxX) - 2 : rect.maxX - theme.controlPaddingX
+        let textRight = showClose ? (closeGlyphRect(i)?.x ?? rect.maxX) - 2 : rect.maxX - theme.controlPaddingX
         let x = rect.x + theme.controlPaddingX + iconSpace(tabs[i], theme: theme)
         return UIRect(x: x, y: rect.y, width: max(0, textRight - x), height: rect.height)
     }
@@ -489,13 +593,14 @@ public final class TabView: Widget {
         }
         drawEllipsized(panel.title, layout: layout, size: theme.fontSize, in: textRect,
                        color: isEffectivelyEnabled ? color : theme.disabledTextColor, list: list)
-        if showClose, let close {
+        if showClose, let close, let glyph = closeGlyphRect(i) {
             let pointer = context?.pointerPosition ?? Vec2(-1e6, -1e6)
             if close.contains(pointer) && (pressedClose === panel || pressedClose == nil) {
-                list.fillRect(close, color: pressedClose === panel ? theme.controlPressed : theme.controlHover,
+                // The highlight a little larger than the glyph; clicks count in all of `close`.
+                list.fillRect(glyph.inset(by: EdgeInsets(-2)), color: pressedClose === panel ? theme.controlPressed : theme.controlHover,
                               radii: UICornerRadii(theme.rowCornerRadius))
             }
-            let c = close.center, s: Float = 3.5
+            let c = glyph.center, s: Float = 3.5
             let xColor = selected ? theme.secondaryTextColor : theme.placeholderColor
             list.drawLine(from: c + Vec2(-s, -s), to: c + Vec2(s, s), width: theme.iconStrokeWidth, color: xColor, cap: .round)
             list.drawLine(from: c + Vec2(-s, s), to: c + Vec2(s, -s), width: theme.iconStrokeWidth, color: xColor, cap: .round)

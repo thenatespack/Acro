@@ -135,6 +135,9 @@ public final class Label: Widget {
     /// An icon before the text, about 1.25 times the text size, in `iconColor` or the text's color.
     public var icon: VectorIcon? { didSet { if icon != oldValue { setNeedsLayout() } } }
     public var iconColor: UIColor? { didSet { setNeedsDisplay() } }
+    /// A single-line label cut off to narrower than this (points) draws nothing rather than a
+    /// few letters and "…"; its tooltip and accessibility text still have the whole text.
+    public var minimumTruncatedWidth: Float = 0 { didSet { setNeedsDisplay() } }
     private var cache = CachedTextLayout()
 
     public init(_ text: String, role: LabelRole = .body, name: String = "") {
@@ -186,6 +189,7 @@ public final class Label: Widget {
     public override func draw(_ list: UIDrawList, theme: UITheme) {
         super.draw(list, theme: theme)
         var content = contentRect
+        if minimumTruncatedWidth > 0, content.width < minimumTruncatedWidth, isTruncated { return }
         if let icon {
             let (edge, gap) = iconSpace
             let y = wraps ? content.y + (theme.lineHeight(size) - edge) / 2 : content.center.y - edge / 2
@@ -321,13 +325,13 @@ public final class Button: Widget {
         switch role {
         case .normal:
             let background = style.background ?? theme.controlBackground
-            fill = !enabled ? background.withAlpha(0.5)
+            fill = !enabled ? background.fading(0.5)
                 : isPressed ? style.pressedBackground ?? theme.controlPressed
                 : isHovered ? style.hoverBackground ?? theme.controlHover : background
             border = style.borderColor ?? theme.controlBorder
         case .primary:
             let accent = style.accent ?? theme.accent
-            fill = !enabled ? accent.withAlpha(0.35)
+            fill = !enabled ? accent.fading(0.35)
                 : isPressed ? style.pressedBackground ?? theme.accentPressed
                 : isHovered ? style.hoverBackground ?? theme.accentHover : accent
             border = fill
@@ -431,7 +435,8 @@ public final class Checkbox: Widget {
         let indicator = indicatorSize(theme)
         let layout = cache.get(title, font: theme.font, size: theme.fontSize)
         let textWidth = title.isEmpty ? 0 : theme.spacing + (layout.width * scale).rounded(.up) / scale
-        return Vec2(indicator.x + textWidth, max(indicator.y, theme.controlHeight))
+        // An untitled checkbox still takes clicks over `minimumHitSize` (the box stays at the left).
+        return Vec2(max(indicator.x + textWidth, theme.minimumHitSize), max(indicator.y, theme.controlHeight, theme.minimumHitSize))
     }
 
     public override func handleEvent(_ event: UIEvent) -> Bool {
@@ -461,26 +466,26 @@ public final class Checkbox: Widget {
         case .checkbox:
             let radii = UICornerRadii(theme.smallCornerRadius)
             if isOn {
-                list.fillRect(box, color: accent.withAlpha(alpha), radii: radii)
+                list.fillRect(box, color: accent.fading(alpha), radii: radii)
                 // A check mark from two round-capped strokes.
                 let s = size.x
                 let a = Vec2(box.x + s * 0.24, box.y + s * 0.52)
                 let b = Vec2(box.x + s * 0.43, box.y + s * 0.70)
                 let c = Vec2(box.x + s * 0.76, box.y + s * 0.31)
-                let color = theme.accentText.withAlpha(alpha)
+                let color = theme.accentText.fading(alpha)
                 list.drawLine(from: a, to: b, width: theme.checkmarkWidth, color: color, cap: .round)
                 list.drawLine(from: b, to: c, width: theme.checkmarkWidth, color: color, cap: .round)
             } else {
-                list.fillRect(box, color: off.withAlpha(alpha), radii: radii)
-                list.strokeRect(box, color: (style.borderColor ?? theme.controlBorder).withAlpha(alpha),
+                list.fillRect(box, color: off.fading(alpha), radii: radii)
+                list.strokeRect(box, color: (style.borderColor ?? theme.controlBorder).fading(alpha),
                                 width: style.borderWidth ?? theme.borderWidth, radii: radii)
             }
         case .toggleSwitch:
             let radii = UICornerRadii(size.y / 2)
-            list.fillRect(box, color: (isOn ? accent : theme.trackBackground).withAlpha(alpha), radii: radii)
+            list.fillRect(box, color: (isOn ? accent : theme.trackBackground).fading(alpha), radii: radii)
             let knob = size.y - 4
             let knobX = isOn ? box.maxX - 2 - knob : box.x + 2
-            list.fillRect(UIRect(x: knobX, y: box.y + 2, width: knob, height: knob), color: theme.thumb.withAlpha(alpha),
+            list.fillRect(UIRect(x: knobX, y: box.y + 2, width: knob, height: knob), color: theme.thumb.fading(alpha),
                           radii: UICornerRadii(knob / 2))
         }
         if !title.isEmpty {
@@ -617,7 +622,7 @@ public final class Slider: Widget {
         let thumb = UIRect(x: t.x + t.width * fraction - s / 2, y: snap(t.y - s / 2), width: s, height: s)
         let active = dragging || isHovered
         list.fillRect(thumb.offsetBy(Vec2(0, 1)), color: theme.shadow, radii: UICornerRadii(s / 2))
-        list.fillRect(thumb, color: enabled ? (active ? .white : theme.thumb) : theme.thumb.withAlpha(0.5),
+        list.fillRect(thumb, color: enabled ? (active ? .white : theme.thumb) : theme.thumb.fading(0.5),
                       radii: UICornerRadii(s / 2))
     }
 }

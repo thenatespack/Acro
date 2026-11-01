@@ -226,8 +226,10 @@ extension UIContext {
                     itemKey: item.key))
             }
             let children = widget.children.filter { includeHidden || !$0.isHidden }
+            // Children are clipped where the widget clips them (a tab view: below its tab bar).
+            let clipForChildren = widget.clipsContent ? clip.flatMap { intersection(widget.childClipRect, $0) } : clip
             for (child, childSegment) in zip(children, uniqueSegments(children.map(Self.segment))) {
-                visit(child, segment: childSegment, parentPath: path, depth: depth + 1, clip: childClip)
+                visit(child, segment: childSegment, parentPath: path, depth: depth + 1, clip: clipForChildren)
             }
         }
 

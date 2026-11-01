@@ -546,6 +546,9 @@ open class Widget {
 
     // MARK: Painting
 
+    /// Where children are clipped with `clipsContent` (the content rect; a tab view's content area).
+    var childClipRect: UIRect { contentRect }
+
     /// Paints this widget and its subtree, skipping it when it lies outside the current clip.
     func paint(_ list: UIDrawList, theme: UITheme) {
         guard !isHidden, opacity > 0 else { return }
@@ -568,7 +571,7 @@ open class Widget {
                             height: frame.height + 2 * slack)
         guard bounds.intersects(clip) else { return }
         draw(list, theme: theme)
-        if clipsContent { list.pushClip(contentRect) }
+        if clipsContent { list.pushClip(childClipRect) }
         for child in children { child.paint(list, theme: theme) }
         if clipsContent { list.popClip() }
         drawForeground(list, theme: theme)

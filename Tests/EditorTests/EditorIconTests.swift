@@ -110,8 +110,9 @@ struct EditorIconTests {
             + ["plus", "copy", "trash-2", "eraser", "layers", "circle-dashed", "file-plus", "folder-open", "save", "save-all", "undo-2",
                "redo-2", "play", "square", "pause", "step-forward", "gamepad-2", "refresh-cw", "loader", "hammer", "magnet",
                "folder-input", "folder-plus", "layout-dashboard", "file-down", "palette", "pencil", "list", "layout-grid", "plug",
-               "plug-zap", "bot", "package-plus", "package-open", "package-check", "rotate-ccw", "unlink", "circle-x", "orbit"]
-        for name in used { #expect(VectorIcon.named(name) != nil, "\(name)") }
+               "plug-zap", "bot", "package-plus", "package-open", "package-check", "rotate-ccw", "unlink", "circle-x", "orbit",
+               "appearance", "mesh-sphere", "mesh-plane", "mesh-cylinder", "mesh-custom"]
+        for name in used { #expect(VectorIcon.named(name) != nil || EditorIcons.editorIcon(name) != nil, "\(name)") }
         // An unknown component gets the fallback.
         #expect(!EditorIcons.hasIcon(forComponent: "EditorIconTestsUnknown"))
         #expect(EditorIcons.component("EditorIconTestsUnknown").name == EditorIcons.fallbackComponent)
@@ -185,7 +186,101 @@ struct EditorIconTests {
         let entity = try #require(session.world.entity(for: cube.entity))
         #expect(session.world.has(PrefabInstance.self, for: entity))
         #expect(EditorIcons.entityKind(entity, in: session.world).kind == .prefab)
-        #expect(EditorIcons.entityIcon(entity, in: session.world).name == "package")
+        #expect(EditorIcons.entityIcon(entity, in: session.world).name == EditorIcons.prefabIconName)
+        // The prefab file in the asset browser has the same mark.
+        #expect(EditorIcons.asset(.prefab).name == EditorIcons.prefabIconName)
+    }
+
+    // MARK: Re-review after icons (card #660)
+
+    /// The editor's own icons (mesh shapes, the prefab mark, Appearance) parse and draw like Lucide's.
+    @Test func editorIconsParseAndDraw() throws {
+        #expect(!EditorIcons.editorIconSVG.isEmpty)
+        for name in EditorIcons.editorIconSVG.keys {
+            #expect(VectorIcon.named(name) == nil, "\(name) shadows a Lucide icon")
+            let icon = try #require(EditorIcons.editorIcon(name), "\(name)")
+            #expect(EditorIcons.named(name) == icon)
+            for pixels in [16, 24, 32] {
+                let mask = icon.rasterize(pixels: pixels)
+                let covered = mask.filter { $0 > 127 }.count
+                #expect(covered > 8 && covered < pixels * pixels * 3 / 4, "\(name) at \(pixels) px: \(covered) pixels")
+                // Solid line pixels (diagonal-only shapes reach a little less).
+                #expect((mask.max() ?? 0) >= 230, "\(name) at \(pixels) px: no solid line pixels")
+            }
+        }
+    }
+
+    /// Meshes are told apart by shape (#660: every mesh entity had the cube), and a prefab
+    /// doesn't look like a mesh: the 16-pixel masks differ in a good share of their ink.
+    @Test func meshKindsAndPrefabsHaveDistinctIcons() throws {
+        #expect(EditorIcons.meshIconName(.cube) == "box")
+        #expect(EditorIcons.meshIconName(.sphere) == "mesh-sphere")
+        #expect(EditorIcons.meshIconName(.plane) == "mesh-plane")
+        #expect(EditorIcons.meshIconName(MeshHandle("sphere-hi")) == "mesh-sphere")
+        #expect(EditorIcons.meshIconName(MeshHandle("floor")) == "mesh-plane")
+        #expect(EditorIcons.meshIconName(MeshHandle("capsule")) == "mesh-cylinder")
+        #expect(EditorIcons.meshIconName(MeshHandle("hero")) == "mesh-custom")
+        let model = MeshHandle(AssetReference(AssetID(high: 1, low: 2), subAsset: "mesh/Box"))
+        #expect(EditorIcons.meshIconName(model) == "mesh-custom")
+
+        let world = World()
+        let ball = world.spawn(Transform(), MeshRenderer(mesh: .sphere))
+        let floor = world.spawn(Transform(), MeshRenderer(mesh: .plane))
+        let crate = world.spawn(Transform(), MeshRenderer(mesh: .cube))
+        #expect(EditorIcons.entityIcon(ball, in: world).name == "mesh-sphere")
+        #expect(EditorIcons.entityIcon(floor, in: world).name == "mesh-plane")
+        #expect(EditorIcons.entityIcon(crate, in: world).name == "box")
+        // The Create menu shows the same shapes.
+        #expect(EntityTemplate.allCases.map { EditorIcons.template($0).name } == ["circle-dashed", "box", "mesh-sphere", "mesh-plane"])
+
+        let names = ["box", "mesh-sphere", "mesh-plane", "mesh-cylinder", "mesh-custom", EditorIcons.prefabIconName]
+        let masks = names.map { EditorIcons.named($0).rasterize(pixels: 16).map { Float($0) / 255 } }
+        for i in names.indices {
+            for j in names.indices where j > i {
+                let difference = zip(masks[i], masks[j]).reduce(Float(0)) { $0 + abs($1.0 - $1.1) }
+                let ink = max(masks[i].reduce(0, +), masks[j].reduce(0, +))
+                #expect(difference / ink > 0.5, "\(names[i]) and \(names[j]) look alike: \(difference / ink)")
+            }
+        }
+    }
+
+    /// WCAG 1.4.11: icon glyphs at 3:1 against what they are drawn on, in every theme: tinted
+    /// icons (prefab instances, folders, the selected tab), disabled toolbar icons, menu icons,
+    /// and the viewport billboards over bright and dark scene content.
+    @Test func iconGlyphsHaveContrastInEveryTheme() {
+        func solid(_ c: UIColor) -> UIColor { c.a < 1 ? c.composited(over: .black) : c }
+        for theme in UITheme.presets {
+            let panel = solid(theme.panelBackground)
+            let selectedRow = theme.rowSelectedFocused.composited(over: panel)
+            let pairs: [(String, UIColor, UIColor)] = [
+                ("row icon", theme.secondaryTextColor, panel),
+                ("selected row icon", theme.textColor, selectedRow),
+                ("prefab icon", EditorIcons.prefabColor(theme: theme), panel),
+                ("folder icon", EditorIcons.assetColor(.folder, theme: theme), panel),
+                ("asset icon, selected cell", theme.textColor, selectedRow),
+                ("selected tab icon", theme.accent.mixed(with: theme.textColor, 0.35), panel),
+                ("toolbar icon", theme.textColor, theme.controlBackground.composited(over: panel)),
+                ("disabled toolbar icon", theme.disabledTextColor, theme.controlBackground.fading(0.5).composited(over: panel)),
+                ("menu icon", theme.secondaryTextColor, solid(theme.popupBackground)),
+                ("highlighted menu icon", theme.accentText, solid(theme.accent)),
+            ]
+            for (what, glyph, background) in pairs {
+                let ratio = glyph.contrastRatio(with: background)
+                #expect(ratio >= 3, "\(theme.name): \(what) is \(ratio):1")
+            }
+        }
+        // Billboards: a translucent dark disc over the scene, judged over white and black.
+        let layer = ViewportBillboards()
+        for kind in EditorIcons.EntityKind.allCases where kind.hasBillboard {
+            for scene in [UIColor.white, .black, UIColor(hex: 0x8fb4e8)] {
+                let disc = layer.background.composited(over: scene)
+                let ratio = kind.billboardColor.contrastRatio(with: disc)
+                #expect(ratio >= 3, "\(kind) billboard over \(scene): \(ratio):1")
+            }
+        }
+        for fill in [layer.primaryColor, layer.secondaryColor] {
+            #expect(layer.selectedIconColor.contrastRatio(with: fill) >= 3)
+        }
     }
 
     // MARK: Games
@@ -308,14 +403,14 @@ struct EditorIconTests {
     /// Writes every built-in icon at 16, 24 and 32 px to `ICON_SHEET` (a PNG), for looking at.
     @Test func contactSheet() throws {
         guard let path = ProcessInfo.processInfo.environment["ICON_SHEET"] else { return }
-        let names = VectorIcon.builtinNames
+        let names = VectorIcon.builtinNames + EditorIcons.editorIconSVG.keys.sorted()
         let sizes = [16, 24, 32, 48]
         let cellWidth = 140, cellHeight = 56, columns = 8
         let rows = (names.count + columns - 1) / columns
         let width = columns * cellWidth, height = rows * cellHeight
         var pixels = [UInt8](repeating: 255, count: width * height * 4)
         for (i, name) in names.enumerated() {
-            let icon = try #require(VectorIcon.named(name))
+            let icon = EditorIcons.named(name)
             var x = (i % columns) * cellWidth + 2
             let y = (i / columns) * cellHeight + 4
             for size in sizes {

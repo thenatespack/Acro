@@ -59,7 +59,7 @@ import Testing
         #expect(tooltip(toolbar.view, "play") == "Play the scene (\(shortcuts.shortcutText(for: .togglePlay)))")
         #expect(tooltip(toolbar.view, "undo") == "Undo (\(shortcuts.shortcutText(for: .undo)))")
         #expect(tooltip(toolbar.view, "redo") == "Redo (\(shortcuts.shortcutText(for: .redo)))")
-        #expect(tooltip(toolbar.view, "scenePath") != nil && tooltip(toolbar.view, "resetLayout") != nil)
+        #expect(tooltip(toolbar.view, "scenePath") != nil && tooltip(toolbar.view, "view") != nil)
         #expect(tooltip(toolbar.view, "move") == "Move tool" && tooltip(toolbar.view, "rotate") == "Rotate tool")
         #expect(tooltip(toolbar.view, "scale") == "Scale tool")
         #expect(tooltip(toolbar.view, "new") != nil && tooltip(toolbar.view, "open") != nil && tooltip(toolbar.view, "saveAs") != nil)

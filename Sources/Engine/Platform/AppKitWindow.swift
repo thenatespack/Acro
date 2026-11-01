@@ -32,7 +32,7 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate, NSApplicat
     private var cursorHidden = false
     private let gamepads = makePlatformGamepadSource()
 
-    init(title: String, width: Int, height: Int, allowsLargerThanScreen: Bool = false) {
+    init(title: String, width: Int, height: Int, allowsLargerThanScreen: Bool = false, minimumSize: (width: Int, height: Int)? = nil) {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
 
@@ -53,6 +53,10 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate, NSApplicat
         metalLayer.contentsScale = window.backingScaleFactor
 
         window.title = title
+        if let minimumSize {
+            // The user can't drag the window smaller than this (content area, in points).
+            window.contentMinSize = NSSize(width: minimumSize.width, height: minimumSize.height)
+        }
         window.contentView = view
         window.makeFirstResponder(view)
         window.delegate = self

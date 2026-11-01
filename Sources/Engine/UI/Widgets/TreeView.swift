@@ -191,7 +191,7 @@ public final class TreeView: RowListView {
             return UIAccessibilityItem(key: "toggle:\(node.title)", role: .button,
                                        label: "\(node.isExpanded ? "Collapse" : "Expand") \(node.title)",
                                        value: node.isExpanded ? "expanded" : "collapsed",
-                                       frame: disclosureRect(row: row, in: rowRect(row)))
+                                       frame: disclosureHitRect(row: row, in: rowRect(row)))
         }
     }
 
@@ -357,11 +357,19 @@ public final class TreeView: RowListView {
         return UIRect(x: rect.x + 4 + Float(rows[row].depth) * indent, y: rect.y, width: indent, height: rect.height)
     }
 
+    /// Where the disclosure triangle takes clicks: its column widened to the theme's
+    /// `minimumHitSize` around the triangle (into the indentation on the left).
+    private func disclosureHitRect(row: Int, in rect: UIRect) -> UIRect {
+        let glyph = disclosureRect(row: row, in: rect)
+        let width = max(glyph.width, theme.minimumHitSize)
+        return UIRect(x: max(rect.x, glyph.center.x - width / 2), y: rect.y, width: width, height: rect.height)
+    }
+
     public override func rowPressed(_ row: Int, at position: Vec2, event: PointerEvent) -> Bool {
         let viewport = contentRect
         let h = effectiveRowHeight
         let rect = UIRect(x: viewport.x, y: viewport.y + Float(row) * h - scroll.offset, width: viewport.width, height: h)
-        if rows[row].node.hasChildren, disclosureRect(row: row, in: rect).contains(position) {
+        if rows[row].node.hasChildren, disclosureHitRect(row: row, in: rect).contains(position) {
             selectRow(row)
             toggle(rows[row].node)
             return true
@@ -695,7 +703,8 @@ public final class TreeView: RowListView {
             // A small triangle from two lines: pointing right when collapsed, down when expanded.
             let c = disclosure.center
             let s: Float = 3.5
-            let arrow = theme.secondaryTextColor
+            // On a selected row the secondary color loses contrast; the text color keeps it.
+            let arrow = selected ? theme.textColor : theme.secondaryTextColor
             if node.isExpanded {
                 list.drawLine(from: c + Vec2(-s, -s / 2), to: c + Vec2(0, s / 2), width: theme.iconStrokeWidth, color: arrow, cap: .round)
                 list.drawLine(from: c + Vec2(0, s / 2), to: c + Vec2(s, -s / 2), width: theme.iconStrokeWidth, color: arrow, cap: .round)

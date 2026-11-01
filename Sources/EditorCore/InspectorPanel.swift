@@ -139,7 +139,9 @@ public final class InspectorPanel {
 
         grid.appliesEditsToWorld = false
         grid.componentFilter = { $0 != Name.componentName && $0 != PrefabInstance.componentName }
-        grid.labelWidth = 104
+        // Room for "Receives Shadows" and the like (it was cut at 104); rows with wide editors
+        // shrink the label column first in a narrow inspector.
+        grid.labelWidth = 120
         grid.padding = EdgeInsets(top: 0, left: 0, bottom: 0, right: 8)
         grid.entityName = { [unowned session] entity in session.displayName(of: entity) }
         grid.onFieldEdit = { [unowned self] edit in recorder.handle(edit) }
@@ -210,12 +212,13 @@ public final class InspectorPanel {
         emptyLabel.isHidden = hasEntity
         guard let entity else { return }
         let (kind, component) = EditorIcons.entityKind(entity, in: world)
-        let icon = EditorIcons.entityIcon(kind: kind, component: component)
+        let icon = EditorIcons.entityIcon(entity, in: world)
         let iconColor: UIColor? = kind == .prefab ? EditorIcons.prefabColor(theme: view.theme) : nil
         if entityIcon.color != iconColor { entityIcon.color = iconColor }
         if entityIcon.icon != icon {
             entityIcon.icon = icon
-            entityIcon.tooltip = component ?? (kind == .group ? "Group" : "Empty entity")
+            let mesh = kind == .mesh ? world.get(MeshRenderer.self, for: entity).map { " (\($0.mesh.key))" } ?? "" : ""
+            entityIcon.tooltip = component.map { $0 + mesh } ?? (kind == .group ? "Group" : "Empty entity")
         }
         if !nameField.isFocused {
             let name = world.get(Name.self, for: entity)?.value ?? ""

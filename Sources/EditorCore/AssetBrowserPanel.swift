@@ -233,7 +233,7 @@ final class AssetGridView: Widget {
                               color: UIColor(hex: 0xf4f6fa))
             }
         } else {
-            Self.drawIcon(entry, in: thumb, list: list, theme: theme)
+            Self.drawIcon(entry, in: thumb, list: list, theme: theme, selected: isSelected)
         }
         if let expander = expanderRect(index) {
             let c = expander.center
@@ -260,7 +260,7 @@ final class AssetGridView: Widget {
             alignment = .center
         }
         drawEllipsizedLine(entry.title, size: size, in: textRect, alignment: alignment,
-                           color: entry.isSubAsset ? theme.secondaryTextColor : theme.textColor, list: list, theme: theme)
+                           color: entry.isSubAsset && !isSelected ? theme.secondaryTextColor : theme.textColor, list: list, theme: theme)
     }
 
     private func drawEllipsizedLine(_ text: String, size: Float, in rect: UIRect, alignment: TextAlignment, color: UIColor,
@@ -276,12 +276,13 @@ final class AssetGridView: Widget {
 
     /// The icon of an entry without a thumbnail: its kind's (`EditorIcons.asset`), in the
     /// middle of the thumbnail square.
-    static func drawIcon(_ entry: AssetBrowserEntry, in rect: UIRect, list: UIDrawList, theme: UITheme) {
+    static func drawIcon(_ entry: AssetBrowserEntry, in rect: UIRect, list: UIDrawList, theme: UITheme, selected: Bool = false) {
         let kind = EditorIcons.assetKind(entry.kind, path: entry.path)
         let side = min(rect.width, rect.height)
         let edge = side < 32 ? side : (side * 0.6).rounded()
+        // On a selected cell the text color keeps its contrast (as tree rows do).
         list.drawIcon(EditorIcons.asset(kind), in: UIRect(x: rect.center.x - edge / 2, y: rect.center.y - edge / 2, width: edge, height: edge),
-                      color: EditorIcons.assetColor(kind, theme: theme))
+                      color: selected ? theme.textColor : EditorIcons.assetColor(kind, theme: theme))
     }
 }
 

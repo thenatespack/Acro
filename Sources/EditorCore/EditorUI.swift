@@ -16,6 +16,7 @@ extension EditorApp {
         statusBar.refresh()
         toolbar.refresh()
         ui.layoutIfNeeded()
+        updateViewportCaption()
     }
 
     /// A key press as if typed: the focused widget or the topmost popup gets it first, then the

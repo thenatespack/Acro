@@ -249,9 +249,25 @@ public protocol EditorHost: AnyObject {
     /// Whether it renders (screenshots are possible); false for a UI without a GPU (headless).
     var canRender: Bool { get }
     func capture(_ request: ScreenshotRequest) -> CommandFuture<Image>?
+    /// Sets the UI theme (a `UITheme` preset name) and / or zoom when given, saves them to the
+    /// prefs, and returns the appearance; nil when this host has no UI.
+    func appearance(theme: String?, uiScale: Float?) throws -> EditorAppearance?
+}
+
+/// The editor UI's theme and zoom (`view.appearance`).
+public struct EditorAppearance: Codable, Equatable, Sendable {
+    /// The theme's name.
+    public var theme: String
+    /// The zoom chosen (prefs `uiScale`).
+    public var uiScale: Float
+    /// The zoom in use: lower than `uiScale` when the window is too small for it.
+    public var effectiveUIScale: Float
+    /// Themes to pick from (the settings menu offers `menuThemes`; Game is for previewing game UI).
+    public var themes: [String]
 }
 
 extension EditorHost {
+    public func appearance(theme: String?, uiScale: Float?) throws -> EditorAppearance? { nil }
     public var canRender: Bool { true }
     public func frame(_ entities: [Entity]) {}
     public var viewportView: (view: SceneView, width: Int, height: Int)? { nil }

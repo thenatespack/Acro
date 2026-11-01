@@ -517,7 +517,10 @@ public final class DockSpace: Widget {
             let split = SplitView(axis, panes: node.children.map(makeView), fractions: node.fractions, minSizes: mins,
                                   name: "dockSplit")
             split.dividerThickness = dividerThickness
-            split.dividerColor = gapColor ?? theme.fieldBackground
+            // Without a gap color the split takes the theme's when it draws: splits built before the
+            // dock joins a context (or before a theme change) used to keep the default theme's.
+            split.dividerColor = gapColor
+            split.dividerUsesThemeColor = true
             split.defaultFractions = SplitLayout.normalized([], count: node.children.count)
             split.onResize = { [weak self, weak node] fractions in
                 node?.fractions = fractions
@@ -553,11 +556,16 @@ public final class DockSpace: Widget {
         layoutChanged()
     }
 
-    /// A floating window's frame in window points: the stored frame, kept large enough and
-    /// with its tab bar reachable inside the dock space.
+    /// A floating window's frame in window points: the stored frame, kept large enough, no larger
+    /// than the dock space and wholly inside it (a window placed for a bigger dock, or before the
+    /// OS window shrank, used to hang below it with its lower part out of reach). The stored frame
+    /// stays, so the window goes back where it was when there is room again.
     func windowFrame(for state: DockFloat) -> UIRect {
         let content = contentRect
-        return clampedFloatingFrame(state.frame).offsetBy(Vec2(content.x, content.y))
+        var frame = state.frame
+        frame.width = min(frame.width, max(content.width, minFloatingSize.x))
+        frame.height = min(frame.height, max(content.height, minFloatingSize.y))
+        return clampedFloatingFrame(frame, fullyVisible: true).offsetBy(Vec2(content.x, content.y))
     }
 
     /// A floating frame (relative to the dock space) at least `minFloatingSize`, with its tab bar
@@ -833,7 +841,9 @@ final class DockFloatingWindow: Widget {
         case .pointerDown(let e) where e.button == .left:
             let grabbed = edges(at: e.position)
             if !grabbed.isEmpty {
-                action = .resize(grabbed, start: e.position, frame: state.frame)
+                // From the frame shown (it may be pulled inside the dock), not the stored one.
+                let content = dock.contentRect
+                action = .resize(grabbed, start: e.position, frame: frame.offsetBy(Vec2(-content.x, -content.y)))
                 return true
             }
             if group.barRect.contains(e.position) {
@@ -847,8 +857,8 @@ final class DockFloatingWindow: Widget {
             switch action {
             case .move(let grab):
                 let origin = e.position - grab - Vec2(content.x, content.y)
-                state.frame = dock.clampedFloatingFrame(UIRect(x: snap(origin.x), y: snap(origin.y), width: state.frame.width,
-                                                               height: state.frame.height))
+                state.frame = dock.clampedFloatingFrame(UIRect(x: snap(origin.x), y: snap(origin.y), width: frame.width,
+                                                               height: frame.height), fullyVisible: true)
             case .resize(let edges, let start, let initial):
                 let d = e.position - start
                 var f = initial
