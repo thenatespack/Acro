@@ -111,4 +111,5 @@ extension DemoScene {
     AnimationLifeScene.self,
     Text3DScene.self,
     FacadesScene.self,
+    FogScene.self,
 ]

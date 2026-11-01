@@ -10,7 +10,8 @@ public struct MeshInstance: Equatable, Sendable, BitwiseCopyable {
     public var previousModel: Mat4
     /// Linear RGB tint times the material color, a: opacity.
     public var color: Vec4
-    /// x: receives shadows (0 / 1).
+    /// x: receives shadows (0 / 1), yzw: the emissive multiplier minus one (`MeshRenderer.emissiveTint`
+    /// x `emissiveStrength`; zero is the material's emission unchanged).
     public var params: Vec4
 
     public init(model: Mat4, previousModel: Mat4, color: Vec4, params: Vec4) {
@@ -179,7 +180,9 @@ public struct RenderPrep {
             items.append(RenderItem(
                 entity: entity, mesh: mesh, material: material,
                 instance: MeshInstance(model: model, previousModel: previous, color: Vec4(renderer.tint, renderer.opacity),
-                                       params: Vec4(renderer.receivesShadows ? 1 : 0, 0, 0, 0)),
+                                       params: Vec4(renderer.receivesShadows ? 1 : 0, renderer.emissiveTint.x * renderer.emissiveStrength - 1,
+                                                    renderer.emissiveTint.y * renderer.emissiveStrength - 1,
+                                                    renderer.emissiveTint.z * renderer.emissiveStrength - 1)),
                 bounds: meshes[mesh].transformed(by: model),
                 castsShadows: renderer.castsShadows,
                 transparent: renderer.opacity < 1 || materials[material].blends,

@@ -255,6 +255,10 @@ public final class PostProcessor {
         black = try device.makeTexture(pixels: [UInt8](repeating: 0, count: 8), width: 1, height: 1, format: .rgba16Float)
     }
 
+    /// Runs on the HDR scene image before bloom, exposure and tonemapping: returns the image to use
+    /// instead (volumetric fog), or nil to keep the scene. `SceneRenderer` sets it each frame.
+    public var sceneEffect: ((GPUTexture) -> GPUTexture?)?
+
     /// Makes the next auto-exposure frame converge at once instead of adapting (camera cuts).
     public func resetExposure() {
         exposureValid = false
@@ -262,14 +266,21 @@ public final class PostProcessor {
 
     /// What `render` produced for `drawOutput`.
     public struct Inputs {
+        /// The scene after `sceneEffect`, if it changed it.
+        var scene: GPUTexture?
         var bloom: GPUTexture?
         var exposure: GPUTexture?
     }
 
     /// Records the bloom and auto-exposure passes that read `scene` (the HDR scene image).
     /// Call after the screen pass has ended, before the output pass. `dt` drives adaptation.
-    public func render(scene: GPUTexture, settings: PostProcessSettings, dt: Float) -> Inputs {
+    public func render(scene original: GPUTexture, settings: PostProcessSettings, dt: Float) -> Inputs {
         var inputs = Inputs()
+        var scene = original
+        if let output = sceneEffect?(scene) {
+            scene = output
+            inputs.scene = output
+        }
         if settings.bloom && settings.bloomIntensity > 0 {
             inputs.bloom = renderBloom(scene: scene)
         } else {
@@ -284,7 +295,8 @@ public final class PostProcessor {
     }
 
     /// Draws the final image (exposure, bloom, tonemapper) into `pass`, the scene output pass.
-    public func drawOutput(into pass: RenderPass, scene: GPUTexture, settings: PostProcessSettings, inputs: Inputs) {
+    public func drawOutput(into pass: RenderPass, scene original: GPUTexture, settings: PostProcessSettings, inputs: Inputs) {
+        let scene = inputs.scene ?? original
         pass.setPipeline(tonemap)
         pass.setTexture(scene, index: 1)
         pass.setTexture(inputs.bloom ?? black, index: 2)
