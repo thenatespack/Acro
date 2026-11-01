@@ -118,6 +118,7 @@ public final class EditorApp: Game, EditorHost {
     private(set) var inspector: InspectorPanel!
     private(set) var console: ConsolePanel!
     private(set) var activity: ActivityPanel!
+    public private(set) var scriptEditor: ScriptEditorPanel!
     private(set) var statusBar: StatusBar!
     /// The Assets panel (browser) and its thumbnails.
     public private(set) var assetBrowser: AssetBrowserPanel!
@@ -318,6 +319,7 @@ public final class EditorApp: Game, EditorHost {
         toolbar.view.background = theme.panelBackground
         statusBar.view.background = theme.panelBackground
         console.recolor()
+        scriptEditor?.recolor()
         hierarchy.sync(force: true)
         syncPanels()
     }
@@ -412,6 +414,14 @@ public final class EditorApp: Game, EditorHost {
             assetBrowser.model.search = ""
             assetBrowser.model.reveal(path)
         }
+        session.onOpenScript = { [unowned self] path in
+            let url = URL(fileURLWithPath: path)
+            scriptEditor.openScript(at: url)
+            if !dock.isOpen(EditorLayout.scripts) {
+                dock.dock(EditorLayout.scripts, at: dock.isOpen(EditorLayout.assets) ? .tab(with: EditorLayout.assets) : .edge(.bottom))
+            }
+            dock.focusPanel(EditorLayout.scripts)
+        }
         if let path = options.selectAssetPath { assetBrowser.model.reveal(path) }
         session.log.info("Editor ready. Right-drag flies the camera, Alt-drag or middle-drag orbits, the wheel zooms.")
         offerRecovery()
@@ -470,6 +480,7 @@ public final class EditorApp: Game, EditorHost {
             return thumbnails?.thumbnail(reference, kind: kind)
         }
         assetBrowser.onDrag = { [unowned self] entry, position, phase in assetDragged(entry, at: position, phase: phase) }
+        scriptEditor = ScriptEditorPanel(session: session)
 
         let viewportPanel = DockPanel(id: EditorLayout.viewport, title: "Scene", content: viewportWidget, isClosable: false,
                                       minSize: Vec2(200, 120))
@@ -480,6 +491,7 @@ public final class EditorApp: Game, EditorHost {
         dock.addPanel(DockPanel(id: EditorLayout.console, title: "Console", content: console.view))
         dock.addPanel(DockPanel(id: EditorLayout.stats, title: "Stats", content: stats.view))
         dock.addPanel(DockPanel(id: EditorLayout.assets, title: "Assets", content: assetBrowser.view, minSize: Vec2(240, 120)))
+        dock.addPanel(DockPanel(id: EditorLayout.scripts, title: "Scripts", content: scriptEditor.view, minSize: Vec2(240, 120)))
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
         for (id, icon) in EditorIcons.panelIconNames { dock.panel(id)?.icon = EditorIcons.named(icon) }
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
@@ -494,6 +506,11 @@ public final class EditorApp: Game, EditorHost {
             dock.dock(EditorLayout.activity, at: dock.isOpen(EditorLayout.console) ? .tab(with: EditorLayout.console)
                                                                                      : .edge(.bottom))
             if let selected { dock.focusPanel(selected) }
+        }
+        // And the Scripts panel tabbed with Assets if not open.
+        if !dock.isOpen(EditorLayout.scripts) {
+            dock.dock(EditorLayout.scripts, at: dock.isOpen(EditorLayout.assets) ? .tab(with: EditorLayout.assets)
+                                                                                   : .edge(.bottom))
         }
         // Parity and introspection: what the dock's tabs and close buttons run.
         dock.itemCommands = ["tab": PanelFocusCommand.id.rawValue, "close": PanelCloseCommand.id.rawValue]

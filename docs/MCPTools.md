@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Editor › AI control). 114 tools.
+named by its id (see README › Editor › AI control). 118 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -31,6 +31,7 @@ optional arguments.
 | `prefab` | [`prefab.apply`](#prefabapply), [`prefab.create`](#prefabcreate), [`prefab.createVariant`](#prefabcreatevariant), [`prefab.overrides`](#prefaboverrides), [`prefab.revert`](#prefabrevert), [`prefab.unpack`](#prefabunpack) |
 | `project` | [`project.close`](#projectclose), [`project.new`](#projectnew), [`project.open`](#projectopen), [`project.recent.list`](#projectrecentlist), [`project.recent.locate`](#projectrecentlocate), [`project.recent.pin`](#projectrecentpin), [`project.recent.remove`](#projectrecentremove), [`project.recent.reveal`](#projectrecentreveal) |
 | `scene` | [`scene.discardRecovery`](#scenediscardrecovery), [`scene.hierarchy`](#scenehierarchy), [`scene.listRecovery`](#scenelistrecovery), [`scene.new`](#scenenew), [`scene.open`](#sceneopen), [`scene.raycast`](#sceneraycast), [`scene.recover`](#scenerecover), [`scene.save`](#scenesave), [`scene.saveAs`](#scenesaveas) |
+| `script` | [`script.list`](#scriptlist), [`script.new`](#scriptnew), [`script.open`](#scriptopen), [`script.save`](#scriptsave) |
 | `selection` | [`selection.clear`](#selectionclear), [`selection.get`](#selectionget), [`selection.set`](#selectionset) |
 | `stats` | [`stats.get`](#statsget) |
 | `tool` | [`tool.set`](#toolset), [`tool.snapping`](#toolsnapping) |
@@ -1560,6 +1561,70 @@ Arguments:
 Result:
 
 - `path`: string
+
+## script
+
+### `script.list`
+
+**List Scripts** · _read-only_, _idempotent_
+
+Lists all Swift game script files in the game module target and project folders.
+
+Arguments: none.
+
+Result:
+
+- `scripts`: [string]
+
+### `script.new`
+
+**New Script**
+
+Creates a new Swift game script file with standard component boilerplate.
+
+Arguments:
+
+- `name`: string
+- `template?`: string
+
+Result:
+
+- `created`: boolean
+- `path`: string
+
+### `script.open`
+
+**Open Script**
+
+Opens a Swift game script by file path, reading its content and showing it in the editor.
+
+Arguments:
+
+- `path`: string
+
+Result:
+
+- `content`: string
+- `lineCount`: integer
+- `path`: string
+
+### `script.save`
+
+**Save Script**
+
+Saves code to a Swift game script and optionally triggers hot reloading.
+
+Arguments:
+
+- `content`: string
+- `path`: string
+- `reload?`: boolean
+
+Result:
+
+- `path`: string
+- `reloaded`: boolean
+- `saved`: boolean
 
 ## selection
 

@@ -81,16 +81,17 @@ public enum EditorLayout {
     public static let stats = "stats"
     public static let assets = "assets"
     public static let activity = "activity"
-    public static let panelIDs = [viewport, hierarchy, inspector, console, stats, assets, activity]
+    public static let scripts = "scripts"
+    public static let panelIDs = [viewport, hierarchy, inspector, console, stats, assets, activity, scripts]
 
-    /// Hierarchy left, inspector right, the viewport in the middle above an Assets / Console /
-    /// Activity / Stats tab group.
+    /// Hierarchy left, inspector right, the viewport in the middle above an Assets / Scripts /
+    /// Console / Activity / Stats tab group.
     public static let defaultLayout = DockLayout(
         root: .split(axis: .horizontal, fractions: [0.19, 0.57, 0.24], children: [
             .tabs(panels: [hierarchy], active: hierarchy),
             .split(axis: .vertical, fractions: [0.64, 0.36], children: [
                 .tabs(panels: [viewport], active: viewport),
-                .tabs(panels: [assets, console, activity, stats], active: assets),
+                .tabs(panels: [assets, scripts, console, activity, stats], active: assets),
             ]),
             .tabs(panels: [inspector], active: inspector),
         ]))

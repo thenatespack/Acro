@@ -101,6 +101,8 @@ public final class EditorSession {
     /// Shows an asset in the browser (a path under `Assets/`, `file#sub-asset` for an object;
     /// the app reveals it). Set by the app; `selectAsset` calls it.
     public var onRevealAsset: ((String) -> Void)?
+    /// Opens a script in the editor. Set by the app.
+    public var onOpenScript: ((String) -> Void)?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()

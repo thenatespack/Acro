@@ -11,6 +11,7 @@ extension EditorApp {
         if isLauncherShown { launcher.sync() }
         hierarchy.sync()
         assetBrowser.sync()
+        scriptEditor?.sync()
         inspector.refresh()
         console.refresh()
         activity.refresh()

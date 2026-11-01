@@ -318,6 +318,7 @@ public enum EditorIcons {
         EditorLayout.stats: "gauge",
         EditorLayout.assets: "folder",
         EditorLayout.activity: "bot",
+        EditorLayout.scripts: "file-code",
     ]
 
     /// Console lines by level.
