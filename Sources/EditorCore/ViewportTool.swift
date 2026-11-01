@@ -215,7 +215,7 @@ public func builtinMeshBounds(_ handle: MeshHandle) -> Bounds? {
     case .cube: BuiltinBounds.cube
     case .sphere: BuiltinBounds.sphere
     case .plane: BuiltinBounds.plane
-    default: nil
+    default: BuiltinBounds.others[handle]
     }
 }
 
@@ -223,4 +223,6 @@ private enum BuiltinBounds {
     static let cube = MeshGeometry.cube().bounds
     static let sphere = MeshGeometry.sphere().bounds
     static let plane = MeshGeometry.plane().bounds
+    static let others: [MeshHandle: Bounds] = Dictionary(
+        uniqueKeysWithValues: [MeshHandle.cylinder, .capsule, .cone, .torus].map { ($0, MeshGeometry.builtin($0)!.bounds) })
 }

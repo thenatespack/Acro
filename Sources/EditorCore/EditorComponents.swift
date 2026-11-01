@@ -65,7 +65,7 @@ public enum EditorComponentCatalog {
         guard !registeredBuiltins else { return }
         registeredBuiltins = true
         ComponentRegistry.register(Transform.self, Name.self, Camera.self, DirectionalLight.self, SceneEnvironment.self,
-                                   MeshRenderer.self, Spin.self)
+                                   MeshRenderer.self, LineRenderer.self, Spin.self)
         register(Transform.self) { Transform() }
         register(Camera.self) { Camera() }
         register(DirectionalLight.self) { DirectionalLight() }
@@ -74,6 +74,7 @@ public enum EditorComponentCatalog {
         register(SceneEnvironment.self) { SceneEnvironment() }
         register(PostProcessSettings.self) { PostProcessSettings() }
         register(MeshRenderer.self) { MeshRenderer(mesh: .cube) }
+        register(LineRenderer.self) { LineRenderer() }
         PhysicsWorld.registerComponents()
         register(Collider.self) { Collider(.box(halfExtents: Vec3(0.5, 0.5, 0.5))) }
         register(RigidBody.self) { RigidBody(.dynamic) }

@@ -498,7 +498,7 @@ public enum SelectionClearCommand: EditorCommand {
 
 public enum EntityCreateCommand: EditorCommand {
     public struct Arguments: Codable, Equatable, Sendable {
-        /// "empty", "cube", "sphere" or "plane".
+        /// "empty", "cube", "sphere", "plane", "cylinder", "capsule", "cone" or "torus".
         public var template: EntityTemplate
         /// Position (in `parent`'s space with a parent; default: the origin).
         public var position: Vec3?

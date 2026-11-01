@@ -22,6 +22,7 @@ public enum EditorIcons {
         SceneEnvironment.componentName: "globe",
         PostProcessSettings.componentName: "aperture",
         MeshRenderer.componentName: "box",
+        LineRenderer.componentName: "cable",
         Collider.componentName: "square-dashed",
         RigidBody.componentName: "weight",
         Joint.componentName: "link",
@@ -70,6 +71,8 @@ public enum EditorIcons {
     /// Icons drawn for the editor where Lucide has none: mesh shapes and the prefab mark. Same
     /// conventions as Lucide (24x24 view box, 2-unit round strokes).
     public static let editorIconSVG: [String: String] = [
+        // A cable hanging between two posts.
+        "cable": #"<path d="M3 4c3 16 15 16 18 0"/><path d="M3 2v4"/><path d="M21 2v4"/>"#,
         prefabIconName: #"<path d="M12 2.5 15.5 6 12 9.5 8.5 6Z"/><path d="M6 8.5 9.5 12 6 15.5 2.5 12Z"/><path d="M18 8.5 21.5 12 18 15.5 14.5 12Z"/><path d="M12 14.5 15.5 18 12 21.5 8.5 18Z"/>"#,
         // A ball with its front equator and a meridian.
         "mesh-sphere": #"<circle cx="12" cy="12" r="10"/><path d="M2 12a10 3.5 0 0 0 20 0"/><path d="M12 2a3.5 10 0 0 0 0 20"/>"#,
@@ -337,6 +340,10 @@ public enum EditorIcons {
         case .cube: named(meshIconName(.cube))
         case .sphere: named(meshIconName(.sphere))
         case .plane: named(meshIconName(.plane))
+        case .cylinder: named(meshIconName(.cylinder))
+        case .capsule: named(meshIconName(.capsule))
+        case .cone: named(meshIconName(.cone))
+        case .torus: named(meshIconName(.torus))
         }
     }
 

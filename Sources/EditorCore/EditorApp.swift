@@ -542,7 +542,7 @@ public final class EditorApp: Game, EditorHost {
             // Without a renderer (headless) the built-in meshes and the starter scene's material.
             meshes: { [unowned self] in
                 sceneRenderer.map { $0.prep.meshes.keys.filter { AssetReference($0) == nil } }
-                    ?? [MeshHandle.cube.key, MeshHandle.sphere.key, MeshHandle.plane.key]
+                    ?? MeshGeometry.builtinHandles.map(\.key)
             },
             materials: { [unowned self] in
                 sceneRenderer.map { $0.prep.materials.keys.filter { AssetReference($0) == nil } } ?? [StarterScene.checkerMaterial.key]
