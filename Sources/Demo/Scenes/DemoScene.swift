@@ -105,4 +105,5 @@ extension DemoScene {
     CrowdScene.self,
     NetScene.self,
     NetCharacterScene.self,
+    RainScene.self,
 ]

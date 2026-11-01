@@ -637,7 +637,7 @@ public final class ParticleSystem {
             colorTimes: Vec4(colorTimes[0], colorTimes[1], colorTimes[2], colorTimes[3]),
             sizes: Vec4(sizes[0], sizes[1], sizes[2], sizes[3]),
             sizeTimes: Vec4(sizeTimes[0], sizeTimes[1], sizeTimes[2], sizeTimes[3]),
-            params: Vec4(max(e.stretch, 0), e.intensity, min(max(e.brightnessVariation, 0), 1), 0),
+            params: Vec4(max(e.stretch, 0), e.intensity, min(max(e.brightnessVariation, 0), 1), e.stretchMode == .streak ? 1 : 0),
             counts: Vec4(Float(max(min(e.color.count, 4), 1)), Float(max(min(e.sizeOverLife.count, 4), 1)), 0, 0),
             atlas: Vec4(Float(max(e.atlasColumns, 1)), Float(max(e.atlasRows, 1)), Float(e.effectiveFrameCount), max(e.frameRate, 0)),
             atlasFlags: Vec4(e.randomStartFrame ? 1 : 0, e.frameBlending ? 1 : 0, textured ? 1 : 0, 0),

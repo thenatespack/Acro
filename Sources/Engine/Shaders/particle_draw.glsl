@@ -9,7 +9,7 @@ layout(set = 2, binding = 2, std140) uniform Draw {
     vec4 colorTimes;    // their times (life fraction), ascending
     vec4 sizes;         // size multipliers
     vec4 sizeTimes;
-    vec4 params;        // x stretch, y intensity, z brightness variation, w unused
+    vec4 params;        // x stretch, y intensity, z brightness variation, w stretch mode (1: streak, else scaled)
     vec4 counts;        // x color keys, y size keys
     vec4 atlas;         // flipbook: x columns, y rows, z frames, w frames per second (0: once over the particle's life)
     vec4 atlasFlags;    // x random start frame, y blend between frames, z textured (else a soft disc)
