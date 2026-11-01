@@ -1,4 +1,4 @@
-public enum TextAlignment: Sendable {
+public enum TextAlignment: String, Codable, Sendable, CaseIterable {
     case left, center, right
 }
 

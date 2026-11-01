@@ -32,6 +32,7 @@ public enum EditorIcons {
         AudioListener.componentName: "ear",
         AudioEmitter.componentName: "volume-2",
         ParticleEmitter.componentName: "sparkles",
+        TextMesh.componentName: "type",
         Sprite.componentName: "image",
         SpriteAnimator.componentName: "images",
         Animator.componentName: "film",

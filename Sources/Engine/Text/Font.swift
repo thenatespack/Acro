@@ -28,8 +28,9 @@ public final class Font {
     /// Baseline-to-baseline distance: `ascent - descent + lineGap`.
     public var lineHeight: Float { ascent - descent + lineGap }
 
-    /// Parses the first font in `bytes` (the bytes are copied).
-    public init(data bytes: [UInt8]) throws {
+    /// Parses font number `index` of `bytes` (the first of a TrueType Collection `.ttc` by
+    /// default; the bytes are copied).
+    public init(data bytes: [UInt8], index: Int = 0) throws {
         let copy = UnsafeMutableRawPointer.allocate(byteCount: max(bytes.count, 1), alignment: 16)
         bytes.withUnsafeBytes { raw in
             if let base = raw.baseAddress { copy.copyMemory(from: base, byteCount: raw.count) }
@@ -37,7 +38,7 @@ public final class Font {
         data = copy
         info = .allocate(capacity: 1)
         let pointer = data.assumingMemoryBound(to: UInt8.self)
-        let offset = bytes.isEmpty ? -1 : stbtt_GetFontOffsetForIndex(pointer, 0)
+        let offset = bytes.isEmpty ? -1 : stbtt_GetFontOffsetForIndex(pointer, Int32(index))
         guard offset >= 0, stbtt_InitFont(info, pointer, offset) != 0 else {
             data.deallocate()
             info.deallocate()
@@ -52,8 +53,8 @@ public final class Font {
         lineGap = Float(g) * perEm
     }
 
-    public convenience init(contentsOf url: URL) throws {
-        try self.init(data: [UInt8](try Data(contentsOf: url)))
+    public convenience init(contentsOf url: URL, index: Int = 0) throws {
+        try self.init(data: [UInt8](try Data(contentsOf: url)), index: index)
     }
 
     deinit {

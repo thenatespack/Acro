@@ -222,7 +222,8 @@ import Testing
         #expect((EditorComponentCatalog.makeDefault(named: "Sprite") as? Sprite)?.atlas == SpriteAtlasHandle("sprites"))
         #expect((EditorComponentCatalog.makeDefault(named: "SpriteAnimator") as? SpriteAnimator)?.current == "idle")
         #expect((EditorComponentCatalog.makeDefault(named: "KeyboardMover") as? KeyboardMover)?.speed == 3)
-        for name in ["Collider", "RigidBody", "Joint", "CharacterController", "AudioListener", "AudioEmitter", "ParticleEmitter",
+        #expect((EditorComponentCatalog.makeDefault(named: "TextMesh") as? TextMesh)?.emissiveStrength == 4)
+        for name in ["Collider", "RigidBody", "Joint", "CharacterController", "AudioListener", "AudioEmitter", "ParticleEmitter", "TextMesh",
                      "RigidBody2D", "Collider2D", "Joint2D", "Sprite", "SpriteAnimator", "KeyboardMover"] {
             #expect(EditorComponentCatalog.addableNames.contains(name), "\(name)")
             #expect(ComponentRegistry.type(named: name) != nil, "\(name)")

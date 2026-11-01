@@ -41,7 +41,7 @@ public struct KeyboardMover: Component, Equatable, Sendable {
 /// Built in: Transform, Camera, the lights, SceneEnvironment, PostProcess, MeshRenderer (a cube),
 /// the physics components (a unit box Collider, a dynamic RigidBody, a ball Joint to the world,
 /// a CharacterController), AudioListener and AudioEmitter (no sound until one is picked), the 2D physics components (a dynamic RigidBody2D, a unit
-/// box Collider2D, a revolute Joint2D to the world), ParticleEmitter, Sprite (atlas "sprites", frame 0), SpriteAnimator (one looping "idle" clip), Saveable, Spin and
+/// box Collider2D, a revolute Joint2D to the world), ParticleEmitter, TextMesh ("Neon", emissive 4), Sprite (atlas "sprites", frame 0), SpriteAnimator (one looping "idle" clip), Saveable, Spin and
 /// KeyboardMover. `Name` is left out on purpose: the inspector header edits it. Games register their own
 /// with `register(_:make:)`, or `register(_:)` for types with a no-argument initializer.
 @MainActor
@@ -88,6 +88,8 @@ public enum EditorComponentCatalog {
         register(Joint2D.self) { Joint2D(.revolute) }
         ParticleSystem.registerComponents()
         register(ParticleEmitter.self) { ParticleEmitter() }
+        TextMeshComponents.registerComponents()
+        register(TextMesh.self) { TextMesh("Neon", emissiveStrength: 4) }
         register(Sprite.self) { Sprite(atlas: SpriteAtlasHandle("sprites")) }
         register(SpriteAnimator.self) { SpriteAnimator(clips: [SpriteClip("idle", frames: [0], fps: 12)]) }
         register(Saveable.self) { Saveable() }
