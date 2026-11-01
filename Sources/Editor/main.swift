@@ -6,14 +6,16 @@ import Foundation
 // Everything lives in EditorCore; this only reads the command line and runs it.
 
 let usage = """
-    Usage: Editor [scene.json] [--project <folder>] [--game <target | module.dylib>] [--game-watch] [--backend metal|vulkan]
-                  [--mcp] [--headless] [--mcp-port <port>] [--mcp-http | --no-mcp-http] [--mcp-read-only]
+    Usage: Editor [scene.json] [--project <folder>] [--launcher] [--game <target | module.dylib>] [--game-watch]
+                  [--backend metal|vulkan] [--mcp] [--headless] [--mcp-port <port>] [--mcp-http | --no-mcp-http] [--mcp-read-only]
            Editor --mcp-tool-docs
            Editor --cook <project> [...] | --build-game <project> [...]   (see Editor --cook --help)
 
     Opens the scene file, or starts with a new scene; --project opens a project (Project.json,
-    Assets/, Library/) and imports its assets. Environment: EDITOR_PREFS=<file> moves the
-    prefs file (dock layout, last scene, theme, uiScale); EDITOR_THEME=<Dark|Light|High Contrast>
+    Assets/, Library/) and imports its assets. Without either the editor starts on the launcher
+    (recent projects, New Project, Open…), or in the last project when the launcher's "Reopen last
+    project" is on; --launcher always starts on it. Environment: EDITOR_PREFS=<file> moves the
+    prefs file (dock layout, last scene, theme, uiScale, recent projects); EDITOR_THEME=<Dark|Light|High Contrast>
     and EDITOR_UI_SCALE=<0.85…2> override the prefs; EDITOR_WINDOW_SIZE=<w>x<h> sizes the window;
     ENGINE_SCREENSHOT=<png> renders a deterministic frame and quits.
 
@@ -49,6 +51,7 @@ var mcpPort: UInt16?
 var mcpReadOnly = false
 var game: GameModuleSettings?
 var gameWatch = false
+var launcher = false
 var arguments = Array(CommandLine.arguments.dropFirst())
 
 // Cooking and exporting run without a window (EditorPackagingCLI).
@@ -80,6 +83,8 @@ while !arguments.isEmpty {
         game = GameModuleSettings(argument: value)
     case "--game-watch":
         gameWatch = true
+    case "--launcher":
+        launcher = true
     case "--mcp":
         mcpStdio = true
     case "--headless":
@@ -114,6 +119,13 @@ if let mcpPort { options.mcp.port = mcpPort }
 options.mcp.readOnly = mcpReadOnly
 if gameWatch { game?.watch = true }
 options.game = game
+// The launcher: with --launcher; on a plain windowed launch (not for screenshots, nor when an MCP
+// client started the editor over stdio, nor headless).
+if launcher {
+    options.launcher = .always
+} else if scenePath == nil, projectPath == nil, !headless, !mcpStdio, !options.deterministic {
+    options.launcher = .auto
+}
 
 if headless {
     exit(EditorHeadless.run(options: options))

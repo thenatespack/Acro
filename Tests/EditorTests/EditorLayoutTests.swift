@@ -473,6 +473,72 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
         #expect(field.tooltip(at: field.frame.center) == longName)
     }
 
+    /// The launcher (card #673) at the smallest and a large window, zoom 1 and 2, every theme:
+    /// empty, with recent projects (pinned, game code, a long name, a missing folder), a row's
+    /// menu, and the New Project and Open forms.
+    @Test func launcherFitsEverySizeZoomAndTheme() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("EditorLayoutTests-\(UUID().uuidString)")
+        let long = "A Project With A Rather Long Name To See How The Launcher Row Ends It"
+        var entries: [RecentProject] = []
+        for (i, name) in ["Space Shooter", "Sample Copy", long].enumerated() {
+            let project = try Project.create(at: folder.appendingPathComponent(name))
+            entries.append(RecentProject(path: project.root.path, name: name, lastOpened: Date() - Double(i) * 3600,
+                                         pinned: i == 0, hasGame: i == 1))
+        }
+        entries.append(RecentProject(path: folder.appendingPathComponent("Moved Away").path, name: "Moved Away",
+                                     lastOpened: Date() - 86_400 * 3))
+        for theme in EditorApp.themes {
+            for size in [Vec2(800, 600), Vec2(2560, 1440)] {
+                for zoom: Float in [1, 2] {
+                    var options = EditorOptions(deterministic: true)
+                    options.theme = theme
+                    options.uiScale = zoom
+                    options.launcher = .always
+                    let app = EditorApp(options: options)
+                    app.setupWithoutWindow(size: size, scale: 2)
+                    let context = "launcher \(theme) \(Int(size.x))x\(Int(size.y)) zoom \(zoom)"
+                    #expect(app.isLauncherShown)
+                    expectClean(app, "\(context) empty")
+                    app.session.recentProjects.load(entries)
+                    app.launcher.showRecent()
+                    expectClean(app, "\(context) recent")
+                    let rows = app.ui.accessibilityElements().filter { $0.role == .listItem && $0.isOnScreen }
+                    #expect(rows.count == 4, "\(context): \(rows.count) rows")
+                    let menu = try #require(app.ui.accessibilityElements().first { $0.label == "More actions for Moved Away" })
+                    app.ui.synthesizeClick(at: menu.clickPoint)
+                    #expect(app.ui.overlays.last is PopupMenu)
+                    expectClean(app, "\(context) row menu")
+                    for overlay in app.ui.overlays.reversed() { app.ui.dismissOverlay(overlay) }
+                    app.launcher.showNewProject(location: folder.path)
+                    expectClean(app, "\(context) new project")
+                    app.launcher.nameField.text = "Space Shooter"
+                    app.launcher.sync()
+                    expectClean(app, "\(context) new project, name taken")
+                    app.launcher.showOpen()
+                    app.launcher.openField.text = folder.path
+                    app.launcher.sync()
+                    expectClean(app, "\(context) open, not a project")
+                }
+            }
+        }
+    }
+
+    /// The launcher's own colors: the Game badge, a missing project's status and the selected row's text.
+    @Test func launcherColorsMeetContrast() {
+        for name in EditorApp.themes {
+            let theme = UITheme.named(name)!
+            let field = theme.fieldBackground
+            let badge = RecentProjectsListView.badgeColors(theme)
+            let behindBadge = badge.fill.composited(over: field)
+            #expect(badge.text.contrastRatio(with: behindBadge) >= 4.5, "\(name): Game badge \(badge.text.contrastRatio(with: behindBadge)):1")
+            #expect(badge.text.contrastRatio(with: field) >= 4.5, "\(name): pinned icon")
+            #expect(theme.warningTextColor.contrastRatio(with: field) >= 4.5, "\(name): Folder not found")
+            #expect(theme.disabledTextColor.contrastRatio(with: field) >= 3, "\(name): a missing project's name")
+            let selected = theme.rowSelectedFocused.composited(over: field)
+            #expect(theme.textColor.contrastRatio(with: selected) >= 4.5, "\(name): a selected row's text")
+        }
+    }
+
     @Test func themeTextMeetsWCAGContrast() {
         for theme in UITheme.presets {
             // Translucent surfaces (the game theme's) are judged over black, where they're drawn over a scene.

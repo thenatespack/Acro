@@ -35,7 +35,7 @@ public enum BuiltinCommands {
         PrefabUnpackCommand.self, PrefabCreateVariantCommand.self,
         LogReadCommand.self, StatsGetCommand.self, DiagnosticsGetCommand.self,
     ] + EditorUICommands.all + EditorSafetyCommands.all + EditorGameModuleCommands.all + EditorBuildCommands.all
-      + EditorRecoveryCommands.all + EditorNetCommands.all
+      + EditorRecoveryCommands.all + EditorNetCommands.all + EditorLauncherCommands.all
 }
 
 extension CommandID {
@@ -284,34 +284,98 @@ public enum ToolSnappingCommand: EditorCommand {
 
 public enum ProjectOpenCommand: EditorCommand {
     public struct Arguments: Codable, Equatable, Sendable {
-        /// The project folder or its `Project.json`.
+        /// The project folder or its `Project.json` (or the name of a project in project.recent.list).
         public var path: String
-        public init(path: String) { self.path = path }
+        /// Also open the scene last used in the project (else its first build scene), as the
+        /// launcher does; replaces the open scene. Default false: the scene stays.
+        public var openLastScene: Bool?
+        public init(path: String, openLastScene: Bool? = nil) {
+            self.path = path
+            self.openLastScene = openLastScene
+        }
     }
 
     public static let id: CommandID = "project.open"
     public static let title = "Open Project"
-    public static let doc = "Opens the project at `path`, scans its assets and imports what changed (in the background). The scene stays open. Returns the project's root folder."
+    public static let doc = "Opens the project at `path` (or a recent project by name), scans its assets and imports what changed (in the background); the project goes to the top of project.recent.list and the launcher closes. The scene stays open unless `openLastScene` is true. Returns the project's root folder."
     public static let isIdempotent = true
+    public static let isDestructive = true
+    public static let confirmsOnlyWhen: String? = "when `openLastScene` is true and the open scene has unsaved changes"
+    public static func needsConfirmation(_ arguments: Arguments, in session: EditorSession) -> Bool {
+        arguments.openLastScene == true && session.document.isDirty
+    }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> PathResult {
-        try session.commands.check(session.openProject(path: arguments.path), title)
+        var path = arguments.path
+        // A recent project's name, when there is no such folder.
+        if !FileManager.default.fileExists(atPath: session.resolvedFileURL(forPath: path).path),
+           let entry = session.recentProjects.entry(path) {
+            path = entry.path
+        }
+        if arguments.openLastScene == true, session.isPlaying { throw CommandError.failed(EditorError.playing.description) }
+        try session.commands.check(session.openProject(path: path), title)
+        if arguments.openLastScene == true, let project = session.project {
+            let entry = session.recentProjects.entry(project.root.path)
+            let candidates = [entry?.lastScene].compactMap { $0 }
+                + (project.settings.build?.scenes ?? []).map { project.url(forAssetPath: $0).path }
+            if let scene = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }),
+               session.document.url?.standardizedFileURL.path != scene {
+                session.open(path: scene)
+            }
+        }
         return PathResult(path: session.project?.root.path ?? "")
     }
 }
 
 public enum ProjectNewCommand: EditorCommand {
     public struct Arguments: Codable, Equatable, Sendable {
-        /// A new folder, or an existing one without a project.
-        public var path: String
-        public init(path: String) { self.path = path }
+        /// A new folder, or an existing one without a project. Default: `location`/`name`.
+        public var path: String?
+        /// The project's name (Project.json); default: the folder's. With `location` it names the folder too.
+        public var name: String?
+        /// The folder to create the project in (with `name`); default: the last one used, else ~/Games.
+        public var location: String?
+        /// What it starts with: `empty`, `starter` (the starter scene in Scenes/Main.scene) or
+        /// `game` (a copy of Projects/SampleGame with its game code). With a template its scene
+        /// is opened in place of the open one; without (the default), only the folders are made
+        /// and the scene stays.
+        public var template: ProjectTemplate?
+        public init(path: String? = nil, name: String? = nil, location: String? = nil, template: ProjectTemplate? = nil) {
+            self.path = path
+            self.name = name
+            self.location = location
+            self.template = template
+        }
     }
 
     public static let id: CommandID = "project.new"
     public static let title = "New Project"
-    public static let doc = "Creates a project (Project.json, Assets/, Library/) at `path` and opens it. Returns its root folder."
+    public static let doc = "Creates a project (Project.json, Assets/, Library/) at `path`, or in `location` as a folder called `name`, and opens it (it goes to the top of project.recent.list and the launcher closes). With `template` (empty, starter, game) it is filled from the template and its scene opened. Paths outside the project folder (the editor's start folder without one) are refused for AI clients. Returns its root folder."
+    public static let isDestructive = true
+    public static let confirmsOnlyWhen: String? = "when a `template` is given and the open scene has unsaved changes (the template's scene replaces it)"
+    public static func needsConfirmation(_ arguments: Arguments, in session: EditorSession) -> Bool {
+        arguments.template != nil && session.document.isDirty
+    }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> PathResult {
-        try session.commands.check(session.newProject(path: arguments.path), title)
+        let path = try folder(for: arguments, in: session)
+        try session.commands.check(session.newProject(path: path, name: arguments.name, template: arguments.template), title)
+        if arguments.path == nil, let location = arguments.location ?? session.recentProjects.newProjectLocation {
+            session.recentProjects.newProjectLocation = location
+        }
         return PathResult(path: session.project?.root.path ?? "")
+    }
+
+    /// The folder to create: `path`, else `location` (or the last one) / `name`.
+    static func folder(for arguments: Arguments, in session: EditorSession) throws -> String {
+        if let path = arguments.path, !path.trimmingCharacters(in: .whitespaces).isEmpty { return path }
+        guard let name = arguments.name?.trimmingCharacters(in: .whitespaces), !name.isEmpty else {
+            throw CommandError.failed("New Project needs a `path`, or a `name` (and a `location`)")
+        }
+        guard !name.contains("/"), !name.contains("\\"), name != ".", name != ".." else {
+            throw CommandError.failed("The project name '\(name)' can't be a folder name (no slashes)")
+        }
+        let location = arguments.location ?? session.recentProjects.newProjectLocation ?? RecentProjectList.defaultNewProjectLocation()
+        let trimmed = location.trimmingCharacters(in: .whitespaces)
+        return (trimmed.isEmpty ? "." : trimmed) + "/" + name
     }
 }
 

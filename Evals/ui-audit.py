@@ -7,7 +7,8 @@ no selection, long names, many entities, long console lines, a long undo title, 
 Component type, the asset inspector per asset type, menus, context menus, the delete dialog,
 play mode, a floating and a squeezed panel, the Activity and Stats panels), checks each
 `ui.snapshot` for interactive elements outside the window, overlapping each other, or too small
-to hit, and saves a window screenshot of each state to look at.
+to hit, and saves a window screenshot of each state to look at. It starts on the launcher (recent
+projects, a missing one, its menu and forms), then continues without a project.
 
     swift build --product Editor
     Evals/ui-audit.py --out /tmp/ui-review                                   # default matrix
@@ -186,8 +187,37 @@ def write_png(path, width, height):
                            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
 
 
+def launcher_states(client, workspace):
+    """The launcher (a plain launch starts on it): empty, with recent projects (pinned, game
+    code, a long name, a missing folder), a row's menu, the New Project and Open forms."""
+    yield "launcher-empty", "the launcher without recent projects (Create your first project)"
+    names = [("Space Shooter", "starter"), ("A Project With A Rather Long Name To See How The Launcher Row Ends It", "starter"),
+             ("Moved Away", "empty"), ("Sample Copy", "game")]
+    for name, template in names:
+        client.call("project.new", {"name": name, "location": workspace, "template": template, "confirm": True})
+        if template != "empty":
+            client.call("scene.save", {})  # renders the project's launcher thumbnail
+        time.sleep(0.5)
+        client.call("launcher.show", {"confirm": True})
+    shutil.rmtree(os.path.join(workspace, "Moved Away"), ignore_errors=True)
+    client.call("project.recent.pin", {"path": "Space Shooter"})
+    time.sleep(0.5)
+    yield "launcher-recent", "four recent projects: one pinned, one with game code, a long name, a missing folder"
+    client.call("ui.click", {"label": "More actions for Space Shooter"})
+    yield "launcher-menu", "a recent project's menu"
+    client.call("ui.key", {"keys": ["escape"]})
+    client.call("ui.key", {"keys": ["mod+n"]})
+    yield "launcher-new-project", "the New Project form"
+    client.call("ui.key", {"keys": ["escape"]})
+    client.call("ui.key", {"keys": ["mod+o"]})
+    yield "launcher-open", "the Open form"
+    client.call("ui.key", {"keys": ["escape"]})
+    client.call("launcher.dismiss")
+
+
 def states(client, workspace):
     """Yields (name, description) after putting the editor into each state."""
+    yield from launcher_states(client, workspace)
     yield "default", "starter scene, Blue Sphere selected"
     client.call("selection.clear")
     yield "no-selection", "nothing selected (inspector empty state), no project (asset browser empty state)"
@@ -326,9 +356,13 @@ def main():
                 print(f"== {name}")
                 process, client = launch(args.editor, size, scale, theme, args.backend, workspace, args.port)
                 try:
+                    seen = set()
                     for state, description in states(client, workspace):
+                        if wanted and seen >= wanted:
+                            break  # the rest of the states aren't wanted
                         if wanted and state not in wanted:
                             continue
+                        seen.add(state)
                         snapshot = client.value("ui.snapshot", {"all": True})
                         issues = audit(snapshot)
                         entry = {"config": name, "state": state, "description": description,

@@ -131,7 +131,7 @@ open class RowListView: Widget {
         updateScrollLengths()
     }
 
-    public override func handleEvent(_ event: UIEvent) -> Bool {
+    open override func handleEvent(_ event: UIEvent) -> Bool {
         updateScrollLengths()
         let result = interaction.handle(event, state: &scroll, viewport: contentRect, theme: theme, dragContent: false)
         if result.changed { setNeedsDisplay() }

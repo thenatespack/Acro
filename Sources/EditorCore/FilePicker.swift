@@ -36,4 +36,23 @@ enum FilePicker {
         return nil
         #endif
     }
+
+    /// Shows a modal dialog for picking one folder (a new one can be made in it). Returns nil
+    /// when cancelled, suppressed (`isSuppressed`) or when there's no native dialog.
+    static func chooseFolder(title: String, prompt: String) -> URL? {
+        #if os(macOS)
+        guard isAvailable else { return nil }
+        let panel = NSOpenPanel()
+        panel.title = title
+        panel.prompt = prompt
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.resolvesAliases = true
+        return panel.runModal() == .OK ? panel.url : nil
+        #else
+        return nil
+        #endif
+    }
 }

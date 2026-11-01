@@ -128,6 +128,51 @@ private func temporaryDirectory() -> URL {
         #expect(issues.isEmpty, "the narrow window: \(issues.joined(separator: "; "))")
     }
 
+    /// The launcher (card #673): its empty state, recent projects (one missing, with Locate… and
+    /// Remove), a row's menu, and the New Project and Open forms all run MCP tools.
+    @Test func everyLauncherElementRunsACommandThatIsATool() throws {
+        var options = EditorOptions(deterministic: true)
+        options.launcher = .always
+        let app = EditorApp(options: options)
+        app.setupWithoutWindow()
+        let session = app.session
+        let ui = app.ui!
+        let tools = toolNames(session)
+        var seen = 0
+        func check(_ what: String) {
+            let elements = ui.accessibilityElements().filter(\.isOnScreen)
+            seen += elements.filter { $0.role.isInteractive }.count
+            let issues = problems(elements, tools: tools)
+            #expect(issues.isEmpty, "\(what): \(issues.joined(separator: "; "))")
+        }
+        #expect(app.isLauncherShown)
+        check("the empty launcher")
+        let folder = temporaryDirectory()
+        let project = try Project.create(at: folder.appendingPathComponent("Present"))
+        session.recentProjects.load([
+            RecentProject(path: project.root.path, name: "Present", lastOpened: Date(), hasGame: true),
+            RecentProject(path: folder.appendingPathComponent("Missing").path, name: "Missing", lastOpened: Date() - 60),
+        ])
+        app.launcher.showRecent()
+        check("the recent projects")
+        for name in ["Present", "Missing"] {
+            let more = try #require(ui.accessibilityElements().first { $0.label == "More actions for \(name)" })
+            ui.synthesizeClick(at: more.clickPoint)
+            let menu = try #require(ui.overlays.last as? PopupMenu)
+            #expect(menu.itemCommandIDs.count == menu.items.count)
+            check("the menu of \(name)")
+            ui.dismissOverlay(menu)
+        }
+        app.launcher.showNewProject(location: folder.path)
+        check("the New Project form")
+        app.launcher.showOpen()
+        app.launcher.openField.text = folder.path
+        app.launcher.sync()
+        #expect(!app.launcher.createHereButton.isHidden)
+        check("the Open form")
+        #expect(seen > 30, "only \(seen) interactive elements were seen")
+    }
+
     @Test func uiWithoutACommandIsCaught() {
         let app = EditorApp(options: EditorOptions(deterministic: true))
         app.setupWithoutWindow()

@@ -80,6 +80,11 @@ public final class EditorSession {
     public var project: Project? { assets?.project }
     /// Called after a project was opened or created, or its assets changed.
     public var onAssetsChange: (() -> Void)?
+    /// The projects opened before, for the launcher (RecentProjects.swift); every project
+    /// opened or created goes to its top. The app loads and saves it with the prefs.
+    public let recentProjects = RecentProjectList()
+    /// The scene was saved (to its file or a new one); the app refreshes the project's thumbnail.
+    public var onSceneSaved: (() -> Void)?
 
     /// The asset the inspector shows instead of the selected entity (picked in the asset
     /// browser). Selecting entities clears it.
@@ -220,6 +225,7 @@ public final class EditorSession {
         do {
             try document.open(url)
             log.info("Opened \(url.lastPathComponent) (\(world.entityCount) entities)")
+            noteSceneInProject()
             changed()
             return true
         } catch {
@@ -240,6 +246,8 @@ public final class EditorSession {
         do {
             try document.save()
             log.info("Saved \(document.displayName)")
+            noteSceneInProject()
+            onSceneSaved?()
             changed()
             return true
         } catch {
@@ -256,6 +264,8 @@ public final class EditorSession {
         do {
             try document.save(to: url)
             log.info("Saved \(url.path)")
+            noteSceneInProject()
+            onSceneSaved?()
             changed()
             return true
         } catch {
@@ -287,16 +297,33 @@ public final class EditorSession {
     }
 
     /// Creates a project at `path` (a new or existing folder without a project) and opens it.
+    /// With a `template` it is filled from it and its scene opened (an empty one for `.empty`),
+    /// replacing the open scene; without, the scene stays. `name` defaults to the folder's.
     @discardableResult
-    public func newProject(path: String) -> Bool {
+    public func newProject(path: String, name: String? = nil, template: ProjectTemplate? = nil) -> Bool {
         guard let url = fileURL(forPath: path, "New Project") else { return false }
+        if template != nil, refuseWhilePlaying("New Project") { return false }
+        if let reason = template?.unavailableReason {
+            log.error("New Project: \(reason)")
+            return false
+        }
+        let created: (project: Project, scene: URL?)
         do {
-            setProject(try Project.create(at: url), verb: "Created")
-            return true
+            created = try (template ?? .empty).create(at: url, name: name.flatMap { $0.isEmpty ? nil : $0 })
         } catch {
             log.error("Couldn't create a project at \(url.path): \(error)")
             return false
         }
+        setProject(created.project, verb: "Created")
+        guard template != nil else { return true }
+        if let scene = created.scene { return open(path: scene.path) }
+        return newDocument(empty: true)
+    }
+
+    /// The document's file is in the open project: remember it as the project's last scene.
+    private func noteSceneInProject() {
+        guard let project, let url = document.url else { return }
+        recentProjects.noteScene(url, in: project)
     }
 
     /// Closes the open project (the scene stays open; asset references in it stay as they are).
@@ -348,6 +375,8 @@ public final class EditorSession {
             onAssetsChange?()
         }
         if ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT"] != nil { database.waitForAll() }
+        recentProjects.noteOpened(project)
+        noteSceneInProject()
         gameModule.projectOpened(project)
         syncPrefabs(force: true)
         onAssetsChange?()

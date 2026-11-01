@@ -2,8 +2,8 @@ import Engine
 import Foundation
 
 /// Per-user editor settings that persist between launches: the dock layout, the last scene and
-/// the last project (pre-filled in the project path field, not opened automatically) and the
-/// AI settings (read-only mode, confirmations, the HTTP server).
+/// the last project (pre-filled in the project path field), the launcher's recent projects and
+/// whether to skip it, and the AI settings (read-only mode, confirmations, the HTTP server).
 public struct EditorPrefs: Codable, Equatable, Sendable {
     public static let currentVersion = 1
     public var version = EditorPrefs.currentVersion
@@ -16,6 +16,12 @@ public struct EditorPrefs: Codable, Equatable, Sendable {
     public var theme: String?
     /// UI zoom on top of the display's backing scale (nil: 1; clamped to `EditorApp.uiScaleRange`).
     public var uiScale: Float?
+    /// The launcher's recent projects (RecentProjects.swift), newest first, pinned ones on top.
+    public var recentProjects: [RecentProject]?
+    /// Start in the last project instead of the launcher (nil: false).
+    public var reopenLastProject: Bool?
+    /// The folder New Project last created a project in (nil: ~/Games).
+    public var newProjectLocation: String?
 
     public init(layout: DockLayout? = nil, lastScenePath: String? = nil, lastProjectPath: String? = nil, ai: AISettings? = nil) {
         self.layout = layout

@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Editor › AI control). 106 tools.
+named by its id (see README › Editor › AI control). 114 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -21,6 +21,7 @@ optional arguments.
 | `entity` | [`entity.create`](#entitycreate), [`entity.delete`](#entitydelete), [`entity.duplicate`](#entityduplicate), [`entity.find`](#entityfind), [`entity.get`](#entityget), [`entity.rename`](#entityrename), [`entity.reparent`](#entityreparent) |
 | `game` | [`game.build`](#gamebuild), [`game.info`](#gameinfo), [`game.load`](#gameload), [`game.reload`](#gamereload), [`game.unload`](#gameunload) |
 | `input` | [`input.clear`](#inputclear), [`input.inject`](#inputinject), [`input.state`](#inputstate) |
+| `launcher` | [`launcher.dismiss`](#launcherdismiss), [`launcher.settings`](#launchersettings), [`launcher.show`](#launchershow) |
 | `layout` | [`layout.reset`](#layoutreset) |
 | `log` | [`log.clear`](#logclear), [`log.read`](#logread) |
 | `material` | [`material.get`](#materialget), [`material.set`](#materialset) |
@@ -28,7 +29,7 @@ optional arguments.
 | `panel` | [`panel.close`](#panelclose), [`panel.dock`](#paneldock), [`panel.focus`](#panelfocus), [`panel.list`](#panellist), [`panel.open`](#panelopen) |
 | `play` | [`play.pause`](#playpause), [`play.setTimeScale`](#playsettimescale), [`play.start`](#playstart), [`play.state`](#playstate), [`play.step`](#playstep), [`play.stop`](#playstop), [`play.toggle`](#playtoggle) |
 | `prefab` | [`prefab.apply`](#prefabapply), [`prefab.create`](#prefabcreate), [`prefab.createVariant`](#prefabcreatevariant), [`prefab.overrides`](#prefaboverrides), [`prefab.revert`](#prefabrevert), [`prefab.unpack`](#prefabunpack) |
-| `project` | [`project.close`](#projectclose), [`project.new`](#projectnew), [`project.open`](#projectopen) |
+| `project` | [`project.close`](#projectclose), [`project.new`](#projectnew), [`project.open`](#projectopen), [`project.recent.list`](#projectrecentlist), [`project.recent.locate`](#projectrecentlocate), [`project.recent.pin`](#projectrecentpin), [`project.recent.remove`](#projectrecentremove), [`project.recent.reveal`](#projectrecentreveal) |
 | `scene` | [`scene.discardRecovery`](#scenediscardrecovery), [`scene.hierarchy`](#scenehierarchy), [`scene.listRecovery`](#scenelistrecovery), [`scene.new`](#scenenew), [`scene.open`](#sceneopen), [`scene.raycast`](#sceneraycast), [`scene.recover`](#scenerecover), [`scene.save`](#scenesave), [`scene.saveAs`](#scenesaveas) |
 | `selection` | [`selection.clear`](#selectionclear), [`selection.get`](#selectionget), [`selection.set`](#selectionset) |
 | `stats` | [`stats.get`](#statsget) |
@@ -749,6 +750,46 @@ Result:
 - `mouseDelta`: number[2] — [x, y]
 - `pending`: integer
 
+## launcher
+
+### `launcher.dismiss`
+
+**Continue Without a Project** · _idempotent_
+
+Leaves the launcher for the editor without opening a project (the starter scene; no assets).
+
+Arguments: none.
+
+### `launcher.settings`
+
+**Launcher Settings** · _idempotent_
+
+Whether the editor skips the launcher at startup and reopens the last project (`reopenLastProject`, saved in the prefs). Returns the settings and whether the launcher is shown.
+
+Arguments:
+
+- `reopenLastProject?`: boolean
+
+Result:
+
+- `launcherShown`: boolean
+- `reopenLastProject`: boolean
+
+### `launcher.show`
+
+**Close Project** · _destructive_
+
+Closes the open project (if any) and shows the launcher: the start screen with the recent projects, New Project and Open. The scene is replaced with a new starter scene, so unsaved changes are lost. Not while playing. Destructive only when the open scene has unsaved changes: then pass confirm: true.
+
+Arguments:
+
+- `confirm?`: true — Required only when the open scene has unsaved changes: that can lose work that undo can't bring back.
+
+Result:
+
+- `closedProject?`: string
+- `launcherShown`: boolean
+
 ## layout
 
 ### `layout.reset`
@@ -1246,9 +1287,106 @@ Arguments: none.
 
 ### `project.new`
 
-**New Project**
+**New Project** · _destructive_
 
-Creates a project (Project.json, Assets/, Library/) at `path` and opens it. Returns its root folder.
+Creates a project (Project.json, Assets/, Library/) at `path`, or in `location` as a folder called `name`, and opens it (it goes to the top of project.recent.list and the launcher closes). With `template` (empty, starter, game) it is filled from the template and its scene opened. Paths outside the project folder (the editor's start folder without one) are refused for AI clients. Returns its root folder. Destructive only when a `template` is given and the open scene has unsaved changes (the template's scene replaces it): then pass confirm: true.
+
+Arguments:
+
+- `confirm?`: true — Required only when a `template` is given and the open scene has unsaved changes (the template's scene replaces it): that can lose work that undo can't bring back.
+- `location?`: string
+- `name?`: string
+- `path?`: string
+- `template?`: "empty" \| "starter" \| "game"
+
+Result:
+
+- `path`: string
+
+### `project.open`
+
+**Open Project** · _destructive_, _idempotent_
+
+Opens the project at `path` (or a recent project by name), scans its assets and imports what changed (in the background); the project goes to the top of project.recent.list and the launcher closes. The scene stays open unless `openLastScene` is true. Returns the project's root folder. Destructive only when `openLastScene` is true and the open scene has unsaved changes: then pass confirm: true.
+
+Arguments:
+
+- `confirm?`: true — Required only when `openLastScene` is true and the open scene has unsaved changes: that can lose work that undo can't bring back.
+- `openLastScene?`: boolean
+- `path`: string
+
+Result:
+
+- `path`: string
+
+### `project.recent.list`
+
+**Recent Projects** · _read-only_, _idempotent_
+
+The recent projects as the launcher lists them (pinned first, then by last opened; at most 20 besides the pinned): name, folder, when last opened, pinned, whether it has game code, whether its folder is missing, its thumbnail and last scene. project.open {path, openLastScene: true} opens one as the launcher does.
+
+Arguments:
+
+- `query?`: string
+
+Result:
+
+- `launcherShown`: boolean
+- `openProject?`: string
+- `projects`: [{game: boolean, lastOpened: string, lastOpenedText: string, lastScene?: string, missing: boolean, name: string, path: string, pinned: boolean, thumbnail?: string}]
+- `reopenLastProject`: boolean
+
+### `project.recent.locate`
+
+**Locate Project** · _idempotent_
+
+Points a recent project whose folder moved (missing in project.recent.list) at its new folder, keeping its place, pin and last scene. `newPath` must hold a Project.json.
+
+Arguments:
+
+- `newPath`: string
+- `path`: string
+
+Result:
+
+- `game`: boolean
+- `lastOpened`: string
+- `lastOpenedText`: string
+- `lastScene?`: string
+- `missing`: boolean
+- `name`: string
+- `path`: string
+- `pinned`: boolean
+- `thumbnail?`: string
+
+### `project.recent.pin`
+
+**Pin Project** · _idempotent_
+
+Pins a recent project to the top of the list (`pinned: false` unpins it). Pinned projects are never dropped from the list.
+
+Arguments:
+
+- `path`: string
+- `pinned?`: boolean
+
+Result:
+
+- `game`: boolean
+- `lastOpened`: string
+- `lastOpenedText`: string
+- `lastScene?`: string
+- `missing`: boolean
+- `name`: string
+- `path`: string
+- `pinned`: boolean
+- `thumbnail?`: string
+
+### `project.recent.remove`
+
+**Remove from List**
+
+Takes a project off the recent projects list (the folder isn't touched).
 
 Arguments:
 
@@ -1258,11 +1396,11 @@ Result:
 
 - `path`: string
 
-### `project.open`
+### `project.recent.reveal`
 
-**Open Project** · _idempotent_
+**Show in Finder** · _idempotent_
 
-Opens the project at `path`, scans its assets and imports what changed (in the background). The scene stays open. Returns the project's root folder.
+Shows a recent project's folder in the Finder (macOS; elsewhere it only returns the folder's path, which the launcher's Copy Path puts on the clipboard).
 
 Arguments:
 

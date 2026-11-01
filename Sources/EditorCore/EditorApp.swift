@@ -25,6 +25,21 @@ public struct EditorOptions: Sendable {
     public var uiScale: Float?
     /// A `UITheme` preset name over the prefs' `theme` (`EDITOR_THEME`: Dark, Light, High Contrast, Game).
     public var theme: String?
+    /// Whether the editor starts on the launcher (the start screen with the recent projects).
+    public var launcher: LauncherMode = .never
+    /// Keep unsaved work for crash recovery when there is a prefs folder (EditorRecovery.swift;
+    /// also off with `EDITOR_RECOVERY=0`). Tests with a prefs file turn it off.
+    public var recovery = true
+
+    /// When the launcher shows at startup.
+    public enum LauncherMode: Sendable, Equatable {
+        /// Never (tests, `--headless`, a scene or project on the command line).
+        case never
+        /// Unless the prefs say to reopen the last project and it still exists (a plain launch).
+        case auto
+        /// Always (`--launcher`).
+        case always
+    }
 
     /// Which MCP transports to start.
     public struct MCPOptions: Sendable {
@@ -112,6 +127,17 @@ public final class EditorApp: Game, EditorHost {
     private let stats = StatsPanel()
     let viewportWidget = ViewportWidget()
     private(set) var toolbar: Toolbar!
+    /// The start screen with the recent projects (LauncherPanel.swift), shown in place of the
+    /// toolbar and the dock.
+    private(set) var launcher: LauncherView!
+    /// Whether the launcher is shown (`launcher.show`, `launcher.dismiss`; opening a project hides it).
+    public private(set) var isLauncherShown = false
+    /// Close Project from the UI: the project's thumbnail renders this frame, the project closes next frame.
+    private var launcherPending = false
+    /// When to render the open project's launcher thumbnail (engine time), if it has none yet.
+    private var thumbnailDue: Double?
+    /// The launcher's thumbnails by project folder (nil: none or unreadable), until it is shown again.
+    private var launcherThumbnails: [String: GPUTexture?] = [:]
 
     private var shownAssetKeys: [AssetReference] = []
     private weak var shownAssets: AssetDatabase?
@@ -319,7 +345,7 @@ public final class EditorApp: Game, EditorHost {
             } catch {
                 session.log.warning("Ignoring unreadable editor prefs at \(url.path): \(error)")
             }
-            if !options.deterministic, ProcessInfo.processInfo.environment["EDITOR_RECOVERY"] != "0" {
+            if !options.deterministic, options.recovery, ProcessInfo.processInfo.environment["EDITOR_RECOVERY"] != "0" {
                 session.recovery = EditorRecovery(session: session, folder: url.deletingLastPathComponent().appendingPathComponent("Recovery", isDirectory: true))
             }
         }
@@ -336,6 +362,19 @@ public final class EditorApp: Game, EditorHost {
         session.onAISettingsChange = { [unowned self] in aiSettingsChanged() }
         session.onChange = { [unowned self] in toolbar.refresh() }
         session.onAssetsChange = { [unowned self] in assetsChanged() }
+        session.onSceneSaved = { [unowned self] in captureProjectThumbnail() }
+        loadRecentProjects()
+        // A plain launch starts on the launcher, or in the last project when the prefs say so.
+        var startOnLauncher = options.launcher == .always
+        var reopen: String?
+        if options.launcher == .auto, options.projectPath == nil, options.scenePath == nil {
+            let recent = session.recentProjects
+            if recent.reopensLastProject, let last = recent.entries.filter({ !$0.isMissing }).max(by: { $0.lastOpened < $1.lastOpened }) {
+                reopen = last.path
+            } else {
+                startOnLauncher = true
+            }
+        }
         // Game code before the scene, so the scene's game components load typed.
         if let game = options.game {
             session.gameModule.commandLineSettings = game
@@ -354,6 +393,15 @@ public final class EditorApp: Game, EditorHost {
             session.run(SceneNewCommand.self)
             toolbar.path.text = prefs.lastScenePath ?? "scene.json"
         }
+        if let reopen {
+            if session.run(ProjectOpenCommand.self, .init(path: reopen, openLastScene: true)) != nil {
+                toolbar.projectPath.text = session.project?.root.path ?? reopen
+                if let url = session.document.url { toolbar.path.text = url.path }
+            } else {
+                startOnLauncher = true
+            }
+        }
+        if startOnLauncher { setLauncherShown(true) }
         hierarchy.sync(force: true)
         if options.deterministic {
             let world = session.world
@@ -465,7 +513,8 @@ public final class EditorApp: Game, EditorHost {
 
         toolbar = Toolbar(app: self)
         statusBar = StatusBar(app: self)
-        let column = VStack(name: "editorRoot", [toolbar.view, dock, statusBar.view])
+        launcher = LauncherView(app: self)
+        let column = VStack(name: "editorRoot", [toolbar.view, dock, launcher.view, statusBar.view])
         column.isHitTestable = false
         ui.root.addChild(column)
     }
@@ -515,10 +564,131 @@ public final class EditorApp: Game, EditorHost {
             prefs.lastProjectPath = project.root.path
             prefsDirty = true
         }
+        if isLauncherShown { setLauncherShown(false) }
+        toolbar.projectPath.text = project.root.path
+        if let url = session.document.url { toolbar.path.text = url.path }
+        // A project without a thumbnail gets one once its scene has had time to load.
+        if canRender, !FileManager.default.fileExists(atPath: RecentProjectList.thumbnailURL(projectRoot: project.root).path) {
+            thumbnailDue = (engine?.time ?? 0) + 2
+        }
+    }
+
+    // MARK: Launcher
+
+    /// The recent projects and the launcher settings from the prefs (a prefs file from before
+    /// the launcher starts the list with its last project); changes are saved back.
+    private func loadRecentProjects() {
+        let recent = session.recentProjects
+        var stored = prefs.recentProjects ?? []
+        if prefs.recentProjects == nil, let last = prefs.lastProjectPath, let project = try? Project.open(at: URL(fileURLWithPath: last)) {
+            stored = [RecentProject(path: project.root.path, name: project.name, lastOpened: Date(), hasGame: project.settings.game != nil)]
+        }
+        recent.load(stored)
+        recent.reopensLastProject = prefs.reopenLastProject ?? false
+        recent.newProjectLocation = prefs.newProjectLocation
+        recent.onChange = { [unowned self, unowned recent] in
+            prefs.recentProjects = recent.entries
+            prefs.reopenLastProject = recent.reopensLastProject ? true : nil
+            prefs.newProjectLocation = recent.newProjectLocation
+            prefsDirty = true
+        }
+    }
+
+    /// Closes the project (if one is open), starts a new scene and shows the launcher
+    /// (`launcher.show`). False (logged) while playing.
+    @discardableResult
+    public func showLauncher() -> Bool {
+        guard !session.isPlaying else {
+            session.log.warning("Close Project: stop playing first")
+            return false
+        }
+        if session.project != nil { session.closeProject() }
+        session.newDocument()
+        hierarchy.sync(force: true)
+        setLauncherShown(true)
+        return true
+    }
+
+    /// Leaves the launcher for the editor (`launcher.dismiss`, or a project was opened).
+    public func hideLauncher() {
+        setLauncherShown(false)
+    }
+
+    private func setLauncherShown(_ shown: Bool) {
+        isLauncherShown = shown
+        if toolbar.view.isHidden != shown { toolbar.view.isHidden = shown }
+        if dock.isHidden != shown { dock.isHidden = shown }
+        if launcher.view.isHidden == shown { launcher.view.isHidden = !shown }
+        if shown {
+            launcherThumbnails.removeAll()
+            for overlay in ui.overlays.reversed() where overlay is PopupMenu { ui.dismissOverlay(overlay) }
+            launcher.showRecent()
+        } else if let focused = ui.focusedWidget, focused.isDescendant(of: launcher.view) {
+            ui.focus(nil)
+        }
+        ui.layoutIfNeeded()
+        toolbar?.refresh()
+    }
+
+    /// Close Project from the toolbar: asks first when the scene has unsaved changes, renders the
+    /// project's thumbnail, then shows the launcher.
+    func requestCloseProject() {
+        guard ui.overlays.isEmpty, session.commands.isAvailable(LauncherShowCommand.self) else { return }
+        let proceed = { [unowned self] in
+            if canRender, session.project != nil {
+                captureProjectThumbnail()
+                launcherPending = true
+            } else {
+                session.run(LauncherShowCommand.self)
+            }
+        }
+        guard session.document.isDirty else {
+            proceed()
+            return
+        }
+        let name = session.project.map { "\u{201C}\($0.name)\u{201D}" } ?? "the scene"
+        let dialog = ConfirmDialog(
+            title: "Close \(name) with unsaved changes?",
+            message: "Your changes to \(session.document.displayName) are lost when the project closes. Cancel, then save (\(shortcuts.shortcutText(for: .save))) to keep them.",
+            confirmTitle: "Discard and Close", name: "closeProjectDialog")
+        dialog.command = LauncherShowCommand.id.rawValue
+        dialog.onConfirm = proceed
+        dialog.present(in: ui)
+    }
+
+    /// Renders the editor camera's view of the open project's scene (16:9, no gizmos) into the
+    /// project's `Library/Editor/Thumbnail.png`, for the launcher. Needs a window.
+    func captureProjectThumbnail() {
+        guard canRender, let project = session.project else { return }
+        thumbnailDue = nil
+        let view = viewport.view(aspect: 16.0 / 9, clearColor: viewportClearColor())
+        let request = ScreenshotRequest(source: .camera, view: view, width: 384, height: 216, grid: false, gizmos: false, outline: false)
+        let url = RecentProjectList.thumbnailURL(projectRoot: project.root)
+        capture(request)?.onFinish { [weak self] result in
+            guard case .success(let image) = result else { return }
+            do {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try image.pngData().write(to: url, options: .atomic)
+                self?.launcherThumbnails[project.root.path] = nil
+            } catch {
+                self?.session.log.warning("Couldn't save the project thumbnail: \(error)")
+            }
+        }
+    }
+
+    /// A recent project's thumbnail as a texture (loaded once per launcher showing), nil without one or a GPU.
+    func launcherThumbnail(_ entry: RecentProject) -> GPUTexture? {
+        if let cached = launcherThumbnails[entry.path] { return cached }
+        var texture: GPUTexture?
+        if let device = engine?.device, let data = try? Data(contentsOf: entry.thumbnailURL), let image = try? ImageDecoder.decode(data) {
+            texture = try? device.makeTexture(image: image, srgb: true, generateMipmaps: false)
+        }
+        launcherThumbnails[entry.path] = texture
+        return texture
     }
 
     func openProject() {
-        if let result = session.run(ProjectOpenCommand.self, .init(path: toolbar.projectPath.text)) {
+        if let result = session.run(ProjectOpenCommand.self, .init(path: toolbar.projectPath.text, openLastScene: nil)) {
             toolbar.projectPath.text = result.path
         }
     }
@@ -594,6 +764,14 @@ public final class EditorApp: Game, EditorHost {
         let input = engine.input
         session.log.time = engine.time
         engineMessages.drain(into: session.log)
+        // Close Project from the toolbar: its thumbnail rendered last frame, now it closes.
+        if launcherPending {
+            launcherPending = false
+            session.run(LauncherShowCommand.self)
+        }
+        if let due = thumbnailDue, engine.time >= due, session.assets?.isLoading != true, !isLauncherShown {
+            captureProjectThumbnail()
+        }
         // Requests from MCP clients run here, between frames, before the UI reads the session.
         if let mcp {
             mcp.pump()
@@ -607,9 +785,13 @@ public final class EditorApp: Game, EditorHost {
         ui.update(engine: engine, dt: dt)
         let focus = EditorShortcuts.Focus(textEditing: textBefore || textEditing(), overlayOpen: overlayBefore,
                                           widgetFocused: focusedBefore)
-        for command in shortcuts.actions(for: input.keyPresses, focus: focus) { invoke(command) }
-
-        updateViewport(engine: engine, dt: dt, keyboardFree: !focus.textEditing)
+        if isLauncherShown {
+            // The launcher has its own keys; the editor's (save, play, delete…) don't apply to it.
+            if !overlayBefore { for event in input.keyPresses { _ = launcher.handleShortcut(event) } }
+        } else {
+            for command in shortcuts.actions(for: input.keyPresses, focus: focus) { invoke(command) }
+            updateViewport(engine: engine, dt: dt, keyboardFree: !focus.textEditing)
+        }
         session.tick(dt: Double(dt))
 
         syncPanels()
@@ -645,7 +827,8 @@ public final class EditorApp: Game, EditorHost {
 
         input.cursor = cursorShape(for: ui.desiredCursor)
         let project = session.project.map { " — \($0.name)" } ?? ""
-        let title = "\(session.document.title)\(project) — Editor" + (session.isPlaying ? " [Playing]" : "")
+        let title = isLauncherShown ? "Projects — Editor"
+            : "\(session.document.title)\(project) — Editor" + (session.isPlaying ? " [Playing]" : "")
         if engine.title != title { engine.title = title }
         if prefsDirty && !MouseButton.allCases.contains(where: input.isDown) { savePrefs() }
         session.recovery?.update()
@@ -942,7 +1125,7 @@ public final class EditorApp: Game, EditorHost {
     public func renderOffscreen(engine: Engine, frame: Frame) {
         thumbnails?.render(frame: frame)
         renderCaptures(frame: frame)
-        guard let view = currentView, sizer.width > 0 else { return }
+        guard let view = currentView, sizer.width > 0, !isLauncherShown else { return }
         sceneRenderer.beginViews(world: gameViewActive ? session.gameWorld : session.world, frame: frame, shadowFocus: view)
         let world = session.world
         guard !gameViewActive else {
@@ -1364,6 +1547,8 @@ final class Toolbar {
         let saveAsButton = Button("Save As", name: "saveAs") { [unowned app] in app.saveAs() }
         let openProjectButton = Button("Open Project", name: "openProject") { [unowned app] in app.openProject() }
         let newProjectButton = Button("New Project", name: "newProject") { [unowned app] in app.newProject() }
+        let closeProjectButton = Button("Close Project", name: "closeProject") { [unowned app] in app.requestCloseProject() }
+        closeProjectButton.tooltip = "Close the project and go back to the launcher (the recent projects)"
         openProjectButton.tooltip = "Open the project folder at the project path and import its assets"
         newProjectButton.tooltip = "Create a project (Project.json, Assets/, Library/) at the project path"
         projectPath.tooltip = "Project folder, used by Open Project and New Project"
@@ -1385,14 +1570,14 @@ final class Toolbar {
             (undoButton, "undo-2"), (redoButton, "redo-2"), (playButton, "play"), (pauseButton, "pause"),
             (stepButton, "step-forward"), (gameViewButton, "gamepad-2"), (netButton, "network"), (reloadGameButton, "refresh-cw"),
             (buildGameButton, "hammer"), (snapButton, "magnet"), (openProjectButton, "folder-input"),
-            (newProjectButton, "folder-plus"), (viewButton, "appearance"),
+            (newProjectButton, "folder-plus"), (closeProjectButton, "folder-x"), (viewButton, "appearance"),
         ] + toolButtons.map { ($0.1, EditorIcons.tool($0.0).name) }
         for (button, icon) in icons {
             button.icon = EditorIcons.named(icon)
             button.showsTitle = false
         }
         commandButtons = [(SceneNewCommand.id, newButton), (SceneOpenCommand.id, openButton), (SceneSaveCommand.id, saveButton),
-                          (SceneSaveAsCommand.id, saveAsButton)]
+                          (SceneSaveAsCommand.id, saveAsButton), (LauncherShowCommand.id, closeProjectButton)]
         // What each control runs, for introspection (`ui.snapshot`) and the parity test.
         let tagged: [(Widget, CommandID)] = commandButtons.map { ($0.1, $0.0) } + [
             (undoButton, EditUndoCommand.id), (redoButton, EditRedoCommand.id), (playButton, PlayToggleCommand.id),
@@ -1410,7 +1595,7 @@ final class Toolbar {
         // One row: what doesn't fit the window goes into the More (») menu at the end, least used
         // first; the scene and project actions people reach for (Play, the tools, Build / Reload
         // Game, View) go last.
-        view.overflowOrder = [newProjectButton, openProjectButton, saveAsButton, newButton, openButton, snapButton,
+        view.overflowOrder = [newProjectButton, openProjectButton, closeProjectButton, saveAsButton, newButton, openButton, snapButton,
                               stepButton, redoButton, netButton, gameViewButton, pauseButton, undoButton, saveButton]
             + toolButtons.map(\.1).reversed() + [reloadGameButton, buildGameButton, playButton]
         view.background = (app.ui?.theme ?? UITheme()).panelBackground
@@ -1437,7 +1622,7 @@ final class Toolbar {
         ] + toolButtons.map(\.1) + [
             snapButton,
             separator(),
-            projectPath, openProjectButton, newProjectButton, buildGameButton,
+            projectPath, openProjectButton, newProjectButton, closeProjectButton, buildGameButton,
             Spacer(),
             titleLabel,
             viewButton,

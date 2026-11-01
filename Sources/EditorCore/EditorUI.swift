@@ -8,6 +8,7 @@ import Foundation
 extension EditorApp {
     /// Brings the panels up to date with the session, as every frame does after input.
     public func syncPanels() {
+        if isLauncherShown { launcher.sync() }
         hierarchy.sync()
         assetBrowser.sync()
         inspector.refresh()
@@ -30,6 +31,12 @@ extension EditorApp {
         let suppressed = FilePicker.isSuppressed
         FilePicker.isSuppressed = true
         defer { FilePicker.isSuppressed = suppressed }
+        if isLauncherShown {
+            if !overlayBefore { _ = launcher.handleShortcut(event) }
+            launcher.sync()
+            ui.layoutIfNeeded()
+            return
+        }
         for command in shortcuts.actions(for: [event], focus: focus) { invoke(command) }
         ui.layoutIfNeeded()
     }
