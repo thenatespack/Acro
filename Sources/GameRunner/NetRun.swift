@@ -158,7 +158,7 @@ enum NetRun {
             }
             if time >= nextReport {
                 nextReport += 2
-                log(String(format: "[%6.1f s] ", time) + client.statsReport().overlayLines.joined(separator: " | ").lowercased())
+                log(String(format: "[%6.1f s] ", time) + client.statsReport().overlayLines.joined(separator: " | "))
             }
             frame += 1
         }

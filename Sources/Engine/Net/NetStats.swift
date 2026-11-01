@@ -73,23 +73,23 @@ public struct NetStatsReport: Codable, Equatable, Sendable {
     public var corrections: Int?
     public var lastCorrection: Double?
 
-    /// The report as short lines for the debug overlay (its bitmap font is upper case).
+    /// The report as short lines for overlays (the debug overlay's bitmap font shows them upper case).
     public var overlayLines: [String] {
         func kb(_ bytesPerSecond: Double) -> String { String(format: "%.1f", bytesPerSecond * 8 / 1000) }
-        var lines = ["NET \(name.uppercased())" + (connected ? "" : " (DISCONNECTED)")]
-        lines.append("RTT " + (rttMs.map { String(format: "%.0f MS", $0) } ?? "-") + String(format: "  LOSS %.1f%%", lossPercent))
-        lines.append("IN \(kb(bytesInPerSecond))  OUT \(kb(bytesOutPerSecond)) KBIT/S")
+        var lines = ["Net \(name)" + (connected ? "" : " (disconnected)")]
+        lines.append("RTT " + (rttMs.map { String(format: "%.0f ms", $0) } ?? "-") + String(format: "  loss %.1f%%", lossPercent))
+        lines.append("in \(kb(bytesInPerSecond))  out \(kb(bytesOutPerSecond)) kbit/s")
         if let lastSnapshotBytes {
-            lines.append("SNAPSHOTS \(snapshots)  LAST \(lastSnapshotBytes) B" + ((deferredEntities ?? 0) > 0 ? "  DEFERRED \(deferredEntities!)" : ""))
+            lines.append("snapshots \(snapshots)  last \(lastSnapshotBytes) B" + ((deferredEntities ?? 0) > 0 ? "  deferred \(deferredEntities!)" : ""))
         } else {
-            lines.append("SNAPSHOTS \(snapshots)" + (entities.map { "  ENTITIES \($0)" } ?? ""))
+            lines.append("snapshots \(snapshots)" + (entities.map { "  entities \($0)" } ?? ""))
         }
         if let interpolationDelayMs {
-            lines.append(String(format: "BUFFER %.0f/%.0f MS", bufferedMs ?? 0, interpolationDelayMs)
-                         + "  \(bufferedSnapshots ?? 0) SNAP  STARVED \(starvedFrames ?? 0)")
+            lines.append(String(format: "buffer %.0f/%.0f ms", bufferedMs ?? 0, interpolationDelayMs)
+                         + "  \(bufferedSnapshots ?? 0) snapshots  starved \(starvedFrames ?? 0)")
         }
         if let corrections {
-            lines.append("CORRECTIONS \(corrections)/\(reconciliations ?? 0)" + String(format: "  ERR %.3f M", lastCorrection ?? 0))
+            lines.append("corrections \(corrections)/\(reconciliations ?? 0)" + String(format: "  error %.3f m", lastCorrection ?? 0))
         }
         return lines
     }

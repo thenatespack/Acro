@@ -157,11 +157,23 @@ public final class EditorNetPlay {
 
     // MARK: Reports
 
-    /// The server's view of each client, then each client's own.
+    /// The server's view of each client, then each client's own, in client order and named by
+    /// the editor's client numbers (the server numbers them in the order they connected).
     public var statsResult: NetStatsResult {
-        let serverReports = server.clients.compactMap { server.statsReport(for: $0) }
-        return NetStatsResult(time: time, server: serverReports, clients: clients.map { $0.net.statsReport() },
-                              network: .init(network.stats))
+        NetStatsResult(time: time, server: clients.compactMap(serverReport), clients: clients.map(report),
+                       network: .init(network.stats))
+    }
+
+    func report(_ client: EditorNetClient) -> NetStatsReport {
+        var report = client.net.statsReport()
+        report.name = "client \(client.index)"
+        return report
+    }
+
+    func serverReport(_ client: EditorNetClient) -> NetStatsReport? {
+        guard let id = client.net.clientID, var report = server.statsReport(for: id) else { return nil }
+        report.name = "server → client \(client.index)"
+        return report
     }
 
     public var stateResult: NetPlayStateResult {
@@ -182,11 +194,11 @@ public final class EditorNetPlay {
         var lines: [String] = []
         if let index = viewedClient, let client = client(index) {
             lines.append("Game View: client \(index)")
-            lines += client.net.statsReport().overlayLines.dropFirst()
+            lines += report(client).overlayLines.dropFirst()
         } else {
             lines.append("Game View: server, \(clients.count) client\(clients.count == 1 ? "" : "s")")
             for client in clients {
-                lines += Self.compact(client.net.statsReport(), server: client.net.clientID.flatMap { server.statsReport(for: $0) })
+                lines += Self.compact(report(client), server: serverReport(client))
             }
         }
         return lines
