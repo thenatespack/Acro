@@ -35,12 +35,13 @@ public enum EditorParity {
         case .viewport: [AssetInstantiateCommand.id, AssetAssignCommand.id]
         case .hierarchy: [AssetInstantiateCommand.id, AssetAssignCommand.id]
         case .field: [AssetAssignCommand.id]
+        case .audioField: [ComponentSetFieldCommand.id]
         }
     }
 
     /// One of each drop target, for checking `dropCommands`.
     public static let sampleDropTargets: [AssetDropTarget] = [
         .viewport(position: .zero, entity: nil), .hierarchy(parent: nil, position: .zero),
-        .field(entity: EntityID(high: 0, low: 1), kind: .material),
+        .field(entity: EntityID(high: 0, low: 1), kind: .material), .audioField(entity: EntityID(high: 0, low: 1)),
     ]
 }

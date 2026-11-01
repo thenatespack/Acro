@@ -1474,7 +1474,7 @@ Arguments:
 
 **Open Scene** · _destructive_, _idempotent_
 
-Replaces the open scene with the scene file at `path` and clears the undo history. Not while playing. Destructive: pass confirm: true.
+Replaces the open scene with the scene file at `path` and clears the undo history. Not while playing. With a project open, `path` is relative to the project folder (Assets/Scenes/Main.scene) or to Assets/ (Scenes/Main.scene, the form Project.json's build.scenes uses); only scenes inside the project folder can be opened. Destructive: pass confirm: true.
 
 Arguments:
 

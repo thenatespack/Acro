@@ -294,10 +294,12 @@ public final class AssetPack: Sendable {
         return try bytes(of: blob)
     }
 
-    /// The scene file at `path` (relative to `Assets/`), or the start scene.
+    /// The scene file at `path` (relative to `Assets/`; a leading `Assets/` is allowed), or the start scene.
     public func scene(_ path: String? = nil) throws -> Data {
         let scenes = manifest.scenes
-        guard let scene = path.map({ p in scenes.first { $0.path == p || ($0.path as NSString).lastPathComponent == p } }) ?? scenes.first else {
+        // `path` may also be project-root relative ("Assets/Scenes/X.scene").
+        let relative = path.map { $0.hasPrefix("Assets/") ? String($0.dropFirst("Assets/".count)) : $0 }
+        guard let scene = relative.map({ p in scenes.first { $0.path == p || ($0.path as NSString).lastPathComponent == p } }) ?? scenes.first else {
             throw AssetPackError.unknownScene(path ?? "(start scene)", pack: name, available: scenes.map(\.path))
         }
         return try bytes(of: scene.blob)

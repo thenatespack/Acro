@@ -190,6 +190,7 @@ final class PackSceneGame: Game {
             physics2D = physics
         }
         if world.count(of: SpriteAnimator.self) > 0 { world.addSpriteAnimationSystem() }
+        if world.count(of: AudioEmitter.self) > 0 { world.addSpatialAudio(engine.audio, assets: { [assets] in assets }) }
         for warning in module.addSystems(to: world, context: GameContext(input: engine.input)) { print(warning) }
         engine.world = world
     }

@@ -190,6 +190,7 @@ public final class EditorApp: Game, EditorHost {
     public func setup(engine: Engine) throws {
         self.engine = engine
         engineMessages.install()
+        session.audioProvider = { [unowned engine] in engine.audio }
         sceneRenderer = try SceneRenderer(device: engine.device, quality: engine.quality)
         try sceneRenderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(0.6, 0.6, 0.58, 1), checker: true, specular: 0.1),
                                            key: StarterScene.checkerMaterial.key)
@@ -558,7 +559,7 @@ public final class EditorApp: Game, EditorHost {
         meshBoundsCache.removeAll()
         // Rebuilding the dropdowns resets the inspector's grid, so only when the choices changed
         // (not for every reimport, such as a material edited live).
-        let keys = session.assets.map { $0.references(of: .mesh) + $0.references(of: .material) + $0.references(of: .texture) } ?? []
+        let keys = session.assets.map { $0.references(of: .mesh) + $0.references(of: .material) + $0.references(of: .texture) + $0.audioReferences() } ?? []
         if keys != shownAssetKeys || session.assets !== shownAssets {
             shownAssetKeys = keys
             shownAssets = session.assets
@@ -1211,6 +1212,7 @@ extension EditorApp {
             while let current = widget {
                 if current.name == "row.\(MeshRenderer.componentName).mesh" { return .field(entity: id, kind: .mesh) }
                 if current.name == "row.\(MeshRenderer.componentName).material" { return .field(entity: id, kind: .material) }
+                if current.name == "row.\(AudioEmitter.componentName).clip" { return .audioField(entity: id) }
                 widget = current.parent
             }
         }
