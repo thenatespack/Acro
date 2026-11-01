@@ -1,7 +1,7 @@
 // Generated from mesh_skinned.vert by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
 // spirv-fnv1a64: 8f86dc001f8619ec
-// glsl-fnv1a64: 94d75a8636f363e1
+// glsl-fnv1a64: 9bb4c7141c72b369
 
 #pragma clang diagnostic ignored "-Wmissing-prototypes"
 

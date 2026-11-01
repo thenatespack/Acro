@@ -56,7 +56,7 @@ extension SceneRenderer {
     }
 
     /// `texture`, recreated at `size` if it has another.
-    private func depthTexture(_ texture: inout GPUTexture?, size: (width: Int, height: Int)) -> GPUTexture? {
+    func depthTexture(_ texture: inout GPUTexture?, size: (width: Int, height: Int)) -> GPUTexture? {
         if let current = texture, current.width == size.width, current.height == size.height { return current }
         do {
             texture = try device.makeTexture(TextureDescriptor(width: max(size.width, 1), height: max(size.height, 1), format: .depth32Float))

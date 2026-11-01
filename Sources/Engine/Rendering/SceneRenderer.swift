@@ -144,8 +144,8 @@ public final class SceneRenderer {
     /// with `ENGINE_SHOW_CASCADES=1`.
     public var showsShadowCascades = ProcessInfo.processInfo.environment["ENGINE_SHOW_CASCADES"] == "1"
 
-    private var uniforms: FrameUniforms?
-    private var reversedZ = false
+    var uniforms: FrameUniforms?
+    var reversedZ = false
     private var shadowsActive = false
     /// The shadows `prepare` set up for `renderShadows`.
     private var shadowSetup: ShadowSetup?
@@ -219,7 +219,7 @@ public final class SceneRenderer {
     private var punctualLights: [PunctualLight] = []
     public private(set) var clusters = LightClusters()
     private var viewClusters = LightClusters()
-    private var lightData = LightClusters.GPUData()
+    var lightData = LightClusters.GPUData()
     /// Bound as the light buffers when there are no point or spot lights (16 KiB of zeros).
     private let emptyLightBuffer: GPUBuffer
     /// GPU particles of the world's `ParticleEmitter`s (see `SceneRenderer+Particles.swift`),
@@ -232,6 +232,8 @@ public final class SceneRenderer {
     /// Depth prepass textures: the `prepare` camera's, and `renderView`'s by size.
     var particleDepthTexture: GPUTexture?
     var viewParticleDepthTextures: [[Int]: GPUTexture] = [:]
+    /// Volumetric fog's per-frame setup and GPU objects (see `SceneRenderer+Volumetric.swift`).
+    let volumetric = VolumetricFogState()
     /// The camera depth prepass's pipelines (`DepthVariant.prepass`), created on first use.
     private var prepassPipelines: [PrepassKey: RenderPipeline] = [:]
 
@@ -490,6 +492,7 @@ public final class SceneRenderer {
         }
         gather(world)
         engine.postProcess = PostProcessSettings.find(in: world)
+        volumetric.setup = nil
 
         guard let (_, camera, cameraWorld) = RenderPrep.findCamera(in: world, preferred: self.camera) else {
             uniforms = nil
@@ -538,6 +541,7 @@ public final class SceneRenderer {
                               projectionScale: camera.projection(aspect: engine.aspectRatio).c1.y)
         particleView = (jittered, jitteredProjection, eye, size, camera.reversedZ)
         prepareParticles(world: world, cameraPosition: eye)
+        prepareVolumetricFog(environment: environment, engine: engine, size: size)
     }
 
     /// Sets up the sky and image-based lighting of `environment` for this frame.
@@ -595,10 +599,10 @@ public final class SceneRenderer {
             previousViewProj: previous,
             lightDir: Vec4(light.toLight, light.intensity),
             lightColor: Vec4(light.color, light.sunShadows ? 1 : 0),
-            cameraPos: Vec4(eye, 0),
+            cameraPos: Vec4(eye, environment.fogBaseHeight),
             fogColor: Vec4(environment.fogColor, environment.fogDensity),
             skyColor: Vec4(environment.skyColor, environment.ambientIntensity),
-            groundColor: Vec4(environment.groundColor, 0),
+            groundColor: Vec4(environment.groundColor, environment.fogHeightFalloff),
             shadowParams: Vec4(1 / Float(shadowMap.width), light.bias, Float(quality.shadowFilterRadius), 0))
     }
 
@@ -636,6 +640,7 @@ public final class SceneRenderer {
         environmentLighting.render()
         renderShadowAtlas(shadowsActive ? shadowSetup : nil, frame: frame)
         renderParticleDepth(frame: frame)
+        renderVolumetricDepth(frame: frame)
         particles?.simulate(frame: frame)
     }
 

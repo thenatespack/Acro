@@ -26,7 +26,7 @@ layout(location = 8) in vec4 previous1;
 layout(location = 9) in vec4 previous2;
 layout(location = 10) in vec4 previous3;
 layout(location = 11) in vec4 inColor;   // linear rgb, a: opacity
-layout(location = 12) in vec4 inParams;  // x: receives shadows
+layout(location = 12) in vec4 inParams;  // x: receives shadows, yzw: emissive multiplier - 1
 layout(location = 13) in vec4 inTangent; // xyz: tangent (increasing U), w: bitangent sign (MeshVertex.tangent)
 
 layout(location = 0) out vec3 vWorldPos;

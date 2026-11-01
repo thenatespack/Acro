@@ -8,10 +8,10 @@ layout(set = 0, binding = 0, std140) uniform Frame {
     mat4 previousViewProj;  // last frame's, unjittered
     vec4 lightDir;          // xyz: direction toward the light, w: intensity
     vec4 lightColor;        // rgb: color, w: 1 when shadows are enabled
-    vec4 cameraPos;         // xyz: eye
+    vec4 cameraPos;         // xyz: eye, w: height fog base height
     vec4 fogColor;          // rgb: fog color, w: density
     vec4 skyColor;          // rgb: hemisphere sky color, w: ambient intensity
-    vec4 groundColor;       // rgb: hemisphere ground color
+    vec4 groundColor;       // rgb: hemisphere ground color, w: height fog falloff
     vec4 shadowParams;      // x: shadow-map texel size, y: depth bias, z: PCF radius in texels
 } frame;
 
@@ -27,7 +27,7 @@ layout(location = 8) in vec4 previous1;
 layout(location = 9) in vec4 previous2;
 layout(location = 10) in vec4 previous3;
 layout(location = 11) in vec4 inColor;   // linear rgb, a: opacity
-layout(location = 12) in vec4 inParams;  // x: receives shadows
+layout(location = 12) in vec4 inParams;  // x: receives shadows, yzw: emissive multiplier - 1
 layout(location = 13) in vec4 inTangent; // xyz: tangent (increasing U), w: bitangent sign (MeshVertex.tangent)
 
 layout(location = 0) out vec3 vWorldPos;

@@ -307,7 +307,8 @@ public struct SpotLight: Component, Codable, Equatable, Sendable {
 public struct SceneEnvironment: Component, Codable, Equatable, Sendable {
     public static let componentName = "SceneEnvironment"
     public static var fieldHints: [String: FieldHints] {
-        ["environmentIntensity": FieldHints(range: 0...16, step: 0.05, tooltip: "Scales the sky and its lighting"),
+        ["fogHeightFalloff": FieldHints(range: 0...2, step: 0.005, tooltip: "0 = uniform fog; else density falls off by e^-falloff per unit above the base height"),
+         "environmentIntensity": FieldHints(range: 0...16, step: 0.05, tooltip: "Scales the sky and its lighting"),
          "environmentRotation": FieldHints(range: -6.2832...6.2832, step: 0.01,
                                            tooltip: "Turns the environment map about +Y, radians (not the procedural sky)"),
          "imageBasedLighting": FieldHints(tooltip: "Light the scene with the sky (else the hemisphere ambient)")]
@@ -321,6 +322,13 @@ public struct SceneEnvironment: Component, Codable, Equatable, Sendable {
     /// The sky itself isn't fogged.
     public var fogColor: Vec3
     public var fogDensity: Float
+    /// Height fog: with a falloff above 0 the density is `fogDensity` at `fogBaseHeight` (world
+    /// units, y up) and shrinks by e^-falloff per unit above it (grows below it), so fog pools
+    /// in valleys and streets. 0 is the uniform fog above. Meshes and the volumetric fog use it.
+    public var fogHeightFalloff: Float
+    public var fogBaseHeight: Float
+    /// Light shafts and lit fog: raymarched, shadowed in-scattering in the same fog (opt-in).
+    public var volumetricFog: VolumetricFog
     /// What's drawn behind the scene and lights it.
     public var sky: SkyMode
     /// The equirectangular HDR image `.map` draws (e.g. a decoded Radiance `.hdr` uploaded with
@@ -341,7 +349,8 @@ public struct SceneEnvironment: Component, Codable, Equatable, Sendable {
     public init(skyColor: Vec3 = Vec3(0.55, 0.65, 0.85), groundColor: Vec3 = Vec3(0.12, 0.1, 0.09),
                 ambientIntensity: Float = 0.3, fogColor: Vec3 = Vec3(0.62, 0.7, 0.82), fogDensity: Float = 0,
                 sky: SkyMode = .color, environmentMap: TextureHandle? = nil, environmentIntensity: Float = 1,
-                environmentRotation: Float = 0, imageBasedLighting: Bool = true, proceduralSky: ProceduralSky = ProceduralSky()) {
+                environmentRotation: Float = 0, imageBasedLighting: Bool = true, proceduralSky: ProceduralSky = ProceduralSky(),
+                fogHeightFalloff: Float = 0, fogBaseHeight: Float = 0, volumetricFog: VolumetricFog = VolumetricFog()) {
         self.skyColor = skyColor
         self.groundColor = groundColor
         self.ambientIntensity = ambientIntensity
@@ -353,6 +362,9 @@ public struct SceneEnvironment: Component, Codable, Equatable, Sendable {
         self.environmentRotation = environmentRotation
         self.imageBasedLighting = imageBasedLighting
         self.proceduralSky = proceduralSky
+        self.fogHeightFalloff = fogHeightFalloff
+        self.fogBaseHeight = fogBaseHeight
+        self.volumetricFog = volumetricFog
     }
 
     /// Missing fields (scene files written before skies existed) take their defaults.
@@ -370,7 +382,60 @@ public struct SceneEnvironment: Component, Codable, Equatable, Sendable {
             environmentIntensity: try c.decodeIfPresent(Float.self, forKey: .environmentIntensity) ?? d.environmentIntensity,
             environmentRotation: try c.decodeIfPresent(Float.self, forKey: .environmentRotation) ?? d.environmentRotation,
             imageBasedLighting: try c.decodeIfPresent(Bool.self, forKey: .imageBasedLighting) ?? d.imageBasedLighting,
-            proceduralSky: try c.decodeIfPresent(ProceduralSky.self, forKey: .proceduralSky) ?? d.proceduralSky)
+            proceduralSky: try c.decodeIfPresent(ProceduralSky.self, forKey: .proceduralSky) ?? d.proceduralSky,
+            fogHeightFalloff: try c.decodeIfPresent(Float.self, forKey: .fogHeightFalloff) ?? d.fogHeightFalloff,
+            fogBaseHeight: try c.decodeIfPresent(Float.self, forKey: .fogBaseHeight) ?? d.fogBaseHeight,
+            volumetricFog: try c.decodeIfPresent(VolumetricFog.self, forKey: .volumetricFog) ?? d.volumetricFog)
+    }
+}
+
+/// Volumetric light in `SceneEnvironment`'s fog (off by default): after the scene pass, a
+/// post-processing pass marches each pixel's view ray through the fog (its density, with the
+/// height falloff) and adds the light scattered toward the camera: the sun, shadowed by its
+/// cascades (so geometry casts shafts), and optionally the point and spot lights (unshadowed).
+/// Needs `fogDensity` above 0 and shadows on the sun for shafts; works from the camera
+/// `SceneRenderer.prepare` used (not `renderView`) and turns the HDR post-processing path on
+/// (a `PostProcess` component isn't required). Keys missing from scene files take defaults.
+public struct VolumetricFog: Codable, Equatable, Sendable {
+    public var enabled: Bool
+    /// Scales the scattered light: 1 lights the fog with the light's color x intensity.
+    public var intensity: Float
+    /// Henyey-Greenstein anisotropy g in -0.95...0.95: 0 scatters evenly, toward 1 the light
+    /// concentrates in the sun's direction (shafts are brightest looking toward the sun).
+    public var anisotropy: Float
+    /// How far from the camera the march reaches (rays that hit nothing stop here too).
+    public var maxDistance: Float
+    /// Samples per ray (8...128), jittered per pixel with a fixed pattern: fewer is noisier.
+    public var steps: Int
+    /// Also scatter point and spot lights.
+    public var localLights: Bool
+
+    public static var fieldHints: [String: FieldHints] {
+        ["intensity": FieldHints(range: 0...16, step: 0.05),
+         "anisotropy": FieldHints(range: -0.95...0.95, step: 0.01),
+         "maxDistance": FieldHints(range: 1...2000, step: 1),
+         "steps": FieldHints(range: 8...128, step: 1)]
+    }
+
+    public init(enabled: Bool = false, intensity: Float = 1, anisotropy: Float = 0.5, maxDistance: Float = 100, steps: Int = 32,
+                localLights: Bool = true) {
+        self.enabled = enabled
+        self.intensity = intensity
+        self.anisotropy = anisotropy
+        self.maxDistance = maxDistance
+        self.steps = steps
+        self.localLights = localLights
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = VolumetricFog()
+        self.init(enabled: try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? d.enabled,
+                  intensity: try c.decodeIfPresent(Float.self, forKey: .intensity) ?? d.intensity,
+                  anisotropy: try c.decodeIfPresent(Float.self, forKey: .anisotropy) ?? d.anisotropy,
+                  maxDistance: try c.decodeIfPresent(Float.self, forKey: .maxDistance) ?? d.maxDistance,
+                  steps: try c.decodeIfPresent(Int.self, forKey: .steps) ?? d.steps,
+                  localLights: try c.decodeIfPresent(Bool.self, forKey: .localLights) ?? d.localLights)
     }
 }
 
@@ -440,9 +505,23 @@ public struct MeshRenderer: Component, Codable, Equatable, Sendable {
     public var castsShadows: Bool
     public var receivesShadows: Bool
     public var isVisible: Bool
+    /// Linear RGB multiplied with the material's emissive color (and emissive texture), like
+    /// `tint` for the base color. `tint` does not affect emissive light. The default leaves the
+    /// material's emission as it is; a material with no emission stays dark.
+    public var emissiveTint: Vec3
+    /// Multiplied with the material's emissive light (on top of `emissiveTint` and the material's
+    /// own `emissiveStrength`): 0 turns a glowing material off for this entity, above 1 drives a
+    /// neon sign into bloom. Entities sharing a material (and a draw call) can differ in both.
+    public var emissiveStrength: Float
+
+    public static var fieldHints: [String: FieldHints] {
+        ["emissiveStrength": FieldHints(range: 0...64, step: 0.1, tooltip: "Scales the material's emissive light for this entity"),
+         "emissiveTint": FieldHints(tooltip: "Multiplies the material's emissive color (tint does not affect emission)")]
+    }
 
     public init(mesh: MeshHandle, material: MaterialHandle = .default, tint: Vec3 = Vec3(1, 1, 1), opacity: Float = 1,
-                castsShadows: Bool = true, receivesShadows: Bool = true, isVisible: Bool = true) {
+                castsShadows: Bool = true, receivesShadows: Bool = true, isVisible: Bool = true,
+                emissiveTint: Vec3 = Vec3(1, 1, 1), emissiveStrength: Float = 1) {
         self.mesh = mesh
         self.material = material
         self.tint = tint
@@ -450,6 +529,18 @@ public struct MeshRenderer: Component, Codable, Equatable, Sendable {
         self.castsShadows = castsShadows
         self.receivesShadows = receivesShadows
         self.isVisible = isVisible
+        self.emissiveTint = emissiveTint
+        self.emissiveStrength = emissiveStrength
+    }
+
+    /// Missing fields (scene files written before the emissive override existed) take their defaults.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) throws -> T { try c.decodeIfPresent(T.self, forKey: key) ?? fallback }
+        self.init(mesh: try c.decode(MeshHandle.self, forKey: .mesh), material: try c.decode(MaterialHandle.self, forKey: .material),
+                  tint: try value(.tint, Vec3(1, 1, 1)), opacity: try value(.opacity, 1), castsShadows: try value(.castsShadows, true),
+                  receivesShadows: try value(.receivesShadows, true), isVisible: try value(.isVisible, true),
+                  emissiveTint: try value(.emissiveTint, Vec3(1, 1, 1)), emissiveStrength: try value(.emissiveStrength, 1))
     }
 }
 

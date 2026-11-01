@@ -38,10 +38,10 @@ layout(set = 0, binding = 0, std140) uniform Frame {
     mat4 previousViewProj;
     vec4 lightDir;
     vec4 lightColor;
-    vec4 cameraPos;
-    vec4 fogColor;
+    vec4 cameraPos;      // xyz: eye, w: height fog base height
+    vec4 fogColor;       // rgb: fog color, w: density (at the base height with height fog)
     vec4 skyColor;
-    vec4 groundColor;
+    vec4 groundColor;    // rgb: hemisphere ground color, w: height fog falloff (0 = off)
     vec4 shadowParams;
     vec4 viewDepth;      // view depth of a world position: dot(viewDepth.xyz, p) + viewDepth.w
     vec4 clusterScale;   // xy: tiles per pixel, z: slice scale, w: slice bias (slice = log2(depth) * z + w)
@@ -344,10 +344,23 @@ void main() {
         }
     }
     color = mix(color, albedo, material.params.y);
-    color += material.emissive.rgb * texture(sampler2D(emissiveMap, materialSampler), uv).rgb;
+    // vParams.yzw: the MeshRenderer's emissive tint x strength, minus one (so zero, a default
+    // instance, multiplies by exactly one). `vColor` (the tint) does not touch emission.
+    color += material.emissive.rgb * texture(sampler2D(emissiveMap, materialSampler), uv).rgb * (vec3(1.0) + vParams.yzw);
 
     float dist = length(frame.cameraPos.xyz - vWorldPos);
     float fog = 1.0 - exp(-dist * frame.fogColor.w);
+    // Height fog (groundColor.w: falloff per world unit of height, 0 = uniform; cameraPos.w: the
+    // height where the density is fogColor.w): the optical depth of the exponential density
+    // d(y) = d0 exp(-k (y - base)) along the ray from the eye to this fragment, in closed form.
+    if (frame.groundColor.w != 0.0) {
+        float k = frame.groundColor.w;
+        vec3 toEye = vWorldPos - frame.cameraPos.xyz;
+        float x = k * toEye.y;  // k x height difference
+        float span = abs(x) < 1e-4 ? 1.0 - 0.5 * x : (1.0 - exp(min(-x, 60.0))) / x;
+        float atEye = frame.fogColor.w * exp(min(-k * (frame.cameraPos.y - frame.cameraPos.w), 30.0));
+        fog = 1.0 - exp(-dist * atEye * span);
+    }
     outColor = vec4(mix(color, frame.fogColor.rgb, fog), opacity);
     outMotion = motionVector(vCurrentClip, vPreviousClip);
 }
