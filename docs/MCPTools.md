@@ -777,7 +777,7 @@ Result:
 
 ### `launcher.show`
 
-**Close Project** · _destructive_
+**Close Project and Show Launcher** · _destructive_
 
 Closes the open project (if any) and shows the launcher: the start screen with the recent projects, New Project and Open. The scene is replaced with a new starter scene, so unsaved changes are lost. Not while playing. Destructive only when the open scene has unsaved changes: then pass confirm: true.
 

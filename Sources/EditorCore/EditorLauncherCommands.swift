@@ -76,7 +76,7 @@ public enum LauncherShowCommand: EditorCommand {
     }
 
     public static let id: CommandID = "launcher.show"
-    public static let title = "Close Project"
+    public static let title = "Close Project and Show Launcher"
     public static let doc = "Closes the open project (if any) and shows the launcher: the start screen with the recent projects, New Project and Open. The scene is replaced with a new starter scene, so unsaved changes are lost. Not while playing."
     public static let isDestructive = true
     public static let confirmsOnlyWhen: String? = "when the open scene has unsaved changes"

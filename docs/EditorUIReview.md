@@ -299,3 +299,20 @@ The user decided the five items above:
    the asset browser drops its selected cell.
 
 `Evals/ui-audit.py` at 800x600 and 1280x720 after these changes (Dark and Light, 25 states each): 0 findings in 100 states. The UI demo scenes are unchanged (Metal and Vulkan identical; `hud` too).
+
+# The launcher (card #673)
+
+The start screen (`LauncherPanel.swift`) replaces the toolbar and dock while it shows; the status
+bar stays. Layout: a 236-point sidebar (New Project…, Open…, Reopen last project, Continue Without
+Project) and the recent projects at most 1100 points wide, centered in big windows. Rows are 68
+points: a 96x54 thumbnail (16:9), the name at 14 pt with a Game badge, the folder and "Opened …"
+at 11 pt, and 28-point pin and ⋯ buttons (Locate… / Remove for a missing folder, which greys the
+row and shows "Folder not found" in the warning color). On the selected row the details use the
+text color (the secondary color lost contrast on the accent). The badge's text is the accent
+lifted until it reaches 4.5:1 on its own tint (`EditorLayoutTests.launcherColorsMeetContrast`).
+
+Checked headless at 800x600 and 2560x1440, zoom 1 and 2, all three themes, empty / recent / row
+menu / New Project / New Project with a taken name / Open on a plain folder
+(`EditorLayoutTests.launcherFitsEverySizeZoomAndTheme`), and windowed with `Evals/ui-audit.py`
+(its first five states are the launcher's) at the same sizes, scales 1 and 2, all themes on
+Metal, and 1280x720 on Vulkan: 0 findings in 65 states.

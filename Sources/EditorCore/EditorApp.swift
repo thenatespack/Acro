@@ -656,12 +656,15 @@ public final class EditorApp: Game, EditorHost {
         dialog.present(in: ui)
     }
 
-    /// Renders the editor camera's view of the open project's scene (16:9, no gizmos) into the
+    /// Renders the open project's scene through its camera (else the editor camera's view; 16:9, no gizmos) into the
     /// project's `Library/Editor/Thumbnail.png`, for the launcher. Needs a window.
     func captureProjectThumbnail() {
         guard canRender, let project = session.project else { return }
         thumbnailDue = nil
-        let view = viewport.view(aspect: 16.0 / 9, clearColor: viewportClearColor())
+        // The scene's camera (what the game shows), else the editor camera.
+        let world = session.world
+        let view: SceneView = RenderPrep.findCamera(in: world).flatMap { SceneView(camera: $0.entity, in: world, aspect: 16.0 / 9) }
+            ?? viewport.view(aspect: 16.0 / 9, clearColor: viewportClearColor())
         let request = ScreenshotRequest(source: .camera, view: view, width: 384, height: 216, grid: false, gizmos: false, outline: false)
         let url = RecentProjectList.thumbnailURL(projectRoot: project.root)
         capture(request)?.onFinish { [weak self] result in
