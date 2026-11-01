@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Editor › AI control). 118 tools.
+named by its id (see README › Editor › AI control). 120 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -14,7 +14,7 @@ optional arguments.
 |---|---|
 | `activity` | [`activity.clear`](#activityclear), [`activity.list`](#activitylist), [`activity.revert`](#activityrevert) |
 | `ai` | [`ai.settings`](#aisettings) |
-| `asset` | [`asset.applySettings`](#assetapplysettings), [`asset.assign`](#assetassign), [`asset.delete`](#assetdelete), [`asset.extractMaterials`](#assetextractmaterials), [`asset.get`](#assetget), [`asset.import`](#assetimport), [`asset.instantiate`](#assetinstantiate), [`asset.list`](#assetlist), [`asset.move`](#assetmove), [`asset.newFolder`](#assetnewfolder), [`asset.newMaterial`](#assetnewmaterial), [`asset.reimport`](#assetreimport), [`asset.rename`](#assetrename), [`asset.select`](#assetselect), [`asset.waitForImports`](#assetwaitforimports) |
+| `asset` | [`asset.applySettings`](#assetapplysettings), [`asset.assign`](#assetassign), [`asset.delete`](#assetdelete), [`asset.extractMaterials`](#assetextractmaterials), [`asset.get`](#assetget), [`asset.import`](#assetimport), [`asset.instantiate`](#assetinstantiate), [`asset.list`](#assetlist), [`asset.move`](#assetmove), [`asset.newFolder`](#assetnewfolder), [`asset.newMaterial`](#assetnewmaterial), [`asset.newProceduralTexture`](#assetnewproceduraltexture), [`asset.reimport`](#assetreimport), [`asset.rename`](#assetrename), [`asset.select`](#assetselect), [`asset.setProceduralTexture`](#assetsetproceduraltexture), [`asset.waitForImports`](#assetwaitforimports) |
 | `component` | [`component.add`](#componentadd), [`component.remove`](#componentremove), [`component.setField`](#componentsetfield), [`component.types`](#componenttypes) |
 | `diagnostics` | [`diagnostics.get`](#diagnosticsget) |
 | `edit` | [`edit.batch`](#editbatch), [`edit.beginBatch`](#editbeginbatch), [`edit.endBatch`](#editendbatch), [`edit.redo`](#editredo), [`edit.undo`](#editundo) |
@@ -264,6 +264,24 @@ Result:
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `path`: string
 
+### `asset.newProceduralTexture`
+
+**New Procedural Texture**
+
+Writes a .proctex file in `folder`: a texture generated from parameters (generator windowGrid, checker, gradient, noise, bricks or stripes; size, colors, seed, counts, margin, variation; see README, Procedural textures), imported like any texture so materials can use its `texture` object. Returns its asset id and path. Change it with asset.setProceduralTexture.
+
+Arguments:
+
+- `folder?`: string
+- `generator?`: "windowGrid" \| "checker" \| "gradient" \| "noise" \| "bricks" \| "stripes"
+- `name?`: string
+- `texture?`: {angle?: number, colorA?: number[3], colorB?: number[3], colorC?: number[3], columns?: integer, fraction?: number, generator?: "windowGrid" \| "checker" \| "gradient" \| "noise" \| "bricks" \| "stripes", height?: integer, margin?: number, octaves?: integer, rows?: integer, scale?: integer, seed?: integer, variation?: number, width?: integer}
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `path`: string
+
 ### `asset.reimport`
 
 **Reimport** · _idempotent_
@@ -307,6 +325,22 @@ Arguments:
 
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `path?`: string
+
+### `asset.setProceduralTexture`
+
+**Set Procedural Texture**
+
+Overwrites a .proctex file with `texture` and reimports it, so materials using it update. Not undoable.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+- `texture`: {angle?: number, colorA?: number[3], colorB?: number[3], colorC?: number[3], columns?: integer, fraction?: number, generator?: "windowGrid" \| "checker" \| "gradient" \| "noise" \| "bricks" \| "stripes", height?: integer, margin?: number, octaves?: integer, rows?: integer, scale?: integer, seed?: integer, variation?: number, width?: integer}
+
+Result:
+
+- `path`: string
 
 ### `asset.waitForImports`
 

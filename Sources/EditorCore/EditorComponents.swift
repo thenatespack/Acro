@@ -74,6 +74,7 @@ public enum EditorComponentCatalog {
         register(SceneEnvironment.self) { SceneEnvironment() }
         register(PostProcessSettings.self) { PostProcessSettings() }
         register(MeshRenderer.self) { MeshRenderer(mesh: .cube) }
+        register(MeshArray.self) { MeshArray(countX: 4, countY: 4, spacing: Vec3(1.5, 1.5, 1.5)) }
         PhysicsWorld.registerComponents()
         register(Collider.self) { Collider(.box(halfExtents: Vec3(0.5, 0.5, 0.5))) }
         register(RigidBody.self) { RigidBody(.dynamic) }

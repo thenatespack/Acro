@@ -22,6 +22,7 @@ public enum EditorIcons {
         SceneEnvironment.componentName: "globe",
         PostProcessSettings.componentName: "aperture",
         MeshRenderer.componentName: "box",
+        MeshArray.componentName: "layout-grid",
         Collider.componentName: "square-dashed",
         RigidBody.componentName: "weight",
         Joint.componentName: "link",
@@ -264,7 +265,7 @@ public enum EditorIcons {
         let ext = path.split(separator: ".").last.map { $0.lowercased() } ?? ""
         switch ext {
         case "gltf", "glb", "obj", "fbx": return .model
-        case "png", "jpg", "jpeg", "tga", "hdr", "exr", "ktx", "ktx2", "dds", "bmp": return .texture
+        case "png", "jpg", "jpeg", "tga", "hdr", "exr", "ktx", "ktx2", "dds", "bmp", "proctex": return .texture
         case "material": return .material
         case "prefab": return .prefab
         case "scene": return .scene

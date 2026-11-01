@@ -51,6 +51,7 @@ public enum ImportSettingsForms {
         register(TextureImporter.Settings.self, importer: TextureImporter().name)
         register(OBJImporter.Settings.self, importer: OBJImporter().name)
         register(GLTFImporter.Settings.self, importer: GLTFImporter().name)
+        register(ProceduralTextureImporter.Settings.self, importer: ProceduralTextureImporter().name)
     }
 
     /// The proxy component holding `settings` for `importer`.
@@ -247,6 +248,9 @@ public final class AssetInspectorView {
     public private(set) var materialEditor: MaterialAssetEditor?
     public private(set) var settingsGrid: PropertyGrid?
     public private(set) var materialGrid: PropertyGrid?
+    /// The `.proctex` parameter form (procedural texture files).
+    public private(set) var proceduralEditor: ProceduralTextureEditor?
+    public private(set) var proceduralGrid: PropertyGrid?
 
     private let title = Label("", role: .heading, name: "assetTitle")
     private let subtitle = Label("", role: .caption, name: "assetPath")
@@ -254,6 +258,8 @@ public final class AssetInspectorView {
     private let content = VStack(spacing: 8, name: "assetContent")
     private let applyButton = Button("Apply", role: .primary, name: "applySettings")
     private let revertButton = Button("Revert", name: "revertSettings")
+    private let proceduralApply = Button("Apply", role: .primary, name: "applyProceduralTexture")
+    private let proceduralRevert = Button("Revert", name: "revertProceduralTexture")
     private var shownRevision = -1
 
     public init(session: EditorSession) {
@@ -265,6 +271,12 @@ public final class AssetInspectorView {
         revertButton.command = AssetApplySettingsCommand.id.rawValue
         applyButton.action = { [unowned self] in settingsEditor?.apply(); updateButtons() }
         revertButton.action = { [unowned self] in settingsEditor?.revert(); settingsGrid?.refresh(); updateButtons() }
+        proceduralApply.tooltip = "Write the parameters to the .proctex file and reimport the texture"
+        proceduralRevert.tooltip = "Discard the changes to the parameters"
+        proceduralApply.command = AssetSetProceduralTextureCommand.id.rawValue
+        proceduralRevert.command = AssetSetProceduralTextureCommand.id.rawValue
+        proceduralApply.action = { [unowned self] in proceduralEditor?.apply(); proceduralGrid?.refresh(); updateButtons() }
+        proceduralRevert.action = { [unowned self] in proceduralEditor?.revert(); proceduralGrid?.refresh(); updateButtons() }
         let scroll = ScrollView(content, name: "assetScroll")
         scroll.style.grow = 1
         scroll.style.shrink = 1
@@ -275,7 +287,8 @@ public final class AssetInspectorView {
     /// Shows `item` (rebuilding the forms when it or its import changed); call every frame.
     public func show(_ item: AssetItem?) {
         let revision = item?.assetID.map { session.assets?.revision(of: $0) ?? 0 } ?? 0
-        if item != self.item || (revision != shownRevision && materialEditor == nil && settingsEditor?.isModified != true) {
+        if item != self.item || (revision != shownRevision && materialEditor == nil && settingsEditor?.isModified != true
+            && proceduralEditor?.isModified != true) {
             self.item = item
             shownRevision = revision
             rebuild()
@@ -283,6 +296,7 @@ public final class AssetInspectorView {
         materialEditor?.refresh()
         settingsGrid?.refresh()
         materialGrid?.refresh()
+        proceduralGrid?.refresh()
         updateButtons()
     }
 
@@ -290,6 +304,9 @@ public final class AssetInspectorView {
         let modified = settingsEditor?.isModified ?? false
         if applyButton.isEnabled != modified { applyButton.isEnabled = modified }
         if revertButton.isEnabled != modified { revertButton.isEnabled = modified }
+        let proceduralModified = proceduralEditor?.isModified ?? false
+        if proceduralApply.isEnabled != proceduralModified { proceduralApply.isEnabled = proceduralModified }
+        if proceduralRevert.isEnabled != proceduralModified { proceduralRevert.isEnabled = proceduralModified }
     }
 
     private func rebuild() {
@@ -298,6 +315,8 @@ public final class AssetInspectorView {
         materialEditor = nil
         settingsGrid = nil
         materialGrid = nil
+        proceduralEditor = nil
+        proceduralGrid = nil
         guard let item, let assets = session.assets else { return }
         switch item {
         case .folder(let path):
@@ -326,6 +345,21 @@ public final class AssetInspectorView {
                 grid.command = AssetApplySettingsCommand.id.rawValue
                 settingsGrid = grid
                 content.addChildren([grid, HStack(spacing: 6, [Spacer(), revertButton, applyButton])])
+            }
+            if let editor = ProceduralTextureEditor(session: session, asset: id) {
+                proceduralEditor = editor
+                let grid = makeGrid(world: editor.world, entity: editor.entity)
+                grid.stringChoices = { _, path in path == "generator" ? ProceduralTexture.Generator.allCases.map(\.rawValue) : nil }
+                grid.onFieldEdit = { [unowned self, unowned editor] edit in
+                    guard edit.phase != .began else { return }
+                    do { try editor.setField(edit.path, to: edit.newValue) } catch {
+                        session.log.error("Procedural texture \(edit.path): \(error)")
+                    }
+                    updateButtons()
+                }
+                grid.command = AssetSetProceduralTextureCommand.id.rawValue
+                proceduralGrid = grid
+                content.addChildren([grid, HStack(spacing: 6, [Spacer(), proceduralRevert, proceduralApply])])
             }
             if session.isMaterialFile(id) {
                 addMaterialForm(AssetReference(id, subAsset: "material"))

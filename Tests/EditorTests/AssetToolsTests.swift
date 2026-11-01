@@ -304,3 +304,33 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(panel.grid.stringChoiceTitle?("TestLeash", "target", "") == "None")
     }
 }
+
+@MainActor
+@Suite struct ProceduralTextureToolTests {
+    @Test func newAndSetProceduralTexture() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
+        let created = try call(session, "asset.newProceduralTexture", ["name": "Facade", "generator": "bricks", "folder": "Textures"])
+        let path = try #require(created["path"] as? String)
+        let id = try #require((created["asset"] as? String).flatMap { AssetID($0) })
+        #expect(path == "Textures/Facade.proctex")
+        #expect(session.isProceduralTextureFile(id))
+        #expect(session.assets?.proceduralTexture(of: id)?.generator == .bricks)
+
+        try call(session, "asset.setProceduralTexture", ["path": path, "texture": ["generator": "checker", "width": 32, "height": 32]])
+        let stored = session.assets?.proceduralTexture(of: id)
+        #expect(stored?.generator == .checker && stored?.width == 32)
+
+        let editor = try #require(ProceduralTextureEditor(session: session, asset: id))
+        #expect(!editor.isModified)
+        try editor.setField("columns", to: .int(5))
+        #expect(editor.isModified && editor.pending.columns == 5)
+        editor.revert()
+        #expect(!editor.isModified)
+        try editor.setField("columns", to: .int(5))
+        #expect(editor.apply())
+        #expect(session.assets?.proceduralTexture(of: id)?.columns == 5)
+    }
+}
