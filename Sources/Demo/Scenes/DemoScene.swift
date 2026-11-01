@@ -106,4 +106,5 @@ extension DemoScene {
     NetScene.self,
     NetCharacterScene.self,
     RainScene.self,
+    AnimationLifeScene.self,
 ]

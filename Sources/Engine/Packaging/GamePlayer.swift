@@ -86,7 +86,8 @@ public enum GamePlayer {
     public static func registerEngineComponents() {
         ComponentRegistry.register(Transform.self, Name.self, Camera.self, DirectionalLight.self, PointLight.self, SpotLight.self,
                                    SceneEnvironment.self, PostProcessSettings.self, MeshRenderer.self, Saveable.self,
-                                   Sprite.self, SpriteAnimator.self, PrefabInstance.self)
+                                   Sprite.self, SpriteAnimator.self, PrefabInstance.self, Spin.self, FieldAnimator.self, LightFlicker.self,
+                                   CameraPath.self)
         PhysicsWorld.registerComponents()
         PhysicsWorld2D.registerComponents()
         AudioSystem.registerComponents()
@@ -191,6 +192,7 @@ final class PackSceneGame: Game {
         }
         if world.count(of: SpriteAnimator.self) > 0 { world.addSpriteAnimationSystem() }
         if world.count(of: AudioEmitter.self) > 0 { world.addSpatialAudio(engine.audio, assets: { [assets] in assets }) }
+        world.addBuiltinAnimationSystems()
         for warning in module.addSystems(to: world, context: GameContext(input: engine.input)) { print(warning) }
         engine.world = world
     }
