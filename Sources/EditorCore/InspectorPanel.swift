@@ -19,6 +19,8 @@ public struct AssetChoices {
     public var meshes: () -> [String]
     public var materials: () -> [String]
     public var textures: () -> [String]
+    /// The project's audio files as `asset:` keys (`AudioEmitter.clip`).
+    public var audioClips: () -> [String] = { [] }
     /// What the dropdown shows for a key (the key itself by default; "" is "None").
     public var title: (String) -> String
 
@@ -42,6 +44,7 @@ public struct AssetChoices {
                 guard let reference = AssetReference(key), let assets = assets() else { return key }
                 return assets.displayName(of: reference)
             })
+        audioClips = { assets()?.audioReferences().map(\.description) ?? [] }
     }
 
     /// Paths of `component`'s `TextureHandle` fields (optional or not), from the catalog's
@@ -84,6 +87,7 @@ public struct AssetChoices {
     /// The options for a field, or nil when it isn't an asset key (it stays a text field).
     public func options(component: String, path: String) -> [String]? {
         if Self.isTextureField(component: component, path: path) { return [""] + textures() }
+        if component == AudioEmitter.componentName { return path == "clip" ? [""] + audioClips() : nil }
         guard component == MeshRenderer.componentName else { return nil }
         switch path {
         case "mesh": return meshes()

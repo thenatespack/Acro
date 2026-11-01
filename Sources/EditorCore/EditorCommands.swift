@@ -101,14 +101,14 @@ extension CommandRegistry {
 
 public enum SceneOpenCommand: EditorCommand {
     public struct Arguments: Codable, Equatable, Sendable {
-        /// A scene file (`~` expanded, relative to the working directory).
+        /// A scene file (`~` expanded; relative to the project folder, or the working directory without a project). With a project open, a path relative to `Assets/` ("Scenes/Main.scene", as in build.scenes) works too. Scenes must be inside the project folder over MCP.
         public var path: String
         public init(path: String) { self.path = path }
     }
 
     public static let id: CommandID = "scene.open"
     public static let title = "Open Scene"
-    public static let doc = "Replaces the open scene with the scene file at `path` and clears the undo history. Not while playing."
+    public static let doc = "Replaces the open scene with the scene file at `path` and clears the undo history. Not while playing. With a project open, `path` is relative to the project folder (Assets/Scenes/Main.scene) or to Assets/ (Scenes/Main.scene, the form Project.json's build.scenes uses); only scenes inside the project folder can be opened."
     public static let isDestructive = true
     public static let isIdempotent = true
     public static func isAvailable(in session: EditorSession) -> Bool { !session.isPlaying }

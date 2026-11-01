@@ -172,6 +172,11 @@ public final class EditorSession {
     /// Whether the viewport shows the scene's Camera entity while playing (`view.gameCamera`);
     /// the editor camera otherwise. On by default.
     public var showsGameCamera = true { didSet { if showsGameCamera != oldValue { changed() } } }
+    /// The sound output play mode uses (set by the editor app; nil headless: no sound). Asked only
+    /// when the scene has `AudioEmitter`s at play start, which then play (their `clip` assets load
+    /// from the project) until Stop.
+    public var audioProvider: (() -> AudioSystem?)?
+    private var spatialAudio: SpatialAudioHandle?
     /// The play session's physics, when the scene has colliders (see `addPlaySystems`).
     public private(set) var physics: PhysicsWorld?
     /// The play session's 2D physics, when the scene has `Collider2D`s.
@@ -224,10 +229,27 @@ public final class EditorSession {
         return true
     }
 
+    /// `path` for opening a scene: as given when that file exists; else, with a project open
+    /// and a relative path, the same path under the project folder ("Assets/Scenes/Main.scene")
+    /// or under `Assets/` (the form the project settings' `build.scenes` use:
+    /// "Scenes/Main.scene"), whichever file exists. The sandbox check
+    /// still applies to the result.
+    func sceneOpenPath(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespaces)
+        guard let project, !(trimmed as NSString).expandingTildeInPath.hasPrefix("/") else { return path }
+        let fm = FileManager.default
+        if fm.fileExists(atPath: resolvedFileURL(forPath: trimmed).path) { return path }
+        for candidate in [project.root.appendingPathComponent(trimmed), project.url(forAssetPath: trimmed)]
+        where fm.fileExists(atPath: candidate.path) {
+            return candidate.standardizedFileURL.path
+        }
+        return path
+    }
+
     @discardableResult
     public func open(path: String) -> Bool {
         guard !refuseWhilePlaying("Open") else { return false }
-        guard let url = fileURL(forPath: path, "Open") else { return false }
+        guard let url = fileURL(forPath: sceneOpenPath(path), "Open") else { return false }
         onWillReplaceWorld?()
         do {
             try document.open(url)
@@ -577,6 +599,9 @@ public final class EditorSession {
         }
         if world.count(of: SpriteAnimator.self) > 0 { world.addSpriteAnimationSystem(name: Self.spriteSystem) }
         tweens = TweenSystem()
+        if world.count(of: AudioEmitter.self) > 0, let audio = audioProvider?() {
+            spatialAudio = world.addSpatialAudio(audio, assets: { [weak self] in self?.assets })
+        }
         gameModule.addSystems()
     }
 
@@ -590,6 +615,8 @@ public final class EditorSession {
             physics2D = nil
         }
         world.removeSystem(named: Self.spriteSystem)
+        spatialAudio?.remove()
+        spatialAudio = nil
         tweens = nil
         gameModule.removeSystems()
     }

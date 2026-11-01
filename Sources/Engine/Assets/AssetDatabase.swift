@@ -247,6 +247,11 @@ public final class AssetDatabase {
         }
     }
 
+    /// References to every audio file (by the "audio" importer; they have no objects), sorted by path.
+    public func audioReferences() -> [AssetReference] {
+        allRecords.filter { $0.importer == AudioImporter().name }.map { AssetReference($0.id) }
+    }
+
     /// A readable name for a reference: "Models/rock.obj › Rock", or the path alone when it
     /// names the whole file or the file has a single object.
     public func displayName(of reference: AssetReference) -> String {

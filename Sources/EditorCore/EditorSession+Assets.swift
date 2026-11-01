@@ -30,6 +30,8 @@ public enum AssetDropTarget: Equatable, Sendable {
     case hierarchy(parent: EntityID?, position: Vec3)
     /// An inspector field taking an asset of `kind` (`MeshRenderer.mesh` / `.material`) of `entity`.
     case field(entity: EntityID, kind: AssetKind)
+    /// `AudioEmitter.clip` of `entity`: takes an audio file.
+    case audioField(entity: EntityID)
 }
 
 /// Makes material edits undoable: performing writes `new` to the `.material` file of `asset`
@@ -423,6 +425,13 @@ extension EditorSession {
                 return runAssign(reference, kind, parent)
             }
             return runInstantiate(item, parent == nil ? position : .zero, parent)
+        case .audioField(let entity):
+            guard case .asset(let id) = item, assets?.record(id)?.importer == AudioImporter().name else {
+                log.info("Only an audio file can be dropped on this field")
+                return false
+            }
+            return run(ComponentSetFieldCommand.self, .init(entity: entity, component: AudioEmitter.componentName, path: "clip",
+                                                            value: .string(AssetReference(id).description))) != nil
         case .field(let entity, let kind):
             guard let (reference, droppedKind) = droppable, droppedKind == kind else {
                 log.info("Only a \(kind.rawValue) can be dropped on this field")
