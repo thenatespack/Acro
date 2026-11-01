@@ -25,6 +25,16 @@ public enum ParticleBlend: String, Codable, Sendable, CaseIterable {
     var blendMode: BlendMode { self == .additive ? .additive : .alpha }
 }
 
+/// How `ParticleEmitter.stretch` elongates a particle along its velocity.
+public enum ParticleStretchMode: String, Codable, Sendable, CaseIterable {
+    /// The quad's half-length is `size × (1 + stretch × speed)`: relative to the size, so a tiny
+    /// particle stays tiny (size 0.015 at 18 m/s with stretch 0.07: 0.034 long). For sparks.
+    case scaled
+    /// The quad's total length is `2 × size + stretch × speed` world units: `stretch` is the
+    /// seconds of motion drawn behind (and ahead of) the particle, like a camera's exposure. For rain.
+    case streak
+}
+
 /// A color at a point of a particle's life (0 at birth, 1 at death).
 public struct ParticleColorKey: Codable, Sendable, Equatable {
     public var time: Float
@@ -153,7 +163,8 @@ public struct ParticleEmitter: Component, Codable, Equatable, Sendable {
          "spread": FieldHints(range: 0...3.1416, step: 0.01, tooltip: "Half-angle of the emission cone around direction, radians"),
          "drag": FieldHints(range: 0...20, step: 0.01, tooltip: "Velocity damping per second"),
          "bounce": FieldHints(range: 0...1, step: 0.01), "friction": FieldHints(range: 0...1, step: 0.01),
-         "stretch": FieldHints(range: 0...2, step: 0.01, tooltip: "Elongates particles along their velocity (seconds)"),
+         "stretch": FieldHints(range: 0...2, step: 0.01, tooltip: "Elongates particles along their velocity as seen from the camera (0: off). Scaled: length × (1 + stretch × speed). Streak: length = 2 × size + stretch × speed, i.e. seconds of motion"),
+         "stretchMode": FieldHints(tooltip: "Scaled: stretch is relative to the size (sparks). Streak: stretch is seconds of motion drawn, in world units (rain)"),
          "intensity": FieldHints(range: 0...1000, step: 0.1, tooltip: "Multiplies the color: HDR glow with bloom"),
          "brightnessVariation": FieldHints(range: 0...1, step: 0.01, tooltip: "Random per-particle dimming"),
          "atlasColumns": FieldHints(range: 1...64, step: 1), "atlasRows": FieldHints(range: 1...64, step: 1),
@@ -211,8 +222,12 @@ public struct ParticleEmitter: Component, Codable, Equatable, Sendable {
     /// Each particle's color is dimmed by a random factor down to 1 − this.
     public var brightnessVariation: Float
     public var blend: ParticleBlend
-    /// Elongates particles along their screen-space velocity: length × (1 + stretch × speed).
+    /// Elongates particles along their velocity as seen from the camera (world units per second,
+    /// the part across the view direction), per `stretchMode`: `.scaled` length × (1 + stretch × speed),
+    /// `.streak` 2 × size + stretch × speed. Stretched particles don't spin.
     public var stretch: Float
+    /// How `stretch` is applied (`.scaled`: relative to the size, `.streak`: seconds of motion in world units).
+    public var stretchMode: ParticleStretchMode
     /// Bounce off the plane y = `groundHeight`.
     public var collidesWithGround: Bool
     public var groundHeight: Float
@@ -263,6 +278,7 @@ public struct ParticleEmitter: Component, Codable, Equatable, Sendable {
                 sizeOverLife: [ParticleCurveKey] = [ParticleCurveKey(0, 1)],
                 color: [ParticleColorKey] = [ParticleColorKey(0, Vec4(1, 1, 1, 1)), ParticleColorKey(1, Vec4(1, 1, 1, 0))],
                 intensity: Float = 1, brightnessVariation: Float = 0, blend: ParticleBlend = .additive, stretch: Float = 0,
+                stretchMode: ParticleStretchMode = .scaled,
                 collidesWithGround: Bool = false, groundHeight: Float = 0, bounce: Float = 0.4, friction: Float = 0.2,
                 collidesWithDepth: Bool = false, depthThickness: Float = 0.5, colliders: [ParticleCollider] = [],
                 killOnCollision: Bool = false, subEmitters: [ParticleSubEmitter] = [],
@@ -297,6 +313,7 @@ public struct ParticleEmitter: Component, Codable, Equatable, Sendable {
         self.brightnessVariation = brightnessVariation
         self.blend = blend
         self.stretch = stretch
+        self.stretchMode = stretchMode
         self.collidesWithGround = collidesWithGround
         self.groundHeight = groundHeight
         self.bounce = bounce
@@ -352,6 +369,7 @@ public struct ParticleEmitter: Component, Codable, Equatable, Sendable {
         brightnessVariation = try value(.brightnessVariation, d.brightnessVariation)
         blend = try value(.blend, d.blend)
         stretch = try value(.stretch, d.stretch)
+        stretchMode = try value(.stretchMode, d.stretchMode)
         collidesWithGround = try value(.collidesWithGround, d.collidesWithGround)
         groundHeight = try value(.groundHeight, d.groundHeight)
         bounce = try value(.bounce, d.bounce)

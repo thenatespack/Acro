@@ -65,14 +65,15 @@ void main() {
     vec3 helper = abs(toCamera.y) < 0.999 ? vec3(0, 1, 0) : vec3(1, 0, 0);
     vec3 right = normalize(cross(helper, toCamera));
     vec3 up = cross(toCamera, right);
-    float lengthScale = 1.0;
+    float lengthScale = 1.0, lengthAdd = 0.0;
     vec3 velocity = p.velocity.xyz - toCamera * dot(p.velocity.xyz, toCamera);
     float speed = length(velocity);
     if (draw.params.x > 0.0 && speed > 1e-4) {
         // Streaks: the quad's long axis follows the velocity as seen from the camera.
         up = velocity / speed;
         right = cross(up, toCamera);
-        lengthScale = 1.0 + draw.params.x * speed;
+        if (draw.params.w > 0.5) lengthAdd = 0.5 * draw.params.x * speed;  // streak: 2 size + stretch speed long
+        else lengthScale = 1.0 + draw.params.x * speed;
     } else {
         float angle = p.attributes.y + p.attributes.z * p.position.w;
         float c = cos(angle), s = sin(angle);
@@ -80,7 +81,7 @@ void main() {
         up = up * c - right * s;
         right = rotatedRight;
     }
-    vec3 world = position + (right * corner.x + up * corner.y * lengthScale) * size;
+    vec3 world = position + (right * corner.x + up * corner.y * lengthScale) * size + up * (corner.y * lengthAdd);
 
     vec4 color = gradient(life);
     color.rgb *= draw.params.y * mix(1.0, p.attributes.w, draw.params.z);

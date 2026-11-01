@@ -249,6 +249,40 @@ private func run(_ schedule: inout ParticleSpawnSchedule, steps: Int, rate: Floa
 }
 
 /// Analytic colliders: particles stay inside a sphere and on top of a box.
+/// Rain: fast drops (18 m/s, no gravity) that die on a raised ground plane spawn their splashes
+/// at the impact height, one `count` per drop, even though a step moves them 0.3 m.
+@MainActor @Test func rainDropsKilledOnTheGroundSpawnSplashesThere() throws {
+    var results: [[Float]] = []
+    try TestDevices.forEachBackend { device, frames in
+        let system = try ParticleSystem(device: device)
+        let world = World()
+        let splash = world.spawn(Transform(), ParticleEmitter(capacity: 256, rate: 0, lifetime: Vec2(10, 10), spread: 1,
+                                                              speed: Vec2(0.5, 1), seed: 41))
+        let rain = world.spawn(Transform(position: Vec3(0, 5, 0)), ParticleEmitter(
+            capacity: 256, rate: 0, bursts: [ParticleBurst(count: 40)], lifetime: Vec2(10, 10), shape: .box,
+            shapeSize: Vec3(3, 0.05, 3), direction: Vec3(0, -1, 0), spread: 0, speed: Vec2(18, 18), stretch: 0.07,
+            stretchMode: .streak, collidesWithGround: true, groundHeight: 0.5, killOnCollision: true,
+            subEmitters: [ParticleSubEmitter(.collision, emitter: world.ref(to: splash), count: 2)], seed: 40))
+        try step(system, world, frames: 40, on: frames)
+        let drops = try readBack(system, rain, on: frames)
+        let splashes = try readBack(system, splash, on: frames)
+        #expect(drops.live == 0, "\(device.backend)")
+        #expect(splashes.live == 80, "\(device.backend)")
+        // Splashes start on the ground plane (y = 0.5) and have moved at most ~1 m/s for 40 steps.
+        #expect(splashes.particles.allSatisfy { $0[1] > 0.45 && $0[1] < 1.6 && abs($0[0]) < 4 }, "\(device.backend)")
+        results.append(drops.all + splashes.all)
+    }
+    #expect(Set(results).count <= 1, "the backends simulated differently")
+}
+
+@Test func stretchModeDefaultsToScaledAndRoundTrips() throws {
+    #expect(ParticleEmitter().stretchMode == .scaled)
+    let old = try JSONDecoder().decode(ParticleEmitter.self, from: Data(#"{"stretch": 0.07}"#.utf8))
+    #expect(old.stretchMode == .scaled)
+    let streak = ParticleEmitter(stretch: 0.07, stretchMode: .streak)
+    #expect(try JSONDecoder().decode(ParticleEmitter.self, from: JSONEncoder().encode(streak)) == streak)
+}
+
 @MainActor @Test func collidersKeepParticlesOnTheirSide() throws {
     try TestDevices.forEachBackend { device, frames in
         let system = try ParticleSystem(device: device)
