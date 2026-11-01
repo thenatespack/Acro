@@ -21,7 +21,7 @@ public struct KeyboardMover: Component, Equatable, Sendable {
 /// pairs a registered component type with a factory for its default value. Components without
 /// a factory can still be loaded, inspected, edited and removed, just not added from the menu.
 ///
-/// Built in: Transform, Camera, the lights, SceneEnvironment, PostProcess, MeshRenderer (a cube),
+/// Built in: Transform, Camera, the lights, SceneEnvironment, PostProcess, PlanarReflection, MeshRenderer (a cube),
 /// the physics components (a unit box Collider, a dynamic RigidBody, a ball Joint to the world,
 /// a CharacterController), AudioListener and AudioEmitter (no sound until one is picked), the 2D physics components (a dynamic RigidBody2D, a unit
 /// box Collider2D, a revolute Joint2D to the world), ParticleEmitter, TextMesh ("Neon", emissive 4), Sprite (atlas "sprites", frame 0), SpriteAnimator (one looping "idle" clip), Saveable, Spin and
@@ -56,6 +56,7 @@ public enum EditorComponentCatalog {
         register(SpotLight.self) { SpotLight() }
         register(SceneEnvironment.self) { SceneEnvironment() }
         register(PostProcessSettings.self) { PostProcessSettings() }
+        register(PlanarReflection.self) { PlanarReflection() }
         register(MeshRenderer.self) { MeshRenderer(mesh: .cube) }
         register(LineRenderer.self) { LineRenderer() }
         register(MeshArray.self) { MeshArray(countX: 4, countY: 4, spacing: Vec3(1.5, 1.5, 1.5)) }

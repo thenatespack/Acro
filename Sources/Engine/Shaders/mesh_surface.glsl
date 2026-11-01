@@ -63,6 +63,11 @@ layout(set = 0, binding = 0, std140) uniform Frame {
     vec4 pointShadowPositions[4]; // xyz: position, w: texel size per unit distance
     vec4 pointShadowParams[4];    // xy: face block origin, depth = z + w / axis distance
     vec4 environment;             // x: 1 image-based lighting, y: intensity, z, w: cos, sin of the rotation
+    // Planar reflection (PlanarReflections.swift), must match `SceneRenderer.FrameUniforms`.
+    mat4 reflectionViewProj;      // world -> the reflection image's clip space (x mirrored)
+    vec4 reflectionPlane;         // xyz: plane normal, w: offset (dot(normal, p) = offset on the plane)
+    vec4 reflectionParams;        // x: strength, y: roughness where it has faded out, z: blur, w: normal distortion
+    vec4 reflectionExtra;         // x: receiver tolerance, y: image height / width, z: 1 when receivers sample it, w: 1 in the reflection pass
 } frame;
 
 // Must match `SceneRenderer.MaterialUniforms` (uniform buffer 2).
@@ -73,7 +78,7 @@ layout(set = 2, binding = 2, std140) uniform MaterialData {
     vec4 uvRow1;
     vec4 surface;    // x: metallic, y: perceptual roughness, z: normal scale, w: occlusion strength
     vec4 emissive;   // rgb: emissive color x strength (linear), w: 1 PBR, 0 Blinn-Phong
-    vec4 flags;      // x: alpha cutoff (mask), y: 1 when there is a normal map, z: its layout (below)
+    vec4 flags;      // x: alpha cutoff (mask), y: 1 when there is a normal map, z: its layout (below), w: 1 when the occlusion slot holds the planar reflection
 } material;
 
 // Point and spot lights, must match `LightClusters.GPUData` (uniform buffers 3-7).
@@ -98,7 +103,7 @@ layout(set = 1, binding = 0) uniform sampler2DShadow shadowMap;  // the shadow a
 layout(set = 2, binding = 9) uniform texture2D baseColorMap;          // sRGB color, alpha
 layout(set = 2, binding = 10) uniform texture2D metallicRoughnessMap; // linear: G roughness, B metallic
 layout(set = 2, binding = 11) uniform texture2D normalMap;            // linear tangent-space normal (see main)
-layout(set = 2, binding = 12) uniform texture2D occlusionMap;         // linear: R occlusion
+layout(set = 2, binding = 12) uniform texture2D occlusionMap;         // linear: R occlusion (the planar reflection when flags.w = 1)
 layout(set = 2, binding = 13) uniform texture2D emissiveMap;          // sRGB color
 layout(set = 2, binding = 17) uniform sampler materialSampler;
 // Image-based lighting: the environment atlas (read with texel loads) and the BRDF table.
@@ -221,6 +226,39 @@ uint lightIndex(uint i) {
     return (lightIndices.data[word >> 2][word & 3u] >> ((i - word * 3u) * 10u)) & 0x3FFu;
 }
 
+// The planar reflection (frame.reflection*) seen from this fragment, blended over `fallback`
+// (the environment's reflection): zero weight away from the plane, at grazing normals and for
+// rough surfaces. The image holds c / (1 + c) (the reflection pass is LDR) with coverage in alpha.
+vec3 planarReflected(vec3 fallback, vec3 n, vec3 ng, float roughness) {
+    vec3 pn = frame.reflectionPlane.xyz;
+    float tolerance = frame.reflectionExtra.x;
+    float onPlane = 1.0 - smoothstep(tolerance * 0.5, tolerance, abs(dot(pn, vWorldPos) - frame.reflectionPlane.w));
+    float facing = smoothstep(0.5, 0.9, dot(ng, pn));
+    float glossy = 1.0 - smoothstep(frame.reflectionParams.y * 0.5, frame.reflectionParams.y, roughness);
+    float weight = frame.reflectionParams.x * onPlane * facing * glossy;
+    if (weight <= 0.0) return fallback;
+    // The normal map's tilt shifts where the reflected ray lands.
+    vec3 p = vWorldPos + (n - pn * dot(n, pn)) * frame.reflectionParams.w;
+    vec4 clip = frame.reflectionViewProj * vec4(p, 1.0);
+    vec2 uv = vec2(clip.x, -clip.y) / clip.w * 0.5 + 0.5;
+    float radius = frame.reflectionParams.z * roughness;
+    vec3 sum = vec3(0.0);
+    float coverage = 0.0;
+    const int taps = 12;
+    for (int i = 0; i < taps; i++) {
+        float r = sqrt((float(i) + 0.5) / float(taps)) * radius;
+        float a = float(i) * 2.39996323;
+        vec2 tap = uv + vec2(cos(a) * frame.reflectionExtra.y, sin(a)) * r;
+        vec2 inside = min(tap, 1.0 - tap);
+        float edge = smoothstep(0.0, 0.04, min(inside.x, inside.y));
+        vec4 t = textureLod(sampler2D(occlusionMap, materialSampler), clamp(tap, 0.0, 1.0), 0.0);
+        sum += (t.rgb / (1.0 - min(t.rgb, vec3(0.995)))) * edge;
+        coverage += t.a * edge;
+    }
+    vec3 planar = sum / float(taps) + fallback * (1.0 - coverage / float(taps));
+    return mix(fallback, planar, weight);
+}
+
 void main() {
     vec2 uv = vec2(dot(material.uvRow0.xy, vUV) + material.uvRow0.z, dot(material.uvRow1.xy, vUV) + material.uvRow1.z);
     vec4 texel = texture(sampler2D(baseColorMap, materialSampler), uv);
@@ -275,7 +313,8 @@ void main() {
         albedo *= cascadeTint;
     }
     vec3 light = frame.lightColor.rgb * frame.lightDir.w;
-    float ao = 1.0 + material.surface.w * (texture(sampler2D(occlusionMap, materialSampler), uv).r - 1.0);
+    float ao = material.flags.w > 0.5 ? 1.0
+        : 1.0 + material.surface.w * (texture(sampler2D(occlusionMap, materialSampler), uv).r - 1.0);
 
     vec3 color;
     if (!pbr) {
@@ -324,6 +363,7 @@ void main() {
             irradiance = hemisphere(n);
             reflected = mix(hemisphere(reflect(-v, n)), irradiance, roughness);
         }
+        if (material.flags.w > 0.5 && frame.reflectionExtra.z > 0.5) reflected = planarReflected(reflected, n, ng, roughness);
         vec3 specularAmbient = f0 * dfg.x + dfg.y;
         vec3 ambient = ((vec3(1.0) - specularAmbient) * diffuseColor * irradiance + specularAmbient * reflected) * ao;
         color = direct + ambient;
@@ -361,6 +401,9 @@ void main() {
         float atEye = frame.fogColor.w * exp(min(-k * (frame.cameraPos.y - frame.cameraPos.w), 30.0));
         fog = 1.0 - exp(-dist * atEye * span);
     }
-    outColor = vec4(mix(color, frame.fogColor.rgb, fog), opacity);
+    vec3 rgb = mix(color, frame.fogColor.rgb, fog);
+    // The reflection pass stores c / (1 + c): its 8-bit target can't hold HDR values.
+    if (frame.reflectionExtra.w > 0.5) rgb /= 1.0 + rgb;
+    outColor = vec4(rgb, opacity);
     outMotion = motionVector(vCurrentClip, vPreviousClip);
 }

@@ -21,6 +21,7 @@ public enum EditorIcons {
         SpotLight.componentName: "flashlight",
         SceneEnvironment.componentName: "globe",
         PostProcessSettings.componentName: "aperture",
+        PlanarReflection.componentName: "reflection",
         MeshRenderer.componentName: "box",
         LineRenderer.componentName: "cable",
         MeshArray.componentName: "layout-grid",
@@ -89,6 +90,8 @@ public enum EditorIcons {
         "appearance": #"<circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 1 0 20Z"/><path d="M12 7h5"/><path d="M12 12h7"/><path d="M12 17h5"/>"#,
         // Two chevrons: the toolbar's More menu (Lucide's chevrons-right).
         "overflow": #"<path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/>"#,
+        // A triangle above a dashed line and its mirror image below: PlanarReflection.
+        "reflection": #"<path d="M12 3 18 10H6Z"/><path d="M12 21 18 14H6Z"/><path d="M2 12h2"/><path d="M8 12h2"/><path d="M14 12h2"/><path d="M20 12h2"/>"#,
         // A subdivided triangle: any other mesh (imported models, meshes games register).
         "mesh-custom": #"<path d="M12 3.5 21 19.5H3Z"/><path d="M7.5 11.5h9"/><path d="m7.5 11.5 4.5 8"/><path d="m16.5 11.5-4.5 8"/>"#,
     ]
@@ -218,6 +221,7 @@ public enum EditorIcons {
         }
         if world.has(SceneEnvironment.self, for: entity) { return (.environment, SceneEnvironment.componentName) }
         if world.has(PostProcessSettings.self, for: entity) { return (.postProcess, PostProcessSettings.componentName) }
+        if world.has(PlanarReflection.self, for: entity) { return (.postProcess, PlanarReflection.componentName) }
         if !registered.isEmpty {
             for type in world.componentTypes(of: entity) where registered[type.componentName] != nil {
                 return (.game, type.componentName)

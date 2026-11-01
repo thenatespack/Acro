@@ -37,7 +37,9 @@ void main() {
     } else {
         color = proceduralSky(skyParameters(), d, true);
     }
-    outColor = vec4(color * skyData.params.y, 1.0);
+    color *= skyData.params.y;
+    if (skyData.extra.y > 0.5) color /= 1.0 + color;  // the planar reflection pass stores c / (1 + c)
+    outColor = vec4(color, 1.0);
 
     vec4 current = frame.currentViewProj * vec4(d, 0.0);
     vec4 previous = frame.previousViewProj * vec4(d, 0.0);

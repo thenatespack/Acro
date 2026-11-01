@@ -112,4 +112,5 @@ extension DemoScene {
     Text3DScene.self,
     FacadesScene.self,
     FogScene.self,
+    ReflectionsScene.self,
 ]
