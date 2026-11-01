@@ -1535,7 +1535,7 @@ Result:
 
 **Save Scene** · _destructive_, _idempotent_
 
-Saves the scene to its file, or to `path` when it has never been saved. Not while playing. Destructive only when `path` names an existing file that isn't the scene's own (saving to the scene's own file or to a new file needs no confirm): then pass confirm: true.
+Saves the scene to its file, or to `path` when it has never been saved. Not while playing. Scenes are only saved inside the project folder (or the editor's start folder without a project); relative paths are relative to it, and a scene opened from elsewhere must be saved with scene.saveAs. Destructive only when `path` names an existing file that isn't the scene's own (saving to the scene's own file or to a new file needs no confirm): then pass confirm: true.
 
 Arguments:
 
@@ -1550,7 +1550,7 @@ Result:
 
 **Save Scene As** · _destructive_, _idempotent_
 
-Saves the scene to `path`, which becomes its file. Not while playing. Destructive only when `path` is an existing file that isn't the scene's own (a new file or the scene's own file needs no confirm): then pass confirm: true.
+Saves the scene to `path`, which becomes its file. Not while playing. `path` must be inside the project folder (or the editor's start folder without a project); relative paths are relative to it. Destructive only when `path` is an existing file that isn't the scene's own (a new file or the scene's own file needs no confirm): then pass confirm: true.
 
 Arguments:
 

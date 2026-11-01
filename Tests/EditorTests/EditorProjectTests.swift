@@ -37,6 +37,45 @@ private let rocksOBJ = """
 }
 
 @MainActor @Suite struct EditorProjectTests {
+    @Test func scenesAreSavedOnlyInsideTheProjectOrTheStartFolder() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let start = folder.appendingPathComponent("Start")
+        let outside = folder.appendingPathComponent("Elsewhere")
+        try FileManager.default.createDirectory(at: start, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        let session = makeSession()
+        session.startFolder = start
+
+        // Without a project: the start folder (relative paths are relative to it) and its subfolders.
+        #expect(session.save(as: "loose.json"))
+        #expect(FileManager.default.fileExists(atPath: start.appendingPathComponent("loose.json").path))
+        #expect(session.save(as: start.appendingPathComponent("Levels/one.json").path))
+        #expect(!session.save(as: outside.appendingPathComponent("away.json").path))
+        #expect(!session.save(as: "../away.json"))
+        #expect(!FileManager.default.fileExists(atPath: outside.appendingPathComponent("away.json").path))
+        #expect(session.log.count(of: .error) == 2)
+
+        // With a project: its folder (the project root or anywhere under it) and nowhere else.
+        let project = folder.appendingPathComponent("Game")
+        #expect(session.newProject(path: project.path))
+        #expect(session.save(as: "main.json"))
+        #expect(FileManager.default.fileExists(atPath: project.appendingPathComponent("main.json").path))
+        #expect(session.save(as: project.appendingPathComponent("Assets/Scenes/level.json").path))
+        #expect(session.save())
+        #expect(!session.save(as: start.appendingPathComponent("loose.json").path))
+        #expect(!session.save(as: outside.appendingPathComponent("away.json").path))
+        #expect(session.document.url?.lastPathComponent == "level.json")
+
+        // A scene opened from outside the project can't be saved back there; Save As into the project.
+        #expect(session.open(path: start.appendingPathComponent("loose.json").path))
+        session.create(.cube)
+        #expect(!session.save())
+        #expect(session.document.isDirty)
+        #expect(session.save(as: "Assets/Scenes/loose.json"))
+        #expect(!session.document.isDirty)
+    }
+
     @Test func newProjectThenOpenProjectScansAssets() throws {
         let folder = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: folder) }

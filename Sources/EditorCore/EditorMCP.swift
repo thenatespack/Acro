@@ -78,9 +78,12 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
         var readOnly: Bool
     }
 
-    /// Where AI clients may touch files without a project open (the folder the editor started
-    /// in); with a project, its folder.
-    public var workspaceRoot = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    /// Where AI clients may touch files without a project open: the session's start folder,
+    /// which is also where scenes are saved without a project; with a project, its folder.
+    public var workspaceRoot: URL {
+        get { session.startFolder }
+        set { session.startFolder = newValue.standardizedFileURL }
+    }
 
     /// The folders file paths in calls are confined to (see EditorSafety.swift).
     public var sandboxRoots: [URL] { [session.project?.root ?? workspaceRoot] }

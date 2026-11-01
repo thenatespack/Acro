@@ -9,6 +9,8 @@ import Testing
     let log = EditorLog()
     log.echoesToStandardOutput = false
     let session = EditorSession(document: EditorDocument(), log: log)
+    // The tests save scenes in temporary folders: as if the editor had started there.
+    session.startFolder = FileManager.default.temporaryDirectory
     session.newDocument()
     return session
 }

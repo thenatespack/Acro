@@ -177,9 +177,12 @@ private func temporaryDirectory() -> URL {
         #expect(client.failure("project.open", ["path": .string(outside.path)]).contains("outside"))
         client.tool("scene.saveAs", ["path": "main.json", "confirm": true])
         #expect(FileManager.default.fileExists(atPath: project.appendingPathComponent("main.json").path))
-        // The scene file now lives in the project; one opened from elsewhere can't be overwritten.
+        // Scenes are only saved inside the project, by the user too.
         session.fileAccessRoots = nil
-        #expect(session.save(as: outside.appendingPathComponent("user.json").path))  // the user can
+        #expect(!session.save(as: outside.appendingPathComponent("user.json").path))
+        // A scene opened from elsewhere can't be overwritten there (Save As into the project instead).
+        try session.document.save(to: outside.appendingPathComponent("user.json"))
+        #expect(!session.save())
         #expect(client.failure("scene.save", ["confirm": true]).contains("outside"))
         // The user's own actions are never confined.
         #expect(session.fileAccessRoots == nil)

@@ -242,10 +242,12 @@ private func temporaryDirectory() -> URL {
         // project.new.
         try session.commands.run(ProjectNewCommand.self, .init(path: folder.appendingPathComponent("Gamma").path))
         #expect(session.recentProjects.entries.map(\.name) == ["Gamma", "Alpha", "Beta"])
-        // A scene saved in a project becomes its last scene; scenes elsewhere don't count.
+        // A scene saved in a project becomes its last scene; saving outside the project is refused.
         try session.commands.run(SceneSaveAsCommand.self, .init(path: folder.appendingPathComponent("Gamma/Assets/Level.scene").path))
         #expect(session.recentProjects.entry("Gamma")?.lastScene?.hasSuffix("Gamma/Assets/Level.scene") == true)
-        try session.commands.run(SceneSaveAsCommand.self, .init(path: folder.appendingPathComponent("Outside.scene").path))
+        #expect(throws: (any Error).self) {
+            try session.commands.run(SceneSaveAsCommand.self, .init(path: folder.appendingPathComponent("Outside.scene").path))
+        }
         #expect(session.recentProjects.entry("Gamma")?.lastScene?.hasSuffix("Level.scene") == true)
     }
 

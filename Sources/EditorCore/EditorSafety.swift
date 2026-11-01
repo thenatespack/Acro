@@ -161,7 +161,7 @@ extension EditorSession {
     /// Whether saving the scene to `path` would overwrite a file that isn't the scene's own.
     func savingOverOtherFile(at path: String) -> Bool {
         guard !path.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
-        let url = resolvedFileURL(forPath: path)
+        let url = resolvedFileURL(forPath: sceneSavePath(path))
         if let own = document.url, Self.resolved(own) == Self.resolved(url) { return false }
         return FileManager.default.fileExists(atPath: url.path)
     }

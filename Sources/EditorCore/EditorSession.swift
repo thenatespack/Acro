@@ -78,6 +78,11 @@ public final class EditorSession {
     /// show in the inspector's dropdowns, and `MeshRenderer`s can reference them.
     public private(set) var assets: AssetDatabase?
     public var project: Project? { assets?.project }
+    /// The folder the editor started in: where scenes are saved while no project is open.
+    public var startFolder = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).standardizedFileURL
+    /// Where scenes may be saved: anywhere inside the open project's folder, or the start
+    /// folder when no project is open. Relative save paths resolve against it.
+    public var sceneSaveRoot: URL { project?.root ?? startFolder }
     /// Called after a project was opened or created, or its assets changed.
     public var onAssetsChange: (() -> Void)?
     /// The projects opened before, for the launcher (RecentProjects.swift); every project
@@ -241,7 +246,7 @@ public final class EditorSession {
             return save(as: fallbackPath)
         }
         guard !refuseWhilePlaying("Save") else { return false }
-        if let url = document.url, !checkFileAccess(url, "Save") { return false }
+        if let url = document.url, !checkFileAccess(url, "Save") || !checkSceneSaveLocation(url, "Save") { return false }
         refreshPrefabOverrides()
         do {
             try document.save()
@@ -259,7 +264,7 @@ public final class EditorSession {
     @discardableResult
     public func save(as path: String) -> Bool {
         guard !refuseWhilePlaying("Save As") else { return false }
-        guard let url = fileURL(forPath: path, "Save As") else { return false }
+        guard let url = fileURL(forPath: sceneSavePath(path), "Save As"), checkSceneSaveLocation(url, "Save As") else { return false }
         refreshPrefabOverrides()
         do {
             try document.save(to: url)
@@ -272,6 +277,21 @@ public final class EditorSession {
             log.error("Couldn't save \(url.path): \(error)")
             return false
         }
+    }
+
+    /// `path` with a relative path made absolute against `sceneSaveRoot`.
+    func sceneSavePath(_ path: String) -> String {
+        let expanded = (path.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
+        return expanded.hasPrefix("/") ? expanded : sceneSaveRoot.appendingPathComponent(expanded).standardizedFileURL.path
+    }
+
+    /// Whether a scene may be saved to `url` (inside `sceneSaveRoot`, symbolic links resolved);
+    /// logs an error when not.
+    func checkSceneSaveLocation(_ url: URL, _ action: String) -> Bool {
+        if Self.isInside(url, sceneSaveRoot) { return true }
+        let place = project == nil ? "the editor's start folder" : "the project folder"
+        log.error("\(action): \(url.path) is outside \(place) (\(sceneSaveRoot.path)); scenes are saved there or in its subfolders. Use Save As with a path inside it.")
+        return false
     }
 
     /// A file URL for a path typed by the user (`~` expanded, relative to the working directory).

@@ -127,7 +127,7 @@ public enum SceneSaveCommand: EditorCommand {
 
     public static let id: CommandID = "scene.save"
     public static let title = "Save Scene"
-    public static let doc = "Saves the scene to its file, or to `path` when it has never been saved. Not while playing."
+    public static let doc = "Saves the scene to its file, or to `path` when it has never been saved. Not while playing. Scenes are only saved inside the project folder (or the editor's start folder without a project); relative paths are relative to it, and a scene opened from elsewhere must be saved with scene.saveAs."
     public static let isDestructive = true
     public static let confirmsOnlyWhen: String? = "when `path` names an existing file that isn't the scene's own (saving to the scene's own file or to a new file needs no confirm)"
     public static func needsConfirmation(_ arguments: Arguments, in session: EditorSession) -> Bool {
@@ -149,7 +149,7 @@ public enum SceneSaveAsCommand: EditorCommand {
 
     public static let id: CommandID = "scene.saveAs"
     public static let title = "Save Scene As"
-    public static let doc = "Saves the scene to `path`, which becomes its file. Not while playing."
+    public static let doc = "Saves the scene to `path`, which becomes its file. Not while playing. `path` must be inside the project folder (or the editor's start folder without a project); relative paths are relative to it."
     public static let isDestructive = true
     public static let confirmsOnlyWhen: String? = "when `path` is an existing file that isn't the scene's own (a new file or the scene's own file needs no confirm)"
     public static func needsConfirmation(_ arguments: Arguments, in session: EditorSession) -> Bool {
