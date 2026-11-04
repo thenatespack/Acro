@@ -35,8 +35,8 @@ public enum BuiltinCommands {
         PrefabUnpackCommand.self, PrefabCreateVariantCommand.self,
         LogReadCommand.self, StatsGetCommand.self, DiagnosticsGetCommand.self,
     ] + EditorUICommands.all + EditorSafetyCommands.all + EditorGameModuleCommands.all + EditorBuildCommands.all
-      + EditorRecoveryCommands.all + EditorNetCommands.all + EditorLauncherCommands.all + EditorScriptCommands.all
-      + EditorProceduralTextureCommands.all
+      + EditorRecoveryCommands.all + EditorNetCommands.all + EditorLauncherCommands.all + EditorScriptCommands.all + EditorFilesCommands.all
+      + EditorProceduralTextureCommands.all + EditorSettingsCommands.all
 }
 
 extension CommandID {
@@ -53,6 +53,8 @@ extension CommandID {
     public static let step: CommandID = "play.step"
     public static let toggleGameCamera: CommandID = "view.gameCamera"
     public static let importAsset: CommandID = "asset.import"
+    /// The Settings window (the UI opens it; over MCP, `settings.get` reads what it shows).
+    public static let settings: CommandID = "settings.get"
 }
 
 /// A result holding one path.
@@ -274,7 +276,7 @@ public enum ToolSnappingCommand: EditorCommand {
 
     public static let id: CommandID = "tool.snapping"
     public static let title = "Snapping"
-    public static let doc = "Turns gizmo snapping on or off (`enabled`; omitted toggles it): drags move in 0.5-unit steps, rotate by 15° and scale by 0.1. Holding Cmd (Ctrl elsewhere) during a drag inverts it."
+    public static let doc = "Turns gizmo snapping on or off (`enabled`; omitted toggles it): drags move, rotate and scale in the steps of settings.setEditor (default 0.5 units, 15° and 0.1). Holding Cmd (Ctrl elsewhere) during a drag inverts it."
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
         session.snapping = arguments.enabled ?? !session.snapping
         return Result(enabled: session.snapping)

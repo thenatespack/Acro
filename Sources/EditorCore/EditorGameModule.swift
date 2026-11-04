@@ -145,6 +145,9 @@ public final class EditorGameModule {
     func projectOpened(_ project: Project) {
         guard commandLineSettings == nil, let game = project.settings.game, game != settings else { return }
         configure(game, base: project.root)
+        // Not built yet (a new project): stay configured; Reload Game Code builds it.
+        if let target = game.target, let package = try? packageURL(),
+           (try? GameModuleBuilder(packageURL: package, target: target).objectFiles()) == nil { return }
         _ = try? reload(build: false)
     }
 

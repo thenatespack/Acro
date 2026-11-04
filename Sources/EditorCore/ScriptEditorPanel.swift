@@ -1,20 +1,8 @@
 import Engine
 import Foundation
 
-/// One script file shown in the script editor.
-public struct ScriptFile: Equatable, Sendable {
-    public var name: String
-    public var path: String
-    public var url: URL
-
-    public init(name: String, path: String, url: URL) {
-        self.name = name
-        self.path = path
-        self.url = url
-    }
-}
-
-/// The script editor panel: browse, write, edit, save, and reload game scripts directly in the editor.
+/// The script editor panel: write, edit, save and reload a game script. It sits with the Scene
+/// view; the Files panel (`FilesPanel`) picks which script it shows.
 @MainActor
 public final class ScriptEditorPanel {
     public unowned let session: EditorSession
@@ -31,20 +19,14 @@ public final class ScriptEditorPanel {
         }
     }
 
-    public private(set) var files: [ScriptFile] = []
-
-    private let fileList: ListView
     private let titleLabel: Label
     private let dirtyLabel: Label
     private let statusLabel: Label
     private let saveButton: Button
     private let reloadButton: Button
-    private let newScriptBar: HStack
-    private let newScriptField: TextField
     private let errorBanner: HStack
     private let errorLabel: Label
 
-    private var lastScannedDate: Date = .distantPast
     private var lastKnownReport: GameReloadReport?
     private var lastKnownError: String?
 
@@ -56,9 +38,6 @@ public final class ScriptEditorPanel {
         scroll.scrollsHorizontally = true
         scroll.style.grow = 1
         scroll.style.shrink = 1
-
-        fileList = ListView(items: [], name: "scriptFileList")
-        fileList.style.grow = 1
 
         titleLabel = Label("No script open", role: .heading, name: "scriptTitleLabel")
         dirtyLabel = Label("", role: .body, name: "scriptDirtyLabel")
@@ -77,23 +56,6 @@ public final class ScriptEditorPanel {
         reloadButton.tooltip = "Rebuild and hot reload game code"
         reloadButton.command = "game.reload"
 
-        let newButton = Button("+", name: "scriptNewButton")
-        newButton.tooltip = "Create a new script"
-        newButton.style.width = 26
-
-        newScriptField = TextField(placeholder: "MyComponent.swift", name: "newScriptName")
-        newScriptField.style.grow = 1
-
-        let createButton = Button("Create", name: "confirmCreateScript")
-        createButton.role = .primary
-
-        let cancelButton = Button("Cancel", name: "cancelCreateScript")
-
-        newScriptBar = HStack(spacing: 4, padding: EdgeInsets(4), [
-            newScriptField, createButton, cancelButton
-        ])
-        newScriptBar.isHidden = true
-
         errorLabel = Label("", role: .caption, name: "scriptErrorLabel")
         errorLabel.color = UIColor(hex: 0xff7b72)
         errorLabel.wraps = true
@@ -107,28 +69,15 @@ public final class ScriptEditorPanel {
         errorBanner.background = UIColor(hex: 0x3d1418)
         errorBanner.isHidden = true
 
-        // Sidebar
-        let sidebarTitle = Label("Scripts", role: .heading, name: "scriptsSidebarHeading")
-        let sidebarHeader = HStack(spacing: 4, padding: EdgeInsets(horizontal: 8, vertical: 4), [
-            sidebarTitle, Spacer(), newButton
-        ])
-        let sidebar = VStack(spacing: 4, padding: EdgeInsets(top: 4, left: 4, bottom: 4, right: 0), [
-            sidebarHeader, newScriptBar, fileList
-        ])
-        sidebar.style.width = 160
-        sidebar.style.minWidth = 120
-
-        // Right pane
+        // The open script's name and actions above the code
         let editorToolbar = HStack(spacing: 6, padding: EdgeInsets(horizontal: 8, vertical: 4), [
             titleLabel, dirtyLabel, Spacer(), statusLabel, saveButton, reloadButton
         ])
-        let rightPane = VStack(spacing: 2, padding: EdgeInsets(0), [
+        let pane = VStack(spacing: 2, padding: EdgeInsets(0), name: "scriptEditorPanel", [
             editorToolbar, errorBanner, scroll
         ])
-        rightPane.style.grow = 1
-
-        let split = SplitView(.horizontal, panes: [sidebar, rightPane], fractions: [0.22, 0.78], minSizes: [120, 200])
-        view = split
+        pane.style.grow = 1
+        view = pane
 
         // Wiring callbacks
         editor.onChange = { [weak self] _ in
@@ -147,99 +96,18 @@ public final class ScriptEditorPanel {
             self?.reloadGame()
         }
 
-        newButton.action = { [weak self] in
-            guard let self else { return }
-            self.newScriptBar.isHidden = false
-            self.newScriptField.text = ""
-        }
-
-        cancelButton.action = { [weak self] in
-            self?.newScriptBar.isHidden = true
-        }
-
-        createButton.action = { [weak self] in
-            self?.confirmNewScript()
-        }
-
-        newScriptField.onSubmit = { [weak self] _ in
-            self?.confirmNewScript()
-        }
-
         dismissErrorButton.action = { [weak self] in
             self?.errorBanner.isHidden = true
         }
 
-        fileList.onSelect = { [weak self] index in
-            guard let self, let index, self.files.indices.contains(index) else { return }
-            let file = self.files[index]
-            if file.url != self.currentScriptURL {
-                self.openScript(at: file.url)
-            }
-        }
-
-        refreshFiles()
-        if let first = files.first {
-            openScript(at: first.url)
-        }
-    }
-
-    public func refreshFiles() {
-        var found: [ScriptFile] = []
-        var seen = Set<String>()
-
-        func addFile(_ url: URL, base: URL) {
-            let standard = url.standardizedFileURL
-            guard standard.pathExtension == "swift" else { return }
-            guard !seen.contains(standard.path) else { return }
-            seen.insert(standard.path)
-
-            let rel: String
-            if standard.path.hasPrefix(base.standardizedFileURL.path) {
-                rel = String(standard.path.dropFirst(base.standardizedFileURL.path.count))
-                    .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            } else {
-                rel = standard.lastPathComponent
-            }
-            found.append(ScriptFile(name: standard.lastPathComponent, path: rel, url: standard))
-        }
-
-        func scanDirectory(_ dir: URL) {
-            guard let enumerator = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: [.isRegularFileKey],
-                                                                 options: [.skipsHiddenFiles]) else { return }
-            for case let fileURL as URL in enumerator {
-                if fileURL.pathExtension == "swift" {
-                    addFile(fileURL, base: dir)
-                }
-            }
-        }
-
-        // 1. Game module target sources
-        if let settings = session.gameModule.settings, let target = settings.target,
-           let packageURL = try? session.gameModule.packageURL() {
-            let targetDir = packageURL.appendingPathComponent("Sources/\(target)", isDirectory: true)
-            scanDirectory(targetDir)
-        }
-
-        // 2. Project sources and scripts
-        if let project = session.project {
-            scanDirectory(project.root.appendingPathComponent("Sources", isDirectory: true))
-            scanDirectory(project.root.appendingPathComponent("Scripts", isDirectory: true))
-        }
-
-        // 3. Fallback to startFolder Sources / Scripts
-        scanDirectory(session.startFolder.appendingPathComponent("Sources", isDirectory: true))
-        scanDirectory(session.startFolder.appendingPathComponent("Scripts", isDirectory: true))
-
-        found.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        files = found
-        fileList.items = files.map(\.name)
-
-        if let current = currentScriptURL, let idx = files.firstIndex(where: { $0.url == current }) {
-            fileList.selectRow(idx, reveal: false)
-        }
+        updateHeader()
     }
 
     public func openScript(at url: URL) {
+        guard session.isProjectScript(url.standardizedFileURL) else {
+            session.log.warning("Not opening \(url.path): only the project's own scripts can be edited here")
+            return
+        }
         if isDirty {
             save()
         }
@@ -252,10 +120,6 @@ public final class ScriptEditorPanel {
         editor.text = content
         isDirty = false
         updateHeader()
-
-        if let idx = files.firstIndex(where: { $0.url == url }) {
-            fileList.selectRow(idx, reveal: true)
-        }
     }
 
     public func save() {
@@ -304,59 +168,6 @@ public final class ScriptEditorPanel {
         }
     }
 
-    private func confirmNewScript() {
-        var rawName = newScriptField.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !rawName.isEmpty else { return }
-        if !rawName.hasSuffix(".swift") {
-            rawName += ".swift"
-        }
-
-        let componentName = String(rawName.dropLast(".swift".count))
-            .replacingOccurrences(of: " ", with: "")
-            .replacingOccurrences(of: "-", with: "_")
-
-        let destinationDir: URL
-        if let target = session.gameModule.settings?.target, let packageURL = try? session.gameModule.packageURL() {
-            destinationDir = packageURL.appendingPathComponent("Sources/\(target)", isDirectory: true)
-        } else if let project = session.project {
-            destinationDir = project.root.appendingPathComponent("Sources/\(project.name)", isDirectory: true)
-        } else {
-            destinationDir = session.startFolder.appendingPathComponent("Scripts", isDirectory: true)
-        }
-
-        let fileURL = destinationDir.appendingPathComponent(rawName)
-        let template = """
-        import Engine
-        import Foundation
-
-        /// Custom game component.
-        public struct \(componentName): Component, Equatable, Sendable {
-            public static let componentName = "\(componentName)"
-            public static var fieldHints: [String: FieldHints] {
-                ["speed": FieldHints(range: 0...20, step: 0.1, tooltip: "Movement speed")]
-            }
-
-            public var speed: Float = 2.0
-
-            public init(speed: Float = 2.0) {
-                self.speed = speed
-            }
-        }
-
-        """
-
-        do {
-            try FileManager.default.createDirectory(at: destinationDir, withIntermediateDirectories: true)
-            try template.write(to: fileURL, atomically: true, encoding: .utf8)
-            newScriptBar.isHidden = true
-            session.log.info("Created script \(rawName)")
-            refreshFiles()
-            openScript(at: fileURL)
-        } catch {
-            session.log.error("Failed to create script: \(error)")
-        }
-    }
-
     private func updateHeader() {
         if let url = currentScriptURL {
             titleLabel.text = url.lastPathComponent
@@ -368,12 +179,6 @@ public final class ScriptEditorPanel {
     }
 
     public func sync() {
-        // Check for newly added or removed script files periodically
-        if Date().timeIntervalSince(lastScannedDate) > 3.0 {
-            lastScannedDate = Date()
-            refreshFiles()
-        }
-
         // Check if game module reload error status changed
         if let err = session.gameModule.lastError, err != lastKnownError {
             lastKnownError = err

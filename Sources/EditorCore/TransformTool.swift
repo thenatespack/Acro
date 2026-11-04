@@ -43,6 +43,9 @@ public final class TransformTool: ViewportTool {
         if let button = event.button, button != .left { return false }
         gizmo.mode = Self.mode(for: context.toolMode)
         gizmo.snapping.isEnabled = context.snapping
+        gizmo.snapping.translateStep = context.snapSteps.translateStep
+        gizmo.snapping.rotateDegrees = context.snapSteps.rotateDegrees
+        gizmo.snapping.scaleStep = context.snapSteps.scaleStep
         let view = ViewportProjection(context.view, size: context.viewportSize, pixelScale: context.pixelScale)
         let world = context.world
         let selection = context.selection.entities(in: world)

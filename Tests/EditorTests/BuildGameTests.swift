@@ -81,8 +81,6 @@ private let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathCompon
     @Test func problemsFailBeforeAnythingRuns() throws {
         let session = makeSession()
         _ = try projectWithScene(session)
-        // A game export needs game code; this project has none.
-        #expect(throws: GameExportError.noGame) { try session.gameExport.start(.init()) }
         // The plan is made at once: a missing scene fails before anything runs in the background.
         #expect(throws: CookError.sceneNotFound("Missing.scene")) { try session.gameExport.start(.init(scenes: ["Missing.scene"], cookOnly: true)) }
         #expect(!session.gameExport.isBusy)
@@ -103,10 +101,39 @@ private let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathCompon
         #expect(options.enginePackage.standardizedFileURL.path == packageRoot.standardizedFileURL.path)
         #expect(options.cook.scenes == ["Scenes/Main.scene"])
         #expect(options.cook.target == CookTarget(platform: .current))
-        #expect(options.output.path.hasSuffix("Projects/SampleGame/Build/\(CookPlatform.current.rawValue)"))
-        // A project without game code can't be exported.
-        let bare = try Project.create(at: temporaryFolder().appendingPathComponent("BuildGameTestsBare"))
-        #expect(throws: GameExportError.noGame) { try GameExporter.options(for: bare) }
+        #expect(options.output.path.hasSuffix("Projects/SampleGame/Build/\(CookPlatform.current.rawValue)-\(BuildArchitecture.current.rawValue)"))
+        #expect(options.configuration == .release && options.architecture == .current)
+        let debug = try GameExporter.options(for: project, configuration: .debug, architecture: .x86_64)
+        #expect(debug.configuration == .debug && debug.architecture == .x86_64)
+        #expect(debug.output.lastPathComponent == "\(CookPlatform.current.rawValue)-x86_64-debug")
+        // A project without game code exports its scenes with a generated module, in its Library.
+        let bare = try Project.create(at: temporaryFolder().appendingPathComponent("Build Game Tests Bare"))
+        let sceneOnly = try GameExporter.options(for: bare)
+        #expect(sceneOnly.sceneOnly && sceneOnly.gameTarget == "BuildGameTestsBareScenes")
+        #expect(sceneOnly.gamePackage.path.hasSuffix("Library/GameExport"))
+        #expect(sceneOnly.enginePackage.standardizedFileURL.path == packageRoot.standardizedFileURL.path)  // above the working directory
+        #expect(throws: GameExportError.self) {
+            try GameExporter.sceneOnlyOptions(for: bare, build: GameBuildSettings(), scenes: nil, output: nil, target: nil,
+                                              engineSearchStarts: [URL(fileURLWithPath: "/")])
+        }
+        #expect(GameExporter.moduleName(for: "9 Lives!") == "Game9LivesScenes")
+    }
+
+    @Test func sceneOnlyPlayerPackageHasAGeneratedModule() throws {
+        let root = temporaryFolder().appendingPathComponent("BuildGameTestsSceneOnly")
+        let project = try Project.create(at: root)
+        let options = try GameExporter.options(for: project)
+        let placeholder = root.appendingPathComponent("placeholder.json")
+        try Data("{}".utf8).write(to: placeholder)
+        let exporter = GameExporter(options: options, cookPlan: try AssetCooker.plan(database: AssetDatabase(project: project),
+                                                                                     options: CookOptions(scenes: [placeholder.path])))
+        try exporter.writePlayerPackage()
+        let package = exporter.playerPackage
+        #expect(package.path.hasPrefix(project.libraryURL.path))
+        let stub = try String(contentsOf: package.appendingPathComponent("Sources/BuildGameTestsSceneOnlyScenes/Game.swift"), encoding: .utf8)
+        #expect(stub.contains("@_cdecl(\"\(GameModuleABI.entryPoint)\")") && stub.contains("game.name = \"BuildGameTestsSceneOnly\""))
+        let manifest = try String(contentsOf: package.appendingPathComponent("Package.swift"), encoding: .utf8)
+        #expect(manifest.contains(".executableTarget(name: \"BuildGameTestsSceneOnlyScenesPlayer\""))
     }
 
     @Test func playerPackageLinksTheGameStatically() throws {
@@ -133,13 +160,61 @@ private let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathCompon
         let date = try FileManager.default.attributesOfItem(atPath: root.appendingPathComponent("Package.swift").path)[.modificationDate] as? Date
         try exporter.writePlayerPackage()
         #expect(try FileManager.default.attributesOfItem(atPath: root.appendingPathComponent("Package.swift").path)[.modificationDate] as? Date == date)
-        #expect(exporter.buildCommand.prefix(5) == ["swift", "build", "-c", "release", "--product"])
+        // Linux: bundled libraries (GLFW) are found in lib/ next to the executable.
+        #expect(manifest.contains("\"-rpath\", \"-Xlinker\", \"$ORIGIN/lib\"]"))
+        #expect(exporter.buildCommand.prefix(4) == ["swift", "build", "-c", "release"])
+        #expect(exporter.buildCommand.suffix(2) == ["--product", "BuildGameTestsGamePlayer"])
+        var debugOptions = options
+        debugOptions.configuration = .debug
+        debugOptions.architecture = .x86_64
+        let debugCommand = GameExporter(options: debugOptions, cookPlan: exporter.cookPlan).buildCommand
+        #expect(debugCommand.prefix(4) == ["swift", "build", "-c", "debug"])
+        #if os(macOS)
+        #expect(debugCommand.contains("--arch") && debugCommand.contains("x86_64"))
+        // macOS exports are Metal only: no Homebrew Vulkan loader or GLFW for players to be missing.
+        #expect(exporter.buildEnvironment == ["ENGINE_DISABLE_VULKAN=1"])
+        #endif
         #if os(macOS)
         #expect(exporter.outputURL.lastPathComponent == "Build Game Tests.app")
         #expect(exporter.infoPlist.contains("<string>Build Game Tests</string>") && exporter.infoPlist.contains("local.swiftgameengine.buildgametests"))
         #else
         #expect(exporter.launcher.contains("--pack \"$here/Build Game Tests.pack\""))
         #endif
+    }
+
+    /// What the Export dialog offers: this machine's platform, both architectures on macOS.
+    @Test func buildablePlatformsAndArchitectures() {
+        #expect(EditorGameExport.unbuildableReason(platform: .current, architecture: .current) == nil)
+        let other: CookPlatform = CookPlatform.current == .linux ? .windows : .linux
+        #expect(EditorGameExport.unbuildableReason(platform: other, architecture: .current) != nil)
+        let otherArch: BuildArchitecture = BuildArchitecture.current == .arm64 ? .x86_64 : .arm64
+        #if os(macOS)
+        #expect(EditorGameExport.unbuildableReason(platform: .macos, architecture: otherArch) == nil)
+        #else
+        #expect(EditorGameExport.unbuildableReason(platform: .current, architecture: otherArch) != nil)
+        #endif
+        #expect(GameExporter.outputFolderName(platform: .linux, architecture: .arm64, configuration: .debug) == "linux-arm64-debug")
+        // Docker builds Linux only, for either architecture.
+        #expect(GameExporter.unbuildableReason(platform: .macos, architecture: .current, useDocker: true) == "Docker builds Linux games only")
+        if GameExporter.dockerExecutable != nil {
+            #expect(GameExporter.unbuildableReason(platform: .linux, architecture: otherArch, useDocker: true) == nil)
+        }
+    }
+
+    /// A Linux export bundles GLFW (from `ldd`'s output) and leaves system libraries alone.
+    @Test func lddOutputNamesTheLibrariesToBundle() {
+        let output = """
+            \tlinux-vdso.so.1 (0x0000ffff9a1b2000)
+            \tlibvulkan.so.1 => /lib/aarch64-linux-gnu/libvulkan.so.1 (0x0000ffff99f00000)
+            \tlibglfw.so.3 => /lib/aarch64-linux-gnu/libglfw.so.3 (0x0000ffff99e80000)
+            \tlibmissing.so.2 => not found
+            \t/lib/ld-linux-aarch64.so.1 (0x0000ffff9a170000)
+            """
+        let libraries = GameExporter.sharedLibraries(inLDDOutput: output)
+        #expect(libraries.map(\.name) == ["libvulkan.so.1", "libglfw.so.3"])
+        #expect(libraries.last?.path == "/lib/aarch64-linux-gnu/libglfw.so.3")
+        let bundled = libraries.filter { library in GameExporter.bundledLibraryPrefixes.contains { library.name.hasPrefix($0) } }
+        #expect(bundled.map(\.name) == ["libglfw.so.3"])
     }
 
     @Test func commandLineCooks() throws {
@@ -167,5 +242,46 @@ private let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathCompon
         #expect(FileManager.default.isExecutableFile(atPath: report.executablePath))
         #expect(FileManager.default.fileExists(atPath: report.packPath))
         #expect(report.linking == "static")
+    }
+}
+
+/// The Export Game dialog (ExportDialog.swift): its choice becomes `game.build`'s arguments, and
+/// platforms or architectures this machine can't build disable Export with the reason.
+@MainActor @Suite struct ExportDialogTests {
+    @Test func choiceDrivesTheBuildArguments() throws {
+        let session = makeSession()
+        try session.commands.run(ProjectNewCommand.self, .init(path: temporaryFolder().appendingPathComponent("ExportDialogTestsGame").path))
+        let dialog = ExportDialog(session: session)
+        #expect(dialog.choice == ExportDialog.Choice())
+        #expect(dialog.unavailableReason == nil)
+        let other: CookPlatform = CookPlatform.current == .linux ? .windows : .linux
+        dialog.select(.init(platform: other))
+        #expect(dialog.unavailableReason?.contains("are built on") == true)
+        dialog.select(.init(configuration: .debug))
+        #expect(dialog.unavailableReason == nil)
+        let arguments = dialog.choice.arguments
+        #expect(arguments.platform == .current && arguments.configuration == .debug && arguments.architecture == .current)
+        // Linux from another platform builds in Docker, for either architecture.
+        dialog.setPlatform(.linux)
+        if CookPlatform.current != .linux {
+            #expect(dialog.choice.useDocker)
+            dialog.select(.init(platform: .linux, architecture: .x86_64, useDocker: true))
+            #expect(dialog.choice.arguments.docker == true && dialog.choice.arguments.architecture == .x86_64)
+            #expect(dialog.unavailableReason == nil || dialog.unavailableReason?.contains("Docker") == true)
+        }
+        dialog.setPlatform(.current)
+        #expect(!dialog.choice.useDocker || CookPlatform.current == .linux)
+        // The output folder: empty is the default, a relative path is in the project.
+        dialog.select(.init(configuration: .debug))
+        #expect(dialog.outputFolder?.lastPathComponent == GameExporter.outputFolderName(platform: .current, architecture: .current,
+                                                                                         configuration: .debug))
+        dialog.setOutput("  Exports/Mine ")
+        #expect(dialog.choice.output == "Exports/Mine")
+        #expect(dialog.outputFolder?.path.hasSuffix("/Exports/Mine") == true, "\(dialog.outputFolder?.path ?? "nil")")
+        dialog.setOutput("")
+        #expect(dialog.choice.output == nil)
+        // Remembered for next time once exported.
+        session.gameExport.lastChoice = dialog.choice
+        #expect(ExportDialog(session: session).choice.configuration == .debug)
     }
 }

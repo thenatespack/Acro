@@ -254,13 +254,14 @@ public final class RecentProjectList {
 // MARK: Templates
 
 /// What a new project starts with (`project.new {template}`, the launcher's New Project).
+/// Every template also gets a Swift package for its game code (`ProjectScaffold`).
 public enum ProjectTemplate: String, CaseIterable, Codable, Sendable {
     /// Project.json, Assets/ and Library/; the editor opens an empty scene.
     case empty
     /// The starter scene saved as `Assets/Scenes/Main.scene` (Build Game's scene) and opened.
     case starter
     /// A copy of Projects/SampleGame: its assets, its scene and its game code (the SampleGame
-    /// target of the engine's package, which the editor builds and loads).
+    /// target's sources, copied into the project's own package).
     case game
 
     public var title: String {
@@ -276,7 +277,7 @@ public enum ProjectTemplate: String, CaseIterable, Codable, Sendable {
         switch self {
         case .empty: "An empty project and an empty scene."
         case .starter: "A camera, a sun, a floor and a few shapes in Scenes/Main.scene."
-        case .game: "A copy of the SampleGame project with its game code (Swift), built and loaded by the editor."
+        case .game: "A copy of the SampleGame project with its game code (Swift) as the project's own package."
         }
     }
 
@@ -320,12 +321,16 @@ public enum ProjectTemplate: String, CaseIterable, Codable, Sendable {
     }
 
     /// Makes the project at `url` (a new folder, or an existing one without a project) named
-    /// `name` (default: the folder's). Returns it and the scene to open, if any.
-    @MainActor public func create(at url: URL, name: String? = nil) throws -> (project: Project, scene: URL?) {
+    /// `name` (default: the folder's), with its own Swift package for game code
+    /// (`ProjectScaffold`). Returns it, the scene to open, if any, and what the scaffold made.
+    @MainActor public func create(at url: URL, name: String? = nil, engine: URL? = ProjectScaffold.findEngine())
+        throws -> (project: Project, scene: URL?, scaffold: ProjectScaffold.Result) {
         let root = url.standardizedFileURL
         switch self {
         case .empty:
-            return (try Project.create(at: root, name: name), nil)
+            var project = try Project.create(at: root, name: name)
+            let scaffold = try ProjectScaffold.write(into: &project, engine: engine)
+            return (project, nil, scaffold)
         case .starter:
             var project = try Project.create(at: root, name: name)
             let scene = project.url(forAssetPath: Self.mainScene)
@@ -336,7 +341,8 @@ public enum ProjectTemplate: String, CaseIterable, Codable, Sendable {
             try world.save().write(to: scene, options: .atomic)
             project.settings.build = GameBuildSettings(scenes: [Self.mainScene])
             try project.saveSettings()
-            return (project, scene)
+            let scaffold = try ProjectScaffold.write(into: &project, engine: engine)
+            return (project, scene, scaffold)
         case .game:
             guard let sample = Self.sampleGameURL() else { throw CommandError.failed(unavailableReason ?? "no sample project") }
             if Project.exists(at: root) { throw AssetError.projectExists(root.path) }
@@ -344,17 +350,26 @@ public enum ProjectTemplate: String, CaseIterable, Codable, Sendable {
             try Self.copyContents(of: sample, to: root, skipping: [Project.libraryFolder, "Build", ".DS_Store"])
             var project = try Project.open(at: root)
             project.settings.name = name ?? root.lastPathComponent
-            // The game code stays the engine package's SampleGame target: point at that package from here.
-            if var game = sampleProject.settings.game {
+            project.settings.game = nil
+            try project.saveSettings()
+            // The sample's game code (the engine package's SampleGame target) becomes the project's own target.
+            var sampleSources: URL?
+            if let game = sampleProject.settings.game, let target = game.target {
+                let package = game.package.map { sample.appendingPathComponent($0).standardizedFileURL } ?? GameModuleBuilder.findPackage(from: sample)
+                sampleSources = package?.appendingPathComponent("Sources/\(target)", isDirectory: true)
+            }
+            let scaffold = try ProjectScaffold.write(into: &project, engine: engine, sources: sampleSources)
+            if scaffold.target == nil, var game = sampleProject.settings.game {
+                // No package of its own: keep building the sample's target in the engine's package.
                 if let package = game.package {
                     let absolute = sample.appendingPathComponent(package).standardizedFileURL
                     game.package = Self.relativePath(from: root, to: absolute)
                 }
                 project.settings.game = game
+                try project.saveSettings()
             }
-            try project.saveSettings()
             let scene = project.url(forAssetPath: Self.mainScene)
-            return (project, FileManager.default.fileExists(atPath: scene.path) ? scene : nil)
+            return (project, FileManager.default.fileExists(atPath: scene.path) ? scene : nil, scaffold)
         }
     }
 

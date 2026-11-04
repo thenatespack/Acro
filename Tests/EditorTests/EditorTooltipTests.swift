@@ -35,13 +35,14 @@ import Testing
     #expect(mac.shortcutText(for: .save) == "⌘S" && other.shortcutText(for: .save) == "Ctrl+S")
     #expect(mac.shortcutText(for: .togglePlay) == "⌘P" && other.shortcutText(for: .togglePlay) == "Ctrl+P")
     #expect(mac.shortcutText(for: .delete) == "Delete" && mac.shortcutText(for: .focusSelection) == "F")
+    #expect(mac.shortcutText(for: .settings) == "⌘," && other.shortcutText(for: .settings) == "Ctrl+,")
     #expect(mac.tooltip("Undo Rename", for: .undo) == "Undo Rename (⌘Z)")
     #expect(other.tooltip("Undo Rename", for: .undo) == "Undo Rename (Ctrl+Z)")
 }
 
 @Test func shownBindingsAreTheRealBindings() {
     let all: [CommandID] = [.undo, .redo, .save, .duplicate, .delete, .focusSelection, .clearSelection, .togglePlay, .importAsset,
-                            .togglePause, .step]
+                            .togglePause, .step, .settings]
     #expect(EditorShortcuts.boundCommands == all)
     for shortcuts in [EditorShortcuts(shortcutModifier: .command), EditorShortcuts(shortcutModifier: .control)] {
         for action in all { #expect(shortcuts.action(for: shortcuts.binding(for: action)!) == action) }
@@ -59,10 +60,12 @@ import Testing
         #expect(tooltip(toolbar.view, "play") == "Play the scene (\(shortcuts.shortcutText(for: .togglePlay)))")
         #expect(tooltip(toolbar.view, "undo") == "Undo (\(shortcuts.shortcutText(for: .undo)))")
         #expect(tooltip(toolbar.view, "redo") == "Redo (\(shortcuts.shortcutText(for: .redo)))")
-        #expect(tooltip(toolbar.view, "scenePath") != nil && tooltip(toolbar.view, "view") != nil)
+        #expect(tooltip(toolbar.view, "view") != nil)
         #expect(tooltip(toolbar.view, "move") == "Move tool" && tooltip(toolbar.view, "rotate") == "Rotate tool")
         #expect(tooltip(toolbar.view, "scale") == "Scale tool")
-        #expect(tooltip(toolbar.view, "new") != nil && tooltip(toolbar.view, "open") != nil && tooltip(toolbar.view, "saveAs") != nil)
+        // Scenes are created and switched in the Files panel, not the toolbar.
+        #expect(toolbar.view.descendant(named: "new") == nil && toolbar.view.descendant(named: "open") == nil)
+        #expect(toolbar.view.descendant(named: "saveAs") == nil && toolbar.view.descendant(named: "scenePath") == nil)
     }
 
     @Test func undoAndPlayTooltipsTrackTheSession() {

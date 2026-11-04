@@ -31,8 +31,19 @@ public enum GameBuildCommand: EditorDeferredCommand {
         /// `Assets/`). Default: Project.json's `build.scenes`, else the open scene's file.
         public var scenes: [String]?
         /// The output folder, relative to the project folder. Default: `build.output` or
-        /// `Build`, plus the platform ("Build/macos").
+        /// `Build`, plus the platform, architecture and configuration ("Build/macos-arm64",
+        /// "Build/linux-x86_64-debug").
         public var output: String?
+        /// `macos`, `linux` or `windows`. Default: this machine's. A game can only be built for
+        /// this machine's platform (no cross-compiling); `cookOnly` cooks for any.
+        public var platform: CookPlatform?
+        /// `release` (optimized, the default) or `debug` (unoptimized, with assertions and debug info).
+        public var configuration: BuildConfiguration?
+        /// `x86_64` or `arm64`. Default: this machine's. macOS builds either; elsewhere only this
+        /// machine's, unless `docker`.
+        public var architecture: BuildArchitecture?
+        /// Build in a Docker container (Linux only): a Linux game from any machine, for either architecture.
+        public var docker: Bool?
         /// `bc` or `astc`. Default: `build.textureFamily`, else ASTC on macOS and BC elsewhere.
         public var textureFamily: TextureFamily?
         /// `compress` (every 8-bit texture block-compressed, the default) or `asImported`.
@@ -40,10 +51,15 @@ public enum GameBuildCommand: EditorDeferredCommand {
         /// Only cook the pack (`<output>/<name>.pack` and its manifest), without building the game.
         public var cookOnly: Bool?
 
-        public init(scenes: [String]? = nil, output: String? = nil, textureFamily: TextureFamily? = nil,
-                    textures: TextureCookMode? = nil, cookOnly: Bool? = nil) {
+        public init(scenes: [String]? = nil, output: String? = nil, platform: CookPlatform? = nil,
+                    configuration: BuildConfiguration? = nil, architecture: BuildArchitecture? = nil, docker: Bool? = nil,
+                    textureFamily: TextureFamily? = nil, textures: TextureCookMode? = nil, cookOnly: Bool? = nil) {
             self.scenes = scenes
             self.output = output
+            self.platform = platform
+            self.configuration = configuration
+            self.architecture = architecture
+            self.docker = docker
             self.textureFamily = textureFamily
             self.textures = textures
             self.cookOnly = cookOnly
@@ -56,11 +72,15 @@ public enum GameBuildCommand: EditorDeferredCommand {
     public static let title = "Build Game"
     public static let doc = """
         Exports the project as a standalone game: cooks every asset reachable from the scenes into one pack (textures \
-        block-compressed for the target GPU family, no source files), builds the game module and Engine in release and \
+        block-compressed for the target GPU family, no source files), builds the game module (a generated one that only plays the scenes when the project has no game code) and Engine in release and \
         links them into one executable, and lays out a runnable app (macOS: <output>/<Name>.app; Linux: <output>/<Name>/ \
         with run.sh). Runs in the background (the first build compiles Engine in release, minutes; later ones seconds); \
         progress and errors go to the console. Returns the output path, the pack's contents and sizes, and timings. \
-        `cookOnly` writes just the pack. The output folder is replaced.
+        `platform`, `architecture` (x86_64 or arm64) and `configuration` (release or debug) pick what is built; \
+        only this machine's platform can be built (macOS builds either architecture, other platforms only their own), \
+        except with `docker: true`, which builds a Linux game in a container from any machine for either architecture \
+        (Docker must be installed and running; the first build takes many minutes). `output` may be any folder. \
+        `cookOnly` writes just the pack (for any platform). The output folder is replaced.
         """
     public static func isAvailable(in session: EditorSession) -> Bool {
         unavailableReason(in: session) == nil
@@ -84,6 +104,8 @@ public final class EditorGameExport {
     public private(set) var lastResult: GameBuildResult?
     /// The last build's error, if it failed.
     public private(set) var lastError: String?
+    /// What the Export Game dialog last exported (its starting choice next time).
+    public var lastChoice: ExportDialog.Choice?
     /// Called when a build starts or finishes (toolbar refresh).
     public var onChange: (() -> Void)?
     private var job: ExportJob?
@@ -104,7 +126,10 @@ public final class EditorGameExport {
         guard !scenes.isEmpty else {
             throw CommandError.failed("Nothing to build: save the scene, pass scenes, or set \"build\": {\"scenes\": […]} in Project.json")
         }
-        let target = CookTarget(platform: .current, textureFamily: arguments.textureFamily ?? build.textureFamily)
+        let platform = arguments.platform ?? .current
+        let configuration = arguments.configuration ?? .release
+        let architecture = arguments.architecture ?? .current
+        let target = CookTarget(platform: platform, textureFamily: arguments.textureFamily ?? build.textureFamily)
         let output = arguments.output.map { URL(fileURLWithPath: $0, relativeTo: project.root).standardizedFileURL }
         let start = Date()
         let future = CommandFuture<GameBuildResult>()
@@ -126,14 +151,21 @@ public final class EditorGameExport {
             }
         } else {
             let game = session.gameModule.settings
+            let docker = arguments.docker ?? false
+            if let reason = Self.unbuildableReason(platform: platform, architecture: architecture, docker: docker) {
+                throw CommandError.failed(reason)
+            }
             var options = try GameExporter.options(for: project, game: game, gameBase: game != nil ? session.gameModule.baseURL : nil,
-                                                   scenes: scenes, output: output, target: target)
+                                                   scenes: scenes, output: output, target: target,
+                                                   configuration: configuration, architecture: architecture)
             if let textures = arguments.textures { options.cook.textures = textures }
+            options.useDocker = docker
             guard session.checkFileAccess(options.output, GameBuildCommand.title) else {
                 throw CommandError.failed("The output is outside the project folder")
             }
             let exporter = try GameExporter.prepare(database: assets, options: options)
-            session.log.info("Build: exporting \(options.name) (\(options.gameTarget)) to \(options.output.path)")
+            session.log.info("Build: exporting \(options.name) (\(options.gameTarget), \(platform.rawValue) \(architecture.rawValue) "
+                             + "\(configuration.rawValue)\(docker ? ", in Docker" : "")) to \(options.output.path)")
             run(job, future: future) { progress in
                 let report = try exporter.run(progress: progress)
                 return GameBuildResult(outputPath: report.outputPath, packPath: report.packPath, cook: report.cook,
@@ -142,6 +174,11 @@ public final class EditorGameExport {
             }
         }
         return future
+    }
+
+    /// Why this machine can't build a game for `platform` / `architecture` (in Docker with `docker`), or nil when it can.
+    public static func unbuildableReason(platform: CookPlatform, architecture: BuildArchitecture, docker: Bool = false) -> String? {
+        GameExporter.unbuildableReason(platform: platform, architecture: architecture, useDocker: docker)
     }
 
     private func run(_ job: ExportJob, future: CommandFuture<GameBuildResult>,

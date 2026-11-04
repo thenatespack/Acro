@@ -377,21 +377,21 @@ struct EditorIconTests {
 
     // MARK: Toolbar and accessibility
 
-    /// The toolbar is icon-only: one row at 1280 and 800 points wide, every button keeps its
-    /// title as its label in ui.snapshot and has a tooltip.
+    /// The toolbar is icon-only (except View, a menu that shows its title too): one row at 1280
+    /// and 800 points wide, every button keeps its title as its label in ui.snapshot and has a tooltip.
     @Test func toolbarFitsOneRowAndKeepsLabels() throws {
         for width in [Float(1280), 800] {
             let app = EditorApp(options: EditorOptions(deterministic: true))
             app.setupWithoutWindow(size: Vec2(width, 600))
             let toolbar = app.toolbar.view
             let buttons = toolbar.children.compactMap { $0 as? Button }.filter { !$0.isHidden }
-            #expect(buttons.count >= 17)
+            #expect(buttons.count >= 14)
             let rowHeight = app.ui.theme.controlHeight + toolbar.padding.vertical
             let layout = toolbar.children.filter { !$0.isHidden }.map { "\($0.name) \($0.frame.x),\($0.frame.y) \($0.frame.width)" }
             #expect(toolbar.frame.height <= rowHeight + 0.5, "\(width) pt: toolbar \(toolbar.frame.height) pt tall: \(layout)")
             let elements = app.ui.accessibilityElements()
             for button in buttons {
-                #expect(button.icon != nil && !button.showsTitle, "\(button.name)")
+                #expect(button.icon != nil && button.showsTitle == (button.name == "view"), "\(button.name)")
                 #expect(!(button.tooltip(at: button.frame.center) ?? "").isEmpty, "\(button.name)")
                 let element = try #require(elements.first { $0.widget === button })
                 #expect(element.label == button.title, "\(button.name): \(element.label ?? "nil")")

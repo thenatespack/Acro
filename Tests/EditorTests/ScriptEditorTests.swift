@@ -157,6 +157,71 @@ import Testing
         try? FileManager.default.removeItem(at: tempDir)
     }
 
+    @MainActor
+    @Test func scriptCommandsOnlyTouchProjectScripts() throws {
+        let log = EditorLog()
+        log.echoesToStandardOutput = false
+        let session = EditorSession(document: EditorDocument(), log: log)
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("ScriptScope-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        session.startFolder = tempDir
+
+        // An engine-style source next to the project, plus a user script the project owns.
+        let engineDir = tempDir.appendingPathComponent("Sources/Engine", isDirectory: true)
+        try FileManager.default.createDirectory(at: engineDir, withIntermediateDirectories: true)
+        let engineFile = engineDir.appendingPathComponent("Renderer.swift")
+        try "struct Renderer {}".write(to: engineFile, atomically: true, encoding: .utf8)
+        let userScript = try session.commands.run(ScriptNewCommand.self, .init(name: "camera-controller"))
+
+        let listed = try session.commands.run(ScriptListCommand.self, NoArguments()).scripts
+        #expect(listed.contains(where: { $0.hasSuffix("camera-controller.swift") }))
+        #expect(!listed.contains(where: { $0.hasSuffix("Renderer.swift") }))
+        #expect(throws: (any Error).self) {
+            try session.commands.run(ScriptOpenCommand.self, .init(path: engineFile.path))
+        }
+        #expect(throws: (any Error).self) {
+            try session.commands.run(ScriptSaveCommand.self, .init(path: engineFile.path, content: "// edited", reload: false))
+        }
+        #expect(try String(contentsOf: engineFile, encoding: .utf8) == "struct Renderer {}")
+        #expect(throws: (any Error).self) {
+            try session.commands.run(ScriptNewCommand.self, .init(name: "../Sources/Engine/Hack.swift"))
+        }
+        #expect(try session.commands.run(ScriptOpenCommand.self, .init(path: userScript.path)).content.contains("Component"))
+    }
+
+    /// The Files panel lists scenes and scripts as folders; files.open opens a script in the
+    /// Scripts editor and a scene in the Scene view.
+    @MainActor
+    @Test func filesListAndOpenScenesAndScripts() throws {
+        let log = EditorLog()
+        log.echoesToStandardOutput = false
+        let session = EditorSession(document: EditorDocument(), log: log)
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("FilesTest-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        session.startFolder = tempDir
+        let scenes = tempDir.appendingPathComponent("Assets/Scenes", isDirectory: true)
+        try FileManager.default.createDirectory(at: scenes, withIntermediateDirectories: true)
+        let saved = EditorDocument()
+        _ = saved.world.spawn(Transform(), Name("Marker"))
+        try saved.save(to: scenes.appendingPathComponent("Level.scene"))
+        let script = try session.commands.run(ScriptNewCommand.self, .init(name: "CameraController"))
+        var opened: [String] = []
+        session.onOpenScript = { opened.append($0) }
+
+        let listed = try session.commands.run(FilesListCommand.self, NoArguments()).files
+        #expect(listed.map(\.path) == ["Assets/Scenes/Level.scene", "Scripts/CameraController.swift"])
+        #expect(listed.map(\.kind) == [.scene, .script])
+
+        let panel = FilesPanel(session: session)
+        #expect(panel.tree.roots.map(\.title) == ["Assets", "Scripts"])
+        panel.open(listed[1])
+        #expect(opened.last.map { URL(fileURLWithPath: $0).standardizedFileURL.path } == URL(fileURLWithPath: script.path).standardizedFileURL.path)
+        try session.commands.run(FilesOpenCommand.self, .init(path: "Assets/Scenes/Level.scene"))
+        #expect(session.document.url?.lastPathComponent == "Level.scene")
+        #expect(session.world.entities.contains { session.displayName(of: $0) == "Marker" })
+        #expect(throws: (any Error).self) { try session.commands.run(FilesOpenCommand.self, .init(path: "README.md")) }
+    }
+
     // MARK: - ScriptEditorPanel Tests
 
     @MainActor
@@ -174,11 +239,11 @@ import Testing
         let fileURL = scriptsDir.appendingPathComponent("Enemy.swift")
         try "struct Enemy: Component {}".write(to: fileURL, atomically: true, encoding: .utf8)
 
+        let files = FilesPanel(session: session)
+        #expect(files.files.contains { $0.path == "Scripts/Enemy.swift" && $0.kind == .script })
+        #expect(files.node(for: "Scripts")?.children.first?.title == "Enemy.swift")
+
         let panel = ScriptEditorPanel(session: session)
-        panel.refreshFiles()
-
-        #expect(panel.files.contains(where: { $0.name == "Enemy.swift" }))
-
         panel.openScript(at: fileURL)
         #expect(panel.editor.text == "struct Enemy: Component {}")
         #expect(!panel.isDirty)

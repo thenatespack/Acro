@@ -328,6 +328,7 @@ public enum EditorIcons {
     /// Icons of the panels' tabs, by panel id (`EditorLayout`).
     public static let panelIconNames: [String: String] = [
         EditorLayout.viewport: "view",
+        EditorLayout.game: "gamepad-2",
         EditorLayout.hierarchy: "list-tree",
         EditorLayout.inspector: "sliders-horizontal",
         EditorLayout.console: "terminal",
@@ -335,6 +336,7 @@ public enum EditorIcons {
         EditorLayout.assets: "folder",
         EditorLayout.activity: "bot",
         EditorLayout.scripts: "file-code",
+        EditorLayout.files: "folder-open",
     ]
 
     /// Console lines by level.

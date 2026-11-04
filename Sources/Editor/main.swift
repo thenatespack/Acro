@@ -34,6 +34,7 @@ let usage = """
     """
 
 var config = EngineConfig(title: "Editor", width: 1440, height: 900, showDebugOverlay: false)
+config.icon = EditorAppIcon.image()
 // Below this the panels' minimum sizes no longer fit (docs/EditorUIReview.md #23).
 config.minimumWindowSize = (Int(EditorApp.minimumWindowSize.x), Int(EditorApp.minimumWindowSize.y))
 // EDITOR_WINDOW_SIZE=<w>x<h> (points) opens the window at that size, even past the screen (UI reviews).

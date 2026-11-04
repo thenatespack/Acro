@@ -153,8 +153,8 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
     }
 
     @Test func auditCatchesBrokenLayouts() throws {
-        // A toolbar that can't move anything into its More menu: its right end runs off a 700-point window.
-        let app = layoutApp(Vec2(700, 600))
+        // A toolbar that can't move anything into its More menu: its right end runs off a 520-point window.
+        let app = layoutApp(Vec2(520, 600))
         app.toolbar.view.overflowOrder = []
         app.ui.layoutIfNeeded()
         let kinds = Set(app.ui.layoutAudit().map(\.kind))
@@ -280,7 +280,11 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
         let client = LayoutClient(app)
         let opened = client.call("ui.click", ["label": "View", "role": "button"])["opened"]?.arrayValue ?? []
         let items = opened.filter { $0["role"] == "menuItem" }.compactMap { $0["label"]?.stringValue }
-        #expect(items.first == "Reset Layout")
+        // Every panel first (so a closed one can be opened again), then the settings and layout.
+        let panels = app.toolbar.menuPanels.map(\.title)
+        #expect(Array(items.prefix(panels.count)) == panels && panels.contains("Files") && panels.contains("Scripts"))
+        let settings = items.dropFirst(panels.count)
+        #expect(settings.first?.hasPrefix("Settings…") == true && settings.dropFirst().first == "Reset Layout")
         #expect(items.contains("Light Theme") && items.contains("Zoom 125%"))
         #expect(!items.contains("Game Theme"))  // a game HUD preset, not offered for the editor
         client.call("ui.click", ["label": "Light Theme", "role": "menuItem"])
@@ -296,7 +300,9 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
         // The menu checks what is chosen.
         client.call("ui.click", ["label": "View", "role": "button"])
         let menu = try #require(app.ui.overlays.compactMap { $0 as? PopupMenu }.last)
-        #expect(menu.checkedIndices == [2, 1 + EditorApp.menuThemes.count + 2])
+        let first = app.toolbar.menuPanels.count
+        let openPanels = Set(app.toolbar.menuPanels.indices.filter { app.dock.isOpen(app.toolbar.menuPanels[$0].id) })
+        #expect(menu.checkedIndices == openPanels.union([first + 3, first + 2 + EditorApp.menuThemes.count + 2]))
         client.call("ui.key", ["keys": ["escape"]])
         // The engine's Game preset is for game UI: refused, with the editor's themes named.
         #expect(throws: CommandError.self) { try app.session.commands.run(ViewAppearanceCommand.self, .init(theme: "game")) }
@@ -320,11 +326,12 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
         #expect((try? EditorApp.editorTheme(named: "high contrast"))?.name == "High Contrast")
     }
 
-    /// One toolbar row at 800 points with a project open (#661 follow-up): what doesn't fit goes
-    /// into the More menu, Build Game stays, the overflowed buttons keep their labels in
-    /// ui.snapshot, and ui.click on one opens the menu and clicks its entry.
+    /// One toolbar row with a project open (#661 follow-up): what doesn't fit goes into the More
+    /// menu, Build Game stays, the overflowed buttons keep their labels in ui.snapshot, and ui.click
+    /// on one opens the menu and clicks its entry. The whole toolbar fits the smallest window
+    /// (800 points), so this lays it out narrower than a window can be.
     @Test func toolbarOverflowsIntoAMoreMenu() throws {
-        let app = layoutApp(Vec2(800, 600), uiScale: 1)
+        let app = layoutApp(Vec2(560, 600), uiScale: 1)
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("EditorLayoutTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
         try #require(app.session.run(ProjectNewCommand.self, .init(path: folder.path)) != nil)
@@ -333,9 +340,9 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
         let rowHeight = app.ui.theme.controlHeight + toolbar.padding.vertical
         #expect(toolbar.frame.height <= rowHeight + 0.5)
         let build = try #require(toolbar.descendant(named: "buildGame") as? Button)
-        #expect(!build.isHidden && build.frame.maxX <= 800)
+        #expect(!build.isHidden && build.frame.maxX <= 560)
         #expect(!toolbar.overflowed.isEmpty && !toolbar.moreButton.isHidden)
-        expectClean(app, "800x600 with a project")
+        expectClean(app, "560x600 with a project")
         let elements = app.ui.accessibilityElements()
         for button in toolbar.overflowed {
             let item = try #require(elements.first { $0.path == "editorRoot/toolbar/overflow:\(button.name)" })

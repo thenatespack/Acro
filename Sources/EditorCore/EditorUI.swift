@@ -12,11 +12,15 @@ extension EditorApp {
         hierarchy.sync()
         assetBrowser.sync()
         scriptEditor?.sync()
+        files?.sync()
         inspector.refresh()
         console.refresh()
         activity.refresh()
         statusBar.refresh()
         toolbar.refresh()
+        settingsDialog?.refresh()
+        exportDialog?.refresh()
+        syncViewTabs()
         ui.layoutIfNeeded()
         updateViewportCaption()
     }
@@ -66,10 +70,10 @@ extension EditorApp {
     }
 
     /// Feeds `frames` to the viewport (`ViewportController.update`, its tools and camera) as
-    /// real input would arrive, one frame each. Refused while the viewport shows the game.
+    /// real input would arrive, one frame each. Refused while the Scene tab is hidden.
     public func viewportPointer(_ frames: [ViewportFrame], modifiers: KeyModifiers) throws {
-        if session.isPlaying, session.showsGameCamera, RenderPrep.findCamera(in: session.gameWorld) != nil {
-            throw CommandError.failed("The viewport shows the game while playing (Game View): use input.inject, or view.gameCamera {enabled: false}")
+        if !viewportWidget.isEffectivelyVisible {
+            throw CommandError.failed("The Scene view is hidden (the Game tab is in front): panel.focus {panel: \"viewport\"}, or input.inject to drive the game")
         }
         viewport.rect = viewportWidget.frame
         var last = frames.first?.position ?? .zero

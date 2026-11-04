@@ -2,7 +2,11 @@
 # Runs the steps of .github/workflows/linux.yml locally in Docker (arm64 on Apple silicon,
 # amd64 elsewhere): debug build, release build, swift test, and the lavapipe render step.
 #
-#   Scripts/linux-docker-ci.sh [step...]        steps: build release test render shell (default: all but shell)
+#   Scripts/linux-docker-ci.sh [step...]        steps: build release test render export shell
+#                                               (default: build release test render)
+#
+# export: Build Game for EXPORT_PROJECT (default Projects/SampleGame) with the Linux toolchain;
+# the game folder lands in .build/linux-ci/export/<Name>/ (run Scripts/linux-play-export.sh on it).
 #
 # SWIFT_IMAGE (default: the workflow's image) picks the toolchain; PLATFORM=linux/amd64 runs
 # x86_64 under emulation (slow). The checkout is copied (without .build / .git) into a Docker
@@ -40,6 +44,7 @@ docker run --rm ${platform:+--platform "$platform"} \
     -e VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
     -e LIBGL_ALWAYS_SOFTWARE=1 -e ENGINE_CRASH_DIR=/out/crashes \
     -e TEST_FILTER="${TEST_FILTER:-}" -e STEPS="${steps[*]}" \
+    -e EXPORT_PROJECT="${EXPORT_PROJECT:-Projects/SampleGame}" \
     ${DOCKER_TTY:+-it} "$tag" bash -c '
 set -uo pipefail
 rsync -a --delete --exclude /.build --exclude /.git --exclude /.claude /src/ /work/src/
@@ -62,6 +67,9 @@ for step in $STEPS; do
                  rm -rf /out/shots
                  run render xvfb-run -a -s "-screen 0 1280x720x24" Scripts/render-scenes.sh low /out/shots
                  grep -E "^(ok|FAIL|DIFF)" /out/render.log ;;
+        export)  rm -rf /out/export
+                 run export swift run -c release Editor --build-game "$EXPORT_PROJECT" --out /out/export
+                 tail -8 /out/export.log ;;
         shell)   bash ;;
         *)       echo "unknown step $step"; status=1 ;;
     esac

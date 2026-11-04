@@ -29,8 +29,9 @@ public enum GamePlayer {
         public var pack: String?
         public var scene: String?
         public var backend: GraphicsBackend?
-        public var width = 1280
-        public var height = 720
+        /// `--size`; nil: the project's runtime window size, else 1280 x 720.
+        public var width: Int?
+        public var height: Int?
 
         public init() {}
 
@@ -129,9 +130,12 @@ public enum GamePlayer {
             let assets = AssetDatabase(mounting: pack)
             self.assets = assets
             let game = try makeGame(module: module, assets: assets, scene: options.scene)
-            var config = EngineConfig(title: module.name.isEmpty ? pack.manifest.name : module.name,
-                                      width: options.width, height: options.height, showDebugOverlay: false)
-            config.backend = options.backend
+            var config = EngineConfig(title: module.name.isEmpty ? pack.manifest.name : module.name, showDebugOverlay: false)
+            // The project's runtime settings, then the command line's size.
+            pack.manifest.runtime?.apply(to: &config)
+            if let width = options.width { config.width = width }
+            if let height = options.height { config.height = height }
+            if let backend = options.backend { config.backend = backend }
             let engine = try Engine(config: config)
             try engine.run(game)
             exit(0)
@@ -181,13 +185,17 @@ final class PackSceneGame: Game {
                                       key: "checker")
         renderer.assets = assets
         try world.load(scene)
+        let runtime = assets.pack?.manifest.runtime ?? ProjectRuntimeSettings()
+        runtime.apply(to: world)
         if world.count(of: Collider.self) > 0 {
             let physics = PhysicsWorld()
+            runtime.apply(to: physics)
             world.addPhysics(physics)
             self.physics = physics
         }
         if world.count(of: Collider2D.self) > 0 {
             let physics = PhysicsWorld2D()
+            runtime.apply(to: physics)
             world.addPhysics2D(physics)
             physics2D = physics
         }

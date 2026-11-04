@@ -19,6 +19,9 @@ import Foundation
 //   "version" : 1
 // }
 // ```
+//
+// Optional sections: `game` (the game code, `GameModuleSettings`), `build` (Build Game,
+// `GameBuildSettings`) and `runtime` (window and physics, `ProjectRuntimeSettings`).
 
 /// Errors from projects, sidecars and imports.
 public enum AssetError: Error, CustomStringConvertible, Equatable {
@@ -56,14 +59,18 @@ public struct ProjectSettings: Equatable, Sendable, Codable {
     /// What Build Game and `--cook` use by default (`"build": {"scenes": ["Scenes/Main.scene"]}`;
     /// see `GameBuildSettings`). nil: none.
     public var build: GameBuildSettings?
+    /// How the game runs: window, render quality, physics (`"runtime": {"window": {...},
+    /// "physics": {...}}`; see `ProjectRuntimeSettings`). nil: the engine's defaults.
+    public var runtime: ProjectRuntimeSettings?
 
-    public init(name: String, game: GameModuleSettings? = nil, build: GameBuildSettings? = nil) {
+    public init(name: String, game: GameModuleSettings? = nil, build: GameBuildSettings? = nil, runtime: ProjectRuntimeSettings? = nil) {
         self.name = name
         self.game = game
         self.build = build
+        self.runtime = runtime
     }
 
-    private enum CodingKeys: String, CodingKey { case format, version, name, game, build }
+    private enum CodingKeys: String, CodingKey { case format, version, name, game, build, runtime }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -72,6 +79,7 @@ public struct ProjectSettings: Equatable, Sendable, Codable {
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
         game = try c.decodeIfPresent(GameModuleSettings.self, forKey: .game)
         build = try c.decodeIfPresent(GameBuildSettings.self, forKey: .build)
+        runtime = try c.decodeIfPresent(ProjectRuntimeSettings.self, forKey: .runtime)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -81,6 +89,7 @@ public struct ProjectSettings: Equatable, Sendable, Codable {
         try c.encode(name, forKey: .name)
         try c.encodeIfPresent(game, forKey: .game)
         try c.encodeIfPresent(build, forKey: .build)
+        if let runtime, !runtime.isEmpty { try c.encode(runtime, forKey: .runtime) }
     }
 }
 

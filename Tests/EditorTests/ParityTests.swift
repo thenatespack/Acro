@@ -99,6 +99,18 @@ private func temporaryDirectory() -> URL {
         // Rename and import bars.
         try click("Rename", role: .button)
         check("the rename bar")
+        // The Settings window, both tabs (and the View menu that opens it).
+        app.toolbar.showViewMenu()
+        check("the View menu")
+        closeOverlays()
+        app.showSettings(tab: .editor)
+        #expect(ui.overlays.last is SettingsDialog)
+        check("the Settings window's Editor tab")
+        app.showSettings(tab: .project)
+        app.syncPanels()
+        check("the Settings window's Project tab")
+        closeOverlays()
+        #expect(app.settingsDialog == nil)
 
         #expect(seen.count > 60, "only \(seen.count) interactive elements were seen")
     }
@@ -106,17 +118,18 @@ private func temporaryDirectory() -> URL {
     /// At 1440 wide the toolbar's More (») button is hidden, so its entries aren't walked above:
     /// at a narrow window every More-menu entry must run a registered MCP command too.
     @Test func everyMoreMenuEntryRunsACommandThatIsATool() throws {
+        // The whole toolbar fits the smallest window (800 wide): lay it out narrower so it overflows.
         let app = EditorApp(options: EditorOptions(deterministic: true))
         app.setupWithoutWindow()
         let session = app.session
         let ui = app.ui!
         let project = temporaryDirectory().appendingPathComponent("Game")
         try session.commands.run(ProjectNewCommand.self, .init(path: project.path))
-        app.resizeWithoutWindow(size: Vec2(800, 600))
+        app.resizeWithoutWindow(size: Vec2(560, 600))
         app.syncPanels()
         let tools = toolNames(session)
         let row = app.toolbar.view
-        #expect(!row.overflowed.isEmpty, "800 wide should overflow some toolbar buttons")
+        #expect(!row.overflowed.isEmpty, "560 wide should overflow some toolbar buttons")
         let menu = try #require(row.showOverflowMenu())
         #expect(menu.items.count == row.overflowed.count)
         #expect(menu.itemCommandIDs.count == menu.items.count)

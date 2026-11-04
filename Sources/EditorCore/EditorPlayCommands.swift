@@ -196,7 +196,7 @@ public enum ViewGameCameraCommand: EditorCommand {
 
     public static let id: CommandID = .toggleGameCamera
     public static let title = "Game View"
-    public static let doc = "Whether the viewport shows the scene's Camera entity while playing (and forwards the keyboard and the mouse over it to the game) or the editor camera. On by default."
+    public static let doc = "Whether play happens in the Game view: Play brings the Game tab (the scene's Camera entity) to the front and the game gets the keyboard and the mouse over it; off, Play stays in the Scene view (the editor camera). While playing it switches between the two tabs, and picking a tab sets it. On by default."
     public static func unavailableReason(in session: EditorSession) -> String? { nil }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
         session.showsGameCamera = arguments.enabled ?? !session.showsGameCamera

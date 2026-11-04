@@ -235,9 +235,11 @@ private func temporaryDirectory() -> URL {
         // MCP / the toolbar (project.open).
         try session.commands.run(ProjectOpenCommand.self, .init(path: b.root.path))
         #expect(session.recentProjects.entries.map(\.name) == ["Beta", "Alpha"])
-        // The toolbar's Open Project button.
-        app.toolbar.projectPath.text = a.root.path
+        // The toolbar's Open Project button: without a window there's no folder picker, so it goes
+        // to the launcher's Open form.
         app.openProject()
+        #expect(app.isLauncherShown && app.launcher.page == .open)
+        try session.commands.run(ProjectOpenCommand.self, .init(path: a.root.path))
         #expect(session.recentProjects.entries.map(\.name) == ["Alpha", "Beta"])
         // project.new.
         try session.commands.run(ProjectNewCommand.self, .init(path: folder.appendingPathComponent("Gamma").path))
@@ -249,6 +251,54 @@ private func temporaryDirectory() -> URL {
             try session.commands.run(SceneSaveAsCommand.self, .init(path: folder.appendingPathComponent("Outside.scene").path))
         }
         #expect(session.recentProjects.entry("Gamma")?.lastScene?.hasSuffix("Level.scene") == true)
+    }
+
+    @Test func filesPanelScenesAreFromTheProjectFolder() throws {
+        let folder = temporaryDirectory()
+        let project = try Project.create(at: folder.appendingPathComponent("Alpha"))
+        var options = EditorOptions(projectPath: project.root.path, deterministic: true)
+        options.recovery = false
+        let app = EditorApp(options: options)
+        app.session.log.echoesToStandardOutput = false
+        app.setupWithoutWindow()
+        let session = app.session
+        app.toolbar.refresh()
+        #expect(app.toolbar.projectLabel.text == "Alpha")
+        #expect(app.toolbar.projectLabel.tooltip?.contains(project.root.path) == true)
+        // The Files panel's New Scene makes it in the project's Assets/Scenes, and the scene
+        // path is kept from the project folder.
+        app.files.startNaming(.scene)
+        app.files.create(named: "Level")
+        #expect(session.document.url?.path.hasSuffix("Alpha/Assets/Scenes/Level.scene") == true)
+        #expect(app.scenePath == "Assets/Scenes/Level.scene")
+        #expect(app.files.files.contains { $0.path == "Assets/Scenes/Level.scene" && $0.kind == .scene })
+        // A click on it in Files opens it again.
+        session.run(SceneNewCommand.self)
+        let level = try #require(app.files.files.first { $0.path == "Assets/Scenes/Level.scene" })
+        app.files.open(level)
+        #expect(session.document.url?.path.hasSuffix("Alpha/Assets/Scenes/Level.scene") == true)
+        // The name is taken now.
+        #expect(throws: CommandError.self) { try session.commands.run(FilesNewSceneCommand.self, .init(name: "Level")) }
+        // A path outside the project stays whole.
+        #expect(app.toolbarScenePath("/tmp/elsewhere.scene") == "/tmp/elsewhere.scene")
+        #expect(app.toolbarScenePath(project.root.appendingPathComponent("Assets/Level.scene").path) == "Assets/Level.scene")
+        // Closing the project: the label says so.
+        session.run(LauncherShowCommand.self)
+        app.toolbar.refresh()
+        #expect(app.toolbar.projectLabel.text == "No project")
+    }
+
+    @Test func toolbarNewProjectGoesToTheLaunchersForm() throws {
+        let folder = temporaryDirectory()
+        let project = try Project.create(at: folder.appendingPathComponent("Alpha"))
+        var options = EditorOptions(projectPath: project.root.path, deterministic: true)
+        options.recovery = false
+        let app = EditorApp(options: options)
+        app.session.log.echoesToStandardOutput = false
+        app.setupWithoutWindow()
+        app.newProject()
+        #expect(app.isLauncherShown && app.launcher.page == .newProject)
+        #expect(app.session.project == nil)
     }
 
     // MARK: Templates
@@ -269,6 +319,12 @@ private func temporaryDirectory() -> URL {
         #expect(session.document.url?.path.hasSuffix("Starter/Assets/Scenes/Main.scene") == true)
         #expect(session.world.entityCount > 5)
         #expect(session.project?.settings.build?.scenes == [ProjectTemplate.mainScene])
+        // Every template gets a Swift package for game code.
+        let starter = try #require(session.project)
+        #expect(starter.settings.game?.target == "Starter" && starter.settings.game?.package == ".")
+        for path in ["Package.swift", "Sources/Starter/Starter.swift", ".gitignore"] {
+            #expect(FileManager.default.fileExists(atPath: starter.root.appendingPathComponent(path).path), "\(path)")
+        }
 
         try session.commands.run(LauncherShowCommand.self)
         let gameFolder = folder.appendingPathComponent("Shooter Game")
@@ -276,11 +332,10 @@ private func temporaryDirectory() -> URL {
         let project = try #require(session.project)
         #expect(project.name == "Shooter" && project.root.lastPathComponent == "Shooter Game")
         let game = try #require(project.settings.game)
-        #expect(game.target == "SampleGame")
-        // The package path, relative to the new project, still names the engine's package.
-        let package = URL(fileURLWithPath: try #require(game.package), relativeTo: project.root).standardizedFileURL
-        #expect(FileManager.default.fileExists(atPath: package.appendingPathComponent("Package.swift").path))
-        #expect(FileManager.default.fileExists(atPath: package.appendingPathComponent("Sources/SampleGame").path))
+        // The sample's game code becomes the project's own package.
+        #expect(game.target == "Shooter" && game.package == ".")
+        #expect(FileManager.default.fileExists(atPath: project.root.appendingPathComponent("Package.swift").path))
+        #expect(FileManager.default.fileExists(atPath: project.root.appendingPathComponent("Sources/Shooter/SampleGame.swift").path))
         #expect(FileManager.default.fileExists(atPath: project.url(forAssetPath: "Models/BoomBox.glb").path))
         #expect(!FileManager.default.fileExists(atPath: project.libraryURL.appendingPathComponent("index.json").path),
                 "the sample's Library isn't copied")
@@ -297,6 +352,43 @@ private func temporaryDirectory() -> URL {
         #expect(throws: (any Error).self) { try session.commands.run(ProjectNewCommand.self, .init()) }
         // New Project remembers the location for next time.
         #expect(session.recentProjects.newProjectLocation == folder.path)
+    }
+
+    @Test func scaffoldWritesAPackageForGameCode() throws {
+        let folder = temporaryDirectory()
+        let engine = try #require(ProjectScaffold.findEngine())
+        var project = try Project.create(at: folder.appendingPathComponent("my cool-game"))
+        let result = try ProjectScaffold.write(into: &project, engine: engine)
+        #expect(result.target == "MyCoolGame" && result.skipped == nil)
+        #expect(project.settings.game == GameModuleSettings(target: "MyCoolGame", package: "."))
+        #expect(try Project.open(at: project.root).settings.game?.target == "MyCoolGame", "saved")
+        let manifest = try String(contentsOf: project.root.appendingPathComponent("Package.swift"), encoding: .utf8)
+        #expect(manifest.contains(engine.path) && manifest.contains("SWIFT_GAME_ENGINE") && manifest.contains(#"name: "MyCoolGame""#))
+        let source = try String(contentsOf: project.root.appendingPathComponent("Sources/MyCoolGame/MyCoolGame.swift"), encoding: .utf8)
+        #expect(source.contains(GameModuleABI.entryPoint))
+        let ignore = try String(contentsOf: project.root.appendingPathComponent(".gitignore"), encoding: .utf8)
+        #expect(ignore.contains("/Library/") && ignore.contains("/.build/") && ignore.contains("/Build/"))
+
+        // Again: an existing Package.swift is kept, the .gitignore isn't repeated.
+        let again = try ProjectScaffold.write(into: &project, engine: engine)
+        #expect(again.target == nil && again.skipped != nil)
+        #expect(try String(contentsOf: project.root.appendingPathComponent(".gitignore"), encoding: .utf8) == ignore)
+
+        // No engine: no package, and why.
+        var bare = try Project.create(at: folder.appendingPathComponent("Bare"))
+        let skipped = try ProjectScaffold.write(into: &bare, engine: nil)
+        #expect(skipped.target == nil && skipped.skipped?.contains("SWIFT_GAME_ENGINE") == true && bare.settings.game == nil)
+        #expect(!FileManager.default.fileExists(atPath: bare.root.appendingPathComponent("Package.swift").path))
+    }
+
+    @Test func scaffoldTargetNames() {
+        #expect(ProjectScaffold.targetName(for: "My Game") == "MyGame")
+        #expect(ProjectScaffold.targetName(for: "space-shooter 2!") == "SpaceShooter2")
+        #expect(ProjectScaffold.targetName(for: "3D Racer") == "Game3DRacer")
+        #expect(ProjectScaffold.targetName(for: "日本") == "Game")
+        // Names the engine's package uses are taken.
+        #expect(ProjectScaffold.targetName(for: "Engine", reserved: ["Engine", "EngineGame"]) == "EngineGameGame")
+        #expect(ProjectScaffold.targetName(for: "sample game", reserved: ["SampleGame"]) == "SampleGameGame")
     }
 
     // MARK: Showing and leaving

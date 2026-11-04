@@ -65,9 +65,13 @@ public struct CookOptions: Equatable, Sendable, Codable {
     public var packName: String?
     /// Also write `<name>.manifest.json` (the table of contents, for people and tools).
     public var writesManifest: Bool
+    /// Stored in the pack's manifest for the player (`AssetPackManifest.runtime`).
+    public var runtime: ProjectRuntimeSettings?
 
     public init(scenes: [String], include: [String] = [], target: CookTarget = CookTarget(), textures: TextureCookMode = .compress,
-                textureQuality: TextureCompressionQuality? = nil, packName: String? = nil, writesManifest: Bool = true) {
+                textureQuality: TextureCompressionQuality? = nil, packName: String? = nil, writesManifest: Bool = true,
+                runtime: ProjectRuntimeSettings? = nil) {
+        self.runtime = runtime
         self.scenes = scenes
         self.include = include
         self.target = target
@@ -300,6 +304,7 @@ public struct CookPlan: Sendable {
         let writer = AssetPackFormat.Writer()
         var manifest = AssetPackManifest(name: projectName, platform: options.target.platform, textureFamily: options.target.textureFamily,
                                          vertexStride: MemoryLayout<MeshVertex>.stride, scenes: [], assets: [])
+        if let runtime = options.runtime, !runtime.isEmpty { manifest.runtime = runtime }
         for (scene, data) in sceneData {
             manifest.scenes.append(AssetPackManifest.Scene(path: scene.path, blob: writer.add(data)))
         }

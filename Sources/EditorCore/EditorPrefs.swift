@@ -3,7 +3,8 @@ import Foundation
 
 /// Per-user editor settings that persist between launches: the dock layout, the last scene and
 /// the last project (pre-filled in the project path field), the launcher's recent projects and
-/// whether to skip it, and the AI settings (read-only mode, confirmations, the HTTP server).
+/// whether to skip it, the AI settings (read-only mode, confirmations, the HTTP server) and the
+/// editor settings (snap steps, viewport camera).
 public struct EditorPrefs: Codable, Equatable, Sendable {
     public static let currentVersion = 1
     public var version = EditorPrefs.currentVersion
@@ -22,6 +23,8 @@ public struct EditorPrefs: Codable, Equatable, Sendable {
     public var reopenLastProject: Bool?
     /// The folder New Project last created a project in (nil: ~/Games).
     public var newProjectLocation: String?
+    /// Snap steps and the viewport camera (nil: the defaults); see `EditorSettings`.
+    public var editor: EditorSettings?
 
     public init(layout: DockLayout? = nil, lastScenePath: String? = nil, lastProjectPath: String? = nil, ai: AISettings? = nil) {
         self.layout = layout
@@ -74,7 +77,9 @@ public struct EditorPrefsStore: Sendable {
 
 /// The editor's panels and their default arrangement.
 public enum EditorLayout {
+    /// The Scene view (the editor camera, gizmos) and the Game view (the scene's Camera entity).
     public static let viewport = "viewport"
+    public static let game = "game"
     public static let hierarchy = "hierarchy"
     public static let inspector = "inspector"
     public static let console = "console"
@@ -82,16 +87,21 @@ public enum EditorLayout {
     public static let assets = "assets"
     public static let activity = "activity"
     public static let scripts = "scripts"
-    public static let panelIDs = [viewport, hierarchy, inspector, console, stats, assets, activity, scripts]
+    public static let files = "files"
+    public static let panelIDs = [viewport, game, hierarchy, inspector, console, stats, assets, activity, scripts, files]
 
-    /// Hierarchy left, inspector right, the viewport in the middle above an Assets / Scripts /
-    /// Console / Activity / Stats tab group.
+    /// Hierarchy above Files on the left, inspector right, the Scene view (tabbed with the Game
+    /// view and Scripts, so scripts open where the Scene view is) in the middle above an Assets / Console / Activity /
+    /// Stats tab group.
     public static let defaultLayout = DockLayout(
         root: .split(axis: .horizontal, fractions: [0.19, 0.57, 0.24], children: [
-            .tabs(panels: [hierarchy], active: hierarchy),
+            .split(axis: .vertical, fractions: [0.55, 0.45], children: [
+                .tabs(panels: [hierarchy], active: hierarchy),
+                .tabs(panels: [files], active: files),
+            ]),
             .split(axis: .vertical, fractions: [0.64, 0.36], children: [
-                .tabs(panels: [viewport], active: viewport),
-                .tabs(panels: [assets, scripts, console, activity, stats], active: assets),
+                .tabs(panels: [viewport, game, scripts], active: viewport),
+                .tabs(panels: [assets, console, activity, stats], active: assets),
             ]),
             .tabs(panels: [inspector], active: inspector),
         ]))
@@ -109,6 +119,17 @@ public enum EditorLayout {
         }
         if let found = layout.root.flatMap(visit) { return found }
         return layout.floating.first { $0.panels.contains(id) }?.active
+    }
+
+    /// Whether `a` and `b` are tabs of the same group.
+    public static func shareGroup(in layout: DockLayout, _ a: String, _ b: String) -> Bool {
+        func visit(_ node: DockLayout.Node) -> Bool {
+            switch node {
+            case .split(_, _, let children): return children.contains(where: visit)
+            case .tabs(let panels, _): return panels.contains(a) && panels.contains(b)
+            }
+        }
+        return layout.root.map(visit) ?? false || layout.floating.contains { $0.panels.contains(a) && $0.panels.contains(b) }
     }
 
     /// The layout to start with: the stored one if it still shows the viewport, else the default.

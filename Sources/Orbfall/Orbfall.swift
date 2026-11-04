@@ -164,6 +164,8 @@ public func registerOrbfall(_ module: UnsafeMutableRawPointer) -> Int32 {
             OrbfallSystems.run(world, input: context.input, log: context.log)
         }
         game.system("orbfall.pegs", after: "orbfall.game") { world, _ in OrbfallSystems.animatePegs(world) }
+        game.component(Pulse.self, icon: "heart") { Pulse() }
+        game.system("orbfall.pulse") { world, _ in PulseSystem.run(world) }
     }
 }
 

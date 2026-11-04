@@ -214,6 +214,8 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate, NSApplicat
         shouldClose = true
     }
 
+    func setIcon(_ image: Image) { setMacAppIcon(image) }
+
     func destroy() {
         applyCursor(.arrow, captured: false)
         window.delegate = nil
@@ -234,11 +236,38 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate, NSApplicat
         return .terminateCancel  // The main loop ends and shuts down normally.
     }
 
+    private var appName = ""
+    private var appMenuItems: [AppMenuItem] = []
+
+    func setAppMenuItems(_ items: [AppMenuItem]) {
+        appMenuItems = items
+        installMenu(appName: appName)
+    }
+
+    @objc private func appMenuItemChosen(_ sender: NSMenuItem) {
+        guard appMenuItems.indices.contains(sender.tag) else { return }
+        appMenuItems[sender.tag].action()
+    }
+
     private func installMenu(appName: String) {
+        self.appName = appName
         let mainMenu = NSMenu()
         let appItem = NSMenuItem()
         mainMenu.addItem(appItem)
         let appMenu = NSMenu()
+        for (index, item) in appMenuItems.enumerated() {
+            let menuItem = NSMenuItem(title: item.title, action: #selector(appMenuItemChosen(_:)), keyEquivalent: item.keyEquivalent)
+            var flags: NSEvent.ModifierFlags = []
+            if item.modifiers.contains(.command) { flags.insert(.command) }
+            if item.modifiers.contains(.shift) { flags.insert(.shift) }
+            if item.modifiers.contains(.alt) { flags.insert(.option) }
+            if item.modifiers.contains(.control) { flags.insert(.control) }
+            menuItem.keyEquivalentModifierMask = flags
+            menuItem.target = self
+            menuItem.tag = index
+            appMenu.addItem(menuItem)
+        }
+        if !appMenuItems.isEmpty { appMenu.addItem(.separator()) }
         let quit = NSMenuItem(title: "Quit \(appName)", action: #selector(quitFromMenu(_:)), keyEquivalent: "q")
         quit.target = self
         appMenu.addItem(quit)
@@ -251,7 +280,7 @@ final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate, NSApplicat
         0: .a, 11: .b, 8: .c, 2: .d, 14: .e, 3: .f, 5: .g, 4: .h, 34: .i, 38: .j, 40: .k, 37: .l, 46: .m,
         45: .n, 31: .o, 35: .p, 12: .q, 15: .r, 1: .s, 17: .t, 32: .u, 9: .v, 13: .w, 7: .x, 16: .y, 6: .z,
         29: .num0, 18: .num1, 19: .num2, 20: .num3, 21: .num4, 23: .num5, 22: .num6, 26: .num7, 28: .num8, 25: .num9,
-        49: .space, 36: .enter, 53: .escape, 48: .tab, 51: .backspace, 50: .grave, 33: .leftBracket, 30: .rightBracket,
+        49: .space, 36: .enter, 53: .escape, 48: .tab, 51: .backspace, 50: .grave, 33: .leftBracket, 30: .rightBracket, 43: .comma,
         122: .f1, 120: .f2, 99: .f3, 118: .f4, 96: .f5, 97: .f6, 98: .f7, 100: .f8, 101: .f9, 109: .f10,
         103: .f11, 111: .f12,
         117: .delete, 115: .home, 119: .end, 116: .pageUp, 121: .pageDown,

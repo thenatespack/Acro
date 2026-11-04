@@ -11,6 +11,60 @@ public enum EditorScriptCommands {
     ]
 }
 
+// MARK: - Project script scope
+
+extension EditorSession {
+    /// Folders that hold the project's own game scripts (the ones a user creates, such as
+    /// `CameraController.swift`). Script tools only list, open and save `.swift` files inside
+    /// these, never engine or editor sources that happen to sit next to the project.
+    public var scriptRoots: [URL] {
+        var roots: [URL] = []
+        if let target = gameModule.settings?.target, let packageURL = try? gameModule.packageURL() {
+            roots.append(packageURL.appendingPathComponent("Sources/\(target)", isDirectory: true))
+        }
+        if let project {
+            roots.append(project.root.appendingPathComponent("Sources/\(project.name)", isDirectory: true))
+            roots.append(project.root.appendingPathComponent("Scripts", isDirectory: true))
+            roots.append(project.assetsURL)
+        } else {
+            roots.append(startFolder.appendingPathComponent("Scripts", isDirectory: true))
+        }
+        var seen = Set<String>()
+        return roots.map(\.standardizedFileURL).filter { seen.insert($0.path).inserted }
+    }
+
+    /// Where new scripts go: the first script root.
+    public var scriptDestination: URL { scriptRoots[0] }
+
+    /// Whether `url` is a project script: a `.swift` file inside one of `scriptRoots`.
+    public func isProjectScript(_ url: URL) -> Bool {
+        url.pathExtension == "swift" && scriptRoots.contains { Self.isInside(url, $0) }
+    }
+
+    /// Every project script, sorted by path.
+    public func projectScripts() -> [URL] {
+        var found: [URL] = []
+        var seen = Set<String>()
+        for root in scriptRoots {
+            guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey],
+                                                                 options: [.skipsHiddenFiles]) else { continue }
+            for case let fileURL as URL in enumerator where fileURL.pathExtension == "swift" {
+                let url = fileURL.standardizedFileURL
+                if seen.insert(url.path).inserted { found.append(url) }
+            }
+        }
+        return found.sorted { $0.path < $1.path }
+    }
+
+    func checkProjectScript(_ url: URL, _ action: String) throws {
+        guard isProjectScript(url) else {
+            let allowed = scriptRoots.map(\.path).joined(separator: ", ")
+            log.error("\(action): \(url.path) is not a project script (scripts live in \(allowed))")
+            throw CommandError.failed("\(url.path) is not a project script; only .swift files in the project's script folders can be opened or saved")
+        }
+    }
+}
+
 public struct ScriptOpenResult: Codable, Equatable, Sendable {
     public var path: String
     public var content: String
@@ -31,7 +85,7 @@ public enum ScriptOpenCommand: EditorCommand {
 
     public static let id: CommandID = "script.open"
     public static let title = "Open Script"
-    public static let doc = "Opens a Swift game script by file path, reading its content and showing it in the editor."
+    public static let doc = "Opens a project Swift game script by file path, reading its content and showing it in the editor. Only files listed by script.list can be opened."
 
     public static func isAvailable(in session: EditorSession) -> Bool { true }
     public static func unavailableReason(in session: EditorSession) -> String? { nil }
@@ -39,9 +93,7 @@ public enum ScriptOpenCommand: EditorCommand {
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> ScriptOpenResult {
         let base = session.project?.root ?? session.startFolder
         let url = URL(fileURLWithPath: arguments.path, relativeTo: base).standardizedFileURL
-        guard session.checkFileAccess(url, title) else {
-            throw CommandError.failed("Script is outside the project folder")
-        }
+        try session.checkProjectScript(url, title)
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw CommandError.failed("No script at \(arguments.path)")
         }
@@ -82,7 +134,7 @@ public enum ScriptSaveCommand: EditorCommand {
 
     public static let id: CommandID = "script.save"
     public static let title = "Save Script"
-    public static let doc = "Saves code to a Swift game script and optionally triggers hot reloading."
+    public static let doc = "Saves code to a project Swift game script and optionally triggers hot reloading. Only project script folders can be written."
 
     public static func isAvailable(in session: EditorSession) -> Bool { true }
     public static func unavailableReason(in session: EditorSession) -> String? { nil }
@@ -90,9 +142,7 @@ public enum ScriptSaveCommand: EditorCommand {
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> ScriptSaveResult {
         let base = session.project?.root ?? session.startFolder
         let url = URL(fileURLWithPath: arguments.path, relativeTo: base).standardizedFileURL
-        guard session.checkFileAccess(url, title) else {
-            throw CommandError.failed("Script is outside the project folder")
-        }
+        try session.checkProjectScript(url, title)
 
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -149,16 +199,13 @@ public enum ScriptNewCommand: EditorCommand {
             .replacingOccurrences(of: " ", with: "")
             .replacingOccurrences(of: "-", with: "_")
 
-        let destinationDir: URL
-        if let target = session.gameModule.settings?.target, let packageURL = try? session.gameModule.packageURL() {
-            destinationDir = packageURL.appendingPathComponent("Sources/\(target)", isDirectory: true)
-        } else if let project = session.project {
-            destinationDir = project.root.appendingPathComponent("Sources/\(project.name)", isDirectory: true)
-        } else {
-            destinationDir = session.startFolder.appendingPathComponent("Scripts", isDirectory: true)
+        guard !rawName.contains("/"), !rawName.contains("\\"), rawName != ".swift" else {
+            throw CommandError.failed("Script name must be a plain file name")
         }
 
+        let destinationDir = session.scriptDestination
         let fileURL = destinationDir.appendingPathComponent(rawName)
+        try session.checkProjectScript(fileURL, title)
         guard session.checkFileAccess(fileURL, title) else {
             throw CommandError.failed("Script destination is outside the project folder")
         }
@@ -206,7 +253,7 @@ public struct ScriptListResult: Codable, Equatable, Sendable {
 public enum ScriptListCommand: EditorCommand {
     public static let id: CommandID = "script.list"
     public static let title = "List Scripts"
-    public static let doc = "Lists all Swift game script files in the game module target and project folders."
+    public static let doc = "Lists the project's own Swift game scripts (game target, project Scripts/ and Assets/ folders); engine and editor sources are never included."
     public static let isReadOnly = true
     public static let isIdempotent = true
 
@@ -214,37 +261,6 @@ public enum ScriptListCommand: EditorCommand {
     public static func unavailableReason(in session: EditorSession) -> String? { nil }
 
     public static func run(_ arguments: NoArguments, in session: EditorSession) throws -> ScriptListResult {
-        var found: [String] = []
-        var seen = Set<String>()
-
-        func scanDirectory(_ dir: URL) {
-            guard let enumerator = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: [.isRegularFileKey],
-                                                                 options: [.skipsHiddenFiles]) else { return }
-            for case let fileURL as URL in enumerator {
-                if fileURL.pathExtension == "swift" {
-                    let path = fileURL.standardizedFileURL.path
-                    if !seen.contains(path) {
-                        seen.insert(path)
-                        found.append(path)
-                    }
-                }
-            }
-        }
-
-        if let settings = session.gameModule.settings, let target = settings.target,
-           let packageURL = try? session.gameModule.packageURL() {
-            scanDirectory(packageURL.appendingPathComponent("Sources/\(target)", isDirectory: true))
-        }
-
-        if let project = session.project {
-            scanDirectory(project.root.appendingPathComponent("Sources", isDirectory: true))
-            scanDirectory(project.root.appendingPathComponent("Scripts", isDirectory: true))
-        }
-
-        scanDirectory(session.startFolder.appendingPathComponent("Sources", isDirectory: true))
-        scanDirectory(session.startFolder.appendingPathComponent("Scripts", isDirectory: true))
-
-        found.sort()
-        return ScriptListResult(scripts: found)
+        ScriptListResult(scripts: session.projectScripts().map(\.path))
     }
 }

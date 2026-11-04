@@ -164,7 +164,7 @@ enum UIKeyParsing {
         let aliases: [String: Key] = [
             "return": .enter, "esc": .escape, "del": .delete, "forwarddelete": .delete, "bksp": .backspace,
             "pgup": .pageUp, "pageup": .pageUp, "pgdn": .pageDown, "pagedown": .pageDown, "arrowleft": .left,
-            "arrowright": .right, "arrowup": .up, "arrowdown": .down, "`": .grave, "[": .leftBracket, "]": .rightBracket,
+            "arrowright": .right, "arrowup": .up, "arrowdown": .down, "`": .grave, "[": .leftBracket, "]": .rightBracket, ",": .comma,
             " ": .space,
         ]
         if let key = aliases[lower] { return key }
@@ -930,7 +930,12 @@ extension EditorLayout {
             return dock.isOpen(viewport) ? .split(beside: viewport, edge: .bottom, fraction: 0.36) : .edge(.bottom, fraction: 0.36)
         }
         switch id {
-        case hierarchy: return .edge(.left, fraction: 0.19)
+        case hierarchy:
+            return dock.isOpen(files) ? .split(beside: files, edge: .top, fraction: 0.55) : .edge(.left, fraction: 0.19)
+        case files:
+            return dock.isOpen(hierarchy) ? .split(beside: hierarchy, edge: .bottom, fraction: 0.45) : .edge(.left, fraction: 0.19)
+        case scripts:
+            return dock.isOpen(viewport) ? .tab(with: viewport) : .edge(.bottom)
         case inspector: return .edge(.right, fraction: 0.24)
         default: return .edge(.right)
         }

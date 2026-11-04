@@ -143,7 +143,8 @@ public enum OrphanSidecarPolicy: Sendable {
 /// The asset database of one `Project`. See the notes above.
 @MainActor
 public final class AssetDatabase {
-    public let project: Project
+    /// The project. Only its settings change (`saveProjectSettings`); the folder stays.
+    public private(set) var project: Project
     /// The importers in use. Changing them doesn't reimport; call `refresh()` afterwards.
     public var importers: AssetImporterRegistry
     public var orphanPolicy: OrphanSidecarPolicy = .delete
@@ -157,6 +158,15 @@ public final class AssetDatabase {
 
     /// The pack this database was mounted from (`init(mounting:)`); nil for a project's.
     public let pack: AssetPack?
+
+    /// Replaces the project's settings and writes `Project.json`. The settings in memory
+    /// change only if the write succeeds.
+    public func saveProjectSettings(_ settings: ProjectSettings) throws {
+        var updated = project
+        updated.settings = settings
+        try updated.saveSettings()
+        project = updated
+    }
     /// Pack entries that failed to load (damaged), so they are reported once.
     var packLoadFailures: Set<AssetID> = []
 

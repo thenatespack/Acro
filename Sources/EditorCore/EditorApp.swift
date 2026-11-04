@@ -109,6 +109,13 @@ public final class EditorApp: Game, EditorHost {
     /// Selection and gizmos in the viewport (set up with the renderer, which it picks against).
     public private(set) var transformTool: TransformTool!
     private var currentView: SceneView?
+    /// The Game view's own render target and size, and what it shows this frame: the scene's
+    /// Camera entity (the game world's while playing), nil without one.
+    private var gameTarget: RenderTarget!
+    private var gameSizer = ViewportTargetSizer()
+    private var gameCurrentView: SceneView?
+    /// The Game view draws nothing of the editor's.
+    private let gameDraw = DebugDraw()
     private var meshBoundsCache: [String: Bounds] = [:]
     /// Watches the open project's `Assets/` folder.
     private var assetWatcher: FileWatcher?
@@ -119,6 +126,7 @@ public final class EditorApp: Game, EditorHost {
     private(set) var console: ConsolePanel!
     private(set) var activity: ActivityPanel!
     public private(set) var scriptEditor: ScriptEditorPanel!
+    public private(set) var files: FilesPanel!
     private(set) var statusBar: StatusBar!
     /// The Assets panel (browser) and its thumbnails.
     public private(set) var assetBrowser: AssetBrowserPanel!
@@ -127,6 +135,8 @@ public final class EditorApp: Game, EditorHost {
     private var assetDrag: (entry: AssetBrowserEntry, position: Vec2)?
     private let stats = StatsPanel()
     let viewportWidget = ViewportWidget()
+    /// The Game panel's content: what the scene's camera sees.
+    let gameWidget = ViewportWidget(name: "gameViewport", label: "Game view")
     private(set) var toolbar: Toolbar!
     /// The start screen with the recent projects (LauncherPanel.swift), shown in place of the
     /// toolbar and the dock.
@@ -135,6 +145,8 @@ public final class EditorApp: Game, EditorHost {
     public private(set) var isLauncherShown = false
     /// Close Project from the UI: the project's thumbnail renders this frame, the project closes next frame.
     private var launcherPending = false
+    /// The launcher page to show once a pending launcher appears (`requestCloseProject(then:)`).
+    private var launcherPage: ((LauncherView) -> Void)?
     /// When to render the open project's launcher thumbnail (engine time), if it has none yet.
     private var thumbnailDue: Double?
     /// The launcher's thumbnails by project folder (nil: none or unreadable), until it is shown again.
@@ -158,8 +170,12 @@ public final class EditorApp: Game, EditorHost {
     /// Screenshot targets rendered this frame, kept until the next one.
     private var captureTargets: [RenderTarget] = []
     private var lastStats: EditorStatsSnapshot?
-    /// The viewport shows the game camera this frame (playing, `showsGameCamera`, a Camera entity).
+    /// The game has the keyboard and the mouse this frame: playing, `showsGameCamera`, the Game
+    /// view in front and a Camera entity.
     private var gameViewActive = false
+    /// Last frame's play state, `showsGameCamera` and which of the Scene and Game tabs were in
+    /// front (`syncViewTabs`).
+    private var tabsState: (playing: Bool, gameCamera: Bool, sceneFront: Bool, gameFront: Bool) = (false, true, true, false)
     /// Real keys and buttons forwarded to the game as down (game view).
     private var forwardedKeys = Set<Key>()
     private var forwardedButtons = Set<MouseButton>()
@@ -190,11 +206,14 @@ public final class EditorApp: Game, EditorHost {
     public func setup(engine: Engine) throws {
         self.engine = engine
         engineMessages.install()
+        // The macOS app menu: Settings… (Cmd+,) above Quit, as Mac apps have it.
+        engine.setAppMenuItems([AppMenuItem(title: "Settings…", keyEquivalent: ",") { [weak self] in self?.showSettings() }])
         session.audioProvider = { [unowned engine] in engine.audio }
         sceneRenderer = try SceneRenderer(device: engine.device, quality: engine.quality)
         try sceneRenderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(0.6, 0.6, 0.58, 1), checker: true, specular: 0.1),
                                            key: StarterScene.checkerMaterial.key)
         target = try RenderTarget(device: engine.device, width: 640, height: 360, label: "viewport")
+        gameTarget = try RenderTarget(device: engine.device, width: 640, height: 360, label: "game view")
         outline = try SelectionOutlineRenderer(device: engine.device)
         toolDrawRenderer = try DebugDrawRenderer(device: engine.device)
         transformTool = TransformTool(meshes: sceneRenderer)
@@ -359,10 +378,13 @@ public final class EditorApp: Game, EditorHost {
         var ai = prefs.ai ?? AISettings()
         if options.mcp.readOnly { ai.readOnly = true }
         session.aiSettings = ai
+        session.editorSettings = prefs.editor ?? EditorSettings()
+        applyEditorSettings()
         buildUI()
 
         session.onWillReplaceWorld = { [unowned self] in inspector.recorder.finishGesture() }
         session.onAISettingsChange = { [unowned self] in aiSettingsChanged() }
+        session.onEditorSettingsChange = { [unowned self] in editorSettingsChanged() }
         session.onChange = { [unowned self] in toolbar.refresh() }
         session.onAssetsChange = { [unowned self] in assetsChanged() }
         session.onSceneSaved = { [unowned self] in captureProjectThumbnail() }
@@ -384,22 +406,17 @@ public final class EditorApp: Game, EditorHost {
             session.gameModule.configure(game, base: URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true))
             _ = try? session.commands.start(GameReloadCommand.self, .init(build: !(game.library != nil && game.buildCommand == nil)))
         }
-        if let path = options.projectPath, session.run(ProjectOpenCommand.self, .init(path: path)) != nil {
-            toolbar.projectPath.text = path
-        } else if !options.deterministic, let path = prefs.lastProjectPath {
-            toolbar.projectPath.text = path
-        }
+        if let path = options.projectPath { session.run(ProjectOpenCommand.self, .init(path: path)) }
         if let path = options.scenePath {
             if session.run(SceneOpenCommand.self, .init(path: path)) == nil { session.run(SceneNewCommand.self) }
-            toolbar.path.text = path
+            scenePath = toolbarScenePath(session.document.url?.path ?? path)
         } else {
             session.run(SceneNewCommand.self)
-            toolbar.path.text = prefs.lastScenePath ?? "scene.json"
+            scenePath = toolbarScenePath(prefs.lastScenePath ?? "scene.json")
         }
         if let reopen {
             if session.run(ProjectOpenCommand.self, .init(path: reopen, openLastScene: true)) != nil {
-                toolbar.projectPath.text = session.project?.root.path ?? reopen
-                if let url = session.document.url { toolbar.path.text = url.path }
+                if let url = session.document.url { scenePath = toolbarScenePath(url.path) }
             } else {
                 startOnLauncher = true
             }
@@ -418,8 +435,10 @@ public final class EditorApp: Game, EditorHost {
         session.onOpenScript = { [unowned self] path in
             let url = URL(fileURLWithPath: path)
             scriptEditor.openScript(at: url)
-            if !dock.isOpen(EditorLayout.scripts) {
-                dock.dock(EditorLayout.scripts, at: dock.isOpen(EditorLayout.assets) ? .tab(with: EditorLayout.assets) : .edge(.bottom))
+            // Scripts open where the Scene view is: tabbed with the viewport.
+            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.scripts, EditorLayout.viewport) {
+                dock.dock(EditorLayout.scripts, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
+                                                                                         : .edge(.bottom))
             }
             dock.focusPanel(EditorLayout.scripts)
         }
@@ -434,6 +453,54 @@ public final class EditorApp: Game, EditorHost {
             }
         }
         toolbar.refresh()
+    }
+
+    /// The open Settings window, if any.
+    public private(set) var settingsDialog: SettingsDialog?
+
+    /// Opens the Settings window (the View menu, Cmd/Ctrl+,) on `tab`, or switches the open one to it.
+    public func showSettings(tab: SettingsDialog.Tab? = nil) {
+        if let open = settingsDialog {
+            if let tab { open.select(tab) }
+            return
+        }
+        let dialog = SettingsDialog(app: self, tab: tab ?? .editor)
+        dialog.onClose = { [unowned self, unowned dialog] in
+            if settingsDialog === dialog { settingsDialog = nil }
+        }
+        settingsDialog = dialog
+        dialog.present(in: ui)
+    }
+
+    /// The open Export Game window, if any.
+    public private(set) var exportDialog: ExportDialog?
+
+    /// Opens the Export Game window (the toolbar's Build Game button): platform, architecture
+    /// and configuration, then Export runs `game.build`.
+    public func showExportDialog() {
+        guard exportDialog == nil, session.project != nil else { return }
+        let dialog = ExportDialog(session: session)
+        dialog.onClose = { [unowned self, unowned dialog] in
+            if exportDialog === dialog { exportDialog = nil }
+        }
+        exportDialog = dialog
+        dialog.present(in: ui)
+    }
+
+    /// The editor settings changed (`settings.setEditor`): persist them and apply them.
+    private func editorSettingsChanged() {
+        let settings = session.editorSettings
+        prefs.editor = settings == EditorSettings() ? nil : settings
+        prefsDirty = true
+        applyEditorSettings()
+    }
+
+    /// The viewport camera's fly speed and field of view from the editor settings (the gizmo's
+    /// snap steps come with each tool context).
+    private func applyEditorSettings() {
+        let settings = session.editorSettings
+        viewport.flySpeed = settings.cameraFlySpeed
+        viewport.camera.fovY = settings.cameraFieldOfView * .pi / 180
     }
 
     /// The AI settings changed (the Activity panel): persist them, start or stop the HTTP server.
@@ -482,17 +549,25 @@ public final class EditorApp: Game, EditorHost {
         }
         assetBrowser.onDrag = { [unowned self] entry, position, phase in assetDragged(entry, at: position, phase: phase) }
         scriptEditor = ScriptEditorPanel(session: session)
+        files = FilesPanel(session: session)
+        files.onOpen = { [unowned self] file in openFile(file) }
+        files.onNewScene = { [unowned self] name in newScene(named: name) }
 
         let viewportPanel = DockPanel(id: EditorLayout.viewport, title: "Scene", content: viewportWidget, isClosable: false,
                                       minSize: Vec2(200, 120))
         viewportPanel.passesPointerThrough = true
         dock.addPanel(viewportPanel)
+        let gamePanel = DockPanel(id: EditorLayout.game, title: "Game", content: gameWidget, isClosable: false,
+                                  minSize: Vec2(200, 120))
+        gamePanel.passesPointerThrough = true
+        dock.addPanel(gamePanel)
         dock.addPanel(DockPanel(id: EditorLayout.hierarchy, title: "Hierarchy", content: hierarchy.view, minSize: Vec2(160, 120)))
         dock.addPanel(DockPanel(id: EditorLayout.inspector, title: "Inspector", content: inspector.view, minSize: Vec2(240, 120)))
         dock.addPanel(DockPanel(id: EditorLayout.console, title: "Console", content: console.view))
         dock.addPanel(DockPanel(id: EditorLayout.stats, title: "Stats", content: stats.view))
         dock.addPanel(DockPanel(id: EditorLayout.assets, title: "Assets", content: assetBrowser.view, minSize: Vec2(240, 120)))
         dock.addPanel(DockPanel(id: EditorLayout.scripts, title: "Scripts", content: scriptEditor.view, minSize: Vec2(240, 120)))
+        dock.addPanel(DockPanel(id: EditorLayout.files, title: "Files", content: files.view, minSize: Vec2(160, 100)))
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
         for (id, icon) in EditorIcons.panelIconNames { dock.panel(id)?.icon = EditorIcons.named(icon) }
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
@@ -508,11 +583,21 @@ public final class EditorApp: Game, EditorHost {
                                                                                      : .edge(.bottom))
             if let selected { dock.focusPanel(selected) }
         }
-        // And the Scripts panel tabbed with Assets if not open.
+        // And the Scripts panel tabbed with the Scene view if not open, keeping the Scene selected.
         if !dock.isOpen(EditorLayout.scripts) {
-            dock.dock(EditorLayout.scripts, at: dock.isOpen(EditorLayout.assets) ? .tab(with: EditorLayout.assets)
-                                                                                   : .edge(.bottom))
+            let selected = EditorLayout.activePanel(in: dock.layout, groupOf: EditorLayout.viewport)
+            dock.dock(EditorLayout.scripts, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
+                                                                                     : .edge(.bottom))
+            if let selected { dock.focusPanel(selected) }
         }
+        // And the Game view tabbed after the Scene view, keeping the Scene selected.
+        if !dock.isOpen(EditorLayout.game) {
+            let selected = EditorLayout.activePanel(in: dock.layout, groupOf: EditorLayout.viewport)
+            dock.dock(EditorLayout.game, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport, index: 1)
+                                                                                  : .edge(.bottom))
+            if let selected { dock.focusPanel(selected) }
+        }
+        tabsState = (session.isPlaying, session.showsGameCamera, isFront(EditorLayout.viewport), isFront(EditorLayout.game))
         // Parity and introspection: what the dock's tabs and close buttons run.
         dock.itemCommands = ["tab": PanelFocusCommand.id.rawValue, "close": PanelCloseCommand.id.rawValue]
         viewportWidget.command = ViewPickCommand.id.rawValue
@@ -583,8 +668,7 @@ public final class EditorApp: Game, EditorHost {
             prefsDirty = true
         }
         if isLauncherShown { setLauncherShown(false) }
-        toolbar.projectPath.text = project.root.path
-        if let url = session.document.url { toolbar.path.text = url.path }
+        if let url = session.document.url { scenePath = toolbarScenePath(url.path) }
         // A project without a thumbnail gets one once its scene has had time to load.
         if canRender, !FileManager.default.fileExists(atPath: RecentProjectList.thumbnailURL(projectRoot: project.root).path) {
             thumbnailDue = (engine?.time ?? 0) + 2
@@ -627,6 +711,13 @@ public final class EditorApp: Game, EditorHost {
         return true
     }
 
+    /// Shows the launcher (Close Project), then the page `requestCloseProject(then:)` asked for.
+    private func showPendingLauncher() {
+        let page = launcherPage
+        launcherPage = nil
+        if session.run(LauncherShowCommand.self) != nil, let page { page(launcher) }
+    }
+
     /// Leaves the launcher for the editor (`launcher.dismiss`, or a project was opened).
     public func hideLauncher() {
         setLauncherShown(false)
@@ -650,14 +741,16 @@ public final class EditorApp: Game, EditorHost {
 
     /// Close Project from the toolbar: asks first when the scene has unsaved changes, renders the
     /// project's thumbnail, then shows the launcher.
-    func requestCloseProject() {
+    /// `then` runs on the launcher once it shows (Open Project / New Project go to its forms).
+    func requestCloseProject(then page: ((LauncherView) -> Void)? = nil) {
         guard ui.overlays.isEmpty, session.commands.isAvailable(LauncherShowCommand.self) else { return }
         let proceed = { [unowned self] in
+            launcherPage = page
             if canRender, session.project != nil {
                 captureProjectThumbnail()
                 launcherPending = true
             } else {
-                session.run(LauncherShowCommand.self)
+                showPendingLauncher()
             }
         }
         guard session.document.isDirty else {
@@ -708,16 +801,44 @@ public final class EditorApp: Game, EditorHost {
         return texture
     }
 
+    /// Open Project from the toolbar: the folder picker (macOS), else the launcher's Open form.
     func openProject() {
-        if let result = session.run(ProjectOpenCommand.self, .init(path: toolbar.projectPath.text, openLastScene: nil)) {
-            toolbar.projectPath.text = result.path
+        guard FilePicker.isAvailable else {
+            requestCloseProject { $0.showOpen() }
+            return
         }
+        // Cancelled: nothing changes.
+        guard let url = FilePicker.chooseFolder(title: "Open Project", prompt: "Open") else { return }
+        session.run(ProjectOpenCommand.self, .init(path: url.path, openLastScene: nil))
     }
 
+    /// New Project from the toolbar: the launcher's New Project form (name, location, template).
     func newProject() {
-        if let result = session.run(ProjectNewCommand.self, .init(path: toolbar.projectPath.text)) {
-            toolbar.projectPath.text = result.path
-        }
+        requestCloseProject { $0.showNewProject() }
+    }
+
+    /// The open scene's path (Save uses it for a scene without a file): from the project folder
+    /// when the scene is in it ("Assets/Main.scene"), else the whole path. The Files panel
+    /// creates and switches scenes, so it is no longer a field.
+    var scenePath = ""
+
+    /// A scene path as `scenePath` keeps it: from the project folder when the scene is in it
+    /// ("Assets/Main.scene"), else the whole path.
+    func toolbarScenePath(_ path: String) -> String {
+        guard let root = session.project?.root else { return path }
+        let url = EditorSession.url(forPath: path)
+        guard EditorSession.isInside(url, root) else { return path }
+        let base = EditorSession.resolved(root).path
+        let full = EditorSession.resolved(url).path
+        return full == base ? "" : String(full.dropFirst(base.count + (base.hasSuffix("/") ? 0 : 1)))
+    }
+
+    /// `scenePath` for a command: a relative path is from the project folder while a
+    /// project is open (`~` and absolute paths are taken as they are).
+    func scenePathFromToolbar() -> String {
+        let text = scenePath.trimmingCharacters(in: .whitespaces)
+        guard let root = session.project?.root, !text.isEmpty, !text.hasPrefix("/"), !text.hasPrefix("~") else { return text }
+        return root.appendingPathComponent(text).standardizedFileURL.path
     }
 
     /// The host calls it when the main loop ended (`quitReason`: why, from `Engine.quitReason`):
@@ -753,7 +874,7 @@ public final class EditorApp: Game, EditorHost {
         dialog.onConfirm = { [unowned self] in
             if session.run(SceneRecoverCommand.self, .init(id: newest.id)) != nil {
                 hierarchy.sync(force: true)
-                if let path = newest.scenePath { toolbar.path.text = path }
+                if let path = newest.scenePath { scenePath = toolbarScenePath(path) }
             }
         }
         dialog.present(in: ui)
@@ -788,7 +909,7 @@ public final class EditorApp: Game, EditorHost {
         // Close Project from the toolbar: its thumbnail rendered last frame, now it closes.
         if launcherPending {
             launcherPending = false
-            session.run(LauncherShowCommand.self)
+            showPendingLauncher()
         }
         if let due = thumbnailDue, engine.time >= due, session.assets?.isLoading != true, !isLauncherShown {
             captureProjectThumbnail()
@@ -840,9 +961,11 @@ public final class EditorApp: Game, EditorHost {
         buildGizmos()
         viewportWidget.texture = target.texture
         viewportWidget.billboards = transformTool.billboards
-        viewportWidget.overlayLines = session.netPlay.map { $0.showsOverlay ? $0.overlayLines() : [] } ?? []
+        gameWidget.texture = gameCurrentView != nil ? gameTarget.texture : nil
+        gameWidget.overlayLines = session.netPlay.map { $0.showsOverlay ? $0.overlayLines() : [] } ?? []
         updateViewportCaption()
         viewportWidget.isPlaying = session.isPlaying
+        gameWidget.isPlaying = session.isPlaying
         ui.draw(into: engine.ui)
         engine.ui.withTransform(scale: ui.uiScale) { drawAssetDrag(into: engine.ui) }
 
@@ -863,6 +986,7 @@ public final class EditorApp: Game, EditorHost {
         case .save: save()
         case .delete: confirmDeleteSelection()
         case .importAsset: assetBrowser.beginImport()
+        case .settings: showSettings()
         case .clearSelection:
             // Esc first cancels a gizmo drag, then clears the selection.
             if transformTool?.cancelDrag(world: session.world) != true { session.run(SelectionClearCommand.self) }
@@ -888,23 +1012,52 @@ public final class EditorApp: Game, EditorHost {
     }
 
     func save() {
-        if session.run(SceneSaveCommand.self, .init(path: toolbar.path.text)) != nil { rememberScenePath() }
+        if session.run(SceneSaveCommand.self, .init(path: scenePathFromToolbar())) != nil { rememberScenePath() }
     }
 
-    func saveAs() {
-        if session.run(SceneSaveAsCommand.self, .init(path: toolbar.path.text)) != nil { rememberScenePath() }
-    }
-
-    func open() {
-        if session.run(SceneOpenCommand.self, .init(path: toolbar.path.text)) != nil {
-            hierarchy.sync(force: true)
-            rememberScenePath()
+    /// A click in the Files panel: a script opens in the Scripts editor; a scene asks first when
+    /// the open one has unsaved changes, then opens in the Scene view.
+    func openFile(_ file: ProjectFile) {
+        let isOpenScene = session.document.url?.standardizedFileURL.path == file.absolutePath
+        if file.kind == .script || !isOpenScene {
+            let name = (file.path as NSString).lastPathComponent
+            let run = { [unowned self] in _ = session.run(FilesOpenCommand.self, .init(path: file.absolutePath)) }
+            if file.kind == .script { run() } else { replaceScene(title: "Open \(name)", confirm: "Discard and Open", command: FilesOpenCommand.id, run) }
+        } else {
+            sceneOpenedFromFiles()
         }
+    }
+
+    /// New Scene in the Files panel: asks first when the open scene has unsaved changes.
+    func newScene(named name: String) {
+        replaceScene(title: "Create \(name)", confirm: "Discard and Create", command: FilesNewSceneCommand.id) { [unowned self] in
+            _ = session.run(FilesNewSceneCommand.self, .init(name: name))
+        }
+    }
+
+    /// Runs `proceed`, which replaces the open scene, after asking when it has unsaved changes.
+    private func replaceScene(title: String, confirm: String, command: CommandID, _ proceed: @escaping () -> Void) {
+        guard session.document.isDirty else { return proceed() }
+        guard ui.overlays.isEmpty else { return }
+        let dialog = ConfirmDialog(
+            title: "\(title) with unsaved changes?",
+            message: "Your changes to \(session.document.displayName) are lost. Cancel, then save (\(shortcuts.shortcutText(for: .save))) to keep them.",
+            confirmTitle: confirm, name: "replaceSceneDialog")
+        dialog.command = command.rawValue
+        dialog.onConfirm = proceed
+        dialog.present(in: ui)
+    }
+
+    /// After files.open or files.newScene opened a scene: the hierarchy, the scene path and the Scene view in front.
+    func sceneOpenedFromFiles() {
+        hierarchy.sync(force: true)
+        rememberScenePath()
+        if dock.isOpen(EditorLayout.viewport) { dock.focusPanel(EditorLayout.viewport) }
     }
 
     private func rememberScenePath() {
         guard let path = session.document.url?.path else { return }
-        toolbar.path.text = path
+        scenePath = toolbarScenePath(path)
         if prefs.lastScenePath != path {
             prefs.lastScenePath = path
             prefsDirty = true
@@ -937,41 +1090,80 @@ public final class EditorApp: Game, EditorHost {
     /// The viewport's caption goes in its panel's tab bar (it covered scene labels as a badge
     /// over the image); the badge only shows when the bar has no room for it.
     func updateViewportCaption() {
-        let caption = playCaption()
-        viewportWidget.caption = caption
-        guard let panel = dock.panel(EditorLayout.viewport) else { return }
+        let scene = "Perspective · \(session.tool.title)" + (playState().map { " · \($0)" } ?? "")
+        setCaption(scene, of: viewportWidget, panel: EditorLayout.viewport)
+        setCaption(gameCaption(), of: gameWidget, panel: EditorLayout.game)
+        gameWidget.placeholder = RenderPrep.findCamera(in: session.gameWorld) == nil
+            ? "No Camera entity in the scene: add one to see the game here" : nil
+    }
+
+    private func setCaption(_ caption: String, of widget: ViewportWidget, panel id: String) {
+        widget.caption = caption
+        guard let panel = dock.panel(id) else { return }
         panel.caption = caption
         let inBar = panel.owner?.captionIsShown ?? false
-        if viewportWidget.drawsCaption == inBar { viewportWidget.drawsCaption = !inBar }
+        if widget.drawsCaption == inBar { widget.drawsCaption = !inBar }
     }
 
-    private func playCaption() -> String {
-        guard session.isPlaying else { return "Perspective · \(session.tool.title)" }
-        let state = session.isPaused ? "Paused · frame \(session.playFrame)" : "Playing"
+    /// "Playing", "Paused · frame 12"…; nil in edit mode.
+    private func playState() -> String? {
+        guard session.isPlaying else { return nil }
+        return session.isPaused ? "Paused · frame \(session.playFrame)" : "Playing"
             + (session.timeScale != 1 ? " · \(Toolbar.timeScaleTitle(session.timeScale))" : "")
+    }
+
+    /// The Game view's caption: the world it shows (network play), the camera and the play state.
+    private func gameCaption() -> String {
         let world = session.gameWorld
-        guard gameViewActive, let camera = RenderPrep.findCamera(in: world)?.entity else {
-            return "Perspective · \(session.tool.title) · \(state)"
-        }
+        guard let camera = RenderPrep.findCamera(in: world)?.entity else { return "No camera" }
         let source = session.netPlay.map { $0.viewedClient.map { "Client \($0) · " } ?? "Server · " } ?? ""
         let name = world === session.world ? session.displayName(of: camera) : world.get(Name.self, for: camera)?.value ?? "Camera"
-        return "Game · \(source)\(name) · \(state)"
+        return "\(source)\(name)" + (playState().map { " · \($0)" } ?? "")
     }
 
-    /// The scene's game camera view at the viewport's aspect, when the viewport should show it.
+    /// The scene's Camera entity's view (the game world's while playing) at `aspect`, nil without one.
     private func gameView(aspect: Float) -> SceneView? {
         let world = session.gameWorld
-        guard session.isPlaying, session.showsGameCamera, let camera = RenderPrep.findCamera(in: world)?.entity else { return nil }
+        guard let camera = RenderPrep.findCamera(in: world)?.entity else { return nil }
         return SceneView(camera: camera, in: world, aspect: aspect)
+    }
+
+    /// Whether panel `id` is open and the selected tab of its group.
+    func isFront(_ id: String) -> Bool {
+        dock.isOpen(id) && EditorLayout.activePanel(in: dock.layout, groupOf: id) == id
+    }
+
+    /// Keeps the Scene and Game tabs and `showsGameCamera` in step: Play brings the Game tab to
+    /// the front (when `showsGameCamera`), Stop the Scene tab back (when they share a group);
+    /// while playing, `view.gameCamera` picks the tab and picking a tab sets it.
+    func syncViewTabs() {
+        guard dock.isOpen(EditorLayout.game), dock.isOpen(EditorLayout.viewport) else { return }
+        let playing = session.isPlaying, last = tabsState
+        if playing != last.playing {
+            if playing, session.showsGameCamera {
+                dock.focusPanel(EditorLayout.game)
+            } else if !playing, isFront(EditorLayout.game), EditorLayout.shareGroup(in: dock.layout, EditorLayout.game, EditorLayout.viewport) {
+                dock.focusPanel(EditorLayout.viewport)
+            }
+        } else if playing, session.showsGameCamera != last.gameCamera {
+            dock.focusPanel(session.showsGameCamera ? EditorLayout.game : EditorLayout.viewport)
+        } else if playing {
+            let sceneFront = isFront(EditorLayout.viewport), gameFront = isFront(EditorLayout.game)
+            if sceneFront != last.sceneFront || gameFront != last.gameFront {
+                if gameFront && !sceneFront { session.showsGameCamera = true }
+                if sceneFront && !gameFront { session.showsGameCamera = false }
+            }
+        }
+        tabsState = (playing, session.showsGameCamera, isFront(EditorLayout.viewport), isFront(EditorLayout.game))
     }
 
     /// Game view: the keyboard (unless the UI is typing) and the mouse over the viewport go to
     /// the game's input as events, positions relative to the viewport. Presses start only over
     /// the viewport; what is down stays down until released.
     private func forwardInputToGame(_ input: Input, keyboardFree: Bool) {
-        let rect = viewportWidget.frame
+        let rect = gameWidget.frame
         let mouse = uiPoint(input.mousePosition)
-        let hovered = viewportWidget.isEffectivelyVisible && rect.contains(mouse) && !ui.wantsPointer
+        let hovered = gameWidget.isEffectivelyVisible && rect.contains(mouse) && !ui.wantsPointer
         var events: [InputEvent] = []
         for key in Key.allCases {
             let down = keyboardFree && input.isDown(key)
@@ -1008,16 +1200,27 @@ public final class EditorApp: Game, EditorHost {
     private func updateViewport(engine: Engine, dt: Float, keyboardFree: Bool) {
         let input = engine.input
         viewport.rect = viewportWidget.isEffectivelyVisible ? viewportWidget.frame : .zero
-        if gameView(aspect: sizer.aspectRatio) != nil {
-            // The game has the viewport: no editor camera, picking or gizmos.
+        // Scene and Game side by side while playing: a click picks which one gets the keyboard.
+        if session.isPlaying, viewportWidget.isEffectivelyVisible, gameWidget.isEffectivelyVisible,
+           MouseButton.allCases.contains(where: input.wasPressed), !ui.wantsPointer {
+            let mouse = uiPoint(input.mousePosition)
+            if gameWidget.frame.contains(mouse) { session.showsGameCamera = true }
+            if viewportWidget.frame.contains(mouse) { session.showsGameCamera = false }
+        }
+        gameViewActive = session.isPlaying && session.showsGameCamera && gameWidget.isEffectivelyVisible
+            && RenderPrep.findCamera(in: session.gameWorld) != nil
+        if gameViewActive {
             forwardInputToGame(input, keyboardFree: keyboardFree)
+        } else {
+            releaseForwardedInput()
+        }
+        guard viewportWidget.isEffectivelyVisible else {
             if captureRequested {
                 input.isMouseCaptured = false
                 captureRequested = false
             }
             return
         }
-        releaseForwardedInput()
         var frameInput = ViewportInput(mousePosition: uiPoint(input.mousePosition))
         frameInput.mouseDelta = input.mouseDelta / ui.uiScale
         for button in MouseButton.allCases {
@@ -1029,7 +1232,7 @@ public final class EditorApp: Game, EditorHost {
         frameInput.modifiers = input.modifiers
         frameInput.dt = dt
         frameInput.pointerOverUI = ui.wantsPointer
-        if keyboardFree {
+        if keyboardFree && !gameViewActive {
             frameInput.move = Vec3(input.axis(negative: .a, positive: .d), input.axis(negative: .q, positive: .e),
                                    input.axis(negative: .s, positive: .w))
         }
@@ -1056,13 +1259,16 @@ public final class EditorApp: Game, EditorHost {
                 session.log.error("Resizing the viewport to \(size.width)x\(size.height) failed: \(error)")
             }
         }
-        if let game = gameView(aspect: target.aspectRatio) {
-            currentView = game
-            gameViewActive = true
-        } else {
-            currentView = viewport.view(aspect: target.aspectRatio, clearColor: viewportClearColor())
-            gameViewActive = false
+        currentView = viewport.view(aspect: target.aspectRatio, clearColor: viewportClearColor())
+        let gameRect = gameWidget.isEffectivelyVisible ? gameWidget.frame : .zero
+        if let size = gameSizer.update(rect: gameRect, scale: scale) {
+            do {
+                try gameTarget.resize(width: size.width, height: size.height)
+            } catch {
+                session.log.error("Resizing the Game view to \(size.width)x\(size.height) failed: \(error)")
+            }
         }
+        gameCurrentView = gameWidget.isEffectivelyVisible ? gameView(aspect: gameTarget.aspectRatio) : nil
     }
 
     private func viewportClearColor() -> Vec4 { session.viewportClearColor }
@@ -1071,7 +1277,8 @@ public final class EditorApp: Game, EditorHost {
         ViewportToolContext(
             world: session.world, selection: session.selection, undo: session.undo, view: view, viewportRect: viewport.rect,
             pixelScale: ui.scale, toolMode: session.tool, isPlaying: session.isPlaying,
-            meshBounds: { [unowned self] handle in meshBounds(handle) }, commands: session.commands, snapping: session.snapping)
+            meshBounds: { [unowned self] handle in meshBounds(handle) }, commands: session.commands, snapping: session.snapping,
+            snapSteps: session.editorSettings.gizmoSnapping(enabled: session.snapping))
     }
 
     private func meshBounds(_ handle: MeshHandle) -> Bounds? {
@@ -1086,14 +1293,8 @@ public final class EditorApp: Game, EditorHost {
     private func buildGizmos() {
         guard let view = currentView else { return }
         let context = toolContext(view: view)
-        // The game view shows what the game camera sees, nothing of the editor's.
-        fillGizmos(gizmos, context: context, grid: !gameViewActive, gizmos: !gameViewActive)
+        fillGizmos(gizmos, context: context, grid: true, gizmos: true)
         toolDraw.removeAll()
-        guard !gameViewActive else {
-            transformTool.billboards.update([], view: ViewportProjection(view, size: context.viewportSize), occluders: nil,
-                                            world: session.world)
-            return
-        }
         transformTool.updateBillboards(view: ViewportProjection(view, size: context.viewportSize, pixelScale: context.pixelScale),
                                        world: session.world)
         for tool in viewport.tools { tool.draw(into: toolDraw, context: context) }
@@ -1156,13 +1357,14 @@ public final class EditorApp: Game, EditorHost {
     public func renderOffscreen(engine: Engine, frame: Frame) {
         thumbnails?.render(frame: frame)
         renderCaptures(frame: frame)
-        guard let view = currentView, sizer.width > 0, !isLauncherShown else { return }
-        sceneRenderer.beginViews(world: gameViewActive ? session.gameWorld : session.world, frame: frame, shadowFocus: view)
-        let world = session.world
-        guard !gameViewActive else {
-            sceneRenderer.renderView(view, into: target, frame: frame, debugDraw: gizmos)
-            return
+        guard !isLauncherShown else { return }
+        if let game = gameCurrentView, gameSizer.width > 0, gameWidget.isEffectivelyVisible {
+            sceneRenderer.beginViews(world: session.gameWorld, frame: frame, shadowFocus: game)
+            sceneRenderer.renderView(game, into: gameTarget, frame: frame, debugDraw: gameDraw)
         }
+        guard let view = currentView, sizer.width > 0, viewportWidget.isEffectivelyVisible else { return }
+        sceneRenderer.beginViews(world: session.world, frame: frame, shadowFocus: view)
+        let world = session.world
         let debugView = DebugView(view: view.view, projection: view.projection,
                                   viewportSize: (target.width, target.height), reversedZ: view.reversedZ)
         outline.renderView(view, sceneRenderer: sceneRenderer, world: world, selection: session.selection.entities(in: world),
@@ -1369,11 +1571,7 @@ extension EditorApp {
                 frame.readBack(target) { image in job.future.resolve(image) }
                 continue
             }
-            var request = job.request
-            if request.view == nil && gameViewActive {
-                // The viewport shows the game camera: so does its screenshot, without editor overlays.
-                (request.grid, request.gizmos, request.outline) = (false, false, false)
-            }
+            let request = job.request
             guard let view = request.view ?? currentView else {
                 job.future.fail(CommandError.failed("The viewport isn't visible"))
                 continue
@@ -1394,7 +1592,7 @@ extension EditorApp {
 
     private func renderCapture(_ view: SceneView, into shot: RenderTarget, request: ScreenshotRequest, frame: Frame) {
         // The Game View's world (a network play client's) for the game and the viewport showing it.
-        let world = request.source == .game || (request.view == nil && gameViewActive) ? session.gameWorld : session.world
+        let world = request.source == .game ? session.gameWorld : session.world
         sceneRenderer.beginViews(world: world, frame: frame, shadowFocus: view)
         // The viewport's own view gets the tools' overlays too (they are sized for it).
         let isViewport = request.view == nil
@@ -1460,10 +1658,13 @@ struct SequentialIDs {
 /// drags in it reach the viewport controller instead of the UI.
 final class ViewportWidget: Widget {
     override var accessibilityRole: UIAccessibilityRole { .viewport }
-    override var accessibilityText: String? { "Scene viewport" }
+    override var accessibilityText: String? { label }
     override var accessibilityValue: String? { caption }
 
     var texture: GPUTexture?
+    /// Said over the background when there is no image (the Game view without a camera).
+    var placeholder: String? { didSet { if placeholder != oldValue { setNeedsDisplay() } } }
+    private let label: String
     var caption = "" { didSet { if caption != oldValue { setNeedsDisplay() } } }
     /// Whether the caption is drawn as a badge over the image (when the tab bar can't show it).
     var drawsCaption = true { didSet { if drawsCaption != oldValue { setNeedsDisplay() } } }
@@ -1475,8 +1676,9 @@ final class ViewportWidget: Widget {
     /// The network stats overlay's lines (EditorNetPlay.swift), top right; empty: none.
     var overlayLines: [String] = [] { didSet { if overlayLines != oldValue { setNeedsDisplay() } } }
 
-    init() {
-        super.init(name: "viewport")
+    init(name: String = "viewport", label: String = "Scene viewport") {
+        self.label = label
+        super.init(name: name)
         isHitTestable = false
     }
 
@@ -1485,6 +1687,11 @@ final class ViewportWidget: Widget {
             list.drawImage(texture, in: frame)
         } else {
             list.fillRect(frame, color: theme.fieldBackground)
+            if let placeholder {
+                let layout = context?.textLayout(placeholder, size: theme.fontSize) ?? TextLayout(placeholder, font: theme.font, size: theme.fontSize)
+                let origin = Vec2(snap(frame.x + (frame.width - layout.width) / 2), snap(frame.y + (frame.height - layout.height) / 2))
+                list.withClip(frame) { list.drawText(layout, font: theme.font, at: origin, color: theme.secondaryTextColor) }
+            }
         }
         if let billboards, !billboards.placed.isEmpty {
             list.withClip(frame) { billboards.draw(into: list, origin: Vec2(frame.x, frame.y), selection: selectionState) }
@@ -1508,7 +1715,7 @@ final class ViewportWidget: Widget {
     }
 }
 
-/// The strip above the dock: file actions with a path field, undo / redo (titled with what
+/// The strip above the dock: Save (the Files panel creates and switches scenes), undo / redo (titled with what
 /// they would undo), play / stop, the transform-tool selector and snapping, the project, the
 /// document title and layout reset.
 ///
@@ -1519,8 +1726,8 @@ final class ViewportWidget: Widget {
 @MainActor
 final class Toolbar {
     let view: ToolbarRow
-    let path = TextField(placeholder: "path/to/scene.json", name: "scenePath")
-    let projectPath = TextField(placeholder: "path/to/project", name: "projectPath")
+    /// The open project's name (its folder in the tooltip); Open / New Project pick the folder.
+    let projectLabel = Label("No project", role: .secondary, name: "projectName")
     private unowned let app: EditorApp
     private let undoButton: Button
     private let redoButton: Button
@@ -1534,6 +1741,8 @@ final class Toolbar {
     private let reloadGameButton: Button
     /// Build Game; shown when a project is open.
     private let buildGameButton: Button
+    /// Open in Code Editor (`file.openInCodeEditor`): the project's code in the editor picked in Settings.
+    private let codeEditorButton: Button
     private let timeScale: Dropdown
     /// The time scales the toolbar offers.
     static let timeScales: [Double] = [0.1, 0.25, 0.5, 1, 2, 4]
@@ -1556,68 +1765,57 @@ final class Toolbar {
         gameViewButton = Button("Game", name: "gameView") { session.run(ViewGameCameraCommand.self, .init()) }
         netButton = Button("Network", name: "network")
         reloadGameButton = Button("Reload Game", name: "reloadGame") { _ = try? session.commands.start(GameReloadCommand.self, .init()) }
-        buildGameButton = Button("Build Game", name: "buildGame") { _ = try? session.commands.start(GameBuildCommand.self, .init()) }
+        buildGameButton = Button("Build Game", name: "buildGame") { [unowned app] in app.showExportDialog() }
         timeScale = Dropdown(options: Self.timeScales.map(Self.timeScaleTitle), selectedIndex: Self.timeScales.firstIndex(of: 1) ?? 0,
                              name: "timeScale") { index in
             session.run(PlaySetTimeScaleCommand.self, .init(scale: Self.timeScales[index]))
         }
         timeScale.tooltip = "Play speed (time scale)"
-        gameViewButton.tooltip = "Show the scene's camera in the viewport while playing, and send it the keyboard and mouse"
+        gameViewButton.tooltip = "Play in the Game view: Play brings the Game tab to the front and sends the game the keyboard and mouse"
         netButton.tooltip = "Play with network clients in this editor, pick the world the Game View shows, simulate latency and loss"
         toolButtons = EditorTool.allCases.map { tool in
             (tool, Button(tool.title, name: tool.rawValue) { session.run(ToolSetCommand.self, .init(tool: tool)) })
         }
         snapButton = Button("Snap", name: "snapping") { session.run(ToolSnappingCommand.self, .init()) }
-        path.style.width = 220
-        // The path fields give way first when the window is narrow.
-        path.style.shrink = 1
-        path.style.minWidth = 72
         let shortcuts = app.shortcuts
-        let newButton = Button("New", name: "new") { session.run(SceneNewCommand.self) }
-        let openButton = Button("Open", name: "open") { [unowned app] in app.open() }
         let saveButton = Button("Save", name: "save") { [unowned app] in app.save() }
-        let saveAsButton = Button("Save As", name: "saveAs") { [unowned app] in app.saveAs() }
-        let openProjectButton = Button("Open Project", name: "openProject") { [unowned app] in app.openProject() }
-        let newProjectButton = Button("New Project", name: "newProject") { [unowned app] in app.newProject() }
+        codeEditorButton = Button(ExternalLaunch.openTitle(session.editorSettings.codeEditor), name: "openInCodeEditor") {
+            session.run(FileOpenInCodeEditorCommand.self, .init())
+        }
         let closeProjectButton = Button("Close Project", name: "closeProject") { [unowned app] in app.requestCloseProject() }
         closeProjectButton.tooltip = "Close the project and go back to the launcher (the recent projects)"
-        openProjectButton.tooltip = "Open the project folder at the project path and import its assets"
-        newProjectButton.tooltip = "Create a project (Project.json, Assets/, Library/) at the project path"
-        projectPath.tooltip = "Project folder, used by Open Project and New Project"
-        projectPath.style.width = 160
-        projectPath.style.shrink = 1
-        projectPath.style.minWidth = 64
-        newButton.tooltip = "Start a new scene"
-        openButton.tooltip = "Open the scene file at the path"
+        codeEditorButton.tooltip = "Open the project's code in the code editor picked in Settings"
+        // The name gives way (ending in "…") when the window is narrow.
+        projectLabel.style.shrink = 1
+        projectLabel.style.minWidth = 0
         saveButton.tooltip = shortcuts.tooltip("Save the scene", for: .save)
-        saveAsButton.tooltip = "Save the scene to the path"
-        path.tooltip = "Scene file path, used by Open, Save and Save As"
         let viewButton = Button("View", name: "view")
-        viewButton.tooltip = "Reset the panel layout, pick the theme and the UI zoom"
+        viewButton.tooltip = "Open any panel (Files, Scripts, Console…), settings, reset the panel layout, pick the theme and the UI zoom"
         for (tool, button) in toolButtons { button.tooltip = "\(tool.title) tool" }
         snapButton.tooltip = "Snap gizmo drags to 0.5 units, 15° and 0.1 scale steps (hold \(KeyModifiers.shortcut == .command ? "⌘" : "Ctrl") to invert)"
         // Icon-only buttons: the titles stay their accessibility labels and default tooltips.
         let icons: [(Button, String)] = [
-            (newButton, "file-plus"), (openButton, "folder-open"), (saveButton, "save"), (saveAsButton, "save-all"),
+            (saveButton, "save"),
             (undoButton, "undo-2"), (redoButton, "redo-2"), (playButton, "play"), (pauseButton, "pause"),
             (stepButton, "step-forward"), (gameViewButton, "gamepad-2"), (netButton, "network"), (reloadGameButton, "refresh-cw"),
-            (buildGameButton, "hammer"), (snapButton, "magnet"), (openProjectButton, "folder-input"),
-            (newProjectButton, "folder-plus"), (closeProjectButton, "folder-x"), (viewButton, "appearance"),
+            (buildGameButton, "hammer"), (snapButton, "magnet"), (codeEditorButton, "file-code"),
+            (closeProjectButton, "folder-x"), (viewButton, "appearance"),
         ] + toolButtons.map { ($0.1, EditorIcons.tool($0.0).name) }
         for (button, icon) in icons {
             button.icon = EditorIcons.named(icon)
             button.showsTitle = false
         }
-        commandButtons = [(SceneNewCommand.id, newButton), (SceneOpenCommand.id, openButton), (SceneSaveCommand.id, saveButton),
-                          (SceneSaveAsCommand.id, saveAsButton), (LauncherShowCommand.id, closeProjectButton)]
+        // View reads as a menu: its title shows beside the icon.
+        viewButton.showsTitle = true
+        commandButtons = [(SceneSaveCommand.id, saveButton), (LauncherShowCommand.id, closeProjectButton)]
         // What each control runs, for introspection (`ui.snapshot`) and the parity test.
         let tagged: [(Widget, CommandID)] = commandButtons.map { ($0.1, $0.0) } + [
             (undoButton, EditUndoCommand.id), (redoButton, EditRedoCommand.id), (playButton, PlayToggleCommand.id),
             (pauseButton, PlayPauseCommand.id), (stepButton, PlayStepCommand.id), (gameViewButton, ViewGameCameraCommand.id),
             (netButton, NetStartCommand.id),
             (reloadGameButton, GameReloadCommand.id), (buildGameButton, GameBuildCommand.id),
-            (timeScale, PlaySetTimeScaleCommand.id), (path, SceneOpenCommand.id), (projectPath, ProjectOpenCommand.id),
-            (openProjectButton, ProjectOpenCommand.id), (newProjectButton, ProjectNewCommand.id),
+            (timeScale, PlaySetTimeScaleCommand.id),
+            (codeEditorButton, FileOpenInCodeEditorCommand.id),
             (snapButton, ToolSnappingCommand.id), (viewButton, ViewAppearanceCommand.id),
         ] + toolButtons.map { ($0.1, ToolSetCommand.id) }
         for (widget, id) in tagged { widget.command = id.rawValue }
@@ -1627,7 +1825,7 @@ final class Toolbar {
         // One row: what doesn't fit the window goes into the More (») menu at the end, least used
         // first; the scene and project actions people reach for (Play, the tools, Build / Reload
         // Game, View) go last.
-        view.overflowOrder = [newProjectButton, openProjectButton, closeProjectButton, saveAsButton, newButton, openButton, snapButton,
+        view.overflowOrder = [closeProjectButton, codeEditorButton, snapButton,
                               stepButton, redoButton, netButton, gameViewButton, pauseButton, undoButton, saveButton]
             + toolButtons.map(\.1).reversed() + [reloadGameButton, buildGameButton, playButton]
         view.background = (app.ui?.theme ?? UITheme()).panelBackground
@@ -1643,18 +1841,16 @@ final class Toolbar {
         // Squeezed to a few letters ("U…") it says nothing: then it hides (the window title and
         // the label's tooltip still name the document).
         titleLabel.minimumTruncatedWidth = 64
+        // Project on the left, Play in the middle, the tools after it, the document and View on the right.
         view.addChildren([
-            newButton, openButton, saveButton, saveAsButton,
-            path,
+            projectLabel, closeProjectButton, codeEditorButton, buildGameButton,
             separator(),
-            undoButton, redoButton,
-            separator(),
+            saveButton, undoButton, redoButton,
+            Spacer(),
             playButton, pauseButton, stepButton, timeScale, gameViewButton, netButton, reloadGameButton,
-            separator(),
+            Spacer(),
         ] + toolButtons.map(\.1) + [
             snapButton,
-            separator(),
-            projectPath, openProjectButton, newProjectButton, closeProjectButton, buildGameButton,
             Spacer(),
             titleLabel,
             viewButton,
@@ -1665,25 +1861,43 @@ final class Toolbar {
         refresh()
     }
 
-    /// The View menu: Reset Layout, then the themes (`EditorApp.menuThemes`) and the zooms, the
-    /// current ones checked.
+    /// The panels the View menu lists, in its order (`EditorLayout.panelIDs`, the Scene view first).
+    var menuPanels: [(id: String, title: String)] {
+        EditorLayout.panelIDs.compactMap { id in app.dock.panel(id).map { (id, $0.title) } }
+    }
+
+    /// The View menu: every panel (open ones checked; picking one opens a closed panel where the
+    /// default layout has it, or brings an open one to the front), then Settings…, Reset Layout,
+    /// the themes (`EditorApp.menuThemes`) and the zooms, the current ones checked.
     func showViewMenu() {
         guard let context = view.context else { return }
+        let panels = menuPanels
         let themes = EditorApp.menuThemes, zooms = EditorApp.menuZooms
-        let items = ["Reset Layout"] + themes.map { "\($0) Theme" } + zooms.map { "Zoom \(Int(($0 * 100).rounded()))%" }
-        let menu = PopupMenu(items: items, anchor: viewButton, name: "viewMenu")
-        menu.itemCommandIDs = [LayoutResetCommand.id.rawValue] + items.dropFirst().map { _ in ViewAppearanceCommand.id.rawValue }
-        menu.itemIcons = [EditorIcons.named("layout-dashboard")]
-        var checked = Set<Int>()
-        if let theme = themes.firstIndex(of: context.theme.name) { checked.insert(1 + theme) }
-        if let zoom = zooms.firstIndex(of: app.preferredUIScale) { checked.insert(1 + themes.count + zoom) }
+        let settingsTitle = "Settings… (\(app.shortcuts.shortcutText(for: .settings)))"
+        let options = [settingsTitle, "Reset Layout"] + themes.map { "\($0) Theme" } + zooms.map { "Zoom \(Int(($0 * 100).rounded()))%" }
+        let menu = PopupMenu(items: panels.map(\.title) + options, anchor: viewButton, name: "viewMenu")
+        menu.itemCommandIDs = panels.map { _ in PanelOpenCommand.id.rawValue }
+            + [SettingsGetCommand.id.rawValue, LayoutResetCommand.id.rawValue]
+            + options.dropFirst(2).map { _ in ViewAppearanceCommand.id.rawValue }
+        menu.itemIcons = panels.map { EditorIcons.panelIconNames[$0.id].map(EditorIcons.named) }
+            + [EditorIcons.named("sliders-horizontal"), EditorIcons.named("layout-dashboard")]
+        let first = panels.count
+        var checked = Set(panels.indices.filter { app.dock.isOpen(panels[$0].id) })
+        if let theme = themes.firstIndex(of: context.theme.name) { checked.insert(first + 2 + theme) }
+        if let zoom = zooms.firstIndex(of: app.preferredUIScale) { checked.insert(first + 2 + themes.count + zoom) }
         menu.checkedIndices = checked
         let session = app.session
         menu.onSelect = { [unowned app] index in
+            if index < first {
+                session.run(PanelOpenCommand.self, .init(panel: panels[index].id))
+                return
+            }
+            let index = index - first
             switch index {
-            case 0: app.resetLayout()
-            case 1...themes.count: session.run(ViewAppearanceCommand.self, .init(theme: themes[index - 1]))
-            default: session.run(ViewAppearanceCommand.self, .init(uiScale: zooms[index - 1 - themes.count]))
+            case 0: app.showSettings()
+            case 1: app.resetLayout()
+            case 2...(themes.count + 1): session.run(ViewAppearanceCommand.self, .init(theme: themes[index - 2]))
+            default: session.run(ViewAppearanceCommand.self, .init(uiScale: zooms[index - 2 - themes.count]))
             }
         }
         context.presentOverlay(menu)
@@ -1722,8 +1936,14 @@ final class Toolbar {
         let reloadTip = game.lastError.map { "Rebuild and reload the game code, keeping the scene. Last error: \($0)" }
             ?? "Rebuild and reload the game code (\(game.loaded?.module.name ?? "not loaded")), keeping the scene"
         if reloadGameButton.tooltip != reloadTip { reloadGameButton.tooltip = reloadTip }
+        let codeTitle = ExternalLaunch.openTitle(session.editorSettings.codeEditor)
+        if codeEditorButton.title != codeTitle { codeEditorButton.title = codeTitle }
         let export = session.gameExport
         view.setAvailable(buildGameButton, session.project != nil)
+        let projectName = session.project?.name ?? "No project"
+        if projectLabel.text != projectName { projectLabel.text = projectName }
+        let projectTip = session.project.map { "Project folder: \($0.root.path)" } ?? "No project open: Open Project or New Project"
+        if projectLabel.tooltip != projectTip { projectLabel.tooltip = projectTip }
         set(buildGameButton, title: export.isBusy ? "Building…" : "Build Game", enabled: session.commands.isAvailable(GameBuildCommand.self))
         let buildTip = export.lastError.map { "Export the game (cook the assets, build a standalone app). Last error: \($0)" }
             ?? export.lastResult.map { "Export the game again (last: \($0.outputPath))" }

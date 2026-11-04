@@ -160,6 +160,19 @@ final class GLFWWindow: PlatformWindow, VulkanSurfaceProvider {
         shouldClose ? requestedCloseReason ?? "the window was closed (its close button, or the window system)" : nil
     }
 
+    func setIcon(_ image: Image) {
+        #if os(macOS)
+        // GLFW ignores window icons on macOS; the Dock icon is the app's.
+        setMacAppIcon(image)
+        #else
+        var pixels = image.pixels
+        pixels.withUnsafeMutableBufferPointer { buffer in
+            var glfwImage = GLFWimage(width: Int32(image.width), height: Int32(image.height), pixels: buffer.baseAddress)
+            glfwSetWindowIcon(handle, 1, &glfwImage)
+        }
+        #endif
+    }
+
     func destroy() {
         for cursor in cursors.values { glfwDestroyCursor(cursor) }
         cursors.removeAll()
@@ -226,7 +239,7 @@ final class GLFWWindow: PlatformWindow, VulkanSurfaceProvider {
         (.num5, GLFW_KEY_5), (.num6, GLFW_KEY_6), (.num7, GLFW_KEY_7), (.num8, GLFW_KEY_8), (.num9, GLFW_KEY_9),
         (.space, GLFW_KEY_SPACE), (.enter, GLFW_KEY_ENTER), (.escape, GLFW_KEY_ESCAPE),
         (.tab, GLFW_KEY_TAB), (.backspace, GLFW_KEY_BACKSPACE), (.grave, GLFW_KEY_GRAVE_ACCENT),
-        (.leftBracket, GLFW_KEY_LEFT_BRACKET), (.rightBracket, GLFW_KEY_RIGHT_BRACKET),
+        (.leftBracket, GLFW_KEY_LEFT_BRACKET), (.rightBracket, GLFW_KEY_RIGHT_BRACKET), (.comma, GLFW_KEY_COMMA),
         (.f1, GLFW_KEY_F1), (.f2, GLFW_KEY_F2), (.f3, GLFW_KEY_F3), (.f4, GLFW_KEY_F4), (.f5, GLFW_KEY_F5),
         (.f6, GLFW_KEY_F6), (.f7, GLFW_KEY_F7), (.f8, GLFW_KEY_F8), (.f9, GLFW_KEY_F9), (.f10, GLFW_KEY_F10),
         (.f11, GLFW_KEY_F11), (.f12, GLFW_KEY_F12),

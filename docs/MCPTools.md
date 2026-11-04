@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Editor › AI control). 120 tools.
+named by its id (see README › Editor › AI control). 128 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -19,6 +19,8 @@ optional arguments.
 | `diagnostics` | [`diagnostics.get`](#diagnosticsget) |
 | `edit` | [`edit.batch`](#editbatch), [`edit.beginBatch`](#editbeginbatch), [`edit.endBatch`](#editendbatch), [`edit.redo`](#editredo), [`edit.undo`](#editundo) |
 | `entity` | [`entity.create`](#entitycreate), [`entity.delete`](#entitydelete), [`entity.duplicate`](#entityduplicate), [`entity.find`](#entityfind), [`entity.get`](#entityget), [`entity.rename`](#entityrename), [`entity.reparent`](#entityreparent) |
+| `file` | [`file.openInCodeEditor`](#fileopenincodeeditor), [`file.reveal`](#filereveal) |
+| `files` | [`files.list`](#fileslist), [`files.newScene`](#filesnewscene), [`files.open`](#filesopen) |
 | `game` | [`game.build`](#gamebuild), [`game.info`](#gameinfo), [`game.load`](#gameload), [`game.reload`](#gamereload), [`game.unload`](#gameunload) |
 | `input` | [`input.clear`](#inputclear), [`input.inject`](#inputinject), [`input.state`](#inputstate) |
 | `launcher` | [`launcher.dismiss`](#launcherdismiss), [`launcher.settings`](#launchersettings), [`launcher.show`](#launchershow) |
@@ -33,6 +35,7 @@ optional arguments.
 | `scene` | [`scene.discardRecovery`](#scenediscardrecovery), [`scene.hierarchy`](#scenehierarchy), [`scene.listRecovery`](#scenelistrecovery), [`scene.new`](#scenenew), [`scene.open`](#sceneopen), [`scene.raycast`](#sceneraycast), [`scene.recover`](#scenerecover), [`scene.save`](#scenesave), [`scene.saveAs`](#scenesaveas) |
 | `script` | [`script.list`](#scriptlist), [`script.new`](#scriptnew), [`script.open`](#scriptopen), [`script.save`](#scriptsave) |
 | `selection` | [`selection.clear`](#selectionclear), [`selection.get`](#selectionget), [`selection.set`](#selectionset) |
+| `settings` | [`settings.get`](#settingsget), [`settings.setEditor`](#settingsseteditor), [`settings.setProject`](#settingssetproject) |
 | `stats` | [`stats.get`](#statsget) |
 | `tool` | [`tool.set`](#toolset), [`tool.snapping`](#toolsnapping) |
 | `transform` | [`transform.lookAt`](#transformlookat), [`transform.set`](#transformset) |
@@ -597,18 +600,101 @@ Arguments:
 - `index?`: integer
 - `parent?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
 
+## file
+
+### `file.openInCodeEditor`
+
+**Open in Code Editor** · _idempotent_
+
+Opens a file or folder in the code editor picked in the Settings window (settings.setEditor `codeEditor`: the system default, VS Code, Cursor, Xcode, Zed, Sublime Text or a custom command). `path` is absolute, relative to the project folder or to Assets/; default: the game code's package folder, else the project folder. Only inside the project for AI clients. Returns the path and the command; it runs only in an editor with a window.
+
+Arguments:
+
+- `path?`: string
+
+Result:
+
+- `command`: [string]
+- `launched`: boolean
+- `path`: string
+
+### `file.reveal`
+
+**Show in Folder** · _idempotent_
+
+Shows a file or folder in the system's file manager (Finder, Explorer; on Linux its folder opens): `path` absolute, relative to the project folder or to Assets/ (default: the project folder). Only inside the project for AI clients. Returns the path and the command; it runs only in an editor with a window.
+
+Arguments:
+
+- `path?`: string
+
+Result:
+
+- `command`: [string]
+- `launched`: boolean
+- `path`: string
+
+## files
+
+### `files.list`
+
+**List Files** · _read-only_, _idempotent_
+
+Lists what the Files panel shows: the project's scenes (.scene under Assets/) and its own scripts (script.list), with paths from the project folder.
+
+Arguments: none.
+
+Result:
+
+- `files`: [{absolutePath: string, kind: string, path: string}]
+
+### `files.newScene`
+
+**New Scene** · _destructive_
+
+Creates a scene file in the project's Assets/Scenes/ (Assets/ without a project), saves it and opens it in the Scene view, as the Files panel's New Scene does. Refuses a name that exists. The open scene is replaced (unsaved changes are lost). Not while playing. Destructive: pass confirm: true.
+
+Arguments:
+
+- `confirm`: true — Must be true: this tool can lose work that undo can't bring back.
+- `name`: string
+- `template?`: string
+
+Result:
+
+- `path`: string
+
+### `files.open`
+
+**Open File** · _destructive_, _idempotent_
+
+Opens a file from the Files panel: a scene replaces the open scene and shows the Scene view (as scene.open), a script opens in the Scripts editor tabbed with the Scene view (as script.open). Not for scenes while playing. Destructive only when `path` is a scene (it replaces the open scene); opening a script needs no confirm: then pass confirm: true.
+
+Arguments:
+
+- `confirm?`: true — Required only when `path` is a scene (it replaces the open scene); opening a script needs no confirm: that can lose work that undo can't bring back.
+- `path`: string
+
+Result:
+
+- `path`: string
+
 ## game
 
 ### `game.build`
 
 **Build Game** · _deferred_
 
-Exports the project as a standalone game: cooks every asset reachable from the scenes into one pack (textures block-compressed for the target GPU family, no source files), builds the game module and Engine in release and links them into one executable, and lays out a runnable app (macOS: <output>/<Name>.app; Linux: <output>/<Name>/ with run.sh). Runs in the background (the first build compiles Engine in release, minutes; later ones seconds); progress and errors go to the console. Returns the output path, the pack's contents and sizes, and timings. `cookOnly` writes just the pack. The output folder is replaced.
+Exports the project as a standalone game: cooks every asset reachable from the scenes into one pack (textures block-compressed for the target GPU family, no source files), builds the game module (a generated one that only plays the scenes when the project has no game code) and Engine in release and links them into one executable, and lays out a runnable app (macOS: <output>/<Name>.app; Linux: <output>/<Name>/ with run.sh). Runs in the background (the first build compiles Engine in release, minutes; later ones seconds); progress and errors go to the console. Returns the output path, the pack's contents and sizes, and timings. `platform`, `architecture` (x86_64 or arm64) and `configuration` (release or debug) pick what is built; only this machine's platform can be built (macOS builds either architecture, other platforms only their own), except with `docker: true`, which builds a Linux game in a container from any machine for either architecture (Docker must be installed and running; the first build takes many minutes). `output` may be any folder. `cookOnly` writes just the pack (for any platform). The output folder is replaced.
 
 Arguments:
 
+- `architecture?`: "x86_64" \| "arm64"
+- `configuration?`: "release" \| "debug"
 - `cookOnly?`: boolean
+- `docker?`: boolean
 - `output?`: string
+- `platform?`: "macos" \| "linux" \| "windows"
 - `scenes?`: [string]
 - `textureFamily?`: "bc" \| "astc"
 - `textures?`: "compress" \| "asImported"
@@ -743,7 +829,7 @@ Result:
 - `gameCamera`: boolean
 - `inputPending`: integer
 - `inputSeconds`: number
-- `keys`: [string (73 cases)]
+- `keys`: [string (74 cases)]
 - `paused`: boolean
 - `physics`: boolean
 - `playing`: boolean
@@ -761,12 +847,12 @@ Plays input into the game (play mode) over game time, after what is already sche
 Arguments:
 
 - `replace?`: boolean
-- `steps`: [{button?: "left" \| "right" \| "middle", down?: boolean, duration?: number, key?: string (73 cases), keys?: [string (73 cases)], mouseBy?: number[2], mouseTo?: number[2], scroll?: number[2], text?: string, wait?: number}]
+- `steps`: [{button?: "left" \| "right" \| "middle", down?: boolean, duration?: number, key?: string (74 cases), keys?: [string (74 cases)], mouseBy?: number[2], mouseTo?: number[2], scroll?: number[2], text?: string, wait?: number}]
 
 Result:
 
 - `seconds`: number
-- `state`: {buttons: ["left" \| "right" \| "middle"], frame: integer, gameCamera: boolean, inputPending: integer, inputSeconds: number, keys: [string (73 cases)], paused: boolean, physics: boolean, playing: boolean, reason?: string, stepped?: integer, time: number, timeScale: number}
+- `state`: {buttons: ["left" \| "right" \| "middle"], frame: integer, gameCamera: boolean, inputPending: integer, inputSeconds: number, keys: [string (74 cases)], paused: boolean, physics: boolean, playing: boolean, reason?: string, stepped?: integer, time: number, timeScale: number}
 
 ### `input.state`
 
@@ -779,8 +865,8 @@ Arguments: none.
 Result:
 
 - `buttons`: ["left" \| "right" \| "middle"]
-- `injectedKeys`: [string (73 cases)]
-- `keys`: [string (73 cases)]
+- `injectedKeys`: [string (74 cases)]
+- `keys`: [string (74 cases)]
 - `mouse`: number[2] — [x, y]
 - `mouseDelta`: number[2] — [x, y]
 - `pending`: integer
@@ -1089,7 +1175,7 @@ Result:
 - `gameCamera`: boolean
 - `inputPending`: integer
 - `inputSeconds`: number
-- `keys`: [string (73 cases)]
+- `keys`: [string (74 cases)]
 - `paused`: boolean
 - `physics`: boolean
 - `playing`: boolean
@@ -1115,7 +1201,7 @@ Result:
 - `gameCamera`: boolean
 - `inputPending`: integer
 - `inputSeconds`: number
-- `keys`: [string (73 cases)]
+- `keys`: [string (74 cases)]
 - `paused`: boolean
 - `physics`: boolean
 - `playing`: boolean
@@ -1141,7 +1227,7 @@ Result:
 - `gameCamera`: boolean
 - `inputPending`: integer
 - `inputSeconds`: number
-- `keys`: [string (73 cases)]
+- `keys`: [string (74 cases)]
 - `paused`: boolean
 - `physics`: boolean
 - `playing`: boolean
@@ -1165,7 +1251,7 @@ Result:
 - `gameCamera`: boolean
 - `inputPending`: integer
 - `inputSeconds`: number
-- `keys`: [string (73 cases)]
+- `keys`: [string (74 cases)]
 - `paused`: boolean
 - `physics`: boolean
 - `playing`: boolean
@@ -1194,7 +1280,7 @@ Result:
 - `gameCamera`: boolean
 - `inputPending`: integer
 - `inputSeconds`: number
-- `keys`: [string (73 cases)]
+- `keys`: [string (74 cases)]
 - `paused`: boolean
 - `physics`: boolean
 - `playing`: boolean
@@ -1602,7 +1688,7 @@ Result:
 
 **List Scripts** · _read-only_, _idempotent_
 
-Lists all Swift game script files in the game module target and project folders.
+Lists the project's own Swift game scripts (game target, project Scripts/ and Assets/ folders); engine and editor sources are never included.
 
 Arguments: none.
 
@@ -1630,7 +1716,7 @@ Result:
 
 **Open Script**
 
-Opens a Swift game script by file path, reading its content and showing it in the editor.
+Opens a project Swift game script by file path, reading its content and showing it in the editor. Only files listed by script.list can be opened.
 
 Arguments:
 
@@ -1646,7 +1732,7 @@ Result:
 
 **Save Script**
 
-Saves code to a Swift game script and optionally triggers hot reloading.
+Saves code to a project Swift game script and optionally triggers hot reloading. Only project script folders can be written.
 
 Arguments:
 
@@ -1693,6 +1779,71 @@ Arguments:
 
 - `entities`: [entity id]
 - `primary?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+
+## settings
+
+### `settings.get`
+
+**Get Settings** · _read-only_, _idempotent_
+
+The editor settings (`editor`: snap steps, viewport camera; `appearance`: theme and UI zoom, with the editor window) and the open project's settings (`project`, its Project.json: name, `game`, `build`, `runtime`). Change them with settings.setEditor, view.appearance and settings.setProject. With a project, `gameTargets` lists the package's game module targets (the choices for game.target) and `scenes` its scene files (for build.scenes).
+
+Arguments: none.
+
+Result:
+
+- `appearance?`: {effectiveUIScale: number, theme: string, themes: [string], uiScale: number}
+- `editor`: {cameraFieldOfView?: number, cameraFlySpeed?: number, codeEditor?: string (7 cases), codeEditorCommand?: string, snapRotateDegrees?: number, snapScale?: number, snapTranslate?: number}
+- `gameTargets?`: [string]
+- `project?`: {build?: {enginePackage?: string, include?: [string], name?: string, output?: string, scenes?: [string], textureFamily?: "bc" \| "astc", textures?: "compress" \| "asImported"}, game?: {buildCommand?: [string], library?: string, package?: string, target?: string, watch?: boolean}, name?: string, runtime?: {physics?: object, window?: object}, version?: integer}
+- `projectPath?`: string
+- `scenes?`: [string]
+
+### `settings.setEditor`
+
+**Editor Settings** · _idempotent_
+
+Changes the user's editor settings (the Settings window's Editor tab) and saves them in the prefs: gizmo snap steps (`snapTranslate`, `snapRotateDegrees`, `snapScale`; tool.snapping turns snapping on) and the viewport camera (`cameraFlySpeed`, `cameraFieldOfView`) and the code editor file.openInCodeEditor uses (`codeEditor`; `codeEditorCommand` for custom, which AI clients can't change). Only the fields given change; `reset: true` goes back to the defaults first. A value outside its range is refused. Returns all of them.
+
+Arguments:
+
+- `cameraFieldOfView?`: number
+- `cameraFlySpeed?`: number
+- `codeEditor?`: "system" \| "vscode" \| "cursor" \| "xcode" \| "zed" \| "sublime" \| "custom"
+- `codeEditorCommand?`: string
+- `reset?`: boolean
+- `snapRotateDegrees?`: number
+- `snapScale?`: number
+- `snapTranslate?`: number
+
+Result:
+
+- `cameraFieldOfView?`: number
+- `cameraFlySpeed?`: number
+- `codeEditor?`: "system" \| "vscode" \| "cursor" \| "xcode" \| "zed" \| "sublime" \| "custom"
+- `codeEditorCommand?`: string
+- `snapRotateDegrees?`: number
+- `snapScale?`: number
+- `snapTranslate?`: number
+
+### `settings.setProject`
+
+**Project Settings** · _idempotent_
+
+Changes the open project's settings (the Settings window's Project tab) and writes Project.json. `name` sets the display name; `game`, `build` and `runtime` each replace their whole section (read it with settings.get, change it, send it back); `clear` removes sections. `runtime.window` (title, width, height, vsync, quality low|medium|high|ultra, showDebugOverlay, renderResolution native|720p|1080p|4k|<w>x<h>|quality|balanced|performance|ultraperformance|<factor>x, upscaler bilinear|fsr1|metalfx|metalfx-temporal|taau|fsr3, upscalerSharpness 0-4 stops, msaa 1|2|4|8, backend metal|vulkan, minWidth, minHeight, allowLargerThanScreen) applies to exported games; `runtime.physics` (gravity [x,y,z], gravity2D [x,y], fixedTimestep in seconds) applies in play mode and exported games. AI clients can't change `game`, `build.enginePackage` or `build.output` (they decide what code runs and where files go): change those in the editor. Not while playing.
+
+Arguments:
+
+- `build?`: {enginePackage?: string, include?: [string], name?: string, output?: string, scenes?: [string], textureFamily?: "bc" \| "astc", textures?: "compress" \| "asImported"}
+- `clear?`: [string]
+- `game?`: {buildCommand?: [string], library?: string, package?: string, target?: string, watch?: boolean}
+- `name?`: string
+- `runtime?`: {physics?: {fixedTimestep?: number, gravity?: number[3], gravity2D?: number[2]}, window?: {allowLargerThanScreen?: boolean, backend?: "metal" \| "vulkan", height?: integer, minHeight?: integer, minWidth?: integer, msaa?: integer, quality?: "low" \| "medium" \| "high" \| "ultra", renderResolution?: string, showDebugOverlay?: boolean, title?: string, upscaler?: string, upscalerSharpness?: number, vsync?: boolean, width?: integer}}
+
+Result:
+
+- `path`: string
+- `project`: {build?: {enginePackage?: string, include?: [string], name?: string, output?: string, scenes?: [string], textureFamily?: "bc" \| "astc", textures?: "compress" \| "asImported"}, game?: {buildCommand?: [string], library?: string, package?: string, target?: string, watch?: boolean}, name?: string, runtime?: {physics?: object, window?: object}, version?: integer}
 
 ## stats
 
@@ -1741,7 +1892,7 @@ Arguments:
 
 **Snapping**
 
-Turns gizmo snapping on or off (`enabled`; omitted toggles it): drags move in 0.5-unit steps, rotate by 15° and scale by 0.1. Holding Cmd (Ctrl elsewhere) during a drag inverts it.
+Turns gizmo snapping on or off (`enabled`; omitted toggles it): drags move, rotate and scale in the steps of settings.setEditor (default 0.5 units, 15° and 0.1). Holding Cmd (Ctrl elsewhere) during a drag inverts it.
 
 Arguments:
 
@@ -1993,7 +2144,7 @@ Arguments:
 
 **Game View**
 
-Whether the viewport shows the scene's Camera entity while playing (and forwards the keyboard and the mouse over it to the game) or the editor camera. On by default.
+Whether play happens in the Game view: Play brings the Game tab (the scene's Camera entity) to the front and the game gets the keyboard and the mouse over it; off, Play stays in the Scene view (the editor camera). While playing it switches between the two tabs, and picking a tab sets it. On by default.
 
 Arguments:
 

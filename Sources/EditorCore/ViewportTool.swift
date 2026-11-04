@@ -55,6 +55,8 @@ public struct ViewportToolContext {
     public let toolMode: EditorTool
     /// The toolbar's snapping toggle.
     public let snapping: Bool
+    /// The snap steps (`EditorSettings`).
+    public let snapSteps: GizmoSnapping
     public let isPlaying: Bool
     /// Local bounds of a mesh (from the renderer), for picking and highlighting.
     public let meshBounds: (MeshHandle) -> Bounds?
@@ -64,8 +66,9 @@ public struct ViewportToolContext {
 
     public init(world: World, selection: EditorSelection, undo: UndoStack, view: SceneView, viewportRect: UIRect,
                 pixelScale: Float, toolMode: EditorTool, isPlaying: Bool, meshBounds: @escaping (MeshHandle) -> Bounds?,
-                commands: CommandRegistry? = nil, snapping: Bool = false) {
+                commands: CommandRegistry? = nil, snapping: Bool = false, snapSteps: GizmoSnapping = GizmoSnapping()) {
         self.snapping = snapping
+        self.snapSteps = snapSteps
         self.world = world
         self.selection = selection
         self.undo = undo

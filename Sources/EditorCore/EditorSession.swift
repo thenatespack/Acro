@@ -74,8 +74,16 @@ public final class EditorSession {
     public let selection = EditorSelection()
     public let log: EditorLog
     public var tool: EditorTool = .move { didSet { if tool != oldValue { changed() } } }
-    /// Gizmo drags snap (0.5 units, 15°, 0.1 scale steps); holding Cmd/Ctrl inverts it for one drag.
+    /// Gizmo drags snap (to `editorSettings`' steps); holding Cmd/Ctrl inverts it for one drag.
     public var snapping = false { didSet { if snapping != oldValue { changed() } } }
+    /// The user's editor settings (snap steps, viewport camera); persisted in the prefs by the app.
+    public var editorSettings = EditorSettings() {
+        didSet { if editorSettings != oldValue { onEditorSettingsChange?(); changed() } }
+    }
+    /// Called after `editorSettings` changed.
+    public var onEditorSettingsChange: (() -> Void)?
+    /// Called after the open project's settings were saved (`saveProjectSettings`).
+    public var onProjectSettingsChange: (() -> Void)?
     public private(set) var playState: PlayState = .editing
     /// Called after the tool, the play state or the document changed (toolbar refresh).
     public var onChange: (() -> Void)?
@@ -177,8 +185,8 @@ public final class EditorSession {
     /// Scripted input for `gameInput`, over game time; a new one each play session.
     public private(set) var inputPlayer = InputPlayer()
     private var forwardedInput: [InputEvent] = []
-    /// Whether the viewport shows the scene's Camera entity while playing (`view.gameCamera`);
-    /// the editor camera otherwise. On by default.
+    /// Whether play happens in the Game view (`view.gameCamera`): Play brings the Game tab to the
+    /// front and the game gets the keyboard and mouse; off, the Scene view keeps them. On by default.
     public var showsGameCamera = true { didSet { if showsGameCamera != oldValue { changed() } } }
     /// The sound output play mode uses (set by the editor app; nil headless: no sound). Asked only
     /// when the scene has `AudioEmitter`s at play start, which then play (their `clip` assets load
@@ -359,7 +367,7 @@ public final class EditorSession {
             log.error("New Project: \(reason)")
             return false
         }
-        let created: (project: Project, scene: URL?)
+        let created: (project: Project, scene: URL?, scaffold: ProjectScaffold.Result)
         do {
             created = try (template ?? .empty).create(at: url, name: name.flatMap { $0.isEmpty ? nil : $0 })
         } catch {
@@ -367,6 +375,11 @@ public final class EditorSession {
             return false
         }
         setProject(created.project, verb: "Created")
+        if let target = created.scaffold.target {
+            log.info("Game code: Sources/\(target)/ (Package.swift); Reload Game Code builds and loads it (the first build compiles the engine)")
+        } else if let reason = created.scaffold.skipped {
+            log.warning("New Project: no Swift package for game code: \(reason)")
+        }
         guard template != nil else { return true }
         if let scene = created.scene { return open(path: scene.path) }
         return newDocument(empty: true)
@@ -594,14 +607,20 @@ public final class EditorSession {
     /// The play session's systems: physics (3D, 2D) when the scene has colliders, sprite animation when
     /// it has animators. Systems are code, not data, so the snapshot doesn't hold them: they
     /// are added on play and removed on stop, with a new `PhysicsWorld` each time.
+    /// The project's runtime settings (gravity, fixed timestep) apply while playing.
     private func addPlaySystems() {
+        let runtime = project?.settings.runtime ?? ProjectRuntimeSettings()
+        timestepBeforePlay = world.fixedTimestep
+        runtime.apply(to: world)
         if world.count(of: Collider.self) > 0 {
             let physics = PhysicsWorld()
+            runtime.apply(to: physics)
             world.addPhysics(physics)
             self.physics = physics
         }
         if world.count(of: Collider2D.self) > 0 {
             let physics = PhysicsWorld2D()
+            runtime.apply(to: physics)
             world.addPhysics2D(physics)
             physics2D = physics
         }
@@ -613,7 +632,14 @@ public final class EditorSession {
         gameModule.addSystems()
     }
 
+    /// The world's fixed timestep before play applied the project's.
+    private var timestepBeforePlay: Double?
+
     private func removePlaySystems() {
+        if let step = timestepBeforePlay {
+            world.fixedTimestep = step
+            timestepBeforePlay = nil
+        }
         if physics != nil {
             world.removePhysics()
             physics = nil

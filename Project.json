@@ -1,0 +1,8 @@
+{
+  "format" : "SwiftGameEngine.Project",
+  "game" : {
+    "target" : "SampleGame"
+  },
+  "name" : "swift-game-engine",
+  "version" : 1
+}

@@ -11,6 +11,10 @@ public struct EngineConfig: Sendable {
     /// `glfwSetWindowSizeLimits`); nil leaves it to the OS. A smaller `width` x `height` opens
     /// at this size (`openingWindowSize`).
     public var minimumWindowSize: (width: Int, height: Int)?
+    /// The app icon: the Dock icon on macOS (Metal and Vulkan), the window and taskbar icon
+    /// elsewhere (`glfwSetWindowIcon`; Wayland ignores it). nil keeps the OS default. A square
+    /// image of 256 pixels or more looks sharp everywhere.
+    public var icon: Image?
     /// The size the window opens at: `width` x `height`, at least `minimumWindowSize`.
     public var openingWindowSize: (width: Int, height: Int) {
         guard let minimum = minimumWindowSize else { return (width, height) }
@@ -342,6 +346,12 @@ public final class Engine {
     }
 
     let window: PlatformWindow
+
+    /// Puts `items` in the macOS app menu above Quit ("Settings…" with Cmd+,); ignored on
+    /// other platforms. Replaces the items set before.
+    public func setAppMenuItems(_ items: [AppMenuItem]) {
+        window.setAppMenuItems(items)
+    }
     private var overlay: DebugOverlay?
     private var uiRenderer: UIRenderer?
     private let countingPass = CountingRenderPass()
@@ -483,6 +493,7 @@ public final class Engine {
             throw GraphicsError("The Vulkan backend was not compiled in (install the Vulkan SDK and GLFW, then rebuild)")
             #endif
         }
+        if let icon = config.icon { window.setIcon(icon) }
         if let error = validate(resolution) { throw GraphicsError("Render resolution \(resolution): \(error)") }
         if let error = unsupported(upscaler) { throw GraphicsError("Upscaler \(upscaler): \(error)") }
         device.upscaler = upscaler

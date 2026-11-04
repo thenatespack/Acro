@@ -567,17 +567,15 @@ public final class AssetBrowserPanel {
                     model.invalidate()
                 }))
             }
-            #if os(macOS)
             if let url = model.session.project?.url(forAssetPath: entry.path) {
-                // An agent has the path from asset.get; revealing it in Finder is for the user.
-                items.append(("Show in Finder", AssetGetCommand.id, {
-                    let process = Process()
-                    process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-                    process.arguments = ["-R", url.path]
-                    try? process.run()
+                let session = model.session
+                items.append((ExternalLaunch.revealTitle, FileRevealCommand.id, { [unowned session] in
+                    session.run(FileRevealCommand.self, .init(path: url.path))
+                }))
+                items.append((ExternalLaunch.openTitle(session.editorSettings.codeEditor), FileOpenInCodeEditorCommand.id, { [unowned session] in
+                    session.run(FileOpenInCodeEditorCommand.self, .init(path: url.path))
                 }))
             }
-            #endif
         }
         let menu = PopupMenu(items: items.map(\.0))
         menu.itemCommandIDs = items.map { $0.1.rawValue }

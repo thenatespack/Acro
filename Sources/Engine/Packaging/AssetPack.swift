@@ -73,6 +73,15 @@ public enum CookPlatform: String, Codable, Sendable, CaseIterable {
         #endif
     }
 
+    /// What menus show: "macOS", "Linux", "Windows".
+    public var title: String {
+        switch self {
+        case .macos: "macOS"
+        case .linux: "Linux"
+        case .windows: "Windows"
+        }
+    }
+
     /// The texture family its GPUs are best served by: ASTC on macOS (Apple silicon), BC elsewhere.
     public var defaultTextureFamily: TextureFamily { self == .macos ? .astc : .bc }
 }
@@ -113,6 +122,8 @@ public struct AssetPackManifest: Codable, Sendable {
     public var scenes: [Scene]
     /// Every asset, sorted by id.
     public var assets: [Asset]
+    /// The project's runtime settings (window, physics) when it has any; `GamePlayer` applies them.
+    public var runtime: ProjectRuntimeSettings? = nil
 
     public struct Scene: Codable, Equatable, Sendable {
         /// The scene's path relative to `Assets/` (or its file name when it was outside).
