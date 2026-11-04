@@ -305,6 +305,7 @@ public struct CookPlan: Sendable {
         var manifest = AssetPackManifest(name: projectName, platform: options.target.platform, textureFamily: options.target.textureFamily,
                                          vertexStride: MemoryLayout<MeshVertex>.stride, scenes: [], assets: [])
         if let runtime = options.runtime, !runtime.isEmpty { manifest.runtime = runtime }
+        manifest.engineVersion = EngineVersion.current
         for (scene, data) in sceneData {
             manifest.scenes.append(AssetPackManifest.Scene(path: scene.path, blob: writer.add(data)))
         }

@@ -93,7 +93,7 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
 
     public init(session: EditorSession) {
         self.session = session
-        server = MCPServer(info: .init(name: Self.serverName, title: "SwiftGameEngine Editor", version: "0.1.0"),
+        server = MCPServer(info: .init(name: Self.serverName, title: "SwiftGameEngine Editor", version: EngineVersion.current),
                            instructions: Self.instructions)
         server.tools = self
         server.resources = self

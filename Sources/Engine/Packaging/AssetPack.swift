@@ -124,6 +124,8 @@ public struct AssetPackManifest: Codable, Sendable {
     public var assets: [Asset]
     /// The project's runtime settings (window, physics) when it has any; `GamePlayer` applies them.
     public var runtime: ProjectRuntimeSettings? = nil
+    /// The engine version that cooked it (`EngineVersion`); nil in packs from before it was recorded.
+    public var engineVersion: String? = nil
 
     public struct Scene: Codable, Equatable, Sendable {
         /// The scene's path relative to `Assets/` (or its file name when it was outside).

@@ -112,7 +112,7 @@ private func database(_ project: Project, counter: CountingImporter.Counter? = n
         #expect(project.name == "My Game")
 
         let text = try String(contentsOf: project.settingsURL, encoding: .utf8)
-        #expect(text == "{\n  \"format\" : \"SwiftGameEngine.Project\",\n  \"name\" : \"My Game\",\n  \"version\" : 1\n}\n")
+        #expect(text == "{\n  \"engineVersion\" : \"\(EngineVersion.current)\",\n  \"format\" : \"SwiftGameEngine.Project\",\n  \"name\" : \"My Game\",\n  \"version\" : 1\n}\n")
 
         let opened = try Project.open(at: url)
         #expect(opened.settings == project.settings)

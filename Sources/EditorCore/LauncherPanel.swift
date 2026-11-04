@@ -301,7 +301,7 @@ final class LauncherView {
         // Sidebar
         let title = Label("Swift Game Engine", role: .heading, name: "launcherTitle")
         title.icon = EditorIcons.named("box")
-        let subtitle = Label("Editor", role: .secondary, name: "launcherSubtitle")
+        let subtitle = Label("Editor \(EngineVersion.current)", role: .secondary, name: "launcherSubtitle")
         newButton.icon = EditorIcons.named("folder-plus")
         openButton.icon = EditorIcons.named("folder-open")
         continueButton.icon = EditorIcons.named("file")
@@ -648,11 +648,9 @@ final class LauncherView {
     }
 
     private func openProject(path: String) {
-        let session = app.session
-        if session.run(ProjectOpenCommand.self, .init(path: path, openLastScene: true)) != nil {
-            app.hideLauncher()
-        } else {
-            sync()
+        // Asks first when the project is from another engine version.
+        app.openProjectAsking(.init(path: path, openLastScene: true)) { [weak self] opened in
+            if opened { self?.app.hideLauncher() } else { self?.sync() }
         }
     }
 

@@ -12,12 +12,14 @@ import Foundation
 // `main` registers the engine's components and the module's, mounts the pack read-only
 // (`AssetDatabase(mounting:)`: no importers, no `Assets/` or `Library/`), loads the start scene
 // from it and plays it the way the editor's play mode does (physics when it has colliders,
-// sprite animation, the module's systems). A module without cooked scenes runs its own `Game`
+// sprite animation, the module's systems); game code switches between the cooked scenes with
+// `context.loadScene(_:)`. A module without cooked scenes runs its own `Game`
 // (`makeGame`), which reaches the pack through `GamePlayer.assets`.
 //
 // Options: `--pack <file>` (default: the one `.pack` in the app's Resources folder or next to
 // the executable; `ENGINE_PACK` too), `--scene <path>` (a cooked scene other than the start
-// scene), `--backend metal|vulkan`, `--size <w>x<h>`.
+// scene), `--backend metal|vulkan`, `--size <w>x<h>`, `--version` (prints the engine version).
+// A pack cooked by another engine version gets a warning on stderr and is played anyway.
 
 @MainActor
 public enum GamePlayer {
@@ -32,10 +34,12 @@ public enum GamePlayer {
         /// `--size`; nil: the project's runtime window size, else 1280 x 720.
         public var width: Int?
         public var height: Int?
+        /// `--version`: print the engine version and exit.
+        public var version = false
 
         public init() {}
 
-        public static let usage = "Usage: <game> [--pack <file.pack>] [--scene <path>] [--backend metal|vulkan] [--size <w>x<h>]"
+        public static let usage = "Usage: <game> [--pack <file.pack>] [--scene <path>] [--backend metal|vulkan] [--size <w>x<h>] [--version]"
 
         /// Parses `arguments` (without the program name).
         public static func parse(_ arguments: [String]) throws -> Options {
@@ -48,6 +52,7 @@ public enum GamePlayer {
             while let argument = rest.popFirst() {
                 switch argument {
                 case "--pack": options.pack = try value(argument)
+                case "--version": options.version = true
                 case "--scene": options.scene = try value(argument)
                 case "--backend":
                     let name = try value(argument)
@@ -109,12 +114,20 @@ public enum GamePlayer {
     public static func makeGame(module: GameModule, assets: AssetDatabase, scene: String?) throws -> any Game {
         guard let pack = assets.pack else { throw GamePlayerError.noPack([]) }
         if !pack.manifest.scenes.isEmpty || scene != nil {
-            return PackSceneGame(module: module, assets: assets, scene: try pack.scene(scene))
+            _ = try pack.scene(scene)  // fail here, before a window opens, on an unknown scene
+            return PackSceneGame(module: module, assets: assets, scene: scene)
         }
         guard let makeGame = module.makeGame else {
             throw GamePlayerError.nothingToRun("\(pack.name) has no scenes and \(module.name) has no Game of its own")
         }
         return makeGame()
+    }
+
+    /// A warning when the pack was cooked by another engine version than this game's (nil: same,
+    /// or not recorded). The game still plays it: the pack format has its own version check.
+    public static func packVersionWarning(_ manifest: AssetPackManifest) -> String? {
+        guard let mismatch = EngineVersionMismatch.check(manifest.engineVersion) else { return nil }
+        return "Warning: \(manifest.name)'s asset pack was cooked by engine \(mismatch.saved), but this game runs engine \(mismatch.current); rebuild the game if anything looks wrong"
     }
 
     /// The exported executable's whole `main`: parses the command line, mounts the pack,
@@ -123,10 +136,15 @@ public enum GamePlayer {
                             arguments: [String] = Array(CommandLine.arguments.dropFirst())) -> Never {
         do {
             let options = try Options.parse(arguments)
+            if options.version {
+                print(EngineVersion.displayName)
+                exit(0)
+            }
             registerEngineComponents()
             let module = try register(module: entry)
             for component in module.components { ComponentRegistry.register(component.type) }
             let pack = try AssetPack(url: try findPack(explicit: options.pack))
+            if let warning = packVersionWarning(pack.manifest) { FileHandle.standardError.write(Data((warning + "\n").utf8)) }
             let assets = AssetDatabase(mounting: pack)
             self.assets = assets
             let game = try makeGame(module: module, assets: assets, scene: options.scene)
@@ -161,18 +179,18 @@ public enum GamePlayerError: Error, Equatable, CustomStringConvertible {
 }
 
 /// Plays a cooked scene: the scene from the pack, drawn by a `SceneRenderer` whose assets
-/// come from the pack, with the play-mode systems and the module's.
+/// come from the pack, with the play-mode systems and the module's (`ScenePlayback`). Game
+/// code switches to another cooked scene with `context.loadScene(_:)`.
 @MainActor
 final class PackSceneGame: Game {
     let module: GameModule
     let assets: AssetDatabase
-    let scene: Data
-    let world = World()
+    /// The scene to start with (nil: the pack's start scene).
+    let scene: String?
     private var renderer: SceneRenderer!
-    private var physics: PhysicsWorld?
-    private var physics2D: PhysicsWorld2D?
+    private(set) var playback: ScenePlayback!
 
-    init(module: GameModule, assets: AssetDatabase, scene: Data) {
+    init(module: GameModule, assets: AssetDatabase, scene: String?) {
         self.module = module
         self.assets = assets
         self.scene = scene
@@ -184,29 +202,20 @@ final class PackSceneGame: Game {
         try renderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(0.6, 0.6, 0.58, 1), checker: true, specular: 0.1),
                                       key: "checker")
         renderer.assets = assets
-        try world.load(scene)
-        let runtime = assets.pack?.manifest.runtime ?? ProjectRuntimeSettings()
-        runtime.apply(to: world)
-        if world.count(of: Collider.self) > 0 {
-            let physics = PhysicsWorld()
-            runtime.apply(to: physics)
-            world.addPhysics(physics)
-            self.physics = physics
+        guard let pack = assets.pack else { throw GamePlayerError.noPack([]) }
+        let context = GameContext(input: engine.input)
+        context.scenes = pack.manifest.scenes.map(\.path)
+        playback = ScenePlayback(module: module, context: context, runtime: pack.manifest.runtime ?? ProjectRuntimeSettings(),
+                                 audio: engine.audio, assets: { [assets] in assets }) { path in try pack.scene(path) }
+        guard let start = scene ?? pack.manifest.startScene else {
+            throw GamePlayerError.nothingToRun("\(pack.name) has no scenes")
         }
-        if world.count(of: Collider2D.self) > 0 {
-            let physics = PhysicsWorld2D()
-            runtime.apply(to: physics)
-            world.addPhysics2D(physics)
-            physics2D = physics
-        }
-        if world.count(of: SpriteAnimator.self) > 0 { world.addSpriteAnimationSystem() }
-        if world.count(of: AudioEmitter.self) > 0 { world.addSpatialAudio(engine.audio, assets: { [assets] in assets }) }
-        world.addBuiltinAnimationSystems()
-        for warning in module.addSystems(to: world, context: GameContext(input: engine.input)) { print(warning) }
-        engine.world = world
+        try playback.load(start)
+        engine.world = playback.world
     }
 
-    func update(engine: Engine, dt: Float) {}
-    func renderOffscreen(engine: Engine, frame: Frame) { renderer.renderOffscreen(world: world, engine: engine, frame: frame) }
+    /// Runs before the world's update, so a scene asked for last frame loads between updates.
+    func update(engine: Engine, dt: Float) { playback.applyPendingScene() }
+    func renderOffscreen(engine: Engine, frame: Frame) { renderer.renderOffscreen(world: playback.world, engine: engine, frame: frame) }
     func render(engine: Engine, pass: RenderPass) { renderer.draw(pass) }
 }

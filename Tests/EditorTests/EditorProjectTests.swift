@@ -181,3 +181,34 @@ private let rocksOBJ = """
         #expect(mesh.selectedOption == "sphere")
     }
 }
+
+// MARK: Engine version
+
+@MainActor @Suite struct ProjectEngineVersionTests {
+    @Test func openRefusesAnotherEngineVersionUnlessAllowedAndStampsIt() throws {
+        let root = temporaryDirectory().appendingPathComponent("Versioned")
+        var project = try Project.create(at: root)
+        project.settings.engineVersion = "99.0.0"
+        try project.saveSettings()
+
+        let session = makeSession()
+        #expect(ProjectOpenCommand.versionMismatch(root.path, in: session)?.saved == "99.0.0")
+        #expect(throws: CommandError.self) { try session.commands.run(ProjectOpenCommand.self, .init(path: root.path)) }
+        #expect(session.project == nil)
+        #expect(try Project.open(at: root).settings.engineVersion == "99.0.0")  // untouched
+
+        try session.commands.run(ProjectOpenCommand.self, .init(path: root.path, allowVersionMismatch: true))
+        #expect(session.project?.root.standardizedFileURL == root.standardizedFileURL)
+        #expect(try Project.open(at: root).settings.engineVersion == EngineVersion.current)
+        #expect(ProjectOpenCommand.versionMismatch(root.path, in: session) == nil)
+    }
+
+    @Test func projectsWithoutAVersionOpenAndGetOne() throws {
+        let root = temporaryDirectory().appendingPathComponent("Unversioned")
+        let project = try Project.create(at: root)
+        try Data(#"{"format": "SwiftGameEngine.Project", "name": "Old", "version": 1}"#.utf8).write(to: project.settingsURL)
+        let session = makeSession()
+        try session.commands.run(ProjectOpenCommand.self, .init(path: root.path))
+        #expect(try Project.open(at: root).settings.engineVersion == EngineVersion.current)
+    }
+}

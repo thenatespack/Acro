@@ -132,6 +132,7 @@ final class DebugOverlay {
         ]) + [
             "DRAWS \(stats.drawCalls)  TRIS \(stats.triangles)" + (stats.descriptorPools.map { "  POOLS \($0)" } ?? ""),
             "\(backend.rawValue) \(deviceName)  VSYNC \(vsync ? "ON" : "OFF")",
+            "ENGINE \(EngineVersion.current)",
         ] + Self.resolutionLines(window: framebufferSize, render: renderSize, upscaler: upscaler)
     }
 

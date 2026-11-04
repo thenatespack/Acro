@@ -13,6 +13,7 @@ let usage = """
            GameRunner <target | module.dylib> [scene.json] --server [--port 7777] [--host 0.0.0.0]
            GameRunner <target | module.dylib> [scene.json] --connect <host:port> [--headless]
       Networked runs: [--duration <seconds>] [--replicate auto|all|marked]
+           GameRunner --version
     """
 
 func fail(_ message: String) -> Never {
@@ -69,6 +70,9 @@ while !arguments.isEmpty {
     case "--replicate":
         replication = value("--replicate")
         guard ["auto", "all", "marked"].contains(replication) else { fail("--replicate is auto, all or marked") }
+    case "--version":
+        print(EngineVersion.displayName)
+        exit(0)
     case "--help", "-h":
         print(usage)
         exit(0)
@@ -102,30 +106,55 @@ if headless && connect == nil { fail("--headless goes with --connect (--server i
     return try GameModuleLoader.load(output, copy: false)
 }
 
-/// Runs a module without a `Game`: its systems over a scene file.
+/// Runs a module without a `Game`: its systems over a scene file, with the play systems
+/// (`ScenePlayback`). `context.loadScene(path)` loads another scene file: `path` as given when
+/// it exists, else relative to the first scene's folder or to an `Assets/` folder above it.
 @MainActor final class SceneHost: Game {
     let module: GameModule
     let sceneURL: URL
-    let world = World()
     var renderer: SceneRenderer!
+    var playback: ScenePlayback!
 
     init(module: GameModule, sceneURL: URL) {
         self.module = module
         self.sceneURL = sceneURL
     }
 
+    /// The file for a scene path game code asked for.
+    static func resolve(_ path: String, from start: URL) -> URL {
+        let fm = FileManager.default
+        let expanded = (path as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") || fm.fileExists(atPath: expanded) { return URL(fileURLWithPath: expanded) }
+        var candidates: [URL] = []
+        var folder = start.deletingLastPathComponent().standardizedFileURL
+        candidates.append(folder.appendingPathComponent(path))
+        // Up to the project: "Scenes/Level2.scene" is relative to Assets/, "Assets/…" to its parent.
+        while folder.path != "/" {
+            if folder.lastPathComponent == "Assets" {
+                candidates.append(folder.appendingPathComponent(path))
+                candidates.append(folder.deletingLastPathComponent().appendingPathComponent(path))
+                break
+            }
+            folder = folder.deletingLastPathComponent()
+        }
+        return candidates.first { fm.fileExists(atPath: $0.path) } ?? candidates[0]
+    }
+
     func setup(engine: Engine) throws {
         renderer = try SceneRenderer(engine: engine)
         try renderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(0.6, 0.6, 0.58, 1), checker: true, specular: 0.1),
                                       key: "checker")
-        world.addBuiltinAnimationSystems()
-        try world.load(Data(contentsOf: sceneURL))
-        for warning in module.addSystems(to: world, context: GameContext(input: engine.input)) { print(warning) }
-        engine.world = world
+        let start = sceneURL
+        playback = ScenePlayback(module: module, context: GameContext(input: engine.input), audio: engine.audio) { path in
+            try Data(contentsOf: SceneHost.resolve(path, from: start))
+        }
+        try playback.load(sceneURL.path)
+        engine.world = playback.world
     }
 
-    func update(engine: Engine, dt: Float) {}
-    func renderOffscreen(engine: Engine, frame: Frame) { renderer.renderOffscreen(world: world, engine: engine, frame: frame) }
+    /// Runs before the world's update, so a scene asked for last frame loads between updates.
+    func update(engine: Engine, dt: Float) { playback.applyPendingScene() }
+    func renderOffscreen(engine: Engine, frame: Frame) { renderer.renderOffscreen(world: playback.world, engine: engine, frame: frame) }
     func render(engine: Engine, pass: RenderPass) { renderer.draw(pass) }
 }
 

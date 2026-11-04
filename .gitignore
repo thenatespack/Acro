@@ -6,3 +6,5 @@ DerivedData/
 .prompt
 logos/*
 Assets/*
+# Scripts/make-editor-app.sh output
+/Build/

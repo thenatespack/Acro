@@ -287,3 +287,50 @@ import Testing
         #expect(try GameMCP.entity(text, in: world) == entity)
     }
 }
+
+// MARK: Scene switching (GameContext.loadScene)
+
+@MainActor
+@Suite struct PlaySceneSwitchTests {
+    @Test func gameCodeSwitchesScenesAndStopRestoresTheOpenOne() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("PlaySceneSwitch-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        func write(_ name: String, _ entities: [String]) throws -> URL {
+            let world = World()
+            for entity in entities { _ = world.spawn(Transform(), Name(entity)) }
+            let url = folder.appendingPathComponent(name)
+            try world.save().write(to: url)
+            return url
+        }
+        let menu = try write("Menu.scene", ["Title"])
+        let level = try write("Level.scene", ["Player", "Goal"])
+        func names(_ session: EditorSession) -> [String] {
+            var names: [String] = []
+            session.world.query(Name.self) { _, name in names.append(name.value) }
+            return names.sorted()
+        }
+
+        let session = makeSession()
+        #expect(session.open(path: menu.path))
+        let opened = try session.world.save()
+        session.play(paused: true)
+        #expect(session.gameModule.context.scene == menu.path)
+
+        session.gameModule.context.loadScene(level.path)
+        session.step(frames: 1)
+        #expect(names(session) == ["Goal", "Player"])
+        #expect(session.gameModule.context.scene == level.path)
+        #expect(session.gameModule.context.pendingScene == nil)
+
+        // A missing scene is logged and the level keeps playing.
+        session.gameModule.context.loadScene(folder.appendingPathComponent("Missing.scene").path)
+        session.step(frames: 1)
+        #expect(names(session) == ["Goal", "Player"])
+
+        session.stop()
+        #expect(names(session) == ["Title"])
+        #expect(try session.world.save() == opened)
+        #expect(session.document.url == menu)
+    }
+}

@@ -14,11 +14,15 @@ import Foundation
 //
 // ```json
 // {
+//   "engineVersion" : "0.1.0",
 //   "format" : "SwiftGameEngine.Project",
 //   "name" : "MyGame",
 //   "version" : 1
 // }
 // ```
+//
+// `engineVersion` is the engine version that last opened the project (`EngineVersion`); the
+// editor warns before opening a project made with another one.
 //
 // Optional sections: `game` (the game code, `GameModuleSettings`), `build` (Build Game,
 // `GameBuildSettings`) and `runtime` (window and physics, `ProjectRuntimeSettings`).
@@ -62,21 +66,27 @@ public struct ProjectSettings: Equatable, Sendable, Codable {
     /// How the game runs: window, render quality, physics (`"runtime": {"window": {...},
     /// "physics": {...}}`; see `ProjectRuntimeSettings`). nil: the engine's defaults.
     public var runtime: ProjectRuntimeSettings?
+    /// The engine version that made or last opened the project (`EngineVersion.current` for new
+    /// ones); nil in projects from before it was recorded.
+    public var engineVersion: String?
 
-    public init(name: String, game: GameModuleSettings? = nil, build: GameBuildSettings? = nil, runtime: ProjectRuntimeSettings? = nil) {
+    public init(name: String, game: GameModuleSettings? = nil, build: GameBuildSettings? = nil, runtime: ProjectRuntimeSettings? = nil,
+                engineVersion: String? = EngineVersion.current) {
         self.name = name
+        self.engineVersion = engineVersion
         self.game = game
         self.build = build
         self.runtime = runtime
     }
 
-    private enum CodingKeys: String, CodingKey { case format, version, name, game, build, runtime }
+    private enum CodingKeys: String, CodingKey { case format, version, engineVersion, name, game, build, runtime }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 1
         guard version <= Self.currentVersion else { throw AssetError.unsupportedProjectVersion(version) }
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        engineVersion = try c.decodeIfPresent(String.self, forKey: .engineVersion)
         game = try c.decodeIfPresent(GameModuleSettings.self, forKey: .game)
         build = try c.decodeIfPresent(GameBuildSettings.self, forKey: .build)
         runtime = try c.decodeIfPresent(ProjectRuntimeSettings.self, forKey: .runtime)
@@ -86,6 +96,7 @@ public struct ProjectSettings: Equatable, Sendable, Codable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(Self.format, forKey: .format)
         try c.encode(Self.currentVersion, forKey: .version)
+        try c.encodeIfPresent(engineVersion, forKey: .engineVersion)
         try c.encode(name, forKey: .name)
         try c.encodeIfPresent(game, forKey: .game)
         try c.encodeIfPresent(build, forKey: .build)
@@ -147,6 +158,27 @@ public struct Project: Sendable {
         try FileManager.default.createDirectory(at: project.assetsURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: project.libraryURL, withIntermediateDirectories: true)
         return project
+    }
+
+    /// The project was made (or last opened) with another engine version (nil: this one, or not recorded).
+    public var engineVersionMismatch: EngineVersionMismatch? { EngineVersionMismatch.check(settings.engineVersion) }
+
+    /// Reads just the engine version recorded in the `Project.json` of the project at `url` (the
+    /// folder or the file), without opening it; nil when there is none or the file can't be read.
+    public static func engineVersionMismatch(at url: URL) -> EngineVersionMismatch? {
+        let file = url.lastPathComponent == fileName ? url : url.appendingPathComponent(fileName)
+        struct Header: Decodable { var engineVersion: String? }
+        guard let data = FileManager.default.contents(atPath: file.path),
+              let header = try? JSONDecoder().decode(Header.self, from: data) else { return nil }
+        return EngineVersionMismatch.check(header.engineVersion)
+    }
+
+    /// Records this engine's version in `Project.json` (after opening a project from another
+    /// version, or one from before versions were recorded). Does nothing when it is already there.
+    public mutating func stampEngineVersion() throws {
+        guard settings.engineVersion != EngineVersion.current else { return }
+        settings.engineVersion = EngineVersion.current
+        try saveSettings()
     }
 
     /// Whether `url` is a project folder (has `Project.json`).

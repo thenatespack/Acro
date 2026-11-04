@@ -406,7 +406,7 @@ public final class EditorApp: Game, EditorHost {
             session.gameModule.configure(game, base: URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true))
             _ = try? session.commands.start(GameReloadCommand.self, .init(build: !(game.library != nil && game.buildCommand == nil)))
         }
-        if let path = options.projectPath { session.run(ProjectOpenCommand.self, .init(path: path)) }
+        if let path = options.projectPath { openProjectAsking(.init(path: path)) }
         if let path = options.scenePath {
             if session.run(SceneOpenCommand.self, .init(path: path)) == nil { session.run(SceneNewCommand.self) }
             scenePath = toolbarScenePath(session.document.url?.path ?? path)
@@ -415,7 +415,10 @@ public final class EditorApp: Game, EditorHost {
             scenePath = toolbarScenePath(prefs.lastScenePath ?? "scene.json")
         }
         if let reopen {
-            if session.run(ProjectOpenCommand.self, .init(path: reopen, openLastScene: true)) != nil {
+            // From another engine version: start on the launcher, which the answer closes.
+            if openProjectAsking(.init(path: reopen, openLastScene: true), then: { [unowned self] opened in
+                if opened { hideLauncher() }
+            }) != nil {
                 if let url = session.document.url { scenePath = toolbarScenePath(url.path) }
             } else {
                 startOnLauncher = true
@@ -809,7 +812,41 @@ public final class EditorApp: Game, EditorHost {
         }
         // Cancelled: nothing changes.
         guard let url = FilePicker.chooseFolder(title: "Open Project", prompt: "Open") else { return }
-        session.run(ProjectOpenCommand.self, .init(path: url.path, openLastScene: nil))
+        openProjectAsking(.init(path: url.path, openLastScene: nil))
+    }
+
+    /// Runs project.open, first asking when the project was made with another engine version:
+    /// a warning with Open Anyway (which opens it and stamps it with this version) and Cancel.
+    /// `done` gets whether the project opened (not called on Cancel). Returns the result when
+    /// it ran at once; nil when it failed or waits for the answer.
+    @discardableResult
+    func openProjectAsking(_ arguments: ProjectOpenCommand.Arguments, then done: ((Bool) -> Void)? = nil) -> PathResult? {
+        guard arguments.allowVersionMismatch != true, let mismatch = ProjectOpenCommand.versionMismatch(arguments.path, in: session) else {
+            let result = session.run(ProjectOpenCommand.self, arguments)
+            done?(result != nil)
+            return result
+        }
+        let path = ProjectOpenCommand.resolvedPath(arguments.path, in: session)
+        let name = (try? Project.open(at: session.resolvedFileURL(forPath: path)).name) ?? (path as NSString).lastPathComponent
+        session.log.warning("\(name) was \(mismatch)")
+        let risk = mismatch.isNewer
+            ? "It may use features this engine doesn't know, and saving it here can lose them."
+            : "Its files may be upgraded and then not open in engine \(mismatch.saved) again."
+        let dialog = ConfirmDialog(
+            title: "Open \u{201C}\(name)\u{201D} made with engine \(mismatch.saved)?",
+            message: "This editor is engine \(mismatch.current). \(risk) Opening it anyway records \(mismatch.current) in its Project.json.",
+            confirmTitle: "Open Anyway", name: "engineVersionDialog")
+        dialog.command = ProjectOpenCommand.id.rawValue
+        dialog.onConfirm = { [unowned self] in
+            var allowed = arguments
+            allowed.allowVersionMismatch = true
+            let opened = session.run(ProjectOpenCommand.self, allowed) != nil
+            if opened, let url = session.document.url { scenePath = toolbarScenePath(url.path) }
+            hierarchy.sync(force: true)
+            done?(opened)
+        }
+        dialog.present(in: ui)
+        return nil
     }
 
     /// New Project from the toolbar: the launcher's New Project form (name, location, template).
@@ -971,8 +1008,8 @@ public final class EditorApp: Game, EditorHost {
 
         input.cursor = cursorShape(for: ui.desiredCursor)
         let project = session.project.map { " — \($0.name)" } ?? ""
-        let title = isLauncherShown ? "Projects — Editor"
-            : "\(session.document.title)\(project) — Editor" + (session.isPlaying ? " [Playing]" : "")
+        let title = isLauncherShown ? "Projects — Editor \(EngineVersion.current)"
+            : "\(session.document.title)\(project) — Editor \(EngineVersion.current)" + (session.isPlaying ? " [Playing]" : "")
         if engine.title != title { engine.title = title }
         if prefsDirty && !MouseButton.allCases.contains(where: input.isDown) { savePrefs() }
         session.recovery?.update()

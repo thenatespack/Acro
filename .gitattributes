@@ -1,1 +1,3 @@
 *.spv binary
+Sources/Engine/Core/EngineVersion.swift merge=engine-version
+.engine-version merge=engine-version

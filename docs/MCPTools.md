@@ -1428,10 +1428,11 @@ Result:
 
 **Open Project** · _destructive_, _idempotent_
 
-Opens the project at `path` (or a recent project by name), scans its assets and imports what changed (in the background); the project goes to the top of project.recent.list and the launcher closes. The scene stays open unless `openLastScene` is true. Returns the project's root folder. Destructive only when `openLastScene` is true and the open scene has unsaved changes: then pass confirm: true.
+Opens the project at `path` (or a recent project by name), scans its assets and imports what changed (in the background); the project goes to the top of project.recent.list and the launcher closes. The scene stays open unless `openLastScene` is true. A project whose Project.json records another engine version (`engineVersion`) is refused unless `allowVersionMismatch` is true; opened, it is stamped with this engine's version (0.1.0). Returns the project's root folder. Destructive only when `openLastScene` is true and the open scene has unsaved changes: then pass confirm: true.
 
 Arguments:
 
+- `allowVersionMismatch?`: boolean
 - `confirm?`: true — Required only when `openLastScene` is true and the open scene has unsaved changes: that can lose work that undo can't bring back.
 - `openLastScene?`: boolean
 - `path`: string
@@ -1795,7 +1796,7 @@ Result:
 - `appearance?`: {effectiveUIScale: number, theme: string, themes: [string], uiScale: number}
 - `editor`: {cameraFieldOfView?: number, cameraFlySpeed?: number, codeEditor?: string (7 cases), codeEditorCommand?: string, snapRotateDegrees?: number, snapScale?: number, snapTranslate?: number}
 - `gameTargets?`: [string]
-- `project?`: {build?: {enginePackage?: string, include?: [string], name?: string, output?: string, scenes?: [string], textureFamily?: "bc" \| "astc", textures?: "compress" \| "asImported"}, game?: {buildCommand?: [string], library?: string, package?: string, target?: string, watch?: boolean}, name?: string, runtime?: {physics?: object, window?: object}, version?: integer}
+- `project?`: {build?: {enginePackage?: string, include?: [string], name?: string, output?: string, scenes?: [string], textureFamily?: "bc" \| "astc", textures?: "compress" \| "asImported"}, engineVersion?: string, game?: {buildCommand?: [string], library?: string, package?: string, target?: string, watch?: boolean}, name?: string, runtime?: {physics?: object, window?: object}, version?: integer}
 - `projectPath?`: string
 - `scenes?`: [string]
 
@@ -1843,7 +1844,7 @@ Arguments:
 Result:
 
 - `path`: string
-- `project`: {build?: {enginePackage?: string, include?: [string], name?: string, output?: string, scenes?: [string], textureFamily?: "bc" \| "astc", textures?: "compress" \| "asImported"}, game?: {buildCommand?: [string], library?: string, package?: string, target?: string, watch?: boolean}, name?: string, runtime?: {physics?: object, window?: object}, version?: integer}
+- `project`: {build?: {enginePackage?: string, include?: [string], name?: string, output?: string, scenes?: [string], textureFamily?: "bc" \| "astc", textures?: "compress" \| "asImported"}, engineVersion?: string, game?: {buildCommand?: [string], library?: string, package?: string, target?: string, watch?: boolean}, name?: string, runtime?: {physics?: object, window?: object}, version?: integer}
 
 ## stats
 

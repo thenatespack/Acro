@@ -292,15 +292,33 @@ public enum ProjectOpenCommand: EditorCommand {
         /// Also open the scene last used in the project (else its first build scene), as the
         /// launcher does; replaces the open scene. Default false: the scene stays.
         public var openLastScene: Bool?
-        public init(path: String, openLastScene: Bool? = nil) {
+        /// Open a project made with another engine version (its Project.json's `engineVersion`)
+        /// anyway; it is then stamped with this one. Default false: such a project is refused.
+        public var allowVersionMismatch: Bool?
+        public init(path: String, openLastScene: Bool? = nil, allowVersionMismatch: Bool? = nil) {
             self.path = path
             self.openLastScene = openLastScene
+            self.allowVersionMismatch = allowVersionMismatch
         }
+    }
+
+    /// The folder `path` names: as given, else a recent project's (by name).
+    static func resolvedPath(_ path: String, in session: EditorSession) -> String {
+        if !FileManager.default.fileExists(atPath: session.resolvedFileURL(forPath: path).path),
+           let entry = session.recentProjects.entry(path) {
+            return entry.path
+        }
+        return path
+    }
+
+    /// The engine version mismatch of the project `path` names, if it has one.
+    public static func versionMismatch(_ path: String, in session: EditorSession) -> EngineVersionMismatch? {
+        Project.engineVersionMismatch(at: session.resolvedFileURL(forPath: resolvedPath(path, in: session)))
     }
 
     public static let id: CommandID = "project.open"
     public static let title = "Open Project"
-    public static let doc = "Opens the project at `path` (or a recent project by name), scans its assets and imports what changed (in the background); the project goes to the top of project.recent.list and the launcher closes. The scene stays open unless `openLastScene` is true. Returns the project's root folder."
+    public static let doc = "Opens the project at `path` (or a recent project by name), scans its assets and imports what changed (in the background); the project goes to the top of project.recent.list and the launcher closes. The scene stays open unless `openLastScene` is true. A project whose Project.json records another engine version (`engineVersion`) is refused unless `allowVersionMismatch` is true; opened, it is stamped with this engine's version (\(EngineVersion.current)). Returns the project's root folder."
     public static let isIdempotent = true
     public static let isDestructive = true
     public static let confirmsOnlyWhen: String? = "when `openLastScene` is true and the open scene has unsaved changes"
@@ -308,11 +326,11 @@ public enum ProjectOpenCommand: EditorCommand {
         arguments.openLastScene == true && session.document.isDirty
     }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> PathResult {
-        var path = arguments.path
         // A recent project's name, when there is no such folder.
-        if !FileManager.default.fileExists(atPath: session.resolvedFileURL(forPath: path).path),
-           let entry = session.recentProjects.entry(path) {
-            path = entry.path
+        let path = resolvedPath(arguments.path, in: session)
+        if arguments.allowVersionMismatch != true, let mismatch = versionMismatch(path, in: session) {
+            throw CommandError.failed("The project was \(mismatch). Open it anyway with `allowVersionMismatch: true` "
+                + "(its Project.json is then stamped with \(mismatch.current))")
         }
         if arguments.openLastScene == true, session.isPlaying { throw CommandError.failed(EditorError.playing.description) }
         try session.commands.check(session.openProject(path: path), title)

@@ -43,7 +43,8 @@ import Foundation
 // against (`GameModule.abiMinorVersion`, 0 for modules from before minor versions).
 // 1.1 added the reload hooks (`willUnload` / `didLoad`, below); 1.2 component icons for the
 // editor (`icon(_:for:)`; modules without them get the editor's fallback icon); 1.3 the world
-// for networked runs (`networkedWorld(_:)`, `GameRunner --server` / `--connect`).
+// for networked runs (`networkedWorld(_:)`, `GameRunner --server` / `--connect`); 1.4 scene
+// switching from game code (`GameContext.loadScene(_:)`).
 //
 // ## State across reloads
 //
@@ -78,7 +79,7 @@ public enum GameModuleABI {
     @inlinable public static var version: Int32 { 1 }
     /// Optional additions within the major version (see "Versions" above); recorded in
     /// `GameModule.abiMinorVersion` by `register`, compiled into the module like `version`.
-    @inlinable public static var minorVersion: Int32 { 3 }
+    @inlinable public static var minorVersion: Int32 { 4 }
     /// A symbol only Engine defines; a module that defines it too carries its own Engine.
     public static let engineMarker = "swift_game_engine_host_marker"
 }
@@ -260,6 +261,43 @@ public final class GameContext {
     public init(input: Input, log: @escaping @MainActor (String) -> Void = { print($0) }) {
         self.input = input
         self.log = log
+    }
+
+    // MARK: Scenes (ABI 1.4)
+
+    /// The scene playing, as the host names it: the path given to `loadScene` (or the start
+    /// scene's). Nil when the host isn't playing a scene file (a module's own `Game`, a
+    /// networked run's built world). Set by the host.
+    public var scene: String?
+    /// The scenes `loadScene` can switch to when the host knows them: an exported game's cooked
+    /// scenes (the project's `build.scenes`), relative to `Assets/`. Empty: unknown (the editor
+    /// and `GameRunner` load any scene file). Set by the host.
+    public var scenes: [String] = []
+    /// The scene `loadScene` asked for, not loaded yet.
+    public private(set) var pendingScene: String?
+
+    /// Switches to the scene at `path` after the current frame: the host clears the world,
+    /// loads the scene and restarts the play systems (physics, audio, sprite animation and the
+    /// module's own), so systems see the new scene from the next frame on. State outside the
+    /// ECS (statics) carries over; entities don't. Paths are relative to `Assets/`
+    /// ("Scenes/Level2.scene"; a leading "Assets/" and a bare file name work too). An exported
+    /// game only has the scenes it was built with (`build.scenes` in Project.json), so list
+    /// every scene the game switches to there. A failed load is logged and the current scene
+    /// keeps playing. Calling it again in the same frame replaces the request; `reloadScene()`
+    /// starts the current scene over.
+    public func loadScene(_ path: String) {
+        pendingScene = path
+    }
+
+    /// Starts the current scene over (as `loadScene(scene)`); does nothing without one.
+    public func reloadScene() {
+        if let scene { loadScene(scene) }
+    }
+
+    /// For hosts: the pending request, cleared. Call between world updates, never during one.
+    public func takePendingScene() -> String? {
+        defer { pendingScene = nil }
+        return pendingScene
     }
 }
 

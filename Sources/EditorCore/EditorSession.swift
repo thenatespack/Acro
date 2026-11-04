@@ -343,12 +343,20 @@ public final class EditorSession {
     // MARK: Project
 
     /// Opens the project at `path` (its folder or its `Project.json`), scans its assets and
-    /// imports what changed. The scene stays open.
+    /// imports what changed. The scene stays open. Records this engine's version in its
+    /// Project.json; a project from another version opens with a warning (`project.open` and
+    /// the editor's UI ask first).
     @discardableResult
     public func openProject(path: String) -> Bool {
         guard let url = fileURL(forPath: path, "Open Project") else { return false }
         do {
-            setProject(try Project.open(at: url), verb: "Opened")
+            var project = try Project.open(at: url)
+            if let mismatch = project.engineVersionMismatch {
+                log.warning("Project \(project.name) was \(mismatch); its Project.json now records \(mismatch.current)")
+            }
+            // Record this engine's version (also in projects from before versions were recorded).
+            do { try project.stampEngineVersion() } catch { log.warning("Couldn't record the engine version in \(project.settingsURL.path): \(error)") }
+            setProject(project, verb: "Opened")
             return true
         } catch {
             log.error("Couldn't open the project at \(url.path): \(error)")
@@ -514,6 +522,8 @@ public final class EditorSession {
         gameInput.reset()
         inputPlayer = InputPlayer()
         forwardedInput.removeAll()
+        gameModule.context.scene = document.url.map { project?.assetPath(for: $0) ?? $0.path }
+        _ = gameModule.context.takePendingScene()
         addPlaySystems()
         log.info(paused ? "Play (paused)" : "Play")
         changed()
@@ -597,11 +607,53 @@ public final class EditorSession {
         inputPlayer.apply(to: gameInput)
         gameInput.endEvents()
         world.update(dt: dt)
+        if let scene = gameModule.context.takePendingScene() { loadPlayScene(scene) }
         netPlay?.advance(dt: dt)
         tweens?.update(dt: Float(dt))
         inputPlayer.advance(by: dt)
         playFrame += 1
         playTime += dt
+    }
+
+    /// Switches the play session to another scene (game code's `context.loadScene`): the
+    /// world's entities are replaced by the scene file's and the play systems restart. Stop
+    /// still restores the scene that was open at Play. `path` resolves like Open's (relative
+    /// to the project or its `Assets/`). Logs and keeps the current scene on failure.
+    @discardableResult
+    public func loadPlayScene(_ path: String) -> Bool {
+        guard isPlaying else { return false }
+        guard netPlay == nil else {
+            log.error("Scene '\(path)': can't switch scenes during network play")
+            return false
+        }
+        guard let url = fileURL(forPath: sceneOpenPath(path), "Load Scene") else { return false }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+            _ = try World().load(data)  // validate before clearing
+        } catch {
+            log.error("Scene '\(path)' failed to load: \(error)")
+            return false
+        }
+        onWillReplaceWorld?()
+        removePlaySystems()
+        for root in world.roots { world.despawn(root) }
+        do {
+            _ = try world.load(data)
+        } catch {
+            log.error("Scene '\(path)' failed to load: \(error)")
+        }
+        world.propagateTransforms()
+        selection.prune(in: world)
+        gameModule.context.scene = project?.assetPath(for: url) ?? path
+        addPlaySystems()
+        if let project, let scenes = project.settings.build?.scenes, !scenes.isEmpty,
+           let assetPath = project.assetPath(for: url), !scenes.contains(assetPath) {
+            log.warning("Scene \(assetPath) isn't in the project's build.scenes: an exported game can't load it")
+        }
+        log.info("Scene: \(url.lastPathComponent) (\(world.entityCount) entities)")
+        changed()
+        return true
     }
 
     /// The play session's systems: physics (3D, 2D) when the scene has colliders, sprite animation when

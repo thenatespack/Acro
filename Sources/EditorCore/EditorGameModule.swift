@@ -103,7 +103,8 @@ public final class EditorGameModule {
     /// What the last module's `willUnload` saved, for the next module's `didLoad`.
     private var carriedState: Data?
     private var watchReloadPending = false
-    private lazy var context = GameContext(input: session.gameInput) { [unowned self] message in session.log.info(message) }
+    /// What the module's systems get; its scene requests (`loadScene`) are applied by the session.
+    private(set) lazy var context = GameContext(input: session.gameInput) { [unowned self] message in session.log.info(message) }
 
     init(session: EditorSession) {
         self.session = session
