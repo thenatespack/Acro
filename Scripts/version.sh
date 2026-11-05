@@ -17,7 +17,7 @@
 # (differs from HEAD's) is not bumped again; its hashes are just recorded.
 set -eu
 
-ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+ROOT=$(cd "$(dirname "$0")/.." && pwd)  # not `git rev-parse`: in a linked worktree hooks get GIT_DIR, which makes that the cwd
 cd "$ROOT"
 VERSION_FILE=Sources/Engine/Core/EngineVersion.swift
 STATE_FILE=.engine-version
