@@ -56,6 +56,7 @@ public enum EditorComponentCatalog {
         register(SpotLight.self) { SpotLight() }
         register(SceneEnvironment.self) { SceneEnvironment() }
         register(PostProcessSettings.self) { PostProcessSettings() }
+        register(PostFXVolume.self) { PostFXVolume() }
         register(PlanarReflection.self) { PlanarReflection() }
         register(MeshRenderer.self) { MeshRenderer(mesh: .cube) }
         register(LineRenderer.self) { LineRenderer() }

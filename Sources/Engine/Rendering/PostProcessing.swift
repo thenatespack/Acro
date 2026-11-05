@@ -45,10 +45,37 @@ public struct PostProcessSettings: Component, Codable, Equatable, Sendable {
     public var bloom: Bool
     /// Fraction of the bloom image in the result (0...1).
     public var bloomIntensity: Float
+    /// Color grading, applied after tonemapping: contrast around middle gray, then lift (raises
+    /// the shadows), gamma (per-channel midtone exponent, 1 = unchanged, higher brightens) and
+    /// gain (per-channel multiplier), then saturation (1 = unchanged, 0 = gray).
+    public var lift: Vec3
+    public var gamma: Vec3
+    public var gain: Vec3
+    public var saturation: Float
+    public var contrast: Float
+    /// Darkens the corners (0 = off, 1 = black); `vignetteSoftness` is how far in the fade reaches.
+    public var vignette: Float
+    public var vignetteSoftness: Float
+    /// Splits red and blue radially toward the edges (0 = off; about 0.2 is subtle).
+    public var chromaticAberration: Float
+    /// Animated noise strength (0 = off).
+    public var filmGrain: Float
 
     public init(tonemapper: Tonemapper = .neutral, exposure: Float = 0, autoExposure: Bool = false,
                 autoExposureMin: Float = -6, autoExposureMax: Float = 6, adaptationSpeed: Float = 1.5,
-                bloom: Bool = false, bloomIntensity: Float = 0.04) {
+                bloom: Bool = false, bloomIntensity: Float = 0.04,
+                lift: Vec3 = Vec3(0, 0, 0), gamma: Vec3 = Vec3(1, 1, 1), gain: Vec3 = Vec3(1, 1, 1),
+                saturation: Float = 1, contrast: Float = 1, vignette: Float = 0, vignetteSoftness: Float = 0.5,
+                chromaticAberration: Float = 0, filmGrain: Float = 0) {
+        self.lift = lift
+        self.gamma = gamma
+        self.gain = gain
+        self.saturation = saturation
+        self.contrast = contrast
+        self.vignette = vignette
+        self.vignetteSoftness = vignetteSoftness
+        self.chromaticAberration = chromaticAberration
+        self.filmGrain = filmGrain
         self.tonemapper = tonemapper
         self.exposure = exposure
         self.autoExposure = autoExposure
@@ -65,6 +92,7 @@ public struct PostProcessSettings: Component, Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case tonemapper, exposure, autoExposure, autoExposureMin, autoExposureMax, adaptationSpeed, bloom, bloomIntensity
+        case lift, gamma, gain, saturation, contrast, vignette, vignetteSoftness, chromaticAberration, filmGrain
     }
 
     /// Missing keys take their defaults, so scene files stay loadable when fields are added.
@@ -79,6 +107,15 @@ public struct PostProcessSettings: Component, Codable, Equatable, Sendable {
         adaptationSpeed = try c.decodeIfPresent(Float.self, forKey: .adaptationSpeed) ?? d.adaptationSpeed
         bloom = try c.decodeIfPresent(Bool.self, forKey: .bloom) ?? d.bloom
         bloomIntensity = try c.decodeIfPresent(Float.self, forKey: .bloomIntensity) ?? d.bloomIntensity
+        lift = try c.decodeIfPresent(Vec3.self, forKey: .lift) ?? d.lift
+        gamma = try c.decodeIfPresent(Vec3.self, forKey: .gamma) ?? d.gamma
+        gain = try c.decodeIfPresent(Vec3.self, forKey: .gain) ?? d.gain
+        saturation = try c.decodeIfPresent(Float.self, forKey: .saturation) ?? d.saturation
+        contrast = try c.decodeIfPresent(Float.self, forKey: .contrast) ?? d.contrast
+        vignette = try c.decodeIfPresent(Float.self, forKey: .vignette) ?? d.vignette
+        vignetteSoftness = try c.decodeIfPresent(Float.self, forKey: .vignetteSoftness) ?? d.vignetteSoftness
+        chromaticAberration = try c.decodeIfPresent(Float.self, forKey: .chromaticAberration) ?? d.chromaticAberration
+        filmGrain = try c.decodeIfPresent(Float.self, forKey: .filmGrain) ?? d.filmGrain
     }
 
     public static var fieldHints: [String: FieldHints] {
@@ -88,6 +125,13 @@ public struct PostProcessSettings: Component, Codable, Equatable, Sendable {
             "autoExposureMax": FieldHints(range: -16...16, step: 0.1, displayName: "Auto exposure max (EV)"),
             "adaptationSpeed": FieldHints(range: 0.01...20, step: 0.1, tooltip: "Per second"),
             "bloomIntensity": FieldHints(range: 0...1, step: 0.005),
+            "lift": FieldHints(color: true), "gamma": FieldHints(color: true), "gain": FieldHints(color: true),
+            "saturation": FieldHints(range: 0...2, step: 0.01),
+            "contrast": FieldHints(range: 0.5...1.5, step: 0.01),
+            "vignette": FieldHints(range: 0...1, step: 0.01),
+            "vignetteSoftness": FieldHints(range: 0.01...1, step: 0.01),
+            "chromaticAberration": FieldHints(range: 0...1, step: 0.01),
+            "filmGrain": FieldHints(range: 0...1, step: 0.01),
         ]
     }
 
@@ -231,6 +275,10 @@ public final class PostProcessor {
     /// The history target written last, and whether it holds a valid exposure.
     private var exposureCurrent = 0
     private var exposureValid = false
+    /// Before/after preview: the left of this fraction of the width (0...1) shows the plain
+    /// scene without exposure or effects, separated by a white line. 0 turns it off.
+    public var splitPreview: Float = 0
+    private var grainTime: Float = 0
 
     /// Size of the auto-exposure log-luminance grid.
     static let exposureGrid = (width: 16, height: 16)
@@ -294,6 +342,16 @@ public final class PostProcessor {
         return inputs
     }
 
+    /// Post-processes `scene` (any texture, e.g. an editor view; its values are already clamped to
+    /// 0...1, so highlights can't bloom as in the HDR path) into `target`, a color-only
+    /// `.rgba8Srgb` target. Call between passes, not inside one.
+    public func renderPreview(scene: GPUTexture, settings: PostProcessSettings, into target: GPURenderTarget, dt: Float) {
+        let inputs = render(scene: scene, settings: settings, dt: dt)
+        let pass = device.beginPass(target: target, clearColor: .zero, clearDepth: 1, label: "post fx preview")
+        drawOutput(into: pass, scene: scene, settings: settings, inputs: inputs)
+        device.endPass()
+    }
+
     /// Draws the final image (exposure, bloom, tonemapper) into `pass`, the scene output pass.
     public func drawOutput(into pass: RenderPass, scene original: GPUTexture, settings: PostProcessSettings, inputs: Inputs) {
         let scene = inputs.scene ?? original
@@ -303,12 +361,23 @@ public final class PostProcessor {
         pass.setTexture(inputs.exposure ?? black, index: 3)
         pass.setSampler(pointSampler, index: 1)
         let bloom = inputs.bloom
+        grainTime += 1.0 / 60
+        let graded = settings.lift != Vec3(0, 0, 0) || settings.gamma != Vec3(1, 1, 1) || settings.gain != Vec3(1, 1, 1)
+            || settings.saturation != 1 || settings.contrast != 1
+        let gammaInverse = Vec3(1 / max(settings.gamma.x, 0.01), 1 / max(settings.gamma.y, 0.01), 1 / max(settings.gamma.z, 0.01))
         pass.setPushConstants(TonemapConstants(
             exposure: PostProcessMath.exposureScale(ev: settings.exposure),
             bloomIntensity: bloom == nil ? 0 : min(max(settings.bloomIntensity, 0), 1),
             tonemapper: Int32(PostProcessSettings.Tonemapper.allCases.firstIndex(of: settings.tonemapper)!),
             autoExposure: inputs.exposure == nil ? 0 : 1,
-            bloomMax: SIMD2(Int32((bloom?.width ?? 1) - 1), Int32((bloom?.height ?? 1) - 1))))
+            bloomMax: SIMD2(Int32((bloom?.width ?? 1) - 1), Int32((bloom?.height ?? 1) - 1)),
+            lift: SIMD4(settings.lift.x, settings.lift.y, settings.lift.z, graded ? 1 : 0),
+            gamma: SIMD4(gammaInverse.x, gammaInverse.y, gammaInverse.z, 0),
+            gain: SIMD4(settings.gain.x, settings.gain.y, settings.gain.z, 0),
+            look: SIMD4(max(settings.saturation, 0), max(settings.contrast, 0), min(max(settings.vignette, 0), 1),
+                        min(max(settings.vignetteSoftness, 0.01), 1)),
+            fx: SIMD4(max(settings.chromaticAberration, 0), max(settings.filmGrain, 0), grainTime,
+                      min(max(splitPreview, 0), 1))))
         pass.draw(vertexCount: 3)
     }
 
@@ -420,4 +489,9 @@ struct TonemapConstants {
     var tonemapper: Int32
     var autoExposure: Float
     var bloomMax: SIMD2<Int32>
+    var lift: SIMD4<Float>
+    var gamma: SIMD4<Float>
+    var gain: SIMD4<Float>
+    var look: SIMD4<Float>
+    var fx: SIMD4<Float>
 }

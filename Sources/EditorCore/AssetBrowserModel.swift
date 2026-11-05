@@ -135,6 +135,8 @@ public final class AssetBrowserModel {
             session.run(VFXOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where session.isSoundBuildFile(id):
             session.run(SoundBuildOpenCommand.self, .init(asset: AssetReference(id)))
+        case .asset(let id) where session.isPostFXFile(id):
+            session.run(PostFXOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where entry.isExpandable:
             toggleExpanded(id)
         default:
@@ -232,6 +234,15 @@ public final class AssetBrowserModel {
     @discardableResult
     public func newSoundBuild() -> AssetID? {
         guard let id = session.run(SoundBuildNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
+        invalidate()
+        selection = .asset(id)
+        return id
+    }
+
+    /// Creates a post-fx profile in the current folder (`postfx.new`) and selects it.
+    @discardableResult
+    public func newPostFX() -> AssetID? {
+        guard let id = session.run(PostFXNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
         invalidate()
         selection = .asset(id)
         return id

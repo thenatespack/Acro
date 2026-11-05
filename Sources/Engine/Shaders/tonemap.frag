@@ -22,6 +22,11 @@ layout(push_constant) uniform PushConstants {
     int tonemapper;        // 0 none, 1 Reinhard, 2 neutral, 3 ACES (`Tonemapper` order)
     float autoExposure;    // 1: also scale by 2^(exposureImage.r)
     ivec2 bloomMax;        // bloom size - 1
+    vec4 lift;             // rgb: color grading lift (added in the shadows); a: 1 when grading is on
+    vec4 gamma;            // rgb: 1 / gamma exponent per channel
+    vec4 gain;             // rgb: gain (multiplier)
+    vec4 look;             // x saturation, y contrast, z vignette intensity, w vignette softness
+    vec4 fx;               // x chromatic aberration, y film grain, z time (seconds), w split position (0 = off)
 } pc;
 
 layout(location = 0) out vec4 outColor;
@@ -58,9 +63,40 @@ vec3 aces(vec3 c) {
                 dot(vec3(-0.00327, -0.07276, 1.07602), v));
 }
 
+float hash12(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
 void main() {
     ivec2 p = ivec2(gl_FragCoord.xy);
+    ivec2 size = textureSize(sampler2D(sceneImage, pointSampler), 0);
+    // Before/after split preview: left of the split line shows the plain scene (neutral
+    // tonemapper, no exposure or effects).
+    if (pc.fx.w > 0.0) {
+        float line = pc.fx.w * float(size.x);
+        if (float(p.x) < line - 1.0) {
+            vec3 c = texelFetch(sampler2D(sceneImage, pointSampler), p, 0).rgb;
+            outColor = vec4(clamp(neutral(max(c, vec3(0.0))), 0.0, 1.0), 1.0);
+            return;
+        }
+        if (float(p.x) < line + 1.0) {
+            outColor = vec4(1.0);
+            return;
+        }
+    }
     vec3 color = texelFetch(sampler2D(sceneImage, pointSampler), p, 0).rgb;
+    vec2 uv = (vec2(p) + 0.5) / vec2(size);
+    vec2 centered = uv * 2.0 - 1.0;
+    centered.x *= float(size.x) / float(size.y);
+    if (pc.fx.x > 0.0) {
+        // Chromatic aberration: red and blue sampled radially in and out (fraction of the height).
+        vec2 dir = (uv - 0.5) * vec2(size) * pc.fx.x * 0.02;
+        ivec2 mx = size - 1;
+        color.r = loadClamped(sceneImage, p + ivec2(round(dir)), mx).r;
+        color.b = loadClamped(sceneImage, p - ivec2(round(dir)), mx).b;
+    }
     if (pc.bloomIntensity > 0.0) {
         color = mix(color, bilinearUpsample(bloomImage, p, pc.bloomMax), pc.bloomIntensity);
     }
@@ -75,6 +111,24 @@ void main() {
         color = neutral(color);
     } else if (pc.tonemapper == 3) {
         color = aces(color);
+    }
+    color = clamp(color, 0.0, 1.0);
+    if (pc.lift.w > 0.5) {
+        // Color grading on the display-referred (linear) result: contrast around middle gray,
+        // lift / gamma / gain, then saturation.
+        color = (color - 0.18) * pc.look.y + 0.18;
+        color = max(color, vec3(0.0));
+        color = pow(max(color * pc.gain.rgb + pc.lift.rgb * (1.0 - color), vec3(0.0)), pc.gamma.rgb);
+        color = mix(vec3(luminance(color)), color, pc.look.x);
+    }
+    if (pc.look.z > 0.0) {
+        float d = length(centered) * 0.7071;
+        float v = smoothstep(1.0, 1.0 - max(pc.look.w, 0.01), d);
+        color *= mix(1.0, v, pc.look.z);
+    }
+    if (pc.fx.y > 0.0) {
+        float n = hash12(gl_FragCoord.xy + fract(pc.fx.z) * 1000.0) - 0.5;
+        color += n * pc.fx.y * 0.25 * (1.0 - 0.5 * luminance(color));
     }
     outColor = vec4(clamp(color, 0.0, 1.0), 1.0);
 }

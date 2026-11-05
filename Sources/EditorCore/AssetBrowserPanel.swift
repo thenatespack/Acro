@@ -555,6 +555,7 @@ public final class AssetBrowserPanel {
             ("New Mesh Build", MeshBuildNewCommand.id, { [unowned self] in model.newMeshBuild(); sync() }),
             ("New VFX", VFXNewCommand.id, { [unowned self] in model.newVFX(); sync() }),
             ("New Sound", SoundBuildNewCommand.id, { [unowned self] in model.newSoundBuild(); sync() }),
+            ("New Post-FX", PostFXNewCommand.id, { [unowned self] in model.newPostFX(); sync() }),
         ]
         if let entry {
             if case .folder = entry.item {

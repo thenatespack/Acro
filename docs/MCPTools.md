@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Editor › AI control). 144 tools.
+named by its id (see README › Editor › AI control). 150 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -31,6 +31,7 @@ optional arguments.
 | `net` | [`net.overlay`](#netoverlay), [`net.setConditions`](#netsetconditions), [`net.start`](#netstart), [`net.stats`](#netstats), [`net.stop`](#netstop), [`net.view`](#netview) |
 | `panel` | [`panel.close`](#panelclose), [`panel.dock`](#paneldock), [`panel.focus`](#panelfocus), [`panel.list`](#panellist), [`panel.open`](#panelopen) |
 | `play` | [`play.pause`](#playpause), [`play.setTimeScale`](#playsettimescale), [`play.start`](#playstart), [`play.state`](#playstate), [`play.step`](#playstep), [`play.stop`](#playstop), [`play.toggle`](#playtoggle) |
+| `postfx` | [`postfx.assign`](#postfxassign), [`postfx.edit`](#postfxedit), [`postfx.get`](#postfxget), [`postfx.new`](#postfxnew), [`postfx.open`](#postfxopen), [`postfx.set`](#postfxset) |
 | `prefab` | [`prefab.apply`](#prefabapply), [`prefab.create`](#prefabcreate), [`prefab.createVariant`](#prefabcreatevariant), [`prefab.overrides`](#prefaboverrides), [`prefab.revert`](#prefabrevert), [`prefab.unpack`](#prefabunpack) |
 | `project` | [`project.close`](#projectclose), [`project.new`](#projectnew), [`project.open`](#projectopen), [`project.recent.list`](#projectrecentlist), [`project.recent.locate`](#projectrecentlocate), [`project.recent.pin`](#projectrecentpin), [`project.recent.remove`](#projectrecentremove), [`project.recent.reveal`](#projectrecentreveal) |
 | `scene` | [`scene.discardRecovery`](#scenediscardrecovery), [`scene.hierarchy`](#scenehierarchy), [`scene.listRecovery`](#scenelistrecovery), [`scene.new`](#scenenew), [`scene.open`](#sceneopen), [`scene.raycast`](#sceneraycast), [`scene.recover`](#scenerecover), [`scene.save`](#scenesave), [`scene.saveAs`](#scenesaveas) |
@@ -1419,6 +1420,118 @@ Play when editing, Stop when playing.
 
 Arguments: none.
 
+## postfx
+
+### `postfx.assign`
+
+**Assign Post-FX** · _undoable_
+
+Assigns a .postfx profile to a camera (sets Camera.postFX; default: the active camera) or to a PostFXVolume entity (sets its profile). Undoable. A camera's profile replaces the scene's PostProcess component; volumes blend over it by priority. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `clear?`: boolean
+- `entity?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `path?`: string
+
+Result:
+
+- `path`: string
+
+### `postfx.edit`
+
+**Edit Post-FX** · _undoable_
+
+Changes some settings of a .postfx profile in one undoable step: optionally restart from a `preset`, then set the keys in `changes` (others keep their values). Returns the full contents and warnings. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `changes?`: any — Any JSON value.
+- `path?`: string
+- `preset?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `path`: string
+- `settings`: {adaptationSpeed?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, exposure?: number, filmGrain?: number, gain?: number[3], gamma?: number[3], lift?: number[3], saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
+- `warnings`: [string]
+
+### `postfx.get`
+
+**Get Post-FX** · _read-only_, _idempotent_
+
+Reads a .postfx profile: every setting (defaults included) and warnings about out-of-range values.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `path`: string
+- `settings`: {adaptationSpeed?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, exposure?: number, filmGrain?: number, gain?: number[3], gamma?: number[3], lift?: number[3], saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
+- `warnings`: [string]
+
+### `postfx.new`
+
+**New Post-FX**
+
+Writes a .postfx profile in `folder` (default: the Assets root) from a `preset` (default neutral) with optional `settings` overrides, and imports it. Returns the asset, its contents and warnings. Assign it with postfx.assign, tweak it with postfx.edit. A post-fx profile is a camera look; every key is optional (missing = neutral): tonemapper none|reinhard|neutral|aces, exposure (EV stops, -10..10), autoExposure (bool), autoExposureMin/autoExposureMax (EV), adaptationSpeed, bloom (bool), bloomIntensity (0..1), color grading applied after tonemapping: contrast (0.5..1.5, 1 = unchanged), lift [r,g,b] (adds to shadows, 0 = unchanged), gamma [r,g,b] (midtone, 1 = unchanged), gain [r,g,b] (multiplier, 1 = unchanged), saturation (0..2, 1 = unchanged), vignette (0..1), vignetteSoftness (0..1), chromaticAberration (0..1), filmGrain (0..1). Presets: neutral, cinematic, warm, cold, noir, retro. Assign a profile to a camera (Camera.postFX) or a PostFXVolume component (profile, shape box|sphere, size, radius, blendDistance, priority, weight, isGlobal) with postfx.assign.
+
+Arguments:
+
+- `folder?`: string
+- `name?`: string
+- `preset?`: string
+- `settings?`: any — Any JSON value.
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `path`: string
+- `settings`: {adaptationSpeed?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, exposure?: number, filmGrain?: number, gain?: number[3], gamma?: number[3], lift?: number[3], saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
+- `warnings`: [string]
+
+### `postfx.open`
+
+**Open in Post-FX Builder** · _idempotent_
+
+Opens a .postfx file in the editor's Post-FX tab (a sample scene run through the profile, with presets, sliders and a before/after split) and brings the tab to the front. view.screenshot {source: "panel", panel: "postFXBuilder"} shows it.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `path`: string
+
+### `postfx.set`
+
+**Set Post-FX** · _undoable_, _idempotent_
+
+Replaces a .postfx profile's whole contents (`settings`, or a `preset`) and reimports it; cameras and volumes using it update. Undoable. For a few changes, postfx.edit is shorter. A post-fx profile is a camera look; every key is optional (missing = neutral): tonemapper none|reinhard|neutral|aces, exposure (EV stops, -10..10), autoExposure (bool), autoExposureMin/autoExposureMax (EV), adaptationSpeed, bloom (bool), bloomIntensity (0..1), color grading applied after tonemapping: contrast (0.5..1.5, 1 = unchanged), lift [r,g,b] (adds to shadows, 0 = unchanged), gamma [r,g,b] (midtone, 1 = unchanged), gain [r,g,b] (multiplier, 1 = unchanged), saturation (0..2, 1 = unchanged), vignette (0..1), vignetteSoftness (0..1), chromaticAberration (0..1), filmGrain (0..1). Presets: neutral, cinematic, warm, cold, noir, retro. Assign a profile to a camera (Camera.postFX) or a PostFXVolume component (profile, shape box|sphere, size, radius, blendDistance, priority, weight, isGlobal) with postfx.assign. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+- `preset?`: string
+- `settings?`: {adaptationSpeed?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, exposure?: number, filmGrain?: number, gain?: number[3], gamma?: number[3], lift?: number[3], saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `path`: string
+- `settings`: {adaptationSpeed?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, exposure?: number, filmGrain?: number, gain?: number[3], gamma?: number[3], lift?: number[3], saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
+- `warnings`: [string]
+
 ## prefab
 
 ### `prefab.apply`
@@ -1542,7 +1655,7 @@ Result:
 
 **Open Project** · _destructive_, _idempotent_
 
-Opens the project at `path` (or a recent project by name), scans its assets and imports what changed (in the background); the project goes to the top of project.recent.list and the launcher closes. The scene stays open unless `openLastScene` is true. A project whose Project.json records another engine version (`engineVersion`) is refused unless `allowVersionMismatch` is true; opened, it is stamped with this engine's version (0.4.0). Returns the project's root folder. Destructive only when `openLastScene` is true and the open scene has unsaved changes: then pass confirm: true.
+Opens the project at `path` (or a recent project by name), scans its assets and imports what changed (in the background); the project goes to the top of project.recent.list and the launcher closes. The scene stays open unless `openLastScene` is true. A project whose Project.json records another engine version (`engineVersion`) is refused unless `allowVersionMismatch` is true; opened, it is stamped with this engine's version (0.5.0). Returns the project's root folder. Destructive only when `openLastScene` is true and the open scene has unsaved changes: then pass confirm: true.
 
 Arguments:
 

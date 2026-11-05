@@ -137,6 +137,19 @@ In the editor, use **New VFX** in the asset browser, then double-click the file 
 
 Editor MCP clients can use `vfx.new {preset}`, `vfx.edit {addEmitters, updateEmitters, removeEmitters}`, `vfx.set`, `vfx.get` and `vfx.open`. See [docs/MCPTools.md](docs/MCPTools.md).
 
+## Post-FX Builder
+
+A `.postfx` file is a saved camera look: tonemapper, exposure and auto exposure, bloom, color
+grading (contrast, lift, gamma, gain, saturation), vignette, chromatic aberration and film
+grain, all in one post pass on Metal and Vulkan. Make one with the Assets panel's New Post-FX
+(or `postfx.new {preset}`: neutral, cinematic, warm, cold, noir, retro) and open it in the
+Post-FX tab for a sample scene with sliders, presets and a before/after split; each change is
+one undo step. Use it per camera (the Camera's `postFX` field, or `postfx.assign`) or blend it
+by area with a `PostFXVolume` component (box or sphere, blend distance, priority, weight).
+Tools: `postfx.new`, `postfx.get`, `postfx.set`, `postfx.edit`, `postfx.assign`, `postfx.open`.
+Not yet: depth of field and LUT grading. The tab previews on an 8-bit image, so bloom looks
+weaker there than in the game.
+
 ## Building
 
 The package uses Swift Package Manager. Build all products with:

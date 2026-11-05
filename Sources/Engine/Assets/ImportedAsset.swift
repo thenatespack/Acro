@@ -478,11 +478,14 @@ public struct PrefabNode: Equatable, Sendable, Codable {
     public var animator: FieldAnimator?
     /// A particle emitter on the node (instantiating adds the `ParticleEmitter`); VFX builds use it.
     public var particles: ParticleEmitter?
+    /// A `.postfx` import's profile (the prefab spawns nothing for it; cameras and volumes read it).
+    public var postFX: PostProcessSettings?
     public var children: [PrefabNode]
 
     public init(name: String, transform: Transform = Transform(), mesh: AssetReference? = nil,
                 material: AssetReference? = nil, skin: PrefabSkin? = nil, animator: FieldAnimator? = nil,
-                children: [PrefabNode] = [], particles: ParticleEmitter? = nil) {
+                children: [PrefabNode] = [], particles: ParticleEmitter? = nil, postFX: PostProcessSettings? = nil) {
+        self.postFX = postFX
         self.name = name
         self.transform = transform
         self.mesh = mesh

@@ -41,6 +41,16 @@ DSP, deterministic per seed, and loadable anywhere an audio file is (`AudioEmitt
 Sound Builder tab has a waveform view, Play / Auto-play and the parameters form. Tools:
 `sfx.new`, `sfx.get`, `sfx.set`, `sfx.edit`, `sfx.play`, `sfx.open`. See README › Sound Builder.
 
+### Post-FX Builder (`.postfx`)
+
+Saved camera looks: tonemapper, exposure and auto exposure, bloom, color grading (contrast,
+lift, gamma, gain, saturation), vignette, chromatic aberration and film grain, in the engine's
+single tonemap pass on both backends. Presets (neutral, cinematic, warm, cold, noir, retro),
+assigned per camera (`Camera.postFX`) or blended by `PostFXVolume` (box or sphere, blend
+distance, priority). The Post-FX tab previews a sample scene with a before/after split.
+Tools: `postfx.new`, `postfx.get`, `postfx.set`, `postfx.edit`, `postfx.assign`, `postfx.open`.
+Not done: depth of field, LUT grading, a split preview inside the Scene view. See README.
+
 ## Planned
 
 Recommended order, grouped so each builder lands after the ones it depends on:
@@ -68,17 +78,6 @@ Outdoor ground for 3D games. The engine has no terrain system yet, so this is th
 - Tools: `terrain.new {size, resolution, seed}`, `terrain.sculpt {brush, points}`,
   `terrain.paint {layer, points}`, `terrain.scatter {asset, density, rules}`.
 
-
-### 4. Post-FX Profile Builder (`.postfx`)
-
-Saved camera looks built on the engine's existing post-processing (tonemapping, exposure,
-bloom).
-
-- Bloom, exposure and auto-exposure, tonemapper, color grading (lift, gamma, gain,
-  saturation, LUT), vignette, chromatic aberration, film grain, depth of field.
-- Before/after split preview in the Scene view.
-- Profiles assigned per camera or blended by volume, so areas can have their own look.
-- Tools: `postfx.new {preset?}`, `postfx.set`.
 
 ### 5. Data Table Builder (`.table`)
 

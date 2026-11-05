@@ -133,6 +133,8 @@ public final class EditorApp: Game, EditorHost {
     public private(set) var vfxWorkspace: VFXBuilderWorkspace!
     /// The Sound Builder tab (SoundBuilderWorkspace.swift).
     public private(set) var soundWorkspace: SoundBuilderWorkspace!
+    /// The Post-FX tab (PostFXWorkspace.swift).
+    public private(set) var postFXWorkspace: PostFXWorkspace!
     private(set) var statusBar: StatusBar!
     /// The Assets panel (browser) and its thumbnails.
     public private(set) var assetBrowser: AssetBrowserPanel!
@@ -466,6 +468,14 @@ public final class EditorApp: Game, EditorHost {
             }
             dock.focusPanel(EditorLayout.soundBuilder)
         }
+        session.onOpenPostFX = { [unowned self] id in
+            guard postFXWorkspace.open(id) else { return }
+            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.postFXBuilder, EditorLayout.viewport) {
+                dock.dock(EditorLayout.postFXBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
+                                                                                               : .edge(.bottom))
+            }
+            dock.focusPanel(EditorLayout.postFXBuilder)
+        }
         session.onOpenScript = { [unowned self] path in
             let url = URL(fileURLWithPath: path)
             scriptEditor.openScript(at: url)
@@ -591,6 +601,9 @@ public final class EditorApp: Game, EditorHost {
         vfxWorkspace.device = engine?.device
         if let quality = engine?.quality { vfxWorkspace.quality = quality }
         soundWorkspace = SoundBuilderWorkspace(session: session)
+        postFXWorkspace = PostFXWorkspace(session: session)
+        postFXWorkspace.device = engine?.device
+        if let quality = engine?.quality { postFXWorkspace.quality = quality }
         files.onOpen = { [unowned self] file in openFile(file) }
         files.onNewScene = { [unowned self] name in newScene(named: name) }
 
@@ -616,6 +629,9 @@ public final class EditorApp: Game, EditorHost {
         vfxPanel.passesPointerThrough = true
         dock.addPanel(vfxPanel)
         dock.addPanel(DockPanel(id: EditorLayout.soundBuilder, title: "Sound Builder", content: soundWorkspace.view, minSize: Vec2(320, 200)))
+        let postFXPanel = DockPanel(id: EditorLayout.postFXBuilder, title: "Post-FX", content: postFXWorkspace.view, minSize: Vec2(320, 200))
+        postFXPanel.passesPointerThrough = true
+        dock.addPanel(postFXPanel)
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
         for (id, icon) in EditorIcons.panelIconNames { dock.panel(id)?.icon = EditorIcons.named(icon) }
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
@@ -1018,6 +1034,7 @@ public final class EditorApp: Game, EditorHost {
             meshWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
             vfxWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
             soundWorkspace.update()
+            postFXWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
         }
         session.tick(dt: Double(dt))
 
@@ -1045,6 +1062,7 @@ public final class EditorApp: Game, EditorHost {
         resizeTarget(scale: ui.scale)
         meshWorkspace.prepareFrame(pixelScale: ui.scale)
         vfxWorkspace.prepareFrame(pixelScale: ui.scale)
+        postFXWorkspace.prepareFrame(pixelScale: ui.scale)
         buildGizmos()
         viewportWidget.texture = target.texture
         viewportWidget.billboards = transformTool.billboards
@@ -1463,6 +1481,7 @@ public final class EditorApp: Game, EditorHost {
         guard !isLauncherShown else { return }
         meshWorkspace.render(frame: frame)
         vfxWorkspace.render(frame: frame)
+        postFXWorkspace.render(frame: frame)
         if let game = gameCurrentView, gameSizer.width > 0, gameWidget.isEffectivelyVisible {
             sceneRenderer.beginViews(world: session.gameWorld, frame: frame, shadowFocus: game)
             sceneRenderer.renderView(game, into: gameTarget, frame: frame, debugDraw: gameDraw)
