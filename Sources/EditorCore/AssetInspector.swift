@@ -409,6 +409,16 @@ public final class AssetInspectorView {
                 content.addChildren([HStack(spacing: 6, [open, Spacer()]),
                                      note("A data table of \(table?.rows.count ?? 0) rows and \(table?.columns.count ?? 0) columns. Game code reads it with assets.dataTable(path:)?.row(id)?.number(column).")])
             }
+            if session.isTerrainFile(id) {
+                let open = Button("Open in Terrain Builder", role: .primary, name: "openTerrainBuilder") { [unowned self] in
+                    session.run(TerrainOpenCommand.self, .init(asset: AssetReference(id)))
+                }
+                open.command = TerrainOpenCommand.id.rawValue
+                open.tooltip = "Sculpt, paint and scatter this terrain in the Terrain Builder tab (or double-click it in the Assets panel)"
+                let size = session.assets?.terrain(of: id)?.size ?? .zero
+                content.addChildren([HStack(spacing: 6, [open, Spacer()]),
+                                     note("A heightmap terrain, \(Int(size.x)) x \(Int(size.y)) m, split into chunks with colliders. The Terrain Builder has brushes, texture layers and scatter rules.")])
+            }
             if session.isMaterialFile(id) {
                 addMaterialForm(AssetReference(id, subAsset: "material"))
             }

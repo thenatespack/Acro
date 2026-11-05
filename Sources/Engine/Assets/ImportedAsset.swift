@@ -480,12 +480,16 @@ public struct PrefabNode: Equatable, Sendable, Codable {
     public var particles: ParticleEmitter?
     /// A `.postfx` import's profile (the prefab spawns nothing for it; cameras and volumes read it).
     public var postFX: PostProcessSettings?
+    /// A static collision shape (instantiating adds a `Collider`); terrains use it for their chunks.
+    public var collider: ColliderShape?
     public var children: [PrefabNode]
 
     public init(name: String, transform: Transform = Transform(), mesh: AssetReference? = nil,
                 material: AssetReference? = nil, skin: PrefabSkin? = nil, animator: FieldAnimator? = nil,
-                children: [PrefabNode] = [], particles: ParticleEmitter? = nil, postFX: PostProcessSettings? = nil) {
+                children: [PrefabNode] = [], particles: ParticleEmitter? = nil, postFX: PostProcessSettings? = nil,
+                collider: ColliderShape? = nil) {
         self.postFX = postFX
+        self.collider = collider
         self.name = name
         self.transform = transform
         self.mesh = mesh
@@ -532,6 +536,7 @@ extension World {
             }
             if let animator = node.animator { add(animator, to: entity) }
             if let particles = node.particles { add(particles, to: entity) }
+            if let shape = node.collider { add(Collider(shape), to: entity) }
             if let skin = node.skin { skinned.append((entity, skin)) }
             if let parent { setParent(entity, to: parent) }
             for child in node.children { _ = spawn(child, parent: entity) }

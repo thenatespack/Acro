@@ -61,6 +61,19 @@ access (`assets.dataTable(path:)?.row("goblin")?.number("hp")`), hot-reloaded wh
 Tools: `table.new`, `table.get`, `table.set`, `table.edit`, `table.query`, `table.importCsv`,
 `table.exportCsv`, `table.open`. See README › Data Table Builder.
 
+### Terrain Builder (`.terrain`)
+
+Heightmap terrain with 16-bit heights, split into chunks (smooth seam normals, optional extra
+LOD meshes, a triangle-mesh collider per chunk), brushes (raise, lower, smooth, flatten, noise
+with radius, strength and falloff), a splat map of texture layers (flat colors, images or
+`.proctex`, baked into one albedo texture), and scatter rules (mesh builds or meshes placed by
+density, slope, height and layer rules on a stable seed, drawn instanced). The Terrain Builder
+tab sculpts and paints by dragging on the terrain. Tools: `terrain.new`, `terrain.get`,
+`terrain.set`, `terrain.edit`, `terrain.open`, `terrain.sculpt`, `terrain.paint`,
+`terrain.scatter`. See README › Terrain Builder. Not yet: runtime LOD switching (the extra
+LOD meshes are generated but nothing swaps them in), per-pixel GPU splat blending with normal
+maps (layers are baked to one albedo), and terrain-following for other builders.
+
 ## Planned
 
 Recommended order, grouped so each builder lands after the ones it depends on:
@@ -88,6 +101,49 @@ Outdoor ground for 3D games. The engine has no terrain system yet, so this is th
 - Tools: `terrain.new {size, resolution, seed}`, `terrain.sculpt {brush, points}`,
   `terrain.paint {layer, points}`, `terrain.scatter {asset, density, rules}`.
 
+
+### 2. VFX Builder (`.vfx`)
+
+Effects as stacks of the engine's existing GPU particle emitters (today they are edited only
+through raw `ParticleEmitter` fields in the inspector).
+
+- Several emitters per effect (fire = flames + smoke + embers), each with timing offsets.
+- A looping preview with restart, a ground plane and a background color.
+- Presets: fire, smoke, sparks, explosion, magic hit, rain, snow, dust, portal.
+- Imported as a prefab, so an effect is placed or spawned like any model.
+- Tools: `vfx.new {preset?}`, `vfx.edit {addEmitters, updateEmitters, removeEmitters}`.
+
+### 3. Sound Builder (`.sfx`)
+
+Game sound effects generated from parameters, the way `.proctex` generates textures.
+
+- A synth voice: waveform (square, saw, sine, noise), pitch envelope and slide, vibrato,
+  volume envelope (attack, sustain, decay), filters, arpeggio, bit crush.
+- Presets with Randomize and Mutate: jump, coin, laser, explosion, hit, power-up, blip.
+- Rendered at import into an audio buffer usable by `AudioEmitter.clip`; deterministic per seed.
+- Tools: `sfx.new {preset?, seed?}`, `sfx.set`, `sfx.play` (preview in the editor).
+
+### 4. Post-FX Profile Builder (`.postfx`)
+
+Saved camera looks built on the engine's existing post-processing (tonemapping, exposure,
+bloom).
+
+- Bloom, exposure and auto-exposure, tonemapper, color grading (lift, gamma, gain,
+  saturation, LUT), vignette, chromatic aberration, film grain, depth of field.
+- Before/after split preview in the Scene view.
+- Profiles assigned per camera or blended by volume, so areas can have their own look.
+- Tools: `postfx.new {preset?}`, `postfx.set`.
+
+### 5. Data Table Builder (`.table`)
+
+Typed spreadsheets for game data: items, enemies, loot, waves, level settings.
+
+- Columns with types (number, text, bool, color, enum, asset reference, row reference)
+  and defaults; validation warnings for bad values.
+- Grid editing with sort, filter and bulk edit; CSV import and export.
+- Readable from game code by row ID with typed access; hot-reloaded while playing.
+- Tools: `table.new {columns}`, `table.edit {addRows, updateRows, removeRows, columns}`,
+  `table.query {filter}`.
 
 ### 6. Pixel Sprite Builder (`.sprite`)
 

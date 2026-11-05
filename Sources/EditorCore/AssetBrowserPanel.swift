@@ -557,6 +557,7 @@ public final class AssetBrowserPanel {
             ("New Sound", SoundBuildNewCommand.id, { [unowned self] in model.newSoundBuild(); sync() }),
             ("New Post-FX", PostFXNewCommand.id, { [unowned self] in model.newPostFX(); sync() }),
             ("New Data Table", TableNewCommand.id, { [unowned self] in model.newDataTable(); sync() }),
+            ("New Terrain", TerrainNewCommand.id, { [unowned self] in model.newTerrain(); sync() }),
         ]
         if let entry {
             if case .folder = entry.item {

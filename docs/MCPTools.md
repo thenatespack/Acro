@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Editor › AI control). 158 tools.
+named by its id (see README › Editor › AI control). 166 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -41,6 +41,7 @@ optional arguments.
 | `sfx` | [`sfx.edit`](#sfxedit), [`sfx.get`](#sfxget), [`sfx.new`](#sfxnew), [`sfx.open`](#sfxopen), [`sfx.play`](#sfxplay), [`sfx.set`](#sfxset) |
 | `stats` | [`stats.get`](#statsget) |
 | `table` | [`table.edit`](#tableedit), [`table.exportCsv`](#tableexportcsv), [`table.get`](#tableget), [`table.importCsv`](#tableimportcsv), [`table.new`](#tablenew), [`table.open`](#tableopen), [`table.query`](#tablequery), [`table.set`](#tableset) |
+| `terrain` | [`terrain.edit`](#terrainedit), [`terrain.get`](#terrainget), [`terrain.new`](#terrainnew), [`terrain.open`](#terrainopen), [`terrain.paint`](#terrainpaint), [`terrain.scatter`](#terrainscatter), [`terrain.sculpt`](#terrainsculpt), [`terrain.set`](#terrainset) |
 | `tool` | [`tool.set`](#toolset), [`tool.snapping`](#toolsnapping) |
 | `transform` | [`transform.lookAt`](#transformlookat), [`transform.set`](#transformset) |
 | `ui` | [`ui.click`](#uiclick), [`ui.drag`](#uidrag), [`ui.find`](#uifind), [`ui.hover`](#uihover), [`ui.key`](#uikey), [`ui.scroll`](#uiscroll), [`ui.snapshot`](#uisnapshot), [`ui.type`](#uitype) |
@@ -2407,6 +2408,260 @@ Result:
 - `path`: string
 - `rowCount`: integer
 - `rows`: [string]
+- `warnings`: [string]
+
+## terrain
+
+### `terrain.edit`
+
+**Edit Terrain** · _undoable_
+
+Changes a .terrain file's settings, layers or scatter rules in one undoable step, in this order: size, resolution (resamples), heightRange, the scalar settings, removeLayers, addLayers, updateLayers (name → fields; "name" renames), removeScatter, addScatter, updateScatter. Placed copies update. Heights and paint are changed with terrain.sculpt and terrain.paint. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `addLayers?`: [{color?: number[3], name?: string, texture?: string, tileSize?: number}]
+- `addScatter?`: [{alignToNormal?: boolean, asset?: string, density?: number, layer?: string, material?: string, maxCount?: integer, maxHeight?: number, maxScale?: number, maxSlope?: number, minHeight?: number, minScale?: number, minSlope?: number, name?: string, seed?: integer}]
+- `albedoSize?`: integer
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `chunkCells?`: integer
+- `collider?`: boolean
+- `colliderLod?`: integer
+- `heightRange?`: number
+- `lods?`: integer
+- `path?`: string
+- `removeLayers?`: [string]
+- `removeScatter?`: [string]
+- `resolution?`: integer
+- `seed?`: integer
+- `size?`: number[2] — [x, y]
+- `updateLayers?`: object
+- `updateScatter?`: object
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `chunks`: integer
+- `entities?`: [entity id]
+- `heightRange`: number
+- `layers`: [string]
+- `maxHeight`: number
+- `minHeight`: number
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `resolution`: integer
+- `scatter`: [string]
+- `scatterCounts`: [integer]
+- `size`: number[2] — [x, y]
+- `warnings`: [string]
+
+### `terrain.get`
+
+**Get Terrain** · _read-only_, _idempotent_
+
+Reads a .terrain file: settings, layers and scatter rules (every field, defaults included), a summary (chunks, height range, props per rule, problems), and with `sampleHeights` a coarse grid of heights. The raw height and weight data stay in the file.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+- `sampleHeights?`: integer
+
+Result:
+
+- `albedoSize`: integer
+- `chunkCells`: integer
+- `collider`: boolean
+- `colliderLod`: integer
+- `heightRange`: number
+- `heights?`: [[number]]
+- `layers`: [{color?: number[3], name?: string, texture?: string, tileSize?: number}]
+- `lods`: integer
+- `resolution`: integer
+- `scatter`: [{alignToNormal?: boolean, asset?: string, density?: number, layer?: string, material?: string, maxCount?: integer, maxHeight?: number, maxScale?: number, maxSlope?: number, minHeight?: number, minScale?: number, minSlope?: number, name?: string, seed?: integer}]
+- `seed`: integer
+- `size`: number[2] — [x, y]
+- `summary`: {asset: asset id, chunks: integer, entities?: [entity id], heightRange: number, layers: [string], maxHeight: number, minHeight: number, path: string, prefab: asset id, resolution: integer, scatter: [string], scatterCounts: [integer], size: number[2], warnings: [string]}
+
+### `terrain.new`
+
+**New Terrain**
+
+Writes a .terrain file in `folder` (default: the Assets root): rolling hills generated from `seed` with grass, rock and dirt layers (grass everywhere), imported as chunk meshes with colliders and a baked albedo, optionally placed in the scene. Then shape it with terrain.sculpt, texture it with terrain.paint, and add props with terrain.scatter. A terrain is a heightmap centered on its origin: `size` [x,z] meters, `resolution` height samples per side (3-1025), `heightRange` (meters at full height; heights span 0 to heightRange), `chunkCells` (cells per chunk mesh), `lods` (extra detail meshes per chunk), `collider` (a triangle-mesh collider per chunk), `colliderLod`, `albedoSize`, `seed`, `layers` (each: name, color [r,g,b] 0-1 sRGB, texture (path under Assets/: an image or .proctex), tileSize meters per repeat), `scatter` rules (each: name, asset (a .meshbuild path, or "asset:<id>#mesh/<name>"), material, density (candidate spots per 100 m²), minSlope/maxSlope degrees, minHeight/maxHeight meters, minScale/maxScale, layer (only where this layer is painted), alignToNormal, seed, maxCount), and the data `heights` (base64 UInt16) and `splat` (base64 UInt8 weights per layer). Positions in tools are terrain-space [x,z] meters from the center (x and z each run -size/2 to size/2). Every key is optional; use terrain.sculpt / terrain.paint to change the data rather than writing it.
+
+Arguments:
+
+- `folder?`: string
+- `heightRange?`: number
+- `hilliness?`: number
+- `name?`: string
+- `place?`: boolean
+- `position?`: number[3] — [x, y, z]
+- `resolution?`: integer
+- `seed?`: integer
+- `size?`: number[2] — [x, y]
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `chunks`: integer
+- `entities?`: [entity id]
+- `heightRange`: number
+- `layers`: [string]
+- `maxHeight`: number
+- `minHeight`: number
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `resolution`: integer
+- `scatter`: [string]
+- `scatterCounts`: [integer]
+- `size`: number[2] — [x, y]
+- `warnings`: [string]
+
+### `terrain.open`
+
+**Open in Terrain Builder** · _idempotent_
+
+Opens a .terrain file in the editor's Terrain Builder tab (a viewport showing just the terrain, brush tools you drag over it, and the layers and scatter forms) and brings the tab to the front. view.screenshot {source: "panel", panel: "terrainBuilder"} shows it.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `path`: string
+
+### `terrain.paint`
+
+**Paint Terrain** · _undoable_
+
+Paints a texture layer (by name) at `points` ([x,z] meters from the terrain's center) onto a .terrain file's splat map in one undoable step; other layers give way so weights sum to 1. `radius` meters, `strength` 0-1, `falloff` 0-1, `erase` removes the layer's paint. Add layers with terrain.edit addLayers (an image or .proctex texture, or a flat color). Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `erase?`: boolean
+- `falloff?`: number
+- `layer`: string
+- `path?`: string
+- `points`: [number[2]]
+- `radius?`: number
+- `strength?`: number
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `chunks`: integer
+- `entities?`: [entity id]
+- `heightRange`: number
+- `layers`: [string]
+- `maxHeight`: number
+- `minHeight`: number
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `resolution`: integer
+- `scatter`: [string]
+- `scatterCounts`: [integer]
+- `size`: number[2] — [x, y]
+- `warnings`: [string]
+
+### `terrain.scatter`
+
+**Scatter on Terrain** · _undoable_
+
+Adds (or replaces, by `name`) a scatter rule on a .terrain file: `terrain` (or `path`) names the terrain; `asset` is the prop to scatter (a .meshbuild path such as "Models/pine.meshbuild", or "asset:<id>#mesh/<name>" with `material`); `density` is candidate spots per 100 m²; `rules` limit where props stand (minSlope/maxSlope degrees, minHeight/maxHeight meters, layer, minScale/maxScale, alignToNormal, seed, maxCount). `remove` deletes rules by name first. Props are drawn instanced. Returns how many props each rule places. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: string
+- `density?`: number
+- `material?`: string
+- `name?`: string
+- `path?`: string
+- `remove?`: [string]
+- `rules?`: {alignToNormal?: boolean, layer?: string, maxCount?: integer, maxHeight?: number, maxScale?: number, maxSlope?: number, minHeight?: number, minScale?: number, minSlope?: number, seed?: integer}
+- `terrain?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `chunks`: integer
+- `entities?`: [entity id]
+- `heightRange`: number
+- `layers`: [string]
+- `maxHeight`: number
+- `minHeight`: number
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `resolution`: integer
+- `scatter`: [string]
+- `scatterCounts`: [integer]
+- `size`: number[2] — [x, y]
+- `warnings`: [string]
+
+### `terrain.sculpt`
+
+**Sculpt Terrain** · _undoable_
+
+Applies a brush (raise, lower, smooth, flatten, noise) at `points` ([x,z] meters from the terrain's center) to a .terrain file's heights, in one undoable step, and reimports it (chunks, colliders and scatter follow). `radius` meters, `strength` (raise/lower/noise: meters per point; smooth/flatten: 0-1), `falloff` 0-1, `height` for flatten. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `brush`: "raise" \| "lower" \| "smooth" \| "flatten" \| "noise"
+- `falloff?`: number
+- `height?`: number
+- `path?`: string
+- `points`: [number[2]]
+- `radius?`: number
+- `strength?`: number
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `chunks`: integer
+- `entities?`: [entity id]
+- `heightRange`: number
+- `layers`: [string]
+- `maxHeight`: number
+- `minHeight`: number
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `resolution`: integer
+- `scatter`: [string]
+- `scatterCounts`: [integer]
+- `size`: number[2] — [x, y]
+- `warnings`: [string]
+
+### `terrain.set`
+
+**Set Terrain** · _undoable_, _idempotent_
+
+Replaces a .terrain file's whole contents (heights included) and reimports it; placed copies update. Undoable. For settings, layers or scatter changes terrain.edit is shorter; sculpt and paint with terrain.sculpt / terrain.paint. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+- `terrain`: {albedoSize?: integer, chunkCells?: integer, collider?: boolean, colliderLod?: integer, heightRange?: number, heights?: string, layers?: [object], lods?: integer, resolution?: integer, scatter?: [object], seed?: integer, size?: number[2], splat?: [string]}
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `chunks`: integer
+- `entities?`: [entity id]
+- `heightRange`: number
+- `layers`: [string]
+- `maxHeight`: number
+- `minHeight`: number
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `resolution`: integer
+- `scatter`: [string]
+- `scatterCounts`: [integer]
+- `size`: number[2] — [x, y]
 - `warnings`: [string]
 
 ## tool

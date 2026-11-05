@@ -40,6 +40,7 @@ public enum BuiltinCommands {
       + EditorSoundBuildCommands.all
       + EditorPostFXCommands.all
       + EditorDataTableCommands.all
+      + EditorTerrainCommands.all
 }
 
 extension CommandID {
