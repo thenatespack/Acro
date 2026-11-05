@@ -22,6 +22,19 @@ the model in its own viewport with picking, Move / Rotate / Scale gizmos and liv
 preview. Tools: `meshBuild.new`, `meshBuild.get`, `meshBuild.set`, `meshBuild.edit`,
 `meshBuild.open`. See README › Mesh Builder.
 
+### Terrain Builder (`.terrain`)
+
+Heightmap terrain with 16-bit heights, split into chunks (smooth seam normals, optional extra
+LOD meshes, a triangle-mesh collider per chunk), brushes (raise, lower, smooth, flatten, noise
+with radius, strength and falloff), a splat map of texture layers (flat colors, images or
+`.proctex`, baked into one albedo texture), and scatter rules (mesh builds or meshes placed by
+density, slope, height and layer rules on a stable seed, drawn instanced). The Terrain Builder
+tab sculpts and paints by dragging on the terrain. Tools: `terrain.new`, `terrain.get`,
+`terrain.set`, `terrain.edit`, `terrain.open`, `terrain.sculpt`, `terrain.paint`,
+`terrain.scatter`. See README › Terrain Builder. Not yet: runtime LOD switching (the extra
+LOD meshes are generated but nothing swaps them in), per-pixel GPU splat blending with normal
+maps (layers are baked to one albedo), and terrain-following for other builders.
+
 ## Planned
 
 Recommended order, grouped so each builder lands after the ones it depends on:
@@ -36,18 +49,6 @@ Recommended order, grouped so each builder lands after the ones it depends on:
 5. **Integrators:** Timeline, then Visual Script, whose engine nodes call into most other
    builders. Its VM and core flow/data nodes can start earlier, with engine nodes added as
    each builder ships.
-
-### 1. Terrain Builder (`.terrain`)
-
-Outdoor ground for 3D games. The engine has no terrain system yet, so this is the largest gap.
-
-- Heightmap terrain split into chunks with LODs, normals, and a collider for physics.
-- Brushes: raise, lower, smooth, flatten, noise; radius, strength and falloff.
-- Texture layers (grass, rock, dirt, sand) painted with a splat map, using images or `.proctex`.
-- Scatter: props (trees, rocks, including mesh builds) placed by density, slope and height
-  rules, drawn instanced.
-- Tools: `terrain.new {size, resolution, seed}`, `terrain.sculpt {brush, points}`,
-  `terrain.paint {layer, points}`, `terrain.scatter {asset, density, rules}`.
 
 ### 2. VFX Builder (`.vfx`)
 

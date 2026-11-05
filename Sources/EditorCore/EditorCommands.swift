@@ -36,7 +36,7 @@ public enum BuiltinCommands {
         LogReadCommand.self, StatsGetCommand.self, DiagnosticsGetCommand.self,
     ] + EditorUICommands.all + EditorSafetyCommands.all + EditorGameModuleCommands.all + EditorBuildCommands.all
       + EditorRecoveryCommands.all + EditorNetCommands.all + EditorLauncherCommands.all + EditorScriptCommands.all + EditorFilesCommands.all
-      + EditorProceduralTextureCommands.all + EditorMeshBuildCommands.all + EditorSettingsCommands.all
+      + EditorProceduralTextureCommands.all + EditorMeshBuildCommands.all + EditorTerrainCommands.all + EditorSettingsCommands.all
 }
 
 extension CommandID {

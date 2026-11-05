@@ -476,11 +476,14 @@ public struct PrefabNode: Equatable, Sendable, Codable {
     public var skin: PrefabSkin?
     /// Animation that plays on the node (instantiating adds the `FieldAnimator`); mesh builds use it.
     public var animator: FieldAnimator?
+    /// A static collision shape (instantiating adds a `Collider`); terrains use it for their chunks.
+    public var collider: ColliderShape?
     public var children: [PrefabNode]
 
     public init(name: String, transform: Transform = Transform(), mesh: AssetReference? = nil,
                 material: AssetReference? = nil, skin: PrefabSkin? = nil, animator: FieldAnimator? = nil,
-                children: [PrefabNode] = []) {
+                children: [PrefabNode] = [], collider: ColliderShape? = nil) {
+        self.collider = collider
         self.name = name
         self.transform = transform
         self.mesh = mesh
@@ -525,6 +528,7 @@ extension World {
                 add(MeshRenderer(mesh: MeshHandle(mesh), material: node.material.map { MaterialHandle($0) } ?? .default), to: entity)
             }
             if let animator = node.animator { add(animator, to: entity) }
+            if let shape = node.collider { add(Collider(shape), to: entity) }
             if let skin = node.skin { skinned.append((entity, skin)) }
             if let parent { setParent(entity, to: parent) }
             for child in node.children { _ = spawn(child, parent: entity) }

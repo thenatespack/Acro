@@ -131,6 +131,8 @@ public final class AssetBrowserModel {
             search = ""
         case .asset(let id) where session.isMeshBuildFile(id):
             session.run(MeshBuildOpenCommand.self, .init(asset: AssetReference(id)))
+        case .asset(let id) where session.isTerrainFile(id):
+            session.run(TerrainOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where entry.isExpandable:
             toggleExpanded(id)
         default:
@@ -200,6 +202,15 @@ public final class AssetBrowserModel {
     @discardableResult
     public func newProceduralTexture() -> AssetID? {
         guard let id = session.run(AssetNewProceduralTextureCommand.self, .init(folder: targetFolder))?.asset else { return nil }
+        invalidate()
+        selection = .asset(id)
+        return id
+    }
+
+    /// Creates a terrain in the current folder (`terrain.new`) and selects it.
+    @discardableResult
+    public func newTerrain() -> AssetID? {
+        guard let id = session.run(TerrainNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
         invalidate()
         selection = .asset(id)
         return id
