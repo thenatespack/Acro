@@ -354,7 +354,7 @@ public struct CookPlan: Sendable {
         var entry = AssetPackManifest.Asset(id: source.id, path: source.path, importer: source.importer?.name, settings: nil,
                                             main: nil, objects: [], files: [:], data: nil)
         // Audio and files without an importer ship as they are.
-        guard let importer = source.importer, importer.name != "audio" else {
+        guard let importer = source.importer, importer.name != "audio", importer.name != "table" else {
             let data = try Data(contentsOf: source.sourceURL)
             if let importer = source.importer { entry.settings = importer.effectiveSettings(source.settings) }
             return Cooked(entry: entry, files: [:], data: data, origin: .file, references: [], warnings: [])

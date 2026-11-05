@@ -150,6 +150,22 @@ Tools: `postfx.new`, `postfx.get`, `postfx.set`, `postfx.edit`, `postfx.assign`,
 Not yet: depth of field and LUT grading. The tab previews on an 8-bit image, so bloom looks
 weaker there than in the game.
 
+## Data Table Builder
+
+Data tables are typed spreadsheets for game data (items, enemies, loot, waves, settings), stored as `.table` JSON files under `Assets/`. Columns have a type (`number`, `text`, `bool`, `color`, `enum`, `asset`, `row`), a default and optional `options` / `min` / `max`; rows are flat objects with a unique `id` (`{"id": "goblin", "hp": 30}`), and a missing cell takes its column's default. Values that don't fit (wrong type, unknown enum case, dangling asset or row reference, duplicate ids) are kept and reported as warnings.
+
+In the editor, use **New Data Table** in the asset browser and double-click the file (or **Open in Data Table** in the inspector) to open the **Data Table** tab. Its grid has one row per table row (click a header to sort, type `hp > 10 kind == ranged goblin` in the filter box); the sidebar edits columns, bulk-sets a column across the shown rows, writes the sort into the file, lists problems and imports / exports CSV (quoted fields, doubled quotes and line breaks inside quotes are handled). Every change is one undo step.
+
+Game code reads a table by row id with typed access; the lookup follows hot reload while playing:
+
+```swift
+let enemies = assets.dataTable(path: "Data/enemies.table")
+let hp = enemies?.row("goblin")?.number("hp") ?? 10
+let loot = enemies?.row("goblin")?.reference("drops")   // row column
+```
+
+Cooked games ship the file as written; include tables game code loads by path with the cooker's `--include`. MCP clients use `table.new`, `table.edit`, `table.query`, `table.get`, `table.set`, `table.importCsv`, `table.exportCsv` and `table.open`; see [docs/MCPTools.md](docs/MCPTools.md).
+
 ## Building
 
 The package uses Swift Package Manager. Build all products with:

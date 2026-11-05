@@ -51,6 +51,16 @@ distance, priority). The Post-FX tab previews a sample scene with a before/after
 Tools: `postfx.new`, `postfx.get`, `postfx.set`, `postfx.edit`, `postfx.assign`, `postfx.open`.
 Not done: depth of field, LUT grading, a split preview inside the Scene view. See README.
 
+### Data Table (`.table`)
+
+Typed spreadsheets for game data: columns (number, text, bool, color, enum, asset reference,
+row reference) with defaults, min/max and enum options; validation warnings (wrong type,
+unknown enum case, dangling asset or row reference, duplicate ids). The Data Table tab is a
+grid with sort, filter, bulk edit and CSV import/export. Game code reads rows by id with typed
+access (`assets.dataTable(path:)?.row("goblin")?.number("hp")`), hot-reloaded while playing.
+Tools: `table.new`, `table.get`, `table.set`, `table.edit`, `table.query`, `table.importCsv`,
+`table.exportCsv`, `table.open`. See README › Data Table Builder.
+
 ## Planned
 
 Recommended order, grouped so each builder lands after the ones it depends on:
@@ -78,17 +88,6 @@ Outdoor ground for 3D games. The engine has no terrain system yet, so this is th
 - Tools: `terrain.new {size, resolution, seed}`, `terrain.sculpt {brush, points}`,
   `terrain.paint {layer, points}`, `terrain.scatter {asset, density, rules}`.
 
-
-### 5. Data Table Builder (`.table`)
-
-Typed spreadsheets for game data: items, enemies, loot, waves, level settings.
-
-- Columns with types (number, text, bool, color, enum, asset reference, row reference)
-  and defaults; validation warnings for bad values.
-- Grid editing with sort, filter and bulk edit; CSV import and export.
-- Readable from game code by row ID with typed access; hot-reloaded while playing.
-- Tools: `table.new {columns}`, `table.edit {addRows, updateRows, removeRows, columns}`,
-  `table.query {filter}`.
 
 ### 6. Pixel Sprite Builder (`.sprite`)
 

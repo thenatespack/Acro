@@ -131,6 +131,9 @@ public final class EditorSession {
     /// The post-fx profile open in the Post-FX tab (`postfx.open`), and how the app shows it.
     public var openPostFX: AssetID?
     public var onOpenPostFX: ((AssetID) -> Void)?
+    /// The data table open in the Data Table tab (`table.open`), and how the app shows it.
+    public var openTable: AssetID?
+    public var onOpenTable: ((AssetID) -> Void)?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()

@@ -556,6 +556,7 @@ public final class AssetBrowserPanel {
             ("New VFX", VFXNewCommand.id, { [unowned self] in model.newVFX(); sync() }),
             ("New Sound", SoundBuildNewCommand.id, { [unowned self] in model.newSoundBuild(); sync() }),
             ("New Post-FX", PostFXNewCommand.id, { [unowned self] in model.newPostFX(); sync() }),
+            ("New Data Table", TableNewCommand.id, { [unowned self] in model.newDataTable(); sync() }),
         ]
         if let entry {
             if case .folder = entry.item {

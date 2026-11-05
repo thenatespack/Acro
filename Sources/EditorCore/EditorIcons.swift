@@ -284,6 +284,7 @@ public enum EditorIcons {
         switch ext {
         case "gltf", "glb", "obj", "fbx", "meshbuild": return .model
         case "vfx": return .prefab
+        case "table": return .model
         case "png", "jpg", "jpeg", "tga", "hdr", "exr", "ktx", "ktx2", "dds", "bmp", "proctex": return .texture
         case "material": return .material
         case "postfx": return .material
@@ -346,6 +347,7 @@ public enum EditorIcons {
         EditorLayout.vfxBuilder: "sparkles",
         EditorLayout.soundBuilder: "volume-2",
         EditorLayout.postFXBuilder: "aperture",
+        EditorLayout.dataTable: "layout-grid",
     ]
 
     /// Console lines by level.

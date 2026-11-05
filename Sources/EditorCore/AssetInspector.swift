@@ -399,6 +399,16 @@ public final class AssetInspectorView {
                 content.addChildren([HStack(spacing: 6, [open, Spacer()]),
                                      note("A camera look. Assign it with postfx.assign, a camera's Post FX field or a PostFXVolume.")])
             }
+            if session.isTableFile(id) {
+                let open = Button("Open in Data Table", role: .primary, name: "openDataTable") { [unowned self] in
+                    session.run(TableOpenCommand.self, .init(asset: AssetReference(id)))
+                }
+                open.command = TableOpenCommand.id.rawValue
+                open.tooltip = "Edit this table in the Data Table tab (or double-click it in the Assets panel)"
+                let table = session.assets?.dataTableContents(of: id)
+                content.addChildren([HStack(spacing: 6, [open, Spacer()]),
+                                     note("A data table of \(table?.rows.count ?? 0) rows and \(table?.columns.count ?? 0) columns. Game code reads it with assets.dataTable(path:)?.row(id)?.number(column).")])
+            }
             if session.isMaterialFile(id) {
                 addMaterialForm(AssetReference(id, subAsset: "material"))
             }

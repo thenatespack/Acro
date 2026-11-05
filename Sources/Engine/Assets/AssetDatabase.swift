@@ -169,6 +169,8 @@ public final class AssetDatabase {
     }
     /// Pack entries that failed to load (damaged), so they are reported once.
     var packLoadFailures: Set<AssetID> = []
+    /// Game-code readers of `.table` assets by the revision they were read at (see DataTableRuntime.swift).
+    var tableReaders: [AssetID: (revision: Int, reader: DataTableReader?)] = [:]
 
     private var idsByPath: [String: AssetID] = [:]
     private var index: LibraryIndex

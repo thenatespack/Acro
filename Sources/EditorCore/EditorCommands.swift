@@ -39,6 +39,7 @@ public enum BuiltinCommands {
       + EditorProceduralTextureCommands.all + EditorMeshBuildCommands.all + EditorVFXCommands.all + EditorSettingsCommands.all
       + EditorSoundBuildCommands.all
       + EditorPostFXCommands.all
+      + EditorDataTableCommands.all
 }
 
 extension CommandID {

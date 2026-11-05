@@ -137,6 +137,8 @@ public final class AssetBrowserModel {
             session.run(SoundBuildOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where session.isPostFXFile(id):
             session.run(PostFXOpenCommand.self, .init(asset: AssetReference(id)))
+        case .asset(let id) where session.isTableFile(id):
+            session.run(TableOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where entry.isExpandable:
             toggleExpanded(id)
         default:
@@ -243,6 +245,15 @@ public final class AssetBrowserModel {
     @discardableResult
     public func newPostFX() -> AssetID? {
         guard let id = session.run(PostFXNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
+        invalidate()
+        selection = .asset(id)
+        return id
+    }
+
+    /// Creates a data table in the current folder (`table.new`) and selects it.
+    @discardableResult
+    public func newDataTable() -> AssetID? {
+        guard let id = session.run(TableNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
         invalidate()
         selection = .asset(id)
         return id

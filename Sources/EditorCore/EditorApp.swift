@@ -135,6 +135,7 @@ public final class EditorApp: Game, EditorHost {
     public private(set) var soundWorkspace: SoundBuilderWorkspace!
     /// The Post-FX tab (PostFXWorkspace.swift).
     public private(set) var postFXWorkspace: PostFXWorkspace!
+    public private(set) var tableWorkspace: DataTableWorkspace!
     private(set) var statusBar: StatusBar!
     /// The Assets panel (browser) and its thumbnails.
     public private(set) var assetBrowser: AssetBrowserPanel!
@@ -476,6 +477,15 @@ public final class EditorApp: Game, EditorHost {
             }
             dock.focusPanel(EditorLayout.postFXBuilder)
         }
+        session.onOpenTable = { [unowned self] id in
+            guard tableWorkspace.open(id) else { return }
+            // The Data Table opens where the Scene view is: tabbed with the viewport.
+            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.dataTable, EditorLayout.viewport) {
+                dock.dock(EditorLayout.dataTable, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
+                                                                                           : .edge(.bottom))
+            }
+            dock.focusPanel(EditorLayout.dataTable)
+        }
         session.onOpenScript = { [unowned self] path in
             let url = URL(fileURLWithPath: path)
             scriptEditor.openScript(at: url)
@@ -595,6 +605,7 @@ public final class EditorApp: Game, EditorHost {
         scriptEditor = ScriptEditorPanel(session: session)
         files = FilesPanel(session: session)
         meshWorkspace = MeshBuilderWorkspace(session: session)
+        tableWorkspace = DataTableWorkspace(session: session)
         meshWorkspace.device = engine?.device
         if let quality = engine?.quality { meshWorkspace.quality = quality }
         vfxWorkspace = VFXBuilderWorkspace(session: session)
@@ -632,6 +643,7 @@ public final class EditorApp: Game, EditorHost {
         let postFXPanel = DockPanel(id: EditorLayout.postFXBuilder, title: "Post-FX", content: postFXWorkspace.view, minSize: Vec2(320, 200))
         postFXPanel.passesPointerThrough = true
         dock.addPanel(postFXPanel)
+        dock.addPanel(DockPanel(id: EditorLayout.dataTable, title: "Data Table", content: tableWorkspace.view, minSize: Vec2(320, 200)))
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
         for (id, icon) in EditorIcons.panelIconNames { dock.panel(id)?.icon = EditorIcons.named(icon) }
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
@@ -1035,6 +1047,7 @@ public final class EditorApp: Game, EditorHost {
             vfxWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
             soundWorkspace.update()
             postFXWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
+            tableWorkspace.update()
         }
         session.tick(dt: Double(dt))
 
