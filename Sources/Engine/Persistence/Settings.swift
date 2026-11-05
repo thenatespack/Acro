@@ -13,7 +13,7 @@ import Foundation
 // try store.save()
 // ```
 //
-// - The file is `{"format": "SwiftGameEngine.Settings", "version": N, "values": {...}}`.
+// - The file is `{"format": "Acro.Settings", "version": N, "values": {...}}`.
 // - Decoding is tolerant: a key the file lacks keeps its default, a key the struct no longer
 //   has is dropped, and a key whose value has the wrong type keeps its default while the rest
 //   load. A file that isn't JSON at all gives the defaults and `lastLoadError`; the next
@@ -39,7 +39,7 @@ extension Settings {
 
 /// Loads and saves a `Settings` value to `<user data dir>/<file>`.
 public final class SettingsStore<S: Settings> {
-    public static var format: String { "SwiftGameEngine.Settings" }
+    public static var format: String { FileFormat.tag("Settings") }
 
     public var values = S()
     public let url: URL
@@ -92,7 +92,7 @@ public final class SettingsStore<S: Settings> {
 
     static func decode(_ data: Data, note: inout String?) throws -> S {
         guard case .object(let root) = try SceneCoder.decoder().decode(JSONValue.self, from: data),
-              case .string(let format)? = root["format"], format == Self.format,
+              case .string(let format)? = root["format"], FileFormat.matches(format, Self.format),
               case .object(var stored)? = root["values"] else {
             throw SettingsError.notASettingsFile
         }

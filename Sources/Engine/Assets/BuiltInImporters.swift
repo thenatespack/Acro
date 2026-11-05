@@ -194,7 +194,7 @@ public struct PrefabFileImporter: AssetImporter {
             var entities: [Entity]
             struct Entity: Decodable {}
         }
-        guard let header = try? AssetJSON.decoder().decode(Header.self, from: data), header.format == SceneFile.format else {
+        guard let header = try? AssetJSON.decoder().decode(Header.self, from: data), FileFormat.matches(header.format, SceneFile.format) else {
             throw AssetError.unreadable("not a prefab (scene file)")
         }
         guard header.version <= SceneFile.currentVersion else { throw AssetError.unreadable("written by a newer engine") }

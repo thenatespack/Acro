@@ -299,7 +299,7 @@ final class LauncherView {
         let shortcut = KeyModifiers.shortcut == .command ? "⌘" : "Ctrl+"
 
         // Sidebar
-        let title = Label("Swift Game Engine", role: .heading, name: "launcherTitle")
+        let title = Label("Acro", role: .heading, name: "launcherTitle")
         title.icon = EditorIcons.named("box")
         let subtitle = Label("Editor \(EngineVersion.current)", role: .secondary, name: "launcherSubtitle")
         newButton.icon = EditorIcons.named("folder-plus")

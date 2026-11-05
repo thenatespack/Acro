@@ -14,13 +14,15 @@ import Engine
     // Outside the macOS icon grid's tile: transparent.
     #expect(pixel(0, 0).last == 0)
     #expect(pixel(size - 1, 0).last == 0)
-    // Inside the tile and on the cube: opaque.
-    #expect(pixel(size / 2, size / 8).last == 255)
-    #expect(pixel(size / 2, size / 2).last == 255)
-    // The cube's top face (warm) is brighter in red than the tile's blue.
-    let topFace = pixel(size / 2, size * 40 / 100)
+    // Inside the tile: opaque, near-black.
     let tile = pixel(size / 2, size / 8)
-    #expect(topFace[topFace.startIndex] > 200 && tile[tile.startIndex] < 100)
+    #expect(tile.last == 255 && tile.dropLast().max()! < 80)
+    // The split down the middle shows the tile through the A.
+    #expect(pixel(size / 2, size * 55 / 100).dropLast().max()! < 100)
+    // The A's left leg is the yellow lit half, its right leg the cyan shadow half.
+    let left = pixel(size * 317 / 1000, size * 743 / 1000), right = pixel(size * 683 / 1000, size * 743 / 1000)
+    #expect(left[left.startIndex] > 230 && left[left.startIndex + 1] > 200 && left[left.startIndex + 2] < 120)
+    #expect(right[right.startIndex] < 80 && right[right.startIndex + 1] > 170 && right[right.startIndex + 2] > 210)
     if let path = ProcessInfo.processInfo.environment["EDITOR_ICON_PNG"] {
         try EditorAppIcon.image(size: 512).writePNG(to: URL(fileURLWithPath: path))
     }

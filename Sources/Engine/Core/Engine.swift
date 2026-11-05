@@ -174,7 +174,10 @@ public final class Engine {
     public let input = Input()
     public var clearColor: Vec4
     /// The active quality preset. Games use it to size shadow maps, filters, etc.
-    public let quality: RenderQuality
+    /// Active quality preset. Changes apply to engine-managed rendering on the next frame
+    /// (including bloom and `SceneRenderer` shadow settings). The device's MSAA sample count
+    /// is fixed when the engine is created; changing this property does not recreate it.
+    public var quality: RenderQuality
     /// Depth the screen pass clears to: 1 for standard depth, 0 for reversed-Z.
     public var clearDepth: Float = 1
     /// Post-processing for the scene (exposure, bloom, tonemapping; see `PostProcessSettings`).

@@ -99,7 +99,7 @@ public enum GameModuleLoader {
             throw GameModuleError.loadFailed(dlerror().map { String(cString: $0) } ?? "dlopen failed")
         }
         // A copy of Engine inside the module would define the marker at another address.
-        if let theirs = dlsym(handle, GameModuleABI.engineMarker), theirs != swiftGameEngineHostMarkerAddress {
+        if let theirs = dlsym(handle, GameModuleABI.engineMarker), theirs != acroHostMarkerAddress {
             throw GameModuleError.embedsEngine(url.lastPathComponent)
         }
         guard let symbol = dlsym(handle, GameModuleABI.entryPoint) else {

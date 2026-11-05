@@ -361,6 +361,16 @@ public final class AssetInspectorView {
                 proceduralGrid = grid
                 content.addChildren([grid, HStack(spacing: 6, [Spacer(), proceduralRevert, proceduralApply])])
             }
+            if session.isMeshBuildFile(id) {
+                let open = Button("Open in Mesh Builder", role: .primary, name: "openMeshBuilder") { [unowned self] in
+                    session.run(MeshBuildOpenCommand.self, .init(asset: AssetReference(id)))
+                }
+                open.command = MeshBuildOpenCommand.id.rawValue
+                open.tooltip = "Edit this model in the Mesh Builder tab (or double-click it in the Assets panel)"
+                let parts = session.assets?.meshBuild(of: id)?.parts.count ?? 0
+                content.addChildren([HStack(spacing: 6, [open, Spacer()]),
+                                     note("A model built from \(parts) shape\(parts == 1 ? "" : "s"). The Mesh Builder shows it in a view of its own, with gizmos, the parts list and live animation.")])
+            }
             if session.isMaterialFile(id) {
                 addMaterialForm(AssetReference(id, subAsset: "material"))
             }

@@ -474,15 +474,19 @@ public struct PrefabNode: Equatable, Sendable, Codable {
     public var material: AssetReference?
     /// For a skinned mesh: the joints that pose it (instantiating adds a `Skin`).
     public var skin: PrefabSkin?
+    /// Animation that plays on the node (instantiating adds the `FieldAnimator`); mesh builds use it.
+    public var animator: FieldAnimator?
     public var children: [PrefabNode]
 
     public init(name: String, transform: Transform = Transform(), mesh: AssetReference? = nil,
-                material: AssetReference? = nil, skin: PrefabSkin? = nil, children: [PrefabNode] = []) {
+                material: AssetReference? = nil, skin: PrefabSkin? = nil, animator: FieldAnimator? = nil,
+                children: [PrefabNode] = []) {
         self.name = name
         self.transform = transform
         self.mesh = mesh
         self.material = material
         self.skin = skin
+        self.animator = animator
         self.children = children
     }
 }
@@ -503,7 +507,7 @@ public struct PrefabSkin: Equatable, Sendable, Codable {
 extension World {
     /// Spawns a copy of `prefab` under `parent` and returns its root entities. A node tree's
     /// nodes become entities with `Name` and `Transform`, plus a `MeshRenderer` for nodes with
-    /// a mesh (`.default` material when a node has none) and a `Skin` for skinned ones, keeping
+    /// a mesh (`.default` material when a node has none) and a `Skin` for skinned ones and a `FieldAnimator` for animated ones, keeping
     /// the hierarchy. A scene-file prefab is loaded with new entity ids (nothing is spawned if it
     /// doesn't load). The copy isn't linked to the asset; see `instantiatePrefab` for that.
     @discardableResult
@@ -520,6 +524,7 @@ extension World {
             if let mesh = node.mesh {
                 add(MeshRenderer(mesh: MeshHandle(mesh), material: node.material.map { MaterialHandle($0) } ?? .default), to: entity)
             }
+            if let animator = node.animator { add(animator, to: entity) }
             if let skin = node.skin { skinned.append((entity, skin)) }
             if let parent { setParent(entity, to: parent) }
             for child in node.children { _ = spawn(child, parent: entity) }

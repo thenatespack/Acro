@@ -176,7 +176,7 @@ private let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathCompon
         #endif
         #if os(macOS)
         #expect(exporter.outputURL.lastPathComponent == "Build Game Tests.app")
-        #expect(exporter.infoPlist.contains("<string>Build Game Tests</string>") && exporter.infoPlist.contains("local.swiftgameengine.buildgametests"))
+        #expect(exporter.infoPlist.contains("<string>Build Game Tests</string>") && exporter.infoPlist.contains("local.acro.buildgametests"))
         #else
         #expect(exporter.launcher.contains("--pack \"$here/Build Game Tests.pack\""))
         #endif

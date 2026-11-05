@@ -127,6 +127,8 @@ public final class EditorApp: Game, EditorHost {
     private(set) var activity: ActivityPanel!
     public private(set) var scriptEditor: ScriptEditorPanel!
     public private(set) var files: FilesPanel!
+    /// The Mesh Builder tab (MeshBuilderWorkspace.swift).
+    public private(set) var meshWorkspace: MeshBuilderWorkspace!
     private(set) var statusBar: StatusBar!
     /// The Assets panel (browser) and its thumbnails.
     public private(set) var assetBrowser: AssetBrowserPanel!
@@ -435,6 +437,15 @@ public final class EditorApp: Game, EditorHost {
             assetBrowser.model.search = ""
             assetBrowser.model.reveal(path)
         }
+        session.onOpenMeshBuild = { [unowned self] id in
+            guard meshWorkspace.open(id) else { return }
+            // The Mesh Builder opens where the Scene view is: tabbed with the viewport.
+            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.meshBuilder, EditorLayout.viewport) {
+                dock.dock(EditorLayout.meshBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
+                                                                                             : .edge(.bottom))
+            }
+            dock.focusPanel(EditorLayout.meshBuilder)
+        }
         session.onOpenScript = { [unowned self] path in
             let url = URL(fileURLWithPath: path)
             scriptEditor.openScript(at: url)
@@ -553,6 +564,9 @@ public final class EditorApp: Game, EditorHost {
         assetBrowser.onDrag = { [unowned self] entry, position, phase in assetDragged(entry, at: position, phase: phase) }
         scriptEditor = ScriptEditorPanel(session: session)
         files = FilesPanel(session: session)
+        meshWorkspace = MeshBuilderWorkspace(session: session)
+        meshWorkspace.device = engine?.device
+        if let quality = engine?.quality { meshWorkspace.quality = quality }
         files.onOpen = { [unowned self] file in openFile(file) }
         files.onNewScene = { [unowned self] name in newScene(named: name) }
 
@@ -571,6 +585,9 @@ public final class EditorApp: Game, EditorHost {
         dock.addPanel(DockPanel(id: EditorLayout.assets, title: "Assets", content: assetBrowser.view, minSize: Vec2(240, 120)))
         dock.addPanel(DockPanel(id: EditorLayout.scripts, title: "Scripts", content: scriptEditor.view, minSize: Vec2(240, 120)))
         dock.addPanel(DockPanel(id: EditorLayout.files, title: "Files", content: files.view, minSize: Vec2(160, 100)))
+        let meshPanel = DockPanel(id: EditorLayout.meshBuilder, title: "Mesh Builder", content: meshWorkspace.view, minSize: Vec2(320, 200))
+        meshPanel.passesPointerThrough = true
+        dock.addPanel(meshPanel)
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
         for (id, icon) in EditorIcons.panelIconNames { dock.panel(id)?.icon = EditorIcons.named(icon) }
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
@@ -970,6 +987,7 @@ public final class EditorApp: Game, EditorHost {
         } else {
             for command in shortcuts.actions(for: input.keyPresses, focus: focus) { invoke(command) }
             updateViewport(engine: engine, dt: dt, keyboardFree: !focus.textEditing)
+            meshWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
         }
         session.tick(dt: Double(dt))
 
@@ -995,6 +1013,7 @@ public final class EditorApp: Game, EditorHost {
         // Size the target to the panel before painting, so the image drawn this frame is the one rendered.
         ui.layoutIfNeeded()
         resizeTarget(scale: ui.scale)
+        meshWorkspace.prepareFrame(pixelScale: ui.scale)
         buildGizmos()
         viewportWidget.texture = target.texture
         viewportWidget.billboards = transformTool.billboards
@@ -1282,6 +1301,22 @@ public final class EditorApp: Game, EditorHost {
         }
     }
 
+    /// This frame's pointer for the Mesh Builder's viewport.
+    private func workspaceInput(_ input: Input, dt: Float) -> ViewportInput {
+        var frameInput = ViewportInput(mousePosition: uiPoint(input.mousePosition))
+        frameInput.mouseDelta = input.mouseDelta / ui.uiScale
+        for button in MouseButton.allCases {
+            if input.wasPressed(button) { frameInput.pressed.insert(button) }
+            if input.wasReleased(button) { frameInput.released.insert(button) }
+            if input.isDown(button) { frameInput.down.insert(button) }
+        }
+        frameInput.scroll = input.scrollDelta
+        frameInput.modifiers = input.modifiers
+        frameInput.dt = dt
+        frameInput.pointerOverUI = ui.wantsPointer
+        return frameInput
+    }
+
     /// A window point (the mouse) in the UI's points, which `uiScale` zooms.
     private func uiPoint(_ windowPoint: Vec2) -> Vec2 { windowPoint / ui.uiScale }
 
@@ -1395,6 +1430,7 @@ public final class EditorApp: Game, EditorHost {
         thumbnails?.render(frame: frame)
         renderCaptures(frame: frame)
         guard !isLauncherShown else { return }
+        meshWorkspace.render(frame: frame)
         if let game = gameCurrentView, gameSizer.width > 0, gameWidget.isEffectivelyVisible {
             sceneRenderer.beginViews(world: session.gameWorld, frame: frame, shadowFocus: game)
             sceneRenderer.renderView(game, into: gameTarget, frame: frame, debugDraw: gameDraw)

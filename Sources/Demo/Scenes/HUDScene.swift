@@ -75,7 +75,7 @@ final class HUDScene: DemoScene {
         var theme = UITheme.game()
         let screenshotRun = ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT"] != nil
         // Screenshot runs stay deterministic: never the real user's settings.
-        settingsStore = screenshotRun && !UserData.isOverridden ? nil : SettingsStore(app: "SwiftGameEngineDemo")
+        settingsStore = screenshotRun && !UserData.isOverridden ? nil : SettingsStore(app: "AcroDemo")
         let saved = settingsStore?.load() ?? HUDSettings()
         if let preset = UITheme.presets.first(where: { $0.name == saved.theme }) { theme = preset }
         if screenshotRun { theme.caretBlinkPeriod = 0 }

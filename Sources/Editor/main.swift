@@ -27,7 +27,7 @@ let usage = """
     MCP (AI clients drive the editor; see README): the editor serves Streamable HTTP on
     127.0.0.1:7333 (--mcp-port, EDITOR_MCP_PORT; the next free port if taken) with a bearer token
     written to <project>/Library/mcp.json; --no-mcp-http or EDITOR_MCP_HTTP=0 turns it off.
-    --mcp serves a client on stdin/stdout instead (`claude mcp add swift-engine -- swift run Editor --mcp`);
+    --mcp serves a client on stdin/stdout instead (`claude mcp add acro -- swift run Editor --mcp`);
     add --mcp-http to serve HTTP too. --headless runs without a window (needs --mcp or --mcp-http).
     --mcp-read-only exposes only read-only tools. --mcp-tool-docs prints the tool reference
     (docs/MCPTools.md) generated from the command registry.

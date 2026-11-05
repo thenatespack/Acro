@@ -1914,7 +1914,7 @@ final class VulkanRenderDevice: RenderDevice {
         appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO
         appInfo.pApplicationName = arena.cString(applicationName)
         appInfo.applicationVersion = vkMakeVersion(1, 0, 0)
-        appInfo.pEngineName = arena.cString("SwiftGameEngine")
+        appInfo.pEngineName = arena.cString("Acro")
         appInfo.engineVersion = vkMakeVersion(0, 1, 0)
         appInfo.apiVersion = vkMakeVersion(1, 1, 0)
 

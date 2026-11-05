@@ -60,3 +60,11 @@ import Testing
         #expect(try GamePlayer.Options.parse(["--version"]).version)
     }
 }
+
+@Test func fileFormatTagsAcceptTheirPreRenameSpelling() {
+    #expect(FileFormat.tag("Scene") == "Acro.Scene")
+    #expect(FileFormat.matches("Acro.Scene", "Acro.Scene"))
+    #expect(FileFormat.matches("SwiftGameEngine.Scene", "Acro.Scene"))
+    #expect(!FileFormat.matches("SwiftGameEngine.Save", "Acro.Scene"))
+    #expect(!FileFormat.matches(nil, "Acro.Scene"))
+}

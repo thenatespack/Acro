@@ -8,7 +8,7 @@ import Foundation
 ///   "url": "http://127.0.0.1:7333/mcp",
 ///   "token": "…",
 ///   "pid": 1234,
-///   "mcpServers": { "swift-engine": { "type": "http", "url": "…", "headers": { "Authorization": "Bearer …" } } }
+///   "mcpServers": { "acro": { "type": "http", "url": "…", "headers": { "Authorization": "Bearer …" } } }
 /// }
 /// ```
 ///

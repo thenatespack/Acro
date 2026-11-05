@@ -7,9 +7,9 @@ import Foundation
 // toolbar does, through the command registry; there is no MCP-specific editor logic.
 //
 // ```sh
-// claude mcp add swift-engine -- swift run Editor --mcp          # stdio: the client launches the editor
+// claude mcp add acro -- swift run Editor --mcp          # stdio: the client launches the editor
 // # or attach to a running editor over HTTP (URL and token in <project>/Library/mcp.json):
-// claude mcp add --transport http swift-engine http://127.0.0.1:7333/mcp --header "Authorization: Bearer <token>"
+// claude mcp add --transport http acro http://127.0.0.1:7333/mcp --header "Authorization: Bearer <token>"
 // ```
 //
 // ## Tools from commands
@@ -89,18 +89,18 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
     public var sandboxRoots: [URL] { [session.project?.root ?? workspaceRoot] }
 
     /// The name `initialize` reports.
-    public static let serverName = "swift-engine"
+    public static let serverName = "acro"
 
     public init(session: EditorSession) {
         self.session = session
-        server = MCPServer(info: .init(name: Self.serverName, title: "SwiftGameEngine Editor", version: EngineVersion.current),
+        server = MCPServer(info: .init(name: Self.serverName, title: "Acro Editor", version: EngineVersion.current),
                            instructions: Self.instructions)
         server.tools = self
         server.resources = self
     }
 
     static let instructions = """
-        Drives the SwiftGameEngine editor. Every editor action is a tool named by its command id \
+        Drives the Acro editor. Every editor action is a tool named by its command id \
         (entity.create, transform.set, component.setField, asset.instantiate…); tools marked undoable record one \
         undo step, which edit.undo reverts. Wrap a multi-step change in edit.batch (or edit.beginBatch / \
         edit.endBatch) so it is one undo step named after its intent, rolled back if a step fails. Read the scene \

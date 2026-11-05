@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Editor › AI control). 128 tools.
+named by its id (see README › Editor › AI control). 133 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -27,6 +27,7 @@ optional arguments.
 | `layout` | [`layout.reset`](#layoutreset) |
 | `log` | [`log.clear`](#logclear), [`log.read`](#logread) |
 | `material` | [`material.get`](#materialget), [`material.set`](#materialset) |
+| `meshBuild` | [`meshBuild.edit`](#meshbuildedit), [`meshBuild.get`](#meshbuildget), [`meshBuild.new`](#meshbuildnew), [`meshBuild.open`](#meshbuildopen), [`meshBuild.set`](#meshbuildset) |
 | `net` | [`net.overlay`](#netoverlay), [`net.setConditions`](#netsetconditions), [`net.start`](#netstart), [`net.stats`](#netstats), [`net.stop`](#netstop), [`net.view`](#netview) |
 | `panel` | [`panel.close`](#panelclose), [`panel.dock`](#paneldock), [`panel.focus`](#panelfocus), [`panel.list`](#panellist), [`panel.open`](#panelopen) |
 | `play` | [`play.pause`](#playpause), [`play.setTimeScale`](#playsettimescale), [`play.start`](#playstart), [`play.state`](#playstate), [`play.step`](#playstep), [`play.stop`](#playstop), [`play.toggle`](#playtoggle) |
@@ -980,6 +981,117 @@ Arguments:
 - `previous?`: {addressMode?: "repeat" \| "clampToEdge" \| "mirrorRepeat", alphaCutoff?: number, alphaMode?: "opaque" \| "mask" \| "blend", baseColor?: number[4], checker?: boolean, doubleSided?: boolean, emissive?: number, emissiveColor?: number[3], emissiveStrength?: number, emissiveTexture?: asset id, filter?: "linear" \| "nearest", metallic?: number, metallicRoughnessTexture?: asset id, mipFilter?: "linear" \| "nearest" \| "none", normalScale?: number, normalTexture?: asset id, occlusionStrength?: number, occlusionTexture?: asset id, roughness?: number, shading?: "pbr" \| "blinnPhong", shininess?: number, specular?: number, texture?: asset id, uvOffset?: number[2], uvRotation?: number, uvScale?: number[2]}
 - `reset?`: boolean
 - `transient?`: boolean
+
+## meshBuild
+
+### `meshBuild.edit`
+
+**Edit Mesh Build** · _undoable_
+
+Changes part of a .meshbuild file in one undoable step, in this order: removeParts, addParts, updateParts (name → fields to change; "name" renames), removeAnimations, addAnimations, then addMotions / addTracks into `animation`. Placed copies update. Returns the part and animation names and import warnings. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `addAnimations?`: [{autoplay?: boolean, loop?: "once" \| "loop" \| "pingPong", motions?: [object], name?: string, speed?: number, tracks?: [object]}]
+- `addMotions?`: [{amount?: number, axis?: "x" \| "y" \| "z", kind?: "spin" \| "bob" \| "swing" \| "pulse" \| "shake", part?: string, period?: number}]
+- `addParts?`: [{color?: number[3], glow?: number[3], glowStrength?: number, material?: string, metallic?: number, name?: string, opacity?: number, parent?: string, position?: number[3], rotation?: number[3], roughness?: number, segments?: integer, shape?: string (12 cases), size?: number[3], texture?: string, textureScale?: number[2], thickness?: number, worldUV?: boolean}]
+- `addTracks?`: [{interpolation?: "linear" \| "step" \| "hermite", keys?: [object], part?: string, property?: "position" \| "rotation" \| "scale"}]
+- `animation?`: string
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+- `removeAnimations?`: [string]
+- `removeParts?`: [string]
+- `updateParts?`: object
+
+Result:
+
+- `animations`: [string]
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `entities?`: [entity id]
+- `parts`: [string]
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `warnings`: [string]
+
+### `meshBuild.get`
+
+**Get Mesh Build** · _read-only_, _idempotent_
+
+Reads a .meshbuild file: its parts and animations (every field, defaults included), the prefab to place, and problems with its references.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `build`: {animations?: [object], parts?: [object]}
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `warnings`: [string]
+
+### `meshBuild.new`
+
+**New Mesh Build**
+
+Writes a .meshbuild file in `folder` (default: the Assets root) and imports it as a model (a prefab of its parts, one mesh and material per part), optionally placing it in the scene (`place`, at `position`; undoable). Returns the asset, its prefab, the part names and import warnings. Edit it later with meshBuild.edit (small changes) or meshBuild.set (whole contents); placed copies update. A mesh build is a model made of shapes: `parts` (each: name, shape group|box|sphere|hemisphere|cylinder|cone|capsule|torus|tube|plane|wedge|pyramid, parent (another part's name; children move with it), position [x,y,z] m in the parent's space, rotation [x,y,z] degrees, size [x,y,z] m (the box the shape fills; cylinders/cones/capsules run along Y), segments, thickness (tube wall), color [r,g,b] 0-1 sRGB, opacity, texture (path under Assets/ such as "Textures/brick.png" or a .proctex, or "asset:<id>"), textureScale [u,v], worldUV (texture keeps its size in meters), metallic, roughness, glow [r,g,b] emitted color, glowStrength, material (a .material asset replacing the look)) and `animations` (each: name, autoplay (default true; every autoplay animation plays at once in play mode and games), loop loop|once|pingPong, speed, motions (ready-made: {part, kind spin|bob|swing|pulse|shake, axis x|y|z, amount (spin: turns, bob/shake: m, swing: degrees, pulse: growth fraction), period seconds}) and tracks (keyframes: {part, property position|rotation|scale, interpolation linear|hermite|step, keys [{time, value [x,y,z]}]}; values are relative to the part's rest pose: position offset in m, rotation degrees added, scale multiplier (1 = unchanged))). Every key is optional. A group part has no mesh: use it as a pivot (hinge, turret) for animated children.
+
+Arguments:
+
+- `build?`: {animations?: [object], parts?: [object]}
+- `folder?`: string
+- `name?`: string
+- `place?`: boolean
+- `position?`: number[3] — [x, y, z]
+
+Result:
+
+- `animations`: [string]
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `entities?`: [entity id]
+- `parts`: [string]
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `warnings`: [string]
+
+### `meshBuild.open`
+
+**Open in Mesh Builder** · _idempotent_
+
+Opens a .meshbuild file in the editor's Mesh Builder tab (a viewport showing just the model, with gizmos to place parts, live animation preview and the parts form) and brings the tab to the front. view.screenshot {source: "panel", panel: "meshBuilder"} shows it.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `path`: string
+
+### `meshBuild.set`
+
+**Set Mesh Build** · _undoable_, _idempotent_
+
+Replaces a .meshbuild file's whole contents and reimports it; placed copies update. Undoable. For a few changes, meshBuild.edit is shorter. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `build`: {animations?: [object], parts?: [object]}
+- `path?`: string
+
+Result:
+
+- `animations`: [string]
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `entities?`: [entity id]
+- `parts`: [string]
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `warnings`: [string]
 
 ## net
 

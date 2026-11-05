@@ -57,7 +57,7 @@ extension Quat: Animatable {
 }
 
 /// How a curve segment is interpolated, set per keyframe for the segment that starts there.
-public enum KeyInterpolation: String, Codable, Sendable {
+public enum KeyInterpolation: String, Codable, CaseIterable, Sendable {
     /// Straight line to the next key.
     case linear
     /// Holds this key's value until the next key's time.

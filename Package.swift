@@ -102,7 +102,7 @@ let textureCodecCXXFlags: [CXXSetting] = isDependencyCheckout ? [] : [.unsafeFla
 let exportsSymbols: [LinkerSetting] = isDependencyCheckout ? [] : [.unsafeFlags(["-Xlinker", "--export-dynamic"], .when(platforms: [.linux]))]
 
 let package = Package(
-    name: "SwiftGameEngine",
+    name: "Acro",
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "Engine", targets: ["Engine"]),

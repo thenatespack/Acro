@@ -26,7 +26,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN/$NAME" "$APP/Contents/MacOS/$NAME"
 # SwiftPM resource bundles (shaders, fonts); Bundle.module finds them in Contents/Resources.
-for bundle in "$BIN"/SwiftGameEngine_Engine.bundle "$BIN"/SwiftGameEngine_Editor*.bundle; do
+for bundle in "$BIN"/Acro_Engine.bundle "$BIN"/Acro_Editor*.bundle; do
     [ -e "$bundle" ] && cp -R "$bundle" "$APP/Contents/Resources/"
 done
 [ -f "$ROOT/logos/AppIcon.icns" ] && cp "$ROOT/logos/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
@@ -38,10 +38,10 @@ cat > "$APP/Contents/Info.plist" <<EOF
 <dict>
 	<key>CFBundleDevelopmentRegion</key><string>en</string>
 	<key>CFBundleExecutable</key><string>$NAME</string>
-	<key>CFBundleIdentifier</key><string>dev.swiftgameengine.editor</string>
+	<key>CFBundleIdentifier</key><string>dev.acro.editor</string>
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
 	<key>CFBundleName</key><string>$NAME</string>
-	<key>CFBundleDisplayName</key><string>Swift Game Engine Editor</string>
+	<key>CFBundleDisplayName</key><string>Acro Editor</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleShortVersionString</key><string>$VERSION</string>
 	<key>CFBundleVersion</key><string>$VERSION</string>

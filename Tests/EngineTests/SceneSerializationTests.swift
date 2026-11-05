@@ -214,7 +214,7 @@ private func text(_ data: Data) -> String { String(decoding: data, as: UTF8.self
     let x = world.spawn(Marker(label: "x"))
     world.add(Follow(target: x), to: x)
     let json = text(try world.save())
-    #expect(json.contains("\"format\" : \"SwiftGameEngine.Scene\""))
+    #expect(json.contains("\"format\" : \"Acro.Scene\""))
     #expect(json.contains("\"version\" : 2"))
     let newer = Data(json.replacingOccurrences(of: "\"version\" : 2", with: "\"version\" : 99").utf8)
     #expect(throws: SceneError.unsupportedVersion(99)) { try World().load(newer) }

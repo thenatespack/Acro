@@ -235,6 +235,6 @@
       "uid" : "119cbe94557081759d91b5bfaca2ba51"
     }
   ],
-  "format" : "SwiftGameEngine.Scene",
+  "format" : "Acro.Scene",
   "version" : 2
 }

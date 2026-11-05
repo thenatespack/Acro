@@ -31,7 +31,7 @@ import Foundation
 // entity only (it loads as nil / `.invalid` for one that wasn't saved); use `EntityRef` for
 // anything that can point outside the saved set.
 //
-// File: `{"format": "SwiftGameEngine.Save", "version": N, "info": {...}, "state": {...},
+// File: `{"format": "Acro.Save", "version": N, "info": {...}, "state": {...},
 // "world": "<the scene file's JSON, as a string>"}`. Older versions are rewritten by
 // `migrate` (given the file as JSON) before decoding; newer ones throw `unsupportedVersion`.
 // Writes are atomic, so a crash while saving leaves the previous save.
@@ -147,7 +147,7 @@ extension World {
 /// The save slots of one game.
 @MainActor
 public final class SaveGames {
-    public static let format = "SwiftGameEngine.Save"
+    public static let format = FileFormat.tag("Save")
     /// The version `save` writes. Bump it when the layout of `state` changes and add the
     /// conversion to `migrate`.
     public var version = 1
@@ -273,7 +273,7 @@ public final class SaveGames {
         } catch {
             throw corrupt("not valid JSON")
         }
-        guard case .string(let format)? = root["format"], format == Self.format, case .int(let fileVersion)? = root["version"] else {
+        guard case .string(let format)? = root["format"], FileFormat.matches(format, Self.format), case .int(let fileVersion)? = root["version"] else {
             throw corrupt("not a save file")
         }
         if fileVersion > Int64(version) { throw SaveError.unsupportedVersion(Int(fileVersion)) }

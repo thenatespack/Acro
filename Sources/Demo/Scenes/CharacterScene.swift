@@ -50,7 +50,7 @@ final class CharacterScene: DemoScene {
     private var crates: [Entity] = []
     private var now: Float = 0
     private var message: (text: String, until: Float)?
-    private let saves = SaveGames(app: "SwiftGameEngineDemo")
+    private let saves = SaveGames(app: "AcroDemo")
     /// Screenshot runs never touch the real user's saves (`ENGINE_USER_DATA_DIR` opts back in).
     private let savesEnabled = ProcessInfo.processInfo.environment["ENGINE_SCREENSHOT"] == nil || UserData.isOverridden
 

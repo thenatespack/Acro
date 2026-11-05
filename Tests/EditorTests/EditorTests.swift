@@ -587,6 +587,20 @@ private func temporaryDirectory() -> URL {
         let url = EditorPrefsStore.defaultURL(environment: ["HOME": "/home/me"])
         #expect(url.lastPathComponent == "prefs.json")
         #expect(url.path.hasPrefix("/home/me/"))
+        #expect(url.path.lowercased().contains("/acro/editor/"))
+    }
+
+    @Test func defaultLocationCopiesPrefsFromBeforeTheRename() throws {
+        let home = temporaryDirectory()
+        let environment = ["HOME": home.path, "APPDATA": home.path, "XDG_CONFIG_HOME": home.path]
+        let url = EditorPrefsStore.defaultURL(environment: environment)
+        // The same place under the old name.
+        let legacy = URL(fileURLWithPath: url.path.replacingOccurrences(of: "/Acro/", with: "/SwiftGameEngine/")
+            .replacingOccurrences(of: "/acro/", with: "/swift-game-engine/"))
+        try FileManager.default.createDirectory(at: legacy.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: legacy)
+        #expect(EditorPrefsStore.defaultURL(environment: environment) == url)
+        #expect(try Data(contentsOf: url) == Data("{}".utf8))
     }
 }
 

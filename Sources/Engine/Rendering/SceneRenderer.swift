@@ -100,7 +100,7 @@ public struct SceneRenderStats: Sendable {
 @MainActor
 public final class SceneRenderer {
     public let device: RenderDevice
-    public let quality: RenderQuality
+    public private(set) var quality: RenderQuality
     /// Renders from this entity's `Camera` instead of the first active one.
     public var camera: Entity?
     public private(set) var stats = SceneRenderStats()
@@ -503,6 +503,7 @@ public final class SceneRenderer {
     /// `engine.postProcess` from the world's `PostProcess` component (nil without one). Without
     /// a camera, nothing is drawn this frame.
     public func prepare(world: World, engine: Engine) {
+        quality = engine.quality
         let start = ContinuousClock.now
         Profiler.begin("render prep")
         defer {

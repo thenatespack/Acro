@@ -15,7 +15,7 @@ import Foundation
 // ```json
 // {
 //   "engineVersion" : "0.1.0",
-//   "format" : "SwiftGameEngine.Project",
+//   "format" : "Acro.Project",
 //   "name" : "MyGame",
 //   "version" : 1
 // }
@@ -52,7 +52,7 @@ public enum AssetError: Error, CustomStringConvertible, Equatable {
 
 /// The contents of `Project.json`. Unknown keys are ignored, missing ones get defaults.
 public struct ProjectSettings: Equatable, Sendable, Codable {
-    public static let format = "SwiftGameEngine.Project"
+    public static let format = FileFormat.tag("Project")
     public static let currentVersion = 1
 
     /// Display name (the folder's name when created).

@@ -26,7 +26,7 @@ import Foundation
 //       "parent" : 0
 //     }
 //   ],
-//   "format" : "SwiftGameEngine.Scene",
+//   "format" : "Acro.Scene",
 //   "version" : 2
 // }
 // ```
@@ -265,7 +265,7 @@ extension World {
 // MARK: File structure
 
 struct SceneFile: Codable {
-    static let format = "SwiftGameEngine.Scene"
+    static let format = FileFormat.tag("Scene")
     static let currentVersion = 2
 
     var entities: [EntityRecord]
@@ -337,7 +337,7 @@ struct SceneFile: Codable {
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        guard (try? container.decode(String.self, forKey: .format)) == Self.format else { throw SceneError.notASceneFile }
+        guard FileFormat.matches(try? container.decode(String.self, forKey: .format), Self.format) else { throw SceneError.notASceneFile }
         let version = try container.decode(Int.self, forKey: .version)
         guard version <= Self.currentVersion else { throw SceneError.unsupportedVersion(version) }
         // Version 1 has no `uid`s; they decode as nil. Nothing else changed.

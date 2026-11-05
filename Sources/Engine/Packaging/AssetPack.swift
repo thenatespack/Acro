@@ -107,7 +107,7 @@ public struct AssetPackBlob: Codable, Equatable, Hashable, Sendable {
 
 /// A pack's table of contents (see the notes at the top of this file).
 public struct AssetPackManifest: Codable, Sendable {
-    public static let format = "SwiftGameEngine.AssetPack"
+    public static let format = FileFormat.tag("AssetPack")
     public static let currentVersion = 1
 
     public var format = AssetPackManifest.format
@@ -255,7 +255,7 @@ public final class AssetPack: Sendable {
         } catch {
             throw AssetPackError.damaged("unreadable table of contents: \(error)")
         }
-        guard manifest.format == AssetPackManifest.format else { throw AssetPackError.notAPack(url.path) }
+        guard FileFormat.matches(manifest.format, AssetPackManifest.format) else { throw AssetPackError.notAPack(url.path) }
         guard manifest.vertexStride == MemoryLayout<MeshVertex>.stride else {
             throw AssetPackError.incompatible("cooked for \(manifest.vertexStride)-byte vertices; this engine uses \(MemoryLayout<MeshVertex>.stride)")
         }

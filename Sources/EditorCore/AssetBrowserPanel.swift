@@ -552,6 +552,7 @@ public final class AssetBrowserPanel {
             ("New Folder", AssetNewFolderCommand.id, { [unowned self] in model.newFolder(); sync() }),
             ("New Material", AssetNewMaterialCommand.id, { [unowned self] in model.newMaterial(); sync() }),
             ("New Procedural Texture", AssetNewProceduralTextureCommand.id, { [unowned self] in model.newProceduralTexture(); sync() }),
+            ("New Mesh Build", MeshBuildNewCommand.id, { [unowned self] in model.newMeshBuild(); sync() }),
         ]
         if let entry {
             if case .folder = entry.item {

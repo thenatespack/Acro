@@ -5,9 +5,9 @@
 /// PATCH when sources change and MINOR when Engine's public API changes; MAJOR is bumped by hand
 /// with `Scripts/version.sh major`), so don't edit the literal below by hand.
 public enum EngineVersion {
-    public static let current = "0.1.0"
-    /// "Swift Game Engine 0.1.0".
-    public static var displayName: String { "Swift Game Engine \(current)" }
+    public static let current = "0.2.0"
+    /// "Acro 0.1.0".
+    public static var displayName: String { "Acro \(current)" }
 }
 
 /// A project or pack made with an engine version other than this one.

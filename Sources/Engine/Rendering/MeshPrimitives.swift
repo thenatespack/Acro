@@ -9,7 +9,7 @@ extension MeshGeometry {
     /// Appends a lathe surface: rings of `segments + 1` vertices (the first and last coincide, for the
     /// UV seam), each given by position `(r, y)` and the outward profile normal `(nr, ny)`. The
     /// profile runs from +Y downward. Triangles collapsed at a zero-radius ring are skipped.
-    fileprivate mutating func appendLathe(_ profile: [LatheRing], segments: Int) {
+    mutating func appendLathe(_ profile: [LatheRing], segments: Int) {
         let base = UInt32(vertices.count)
         for p in profile {
             for s in 0...segments {
@@ -31,7 +31,7 @@ extension MeshGeometry {
     }
 
     /// Appends a flat disc at height `y` facing up or down, with planar UVs.
-    fileprivate mutating func appendCap(radius: Float, y: Float, up: Bool, segments: Int) {
+    mutating func appendCap(radius: Float, y: Float, up: Bool, segments: Int) {
         let base = UInt32(vertices.count)
         let n = Vec3(0, up ? 1 : -1, 0)
         vertices.append(MeshVertex(position: Vec3(0, y, 0), normal: n, uv: Vec2(0.5, 0.5)))

@@ -81,17 +81,17 @@ public enum GameModuleABI {
     /// `GameModule.abiMinorVersion` by `register`, compiled into the module like `version`.
     @inlinable public static var minorVersion: Int32 { 4 }
     /// A symbol only Engine defines; a module that defines it too carries its own Engine.
-    public static let engineMarker = "swift_game_engine_host_marker"
+    public static let engineMarker = "acro_host_marker"
 }
 
 /// Defined by Engine only (see `GameModuleABI.engineMarker`).
-@_cdecl("swift_game_engine_host_marker")
-public func swiftGameEngineHostMarker() -> Int32 { GameModuleABI.version }
+@_cdecl("acro_host_marker")
+public func acroHostMarker() -> Int32 { GameModuleABI.version }
 
 /// The marker's address in this image (taken here: elsewhere the compiler emits a second
 /// definition of the C symbol).
-nonisolated(unsafe) let swiftGameEngineHostMarkerAddress = unsafeBitCast(
-    swiftGameEngineHostMarker as @convention(c) () -> Int32, to: UnsafeMutableRawPointer.self)
+nonisolated(unsafe) let acroHostMarkerAddress = unsafeBitCast(
+    acroHostMarker as @convention(c) () -> Int32, to: UnsafeMutableRawPointer.self)
 
 /// What a game module registers with its host: filled in by the module's entry point (see
 /// the notes at the top of this file).

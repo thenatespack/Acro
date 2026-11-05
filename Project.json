@@ -1,5 +1,5 @@
 {
-  "format" : "SwiftGameEngine.Project",
+  "format" : "Acro.Project",
   "game" : {
     "target" : "SampleGame"
   },

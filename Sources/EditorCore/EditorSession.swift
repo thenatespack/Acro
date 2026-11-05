@@ -119,6 +119,9 @@ public final class EditorSession {
     public var onRevealAsset: ((String) -> Void)?
     /// Opens a script in the editor. Set by the app.
     public var onOpenScript: ((String) -> Void)?
+    /// The mesh build open in the Mesh Builder tab (`meshBuild.open`), and how the app shows it.
+    public var openMeshBuild: AssetID?
+    public var onOpenMeshBuild: ((AssetID) -> Void)?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()

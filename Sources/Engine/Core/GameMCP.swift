@@ -60,14 +60,14 @@ public final class GameMCP: MCPToolProvider {
     private var generator = GameMCP.makeSchemaGenerator()
 
     init() {
-        server = MCPServer(info: .init(name: "swift-engine-game", title: "SwiftGameEngine Game", version: "0.1.0"),
+        server = MCPServer(info: .init(name: "acro-game", title: "Acro Game", version: "0.1.0"),
                            instructions: Self.instructions)
         server.tools = self
         registerTools()
     }
 
     static let instructions = """
-        Drives a running SwiftGameEngine game. play.pause / play.step / play.setTimeScale control time \
+        Drives a running Acro game. play.pause / play.step / play.setTimeScale control time \
         (stepping runs whole frames at 1/60 s, deterministic); input.inject plays keyboard, mouse, scroll and text \
         into the game over game time (e.g. [{"key": "w", "duration": 2}, {"key": "space"}]); view.screenshot shows \
         the next frame; stats.get has frame and GPU times. With a world: scene.hierarchy, entity.find, entity.get and \

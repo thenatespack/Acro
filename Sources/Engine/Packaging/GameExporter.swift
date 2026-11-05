@@ -8,8 +8,8 @@ import Foundation
 // macOS   <out>/<Name>.app/Contents/Info.plist
 //                                  /MacOS/<Name>                       Engine + game module, one executable
 //                                  /Resources/<Name>.pack              the cooked assets
-//                                  /Resources/SwiftGameEngine_Engine.bundle   shaders, fonts
-// Linux   <out>/<Name>/<Name>, <Name>.pack, SwiftGameEngine_Engine.bundle/ (or .resources/), lib/libglfw.so.3, run.sh
+//                                  /Resources/Acro_Engine.bundle   shaders, fonts
+// Linux   <out>/<Name>/<Name>, <Name>.pack, Acro_Engine.bundle/ (or .resources/), lib/libglfw.so.3, run.sh
 // ```
 //
 // **Static linking.** In the editor a game is a module loaded at run time (GameModule.swift):
@@ -579,7 +579,7 @@ public struct GameExporter: Sendable {
     }
 
     var infoPlist: String {
-        let identifier = "local.swiftgameengine." + options.name.filter { $0.isLetter || $0.isNumber }.lowercased()
+        let identifier = "local.acro." + options.name.filter { $0.isLetter || $0.isNumber }.lowercased()
         return """
             <?xml version="1.0" encoding="UTF-8"?>
             <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

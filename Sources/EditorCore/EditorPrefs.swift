@@ -37,9 +37,10 @@ public struct EditorPrefs: Codable, Equatable, Sendable {
 /// Reads and writes `EditorPrefs` as a small JSON file.
 ///
 /// Location (`defaultURL`): `EDITOR_PREFS=<file>` if set; else on macOS
-/// `~/Library/Application Support/SwiftGameEngine/Editor/prefs.json`, on Windows
-/// `%APPDATA%\SwiftGameEngine\Editor\prefs.json`, elsewhere
-/// `$XDG_CONFIG_HOME/swift-game-engine/editor/prefs.json` (default `~/.config`).
+/// `~/Library/Application Support/Acro/Editor/prefs.json`, on Windows
+/// `%APPDATA%\Acro\Editor\prefs.json`, elsewhere
+/// `$XDG_CONFIG_HOME/acro/editor/prefs.json` (default `~/.config`). Prefs saved before the rename
+/// (under `SwiftGameEngine` / `swift-game-engine`) are copied there the first time.
 public struct EditorPrefsStore: Sendable {
     public let url: URL
 
@@ -51,14 +52,23 @@ public struct EditorPrefsStore: Sendable {
         if let path = environment["EDITOR_PREFS"], !path.isEmpty { return URL(fileURLWithPath: path) }
         let home = URL(fileURLWithPath: environment["HOME"] ?? NSHomeDirectory())
         #if os(macOS)
-        let base = home.appendingPathComponent("Library/Application Support/SwiftGameEngine/Editor")
+        let parent = home.appendingPathComponent("Library/Application Support")
+        let (folder, legacyFolder) = ("Acro/Editor", "SwiftGameEngine/Editor")
         #elseif os(Windows)
-        let base = (environment["APPDATA"].map { URL(fileURLWithPath: $0) } ?? home).appendingPathComponent("SwiftGameEngine/Editor")
+        let parent = environment["APPDATA"].map { URL(fileURLWithPath: $0) } ?? home
+        let (folder, legacyFolder) = ("Acro/Editor", "SwiftGameEngine/Editor")
         #else
-        let config = environment["XDG_CONFIG_HOME"].map { URL(fileURLWithPath: $0) } ?? home.appendingPathComponent(".config")
-        let base = config.appendingPathComponent("swift-game-engine/editor")
+        let parent = environment["XDG_CONFIG_HOME"].map { URL(fileURLWithPath: $0) } ?? home.appendingPathComponent(".config")
+        let (folder, legacyFolder) = ("acro/editor", "swift-game-engine/editor")
         #endif
-        return base.appendingPathComponent("prefs.json")
+        let url = parent.appendingPathComponent(folder).appendingPathComponent("prefs.json")
+        let legacy = parent.appendingPathComponent(legacyFolder).appendingPathComponent("prefs.json")
+        let files = FileManager.default
+        if !files.fileExists(atPath: url.path), files.fileExists(atPath: legacy.path) {
+            try? files.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? files.copyItem(at: legacy, to: url)
+        }
+        return url
     }
 
     /// The stored prefs, nil if there is no file. Throws for a file that can't be decoded.
@@ -88,7 +98,9 @@ public enum EditorLayout {
     public static let activity = "activity"
     public static let scripts = "scripts"
     public static let files = "files"
-    public static let panelIDs = [viewport, game, hierarchy, inspector, console, stats, assets, activity, scripts, files]
+    /// The Mesh Builder tab (opened with a mesh build, tabbed with the Scene view; not in the default layout).
+    public static let meshBuilder = "meshBuilder"
+    public static let panelIDs = [viewport, game, hierarchy, inspector, console, stats, assets, activity, scripts, files, meshBuilder]
 
     /// Hierarchy above Files on the left, inspector right, the Scene view (tabbed with the Game
     /// view and Scripts, so scripts open where the Scene view is) in the middle above an Assets / Console / Activity /
