@@ -371,6 +371,15 @@ public final class AssetInspectorView {
                 content.addChildren([HStack(spacing: 6, [open, Spacer()]),
                                      note("A model built from \(parts) shape\(parts == 1 ? "" : "s"). The Mesh Builder shows it in a view of its own, with gizmos, the parts list and live animation.")])
             }
+            if session.isPostFXFile(id) {
+                let open = Button("Open in Post-FX Builder", role: .primary, name: "openPostFXBuilder") { [unowned self] in
+                    session.run(PostFXOpenCommand.self, .init(asset: AssetReference(id)))
+                }
+                open.command = PostFXOpenCommand.id.rawValue
+                open.tooltip = "Edit this look in the Post-FX tab (or double-click it in the Assets panel)"
+                content.addChildren([HStack(spacing: 6, [open, Spacer()]),
+                                     note("A camera look. Assign it with postfx.assign, a camera's Post FX field or a PostFXVolume.")])
+            }
             if session.isMaterialFile(id) {
                 addMaterialForm(AssetReference(id, subAsset: "material"))
             }

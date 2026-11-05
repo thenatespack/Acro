@@ -523,6 +523,7 @@ public final class SceneRenderer {
             return
         }
         reversedZ = camera.reversedZ
+        engine.postProcess = PostFXResolver.resolve(world: world, camera: camera, cameraWorld: cameraWorld, assets: assets)
         engine.clearColor = camera.clearColor
         engine.clearDepth = camera.reversedZ ? 0 : 1
 

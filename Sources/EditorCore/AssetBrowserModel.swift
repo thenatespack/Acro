@@ -131,6 +131,8 @@ public final class AssetBrowserModel {
             search = ""
         case .asset(let id) where session.isMeshBuildFile(id):
             session.run(MeshBuildOpenCommand.self, .init(asset: AssetReference(id)))
+        case .asset(let id) where session.isPostFXFile(id):
+            session.run(PostFXOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where entry.isExpandable:
             toggleExpanded(id)
         default:
@@ -210,6 +212,15 @@ public final class AssetBrowserModel {
     @discardableResult
     public func newMeshBuild() -> AssetID? {
         guard let id = session.run(MeshBuildNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
+        invalidate()
+        selection = .asset(id)
+        return id
+    }
+
+    /// Creates a post-fx profile in the current folder (`postfx.new`) and selects it.
+    @discardableResult
+    public func newPostFX() -> AssetID? {
+        guard let id = session.run(PostFXNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
         invalidate()
         selection = .asset(id)
         return id

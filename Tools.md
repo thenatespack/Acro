@@ -22,6 +22,16 @@ the model in its own viewport with picking, Move / Rotate / Scale gizmos and liv
 preview. Tools: `meshBuild.new`, `meshBuild.get`, `meshBuild.set`, `meshBuild.edit`,
 `meshBuild.open`. See README › Mesh Builder.
 
+### Post-FX Builder (`.postfx`)
+
+Saved camera looks: tonemapper, exposure and auto exposure, bloom, color grading (contrast,
+lift, gamma, gain, saturation), vignette, chromatic aberration and film grain, in the engine's
+single tonemap pass on both backends. Presets (neutral, cinematic, warm, cold, noir, retro),
+assigned per camera (`Camera.postFX`) or blended by `PostFXVolume` (box or sphere, blend
+distance, priority). The Post-FX tab previews a sample scene with a before/after split.
+Tools: `postfx.new`, `postfx.get`, `postfx.set`, `postfx.edit`, `postfx.assign`, `postfx.open`.
+Not done: depth of field, LUT grading, a split preview inside the Scene view. See README.
+
 ## Planned
 
 Recommended order, grouped so each builder lands after the ones it depends on:
@@ -69,17 +79,6 @@ Game sound effects generated from parameters, the way `.proctex` generates textu
 - Presets with Randomize and Mutate: jump, coin, laser, explosion, hit, power-up, blip.
 - Rendered at import into an audio buffer usable by `AudioEmitter.clip`; deterministic per seed.
 - Tools: `sfx.new {preset?, seed?}`, `sfx.set`, `sfx.play` (preview in the editor).
-
-### 4. Post-FX Profile Builder (`.postfx`)
-
-Saved camera looks built on the engine's existing post-processing (tonemapping, exposure,
-bloom).
-
-- Bloom, exposure and auto-exposure, tonemapper, color grading (lift, gamma, gain,
-  saturation, LUT), vignette, chromatic aberration, film grain, depth of field.
-- Before/after split preview in the Scene view.
-- Profiles assigned per camera or blended by volume, so areas can have their own look.
-- Tools: `postfx.new {preset?}`, `postfx.set`.
 
 ### 5. Data Table Builder (`.table`)
 

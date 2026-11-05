@@ -122,6 +122,9 @@ public final class EditorSession {
     /// The mesh build open in the Mesh Builder tab (`meshBuild.open`), and how the app shows it.
     public var openMeshBuild: AssetID?
     public var onOpenMeshBuild: ((AssetID) -> Void)?
+    /// The post-fx profile open in the Post-FX tab (`postfx.open`), and how the app shows it.
+    public var openPostFX: AssetID?
+    public var onOpenPostFX: ((AssetID) -> Void)?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()

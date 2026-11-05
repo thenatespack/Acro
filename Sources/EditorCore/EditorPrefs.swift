@@ -100,7 +100,9 @@ public enum EditorLayout {
     public static let files = "files"
     /// The Mesh Builder tab (opened with a mesh build, tabbed with the Scene view; not in the default layout).
     public static let meshBuilder = "meshBuilder"
-    public static let panelIDs = [viewport, game, hierarchy, inspector, console, stats, assets, activity, scripts, files, meshBuilder]
+    /// The Post-FX tab (opened with a .postfx file, tabbed with the Scene view; not in the default layout).
+    public static let postFXBuilder = "postFXBuilder"
+    public static let panelIDs = [viewport, game, hierarchy, inspector, console, stats, assets, activity, scripts, files, meshBuilder, postFXBuilder]
 
     /// Hierarchy above Files on the left, inspector right, the Scene view (tabbed with the Game
     /// view and Scripts, so scripts open where the Scene view is) in the middle above an Assets / Console / Activity /

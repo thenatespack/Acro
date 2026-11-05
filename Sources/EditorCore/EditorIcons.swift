@@ -21,6 +21,7 @@ public enum EditorIcons {
         SpotLight.componentName: "flashlight",
         SceneEnvironment.componentName: "globe",
         PostProcessSettings.componentName: "aperture",
+        PostFXVolume.componentName: "aperture",
         PlanarReflection.componentName: "reflection",
         MeshRenderer.componentName: "box",
         LineRenderer.componentName: "cable",
@@ -221,6 +222,7 @@ public enum EditorIcons {
         }
         if world.has(SceneEnvironment.self, for: entity) { return (.environment, SceneEnvironment.componentName) }
         if world.has(PostProcessSettings.self, for: entity) { return (.postProcess, PostProcessSettings.componentName) }
+        if world.has(PostFXVolume.self, for: entity) { return (.postProcess, PostFXVolume.componentName) }
         if world.has(PlanarReflection.self, for: entity) { return (.postProcess, PlanarReflection.componentName) }
         if !registered.isEmpty {
             for type in world.componentTypes(of: entity) where registered[type.componentName] != nil {
@@ -282,6 +284,7 @@ public enum EditorIcons {
         case "gltf", "glb", "obj", "fbx", "meshbuild": return .model
         case "png", "jpg", "jpeg", "tga", "hdr", "exr", "ktx", "ktx2", "dds", "bmp", "proctex": return .texture
         case "material": return .material
+        case "postfx": return .material
         case "prefab": return .prefab
         case "scene": return .scene
         case "wav", "ogg", "mp3", "flac": return .audio
@@ -338,6 +341,7 @@ public enum EditorIcons {
         EditorLayout.scripts: "file-code",
         EditorLayout.files: "folder-open",
         EditorLayout.meshBuilder: "cuboid",
+        EditorLayout.postFXBuilder: "sparkles",
     ]
 
     /// Console lines by level.

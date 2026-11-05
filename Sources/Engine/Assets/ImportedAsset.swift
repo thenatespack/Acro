@@ -476,11 +476,14 @@ public struct PrefabNode: Equatable, Sendable, Codable {
     public var skin: PrefabSkin?
     /// Animation that plays on the node (instantiating adds the `FieldAnimator`); mesh builds use it.
     public var animator: FieldAnimator?
+    /// A `.postfx` import's profile (the prefab spawns nothing for it; cameras and volumes read it).
+    public var postFX: PostProcessSettings?
     public var children: [PrefabNode]
 
     public init(name: String, transform: Transform = Transform(), mesh: AssetReference? = nil,
                 material: AssetReference? = nil, skin: PrefabSkin? = nil, animator: FieldAnimator? = nil,
-                children: [PrefabNode] = []) {
+                children: [PrefabNode] = [], postFX: PostProcessSettings? = nil) {
+        self.postFX = postFX
         self.name = name
         self.transform = transform
         self.mesh = mesh

@@ -87,15 +87,33 @@ public struct Camera: Component, Codable, Equatable, Sendable {
     /// Linear RGBA the screen is cleared to (set as `engine.clearColor`).
     public var clearColor: Vec4
     public var isActive: Bool
+    /// A `.postfx` profile for this camera ("" = none): a path relative to `Assets/` or an
+    /// "asset:<id>" reference. Replaces the scene's `PostProcess` component; `PostFXVolume`s blend over it.
+    public var postFX: String
 
     public init(fovY: Float = .pi / 3, near: Float = 0.1, far: Float = 500, reversedZ: Bool = false,
-                clearColor: Vec4 = Vec4(0, 0, 0, 1), isActive: Bool = true) {
+                clearColor: Vec4 = Vec4(0, 0, 0, 1), isActive: Bool = true, postFX: String = "") {
+        self.postFX = postFX
         self.fovY = fovY
         self.near = near
         self.far = far
         self.reversedZ = reversedZ
         self.clearColor = clearColor
         self.isActive = isActive
+    }
+
+    private enum CodingKeys: String, CodingKey { case fovY, near, far, reversedZ, clearColor, isActive, postFX }
+
+    /// Missing `postFX` (older scene files) means none.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        fovY = try c.decode(Float.self, forKey: .fovY)
+        near = try c.decode(Float.self, forKey: .near)
+        far = try c.decode(Float.self, forKey: .far)
+        reversedZ = try c.decode(Bool.self, forKey: .reversedZ)
+        clearColor = try c.decode(Vec4.self, forKey: .clearColor)
+        isActive = try c.decode(Bool.self, forKey: .isActive)
+        postFX = try c.decodeIfPresent(String.self, forKey: .postFX) ?? ""
     }
 
     /// The projection matrix (unjittered) for a viewport of `aspect` = width / height.
