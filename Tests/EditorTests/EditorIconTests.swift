@@ -97,7 +97,8 @@ struct EditorIconTests {
     /// and every icon name the editor uses exists in the built-in set.
     @Test func everyComponentTypeHasAnIcon() throws {
         EditorComponentCatalog.registerBuiltins()
-        for name in EditorComponentCatalog.addableNames where !name.hasPrefix("GameModuleTest") && !name.hasPrefix("EditorIconTests") {
+        // Built-ins only: other tests load game modules (Orbfall's Pulse…), whose components use the fallback.
+        for name in EditorComponentCatalog.builtinNames.sorted() {
             #expect(EditorIcons.hasIcon(forComponent: name), "\(name) uses the fallback icon")
         }
         for name in ["Transform", "Name", "Camera", "DirectionalLight", "PointLight", "SpotLight", "SceneEnvironment", "PostProcess",

@@ -47,6 +47,8 @@ public enum EditorComponentCatalog {
     public static func registerBuiltins() {
         guard !registeredBuiltins else { return }
         registeredBuiltins = true
+        let before = Set(factories.keys)
+        defer { builtinNames = Set(factories.keys).subtracting(before) }
         ComponentRegistry.register(Transform.self, Name.self, Camera.self, DirectionalLight.self, SceneEnvironment.self,
                                    MeshRenderer.self, LineRenderer.self, Spin.self, FieldAnimator.self, LightFlicker.self, CameraPath.self)
         register(Transform.self) { Transform() }
@@ -104,6 +106,9 @@ public enum EditorComponentCatalog {
     public static func makeDefault(named name: String) -> (any Component)? {
         factories[name]?()
     }
+
+    /// The names `registerBuiltins` made addable (the engine's and editor's), as opposed to game modules'.
+    public private(set) static var builtinNames: Set<String> = []
 
     /// Every addable component name, sorted.
     public static var addableNames: [String] { factories.keys.sorted() }

@@ -5,7 +5,7 @@
 /// PATCH when sources change and MINOR when Engine's public API changes; MAJOR is bumped by hand
 /// with `Scripts/version.sh major`), so don't edit the literal below by hand.
 public enum EngineVersion {
-    public static let current = "0.7.0"
+    public static let current = "0.7.1"
     /// "Acro 0.1.0".
     public static var displayName: String { "Acro \(current)" }
 }
