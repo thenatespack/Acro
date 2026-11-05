@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Editor › AI control). 133 tools.
+named by its id (see README › Editor › AI control). 139 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -37,6 +37,7 @@ optional arguments.
 | `script` | [`script.list`](#scriptlist), [`script.new`](#scriptnew), [`script.open`](#scriptopen), [`script.save`](#scriptsave) |
 | `selection` | [`selection.clear`](#selectionclear), [`selection.get`](#selectionget), [`selection.set`](#selectionset) |
 | `settings` | [`settings.get`](#settingsget), [`settings.setEditor`](#settingsseteditor), [`settings.setProject`](#settingssetproject) |
+| `sfx` | [`sfx.edit`](#sfxedit), [`sfx.get`](#sfxget), [`sfx.new`](#sfxnew), [`sfx.open`](#sfxopen), [`sfx.play`](#sfxplay), [`sfx.set`](#sfxset) |
 | `stats` | [`stats.get`](#statsget) |
 | `tool` | [`tool.set`](#toolset), [`tool.snapping`](#toolsnapping) |
 | `transform` | [`transform.lookAt`](#transformlookat), [`transform.set`](#transformset) |
@@ -1540,7 +1541,7 @@ Result:
 
 **Open Project** · _destructive_, _idempotent_
 
-Opens the project at `path` (or a recent project by name), scans its assets and imports what changed (in the background); the project goes to the top of project.recent.list and the launcher closes. The scene stays open unless `openLastScene` is true. A project whose Project.json records another engine version (`engineVersion`) is refused unless `allowVersionMismatch` is true; opened, it is stamped with this engine's version (0.1.0). Returns the project's root folder. Destructive only when `openLastScene` is true and the open scene has unsaved changes: then pass confirm: true.
+Opens the project at `path` (or a recent project by name), scans its assets and imports what changed (in the background); the project goes to the top of project.recent.list and the launcher closes. The scene stays open unless `openLastScene` is true. A project whose Project.json records another engine version (`engineVersion`) is refused unless `allowVersionMismatch` is true; opened, it is stamped with this engine's version (0.2.0). Returns the project's root folder. Destructive only when `openLastScene` is true and the open scene has unsaved changes: then pass confirm: true.
 
 Arguments:
 
@@ -1957,6 +1958,142 @@ Result:
 
 - `path`: string
 - `project`: {build?: {enginePackage?: string, include?: [string], name?: string, output?: string, scenes?: [string], textureFamily?: "bc" \| "astc", textures?: "compress" \| "asImported"}, engineVersion?: string, game?: {buildCommand?: [string], library?: string, package?: string, target?: string, watch?: boolean}, name?: string, runtime?: {physics?: object, window?: object}, version?: integer}
+
+## sfx
+
+### `sfx.edit`
+
+**Edit Sound** · _undoable_
+
+Changes a .sfx file in one undoable step, in this order: `preset` (load it; `randomize` with `seed` for a variation), `mutate` (jitter every continuous parameter by that fraction), then `changes` (field name → new value). Returns the new parameters, duration, waveform summary and warnings. Hear the result with sfx.play. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `changes?`: any — Any JSON value.
+- `mutate?`: number
+- `path?`: string
+- `preset?`: "jump" \| "coin" \| "laser" \| "explosion" \| "hit" \| "powerUp" \| "blip"
+- `randomize?`: boolean
+- `seed?`: integer
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `build`: {arpeggio?: number, arpeggioTime?: number, attack?: number, bitCrush?: integer, decay?: number, duty?: number, dutySweep?: number, frequency?: number, highPass?: number, lowPass?: number, minFrequency?: number, punch?: number, sampleRate?: integer, seed?: integer, slide?: number, slideAcceleration?: number, sustain?: number, vibratoDepth?: number, vibratoRate?: number, volume?: number, waveform?: "square" \| "saw" \| "sine" \| "noise"}
+- `clip`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `duration`: number
+- `path`: string
+- `peaks`: [number]
+- `played?`: boolean
+- `warnings`: [string]
+
+### `sfx.get`
+
+**Get Sound** · _read-only_, _idempotent_
+
+Reads a .sfx file: every parameter (defaults included), its duration, a waveform summary (peak loudness across the sound) and warnings.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `build`: {arpeggio?: number, arpeggioTime?: number, attack?: number, bitCrush?: integer, decay?: number, duty?: number, dutySweep?: number, frequency?: number, highPass?: number, lowPass?: number, minFrequency?: number, punch?: number, sampleRate?: integer, seed?: integer, slide?: number, slideAcceleration?: number, sustain?: number, vibratoDepth?: number, vibratoRate?: number, volume?: number, waveform?: "square" \| "saw" \| "sine" \| "noise"}
+- `clip`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `duration`: number
+- `path`: string
+- `peaks`: [number]
+- `played?`: boolean
+- `warnings`: [string]
+
+### `sfx.new`
+
+**New Sound**
+
+Writes a .sfx file in `folder` (default: the Assets root): a synthesized sound effect from `preset` (jump, coin, laser, explosion, hit, powerUp, blip) with an optional `seed` for a random variation, or from `build`. It imports as an audio file, so an AudioEmitter's `clip` can point at it. Returns the asset, its parameters, duration, a waveform summary and warnings. Change it with sfx.edit or sfx.set, hear it with sfx.play. A sound build is a synthesized effect (every key optional): waveform square|saw|sine|noise, frequency Hz, slide (octaves/second, negative falls), slideAcceleration, minFrequency (the sound ends when the pitch falls below it), vibratoDepth (semitones) and vibratoRate (Hz), arpeggio (semitone jump after arpeggioTime seconds), duty and dutySweep (square pulse width), attack / sustain / decay (seconds), punch 0-1, lowPass / highPass (Hz, 0 = off), bitCrush (bits 1-15, 0 = off), volume 0-1, sampleRate, seed (drives the noise: the same parameters and seed give identical samples). Presets: jump|coin|laser|explosion|hit|powerUp|blip. The file plays anywhere an audio file does: set an AudioEmitter's `clip` to it.
+
+Arguments:
+
+- `build?`: {arpeggio?: number, arpeggioTime?: number, attack?: number, bitCrush?: integer, decay?: number, duty?: number, dutySweep?: number, frequency?: number, highPass?: number, lowPass?: number, minFrequency?: number, punch?: number, sampleRate?: integer, seed?: integer, slide?: number, slideAcceleration?: number, sustain?: number, vibratoDepth?: number, vibratoRate?: number, volume?: number, waveform?: "square" \| "saw" \| "sine" \| "noise"}
+- `folder?`: string
+- `name?`: string
+- `preset?`: "jump" \| "coin" \| "laser" \| "explosion" \| "hit" \| "powerUp" \| "blip"
+- `seed?`: integer
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `build`: {arpeggio?: number, arpeggioTime?: number, attack?: number, bitCrush?: integer, decay?: number, duty?: number, dutySweep?: number, frequency?: number, highPass?: number, lowPass?: number, minFrequency?: number, punch?: number, sampleRate?: integer, seed?: integer, slide?: number, slideAcceleration?: number, sustain?: number, vibratoDepth?: number, vibratoRate?: number, volume?: number, waveform?: "square" \| "saw" \| "sine" \| "noise"}
+- `clip`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `duration`: number
+- `path`: string
+- `peaks`: [number]
+- `played?`: boolean
+- `warnings`: [string]
+
+### `sfx.open`
+
+**Open in Sound Builder** · _idempotent_
+
+Opens a .sfx file in the editor's Sound Builder tab (waveform view, play button, presets with Randomize and Mutate, and the parameters form) and brings the tab to the front. view.screenshot {source: "panel", panel: "soundBuilder"} shows it.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `path`: string
+
+### `sfx.play`
+
+**Play Sound** · _read-only_
+
+Plays a .sfx file once through the editor's audio output (a new preview replaces the one playing). Returns its duration and waveform summary; `played` is false when the editor has no audio device.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `build`: {arpeggio?: number, arpeggioTime?: number, attack?: number, bitCrush?: integer, decay?: number, duty?: number, dutySweep?: number, frequency?: number, highPass?: number, lowPass?: number, minFrequency?: number, punch?: number, sampleRate?: integer, seed?: integer, slide?: number, slideAcceleration?: number, sustain?: number, vibratoDepth?: number, vibratoRate?: number, volume?: number, waveform?: "square" \| "saw" \| "sine" \| "noise"}
+- `clip`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `duration`: number
+- `path`: string
+- `peaks`: [number]
+- `played?`: boolean
+- `warnings`: [string]
+
+### `sfx.set`
+
+**Set Sound** · _undoable_, _idempotent_
+
+Replaces a .sfx file's whole contents and reimports it. Undoable. For a few changes, sfx.edit is shorter. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `build`: {arpeggio?: number, arpeggioTime?: number, attack?: number, bitCrush?: integer, decay?: number, duty?: number, dutySweep?: number, frequency?: number, highPass?: number, lowPass?: number, minFrequency?: number, punch?: number, sampleRate?: integer, seed?: integer, slide?: number, slideAcceleration?: number, sustain?: number, vibratoDepth?: number, vibratoRate?: number, volume?: number, waveform?: "square" \| "saw" \| "sine" \| "noise"}
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `build`: {arpeggio?: number, arpeggioTime?: number, attack?: number, bitCrush?: integer, decay?: number, duty?: number, dutySweep?: number, frequency?: number, highPass?: number, lowPass?: number, minFrequency?: number, punch?: number, sampleRate?: integer, seed?: integer, slide?: number, slideAcceleration?: number, sustain?: number, vibratoDepth?: number, vibratoRate?: number, volume?: number, waveform?: "square" \| "saw" \| "sine" \| "noise"}
+- `clip`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `duration`: number
+- `path`: string
+- `peaks`: [number]
+- `played?`: boolean
+- `warnings`: [string]
 
 ## stats
 

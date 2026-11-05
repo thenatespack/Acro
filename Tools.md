@@ -22,11 +22,20 @@ the model in its own viewport with picking, Move / Rotate / Scale gizmos and liv
 preview. Tools: `meshBuild.new`, `meshBuild.get`, `meshBuild.set`, `meshBuild.edit`,
 `meshBuild.open`. See README › Mesh Builder.
 
+### Sound Builder (`.sfx`)
+
+Sound effects generated from synth parameters (square/saw/sine/noise, pitch envelope and
+slide, vibrato, attack/sustain/decay, low/high-pass, arpeggio, bit crush), with presets (jump,
+coin, laser, explosion, hit, power-up, blip) plus Randomize and Mutate. Rendered by pure-Swift
+DSP, deterministic per seed, and loadable anywhere an audio file is (`AudioEmitter.clip`). The
+Sound Builder tab has a waveform view, Play / Auto-play and the parameters form. Tools:
+`sfx.new`, `sfx.get`, `sfx.set`, `sfx.edit`, `sfx.play`, `sfx.open`. See README › Sound Builder.
+
 ## Planned
 
 Recommended order, grouped so each builder lands after the ones it depends on:
 
-1. **Big gaps and quick wins:** Terrain, VFX, Sound, Post-FX, Data Table.
+1. **Big gaps and quick wins:** Terrain, VFX, Post-FX, Data Table.
 2. **Level building:** Pixel Sprite (makes Tilemap tiles), Tilemap, GridMap, Path (after
    Terrain, for terrain following).
 3. **Characters and AI:** Character, Animation Graph (needs glTF clip import), Behavior Tree.
@@ -59,16 +68,6 @@ through raw `ParticleEmitter` fields in the inspector).
 - Presets: fire, smoke, sparks, explosion, magic hit, rain, snow, dust, portal.
 - Imported as a prefab, so an effect is placed or spawned like any model.
 - Tools: `vfx.new {preset?}`, `vfx.edit {addEmitters, updateEmitters, removeEmitters}`.
-
-### 3. Sound Builder (`.sfx`)
-
-Game sound effects generated from parameters, the way `.proctex` generates textures.
-
-- A synth voice: waveform (square, saw, sine, noise), pitch envelope and slide, vibrato,
-  volume envelope (attack, sustain, decay), filters, arpeggio, bit crush.
-- Presets with Randomize and Mutate: jump, coin, laser, explosion, hit, power-up, blip.
-- Rendered at import into an audio buffer usable by `AudioEmitter.clip`; deterministic per seed.
-- Tools: `sfx.new {preset?, seed?}`, `sfx.set`, `sfx.play` (preview in the editor).
 
 ### 4. Post-FX Profile Builder (`.postfx`)
 

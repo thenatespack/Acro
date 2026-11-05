@@ -122,6 +122,9 @@ public final class EditorSession {
     /// The mesh build open in the Mesh Builder tab (`meshBuild.open`), and how the app shows it.
     public var openMeshBuild: AssetID?
     public var onOpenMeshBuild: ((AssetID) -> Void)?
+    /// The sound build open in the Sound Builder tab (`sfx.open`), and how the app shows it.
+    public var openSoundBuild: AssetID?
+    public var onOpenSoundBuild: ((AssetID) -> Void)?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()

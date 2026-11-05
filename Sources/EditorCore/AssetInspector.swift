@@ -371,6 +371,15 @@ public final class AssetInspectorView {
                 content.addChildren([HStack(spacing: 6, [open, Spacer()]),
                                      note("A model built from \(parts) shape\(parts == 1 ? "" : "s"). The Mesh Builder shows it in a view of its own, with gizmos, the parts list and live animation.")])
             }
+            if session.isSoundBuildFile(id) {
+                let open = Button("Open in Sound Builder", role: .primary, name: "openSoundBuilder") { [unowned self] in
+                    session.run(SoundBuildOpenCommand.self, .init(asset: AssetReference(id)))
+                }
+                open.command = SoundBuildOpenCommand.id.rawValue
+                open.tooltip = "Edit this sound in the Sound Builder tab (or double-click it in the Assets panel)"
+                content.addChildren([HStack(spacing: 6, [open, Spacer()]),
+                                     note("A synthesized sound effect. Set an AudioEmitter's clip to it to play it in the game.")])
+            }
             if session.isMaterialFile(id) {
                 addMaterialForm(AssetReference(id, subAsset: "material"))
             }

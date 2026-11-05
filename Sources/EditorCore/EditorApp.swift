@@ -129,6 +129,8 @@ public final class EditorApp: Game, EditorHost {
     public private(set) var files: FilesPanel!
     /// The Mesh Builder tab (MeshBuilderWorkspace.swift).
     public private(set) var meshWorkspace: MeshBuilderWorkspace!
+    /// The Sound Builder tab (SoundBuilderWorkspace.swift).
+    public private(set) var soundWorkspace: SoundBuilderWorkspace!
     private(set) var statusBar: StatusBar!
     /// The Assets panel (browser) and its thumbnails.
     public private(set) var assetBrowser: AssetBrowserPanel!
@@ -446,6 +448,14 @@ public final class EditorApp: Game, EditorHost {
             }
             dock.focusPanel(EditorLayout.meshBuilder)
         }
+        session.onOpenSoundBuild = { [unowned self] id in
+            guard soundWorkspace.open(id) else { return }
+            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.soundBuilder, EditorLayout.viewport) {
+                dock.dock(EditorLayout.soundBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
+                                                                                              : .edge(.bottom))
+            }
+            dock.focusPanel(EditorLayout.soundBuilder)
+        }
         session.onOpenScript = { [unowned self] path in
             let url = URL(fileURLWithPath: path)
             scriptEditor.openScript(at: url)
@@ -567,6 +577,7 @@ public final class EditorApp: Game, EditorHost {
         meshWorkspace = MeshBuilderWorkspace(session: session)
         meshWorkspace.device = engine?.device
         if let quality = engine?.quality { meshWorkspace.quality = quality }
+        soundWorkspace = SoundBuilderWorkspace(session: session)
         files.onOpen = { [unowned self] file in openFile(file) }
         files.onNewScene = { [unowned self] name in newScene(named: name) }
 
@@ -588,6 +599,7 @@ public final class EditorApp: Game, EditorHost {
         let meshPanel = DockPanel(id: EditorLayout.meshBuilder, title: "Mesh Builder", content: meshWorkspace.view, minSize: Vec2(320, 200))
         meshPanel.passesPointerThrough = true
         dock.addPanel(meshPanel)
+        dock.addPanel(DockPanel(id: EditorLayout.soundBuilder, title: "Sound Builder", content: soundWorkspace.view, minSize: Vec2(320, 200)))
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
         for (id, icon) in EditorIcons.panelIconNames { dock.panel(id)?.icon = EditorIcons.named(icon) }
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
@@ -988,6 +1000,7 @@ public final class EditorApp: Game, EditorHost {
             for command in shortcuts.actions(for: input.keyPresses, focus: focus) { invoke(command) }
             updateViewport(engine: engine, dt: dt, keyboardFree: !focus.textEditing)
             meshWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
+            soundWorkspace.update()
         }
         session.tick(dt: Double(dt))
 
