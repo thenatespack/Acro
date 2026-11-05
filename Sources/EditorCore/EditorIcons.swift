@@ -51,6 +51,7 @@ public enum EditorIcons {
         FieldAnimator.componentName: "sliders-horizontal",
         LightFlicker.componentName: "gauge",
         CameraPath.componentName: "orbit",
+        "Pulse": "gauge",
     ]
 
     /// The icon of component types without one of their own (games' components, unknown data).

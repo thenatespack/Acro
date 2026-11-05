@@ -133,7 +133,11 @@ public struct CameraPath: Component, Equatable, Sendable {
 
     private static func catmullRom(_ p0: Vec3, _ p1: Vec3, _ p2: Vec3, _ p3: Vec3, _ t: Float) -> Vec3 {
         let t2 = t * t, t3 = t2 * t
-        return 0.5 * ((2 * p1) + (p2 - p0) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (3 * p1 - p0 - 3 * p2 + p3) * t3)
+        let a = p1 * 2
+        let b = (p2 - p0) * t
+        let c = (p0 * 2 - p1 * 5 + p2 * 4 - p3) * t2
+        let d = (p1 * 3 - p0 - p2 * 3 + p3) * t3
+        return (a + b + c + d) * 0.5
     }
 
     private static func segmentCount(_ n: Int, closed: Bool) -> Int { n < 2 ? 0 : (closed && n > 2 ? n : n - 1) }

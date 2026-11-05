@@ -180,7 +180,11 @@ public struct LineRenderer: Component, Codable, Equatable, Sendable {
                 if spec.smooth {
                     // Uniform Catmull-Rom; end spans reuse their end point as the missing neighbor.
                     let t2 = t * t, t3 = t2 * t
-                    point = (p1 * 2 + (p2 - p0) * t + (p0 * 2 - p1 * 5 + p2 * 4 - p3) * t2 + (p1 * 3 - p0 - p2 * 3 + p3) * t3) * 0.5
+                    let a = p1 * 2
+                    let b = (p2 - p0) * t
+                    let c = (p0 * 2 - p1 * 5 + p2 * 4 - p3) * t2
+                    let d = (p1 * 3 - p0 - p2 * 3 + p3) * t3
+                    point = (a + b + c + d) * 0.5
                 } else {
                     point = p1 + (p2 - p1) * t
                 }

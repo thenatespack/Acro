@@ -1,8 +1,0 @@
-{
-  "format" : "Acro.Project",
-  "game" : {
-    "target" : "SampleGame"
-  },
-  "name" : "swift-game-engine",
-  "version" : 1
-}

@@ -102,7 +102,9 @@ public enum FilesOpenCommand: EditorCommand {
 
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> PathResult {
         let file = (arguments.path as NSString).expandingTildeInPath
-        let url = URL(fileURLWithPath: file, relativeTo: session.filesBase).standardizedFileURL
+        let url = (file.hasPrefix("/")
+            ? URL(fileURLWithPath: file)
+            : session.filesBase.appendingPathComponent(file)).standardizedFileURL
         switch url.pathExtension.lowercased() {
         case "swift":
             let result = try ScriptOpenCommand.run(.init(path: url.path), in: session)

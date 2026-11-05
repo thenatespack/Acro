@@ -122,7 +122,8 @@ public struct SkinHistory: Sendable {
     public mutating func previousJoints(for entity: Entity, current: [Mat4], frame: Int) -> [Mat4] {
         let index = Int(entity.index)
         if index >= slots.count {
-            slots.append(contentsOf: repeatElement((UInt32.max, Int.min, []), count: max(index + 1 - slots.count, slots.count)))
+            let emptySlot: (generation: UInt32, frame: Int, joints: [Mat4]) = (.max, .min, [])
+            slots.append(contentsOf: repeatElement(emptySlot, count: max(index + 1 - slots.count, slots.count)))
         }
         let slot = slots[index]
         let previous = slot.generation == entity.generation && slot.frame == frame - 1 && slot.joints.count == current.count

@@ -1540,7 +1540,7 @@ Result:
 
 **Open Project** · _destructive_, _idempotent_
 
-Opens the project at `path` (or a recent project by name), scans its assets and imports what changed (in the background); the project goes to the top of project.recent.list and the launcher closes. The scene stays open unless `openLastScene` is true. A project whose Project.json records another engine version (`engineVersion`) is refused unless `allowVersionMismatch` is true; opened, it is stamped with this engine's version (0.1.0). Returns the project's root folder. Destructive only when `openLastScene` is true and the open scene has unsaved changes: then pass confirm: true.
+Opens the project at `path` (or a recent project by name), scans its assets and imports what changed (in the background); the project goes to the top of project.recent.list and the launcher closes. The scene stays open unless `openLastScene` is true. A project whose Project.json records another engine version (`engineVersion`) is refused unless `allowVersionMismatch` is true; opened, it is stamped with this engine's version (0.2.0). Returns the project's root folder. Destructive only when `openLastScene` is true and the open scene has unsaved changes: then pass confirm: true.
 
 Arguments:
 
