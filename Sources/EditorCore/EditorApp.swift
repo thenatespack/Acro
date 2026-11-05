@@ -129,6 +129,8 @@ public final class EditorApp: Game, EditorHost {
     public private(set) var files: FilesPanel!
     /// The Mesh Builder tab (MeshBuilderWorkspace.swift).
     public private(set) var meshWorkspace: MeshBuilderWorkspace!
+    /// The VFX Builder tab (VFXBuilderWorkspace.swift).
+    public private(set) var vfxWorkspace: VFXBuilderWorkspace!
     private(set) var statusBar: StatusBar!
     /// The Assets panel (browser) and its thumbnails.
     public private(set) var assetBrowser: AssetBrowserPanel!
@@ -446,6 +448,14 @@ public final class EditorApp: Game, EditorHost {
             }
             dock.focusPanel(EditorLayout.meshBuilder)
         }
+        session.onOpenVFX = { [unowned self] id in
+            guard vfxWorkspace.open(id) else { return }
+            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.vfxBuilder, EditorLayout.viewport) {
+                dock.dock(EditorLayout.vfxBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
+                                                                                            : .edge(.bottom))
+            }
+            dock.focusPanel(EditorLayout.vfxBuilder)
+        }
         session.onOpenScript = { [unowned self] path in
             let url = URL(fileURLWithPath: path)
             scriptEditor.openScript(at: url)
@@ -567,6 +577,9 @@ public final class EditorApp: Game, EditorHost {
         meshWorkspace = MeshBuilderWorkspace(session: session)
         meshWorkspace.device = engine?.device
         if let quality = engine?.quality { meshWorkspace.quality = quality }
+        vfxWorkspace = VFXBuilderWorkspace(session: session)
+        vfxWorkspace.device = engine?.device
+        if let quality = engine?.quality { vfxWorkspace.quality = quality }
         files.onOpen = { [unowned self] file in openFile(file) }
         files.onNewScene = { [unowned self] name in newScene(named: name) }
 
@@ -588,6 +601,9 @@ public final class EditorApp: Game, EditorHost {
         let meshPanel = DockPanel(id: EditorLayout.meshBuilder, title: "Mesh Builder", content: meshWorkspace.view, minSize: Vec2(320, 200))
         meshPanel.passesPointerThrough = true
         dock.addPanel(meshPanel)
+        let vfxPanel = DockPanel(id: EditorLayout.vfxBuilder, title: "VFX Builder", content: vfxWorkspace.view, minSize: Vec2(320, 200))
+        vfxPanel.passesPointerThrough = true
+        dock.addPanel(vfxPanel)
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
         for (id, icon) in EditorIcons.panelIconNames { dock.panel(id)?.icon = EditorIcons.named(icon) }
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
@@ -988,6 +1004,7 @@ public final class EditorApp: Game, EditorHost {
             for command in shortcuts.actions(for: input.keyPresses, focus: focus) { invoke(command) }
             updateViewport(engine: engine, dt: dt, keyboardFree: !focus.textEditing)
             meshWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
+            vfxWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
         }
         session.tick(dt: Double(dt))
 
@@ -1014,6 +1031,7 @@ public final class EditorApp: Game, EditorHost {
         ui.layoutIfNeeded()
         resizeTarget(scale: ui.scale)
         meshWorkspace.prepareFrame(pixelScale: ui.scale)
+        vfxWorkspace.prepareFrame(pixelScale: ui.scale)
         buildGizmos()
         viewportWidget.texture = target.texture
         viewportWidget.billboards = transformTool.billboards
@@ -1431,6 +1449,7 @@ public final class EditorApp: Game, EditorHost {
         renderCaptures(frame: frame)
         guard !isLauncherShown else { return }
         meshWorkspace.render(frame: frame)
+        vfxWorkspace.render(frame: frame)
         if let game = gameCurrentView, gameSizer.width > 0, gameWidget.isEffectivelyVisible {
             sceneRenderer.beginViews(world: session.gameWorld, frame: frame, shadowFocus: game)
             sceneRenderer.renderView(game, into: gameTarget, frame: frame, debugDraw: gameDraw)

@@ -182,6 +182,8 @@ public struct ParticleEmitter: Component, Codable, Equatable, Sendable {
     /// Particles per second while `isEmitting`.
     public var rate: Float
     public var bursts: [ParticleBurst]
+    /// Seconds after the emitter starts before its rate and bursts begin (VFX timing offsets).
+    public var startDelay: Float
     /// Seconds simulated at once when the emitter first runs, so it starts in its steady state.
     public var prewarm: Float
     /// Random lifetime range in seconds (x min, y max).
@@ -269,7 +271,7 @@ public struct ParticleEmitter: Component, Codable, Equatable, Sendable {
     /// Random seed: emitters with the same seed and settings produce the same particles.
     public var seed: UInt32
 
-    public init(capacity: Int = 4096, rate: Float = 200, bursts: [ParticleBurst] = [], prewarm: Float = 0,
+    public init(capacity: Int = 4096, rate: Float = 200, bursts: [ParticleBurst] = [], startDelay: Float = 0, prewarm: Float = 0,
                 lifetime: Vec2 = Vec2(1, 2), shape: ParticleEmitterShape = .point, shapeSize: Vec3 = Vec3(0.5, 0.5, 0.5),
                 direction: Vec3 = Vec3(0, 1, 0), spread: Float = 0.4, speed: Vec2 = Vec2(1, 2),
                 gravity: Vec3 = .zero, drag: Float = 0, turbulence: Float = 0, turbulenceFrequency: Float = 1,
@@ -289,6 +291,7 @@ public struct ParticleEmitter: Component, Codable, Equatable, Sendable {
         self.capacity = capacity
         self.rate = rate
         self.bursts = bursts
+        self.startDelay = startDelay
         self.prewarm = prewarm
         self.lifetime = lifetime
         self.shape = shape
@@ -345,6 +348,7 @@ public struct ParticleEmitter: Component, Codable, Equatable, Sendable {
         capacity = try value(.capacity, d.capacity)
         rate = try value(.rate, d.rate)
         bursts = try value(.bursts, d.bursts)
+        startDelay = try value(.startDelay, d.startDelay)
         prewarm = try value(.prewarm, d.prewarm)
         lifetime = try value(.lifetime, d.lifetime)
         shape = try value(.shape, d.shape)
