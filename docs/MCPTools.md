@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Editor › AI control). 133 tools.
+named by its id (see README › Editor › AI control). 141 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -38,6 +38,7 @@ optional arguments.
 | `selection` | [`selection.clear`](#selectionclear), [`selection.get`](#selectionget), [`selection.set`](#selectionset) |
 | `settings` | [`settings.get`](#settingsget), [`settings.setEditor`](#settingsseteditor), [`settings.setProject`](#settingssetproject) |
 | `stats` | [`stats.get`](#statsget) |
+| `table` | [`table.edit`](#tableedit), [`table.exportCsv`](#tableexportcsv), [`table.get`](#tableget), [`table.importCsv`](#tableimportcsv), [`table.new`](#tablenew), [`table.open`](#tableopen), [`table.query`](#tablequery), [`table.set`](#tableset) |
 | `tool` | [`tool.set`](#toolset), [`tool.snapping`](#toolsnapping) |
 | `transform` | [`transform.lookAt`](#transformlookat), [`transform.set`](#transformset) |
 | `ui` | [`ui.click`](#uiclick), [`ui.drag`](#uidrag), [`ui.find`](#uifind), [`ui.hover`](#uihover), [`ui.key`](#uikey), [`ui.scroll`](#uiscroll), [`ui.snapshot`](#uisnapshot), [`ui.type`](#uitype) |
@@ -1540,7 +1541,7 @@ Result:
 
 **Open Project** · _destructive_, _idempotent_
 
-Opens the project at `path` (or a recent project by name), scans its assets and imports what changed (in the background); the project goes to the top of project.recent.list and the launcher closes. The scene stays open unless `openLastScene` is true. A project whose Project.json records another engine version (`engineVersion`) is refused unless `allowVersionMismatch` is true; opened, it is stamped with this engine's version (0.1.0). Returns the project's root folder. Destructive only when `openLastScene` is true and the open scene has unsaved changes: then pass confirm: true.
+Opens the project at `path` (or a recent project by name), scans its assets and imports what changed (in the background); the project goes to the top of project.recent.list and the launcher closes. The scene stays open unless `openLastScene` is true. A project whose Project.json records another engine version (`engineVersion`) is refused unless `allowVersionMismatch` is true; opened, it is stamped with this engine's version (0.2.0). Returns the project's root folder. Destructive only when `openLastScene` is true and the open scene has unsaved changes: then pass confirm: true.
 
 Arguments:
 
@@ -1988,6 +1989,174 @@ Result:
 - `viewport?`: [integer]
 - `viewportCulled?`: integer
 - `viewportDrawn?`: integer
+
+## table
+
+### `table.edit`
+
+**Edit Data Table** · _undoable_
+
+Changes part of a .table file in one undoable step, in this order: renameColumns, columns (add or replace by name), removeColumns, removeRows, addRows, updateRows (row id → cells; null clears; "id" renames). Running games read the new data. Returns column names, row ids and warnings. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `addRows?`: [boolean]
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `columns?`: [{default?: any, max?: number, min?: number, name?: string, options?: [string], table?: string, type?: string (7 cases)}]
+- `path?`: string
+- `removeColumns?`: [string]
+- `removeRows?`: [string]
+- `renameColumns?`: object
+- `updateRows?`: object
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `columns`: [string]
+- `path`: string
+- `rowCount`: integer
+- `rows`: [string]
+- `warnings`: [string]
+
+### `table.exportCsv`
+
+**Export Data Table as CSV** · _idempotent_
+
+Returns a .table file as CSV text (header `id` plus the column names; fields with commas, quotes or line breaks are quoted), and writes it to `file` when given.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `file?`: string
+- `path?`: string
+
+Result:
+
+- `csv`: string
+- `file?`: string
+
+### `table.get`
+
+**Get Data Table** · _read-only_, _idempotent_
+
+Reads a .table file: its columns and rows as stored, and the problems with its values and references. For filtered or sorted rows use table.query.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `path`: string
+- `table`: {columns?: [object], rows?: [boolean]}
+- `warnings`: [string]
+
+### `table.importCsv`
+
+**Import CSV into Data Table** · _undoable_
+
+Reads CSV (RFC 4180: quoted fields, doubled quotes, line breaks inside quotes; the header is `id` plus column names, matched by name) from `csv` or `file` into a .table file as one undoable step. Modes: replace, merge (by id), append. Cells that don't fit their column are kept and reported in the table's warnings. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `createColumns?`: boolean
+- `csv?`: string
+- `file?`: string
+- `mode?`: "replace" \| "merge" \| "append"
+- `path?`: string
+
+Result:
+
+- `added`: integer
+- `createdColumns`: [string]
+- `importWarnings`: [string]
+- `skippedColumns`: [string]
+- `table`: {asset: asset id, columns: [string], path: string, rowCount: integer, rows: [string], warnings: [string]}
+- `updated`: integer
+
+### `table.new`
+
+**New Data Table**
+
+Writes a .table file in `folder` (default: the Assets root) with the given `columns` and optional `rows`, and imports it. Returns the asset, column names, row ids and warnings. Change it later with table.edit (add/update/remove rows and columns), table.set (whole contents) or table.importCsv. A data table is a typed spreadsheet for game data: `columns` (each: name, type number|text|bool|color|enum|asset|row, default (value of a row without that cell), options [..] for enum, table (for a row column: another .table path under Assets/; empty means this table), min/max for number) and `rows` (flat objects: {"id": "goblin", "hp": 30, ...}; ids are unique and are how game code finds a row). Values: number, text, bool, color ("#RRGGBB[AA]" or [r,g,b,a] sRGB 0-1), enum (one of options), asset (path under Assets/ or "asset:<id>"), row (a row id). Wrong values are kept and reported in `warnings` (wrong type, unknown enum case, dangling asset or row reference, duplicate ids). Game code reads it with assets.dataTable(path: "Data/enemies.table")?.row("goblin")?.number("hp").
+
+Arguments:
+
+- `columns?`: [{default?: any, max?: number, min?: number, name?: string, options?: [string], table?: string, type?: string (7 cases)}]
+- `folder?`: string
+- `name?`: string
+- `rows?`: [boolean]
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `columns`: [string]
+- `path`: string
+- `rowCount`: integer
+- `rows`: [string]
+- `warnings`: [string]
+
+### `table.open`
+
+**Open in Data Table** · _idempotent_
+
+Opens a .table file in the editor's Data Table tab (a grid with sort, filter, bulk edit and CSV import/export) and brings the tab to the front. view.screenshot {source: "panel", panel: "dataTable"} shows it.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `path`: string
+
+### `table.query`
+
+**Query Data Table** · _read-only_, _idempotent_
+
+Finds rows of a .table file by a text `filter` (see its format), optionally sorted and limited. Rows come back as game code reads them: id plus each column's value with defaults filled in.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `columns?`: [string]
+- `descending?`: boolean
+- `filter?`: string
+- `limit?`: integer
+- `path?`: string
+- `sort?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `matched`: integer
+- `path`: string
+- `rows`: [any]
+
+### `table.set`
+
+**Set Data Table** · _undoable_, _idempotent_
+
+Replaces a .table file's whole contents and reimports it (running games read the new data). Undoable. For a few changes, table.edit is shorter. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+- `table`: {columns?: [object], rows?: [boolean]}
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `columns`: [string]
+- `path`: string
+- `rowCount`: integer
+- `rows`: [string]
+- `warnings`: [string]
 
 ## tool
 

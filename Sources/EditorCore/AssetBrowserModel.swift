@@ -131,6 +131,8 @@ public final class AssetBrowserModel {
             search = ""
         case .asset(let id) where session.isMeshBuildFile(id):
             session.run(MeshBuildOpenCommand.self, .init(asset: AssetReference(id)))
+        case .asset(let id) where session.isTableFile(id):
+            session.run(TableOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where entry.isExpandable:
             toggleExpanded(id)
         default:
@@ -210,6 +212,15 @@ public final class AssetBrowserModel {
     @discardableResult
     public func newMeshBuild() -> AssetID? {
         guard let id = session.run(MeshBuildNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
+        invalidate()
+        selection = .asset(id)
+        return id
+    }
+
+    /// Creates a data table in the current folder (`table.new`) and selects it.
+    @discardableResult
+    public func newDataTable() -> AssetID? {
+        guard let id = session.run(TableNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
         invalidate()
         selection = .asset(id)
         return id

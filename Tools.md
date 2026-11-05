@@ -22,6 +22,16 @@ the model in its own viewport with picking, Move / Rotate / Scale gizmos and liv
 preview. Tools: `meshBuild.new`, `meshBuild.get`, `meshBuild.set`, `meshBuild.edit`,
 `meshBuild.open`. See README › Mesh Builder.
 
+### Data Table (`.table`)
+
+Typed spreadsheets for game data: columns (number, text, bool, color, enum, asset reference,
+row reference) with defaults, min/max and enum options; validation warnings (wrong type,
+unknown enum case, dangling asset or row reference, duplicate ids). The Data Table tab is a
+grid with sort, filter, bulk edit and CSV import/export. Game code reads rows by id with typed
+access (`assets.dataTable(path:)?.row("goblin")?.number("hp")`), hot-reloaded while playing.
+Tools: `table.new`, `table.get`, `table.set`, `table.edit`, `table.query`, `table.importCsv`,
+`table.exportCsv`, `table.open`. See README › Data Table Builder.
+
 ## Planned
 
 Recommended order, grouped so each builder lands after the ones it depends on:
@@ -80,17 +90,6 @@ bloom).
 - Before/after split preview in the Scene view.
 - Profiles assigned per camera or blended by volume, so areas can have their own look.
 - Tools: `postfx.new {preset?}`, `postfx.set`.
-
-### 5. Data Table Builder (`.table`)
-
-Typed spreadsheets for game data: items, enemies, loot, waves, level settings.
-
-- Columns with types (number, text, bool, color, enum, asset reference, row reference)
-  and defaults; validation warnings for bad values.
-- Grid editing with sort, filter and bulk edit; CSV import and export.
-- Readable from game code by row ID with typed access; hot-reloaded while playing.
-- Tools: `table.new {columns}`, `table.edit {addRows, updateRows, removeRows, columns}`,
-  `table.query {filter}`.
 
 ### 6. Pixel Sprite Builder (`.sprite`)
 
