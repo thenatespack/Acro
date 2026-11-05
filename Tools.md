@@ -76,76 +76,19 @@ maps (layers are baked to one albedo), and terrain-following for other builders.
 
 ## Planned
 
-Recommended order, grouped so each builder lands after the ones it depends on:
+Recommended order (Terrain, VFX, Sound, Post-FX and Data Table have shipped), grouped so each builder lands after the ones it depends on:
 
-1. **Big gaps and quick wins:** Terrain, VFX, Post-FX, Data Table.
-2. **Level building:** Pixel Sprite (makes Tilemap tiles), Tilemap, GridMap, Path (after
+1. **Level building:** Pixel Sprite (makes Tilemap tiles), Tilemap, GridMap, Path (after
    Terrain, for terrain following).
-3. **Characters and AI:** Character, Animation Graph (needs glTF clip import), Behavior Tree.
-4. **Presentation:** UI / HUD (Dialogue's default widget), Dialogue, Material (hardest:
+2. **Characters and AI:** Character, Animation Graph (needs glTF clip import), Behavior Tree.
+3. **Presentation:** UI / HUD (Dialogue's default widget), Dialogue, Material (hardest:
    shader compile for Metal and Vulkan; Terrain and mesh builds use images and `.proctex`
    until it lands).
-5. **Integrators:** Timeline, then Visual Script, whose engine nodes call into most other
+4. **Integrators:** Timeline, then Visual Script, whose engine nodes call into most other
    builders. Its VM and core flow/data nodes can start earlier, with engine nodes added as
    each builder ships.
 
-### 1. Terrain Builder (`.terrain`)
-
-Outdoor ground for 3D games. The engine has no terrain system yet, so this is the largest gap.
-
-- Heightmap terrain split into chunks with LODs, normals, and a collider for physics.
-- Brushes: raise, lower, smooth, flatten, noise; radius, strength and falloff.
-- Texture layers (grass, rock, dirt, sand) painted with a splat map, using images or `.proctex`.
-- Scatter: props (trees, rocks, including mesh builds) placed by density, slope and height
-  rules, drawn instanced.
-- Tools: `terrain.new {size, resolution, seed}`, `terrain.sculpt {brush, points}`,
-  `terrain.paint {layer, points}`, `terrain.scatter {asset, density, rules}`.
-
-
-### 2. VFX Builder (`.vfx`)
-
-Effects as stacks of the engine's existing GPU particle emitters (today they are edited only
-through raw `ParticleEmitter` fields in the inspector).
-
-- Several emitters per effect (fire = flames + smoke + embers), each with timing offsets.
-- A looping preview with restart, a ground plane and a background color.
-- Presets: fire, smoke, sparks, explosion, magic hit, rain, snow, dust, portal.
-- Imported as a prefab, so an effect is placed or spawned like any model.
-- Tools: `vfx.new {preset?}`, `vfx.edit {addEmitters, updateEmitters, removeEmitters}`.
-
-### 3. Sound Builder (`.sfx`)
-
-Game sound effects generated from parameters, the way `.proctex` generates textures.
-
-- A synth voice: waveform (square, saw, sine, noise), pitch envelope and slide, vibrato,
-  volume envelope (attack, sustain, decay), filters, arpeggio, bit crush.
-- Presets with Randomize and Mutate: jump, coin, laser, explosion, hit, power-up, blip.
-- Rendered at import into an audio buffer usable by `AudioEmitter.clip`; deterministic per seed.
-- Tools: `sfx.new {preset?, seed?}`, `sfx.set`, `sfx.play` (preview in the editor).
-
-### 4. Post-FX Profile Builder (`.postfx`)
-
-Saved camera looks built on the engine's existing post-processing (tonemapping, exposure,
-bloom).
-
-- Bloom, exposure and auto-exposure, tonemapper, color grading (lift, gamma, gain,
-  saturation, LUT), vignette, chromatic aberration, film grain, depth of field.
-- Before/after split preview in the Scene view.
-- Profiles assigned per camera or blended by volume, so areas can have their own look.
-- Tools: `postfx.new {preset?}`, `postfx.set`.
-
-### 5. Data Table Builder (`.table`)
-
-Typed spreadsheets for game data: items, enemies, loot, waves, level settings.
-
-- Columns with types (number, text, bool, color, enum, asset reference, row reference)
-  and defaults; validation warnings for bad values.
-- Grid editing with sort, filter and bulk edit; CSV import and export.
-- Readable from game code by row ID with typed access; hot-reloaded while playing.
-- Tools: `table.new {columns}`, `table.edit {addRows, updateRows, removeRows, columns}`,
-  `table.query {filter}`.
-
-### 6. Pixel Sprite Builder (`.sprite`)
+### 1. Pixel Sprite Builder (`.sprite`)
 
 Pixel art and sprite animation drawn inside the editor.
 
@@ -157,7 +100,7 @@ Pixel art and sprite animation drawn inside the editor.
 - Tools: `sprite.new {width, height, palette?}`, `sprite.draw {frame, layer, pixels}`,
   `sprite.edit {addFrames, tags}`.
 
-### 7. Tilemap Builder (`.tilemap`)
+### 2. Tilemap Builder (`.tilemap`)
 
 2D levels for sprite games, painted from tiles on the engine's `SpriteAtlas` / `SpriteBatch`.
 
@@ -173,7 +116,7 @@ Pixel art and sprite animation drawn inside the editor.
 - Tools: `tilemap.new {tileSize, size, tileset}`, `tilemap.paint {layer, tile, cells}`,
   `tilemap.fill {layer, tile, rect}`, `tilemap.erase {layer, cells}`, `tilemap.edit`.
 
-### 8. GridMap Builder (`.gridmap`)
+### 3. GridMap Builder (`.gridmap`)
 
 3D levels built from modular pieces on a grid: dungeons, buildings, city blocks.
 
@@ -187,7 +130,7 @@ Pixel art and sprite animation drawn inside the editor.
 - Tools: `gridMap.new {cellSize, library}`, `gridMap.paint {piece, cells, rotation}`,
   `gridMap.fill {piece, box}`, `gridMap.erase {cells}`, `gridMap.edit`.
 
-### 9. Path Builder (`.path`)
+### 4. Path Builder (`.path`)
 
 Splines that generate geometry along them, reusing `LineRenderer` and `CameraPath`.
 
@@ -196,7 +139,7 @@ Splines that generate geometry along them, reusing `LineRenderer` and `CameraPat
 - Edit control points with gizmos in the viewport.
 - Tools: `path.new {kind}`, `path.edit {points, profile}`.
 
-### 10. Character Builder (`.character`)
+### 5. Character Builder (`.character`)
 
 Rigged characters and creatures assembled from parts.
 
@@ -206,7 +149,7 @@ Rigged characters and creatures assembled from parts.
 - Imported as a skinned prefab with an `Animator`, ready for the Animation Graph Builder.
 - Tools: `character.new {template}`, `character.edit {proportions, attach, colors}`.
 
-### 11. Animation Graph Builder (`.animgraph`)
+### 6. Animation Graph Builder (`.animgraph`)
 
 A node editor for the engine's existing `Animator` state machine, which is only usable from code today.
 
@@ -216,7 +159,7 @@ A node editor for the engine's existing `Animator` state machine, which is only 
 - Needs animation clips imported through the asset database (glTF clips are not yet).
 - Tools: `animGraph.new`, `animGraph.edit {addStates, addTransitions, parameters}`.
 
-### 12. Behavior Tree Builder (`.behavior`)
+### 7. Behavior Tree Builder (`.behavior`)
 
 NPC AI as a node tree instead of hand-written code.
 
@@ -227,7 +170,7 @@ NPC AI as a node tree instead of hand-written code.
 - Live debugging: the running path highlighted on a selected entity while playing.
 - Tools: `behavior.new {preset?}`, `behavior.edit {addNodes, connect, blackboard}`.
 
-### 13. UI / HUD Builder (`.ui`)
+### 8. UI / HUD Builder (`.ui`)
 
 Game menus and HUDs laid out visually with the engine's widget toolkit.
 
@@ -236,7 +179,7 @@ Game menus and HUDs laid out visually with the engine's widget toolkit.
 - Preview at several screen sizes and aspect ratios.
 - Tools: `ui.newLayout`, `ui.editLayout {addWidgets, updateWidgets, bindings}`.
 
-### 14. Dialogue Builder (`.dialogue`)
+### 9. Dialogue Builder (`.dialogue`)
 
 Branching conversations for NPCs, quests and tutorials.
 
@@ -248,7 +191,7 @@ Branching conversations for NPCs, quests and tutorials.
 - Localization keys per line.
 - Tools: `dialogue.new`, `dialogue.edit {addNodes, connect, variables}`, `dialogue.play`.
 
-### 15. Material Builder (`.material`)
+### 10. Material Builder (`.material`)
 
 A node graph for surface shaders, beyond the fixed PBR settings in `Material` today.
 
@@ -260,7 +203,7 @@ A node graph for surface shaders, beyond the fixed PBR settings in `Material` to
   models, terrain layers and decals.
 - Tools: `material.new {preset?}`, `material.edit {addNodes, connect, removeNodes, params}`.
 
-### 16. Cutscene / Timeline Builder (`.timeline`)
+### 11. Cutscene / Timeline Builder (`.timeline`)
 
 Sequenced scenes for intros, cutscenes and scripted moments.
 
@@ -270,7 +213,7 @@ Sequenced scenes for intros, cutscenes and scripted moments.
 - A runtime `TimelinePlayer` component with play, pause, skip and events for game code.
 - Tools: `timeline.new {duration}`, `timeline.edit {addTracks, addKeys, removeKeys}`.
 
-### 17. Visual Script Builder (`.vscript`)
+### 12. Visual Script Builder (`.vscript`)
 
 Game logic as node graphs, Blueprint-style, so people can script without writing Swift and
 without building a game module. Graphs live alongside Swift code: a game can mix both.
