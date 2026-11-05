@@ -554,6 +554,7 @@ public final class AssetBrowserPanel {
             ("New Procedural Texture", AssetNewProceduralTextureCommand.id, { [unowned self] in model.newProceduralTexture(); sync() }),
             ("New Mesh Build", MeshBuildNewCommand.id, { [unowned self] in model.newMeshBuild(); sync() }),
             ("New VFX", VFXNewCommand.id, { [unowned self] in model.newVFX(); sync() }),
+            ("New Sound", SoundBuildNewCommand.id, { [unowned self] in model.newSoundBuild(); sync() }),
         ]
         if let entry {
             if case .folder = entry.item {

@@ -127,6 +127,7 @@ public enum AudioFile {
     /// A decoder for a file. WAV streams from disk; Vorbis and MP3 read the (compressed) file
     /// into memory and decode from it incrementally.
     public static func decoder(contentsOf url: URL) throws -> AudioDecoder {
+        if url.pathExtension.lowercased() == "sfx" { return try SFXDecoder(data: Data(contentsOf: url)) }
         let handle = try FileHandle(forReadingFrom: url)
         let header = try handle.read(upToCount: 12) ?? Data()
         try? handle.close()
@@ -142,6 +143,8 @@ public enum AudioFile {
 
     /// A decoder for a file already in memory.
     public static func decoder(data: Data) throws -> AudioDecoder {
+        // A `.sfx` (synth parameters) is JSON: it starts with "{".
+        if data.first(where: { $0 != 0x20 && $0 != 0x0A && $0 != 0x0D && $0 != 0x09 }) == UInt8(ascii: "{") { return try SFXDecoder(data: data) }
         guard let format = format(of: data) else { throw AudioError("Not a WAV, Ogg Vorbis or MP3 file") }
         switch format {
         case .wav: return try WAVDecoder(data: data)

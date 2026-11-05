@@ -133,6 +133,8 @@ public final class AssetBrowserModel {
             session.run(MeshBuildOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where session.isVFXFile(id):
             session.run(VFXOpenCommand.self, .init(asset: AssetReference(id)))
+        case .asset(let id) where session.isSoundBuildFile(id):
+            session.run(SoundBuildOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where entry.isExpandable:
             toggleExpanded(id)
         default:
@@ -221,6 +223,15 @@ public final class AssetBrowserModel {
     @discardableResult
     public func newVFX() -> AssetID? {
         guard let id = session.run(VFXNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
+        invalidate()
+        selection = .asset(id)
+        return id
+    }
+
+    /// Creates a sound build in the current folder (`sfx.new`) and selects it.
+    @discardableResult
+    public func newSoundBuild() -> AssetID? {
+        guard let id = session.run(SoundBuildNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
         invalidate()
         selection = .asset(id)
         return id

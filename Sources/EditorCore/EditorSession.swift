@@ -125,6 +125,9 @@ public final class EditorSession {
     /// The effect open in the VFX Builder tab (`vfx.open`), and how the app shows it.
     public var openVFX: AssetID?
     public var onOpenVFX: ((AssetID) -> Void)?
+    /// The sound build open in the Sound Builder tab (`sfx.open`), and how the app shows it.
+    public var openSoundBuild: AssetID?
+    public var onOpenSoundBuild: ((AssetID) -> Void)?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()

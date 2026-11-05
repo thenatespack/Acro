@@ -426,7 +426,7 @@ extension EditorSession {
             }
             return runInstantiate(item, parent == nil ? position : .zero, parent)
         case .audioField(let entity):
-            guard case .asset(let id) = item, assets?.record(id)?.importer == AudioImporter().name else {
+            guard case .asset(let id) = item, [AudioImporter().name, SoundBuildImporter().name].contains(assets?.record(id)?.importer) else {
                 log.info("Only an audio file can be dropped on this field")
                 return false
             }

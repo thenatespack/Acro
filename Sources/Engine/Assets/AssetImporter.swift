@@ -197,6 +197,7 @@ public struct AssetImporterRegistry: Sendable {
         registry.register(ProceduralTextureImporter())
         registry.register(MeshBuildImporter())
         registry.register(VFXBuildImporter())
+        registry.register(SoundBuildImporter())
         return registry
     }
 

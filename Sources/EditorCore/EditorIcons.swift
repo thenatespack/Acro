@@ -286,7 +286,7 @@ public enum EditorIcons {
         case "material": return .material
         case "prefab": return .prefab
         case "scene": return .scene
-        case "wav", "ogg", "mp3", "flac": return .audio
+        case "wav", "ogg", "mp3", "flac", "sfx": return .audio
         case "metal", "vert", "frag", "comp", "glsl", "hlsl", "spv": return .shader
         case "ttf", "otf": return .font
         case "txt", "md": return .text
@@ -341,6 +341,7 @@ public enum EditorIcons {
         EditorLayout.files: "folder-open",
         EditorLayout.meshBuilder: "cuboid",
         EditorLayout.vfxBuilder: "sparkles",
+        EditorLayout.soundBuilder: "volume-2",
     ]
 
     /// Console lines by level.

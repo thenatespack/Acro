@@ -102,7 +102,10 @@ public enum EditorLayout {
     public static let meshBuilder = "meshBuilder"
     /// The VFX Builder tab (opened with a .vfx file, like the Mesh Builder).
     public static let vfxBuilder = "vfxBuilder"
-    public static let panelIDs = [viewport, game, hierarchy, inspector, console, stats, assets, activity, scripts, files, meshBuilder, vfxBuilder]
+    /// The Sound Builder tab (opened with a sound build, tabbed with the Scene view; not in the default layout).
+    public static let soundBuilder = "soundBuilder"
+    public static let panelIDs = [viewport, game, hierarchy, inspector, console, stats, assets, activity, scripts, files, meshBuilder, vfxBuilder,
+                                  soundBuilder]
 
     /// Hierarchy above Files on the left, inspector right, the Scene view (tabbed with the Game
     /// view and Scripts, so scripts open where the Scene view is) in the middle above an Assets / Console / Activity /

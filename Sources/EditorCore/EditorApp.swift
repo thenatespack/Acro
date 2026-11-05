@@ -131,6 +131,8 @@ public final class EditorApp: Game, EditorHost {
     public private(set) var meshWorkspace: MeshBuilderWorkspace!
     /// The VFX Builder tab (VFXBuilderWorkspace.swift).
     public private(set) var vfxWorkspace: VFXBuilderWorkspace!
+    /// The Sound Builder tab (SoundBuilderWorkspace.swift).
+    public private(set) var soundWorkspace: SoundBuilderWorkspace!
     private(set) var statusBar: StatusBar!
     /// The Assets panel (browser) and its thumbnails.
     public private(set) var assetBrowser: AssetBrowserPanel!
@@ -456,6 +458,14 @@ public final class EditorApp: Game, EditorHost {
             }
             dock.focusPanel(EditorLayout.vfxBuilder)
         }
+        session.onOpenSoundBuild = { [unowned self] id in
+            guard soundWorkspace.open(id) else { return }
+            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.soundBuilder, EditorLayout.viewport) {
+                dock.dock(EditorLayout.soundBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
+                                                                                              : .edge(.bottom))
+            }
+            dock.focusPanel(EditorLayout.soundBuilder)
+        }
         session.onOpenScript = { [unowned self] path in
             let url = URL(fileURLWithPath: path)
             scriptEditor.openScript(at: url)
@@ -580,6 +590,7 @@ public final class EditorApp: Game, EditorHost {
         vfxWorkspace = VFXBuilderWorkspace(session: session)
         vfxWorkspace.device = engine?.device
         if let quality = engine?.quality { vfxWorkspace.quality = quality }
+        soundWorkspace = SoundBuilderWorkspace(session: session)
         files.onOpen = { [unowned self] file in openFile(file) }
         files.onNewScene = { [unowned self] name in newScene(named: name) }
 
@@ -604,6 +615,7 @@ public final class EditorApp: Game, EditorHost {
         let vfxPanel = DockPanel(id: EditorLayout.vfxBuilder, title: "VFX Builder", content: vfxWorkspace.view, minSize: Vec2(320, 200))
         vfxPanel.passesPointerThrough = true
         dock.addPanel(vfxPanel)
+        dock.addPanel(DockPanel(id: EditorLayout.soundBuilder, title: "Sound Builder", content: soundWorkspace.view, minSize: Vec2(320, 200)))
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
         for (id, icon) in EditorIcons.panelIconNames { dock.panel(id)?.icon = EditorIcons.named(icon) }
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
@@ -1005,6 +1017,7 @@ public final class EditorApp: Game, EditorHost {
             updateViewport(engine: engine, dt: dt, keyboardFree: !focus.textEditing)
             meshWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
             vfxWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
+            soundWorkspace.update()
         }
         session.tick(dt: Double(dt))
 

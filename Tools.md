@@ -32,11 +32,20 @@ Restart, Loop and Pause, a ground plane and a background color. Tools: `vfx.new`
 `vfx.set`, `vfx.edit`, `vfx.open`. Not done: sub-emitter links and particle textures in `.vfx`.
 See README > VFX Builder.
 
+### Sound Builder (`.sfx`)
+
+Sound effects generated from synth parameters (square/saw/sine/noise, pitch envelope and
+slide, vibrato, attack/sustain/decay, low/high-pass, arpeggio, bit crush), with presets (jump,
+coin, laser, explosion, hit, power-up, blip) plus Randomize and Mutate. Rendered by pure-Swift
+DSP, deterministic per seed, and loadable anywhere an audio file is (`AudioEmitter.clip`). The
+Sound Builder tab has a waveform view, Play / Auto-play and the parameters form. Tools:
+`sfx.new`, `sfx.get`, `sfx.set`, `sfx.edit`, `sfx.play`, `sfx.open`. See README › Sound Builder.
+
 ## Planned
 
 Recommended order, grouped so each builder lands after the ones it depends on:
 
-1. **Big gaps and quick wins:** Terrain, VFX, Sound, Post-FX, Data Table.
+1. **Big gaps and quick wins:** Terrain, VFX, Post-FX, Data Table.
 2. **Level building:** Pixel Sprite (makes Tilemap tiles), Tilemap, GridMap, Path (after
    Terrain, for terrain following).
 3. **Characters and AI:** Character, Animation Graph (needs glTF clip import), Behavior Tree.
@@ -59,15 +68,6 @@ Outdoor ground for 3D games. The engine has no terrain system yet, so this is th
 - Tools: `terrain.new {size, resolution, seed}`, `terrain.sculpt {brush, points}`,
   `terrain.paint {layer, points}`, `terrain.scatter {asset, density, rules}`.
 
-### 3. Sound Builder (`.sfx`)
-
-Game sound effects generated from parameters, the way `.proctex` generates textures.
-
-- A synth voice: waveform (square, saw, sine, noise), pitch envelope and slide, vibrato,
-  volume envelope (attack, sustain, decay), filters, arpeggio, bit crush.
-- Presets with Randomize and Mutate: jump, coin, laser, explosion, hit, power-up, blip.
-- Rendered at import into an audio buffer usable by `AudioEmitter.clip`; deterministic per seed.
-- Tools: `sfx.new {preset?, seed?}`, `sfx.set`, `sfx.play` (preview in the editor).
 
 ### 4. Post-FX Profile Builder (`.postfx`)
 
