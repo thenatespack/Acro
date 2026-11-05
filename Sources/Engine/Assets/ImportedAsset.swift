@@ -476,17 +476,20 @@ public struct PrefabNode: Equatable, Sendable, Codable {
     public var skin: PrefabSkin?
     /// Animation that plays on the node (instantiating adds the `FieldAnimator`); mesh builds use it.
     public var animator: FieldAnimator?
+    /// A particle emitter on the node (instantiating adds the `ParticleEmitter`); VFX builds use it.
+    public var particles: ParticleEmitter?
     public var children: [PrefabNode]
 
     public init(name: String, transform: Transform = Transform(), mesh: AssetReference? = nil,
                 material: AssetReference? = nil, skin: PrefabSkin? = nil, animator: FieldAnimator? = nil,
-                children: [PrefabNode] = []) {
+                children: [PrefabNode] = [], particles: ParticleEmitter? = nil) {
         self.name = name
         self.transform = transform
         self.mesh = mesh
         self.material = material
         self.skin = skin
         self.animator = animator
+        self.particles = particles
         self.children = children
     }
 }
@@ -525,6 +528,7 @@ extension World {
                 add(MeshRenderer(mesh: MeshHandle(mesh), material: node.material.map { MaterialHandle($0) } ?? .default), to: entity)
             }
             if let animator = node.animator { add(animator, to: entity) }
+            if let particles = node.particles { add(particles, to: entity) }
             if let skin = node.skin { skinned.append((entity, skin)) }
             if let parent { setParent(entity, to: parent) }
             for child in node.children { _ = spawn(child, parent: entity) }

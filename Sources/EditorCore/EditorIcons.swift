@@ -281,6 +281,7 @@ public enum EditorIcons {
         let ext = path.split(separator: ".").last.map { $0.lowercased() } ?? ""
         switch ext {
         case "gltf", "glb", "obj", "fbx", "meshbuild": return .model
+        case "vfx": return .prefab
         case "png", "jpg", "jpeg", "tga", "hdr", "exr", "ktx", "ktx2", "dds", "bmp", "proctex": return .texture
         case "material": return .material
         case "prefab": return .prefab
@@ -339,6 +340,7 @@ public enum EditorIcons {
         EditorLayout.scripts: "file-code",
         EditorLayout.files: "folder-open",
         EditorLayout.meshBuilder: "cuboid",
+        EditorLayout.vfxBuilder: "sparkles",
     ]
 
     /// Console lines by level.

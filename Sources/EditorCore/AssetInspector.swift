@@ -371,6 +371,16 @@ public final class AssetInspectorView {
                 content.addChildren([HStack(spacing: 6, [open, Spacer()]),
                                      note("A model built from \(parts) shape\(parts == 1 ? "" : "s"). The Mesh Builder shows it in a view of its own, with gizmos, the parts list and live animation.")])
             }
+            if session.isVFXFile(id) {
+                let open = Button("Open in VFX Builder", role: .primary, name: "openVFXBuilder") { [unowned self] in
+                    session.run(VFXOpenCommand.self, .init(asset: AssetReference(id)))
+                }
+                open.command = VFXOpenCommand.id.rawValue
+                open.tooltip = "Edit this effect in the VFX Builder tab (or double-click it in the Assets panel)"
+                let count = session.assets?.vfx(of: id)?.emitters.count ?? 0
+                content.addChildren([HStack(spacing: 6, [open, Spacer()]),
+                                     note("A visual effect of \(count) particle emitter\(count == 1 ? "" : "s"). Place it like a model; the VFX Builder previews it looping.")])
+            }
             if session.isMaterialFile(id) {
                 addMaterialForm(AssetReference(id, subAsset: "material"))
             }

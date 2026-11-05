@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Editor › AI control). 133 tools.
+named by its id (see README › Editor › AI control). 138 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -41,6 +41,7 @@ optional arguments.
 | `tool` | [`tool.set`](#toolset), [`tool.snapping`](#toolsnapping) |
 | `transform` | [`transform.lookAt`](#transformlookat), [`transform.set`](#transformset) |
 | `ui` | [`ui.click`](#uiclick), [`ui.drag`](#uidrag), [`ui.find`](#uifind), [`ui.hover`](#uihover), [`ui.key`](#uikey), [`ui.scroll`](#uiscroll), [`ui.snapshot`](#uisnapshot), [`ui.type`](#uitype) |
+| `vfx` | [`vfx.edit`](#vfxedit), [`vfx.get`](#vfxget), [`vfx.new`](#vfxnew), [`vfx.open`](#vfxopen), [`vfx.set`](#vfxset) |
 | `view` | [`view.appearance`](#viewappearance), [`view.frameSelection`](#viewframeselection), [`view.gameCamera`](#viewgamecamera), [`view.pick`](#viewpick), [`view.screenshot`](#viewscreenshot) |
 
 ## activity
@@ -2222,6 +2223,116 @@ Result:
 - `target?`: {command?: string, depth: integer, enabled?: boolean, focused?: boolean, hovered?: boolean, label?: string, offscreen?: boolean, path: string, rect: [number], role: string (27 cases), selected?: boolean, tooltip?: string, value?: string}
 - `tooltip?`: string
 - `viewport?`: boolean
+
+## vfx
+
+### `vfx.edit`
+
+**Edit VFX** · _undoable_
+
+Changes part of a .vfx file in one undoable step, in this order: removeEmitters, addEmitters, updateEmitters (name → fields to change; "name" renames), then duration / background / ground. Placed copies update. Returns the emitter names and import warnings. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `addEmitters?`: [{armWidth?: number, attraction?: number, blend?: "additive" \| "alpha", bounce?: number, brightnessVariation?: number, bursts?: [object], capacity?: integer, collidesWithGround?: boolean, color?: [object], delay?: number, direction?: number[3], drag?: number, friction?: number, gravity?: number[3], groundHeight?: number, intensity?: number, lifetime?: number[2], lit?: boolean, name?: string, orbit?: number, position?: number[3], prewarm?: number, rate?: number, rotation?: number[3], seed?: integer, shape?: "point" \| "sphere" \| "box" \| "disc", shapeSize?: number[3], size?: number[2], sizeOverLife?: [object], softness?: number, speed?: number[2], spin?: number, spiralArms?: integer, spiralTwist?: number, spread?: number, stretch?: number, stretchMode?: "scaled" \| "streak", turbulence?: number, turbulenceFrequency?: number}]
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `background?`: number[3] — [x, y, z]
+- `duration?`: number
+- `ground?`: boolean
+- `path?`: string
+- `removeEmitters?`: [string]
+- `updateEmitters?`: object
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `duration`: number
+- `emitters`: [string]
+- `entities?`: [entity id]
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `warnings`: [string]
+
+### `vfx.get`
+
+**Get VFX** · _read-only_, _idempotent_
+
+Reads a .vfx file: its emitters (every field, defaults included), duration, preview settings, the prefab to place, and problems found.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `effect`: {background?: number[3], duration?: number, emitters?: [object], ground?: boolean}
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `warnings`: [string]
+
+### `vfx.new`
+
+**New VFX**
+
+Writes a .vfx file in `folder` (default: the Assets root) and imports it as a prefab of particle emitters, from a `preset` (or `effect` contents), optionally placing it in the scene (`place`, at `position`; undoable). Returns the asset, its prefab, the emitter names and import warnings. Edit it later with vfx.edit (small changes) or vfx.set (whole contents); placed copies update. A VFX effect is a stack of GPU particle emitters: `emitters` (each: name, position [x,y,z] m and rotation [x,y,z] degrees relative to the effect, delay (seconds before it starts: timing offset), rate (particles/s), bursts [{time, count, interval, cycles}], capacity, prewarm (seconds pre-simulated so a continuous effect starts steady), lifetime [min,max] s, shape point|sphere|box|disc, shapeSize, direction [x,y,z], spread (cone half-angle, radians), speed [min,max], gravity [x,y,z], drag, turbulence, turbulenceFrequency, attraction, orbit, spiralArms, spiralTwist, armWidth, size [min,max] (half-width m), spin, sizeOverLife [{time, value}] (up to 4), color [{time, color [r,g,b,a] linear}] (up to 4, alpha fades), intensity (HDR glow), brightnessVariation, blend additive|alpha (alpha = smoke/dust, sorted, at most 262144 particles), stretch, stretchMode scaled|streak, collidesWithGround, groundHeight, bounce, friction, softness, lit, seed), plus `duration` (seconds one run lasts; the editor preview loops after it), `background` [r,g,b] and `ground` (preview only). Every key is optional. Presets: fire, smoke, sparks, explosion, magicHit, rain, snow, dust, portal.
+
+Arguments:
+
+- `effect?`: {background?: number[3], duration?: number, emitters?: [object], ground?: boolean}
+- `folder?`: string
+- `name?`: string
+- `place?`: boolean
+- `position?`: number[3] — [x, y, z]
+- `preset?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `duration`: number
+- `emitters`: [string]
+- `entities?`: [entity id]
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `warnings`: [string]
+
+### `vfx.open`
+
+**Open in VFX Builder** · _idempotent_
+
+Opens a .vfx file in the editor's VFX Builder tab (a looping live preview over a ground plane, with the emitters form) and brings the tab to the front. view.screenshot {source: "panel", panel: "vfxBuilder"} shows it.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `path`: string
+
+### `vfx.set`
+
+**Set VFX** · _undoable_, _idempotent_
+
+Replaces a .vfx file's whole contents and reimports it; placed copies update. Undoable. For a few changes, vfx.edit is shorter. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `effect`: {background?: number[3], duration?: number, emitters?: [object], ground?: boolean}
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `duration`: number
+- `emitters`: [string]
+- `entities?`: [entity id]
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `warnings`: [string]
 
 ## view
 

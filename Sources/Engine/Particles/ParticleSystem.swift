@@ -325,7 +325,17 @@ public final class ParticleSystem {
             state.pendingTime -= fixedTimestep
             let time = state.schedule.time
             let before = state.schedule.spawned
-            let requested = state.schedule.step(dt: fixedTimestep, rate: emitter.rate, bursts: emitter.bursts, emitting: emitter.isEmitting)
+            let requested: Int
+            if emitter.startDelay > 0 {
+                // Timing offset: nothing spawns until the delay has passed; bursts are relative to it.
+                let delay = Double(emitter.startDelay)
+                var bursts = emitter.bursts
+                for i in bursts.indices { bursts[i].time += emitter.startDelay }
+                requested = state.schedule.step(dt: fixedTimestep, rate: emitter.rate, bursts: bursts,
+                                                emitting: emitter.isEmitting && state.schedule.time + fixedTimestep > delay)
+            } else {
+                requested = state.schedule.step(dt: fixedTimestep, rate: emitter.rate, bursts: emitter.bursts, emitting: emitter.isEmitting)
+            }
             // More than the ring holds: the first ones would be overwritten at once; skip them.
             let count = min(requested, state.capacity)
             let firstIndex = before + UInt64(requested - count)

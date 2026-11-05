@@ -22,6 +22,16 @@ the model in its own viewport with picking, Move / Rotate / Scale gizmos and liv
 preview. Tools: `meshBuild.new`, `meshBuild.get`, `meshBuild.set`, `meshBuild.edit`,
 `meshBuild.open`. See README › Mesh Builder.
 
+### VFX Builder (`.vfx`)
+
+Effects as stacks of GPU particle emitters, each with placement and a start `delay`. Presets:
+fire, smoke, sparks, explosion, magic hit, rain, snow, dust, portal. Imported as a prefab of
+`ParticleEmitter` children (placed or spawned like a model; `ParticleEmitter.startDelay` and
+`PrefabNode.particles` are new engine fields). The VFX Builder tab previews it looping with
+Restart, Loop and Pause, a ground plane and a background color. Tools: `vfx.new`, `vfx.get`,
+`vfx.set`, `vfx.edit`, `vfx.open`. Not done: sub-emitter links and particle textures in `.vfx`.
+See README > VFX Builder.
+
 ## Planned
 
 Recommended order, grouped so each builder lands after the ones it depends on:
@@ -48,17 +58,6 @@ Outdoor ground for 3D games. The engine has no terrain system yet, so this is th
   rules, drawn instanced.
 - Tools: `terrain.new {size, resolution, seed}`, `terrain.sculpt {brush, points}`,
   `terrain.paint {layer, points}`, `terrain.scatter {asset, density, rules}`.
-
-### 2. VFX Builder (`.vfx`)
-
-Effects as stacks of the engine's existing GPU particle emitters (today they are edited only
-through raw `ParticleEmitter` fields in the inspector).
-
-- Several emitters per effect (fire = flames + smoke + embers), each with timing offsets.
-- A looping preview with restart, a ground plane and a background color.
-- Presets: fire, smoke, sparks, explosion, magic hit, rain, snow, dust, portal.
-- Imported as a prefab, so an effect is placed or spawned like any model.
-- Tools: `vfx.new {preset?}`, `vfx.edit {addEmitters, updateEmitters, removeEmitters}`.
 
 ### 3. Sound Builder (`.sfx`)
 
