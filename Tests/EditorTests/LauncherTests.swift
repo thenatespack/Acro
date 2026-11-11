@@ -363,7 +363,7 @@ private func temporaryDirectory() -> URL {
         #expect(project.settings.game == GameModuleSettings(target: "MyCoolGame", package: "."))
         #expect(try Project.open(at: project.root).settings.game?.target == "MyCoolGame", "saved")
         let manifest = try String(contentsOf: project.root.appendingPathComponent("Package.swift"), encoding: .utf8)
-        #expect(manifest.contains(engine.path) && manifest.contains("SWIFT_GAME_ENGINE") && manifest.contains(#"name: "MyCoolGame""#))
+        #expect(manifest.contains(engine.path) && manifest.contains("ACRO_ENGINE") && manifest.contains(#"name: "MyCoolGame""#))
         let source = try String(contentsOf: project.root.appendingPathComponent("Sources/MyCoolGame/MyCoolGame.swift"), encoding: .utf8)
         #expect(source.contains(GameModuleABI.entryPoint))
         let ignore = try String(contentsOf: project.root.appendingPathComponent(".gitignore"), encoding: .utf8)
@@ -377,7 +377,7 @@ private func temporaryDirectory() -> URL {
         // No engine: no package, and why.
         var bare = try Project.create(at: folder.appendingPathComponent("Bare"))
         let skipped = try ProjectScaffold.write(into: &bare, engine: nil)
-        #expect(skipped.target == nil && skipped.skipped?.contains("SWIFT_GAME_ENGINE") == true && bare.settings.game == nil)
+        #expect(skipped.target == nil && skipped.skipped?.contains("ACRO_ENGINE") == true && bare.settings.game == nil)
         #expect(!FileManager.default.fileExists(atPath: bare.root.appendingPathComponent("Package.swift").path))
     }
 

@@ -118,21 +118,22 @@ public enum ProjectChoices {
     private static var targetCache: [String: (date: Date, targets: [String])] = [:]
 
     /// The folders under `package`'s `Sources/` that are game modules: a Swift file in them
-    /// declares the entry point (`@_cdecl("swift_game_engine_module_v1")` at the start of a
-    /// line). Sorted; cached until `Sources/` changes.
+    /// declares the entry point (`@_cdecl("acro_module_v1")` at the start of a
+    /// line; the pre-Acro `swift_game_engine_module_v1` counts too). Sorted; cached until `Sources/` changes.
     public static func gameTargets(in package: URL) -> [String] {
         let fm = FileManager.default
         let sources = package.appendingPathComponent("Sources", isDirectory: true)
         let date = (try? fm.attributesOfItem(atPath: sources.path))?[.modificationDate] as? Date ?? .distantPast
         if let cached = targetCache[package.path], cached.date == date { return cached.targets }
-        let marker = "@_cdecl(\"\(GameModuleABI.entryPoint)\")"
+        let markers = [GameModuleABI.entryPoint, GameModuleABI.legacyEntryPoint].map { "@_cdecl(\"\($0)\")" }
         var targets: [String] = []
         for name in (try? fm.contentsOfDirectory(atPath: sources.path)) ?? [] {
             let folder = sources.appendingPathComponent(name, isDirectory: true)
             guard let files = fm.enumerator(at: folder, includingPropertiesForKeys: nil) else { continue }
             for case let file as URL in files where file.pathExtension == "swift" {
-                guard let text = try? String(contentsOf: file, encoding: .utf8), text.contains(marker) else { continue }
-                if text.split(separator: "\n").contains(where: { $0.hasPrefix(marker) }) {
+                guard let text = try? String(contentsOf: file, encoding: .utf8),
+                      markers.contains(where: text.contains) else { continue }
+                if text.split(separator: "\n").contains(where: { line in markers.contains { line.hasPrefix($0) } }) {
                     targets.append(name)
                     break
                 }

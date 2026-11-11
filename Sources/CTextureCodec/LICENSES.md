@@ -8,7 +8,7 @@ Upstream sources; `codec.cpp` and `bc6h.cpp` are the engine's adapters (`include
 | `vendor/astcenc/astcenc*.cpp`, `astcenc*.h` (the library; not the command-line tool) | 5.7.0 | https://github.com/ARM-software/astc-encoder | Apache License 2.0; see `vendor/astcenc/LICENSE.txt` |
 | `vendor/cvtt/ConvectionKernels*` (the BC6H / BC7 kernels and what they include; not the ETC / S3TC ones, `MakeTables` or `etc2packer`) | master, commit 350416d (2022-06-22) | https://github.com/elasota/ConvectionKernels | MIT (Convection Texture Tools, itself based on Microsoft's MIT-licensed DirectXTex); see `vendor/cvtt/LICENSE.txt` |
 
-Local changes, marked `swift-game-engine:`: in `bc7enc.c`, opaque blocks encoded in mode 6
+Local changes, marked `acro:`: in `bc7enc.c`, opaque blocks encoded in mode 6
 only use p-bit 1, so their alpha decodes to 255 instead of sometimes 254; in
 `ConvectionKernels_BC67.cpp`, `PackingVector::InitPacked` zeroes the words past the header
 (upstream left the last one uninitialized and ORed BC6H indices into it, so stack garbage

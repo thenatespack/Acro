@@ -5,7 +5,7 @@ import Foundation
 //
 // ```swift
 // import Engine
-// @_silgen_name("swift_game_engine_module_v1") func gameModuleEntry(_ module: UnsafeMutableRawPointer) -> Int32
+// @_silgen_name("acro_module_v1") func gameModuleEntry(_ module: UnsafeMutableRawPointer) -> Int32
 // GamePlayer.main(module: gameModuleEntry)
 // ```
 //

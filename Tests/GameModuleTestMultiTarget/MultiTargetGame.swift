@@ -4,7 +4,7 @@ import GameModuleTestLibrary
 // The game half of a two-target game (GameModuleReloadTests): registers the library target's
 // component and runs its code. The module links both targets' objects.
 
-@_cdecl("swift_game_engine_module_v1")
+@_cdecl("acro_module_v1")
 public func registerMultiTargetGame(_ module: UnsafeMutableRawPointer) -> Int32 {
     GameModule.register(module) { game in
         game.name = "MultiTargetGame"

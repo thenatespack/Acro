@@ -6,7 +6,7 @@
 #   Scripts/make-editor-app.sh ~/Applications/Editor.app
 #
 # The app is for this machine: it uses this checkout's sources (Info.plist sets
-# SWIFT_GAME_ENGINE to it, so Build Game, game modules and the Game Module template keep
+# ACRO_ENGINE to it, so Build Game, game modules and the Game Module template keep
 # working from Finder, where the working directory is /), and with Vulkan enabled it links
 # Homebrew's libvulkan / libglfw. Game modules are built in the app's configuration.
 set -eu
@@ -51,7 +51,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
 	<key>NSPrincipalClass</key><string>NSApplication</string>
 	<key>LSEnvironment</key>
 	<dict>
-		<key>SWIFT_GAME_ENGINE</key><string>$ROOT</string>
+		<key>ACRO_ENGINE</key><string>$ROOT</string>
 		<key>EDITOR_SAMPLE_PROJECT</key><string>$ROOT/Projects/SampleGame</string>
 		<key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
 	</dict>

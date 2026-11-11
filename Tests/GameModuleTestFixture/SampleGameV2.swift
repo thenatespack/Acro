@@ -27,7 +27,7 @@ struct SampleGameV2Stats: Codable {
     var frames: Int
 }
 
-@_cdecl("swift_game_engine_module_v1")
+@_cdecl("acro_module_v1")
 public func registerSampleGameV2(_ module: UnsafeMutableRawPointer) -> Int32 {
     GameModule.register(module) { game in
         game.name = "SampleGame"

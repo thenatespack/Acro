@@ -102,7 +102,7 @@ public enum GameModuleLoader {
         if let theirs = dlsym(handle, GameModuleABI.engineMarker), theirs != acroHostMarkerAddress {
             throw GameModuleError.embedsEngine(url.lastPathComponent)
         }
-        guard let symbol = dlsym(handle, GameModuleABI.entryPoint) else {
+        guard let symbol = dlsym(handle, GameModuleABI.entryPoint) ?? dlsym(handle, GameModuleABI.legacyEntryPoint) else {
             throw GameModuleError.noEntryPoint(url.lastPathComponent)
         }
         typealias Entry = @convention(c) (UnsafeMutableRawPointer) -> Int32

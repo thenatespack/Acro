@@ -13,7 +13,7 @@ import Foundation
 // ```swift
 // import Engine
 //
-// @_cdecl("swift_game_engine_module_v1")
+// @_cdecl("acro_module_v1")
 // public func registerGameModule(_ module: UnsafeMutableRawPointer) -> Int32 {
 //     GameModule.register(module) { game in
 //         game.name = "MyGame"
@@ -73,7 +73,9 @@ import Foundation
 public enum GameModuleABI {
     /// The C symbol a module exports. The version is part of the name, so a module built for
     /// another ABI fails to load with a clear error rather than misbehaving.
-    public static let entryPoint = "swift_game_engine_module_v1"
+    public static let entryPoint = "acro_module_v1"
+    /// The entry point's name from before the engine was called Acro; still loaded.
+    public static let legacyEntryPoint = "swift_game_engine_module_v1"
     /// What `GameModule.register` returns; checked by the loader. Inlinable, so a module
     /// returns the version it was compiled against, not the host's.
     @inlinable public static var version: Int32 { 1 }

@@ -149,7 +149,7 @@ public struct OrbfallHUD: Component, Equatable, Sendable {
 
 // MARK: Module
 
-@_cdecl("swift_game_engine_module_v1")
+@_cdecl("acro_module_v1")
 public func registerOrbfall(_ module: UnsafeMutableRawPointer) -> Int32 {
     GameModule.register(module) { game in
         game.name = "Orbfall"

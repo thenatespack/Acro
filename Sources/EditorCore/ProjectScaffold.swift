@@ -10,14 +10,16 @@ import Foundation
 //   Project.json                 "game": {"target": "<Target>", "package": "."}
 //
 // The engine's package is found above the working directory or the editor's executable
-// (`SWIFT_GAME_ENGINE` overrides it); the manifest names its absolute path, which the
-// `SWIFT_GAME_ENGINE` environment variable overrides at build time too (another checkout, a CI
+// (`ACRO_ENGINE` overrides it); the manifest names its absolute path, which the
+// `ACRO_ENGINE` environment variable overrides at build time too (another checkout, a CI
 // machine). Without an engine to point at there is no package (a warning says why). Files that
 // already exist are left alone, and a folder that already has a Package.swift keeps it.
 
 public enum ProjectScaffold {
     /// The environment variable naming the engine's package folder.
-    public static let engineEnvironmentKey = "SWIFT_GAME_ENGINE"
+    public static let engineEnvironmentKey = "ACRO_ENGINE"
+    /// The variable's name from before the engine was called Acro; still read.
+    public static let legacyEngineEnvironmentKey = "SWIFT_GAME_ENGINE"
 
     /// What `write` made.
     public struct Result: Sendable, Equatable {
@@ -27,10 +29,10 @@ public enum ProjectScaffold {
         public var skipped: String?
     }
 
-    /// The engine's package: `SWIFT_GAME_ENGINE`, else at or above the working directory or the
+    /// The engine's package: `ACRO_ENGINE`, else at or above the working directory or the
     /// running executable's folder. Nil for an installed editor without the sources.
     public static func findEngine(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL? {
-        if let path = environment[engineEnvironmentKey], !path.isEmpty {
+        if let path = environment[engineEnvironmentKey] ?? environment[legacyEngineEnvironmentKey], !path.isEmpty {
             let url = URL(fileURLWithPath: path).standardizedFileURL
             return GameExporter.isEnginePackage(url) ? url : nil
         }

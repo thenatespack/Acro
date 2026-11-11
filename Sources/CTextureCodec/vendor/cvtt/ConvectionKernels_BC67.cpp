@@ -664,7 +664,7 @@ namespace cvtt
 
             void InitPacked(const uint32_t *v, int bits)
             {
-                // swift-game-engine: words past the header (the last one, for BC6H's 65- and
+                // acro: words past the header (the last one, for BC6H's 65- and
                 // 82-bit headers) were left uninitialized, and Pack ORs indices into them, so
                 // stack garbage corrupted index bits 96...127 now and then.
                 Init();

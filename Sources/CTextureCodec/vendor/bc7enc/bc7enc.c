@@ -765,7 +765,7 @@ static uint64_t find_optimal_solution(uint32_t mode, vec4F xl, vec4F xh, const c
 			float best_err0 = 1e+9;
 			float best_err1 = 1e+9;
 
-			// swift-game-engine: opaque blocks only use pbit 1, so mode 6 alpha decodes to 255 rather than 254.
+			// acro: opaque blocks only use pbit 1, so mode 6 alpha decodes to 255 rather than 254.
 			for (int p = pParams->m_has_alpha ? 0 : 1; p < 2; p++)
 			{
 				color_quad_u8 xMinColor, xMaxColor;

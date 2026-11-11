@@ -73,7 +73,7 @@ enum SampleGameState {
 }
 
 /// The module's entry point (`GameModuleABI.entryPoint`).
-@_cdecl("swift_game_engine_module_v1")
+@_cdecl("acro_module_v1")
 public func registerSampleGame(_ module: UnsafeMutableRawPointer) -> Int32 {
     GameModule.register(module) { game in
         game.name = "SampleGame"
