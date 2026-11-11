@@ -206,11 +206,12 @@ GitHub Actions runs on every push and pull request:
 
 | Workflow | What it does |
 |---|---|
-| macOS | Builds, runs `swift test`, and renders demo scenes on Metal and MoltenVK |
-| Linux | Builds and runs `swift test` in the `swift:6.4-noble` container, then renders demo scenes on lavapipe (software Vulkan) |
+| macOS | Builds and runs `swift test` on Xcode 27 |
+| Linux | Builds and runs `swift test` in the `swift:6.4-noble` container, with GPU tests on lavapipe (software Vulkan) |
 | Windows | Build only; the hosted runner has no GPU |
+| Docs | Builds the Engine API reference, and publishes it to GitHub Pages from `main` |
 
-Scene renders are compared with baselines saved from the last run on `main` by `Scripts/compare-golden.sh`, with a tolerance. Rendering steps don't fail the job yet, because they haven't been verified on hosted runners. To reproduce the Linux job locally, run `Scripts/linux-docker-ci.sh`.
+CI doesn't render the demo scenes. Check rendering changes locally with `Scripts/render-scenes.sh`, which renders every scene on each available backend and checks that they match. To reproduce the Linux job locally, run `Scripts/linux-docker-ci.sh`.
 
 ## Project layout
 
@@ -226,16 +227,21 @@ Scene renders are compared with baselines saved from the last run on `main` by `
 | `Projects/` | Sample editor project |
 | `Scripts/` | Shader, scene-rendering, CI, and packaging tools |
 | `docs/` | Builder, MCP, networking, and scripting documentation |
+| `Sources/Engine/Engine.docc/` | DocC catalog: the API reference's landing page and articles |
 | `Tests/` | Engine, editor, and MCP test suites |
 
 ## Documentation
 
+- [Engine API reference](https://thenatespack.github.io/Acro/documentation/engine/) (DocC; build it locally with `Scripts/build-docs.sh`)
 - [Builder tools](docs/Builders.md)
 - [Editor MCP tools](docs/MCPTools.md)
 - [Networking design and implementation](docs/Networking.md)
 - [Scripting options and measurements](docs/Scripting.md)
-- [Cross-platform notes](cross-plat.md)
+- [Cross-platform notes](docs/cross-plat.md)
 - [Builder roadmap](Tools.md)
+- [Contributing](CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md)
+- [Security policy](SECURITY.md)
 
 Useful commands:
 

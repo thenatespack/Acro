@@ -1,0 +1,58 @@
+name: Docs
+
+# Builds the Engine API documentation with DocC (Scripts/build-docs.sh) and publishes it to
+# GitHub Pages at https://thenatespack.github.io/Acro/. Pull requests build it without
+# publishing, so broken documentation shows up before merging.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container:
+      # Same toolchain as the Linux CI job; the image includes docc.
+      image: swift:6.4-noble
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            libvulkan-dev libglfw3-dev zlib1g-dev pkg-config libasound2-dev ca-certificates
+
+      - name: Build documentation
+        env:
+          DOCS_HOSTING_BASE_PATH: Acro
+        run: Scripts/build-docs.sh docs-site
+
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs-site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}documentation/engine/
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

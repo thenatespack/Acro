@@ -329,7 +329,11 @@ final class RecoveryBuffers: @unchecked Sendable {
                 file.bytes.withUnsafeBufferPointer { bytes in
                     var offset = 0
                     while offset < bytes.count {
+                        #if os(Windows)
+                        let written = Int(write(descriptor, bytes.baseAddress! + offset, UInt32(bytes.count - offset)))
+                        #else
                         let written = write(descriptor, bytes.baseAddress! + offset, bytes.count - offset)
+                        #endif
                         if written <= 0 { break }
                         offset += written
                     }
