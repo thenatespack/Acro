@@ -55,8 +55,15 @@ public final class MCPStdioTransport: @unchecked Sendable {
     private func readLoop() {
         var buffer = Data()
         while true {
+            #if os(Windows)
+            // FileHandle.fileDescriptor is unavailable on Windows; availableData returns what the
+            // pipe has (empty at EOF).
+            let chunk = input.availableData
+            if chunk.isEmpty { break }
+            #else
             // Plain read(2): FileHandle's reads wait for the whole count on a pipe.
             guard let chunk = Self.read(input.fileDescriptor) else { break }
+            #endif
             buffer.append(chunk)
             while let newline = buffer.firstIndex(of: UInt8(ascii: "\n")) {
                 let line = buffer[buffer.startIndex..<newline]

@@ -15,7 +15,15 @@ private func copyShader() throws -> ShaderSource {
 
 /// RGBA8 texels of a `size`² texture: texel i is (i, 2i, 255 - i, seed) mod 256.
 private func pattern(size: Int, seed: UInt8) -> [UInt8] {
-    (0..<size * size).flatMap { i -> [UInt8] in [UInt8(i & 255), UInt8(i * 2 & 255), UInt8(255 - i & 255), seed] }
+    var texels: [UInt8] = []
+    texels.reserveCapacity(size * size * 4)
+    for i in 0..<size * size {
+        let r = UInt8(i & 255)
+        let g = UInt8((i * 2) & 255)
+        let b = UInt8(255 - (i & 255))  // `&` binds tighter than `-` in Swift
+        texels += [r, g, b, seed]
+    }
+    return texels
 }
 
 /// What `test_copy` writes for `pattern`: unorm floats.

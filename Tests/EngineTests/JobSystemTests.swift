@@ -295,9 +295,12 @@ private struct JobSystemTestsSpin: Component, Codable, Equatable {
     }
 
     @Test func lightClustersAreIdenticalForAnyThreadCount() {
-        let lights = (0..<400).map { i in
-            PunctualLight(point: PointLight(color: Vec3(1, 0.5, 0.2), intensity: 3, range: 2 + Float(i % 5)),
-                          position: Vec3(Float(i % 20) * 2 - 20, 1, Float(i / 20) * -2))
+        let lights = (0..<400).map { (i: Int) -> PunctualLight in
+            let range: Float = 2 + Float(i % 5)
+            let x: Float = Float(i % 20) * 2 - 20
+            let z: Float = Float(i / 20) * -2
+            let point = PointLight(color: Vec3(1, 0.5, 0.2), intensity: 3, range: range)
+            return PunctualLight(point: point, position: Vec3(x, 1, z))
         }
         func build(_ threads: Int) -> LightClusters {
             var clusters = LightClusters()
