@@ -188,6 +188,8 @@ swift build -c release
 swift run -c release Demo
 ```
 
+The engine links `zlib.lib`. vcpkg's zlib 1.3.2 and later installs it as `z.lib`, so copy `%ZLIB_DIR%\lib\z.lib` to `zlib.lib` if it's missing.
+
 ### Using Acro as a package dependency
 
 The package exports the `Engine` and `EngineMCP` libraries. Add Acro with SwiftPM, then `import Engine` in a target that depends on the `Engine` product. On Windows the package currently needs unsafe compiler and linker flags, which limits its use as a dependency there.

@@ -40,6 +40,11 @@ jobs:
         run: |
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install zlib:x64-windows
           $dir = Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed\x64-windows'
+          # zlib 1.3.2+ names the import library z.lib; Windows/CZlib links "zlib".
+          if (-not (Test-Path "$dir\lib\zlib.lib") -and (Test-Path "$dir\lib\z.lib")) {
+            Copy-Item "$dir\lib\z.lib" "$dir\lib\zlib.lib"
+          }
+          Get-ChildItem "$dir\lib" -Filter *.lib | ForEach-Object { $_.Name }
           # The engine expects $ZLIB_DIR\include and $ZLIB_DIR\lib (zlib.lib); zlib1.dll must be on PATH to run.
           "ZLIB_DIR=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "$dir\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
