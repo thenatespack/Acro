@@ -198,7 +198,7 @@ private let rocksOBJ = """
         #expect(try Project.open(at: root).settings.engineVersion == "99.0.0")  // untouched
 
         try session.commands.run(ProjectOpenCommand.self, .init(path: root.path, allowVersionMismatch: true))
-        #expect(session.project?.root.standardizedFileURL == root.standardizedFileURL)
+        #expect(session.project?.root.standardizedFileURL.path == root.standardizedFileURL.path)
         #expect(try Project.open(at: root).settings.engineVersion == EngineVersion.current)
         #expect(ProjectOpenCommand.versionMismatch(root.path, in: session) == nil)
     }

@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Editor › AI control). 166 tools.
+named by its id (see README › Use the editor › AI control). 166 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -277,7 +277,7 @@ Result:
 
 **New Procedural Texture**
 
-Writes a .proctex file in `folder`: a texture generated from parameters (generator windowGrid, checker, gradient, noise, bricks or stripes; size, colors, seed, counts, margin, variation; see README, Procedural textures), imported like any texture so materials can use its `texture` object. Returns its asset id and path. Change it with asset.setProceduralTexture.
+Writes a .proctex file in `folder`: a texture generated from parameters (generator windowGrid, checker, gradient, noise, bricks or stripes; size, colors, seed, counts, margin, variation), imported like any texture so materials can use its `texture` object. Returns its asset id and path. Change it with asset.setProceduralTexture.
 
 Arguments:
 
@@ -1657,7 +1657,7 @@ Result:
 
 **Open Project** · _destructive_, _idempotent_
 
-Opens the project at `path` (or a recent project by name), scans its assets and imports what changed (in the background); the project goes to the top of project.recent.list and the launcher closes. The scene stays open unless `openLastScene` is true. A project whose Project.json records another engine version (`engineVersion`) is refused unless `allowVersionMismatch` is true; opened, it is stamped with this engine's version (0.7.1). Returns the project's root folder. Destructive only when `openLastScene` is true and the open scene has unsaved changes: then pass confirm: true.
+Opens the project at `path` (or a recent project by name), scans its assets and imports what changed (in the background); the project goes to the top of project.recent.list and the launcher closes. The scene stays open unless `openLastScene` is true. A project whose Project.json records another engine version (`engineVersion`) is refused unless `allowVersionMismatch` is true; opened, it is stamped with this engine's version, which the MCP server reports in its initialize response. Returns the project's root folder. Destructive only when `openLastScene` is true and the open scene has unsaved changes: then pass confirm: true.
 
 Arguments:
 

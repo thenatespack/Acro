@@ -23,7 +23,7 @@ public enum EditorToolReference {
 
             Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > \(path)`;
             `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-            named by its id (see README › Editor › AI control). \(tools.count) tools.
+            named by its id (see README › Use the editor › AI control). \(tools.count) tools.
 
             Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
             made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**

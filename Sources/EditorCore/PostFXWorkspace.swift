@@ -119,9 +119,9 @@ public final class PostFXWorkspace {
         splitSlider.style.width = 120
         splitSlider.onChange = { [unowned self] value in splitPosition = value }
         bar.addChildren([splitToggle, splitSlider])
-        let close = Button("Close", name: "postFXClose") { [unowned self] in close() }
-        close.tooltip = "Stop editing this profile"
-        bar.addChild(close)
+        let closeButton = Button("Close", name: "postFXClose") { [unowned self] in self.close() }
+        closeButton.tooltip = "Stop editing this profile"
+        bar.addChild(closeButton)
 
         viewportWidget.style.grow = 1
         viewportWidget.style.shrink = 1

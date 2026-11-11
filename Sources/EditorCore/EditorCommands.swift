@@ -322,7 +322,7 @@ public enum ProjectOpenCommand: EditorCommand {
 
     public static let id: CommandID = "project.open"
     public static let title = "Open Project"
-    public static let doc = "Opens the project at `path` (or a recent project by name), scans its assets and imports what changed (in the background); the project goes to the top of project.recent.list and the launcher closes. The scene stays open unless `openLastScene` is true. A project whose Project.json records another engine version (`engineVersion`) is refused unless `allowVersionMismatch` is true; opened, it is stamped with this engine's version (\(EngineVersion.current)). Returns the project's root folder."
+    public static let doc = "Opens the project at `path` (or a recent project by name), scans its assets and imports what changed (in the background); the project goes to the top of project.recent.list and the launcher closes. The scene stays open unless `openLastScene` is true. A project whose Project.json records another engine version (`engineVersion`) is refused unless `allowVersionMismatch` is true; opened, it is stamped with this engine's version, which the MCP server reports in its initialize response. Returns the project's root folder."
     public static let isIdempotent = true
     public static let isDestructive = true
     public static let confirmsOnlyWhen: String? = "when `openLastScene` is true and the open scene has unsaved changes"

@@ -263,9 +263,9 @@ public final class SoundBuilderWorkspace {
         autoPlayToggle.onChange = { [unowned self] on in autoPlay = on }
         autoPlayToggle.tooltip = "Play the sound after each change"
         bar.addChild(autoPlayToggle)
-        let close = Button("Close", name: "soundBuilderClose") { [unowned self] in close() }
-        close.tooltip = "Stop editing this sound"
-        bar.addChild(close)
+        let closeButton = Button("Close", name: "soundBuilderClose") { [unowned self] in self.close() }
+        closeButton.tooltip = "Stop editing this sound"
+        bar.addChild(closeButton)
 
         waveform.style.grow = 1
         waveform.style.shrink = 1

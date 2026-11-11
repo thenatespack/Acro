@@ -3,7 +3,7 @@ name: macOS
 # Builds, runs the tests, and renders the demo scenes on Metal and (through MoltenVK) Vulkan on
 # the runner's GPU, failing if the two backends differ (Scripts/render-scenes.sh). Screenshots are
 # also compared with the baselines of the last run on main, with a tolerance
-# (Scripts/compare-golden.sh; see README "Continuous integration").
+# (Scripts/compare-golden.sh; see README › Building › Continuous integration).
 on:
   push:
   pull_request:

@@ -121,9 +121,9 @@ public final class MeshBuilderWorkspace {
         animateToggle.onChange = { [unowned self] on in setPreviewingAnimation(on) }
         animateToggle.tooltip = "Play the model's animations here"
         bar.addChild(animateToggle)
-        let close = Button("Close", name: "meshBuilderClose") { [unowned self] in close() }
-        close.tooltip = "Stop editing this mesh build"
-        bar.addChild(close)
+        let closeButton = Button("Close", name: "meshBuilderClose") { [unowned self] in self.close() }
+        closeButton.tooltip = "Stop editing this mesh build"
+        bar.addChild(closeButton)
 
         viewportWidget.style.grow = 1
         viewportWidget.style.shrink = 1

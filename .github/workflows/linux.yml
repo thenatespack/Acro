@@ -2,8 +2,8 @@ name: Linux
 
 # Builds, runs the tests and renders the demo scenes on the Vulkan backend with lavapipe
 # (Mesa's software Vulkan) under a virtual X display. Screenshots are compared with the
-# baselines of the last run on main (Scripts/compare-golden.sh, with a tolerance; see README
-# "Continuous integration").
+# baselines of the last run on main (Scripts/compare-golden.sh, with a tolerance; see README ›
+# Building › Continuous integration).
 on:
   push:
   pull_request:

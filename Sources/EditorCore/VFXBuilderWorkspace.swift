@@ -116,9 +116,9 @@ public final class VFXBuilderWorkspace {
         title.style.shrink = 1
         bar.addChild(title)
         bar.addChild(Spacer())
-        let restart = Button("Restart", name: "vfxRestart") { [unowned self] in restart() }
-        restart.tooltip = "Play the effect again from the start"
-        bar.addChild(restart)
+        let restartButton = Button("Restart", name: "vfxRestart") { [unowned self] in self.restart() }
+        restartButton.tooltip = "Play the effect again from the start"
+        bar.addChild(restartButton)
         loopToggle.isOn = true
         loopToggle.onChange = { [unowned self] on in isLooping = on }
         loopToggle.tooltip = "Replay the effect when its duration is over"
@@ -126,9 +126,9 @@ public final class VFXBuilderWorkspace {
         pauseToggle.onChange = { [unowned self] on in isPaused = on }
         pauseToggle.tooltip = "Freeze the preview"
         bar.addChild(pauseToggle)
-        let close = Button("Close", name: "vfxClose") { [unowned self] in close() }
-        close.tooltip = "Stop editing this effect"
-        bar.addChild(close)
+        let closeButton = Button("Close", name: "vfxClose") { [unowned self] in self.close() }
+        closeButton.tooltip = "Stop editing this effect"
+        bar.addChild(closeButton)
 
         viewportWidget.style.grow = 1
         viewportWidget.style.shrink = 1

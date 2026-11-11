@@ -189,9 +189,9 @@ public final class TerrainBuilderWorkspace {
         let frame = Button("Frame", name: "terrainBuilderFrame") { [unowned self] in frameTerrain() }
         frame.tooltip = "Fit the whole terrain in the view"
         bar.addChild(frame)
-        let close = Button("Close", name: "terrainBuilderClose") { [unowned self] in close() }
-        close.tooltip = "Stop editing this terrain"
-        bar.addChild(close)
+        let closeButton = Button("Close", name: "terrainBuilderClose") { [unowned self] in self.close() }
+        closeButton.tooltip = "Stop editing this terrain"
+        bar.addChild(closeButton)
 
         viewportWidget.style.grow = 1
         viewportWidget.style.shrink = 1

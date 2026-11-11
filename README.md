@@ -198,6 +198,18 @@ Game rendering goes through the `RenderDevice`, `RenderPass`, and `ComputePass` 
 
 Engine shaders are written in GLSL. The generated SPIR-V and Metal files are committed, so normal builds don't need shader tools. After editing GLSL, run `Scripts/compile-shaders.sh` to regenerate them; it needs `glslc` and SPIRV-Cross.
 
+### Continuous integration
+
+GitHub Actions runs on every push and pull request:
+
+| Workflow | What it does |
+|---|---|
+| macOS | Builds, runs `swift test`, and renders demo scenes on Metal and MoltenVK |
+| Linux | Builds and runs `swift test` in the `swift:6.4-noble` container, then renders demo scenes on lavapipe (software Vulkan) |
+| Windows | Build only; the hosted runner has no GPU |
+
+Scene renders are compared with baselines saved from the last run on `main` by `Scripts/compare-golden.sh`, with a tolerance. Rendering steps don't fail the job yet, because they haven't been verified on hosted runners. To reproduce the Linux job locally, run `Scripts/linux-docker-ci.sh`.
+
 ## Project layout
 
 | Path | Contents |

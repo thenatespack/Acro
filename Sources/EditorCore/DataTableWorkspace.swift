@@ -91,12 +91,12 @@ public final class DataTableWorkspace {
             filterText = text
             dirty = true
         }
-        let addRow = Button("Add Row", role: .primary, name: "dataTableAddRow") { [unowned self] in addRow() }
-        addRow.command = TableEditCommand.id.rawValue
-        addRow.tooltip = "Add a row with every column at its default"
-        let close = Button("Close", name: "dataTableClose") { [unowned self] in close() }
+        let addRowButton = Button("Add Row", role: .primary, name: "dataTableAddRow") { [unowned self] in self.addRow() }
+        addRowButton.command = TableEditCommand.id.rawValue
+        addRowButton.tooltip = "Add a row with every column at its default"
+        let closeButton = Button("Close", name: "dataTableClose") { [unowned self] in self.close() }
         let bar = HStack(spacing: 6, padding: EdgeInsets(top: 6, left: 10, bottom: 6, right: 10), name: "dataTableToolbar",
-                         [title, filterField, countLabel, addRow, close])
+                         [title, filterField, countLabel, addRowButton, closeButton])
         let scroll = ScrollView(gridHost, name: "dataTableScroll")
         scroll.scrollsHorizontally = true
         scroll.style.grow = 1
