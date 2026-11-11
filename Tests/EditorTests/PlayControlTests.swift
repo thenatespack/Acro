@@ -268,6 +268,26 @@ import Testing
         #expect(diagnostics.validation.last?.message.contains("VUID-vkCmdDraw") == true)
     }
 
+    @Test func playHearsAnEmitterSpawnedAfterPlayStarts() throws {
+        let session = makeSession()
+        let audio = try AudioSystem(device: OfflineAudioDevice(sampleRate: 48000), maxVoices: 8)
+        audio.register(SoundBuffer(frameCount: 4800, channelCount: 1, sampleRate: 48000) { _, _ in 1 }, as: "shot")
+        session.audioProvider = { audio }
+        _ = session.world.spawn(Transform(), AudioListener())
+        #expect(session.world.count(of: AudioEmitter.self) == 0)
+        session.play()
+        #expect(session.world.systemNames(in: .renderPrep).contains("audio.spatial"))
+        #expect(audio.activeVoices.isEmpty)
+        _ = session.world.spawn(Transform(), AudioEmitter(sound: "shot", loop: true))
+        session.tick(dt: 1.0 / 60)
+        #expect(audio.activeVoices.count == 1)
+        session.stop()
+        _ = audio.render(frames: 2400)
+        #expect(audio.activeVoices.isEmpty)
+        #expect(!session.world.systemNames(in: .renderPrep).contains("audio.spatial"))
+        #expect(session.world.count(of: AudioEmitter.self) == 0)
+    }
+
     @Test func pauseAndStepShortcuts() {
         let mac = EditorShortcuts(shortcutModifier: .command)
         #expect(mac.action(for: KeyEvent(key: .p, modifiers: [.command, .shift])) == .togglePause)

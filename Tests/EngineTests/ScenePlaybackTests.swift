@@ -98,4 +98,34 @@ import Testing
         playback.applyPendingScene()
         #expect(playback.physics == nil)
     }
+
+    /// A scene with no `AudioEmitter` still runs spatial audio, so a module can spawn one on the
+    /// first frame (and again after a scene switch) and have it heard.
+    @Test func spawnedEmitterPlaysWithoutOneInTheScene() throws {
+        let audio = try AudioSystem(device: OfflineAudioDevice(sampleRate: 48000), maxVoices: 8)
+        audio.register(SoundBuffer(frameCount: 4800, channelCount: 1, sampleRate: 48000) { _, _ in 1 }, as: "shot")
+        let module = GameModule()
+        module.system("test.shoot") { world, _ in
+            if world.count(of: AudioEmitter.self) == 0 {
+                _ = world.spawn(Transform(), AudioEmitter(sound: "shot", loop: true))
+            }
+        }
+        let playback = ScenePlayback(module: module, context: GameContext(input: Input()), audio: audio, log: { _ in }) { path in
+            guard path == "Empty.scene" || path == "Other.scene" else { throw CocoaError(.fileNoSuchFile) }
+            return try sceneData(["Camera"])
+        }
+        try playback.load("Empty.scene")
+        #expect(playback.world.count(of: AudioEmitter.self) == 0)
+        #expect(playback.world.systemNames(in: .renderPrep).contains("audio.spatial"))
+        playback.world.update(dt: 1.0 / 60)
+        #expect(audio.activeVoices.count == 1)
+
+        playback.context.loadScene("Other.scene")
+        #expect(playback.applyPendingScene())
+        // Stop fades for 10 ms; render past that before the next scene's emitter starts.
+        _ = audio.render(frames: 4800)
+        #expect(audio.activeVoices.isEmpty)
+        playback.world.update(dt: 1.0 / 60)
+        #expect(audio.activeVoices.count == 1)
+    }
 }

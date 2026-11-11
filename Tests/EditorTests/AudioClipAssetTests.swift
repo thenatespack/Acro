@@ -56,6 +56,50 @@ import Testing
         #expect(audio.activeVoices.isEmpty)
     }
 
+    @Test func aMissingClipIsReportedOnceOnTheEngineLog() throws {
+        let (session, folder, _) = try makeAudioProject()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let audio = try AudioSystem(device: OfflineAudioDevice(sampleRate: 48000), maxVoices: 8)
+        session.audioProvider = { audio }
+        let missing = AssetID(high: 1, low: 2)
+        _ = session.world.spawn(Transform(), AudioEmitter(clip: AssetReference(missing).description, loop: true))
+        let start = (EngineLog.recent().last?.sequence ?? -1) + 1
+        session.play()
+        session.tick(dt: 1.0 / 60)
+        session.tick(dt: 1.0 / 60)
+        let hits = EngineLog.recent().filter {
+            $0.sequence >= start && $0.category == .audio && $0.message.contains("no audio asset \(missing)")
+        }
+        #expect(hits.count == 1)
+        #expect(hits.first?.level == .warning)
+        #expect(audio.activeVoices.isEmpty)
+        session.stop()
+    }
+
+    @Test func aClipThatFailsToDecodeIsReportedOnTheEngineLog() throws {
+        let (session, folder, _) = try makeAudioProject()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try Data("not a wav".utf8).write(to: folder.appendingPathComponent("Assets/Audio/bad.wav"))
+        _ = session.assets?.refresh()
+        let id = try #require(session.assets?.id(forPath: "Audio/bad.wav"))
+        let audio = try AudioSystem(device: OfflineAudioDevice(sampleRate: 48000), maxVoices: 8)
+        session.audioProvider = { audio }
+        _ = session.world.spawn(Transform(), AudioEmitter(clip: AssetReference(id).description, loop: true))
+        let start = (EngineLog.recent().last?.sequence ?? -1) + 1
+        session.play()
+        var reported = false
+        for _ in 0..<400 where !reported {
+            session.tick(dt: 1.0 / 60)
+            reported = EngineLog.recent().contains {
+                $0.sequence >= start && $0.category == .audio && $0.message.contains("could not load \(id)")
+            }
+            if !reported { Thread.sleep(forTimeInterval: 0.005) }
+        }
+        #expect(reported)
+        #expect(audio.activeVoices.isEmpty)
+        session.stop()
+    }
+
     @Test func sceneOpenAcceptsProjectAndAssetsRelativePaths() throws {
         let (session, folder, _) = try makeAudioProject()
         defer { try? FileManager.default.removeItem(at: folder) }

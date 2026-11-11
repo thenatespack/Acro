@@ -2,8 +2,10 @@ import Foundation
 
 /// Plays scene files with a game module outside the editor, the way the editor's play mode
 /// does: the play systems (physics and 2D physics when the scene has colliders, sprite
-/// animation, spatial audio, the built-in animators) and the module's systems, over one
-/// world. Switches scenes when game code calls `context.loadScene(_:)`: `applyPendingScene()`
+/// animation when the scene has animators, spatial audio whenever `audio` is set, the built-in
+/// animators) and the module's systems, over one world. Spatial audio starts even when the
+/// scene has no `AudioEmitter`: a module spawns emitters while it runs. Switches scenes when
+/// game code calls `context.loadScene(_:)`: `applyPendingScene()`
 /// (called by the host between world updates) clears the world, loads the new scene and
 /// restarts the systems. Used by exported games (`GamePlayer`) and `GameRunner`.
 ///
@@ -90,7 +92,8 @@ public final class ScenePlayback {
             physics2D = physics
         }
         if world.count(of: SpriteAnimator.self) > 0 { world.addSpriteAnimationSystem(name: Self.spriteSystem) }
-        if world.count(of: AudioEmitter.self) > 0, let audio { spatialAudio = world.addSpatialAudio(audio, assets: assets) }
+        // Not gated on an emitter already in the scene: game code spawns them after this returns.
+        if let audio { spatialAudio = world.addSpatialAudio(audio, assets: assets) }
         world.addBuiltinAnimationSystems()
         for warning in module.addSystems(to: world, context: context) { log(warning) }
         systemsAdded = true

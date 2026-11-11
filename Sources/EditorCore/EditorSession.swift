@@ -206,9 +206,9 @@ public final class EditorSession {
     /// Whether play happens in the Game view (`view.gameCamera`): Play brings the Game tab to the
     /// front and the game gets the keyboard and mouse; off, the Scene view keeps them. On by default.
     public var showsGameCamera = true { didSet { if showsGameCamera != oldValue { changed() } } }
-    /// The sound output play mode uses (set by the editor app; nil headless: no sound). Asked only
-    /// when the scene has `AudioEmitter`s at play start, which then play (their `clip` assets load
-    /// from the project) until Stop.
+    /// The sound output play mode uses (set by the editor app; nil headless: no sound). Asked each
+    /// time play systems start. Emitters spawned by game code after that still play (their `clip`
+    /// assets load from the project) until Stop.
     public var audioProvider: (() -> AudioSystem?)?
     private var spatialAudio: SpatialAudioHandle?
     /// The play session's physics, when the scene has colliders (see `addPlaySystems`).
@@ -675,9 +675,14 @@ public final class EditorSession {
     }
 
     /// The play session's systems: physics (3D, 2D) when the scene has colliders, sprite animation when
-    /// it has animators. Systems are code, not data, so the snapshot doesn't hold them: they
-    /// are added on play and removed on stop, with a new `PhysicsWorld` each time.
-    /// The project's runtime settings (gravity, fixed timestep) apply while playing.
+    /// it has animators, spatial audio whenever `audioProvider` returns a device. Systems are code,
+    /// not data, so the snapshot doesn't hold them: they are added on play and removed on stop, with
+    /// a new `PhysicsWorld` each time. The project's runtime settings (gravity, fixed timestep) apply
+    /// while playing.
+    ///
+    /// Spatial audio starts with no `AudioEmitter` in the scene. A module spawns shots, explosions
+    /// and music while it runs, and those need the system already installed. Physics and sprite
+    /// animation stay gated: nothing needs them until a collider or animator exists.
     private func addPlaySystems() {
         let runtime = project?.settings.runtime ?? ProjectRuntimeSettings()
         timestepBeforePlay = world.fixedTimestep
@@ -696,7 +701,7 @@ public final class EditorSession {
         }
         if world.count(of: SpriteAnimator.self) > 0 { world.addSpriteAnimationSystem(name: Self.spriteSystem) }
         tweens = TweenSystem()
-        if world.count(of: AudioEmitter.self) > 0, let audio = audioProvider?() {
+        if let audio = audioProvider?() {
             spatialAudio = world.addSpatialAudio(audio, assets: { [weak self] in self?.assets })
         }
         gameModule.addSystems()

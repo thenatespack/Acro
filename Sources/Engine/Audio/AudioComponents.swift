@@ -162,7 +162,7 @@ final class SpatialAudioBinding {
             case .success(let buffer): clips[id] = buffer
             case .failure(let error):
                 failed.insert(id)
-                print("AudioEmitter: could not load \(id): \(error)")
+                EngineLog.warning("AudioEmitter: could not load \(id): \(error)", category: .audio)
             }
         }
     }
@@ -182,7 +182,7 @@ final class SpatialAudioBinding {
         if assets.pack != nil {
             guard let data = try? assets.fileData(of: id) else {
                 failed.insert(id)
-                print("AudioEmitter: no audio asset \(id)")
+                EngineLog.warning("AudioEmitter: no audio asset \(id)", category: .audio)
                 return nil
             }
             source = .data(data)
@@ -190,7 +190,7 @@ final class SpatialAudioBinding {
             source = .url(url)
         } else {
             failed.insert(id)
-            print("AudioEmitter: no audio asset \(id)")
+            EngineLog.warning("AudioEmitter: no audio asset \(id)", category: .audio)
             return nil
         }
         loading.insert(id)

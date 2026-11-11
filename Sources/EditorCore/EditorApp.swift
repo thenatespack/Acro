@@ -170,6 +170,11 @@ public final class EditorApp: Game, EditorHost {
     public private(set) var preferredUIScale: Float = 1
     private var prefsDirty = false
     private var captureRequested = false
+    /// The game asked the Game view to lock the cursor (`Input.isMouseCaptured`). The window
+    /// lock follows it. Esc on the window swallows the key, so a drop is forwarded as Esc.
+    private var gameMouseCapture = false
+    /// A synthetic Esc was forwarded down and still needs its key-up.
+    private var releaseGameEscape = false
     /// The MCP server, when a transport is on (`EditorOptions.mcp`).
     public internal(set) var mcp: EditorMCP?
 
@@ -1346,14 +1351,35 @@ public final class EditorApp: Game, EditorHost {
         gameViewActive = session.isPlaying && session.showsGameCamera && gameWidget.isEffectivelyVisible
             && RenderPrep.findCamera(in: session.gameWorld) != nil
         if gameViewActive {
+            if releaseGameEscape {
+                session.forwardToGame([.key(.escape, down: false)])
+                releaseGameEscape = false
+            }
             forwardInputToGame(input, keyboardFree: keyboardFree)
+            // The frame capture is first requested, the window has not locked yet. That is not a drop.
+            if gameMouseCapture && captureRequested && !input.isMouseCaptured {
+                session.forwardToGame([.key(.escape, down: true)])
+                releaseGameEscape = true
+                gameMouseCapture = false
+            } else if session.gameInput.isMouseCaptured {
+                gameMouseCapture = true
+            }
+            if input.isMouseCaptured && gameMouseCapture && input.mouseDelta != .zero {
+                session.forwardToGame([.mouseMotion(by: input.mouseDelta / ui.uiScale)])
+            }
         } else {
+            if releaseGameEscape {
+                session.forwardToGame([.key(.escape, down: false)])
+                releaseGameEscape = false
+            }
+            gameMouseCapture = false
             releaseForwardedInput()
         }
         guard viewportWidget.isEffectivelyVisible else {
-            if captureRequested {
-                input.isMouseCaptured = false
-                captureRequested = false
+            // The Game tab can be the only view in front. The lock still follows the game.
+            if gameMouseCapture != captureRequested {
+                input.isMouseCaptured = gameMouseCapture
+                captureRequested = gameMouseCapture
             }
             return
         }
@@ -1374,7 +1400,7 @@ public final class EditorApp: Game, EditorHost {
         }
         viewport.update(frameInput) { [unowned self] view in toolContext(view: view) }
 
-        let wantsCapture = viewport.wantsMouseCapture
+        let wantsCapture = viewport.wantsMouseCapture || gameMouseCapture
         if wantsCapture != captureRequested {
             input.isMouseCaptured = wantsCapture
             captureRequested = wantsCapture
