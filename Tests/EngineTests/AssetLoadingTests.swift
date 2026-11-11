@@ -334,7 +334,8 @@ import QuartzCore
         let mesh = MeshHandle(AssetReference(tri, subAsset: "mesh/Tri")), material = MaterialHandle(AssetReference(painted))
         _ = world.spawn(Transform(), MeshRenderer(mesh: mesh, material: material))
         world.propagateTransforms()
-        for _ in 0..<4 { renderer.gather(world) }
+        // Loading doesn't block: gather until the texture is in (a slow runner can need more frames).
+        #expect(spin(database) { renderer.gather(world); return renderer.material(material)?.texture != nil })
         let first = try #require(renderer.material(material)?.texture)
         #expect(first.width == 2)
 
@@ -342,7 +343,7 @@ import QuartzCore
         try overwrite(Image(width: 4, height: 4, pixels: [UInt8](repeating: 200, count: 64)).pngData(), at: pngURL)
         database.refreshAsync()
         database.waitForAll()
-        for _ in 0..<4 { renderer.gather(world) }
+        #expect(spin(database) { renderer.gather(world); return renderer.material(material)?.texture?.width == 4 })
         let second = try #require(renderer.material(material)?.texture)
         #expect(second !== first && second.width == 4)
 

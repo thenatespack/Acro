@@ -85,8 +85,8 @@ extension GameExporter {
         ldd "/out/app/$NAME" | awk '$2 == "=>" && $1 ~ /^libglfw\.so/ {print $1, $3}' | while read -r name path; do
             cp -L "$path" "/out/app/lib/$name"
         done
-        chown -R "$HOST_IDS" /out/app 2>/dev/null || true
-        if [ -e Package.resolved ]; then chown "$HOST_IDS" Package.resolved 2>/dev/null || true; fi
+        chown -R "${HOST_IDS:-0:0}" /out/app 2>/dev/null || true
+        if [ -e Package.resolved ]; then chown "${HOST_IDS:-0:0}" Package.resolved 2>/dev/null || true; fi
         """#
 
     /// Builds the player in a Linux container; the products land in `staging/docker`.
@@ -124,11 +124,17 @@ extension GameExporter {
             if game != engine { mounts += ["-v", "\(game):\(game):ro"] }
         }
         mounts += ["-v", "\(player):\(player)", "-v", "\(dockerVolume):\(player)/.build", "-v", "\(out.path):/out"]
-        let environment = ["PLAYER": player, "PRODUCT": playerTarget, "NAME": options.name, "FLAGS": buildFlags.joined(separator: " "),
-                           "STRIP": options.configuration == .release ? "1" : "0", "HOST_IDS": "\(getuid()):\(getgid())"]
-        let command = ["run", "--rm", "--platform", dockerPlatform] + mounts
-            + environment.sorted { $0.key < $1.key }.flatMap { ["-e", "\($0.key)=\($0.value)"] }
-            + [dockerImageTag, "bash", "-c", Self.dockerScript]
+        var environment: [String: String] = ["PLAYER": player, "PRODUCT": playerTarget, "NAME": options.name,
+                                             "FLAGS": buildFlags.joined(separator: " "),
+                                             "STRIP": options.configuration == .release ? "1" : "0"]
+        #if !os(Windows)
+        // Output files get the host user's ids instead of root's (no POSIX ids on Windows).
+        environment["HOST_IDS"] = "\(getuid()):\(getgid())"
+        #endif
+        var command: [String] = ["run", "--rm", "--platform", dockerPlatform]
+        command += mounts
+        for (key, value) in environment.sorted(by: { $0.key < $1.key }) { command += ["-e", "\(key)=\(value)"] }
+        command += [dockerImageTag, "bash", "-c", Self.dockerScript]
         progress?("Docker: building \(options.gameTarget) with Engine (\(options.configuration.rawValue), \(options.architecture.rawValue)) "
                   + "in \(Self.dockerBaseImage); the first build compiles Engine: minutes, more under emulation")
         let build = Self.docker(command, in: staging)
