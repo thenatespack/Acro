@@ -1,4 +1,4 @@
-# Acro
+<p align="center"><img src="docs/images/banner.png" alt="Acro: 3D game engine and editor, written in Swift" width="100%"></p>
 
 Acro is a cross-platform 3D game engine and editor written in Swift. It uses Metal on macOS and Vulkan on Linux and Windows. The repository includes a runnable demo, a scene editor, an example game module, and tools for building distributable games.
 
