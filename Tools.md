@@ -20,7 +20,7 @@ wedge, pyramid, group pivots) with a part hierarchy, colors, textures, PBR setti
 keyframe or ready-made animations (spin, bob, swing, pulse, shake). The Mesh Builder tab shows
 the model in its own viewport with picking, Move / Rotate / Scale gizmos and live animation
 preview. Tools: `meshBuild.new`, `meshBuild.get`, `meshBuild.set`, `meshBuild.edit`,
-`meshBuild.open`. See README › Mesh Builder.
+`meshBuild.open`. See docs/Builders.md › Mesh Builder.
 
 ### VFX Builder (`.vfx`)
 
@@ -30,7 +30,7 @@ fire, smoke, sparks, explosion, magic hit, rain, snow, dust, portal. Imported as
 `PrefabNode.particles` are new engine fields). The VFX Builder tab previews it looping with
 Restart, Loop and Pause, a ground plane and a background color. Tools: `vfx.new`, `vfx.get`,
 `vfx.set`, `vfx.edit`, `vfx.open`. Not done: sub-emitter links and particle textures in `.vfx`.
-See README > VFX Builder.
+See docs/Builders.md › VFX Builder.
 
 ### Sound Builder (`.sfx`)
 
@@ -39,7 +39,7 @@ slide, vibrato, attack/sustain/decay, low/high-pass, arpeggio, bit crush), with 
 coin, laser, explosion, hit, power-up, blip) plus Randomize and Mutate. Rendered by pure-Swift
 DSP, deterministic per seed, and loadable anywhere an audio file is (`AudioEmitter.clip`). The
 Sound Builder tab has a waveform view, Play / Auto-play and the parameters form. Tools:
-`sfx.new`, `sfx.get`, `sfx.set`, `sfx.edit`, `sfx.play`, `sfx.open`. See README › Sound Builder.
+`sfx.new`, `sfx.get`, `sfx.set`, `sfx.edit`, `sfx.play`, `sfx.open`. See docs/Builders.md › Sound Builder.
 
 ### Post-FX Builder (`.postfx`)
 
@@ -49,7 +49,7 @@ single tonemap pass on both backends. Presets (neutral, cinematic, warm, cold, n
 assigned per camera (`Camera.postFX`) or blended by `PostFXVolume` (box or sphere, blend
 distance, priority). The Post-FX tab previews a sample scene with a before/after split.
 Tools: `postfx.new`, `postfx.get`, `postfx.set`, `postfx.edit`, `postfx.assign`, `postfx.open`.
-Not done: depth of field, LUT grading, a split preview inside the Scene view. See README.
+Not done: depth of field, LUT grading, a split preview inside the Scene view. See docs/Builders.md › Post-FX Builder.
 
 ### Data Table (`.table`)
 
@@ -59,7 +59,7 @@ unknown enum case, dangling asset or row reference, duplicate ids). The Data Tab
 grid with sort, filter, bulk edit and CSV import/export. Game code reads rows by id with typed
 access (`assets.dataTable(path:)?.row("goblin")?.number("hp")`), hot-reloaded while playing.
 Tools: `table.new`, `table.get`, `table.set`, `table.edit`, `table.query`, `table.importCsv`,
-`table.exportCsv`, `table.open`. See README › Data Table Builder.
+`table.exportCsv`, `table.open`. See docs/Builders.md › Data Table Builder.
 
 ### Terrain Builder (`.terrain`)
 
@@ -70,7 +70,7 @@ with radius, strength and falloff), a splat map of texture layers (flat colors, 
 density, slope, height and layer rules on a stable seed, drawn instanced). The Terrain Builder
 tab sculpts and paints by dragging on the terrain. Tools: `terrain.new`, `terrain.get`,
 `terrain.set`, `terrain.edit`, `terrain.open`, `terrain.sculpt`, `terrain.paint`,
-`terrain.scatter`. See README › Terrain Builder. Not yet: runtime LOD switching (the extra
+`terrain.scatter`. See docs/Builders.md › Terrain Builder. Not yet: runtime LOD switching (the extra
 LOD meshes are generated but nothing swaps them in), per-pixel GPU splat blending with normal
 maps (layers are baked to one albedo), and terrain-following for other builders.
 
