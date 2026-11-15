@@ -1,6 +1,8 @@
 #if canImport(GameController)
 import GameController
 #endif
+import EngineCore
+import EngineGraphics
 
 /// Reads the connected gamepads from the OS, once per frame (`Input.updateGamepads`).
 @MainActor
@@ -75,8 +77,6 @@ final class GameControllerSource: GamepadSource {
 
 #if ENGINE_VULKAN
 import CGLFW
-import EngineCore
-import EngineGraphics
 
 /// GLFW's gamepad API: joysticks with a mapping in GLFW's database (SDL_GameControllerDB format;
 /// the common Xbox / PlayStation / Switch pads are built in) read in the standard layout.

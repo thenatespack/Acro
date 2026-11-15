@@ -1,3 +1,6 @@
+import EngineCore
+import EngineGraphics
+
 /// An item of the macOS app menu, above Quit (`Engine.setAppMenuItems`): "Settings…" with
 /// Cmd+, for example. Other platforms have no app menu and ignore them.
 public struct AppMenuItem {
@@ -50,8 +53,6 @@ extension PlatformWindow {
 
 #if canImport(AppKit)
 import AppKit
-import EngineCore
-import EngineGraphics
 
 /// Sets the Dock icon (`NSApp.applicationIconImage`): how macOS shows an app icon for a bare
 /// executable without a bundle, under either backend.
