@@ -7,23 +7,23 @@ public struct Ray: Sendable, Equatable {
     public var direction: Vec3
 
     /// `direction` is normalized.
-    public init(origin: Vec3, direction: Vec3) {
+    @inlinable public init(origin: Vec3, direction: Vec3) {
         self.origin = origin
         self.direction = normalize(direction)
     }
 
-    public func point(at t: Float) -> Vec3 { origin + direction * t }
+    @inlinable public func point(at t: Float) -> Vec3 { origin + direction * t }
 
     /// Where the ray enters and leaves an axis-aligned box (slab test), as distances along it,
     /// or nil if it misses or the box is behind the origin. `enter` is 0 when the origin is inside.
-    public func intersect(_ bounds: Bounds) -> (enter: Float, exit: Float)? {
+    @inlinable public func intersect(_ bounds: Bounds) -> (enter: Float, exit: Float)? {
         Self.intersect(origin: origin, direction: direction, bounds: bounds)
     }
 
     /// The slab test for any direction (not necessarily unit length; distances are then in
     /// multiples of it). Axes the direction is parallel to only pass if the origin is inside
     /// the slab.
-    static func intersect(origin: Vec3, direction: Vec3, bounds: Bounds) -> (enter: Float, exit: Float)? {
+    @usableFromInline static func intersect(origin: Vec3, direction: Vec3, bounds: Bounds) -> (enter: Float, exit: Float)? {
         let lo = bounds.center - bounds.halfExtent, hi = bounds.center + bounds.halfExtent
         var enter: Float = 0, exit = Float.infinity
         for axis in 0..<3 {
@@ -44,13 +44,13 @@ public struct Ray: Sendable, Equatable {
 
     /// The distance to triangle `a b c` (either side), or nil if the ray misses it or it is
     /// behind the origin (Möller–Trumbore).
-    public func intersect(_ a: Vec3, _ b: Vec3, _ c: Vec3) -> Float? {
+    @inlinable public func intersect(_ a: Vec3, _ b: Vec3, _ c: Vec3) -> Float? {
         Self.intersectTriangle(origin: origin, direction: direction, a, b, c)?.t
     }
 
     /// Möller–Trumbore for any direction: the hit's ray parameter `t` and barycentrics (u, v)
     /// of b and c, and whether the triangle faces the ray (counter-clockwise seen from the origin).
-    package static func intersectTriangle(origin: Vec3, direction: Vec3, _ a: Vec3, _ b: Vec3, _ c: Vec3)
+    @usableFromInline package static func intersectTriangle(origin: Vec3, direction: Vec3, _ a: Vec3, _ b: Vec3, _ c: Vec3)
         -> (t: Float, u: Float, v: Float, frontFacing: Bool)? {
         let e1 = b - a, e2 = c - a
         let p = cross(direction, e2)
@@ -72,7 +72,7 @@ public struct Ray: Sendable, Equatable {
 
     /// The distance to the plane through `point` with normal `normal`, or nil if the ray is
     /// (nearly) parallel to it or the plane is behind the origin.
-    public func intersectPlane(point: Vec3, normal: Vec3) -> Float? {
+    @inlinable public func intersectPlane(point: Vec3, normal: Vec3) -> Float? {
         let n = normalize(normal)
         let denominator = dot(direction, n)
         guard abs(denominator) > 1e-6 else { return nil }
@@ -83,7 +83,7 @@ public struct Ray: Sendable, Equatable {
     /// The parameter `s` of the point on the infinite line `linePoint + s * lineDirection`
     /// (unit direction) closest to this ray (treated as a full line), or nil when they are
     /// (nearly) parallel. The constraint math of axis drags.
-    public func closestParameter(onLine linePoint: Vec3, direction lineDirection: Vec3) -> Float? {
+    @inlinable public func closestParameter(onLine linePoint: Vec3, direction lineDirection: Vec3) -> Float? {
         let a = normalize(lineDirection)
         let b = dot(a, direction)
         let denominator = 1 - b * b
@@ -98,13 +98,13 @@ public struct Bounds: Equatable, Sendable {
     public var center: Vec3
     public var halfExtent: Vec3
 
-    public init(center: Vec3, halfExtent: Vec3) {
+    @inlinable public init(center: Vec3, halfExtent: Vec3) {
         self.center = center
         self.halfExtent = halfExtent
     }
 
     /// The smallest box around `points` (a zero box at the origin when empty).
-    public init<S: Sequence>(enclosing points: S) where S.Element == Vec3 {
+    @inlinable public init<S: Sequence>(enclosing points: S) where S.Element == Vec3 {
         var lo = Vec3(repeating: .infinity), hi = Vec3(repeating: -.infinity)
         for p in points {
             lo = pointwiseMin(lo, p)
