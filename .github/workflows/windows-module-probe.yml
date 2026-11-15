@@ -49,15 +49,15 @@ jobs:
           "game objects: $($objects -join ', ')"
 
           "--- A: game linked against Core.lib, loaded by Host (imports Core.dll)"
-          swiftc -emit-library -o "$out\A\Game.dll" $objects "$bin\Core.lib" *> "$out\link-A.log"
+          swiftc -emit-library -o "$out\A\Game.dll" $objects "$bin\Core.lib" -Xlinker /EXPORT:acro_module_v1 *> "$out\link-A.log"
           "link A exit: $LASTEXITCODE"; Get-Content "$out\link-A.log" -Tail 15
-          "Game A imports:"; & llvm-readobj --coff-imports "$out\A\Game.dll" | Select-String 'Name: .*\.dll'
+          "Game A imports:"; & llvm-readobj --coff-imports "$out\A\Game.dll" | Select-String 'Name: .*\.(dll|exe)'
           & "$bin\Host.exe" "$out\A\Game.dll"; "host A exit: $LASTEXITCODE"
 
           "--- B: game linked against InHost.lib, loaded by InHost (embeds Core)"
-          swiftc -emit-library -o "$out\B\Game.dll" $objects "$coreBin\InHost.lib" *> "$out\link-B.log"
+          swiftc -emit-library -o "$out\B\Game.dll" $objects "$coreBin\InHost.lib" -Xlinker /EXPORT:acro_module_v1 *> "$out\link-B.log"
           "link B exit: $LASTEXITCODE"; Get-Content "$out\link-B.log" -Tail 15
-          "Game B imports:"; & llvm-readobj --coff-imports "$out\B\Game.dll" | Select-String 'Name: .*\.dll'
+          "Game B imports:"; & llvm-readobj --coff-imports "$out\B\Game.dll" | Select-String 'Name: .*\.(dll|exe)'
           & "$coreBin\InHost.exe" "$out\B\Game.dll"; "host B exit: $LASTEXITCODE"
 
       - uses: actions/upload-artifact@v4
