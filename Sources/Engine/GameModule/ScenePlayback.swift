@@ -1,4 +1,15 @@
 import Foundation
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
 
 /// Plays scene files with a game module outside the editor, the way the editor's play mode
 /// does: the play systems (physics and 2D physics when the scene has colliders, sprite

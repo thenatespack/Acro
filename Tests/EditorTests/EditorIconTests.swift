@@ -2,6 +2,17 @@ import Foundation
 import Testing
 @testable import EditorCore
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
 // Editor icons (card #659): the vector icon rasterizer, the icons of every component type and
 // asset kind, game-registered icons, icon-only toolbar buttons that keep their labels, and the

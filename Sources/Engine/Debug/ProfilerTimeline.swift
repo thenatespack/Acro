@@ -1,4 +1,15 @@
 import Foundation
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
 
 /// The profiler's part of the overlay: the last frames as stacked bars (CPU scopes at the top
 /// level of the main thread, then that frame's GPU passes next to them) and the newest frame

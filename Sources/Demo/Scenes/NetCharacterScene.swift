@@ -1,7 +1,7 @@
 import Engine
 import Foundation
 
-/// Client-side prediction (Sources/Engine/Net, card 662): one server and two clients in one
+/// Client-side prediction (Sources/EngineNet/Net, card 662): one server and two clients in one
 /// process over a simulated link (100 ms one way, 20 ms jitter, 3% loss each way). Each client
 /// moves its own capsule character immediately from its inputs (predicted with the same
 /// `CharacterController` step the server runs), sends the inputs redundantly, and reconciles on

@@ -19,7 +19,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 CONFIG=${CONFIG:-release}
 APP=${1:-"$ROOT/Build/Editor.app"}
 NAME=Editor
-VERSION=$(sed -n 's/.*"\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)".*/\1/p' "$ROOT/Sources/Engine/Core/EngineVersion.swift" | head -n 1)
+VERSION=$(sed -n 's/.*"\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)".*/\1/p' "$ROOT/Sources/EngineCore/Core/EngineVersion.swift" | head -n 1)
 VERSION=${VERSION:-0.0.0}
 
 cd "$ROOT"
@@ -30,7 +30,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN/$NAME" "$APP/Contents/MacOS/$NAME"
 # SwiftPM resource bundles (shaders, fonts); Bundle.module finds them in Contents/Resources.
-for bundle in "$BIN"/Acro_Engine.bundle "$BIN"/Acro_Editor*.bundle; do
+for bundle in "$BIN"/Acro_Engine*.bundle "$BIN"/Acro_Editor*.bundle; do
     [ -e "$bundle" ] && cp -R "$bundle" "$APP/Contents/Resources/"
 done
 [ -f "$ROOT/logos/AppIcon.icns" ] && cp "$ROOT/logos/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"

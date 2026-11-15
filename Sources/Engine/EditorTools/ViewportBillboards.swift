@@ -1,5 +1,17 @@
 /// An icon an editor draws at an entity's position in a scene view, for entities with nothing
 /// to see or click on (cameras, lights, audio sources, particle emitters, triggers).
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
+
 public struct ViewportBillboard: Sendable, Equatable {
     public var entity: Entity
     /// World position (usually the entity's `GlobalTransform` translation).

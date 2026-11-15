@@ -23,7 +23,7 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 ### Fixed
 
 - Windows: `Editor.exe` and `GameRunner.exe` started by double-clicking show startup errors in a message box, and on a crash a message box keeps the console window, with the error, open (`StartupErrors`). From a terminal they print as before.
-- Windows release: the zip now includes Engine's resource bundle (`Acro_Engine.bundle`: shaders and fonts). Without it, `Editor.exe` exited as soon as it started. The packaging script only looked for Linux's `.resources` folder name.
+- Windows release: the zip now includes the engine's resource bundle (`Acro_EngineCore.bundle`: shaders and fonts). Without it, `Editor.exe` exited as soon as it started. The packaging script only looked for Linux's `.resources` folder name.
 - Windows: crash recovery files are written with the Windows `write` signature.
 - Windows CI: the build links against vcpkg's zlib 1.3.2 and later, which names its import library `z.lib`.
 

@@ -1,4 +1,15 @@
 import Foundation
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
 
 // The runtime of an exported game (GameExporter.swift): one executable with Engine and the
 // game module linked in statically, and an asset pack. Its generated `main.swift` is just

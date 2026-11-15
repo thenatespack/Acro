@@ -1,5 +1,16 @@
 import Testing
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
 @MainActor @Test func batchRoutesResultsToTheirSetsAndIndices() {
     let a = OcclusionQuerySet(count: 3)

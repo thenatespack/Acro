@@ -8,6 +8,17 @@ import Musl
 #elseif os(Windows)
 import WinSDK
 #endif
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
 
 /// Errors from building, linking and loading game modules.
 public enum GameModuleError: Error, Equatable, CustomStringConvertible {
@@ -67,7 +78,7 @@ public final class LoadedGameModule {
     public let loadedAt = Date()
     /// How many "Class X is implemented in both" warnings the Objective-C runtime printed while
     /// mapping it (filtered out; see `GameModuleLoader.load`).
-    public internal(set) var duplicateClassWarnings = 0
+    public package(set) var duplicateClassWarnings = 0
     let handle: UnsafeMutableRawPointer
 
     init(module: GameModule, sourceURL: URL, loadedURL: URL, handle: UnsafeMutableRawPointer) {

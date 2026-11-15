@@ -17,8 +17,15 @@ let vulkanEnabled: Bool = {
 let vulkanEnabled = true
 #endif
 
-// EngineMCP (Foundation only) lets any game host an MCP server (`EngineConfig.mcp`).
-var engineDependencies: [Target.Dependency] = ["CZlib", "CStbTrueType", "CStbImage", "CAudio", "CTextureCodec", "EngineMCP"]
+// The engine is split into modules so release builds (whole-module optimization, which runs
+// one module's optimizer on one core) can compile independent parts in parallel. `Engine` is
+// the module everyone imports: it re-exports the rest (Sources/Engine/Exports.swift). Bottom
+// up: EngineCore (math, input, logging, resources) → EngineScene (ECS, jobs, persistence) and
+// EngineGraphics (the device API) → EngineBackends (Metal/Vulkan, windows), EngineText,
+// EnginePhysics, EngineAudio → EngineAssets (database, importers, prefab component data),
+// EngineNet, EngineUI → EngineRendering → Engine (the Engine class, packaging, game modules,
+// editor tools).
+var backendDependencies: [Target.Dependency] = []
 var engineSwiftSettings: [SwiftSetting] = []
 var vulkanTargets: [Target] = []
 
@@ -44,7 +51,7 @@ if vulkanEnabled {
         ),
     ]
     #endif
-    engineDependencies += ["CVulkan", "CGLFW"]
+    backendDependencies += ["CVulkan", "CGLFW"]
     engineSwiftSettings.append(.define("ENGINE_VULKAN"))
 }
 
@@ -115,11 +122,16 @@ let engineProductType: Product.Library.LibraryType? = .dynamic
 let engineProductType: Product.Library.LibraryType? = nil
 #endif
 
+// Every engine module is in the Engine product, so on Windows (a .dynamic product) all of them
+// are compiled with their public symbols exported.
+let engineModules = ["EngineCore", "EngineScene", "EngineGraphics", "EngineBackends", "EngineText", "EnginePhysics", "EngineAudio",
+                     "EngineAssets", "EngineNet", "EngineUI", "EngineRendering", "Engine"]
+
 let package = Package(
     name: "Acro",
     platforms: [.macOS(.v14)],
     products: [
-        .library(name: "Engine", type: engineProductType, targets: ["Engine"]),
+        .library(name: "Engine", type: engineProductType, targets: engineModules),
         .library(name: "EngineMCP", targets: ["EngineMCP"]),
         .executable(name: "Demo", targets: ["Demo"]),
         .executable(name: "Editor", targets: ["Editor"]),
@@ -149,12 +161,32 @@ let package = Package(
             // Only 4x4 blocks are used: smaller per-block working sets.
             cxxSettings: [.define("ASTCENC_BLOCK_MAX_TEXELS", to: "16")] + textureCodecCXXFlags
         ),
+        .target(name: "EngineCore", dependencies: ["CZlib", "CStbImage"], resources: [.copy("Shaders"), .copy("Fonts")],
+                swiftSettings: engineSwiftSettings, linkerSettings: windowsLinkerSettings),
+        .target(name: "EngineScene", dependencies: ["EngineCore"], swiftSettings: engineSwiftSettings, linkerSettings: windowsLinkerSettings),
+        .target(name: "EngineGraphics", dependencies: ["EngineCore", "CTextureCodec"], swiftSettings: engineSwiftSettings,
+                linkerSettings: windowsLinkerSettings),
+        .target(name: "EngineBackends", dependencies: ["EngineGraphics"] + backendDependencies, swiftSettings: engineSwiftSettings,
+                linkerSettings: windowsLinkerSettings),
+        // UI/Icons: Lucide icon paths (ISC), see its LICENSES.md.
+        .target(name: "EngineText", dependencies: ["EngineScene", "EngineGraphics", "CStbTrueType"], exclude: ["UI/Icons/LICENSES.md"],
+                swiftSettings: engineSwiftSettings, linkerSettings: windowsLinkerSettings),
+        .target(name: "EnginePhysics", dependencies: ["EngineScene", "EngineGraphics"], swiftSettings: engineSwiftSettings,
+                linkerSettings: windowsLinkerSettings),
+        .target(name: "EngineAudio", dependencies: ["EngineScene", "CAudio"], swiftSettings: engineSwiftSettings,
+                linkerSettings: windowsLinkerSettings),
+        .target(name: "EngineAssets", dependencies: ["EnginePhysics", "EngineAudio"], swiftSettings: engineSwiftSettings,
+                linkerSettings: windowsLinkerSettings),
+        .target(name: "EngineNet", dependencies: ["EnginePhysics", "CZlib"], swiftSettings: engineSwiftSettings,
+                linkerSettings: windowsLinkerSettings),
+        .target(name: "EngineUI", dependencies: ["EngineText", "EngineBackends", "EnginePhysics"], swiftSettings: engineSwiftSettings,
+                linkerSettings: windowsLinkerSettings),
+        .target(name: "EngineRendering", dependencies: ["EngineAssets", "EngineText"], swiftSettings: engineSwiftSettings,
+                linkerSettings: windowsLinkerSettings),
+        // EngineMCP (Foundation only) lets any game host an MCP server (`EngineConfig.mcp`).
         .target(
             name: "Engine",
-            dependencies: engineDependencies,
-            // UI/Icons: Lucide icon paths (ISC), see its LICENSES.md.
-            exclude: ["UI/Icons/LICENSES.md"],
-            resources: [.copy("Shaders"), .copy("Fonts")],
+            dependencies: ["EngineRendering", "EngineUI", "EngineNet", "EngineBackends", "EngineAudio", "EngineMCP"] + backendDependencies,
             swiftSettings: engineSwiftSettings,
             linkerSettings: windowsLinkerSettings
         ),

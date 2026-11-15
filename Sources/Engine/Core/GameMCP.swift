@@ -1,5 +1,16 @@
 import EngineMCP
 import Foundation
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
 
 // A game as an MCP server (`EngineConfig.mcp`, or `ENGINE_MCP=1` for stdio / `ENGINE_MCP=http`):
 // an AI client can pause and step the game, play input into it, take screenshots, read stats

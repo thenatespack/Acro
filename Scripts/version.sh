@@ -1,5 +1,5 @@
 #!/bin/sh
-# Engine version numbering: MAJOR.MINOR.PATCH, kept in Sources/Engine/Core/EngineVersion.swift.
+# Engine version numbering: MAJOR.MINOR.PATCH, kept in Sources/EngineCore/Core/EngineVersion.swift.
 #
 #   Scripts/version.sh                  print the version
 #   Scripts/version.sh install          set up the git hook and merge driver (once per clone)
@@ -19,7 +19,7 @@ set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)  # not `git rev-parse`: in a linked worktree hooks get GIT_DIR, which makes that the cwd
 cd "$ROOT"
-VERSION_FILE=Sources/Engine/Core/EngineVersion.swift
+VERSION_FILE=Sources/EngineCore/Core/EngineVersion.swift
 STATE_FILE=.engine-version
 EXCLUDE=":(exclude)$VERSION_FILE"
 
@@ -46,7 +46,7 @@ source_hash() { git ls-files -s -- Sources Package.swift "$EXCLUDE" | git hash-o
 api_hash() {
     { git grep --cached -h -I -E \
         '^[^/"]*(^|[[:space:]])(public[[:space:]]|open[[:space:]]+(class|func|var|override|subscript|static|final))' \
-        -- Sources/Engine Sources/EngineMCP "$EXCLUDE" || true; } |
+        -- 'Sources/Engine*' "$EXCLUDE" || true; } |
         sed -e 's://.*$::' -e 's/[[:space:]]*{.*$//' -e 's/[[:space:]][[:space:]]*/ /g' -e 's/^ //' -e 's/ $//' |
         LC_ALL=C sort | git hash-object --stdin
 }

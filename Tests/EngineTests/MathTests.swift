@@ -1,5 +1,16 @@
 import Testing
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
 private func approx(_ a: Vec4, _ b: Vec4, _ eps: Float = 1e-5) -> Bool {
     ((a - b) * (a - b)).sum() < eps

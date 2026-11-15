@@ -1,4 +1,15 @@
 import Foundation
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
 
 // Exporting a game: the project's game module and Engine linked statically into one executable
 // (release or debug, for the chosen architecture), its assets cooked into a pack (AssetCooker), laid out as something that runs on
@@ -8,8 +19,8 @@ import Foundation
 // macOS   <out>/<Name>.app/Contents/Info.plist
 //                                  /MacOS/<Name>                       Engine + game module, one executable
 //                                  /Resources/<Name>.pack              the cooked assets
-//                                  /Resources/Acro_Engine.bundle   shaders, fonts
-// Linux   <out>/<Name>/<Name>, <Name>.pack, Acro_Engine.bundle/ (or .resources/), lib/libglfw.so.3, run.sh
+//                                  /Resources/Acro_EngineCore.bundle   shaders, fonts
+// Linux   <out>/<Name>/<Name>, <Name>.pack, Acro_EngineCore.bundle/ (or .resources/), lib/libglfw.so.3, run.sh
 // ```
 //
 // **Static linking.** In the editor a game is a module loaded at run time (GameModule.swift):
@@ -663,35 +674,3 @@ public struct GameExporter: Sendable {
     }
 }
 
-/// `Project.json`'s `"build"` object: defaults for Build Game (`game.build`) and `--cook`.
-///
-/// ```json
-/// "build": {"scenes": ["Scenes/Main.scene"], "include": ["Audio/theme.ogg"], "name": "My Game",
-///           "output": "Build", "textureFamily": "astc", "textures": "compress", "enginePackage": "../engine"}
-/// ```
-public struct GameBuildSettings: Equatable, Sendable, Codable {
-    /// Scenes to cook, the start scene first (paths relative to the project folder or `Assets/`).
-    public var scenes: [String]?
-    /// More assets to cook: ones only code refers to (paths relative to `Assets/`, or ids).
-    public var include: [String]?
-    /// The app's name; default: the project's.
-    public var name: String?
-    /// The output folder, relative to the project folder (default `Build`); a folder per platform goes inside.
-    public var output: String?
-    /// Default: ASTC on macOS, BC elsewhere.
-    public var textureFamily: TextureFamily?
-    public var textures: TextureCookMode?
-    /// The engine's package, when it can't be found from the game's package.
-    public var enginePackage: String?
-
-    public init(scenes: [String]? = nil, include: [String]? = nil, name: String? = nil, output: String? = nil,
-                textureFamily: TextureFamily? = nil, textures: TextureCookMode? = nil, enginePackage: String? = nil) {
-        self.scenes = scenes
-        self.include = include
-        self.name = name
-        self.output = output
-        self.textureFamily = textureFamily
-        self.textures = textures
-        self.enginePackage = enginePackage
-    }
-}

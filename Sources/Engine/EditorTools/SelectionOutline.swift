@@ -1,4 +1,16 @@
 /// How `SelectionOutlineRenderer` draws the outline.
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
+
 public struct SelectionOutlineStyle: Sendable, Equatable {
     /// Width in points (times the view's pixel scale: constant on screen).
     public var width: Float
@@ -275,8 +287,8 @@ public final class SelectionOutlineRenderer {
 
     public init(device: RenderDevice, maskLabel: String = "outline mask") throws {
         self.device = device
-        maskShader = try ShaderSource.load(named: "outline_mask", bundle: .module)
-        compositeShader = try ShaderSource.load(named: "outline_composite", bundle: .module)
+        maskShader = try ShaderSource.load(named: "outline_mask", bundle: .engineResources)
+        compositeShader = try ShaderSource.load(named: "outline_composite", bundle: .engineResources)
         mask = try RenderTarget(device: device, width: 1, height: 1, multisampled: false, label: maskLabel)
         sampler = try device.makeSampler(SamplerDescriptor(filter: .nearest))
     }
@@ -389,7 +401,7 @@ public final class SelectionOutlineRenderer {
         } else if key.skinned {
             if skinnedMaskShader == nil {
                 do {
-                    skinnedMaskShader = try ShaderSource.load(vertex: "outline_mask_skinned", fragment: "outline_mask", bundle: .module)
+                    skinnedMaskShader = try ShaderSource.load(vertex: "outline_mask_skinned", fragment: "outline_mask", bundle: .engineResources)
                 } catch {
                     print("SelectionOutlineRenderer: skinned mask shader unavailable: \(error)")
                     return nil

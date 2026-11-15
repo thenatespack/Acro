@@ -1,4 +1,15 @@
 import Foundation
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
 
 // Building a Linux game in Docker (`GameExportOptions.useDocker`, the Export Game dialog's
 // "Build in Docker"): the same generated player package, compiled by the Linux Swift toolchain

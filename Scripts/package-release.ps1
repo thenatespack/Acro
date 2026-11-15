@@ -15,7 +15,7 @@ Set-Location $Root
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $OutDir = (Resolve-Path $OutDir).Path
 
-$VersionFile = Get-Content Sources\Engine\Core\EngineVersion.swift -Raw
+$VersionFile = Get-Content Sources\EngineCore\Core\EngineVersion.swift -Raw
 if ($VersionFile -notmatch 'static let current = "(\d+\.\d+\.\d+)"') { throw "No engine version in EngineVersion.swift" }
 $Version = $Matches[1]
 $Name = "Acro-$Version-windows-x64"
@@ -39,11 +39,11 @@ foreach ($product in $Products) {
 }
 # Resource bundles (shaders, fonts). SwiftPM names them Acro_<Target>.bundle on Windows and
 # Acro_<Target>.resources on Linux; Bundle.module looks for them next to the exe and traps if
-# Engine's is missing, so the editor would exit as soon as it starts.
+# EngineCore's (the engine's shaders and fonts) is missing, so the editor would exit at once.
 Get-ChildItem $Bin -Directory | Where-Object { $_.Name -match '^Acro_(.+)\.(bundle|resources)$' -and $Matches[1] -ne 'Demo' } |
     ForEach-Object { Copy-Item $_.FullName $Stage -Recurse }
-if (-not (Get-ChildItem $Stage -Directory | Where-Object Name -match '^Acro_Engine\.(bundle|resources)$')) {
-    throw "Engine's resource bundle (Acro_Engine.bundle) is missing from $Bin"
+if (-not (Get-ChildItem $Stage -Directory | Where-Object Name -match '^Acro_EngineCore\.(bundle|resources)$')) {
+    throw "The engine's resource bundle (Acro_EngineCore.bundle) is missing from $Bin"
 }
 Copy-Item README.md, LICENSE, CHANGELOG.md $Stage
 

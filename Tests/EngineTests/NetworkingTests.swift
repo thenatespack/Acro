@@ -1,8 +1,19 @@
 import Foundation
 import Testing
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
-/// Snapshot replication (Sources/Engine/Net, cards 624 and 662) over the loopback and UDP
+/// Snapshot replication (Sources/EngineNet/Net, cards 624 and 662) over the loopback and UDP
 /// transports: deltas, interpolation under latency and loss, the compact encodings (quantized
 /// Transform, binary Codable, zlib), priorities and the bandwidth budget.
 @MainActor @Suite struct NetworkingTests {

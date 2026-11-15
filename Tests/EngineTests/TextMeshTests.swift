@@ -1,6 +1,17 @@
 import Foundation
 import Testing
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
 @Test func textMeshRoundTripsThroughJSON() throws {
     let mesh = TextMesh("Open\nNow", font: "Fonts/neon.ttf#1", size: 2, alignment: .right, verticalAlignment: .bottom,
@@ -73,7 +84,7 @@ import Testing
 
 @Test func fontIndexOutOfRangeThrows() throws {
     let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        .appendingPathComponent("Sources/Engine/Fonts/Inter-Regular.ttf")
+        .appendingPathComponent("Sources/EngineCore/Fonts/Inter-Regular.ttf")
     let bytes = [UInt8](try Data(contentsOf: url))
     #expect(throws: FontError.self) { try Font(data: bytes, index: 5) }
     _ = try Font(data: bytes, index: 0)
