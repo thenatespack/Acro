@@ -26,6 +26,9 @@ public final class ScriptEditorPanel {
     private let reloadButton: Button
     private let errorBanner: HStack
     private let errorLabel: Label
+    private let goToErrorButton: Button
+    /// The errors the banner shows, for Go to Error.
+    public private(set) var shownDiagnostics: [GameBuildDiagnostic] = []
 
     private var lastKnownReport: GameReloadReport?
     private var lastKnownError: String?
@@ -60,11 +63,15 @@ public final class ScriptEditorPanel {
         errorLabel.color = UIColor(hex: 0xff7b72)
         errorLabel.wraps = true
 
+        goToErrorButton = Button("Go to Error", name: "scriptGoToErrorButton")
+        goToErrorButton.tooltip = "Open the first error's file at its line"
+        goToErrorButton.isHidden = true
+
         let dismissErrorButton = Button("Dismiss", name: "dismissScriptError")
         dismissErrorButton.style.width = 60
 
         errorBanner = HStack(spacing: 6, padding: EdgeInsets(horizontal: 8, vertical: 4), [
-            errorLabel, Spacer(), dismissErrorButton
+            errorLabel, Spacer(), goToErrorButton, dismissErrorButton
         ])
         errorBanner.background = UIColor(hex: 0x3d1418)
         errorBanner.isHidden = true
@@ -96,8 +103,12 @@ public final class ScriptEditorPanel {
             self?.reloadGame()
         }
 
+        goToErrorButton.action = { [weak self] in
+            self?.goToFirstError()
+        }
+
         dismissErrorButton.action = { [weak self] in
-            self?.errorBanner.isHidden = true
+            self?.hideError()
         }
 
         updateHeader()
@@ -105,14 +116,21 @@ public final class ScriptEditorPanel {
 
     public func openScript(at url: URL) {
         guard session.isProjectScript(url.standardizedFileURL) else {
-            session.log.warning("Not opening \(url.path): only the project's own scripts can be edited here")
+            let message = "Can't open \(url.lastPathComponent): only .swift files in the project's script folders can be edited here"
+            session.log.warning(message)
+            showError(message)
             return
         }
         if isDirty {
             save()
         }
-        guard let content = try? String(contentsOf: url, encoding: .utf8) else {
-            session.log.warning("Could not read script at \(url.path)")
+        let content: String
+        do {
+            content = try String(contentsOf: url, encoding: .utf8)
+        } catch {
+            let message = "Couldn't read \(url.lastPathComponent): \(error.localizedDescription)"
+            session.log.warning(message)
+            showError(message)
             return
         }
 
@@ -131,9 +149,11 @@ public final class ScriptEditorPanel {
             statusLabel.color = UIColor(hex: 0x7ee787)
             session.log.info("Saved script \(url.lastPathComponent)")
         } catch {
-            session.log.error("Failed to save script \(url.lastPathComponent): \(error)")
+            let message = "Couldn't save \(url.lastPathComponent): \(error.localizedDescription)"
+            session.log.error(message)
             statusLabel.text = "Save failed"
             statusLabel.color = UIColor(hex: 0xff7b72)
+            showError(message)
         }
     }
 
@@ -152,20 +172,50 @@ public final class ScriptEditorPanel {
                 case .success(let report):
                     self.statusLabel.text = "Reloaded (\(String(format: "%.2f", report.totalSeconds))s)"
                     self.statusLabel.color = UIColor(hex: 0x7ee787)
-                    self.errorBanner.isHidden = true
+                    self.hideError()
                 case .failure(let error):
-                    self.statusLabel.text = "Build error"
+                    let diagnostics = self.session.gameModule.lastDiagnostics
+                    self.statusLabel.text = diagnostics.isEmpty ? "Build error" : "\(diagnostics.count) error\(diagnostics.count == 1 ? "" : "s")"
                     self.statusLabel.color = UIColor(hex: 0xff7b72)
-                    self.errorLabel.text = "\(error)"
-                    self.errorBanner.isHidden = false
+                    self.showError("\(error)", diagnostics: diagnostics)
                 }
             }
         } catch {
-            statusLabel.text = "Rebuild failed"
+            statusLabel.text = "Can't rebuild"
             statusLabel.color = UIColor(hex: 0xff7b72)
-            errorLabel.text = "\(error)"
-            errorBanner.isHidden = false
+            showError("\(error)")
         }
+    }
+
+    /// Shows `message` in the error banner; with `diagnostics`, Go to Error jumps to the first.
+    public func showError(_ message: String, diagnostics: [GameBuildDiagnostic] = []) {
+        errorLabel.text = message
+        shownDiagnostics = diagnostics
+        goToErrorButton.isHidden = diagnostics.isEmpty
+        errorBanner.isHidden = false
+    }
+
+    private func hideError() {
+        errorBanner.isHidden = true
+        shownDiagnostics = []
+        goToErrorButton.isHidden = true
+    }
+
+    /// Opens the first shown error's file (preferring one in the open script) at its line.
+    public func goToFirstError() {
+        let current = currentScriptURL?.standardizedFileURL.path
+        guard let diagnostic = shownDiagnostics.first(where: { URL(fileURLWithPath: $0.file).standardizedFileURL.path == current })
+                ?? shownDiagnostics.first else { return }
+        let url = URL(fileURLWithPath: diagnostic.file).standardizedFileURL
+        guard session.isProjectScript(url) else {
+            session.log.warning("\(diagnostic.summary) (\(url.path) isn't a project script, so it can't be opened here)")
+            return
+        }
+        let diagnostics = shownDiagnostics
+        if currentScriptURL?.standardizedFileURL != url { openScript(at: url) }
+        guard currentScriptURL?.standardizedFileURL == url else { return }
+        editor.goTo(line: diagnostic.line, column: diagnostic.column)
+        showError(errorLabel.text, diagnostics: diagnostics)
     }
 
     private func updateHeader() {
@@ -182,11 +232,10 @@ public final class ScriptEditorPanel {
         // Check if game module reload error status changed
         if let err = session.gameModule.lastError, err != lastKnownError {
             lastKnownError = err
-            errorLabel.text = err
-            errorBanner.isHidden = false
+            showError(err, diagnostics: session.gameModule.lastDiagnostics)
         } else if session.gameModule.lastError == nil && lastKnownError != nil {
             lastKnownError = nil
-            errorBanner.isHidden = true
+            hideError()
         }
 
         if let rep = session.gameModule.lastReport, rep != lastKnownReport {

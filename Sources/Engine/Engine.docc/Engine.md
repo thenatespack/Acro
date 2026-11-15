@@ -24,6 +24,8 @@ To get started, see <doc:GettingStarted>. The [Acro repository](https://github.c
 - ``Entity``
 - ``EntityID``
 - ``Component``
+- ``Script``
+- ``ScriptContext``
 - ``Transform``
 - ``SystemStage``
 - ``WorldTime``

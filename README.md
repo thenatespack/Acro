@@ -126,7 +126,7 @@ enum Main {
 }
 ```
 
-For a larger example with custom components and systems, see [Sources/SampleGame](Sources/SampleGame). Run it in the editor or on its own:
+For a larger example with custom components and systems, see [Sources/SampleGame](Sources/SampleGame). The quickest way to add behavior is a `Script`: a component with an `update(_ context:)` that runs every frame, registered with `game.script(MyScript.self)`. The editor's **New Script** writes one and registers it for you, and when a build fails the Script Editor lists each error with its file and line and can jump to it. Run it in the editor or on its own:
 
 ```sh
 swift run Editor --game SampleGame

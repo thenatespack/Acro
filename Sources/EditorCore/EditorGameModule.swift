@@ -76,6 +76,35 @@ public struct GameReloadReport: Codable, Equatable, Sendable {
     public var undoValuesRestored: Int?
 }
 
+/// One compiler error from a failed game build: where it is and what it says.
+public struct GameBuildDiagnostic: Codable, Equatable, Sendable {
+    /// The source file's path, as the compiler gave it (absolute for SwiftPM builds).
+    public var file: String
+    /// 1-based line and column.
+    public var line: Int
+    public var column: Int
+    public var message: String
+
+    public init(file: String, line: Int, column: Int, message: String) {
+        self.file = file
+        self.line = line
+        self.column = column
+        self.message = message
+    }
+
+    /// "Player.swift:12:5: cannot find 'speeed' in scope".
+    public var summary: String {
+        "\(URL(fileURLWithPath: file).lastPathComponent):\(line):\(column): \(message)"
+    }
+
+    /// Parses one "path/File.swift:12:5: error: message" line; nil for anything else.
+    public init?(compilerLine line: String) {
+        guard let match = line.firstMatch(of: /^(\S.*?):(\d+):(\d+): error: (.*)$/),
+              let number = Int(match.2), let column = Int(match.3) else { return nil }
+        self.init(file: String(match.1), line: number, column: column, message: String(match.4))
+    }
+}
+
 /// The game module the editor has loaded, and its reloading (see the notes above).
 @MainActor
 public final class EditorGameModule {
@@ -92,6 +121,9 @@ public final class EditorGameModule {
     public private(set) var lastReport: GameReloadReport?
     /// The last failure, cleared by a successful load.
     public private(set) var lastError: String?
+    /// The last failed build's compiler errors with their locations (empty when the last
+    /// failure wasn't a compile error), cleared by a successful load.
+    public private(set) var lastDiagnostics: [GameBuildDiagnostic] = []
     /// Called when the module, the settings or the busy state change.
     public var onChange: (() -> Void)?
 
@@ -290,6 +322,7 @@ public final class EditorGameModule {
             if let folders = outcome.folders { watch(folders.map { URL(fileURLWithPath: $0, isDirectory: true) }) }
             lastReport = report
             lastError = nil
+            lastDiagnostics = []
             log(report)
             future.resolve(report)
         } catch {
@@ -303,15 +336,32 @@ public final class EditorGameModule {
             let errors = Self.compilerErrors(in: buildOutput)
             let lines = buildOutput.split(separator: "\n").map { Self.strippingEscapes(String($0)) }
             for line in errors.isEmpty ? Array(lines.suffix(30)) : errors { session.log.error(line) }
-            let summary = "Build failed (\(max(errors.count, 1)) error\(errors.count == 1 ? "" : "s")); the old game code keeps running"
+            let diagnostics = errors.compactMap(GameBuildDiagnostic.init(compilerLine:))
+            let summary = Self.buildFailureMessage(errors: errors, diagnostics: diagnostics, oldCodeRunning: loaded != nil)
             lastError = summary
+            lastDiagnostics = diagnostics
             onChange?()
             return CommandError.failed(summary)
         }
         let message = (error as? GameModuleError)?.description ?? (error as? CommandError)?.description ?? "\(error)"
         lastError = message
+        lastDiagnostics = []
         onChange?()
         return CommandError.failed(loaded == nil ? message : message + " (the old game code keeps running)")
+    }
+
+    /// A failed build, for the console, the script editor and `game.reload`'s caller: the count
+    /// and the first errors with their file and line, so the fix doesn't need the full log.
+    static func buildFailureMessage(errors: [String], diagnostics: [GameBuildDiagnostic], oldCodeRunning: Bool,
+                                    limit: Int = 5) -> String {
+        let count = max(errors.count, 1)
+        var message = "Build failed with \(count) error\(count == 1 ? "" : "s")"
+        if oldCodeRunning { message += "; the old game code keeps running" }
+        let shown = diagnostics.isEmpty ? errors.map { $0.replacingOccurrences(of: "error: ", with: "") } : diagnostics.map(\.summary)
+        if shown.isEmpty { return message + " (see the console for the build output)" }
+        message += ":\n" + shown.prefix(limit).map { "  " + $0 }.joined(separator: "\n")
+        if shown.count > limit { message += "\n  … and \(shown.count - limit) more (see the console)" }
+        return message
     }
 
     /// The compiler's diagnostics in build output ("file.swift:12:5: error: …"), once each
@@ -503,7 +553,8 @@ public final class EditorGameModule {
         GameInfoResult(
             configured: settings != nil, settings: settings, loaded: loaded != nil, module: loaded?.module.name,
             summary: loaded?.module.summary, components: registeredNames, systems: loaded?.module.systems.map(\.name) ?? [],
-            library: loaded?.sourceURL.path, busy: isBusy, lastError: lastError, lastReport: lastReport,
+            library: loaded?.sourceURL.path, busy: isBusy, lastError: lastError,
+            diagnostics: lastDiagnostics.isEmpty ? nil : lastDiagnostics, lastReport: lastReport,
             unresolved: session.world.unresolvedComponentCounts())
     }
 }
@@ -562,6 +613,8 @@ public struct GameInfoResult: Codable, Equatable, Sendable {
     /// Whether a build or reload is running.
     public var busy: Bool
     public var lastError: String?
+    /// The last failed build's compiler errors with file, line and column (nil: none).
+    public var diagnostics: [GameBuildDiagnostic]?
     public var lastReport: GameReloadReport?
     /// Components the scene holds as JSON because their type isn't loaded: name → entities.
     public var unresolved: [String: Int]

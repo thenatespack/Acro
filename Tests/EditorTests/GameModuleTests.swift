@@ -282,6 +282,25 @@ private let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathCompon
         #expect(EditorGameModule.compilerErrors(in: "error: no such target\n") == ["error: no such target"])
     }
 
+    @Test func buildFailuresListTheirErrors() {
+        let line = "/p/Sources/MyGame/Player.swift:12:5: error: cannot find 'speeed' in scope"
+        let diagnostic = GameBuildDiagnostic(compilerLine: line)
+        #expect(diagnostic == GameBuildDiagnostic(file: "/p/Sources/MyGame/Player.swift", line: 12, column: 5,
+                                                  message: "cannot find 'speeed' in scope"))
+        #expect(diagnostic?.summary == "Player.swift:12:5: cannot find 'speeed' in scope")
+        #expect(GameBuildDiagnostic(compilerLine: "error: no such target") == nil)
+
+        let errors = (1...7).map { "/p/A.swift:\($0):1: error: e\($0)" }
+        let message = EditorGameModule.buildFailureMessage(errors: errors, diagnostics: errors.compactMap(GameBuildDiagnostic.init(compilerLine:)),
+                                                           oldCodeRunning: true)
+        #expect(message.hasPrefix("Build failed with 7 errors; the old game code keeps running:\n  A.swift:1:1: e1\n"))
+        #expect(message.contains("A.swift:5:1: e5"))
+        #expect(!message.contains("e6"))
+        #expect(message.hasSuffix("… and 2 more (see the console)"))
+        #expect(EditorGameModule.buildFailureMessage(errors: ["error: no such target"], diagnostics: [], oldCodeRunning: false)
+                == "Build failed with 1 error:\n  no such target")
+    }
+
     // MARK: Detach and tolerant resolve, without a module
 
     struct HealthV1: Component, Equatable {

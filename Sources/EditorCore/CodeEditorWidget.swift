@@ -533,6 +533,14 @@ public final class CodeEditorWidget: Widget {
         return UIRect(x: caretX, y: caretY, width: 2, height: lh)
     }
 
+    /// Puts the caret at a 1-based `line` and `column` (as compiler errors give them) and
+    /// scrolls it into view.
+    public func goTo(line: Int, column: Int = 1) {
+        buffer.setCaret(buffer.charIndex(line: line - 1, column: column - 1))
+        setNeedsDisplay()
+        scrollToCaret()
+    }
+
     private func scrollToCaret() {
         let rect = textInputCaretRect
         let reveal = UIRect(x: rect.x - 30, y: rect.y - 10, width: 60, height: rect.height + 20)

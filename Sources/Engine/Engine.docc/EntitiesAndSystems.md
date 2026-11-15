@@ -64,3 +64,23 @@ world.addSystem("game.spin") { world in
 ```
 
 In a game module, register systems with ``GameModule``'s `system` method instead; the editor then runs them in play mode.
+
+## Write a script
+
+For behavior that belongs to one kind of entity, a ``Script`` is simpler than a component plus a system: one struct holds the inspector's fields and an `update` that runs every frame for each entity that has it.
+
+```swift
+public struct Spinner: Script, Equatable, Sendable {
+    public static let componentName = "Spinner"
+    public var speed: Float = 0.5  // turns per second
+
+    public init() {}
+
+    public mutating func update(_ context: ScriptContext) {
+        let turn = Quat(angle: speed * 2 * .pi * context.dt, axis: Vec3(0, 1, 0))
+        context.transform.rotation = turn * context.transform.rotation
+    }
+}
+```
+
+Register it in the game module's entry point with `game.script(Spinner.self)`. The editor's New Script (`script.new`) writes this template and adds the registration for you. ``ScriptContext`` gives the entity, its transform, its other components (`get` / `modify`), `dt`, `time`, `input` and `log`. Use a system instead when the code works across several component types or needs a specific order.

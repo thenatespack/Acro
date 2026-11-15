@@ -728,6 +728,7 @@ Result:
 - `busy`: boolean
 - `components`: [string]
 - `configured`: boolean
+- `diagnostics?`: [{column: integer, file: string, line: integer, message: string}]
 - `lastError?`: string
 - `lastReport?`: {added: [string], buildMode?: string, buildSeconds?: number, built: boolean, carriedStateBytes?: integer, components: [string], failed: object, fastBuildSkipped?: string, libraryTargets?: [string], linkSeconds?: number, loadSeconds: number, module: string, playing: boolean, removed: object, resetFields: object, restored: integer, swapSeconds: number, systems: [string], totalSeconds: number, undoValuesRestored?: integer, warnings: [string]}
 - `library?`: string
@@ -780,7 +781,7 @@ Result:
 
 **Reload Game Code** · _deferred_
 
-Rebuilds the game module in the background (one direct `swiftc` call for the game target once a build plan is cached, else `swift build --target <game>`, or its build command), then swaps it in with the scene kept: game components (scene, play snapshot, undo history) are serialized, the old code's willUnload state saved, the new types registered and the components restored (new fields get defaults, removed fields are dropped, components whose type is gone stay as JSON), the new code's didLoad given the state; play mode goes on with the new systems. Build errors go to the console and the old code keeps running. Returns what changed, how it was built and the build, link, load and swap times. Keeps the undo history.
+Rebuilds the game module in the background (one direct `swiftc` call for the game target once a build plan is cached, else `swift build --target <game>`, or its build command), then swaps it in with the scene kept: game components (scene, play snapshot, undo history) are serialized, the old code's willUnload state saved, the new types registered and the components restored (new fields get defaults, removed fields are dropped, components whose type is gone stay as JSON), the new code's didLoad given the state; play mode goes on with the new systems. A failed build keeps the old code running and fails with the first compiler errors (file:line:column: message); game.info's diagnostics has them all, structured. Returns what changed, how it was built and the build, link, load and swap times. Keeps the undo history.
 
 Arguments:
 
@@ -1930,7 +1931,7 @@ Result:
 
 **New Script**
 
-Creates a new Swift game script file with standard component boilerplate.
+Creates a Swift game script: a component with an update(_ context:) that runs every frame for each entity that has it (the Script protocol). Registers it in the game module's entry point (game.script(Name.self)) so it shows in Add Component after the next reload. Refuses to overwrite an existing file.
 
 Arguments:
 
@@ -1940,7 +1941,10 @@ Arguments:
 Result:
 
 - `created`: boolean
+- `note?`: string
 - `path`: string
+- `registeredIn?`: string
+- `typeName`: string
 
 ### `script.open`
 
@@ -1962,7 +1966,7 @@ Result:
 
 **Save Script**
 
-Saves code to a project Swift game script and optionally triggers hot reloading. Only project script folders can be written.
+Saves code to a project Swift game script and starts a rebuild and hot reload (reload: false skips it). The build runs in the background; if it fails, game.info's diagnostics list each error's file, line and message. Only project script folders can be written.
 
 Arguments:
 
@@ -1973,6 +1977,7 @@ Arguments:
 Result:
 
 - `path`: string
+- `reloadNote?`: string
 - `reloaded`: boolean
 - `saved`: boolean
 

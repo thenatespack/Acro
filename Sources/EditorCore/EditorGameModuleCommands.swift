@@ -30,7 +30,8 @@ public enum GameReloadCommand: EditorDeferredCommand {
         components (scene, play snapshot, undo history) are serialized, the old code's willUnload state saved, the new \
         types registered and the components restored (new fields get defaults, removed fields are dropped, components \
         whose type is gone stay as JSON), the new code's didLoad given the state; play mode goes on with the new \
-        systems. Build errors go to the console and the old code keeps running. Returns what changed, how it was built \
+        systems. A failed build keeps the old code running and fails with the first compiler errors (file:line:column: \
+        message); game.info's diagnostics has them all, structured. Returns what changed, how it was built \
         and the build, link, load and swap times. Keeps the undo history.
         """
     public static func isAvailable(in session: EditorSession) -> Bool {

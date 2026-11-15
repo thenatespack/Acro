@@ -141,7 +141,7 @@ import Testing
 
         // 3. Open script via script.open
         let openResult = try session.commands.run(ScriptOpenCommand.self, .init(path: newResult.path))
-        #expect(openResult.content.contains("struct TestComponent: Component"))
+        #expect(openResult.content.contains("struct TestComponent: Script"))
         #expect(openResult.lineCount > 5)
 
         // 4. Save script modifications via script.save
@@ -186,7 +186,7 @@ import Testing
         #expect(throws: (any Error).self) {
             try session.commands.run(ScriptNewCommand.self, .init(name: "../Sources/Engine/Hack.swift"))
         }
-        #expect(try session.commands.run(ScriptOpenCommand.self, .init(path: userScript.path)).content.contains("Component"))
+        #expect(try session.commands.run(ScriptOpenCommand.self, .init(path: userScript.path)).content.contains("struct CameraController: Script"))
     }
 
     /// The Files panel lists scenes and scripts as folders; files.open opens a script in the
@@ -220,6 +220,102 @@ import Testing
         #expect(session.document.url?.lastPathComponent == "Level.scene")
         #expect(session.world.entities.contains { session.displayName(of: $0) == "Marker" })
         #expect(throws: (any Error).self) { try session.commands.run(FilesOpenCommand.self, .init(path: "README.md")) }
+    }
+
+    /// script.new turns the name into a type, registers it in the module's entry point once,
+    /// refuses names that aren't types, existing files and duplicate type names.
+    @MainActor
+    @Test func scriptNewRegistersAndChecksNames() throws {
+        let log = EditorLog()
+        log.echoesToStandardOutput = false
+        let session = EditorSession(document: EditorDocument(), log: log)
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("ScriptNew-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        session.startFolder = tempDir
+        let scripts = tempDir.appendingPathComponent("Scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        let entry = scripts.appendingPathComponent("MyGame.swift")
+        try """
+            @_cdecl("acro_module_v1")
+            public func registerMyGame(_ module: UnsafeMutableRawPointer) -> Int32 {
+                GameModule.register(module) { game in
+                    game.name = "MyGame"
+                }
+            }
+
+            """.write(to: entry, atomically: true, encoding: .utf8)
+
+        let result = try session.commands.run(ScriptNewCommand.self, .init(name: "camera controller"))
+        #expect(result.typeName == "CameraController")
+        #expect(result.registeredIn.map { URL(fileURLWithPath: $0).lastPathComponent } == "MyGame.swift")
+        #expect(result.note == nil)
+        let source = try String(contentsOf: URL(fileURLWithPath: result.path), encoding: .utf8)
+        #expect(source.contains("public struct CameraController: Script"))
+        #expect(try String(contentsOf: entry, encoding: .utf8).contains("""
+                GameModule.register(module) { game in
+                    game.script(CameraController.self)
+                    game.name = "MyGame"
+            """))
+
+        // The same file again, a name that clashes with a declared type, and a non-type name.
+        let again = #expect(throws: CommandError.self) { try session.commands.run(ScriptNewCommand.self, .init(name: "camera controller")) }
+        #expect("\(again!)".contains("already exists"))
+        let clash = #expect(throws: CommandError.self) { try session.commands.run(ScriptNewCommand.self, .init(name: "Camera_Controller")) }
+        #expect("\(clash!)".contains("already declares"))
+        let bad = #expect(throws: CommandError.self) { try session.commands.run(ScriptNewCommand.self, .init(name: "3D thing")) }
+        #expect("\(bad!)".contains("Swift type name"))
+        #expect(try String(contentsOf: entry, encoding: .utf8).components(separatedBy: ".script(").count == 2)
+    }
+
+    /// Without an entry point the script is still created, with a note saying what to add.
+    @MainActor
+    @Test func scriptNewWithoutEntryPointExplains() throws {
+        let log = EditorLog()
+        log.echoesToStandardOutput = false
+        let session = EditorSession(document: EditorDocument(), log: log)
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("ScriptNewNoEntry-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        session.startFolder = tempDir
+        let result = try session.commands.run(ScriptNewCommand.self, .init(name: "Spinner"))
+        #expect(result.created)
+        #expect(result.registeredIn == nil)
+        #expect(result.note?.contains("game.script(Spinner.self)") == true)
+    }
+
+    /// script.save says why it didn't reload instead of claiming it did.
+    @MainActor
+    @Test func scriptSaveExplainsSkippedReload() throws {
+        let log = EditorLog()
+        log.echoesToStandardOutput = false
+        let session = EditorSession(document: EditorDocument(), log: log)
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("ScriptSaveNote-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        session.startFolder = tempDir
+        let script = try session.commands.run(ScriptNewCommand.self, .init(name: "Spinner"))
+        let saved = try session.commands.run(ScriptSaveCommand.self, .init(path: script.path, content: "// x\n"))
+        #expect(saved.saved)
+        #expect(!saved.reloaded)
+        #expect(saved.reloadNote?.contains("no game module") == true)
+    }
+
+    /// The panel's banner lists build errors, and Go to Error opens the file at the line.
+    @MainActor
+    @Test func scriptEditorPanelGoesToBuildError() throws {
+        let log = EditorLog()
+        log.echoesToStandardOutput = false
+        let session = EditorSession(document: EditorDocument(), log: log)
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("ScriptGoTo-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        session.startFolder = tempDir
+        let script = try session.commands.run(ScriptNewCommand.self, .init(name: "Spinner"))
+        let panel = ScriptEditorPanel(session: session)
+        let diagnostic = GameBuildDiagnostic(file: script.path, line: 5, column: 9, message: "cannot find 'x' in scope")
+        panel.showError("Build failed with 1 error", diagnostics: [diagnostic])
+        panel.goToFirstError()
+        #expect(panel.currentScriptURL?.lastPathComponent == "Spinner.swift")
+        #expect(panel.editor.buffer.lineIndex(for: panel.editor.buffer.caret) == 4)
+        #expect(panel.editor.buffer.columnIndex(for: panel.editor.buffer.caret) == 8)
+        #expect(panel.shownDiagnostics == [diagnostic])
     }
 
     // MARK: - ScriptEditorPanel Tests
