@@ -6,12 +6,14 @@ import Foundation
 // module (GameModuleBuilder) and runs it; a path to a .dylib / .so loads that instead. A
 // module with a `Game` (`makeGame`) runs it; otherwise the scene file is loaded and drawn by a
 // SceneRenderer with the module's systems running. `--server` runs it headless as a UDP server
-// and `--connect host:port` as a client of one (NetRun.swift).
+// and `--connect host:port` as a client of one (NetRun.swift). `--check` only loads it and
+// checks that it shares this process's Engine, then exits (no window: CI uses it).
 
 let usage = """
     Usage: GameRunner <target | module.dylib> [scene.json] [--package <folder>] [--no-build] [--backend metal|vulkan]
            GameRunner <target | module.dylib> [scene.json] --server [--port 7777] [--host 0.0.0.0]
            GameRunner <target | module.dylib> [scene.json] --connect <host:port> [--headless]
+           GameRunner <target | module.dylib> --check
       Networked runs: [--duration <seconds>] [--replicate auto|all|marked]
            GameRunner --version
     """
@@ -30,6 +32,7 @@ var connect: (host: String, port: UInt16)?
 var port: UInt16 = 7777
 var host = "0.0.0.0"
 var headless = false
+var check = false
 var duration: Double?
 var replication = "auto"
 var arguments = Array(CommandLine.arguments.dropFirst())
@@ -64,6 +67,8 @@ while !arguments.isEmpty {
         connect = (String(address[..<colon]), number)
     case "--headless":
         headless = true
+    case "--check":
+        check = true
     case "--duration":
         guard let seconds = Double(value("--duration")), seconds > 0 else { fail("--duration needs seconds") }
         duration = seconds
@@ -166,6 +171,27 @@ MainActor.assumeIsolated {
         for component in module.components { ComponentRegistry.register(component.type) }
         ComponentRegistry.register(Spin.self, FieldAnimator.self, LightFlicker.self, CameraPath.self)
         print("Loaded \(module.name): \(module.componentNames.joined(separator: ", "))")
+        if check {
+            // The module filled in this process's GameModule through Engine's API (on Windows,
+            // imports bound to this executable), and its component types must work with Engine's
+            // registry here. A smoke test for loading, not for the module's behavior.
+            var problems: [String] = []
+            if module.abiMinorVersion <= 0 { problems.append("the module recorded no ABI minor version") }
+            for component in module.components {
+                guard let registered = ComponentRegistry.type(named: component.name) else {
+                    problems.append("\(component.name) isn't in the registry"); continue
+                }
+                if ObjectIdentifier(registered) != ObjectIdentifier(component.type) {
+                    problems.append("\(component.name) is registered as another type")
+                }
+                if ObjectIdentifier(type(of: component.makeDefault())) != ObjectIdentifier(component.type) {
+                    problems.append("\(component.name)'s default value has another type")
+                }
+            }
+            guard problems.isEmpty else { fail("Check failed:\n" + problems.joined(separator: "\n")) }
+            print("Check passed: \(module.components.count) components, ABI \(GameModuleABI.version).\(module.abiMinorVersion), loaded from \(loaded.loadedURL.lastPathComponent)")
+            exit(0)
+        }
         let sceneURL = scenePath.map { URL(fileURLWithPath: $0) }
         if server || connect != nil {
             #if canImport(Darwin) || canImport(Glibc)

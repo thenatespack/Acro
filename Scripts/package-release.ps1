@@ -4,9 +4,9 @@
 #   Scripts\package-release.ps1 [-OutDir Build\release]
 #
 # Needs VULKAN_SDK, GLFW_DIR and ZLIB_DIR set as for any Windows build (see README). Writes
-# <OutDir>\Acro-<version>-windows-x64.zip containing Editor.exe with the engine's resource
-# folder, the Swift runtime DLLs and zlib1.dll, which it needs next to it. vulkan-1.dll comes with
-# the GPU driver; GLFW is linked statically.
+# <OutDir>\Acro-<version>-windows-x64.zip containing Editor.exe, its import library Editor.lib
+# (game modules link against it), the engine's resource folder, and the Swift runtime DLLs and
+# zlib1.dll it needs next to it. vulkan-1.dll comes with the GPU driver; GLFW is linked statically.
 param([string]$OutDir = "Build\release")
 $ErrorActionPreference = 'Stop'
 
@@ -30,7 +30,13 @@ $Bin = (swift build -c release --show-bin-path).Trim()
 
 if (Test-Path $Stage) { Remove-Item -Recurse -Force $Stage }
 New-Item -ItemType Directory -Path $Stage | Out-Null
-foreach ($product in $Products) { Copy-Item (Join-Path $Bin "$product.exe") $Stage }
+foreach ($product in $Products) {
+    Copy-Item (Join-Path $Bin "$product.exe") $Stage
+    # Game modules link against the editor's import library (GameModuleBuilder.hostImportLibrary).
+    $importLibrary = Join-Path $Bin "$product.lib"
+    if (-not (Test-Path $importLibrary)) { throw "$product.lib is missing: Engine must be a .dynamic product on Windows (Package.swift)" }
+    Copy-Item $importLibrary $Stage
+}
 Get-ChildItem $Bin -Directory -Filter 'Acro_*.resources' | Where-Object Name -ne 'Acro_Demo.resources' | ForEach-Object { Copy-Item $_.FullName $Stage -Recurse }
 Copy-Item README.md, LICENSE, CHANGELOG.md $Stage
 
