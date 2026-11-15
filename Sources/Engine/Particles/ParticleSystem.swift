@@ -199,7 +199,7 @@ public final class ParticleSystem {
     public init(device: RenderDevice) throws {
         self.device = device
         func compute(_ name: String) throws -> ComputePipeline {
-            try device.makeComputePipeline(shader: ShaderSource.load(compute: name, bundle: .module))
+            try device.makeComputePipeline(shader: ShaderSource.load(compute: name, bundle: .engineResources))
         }
         simulatePipeline = try compute("particle_simulate")
         compactPipeline = try compute("particle_compact")
@@ -210,7 +210,7 @@ public final class ParticleSystem {
         sortLocalPipeline = try compute("particle_sort_local")
         sortGlobalPipeline = try compute("particle_sort_global")
         sortWritePipeline = try compute("particle_sort_write")
-        shader = try ShaderSource.load(named: "particle", bundle: .module)
+        shader = try ShaderSource.load(named: "particle", bundle: .engineResources)
         whiteTexture = try device.makeTexture(pixels: [255, 255, 255, 255], width: 1, height: 1, format: .rgba8Unorm)
         sampler = try device.makeSampler(SamplerDescriptor(minFilter: .linear, magFilter: .linear, mipFilter: .linear,
                                                            addressMode: .clampToEdge))
@@ -504,7 +504,7 @@ public final class ParticleSystem {
     private func pipeline(_ key: PipelineKey) -> RenderPipeline? {
         if let pipeline = pipelines[key] { return pipeline }
         do {
-            if key.lit && litShader == nil { litShader = try ShaderSource.load(vertex: "particle_lit", fragment: "particle", bundle: .module) }
+            if key.lit && litShader == nil { litShader = try ShaderSource.load(vertex: "particle_lit", fragment: "particle", bundle: .engineResources) }
             var descriptor = PipelineDescriptor(shader: key.lit ? litShader! : shader, vertexLayout: .none)
             descriptor.cullMode = .none
             descriptor.depthWrite = false
@@ -652,5 +652,13 @@ public final class ParticleSystem {
             atlas: Vec4(Float(max(e.atlasColumns, 1)), Float(max(e.atlasRows, 1)), Float(e.effectiveFrameCount), max(e.frameRate, 0)),
             atlasFlags: Vec4(e.randomStartFrame ? 1 : 0, e.frameBlending ? 1 : 0, textured ? 1 : 0, 0),
             soft: Vec4(depth != nil ? 1 / e.softness : 0, depth?.linear.x ?? 1, depth?.linear.y ?? 0, e.receivesShadows ? 1 : 0))
+    }
+}
+
+extension ParticleSystem {
+    /// Registers `ParticleEmitter` with `ComponentRegistry` (needed before loading scene files
+    /// that use it into a world that hasn't stored one yet).
+    public static func registerComponents() {
+        ComponentRegistry.register(ParticleEmitter.self)
     }
 }

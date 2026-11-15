@@ -326,3 +326,13 @@ final class ProfilerCore: @unchecked Sendable {
         return result + "\""
     }
 }
+
+/// GPU time of one pass: `depth` (`beginDepthPass`), `scene` (`beginScreenPass`), compute passes
+/// by their label (e.g. `particles`), post-processing
+/// passes by their label (`bloom`, `exposure`, `tonemap`), `upscale`
+/// (an upscaler's first stage: EASU, TAAU, FSR 3 or MetalFX), `window` (`beginWindowPass` when
+/// rendering offscreen) or a render target pass's label.
+public struct GPUPassTime: Sendable {
+    public var name: String
+    public var seconds: Double
+}

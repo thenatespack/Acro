@@ -76,7 +76,7 @@ final class WorldTextRenderer {
 
     init(device: RenderDevice) throws {
         self.device = device
-        shader = try ShaderSource.load(vertex: "text3d", fragment: "text3d", bundle: .module)
+        shader = try ShaderSource.load(vertex: "text3d", fragment: "text3d", bundle: .engineResources)
         sampler = try device.makeSampler(SamplerDescriptor(filter: .linear, mipFilter: .none, addressMode: .clampToEdge))
     }
 

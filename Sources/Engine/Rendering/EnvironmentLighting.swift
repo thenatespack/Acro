@@ -282,7 +282,7 @@ final class EnvironmentLighting {
         if pipelines == nil {
             func pipeline(_ fragment: String) throws -> RenderPipeline {
                 var descriptor = PipelineDescriptor(
-                    shader: try ShaderSource.load(vertex: "post", fragment: fragment, bundle: .module), vertexLayout: .none)
+                    shader: try ShaderSource.load(vertex: "post", fragment: fragment, bundle: .engineResources), vertexLayout: .none)
                 descriptor.target = .color(.rgba16Float)
                 descriptor.cullMode = .none
                 descriptor.depthTest = false
@@ -396,7 +396,7 @@ final class EnvironmentLighting {
     private func skyPipeline(reversedZ: Bool) -> RenderPipeline? {
         if let pipeline = skyPipelines[reversedZ] { return pipeline }
         do {
-            var descriptor = PipelineDescriptor(shader: try ShaderSource.load(named: "sky", bundle: .module), vertexLayout: .none)
+            var descriptor = PipelineDescriptor(shader: try ShaderSource.load(named: "sky", bundle: .engineResources), vertexLayout: .none)
             descriptor.cullMode = .none
             descriptor.depthWrite = false
             descriptor.depthCompare = reversedZ ? .greaterEqual : .lessEqual

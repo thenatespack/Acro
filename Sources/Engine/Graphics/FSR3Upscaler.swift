@@ -270,7 +270,7 @@ private struct FSR3ClearConstants {
 
     init(device: RenderDevice) throws {
         func load(_ name: String) throws -> ComputePipeline {
-            try device.makeComputePipeline(shader: ShaderSource.load(compute: name, bundle: .module))
+            try device.makeComputePipeline(shader: ShaderSource.load(compute: name, bundle: .engineResources))
         }
         clear = try load("fsr3_clear")
         prepareInputs = try load("fsr3_prepare_inputs")

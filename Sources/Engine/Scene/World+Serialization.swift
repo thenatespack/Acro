@@ -378,6 +378,15 @@ struct AnyComponent: Encodable {
 extension CodingUserInfoKey {
     static let sceneEncoding = CodingUserInfoKey(rawValue: "Engine.SceneEncoding")!
     static let sceneDecoding = CodingUserInfoKey(rawValue: "Engine.SceneDecoding")!
+    /// An `EntityIDMapping` (networking's `NetEntityMapping`): entities encode as its stable ids.
+    static let netEntities = CodingUserInfoKey(rawValue: "Engine.NetEntities")!
+}
+
+/// Translates entities to ids that stay the same across processes (networking), for the
+/// `.netEntities` coding key.
+protocol EntityIDMapping: AnyObject {
+    func id(of entity: Entity) -> EntityID?
+    func entity(for id: EntityID) -> Entity
 }
 
 /// While saving: the file id of every saved entity.
@@ -428,7 +437,7 @@ extension Entity: Codable {
             return
         }
         let container = try decoder.container(keyedBy: Key.self)
-        if let mapping = decoder.userInfo[.netEntities] as? NetEntityMapping {
+        if let mapping = decoder.userInfo[.netEntities] as? any EntityIDMapping {
             let text = try container.decode(String.self, forKey: Key())
             guard let id = EntityID(text) else {
                 throw DecodingError.dataCorruptedError(forKey: Key(), in: container, debugDescription: "Bad entity id '\(text)'")
@@ -448,7 +457,7 @@ extension Entity: Codable {
     }
 
     public func encode(to encoder: any Encoder) throws {
-        if let mapping = encoder.userInfo[.netEntities] as? NetEntityMapping {
+        if let mapping = encoder.userInfo[.netEntities] as? any EntityIDMapping {
             guard let id = mapping.id(of: self) else {
                 var container = encoder.singleValueContainer()
                 try container.encodeNil()

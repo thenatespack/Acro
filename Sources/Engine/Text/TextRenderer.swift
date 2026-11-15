@@ -70,7 +70,7 @@ public final class TextRenderer {
         self.font = try font ?? Font.bundledUI()
         self.atlas = atlas
         var descriptor = PipelineDescriptor(
-            shader: try ShaderSource.load(named: "text", bundle: .module),
+            shader: try ShaderSource.load(named: "text", bundle: .engineResources),
             vertexLayout: VertexLayout(
                 stride: MemoryLayout<TextVertex>.stride,
                 attributes: [

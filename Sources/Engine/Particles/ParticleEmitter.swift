@@ -412,14 +412,6 @@ public struct ParticleEmitter: Component, Codable, Equatable, Sendable {
     }
 }
 
-extension ParticleSystem {
-    /// Registers `ParticleEmitter` with `ComponentRegistry` (needed before loading scene files
-    /// that use it into a world that hasn't stored one yet).
-    public static func registerComponents() {
-        ComponentRegistry.register(ParticleEmitter.self)
-    }
-}
-
 /// When an emitter spawns, on the CPU: a deterministic function of the steps it is advanced by
 /// (rate accumulation, bursts and requested bursts). The GPU only learns how many particles each
 /// step spawns, into which ring slots, and their spawn indices (which seed their random numbers).

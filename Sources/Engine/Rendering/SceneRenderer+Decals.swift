@@ -94,7 +94,7 @@ final class DecalRenderer {
     private func pipeline(reversedZ: Bool) -> RenderPipeline? {
         if let pipeline = pipelines[reversedZ] { return pipeline }
         do {
-            if shader == nil { shader = try ShaderSource.load(vertex: "decal", fragment: "decal", bundle: .module) }
+            if shader == nil { shader = try ShaderSource.load(vertex: "decal", fragment: "decal", bundle: .engineResources) }
             var descriptor = PipelineDescriptor(shader: shader!, vertexLayout: .none)
             // Back faces only, so the camera can be inside the box; the shader clips to it.
             descriptor.cullMode = .front

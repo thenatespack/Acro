@@ -12,15 +12,10 @@
 // `EntityRef` needs none of this: it names its target by id already and resolves through
 // `World.resolve` whenever it is read.
 
-extension CodingUserInfoKey {
-    /// A `NetEntityMapping` while replicated components are encoded or decoded.
-    static let netEntities = CodingUserInfoKey(rawValue: "Engine.NetEntities")!
-}
-
 /// Maps `Entity` handles to `EntityID`s (server, encoding) and ids back to handles (client,
 /// decoding) for one world. Coders are not main-actor isolated, but replication encodes and
 /// decodes on the main actor only.
-final class NetEntityMapping: @unchecked Sendable {
+final class NetEntityMapping: EntityIDMapping, @unchecked Sendable {
     let world: World
     /// Decoding: every id the value referred to and the entity it resolved to (nil: none yet).
     private(set) var referenced: [EntityID: Entity?] = [:]

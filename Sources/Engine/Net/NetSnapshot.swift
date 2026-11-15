@@ -73,7 +73,6 @@ public struct NetSnapshot: Equatable, Sendable {
         return state
     }
 
-
     // MARK: Wire format (packet version 3, card 672)
     //
     // tick u32, the baseline as tick - baseline (varint, 0: none), serverTime f64, a sections
@@ -299,7 +298,6 @@ public struct NetSnapshot: Equatable, Sendable {
     }
 }
 
-
 public enum NetError: Error, Equatable, CustomStringConvertible {
     case malformed(String)
     case unknownComponent(String)
@@ -313,17 +311,6 @@ public enum NetError: Error, Equatable, CustomStringConvertible {
 }
 
 // MARK: Component encoding
-
-/// How a replicated entity's `Transform` is sent.
-public enum NetTransformEncoding: String, Codable, Sendable {
-    /// Position in 1/1024 m steps (zigzag varints), rotation as smallest-three in 32 bits
-    /// (within 0.2 degrees), scale omitted when one: 12-14 bytes for an unscaled entity within
-    /// 500 m of the origin, and a delta of the changed fields against the client's baseline in
-    /// snapshots (2-8 bytes for something moving and turning).
-    case quantized
-    /// 41 bytes, bit-exact (what client-side prediction reconciles from).
-    case exact
-}
 
 /// A component with a hand-written network encoding, used by `NetComponentCoder` instead of
 /// its Codable conformance (for hot types: `CharacterController` has one). Equal values must
@@ -582,7 +569,6 @@ extension CharacterController: NetCustomEncoding {
         return c
     }
 }
-
 
 // MARK: Compression
 

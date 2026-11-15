@@ -165,11 +165,6 @@ public final class UIContext {
 
     // MARK: Frame
 
-    /// Processes this frame's engine input and lays out; call early in `Game.update`.
-    public func update(engine: Engine, dt: Float) {
-        update(input: engine.input, dt: dt, viewportSize: engine.ui.size, scale: engine.ui.scale)
-    }
-
     /// Processes `input` for a viewport of `viewportSize` points at `scale` pixels per point.
     public func update(input: Input, dt: Float, viewportSize: Vec2, scale: Float) {
         time += Double(dt)

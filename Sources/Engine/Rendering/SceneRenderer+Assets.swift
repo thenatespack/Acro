@@ -334,3 +334,34 @@ final class PreparedTextureLevels: @unchecked Sendable {
         if let job { jobs.wait(job) }
     }
 }
+
+@MainActor
+extension ImportedModel {
+    /// Uploads every primitive and material to `renderer` under keys starting with
+    /// `keyPrefix` ("<prefix>/mesh<m>.<p>", "<prefix>/material<i>", "<prefix>/default") and
+    /// returns their handles. Materials go through `ImportedMaterial.engineMaterial`, with each
+    /// texture reference's GPU texture from `textures[textureIndex]` (see `makeTextures`; nil
+    /// or a missing entry leaves that slot empty). Empty primitives are left out.
+    public func register(with renderer: SceneRenderer, keyPrefix: String, textures: [GPUTexture?] = []) throws -> ModelHandles {
+        var meshHandles: [[MeshHandle?]] = []
+        for (m, mesh) in meshes.enumerated() {
+            meshHandles.append(try mesh.primitives.enumerated().map { p, primitive in
+                primitive.geometry.indices.isEmpty
+                    ? nil : try renderer.registerMesh(primitive.geometry, key: "\(keyPrefix)/mesh\(m).\(p)")
+            })
+        }
+        var materialHandles: [MaterialHandle] = []
+        for (i, material) in materials.enumerated() {
+            let sampler = material.primaryTexture.map { self.textures[$0.texture].sampler }
+            materialHandles.append(try renderer.registerMaterial(
+                material.engineMaterial(textures: { textures[safe: $0.texture] ?? nil }, sampler: sampler),
+                key: "\(keyPrefix)/material\(i)"))
+        }
+        let defaultMaterial = try renderer.registerMaterial(ImportedMaterial.gltfDefault.engineMaterial(), key: "\(keyPrefix)/default")
+        return ModelHandles(meshes: meshHandles, materials: materialHandles, defaultMaterial: defaultMaterial)
+    }
+}
+
+fileprivate extension Array {
+    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
+}

@@ -26,7 +26,7 @@ final class DebugOverlay {
     private var accumulated = (frames: 0, frameTime: 0.0, cpuTime: 0.0)
 
     init(device: RenderDevice) throws {
-        let shader = try ShaderSource.load(named: "overlay", bundle: .module)
+        let shader = try ShaderSource.load(named: "overlay", bundle: .engineResources)
         var descriptor = PipelineDescriptor(
             shader: shader,
             vertexLayout: VertexLayout(

@@ -170,25 +170,6 @@ public struct ProjectRuntimeSettings: Equatable, Sendable, Codable {
         return nil
     }
 
-    /// Lays the window settings over `config`.
-    public func apply(to config: inout EngineConfig) {
-        guard let window else { return }
-        if let title = window.title, !title.isEmpty { config.title = title }
-        if let width = window.width { config.width = width }
-        if let height = window.height { config.height = height }
-        if let vsync = window.vsync { config.vsync = vsync }
-        if let quality = window.quality { config.quality = quality }
-        if let overlay = window.showDebugOverlay { config.showDebugOverlay = overlay }
-        if let resolution = window.parsedRenderResolution { config.renderResolution = resolution }
-        if let upscaler = window.parsedUpscaler { config.upscaler = upscaler }
-        if let msaa = window.msaa { config.sampleCount = msaa }
-        if let backend = window.backend { config.backend = backend }
-        if window.minWidth != nil || window.minHeight != nil {
-            config.minimumWindowSize = (window.minWidth ?? Self.windowSizeRange.lowerBound, window.minHeight ?? Self.windowSizeRange.lowerBound)
-        }
-        if let larger = window.allowLargerThanScreen { config.allowsWindowLargerThanScreen = larger }
-    }
-
     /// Sets `world`'s fixed timestep.
     @MainActor
     public func apply(to world: World) {

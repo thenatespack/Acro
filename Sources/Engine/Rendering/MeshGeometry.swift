@@ -68,38 +68,6 @@ public struct SkinInfluence: Equatable, Sendable {
     }
 }
 
-/// An axis-aligned box as center and half-extent.
-public struct Bounds: Equatable, Sendable {
-    public var center: Vec3
-    public var halfExtent: Vec3
-
-    public init(center: Vec3, halfExtent: Vec3) {
-        self.center = center
-        self.halfExtent = halfExtent
-    }
-
-    /// The smallest box around `points` (a zero box at the origin when empty).
-    public init<S: Sequence>(enclosing points: S) where S.Element == Vec3 {
-        var lo = Vec3(repeating: .infinity), hi = Vec3(repeating: -.infinity)
-        for p in points {
-            lo = pointwiseMin(lo, p)
-            hi = pointwiseMax(hi, p)
-        }
-        if lo.x > hi.x { lo = .zero; hi = .zero }
-        center = (lo + hi) / 2
-        halfExtent = (hi - lo) / 2
-    }
-
-    /// The axis-aligned box around this box transformed by the affine matrix `m`.
-    @inlinable public func transformed(by m: Mat4) -> Bounds {
-        let c = m.c0 * center.x + m.c1 * center.y + m.c2 * center.z + m.c3
-        let ax = Vec3(abs(m.c0.x), abs(m.c0.y), abs(m.c0.z))
-        let ay = Vec3(abs(m.c1.x), abs(m.c1.y), abs(m.c1.z))
-        let az = Vec3(abs(m.c2.x), abs(m.c2.y), abs(m.c2.z))
-        return Bounds(center: Vec3(c.x, c.y, c.z), halfExtent: ax * halfExtent.x + ay * halfExtent.y + az * halfExtent.z)
-    }
-}
-
 /// Mesh data on the CPU: triangles with counter-clockwise front faces. Register it with
 /// `SceneRenderer.registerMesh(_:key:)` to upload it.
 public struct MeshGeometry: Sendable {

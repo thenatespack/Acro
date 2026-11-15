@@ -588,3 +588,30 @@ extension Transform {
         Transform(position: position, rotation: .lookRotation(forward: target - position, up: up))
     }
 }
+
+extension MeshHandle {
+    /// A handle naming a mesh imported from a project asset (resolved through
+    /// `SceneRenderer.assets`). It encodes as `asset:<id>[#<sub-asset>]`.
+    public init(_ reference: AssetReference) { self.init(reference.description) }
+
+    /// The asset this handle names, or nil for a plain key ("cube", a code-registered mesh).
+    public var assetReference: AssetReference? { AssetReference(key) }
+}
+
+extension MaterialHandle {
+    /// A handle naming a material imported from a project asset (resolved through
+    /// `SceneRenderer.assets`). It encodes as `asset:<id>[#<sub-asset>]`.
+    public init(_ reference: AssetReference) { self.init(reference.description) }
+
+    /// The asset this handle names, or nil for a plain key ("default", a code-registered material).
+    public var assetReference: AssetReference? { AssetReference(key) }
+}
+
+extension TextureHandle {
+    /// A handle naming a project texture asset (resolved through `SceneRenderer.assets`). It
+    /// encodes as `asset:<id>[#<sub-asset>]`.
+    public init(_ reference: AssetReference) { self.init(reference.description) }
+
+    /// The asset this handle names, or nil for a plain key (a code-registered texture).
+    public var assetReference: AssetReference? { AssetReference(key) }
+}

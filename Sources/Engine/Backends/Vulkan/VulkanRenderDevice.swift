@@ -526,23 +526,23 @@ final class VulkanRenderDevice: RenderDevice {
         let size = window.framebufferSize
         swapchain = try createSwapchain(width: size.width, height: size.height, old: nil)
 
-        var blit = PipelineDescriptor(shader: try ShaderSource.load(named: "blit", bundle: .module), vertexLayout: .none)
+        var blit = PipelineDescriptor(shader: try ShaderSource.load(named: "blit", bundle: .engineResources), vertexLayout: .none)
         blit.cullMode = .none
         blit.depthTest = false
         blit.depthWrite = false
         blitPipeline = try makePipeline(blit) as? VulkanPipeline
 
         if let upscaleRenderPass {
-            var easu = PipelineDescriptor(shader: try ShaderSource.load(named: "fsr_easu", bundle: .module), vertexLayout: .none)
+            var easu = PipelineDescriptor(shader: try ShaderSource.load(named: "fsr_easu", bundle: .engineResources), vertexLayout: .none)
             easu.cullMode = .none
             easu.depthTest = false
             easu.depthWrite = false
             easuPipeline = try createPipeline(easu, colorPass: upscaleRenderPass)
             var rcas = easu
-            rcas.shader = try ShaderSource.load(named: "fsr_rcas", bundle: .module)
+            rcas.shader = try ShaderSource.load(named: "fsr_rcas", bundle: .engineResources)
             rcasPipeline = try createPipeline(rcas)
             var taau = easu
-            taau.shader = try ShaderSource.load(named: "taau", bundle: .module)
+            taau.shader = try ShaderSource.load(named: "taau", bundle: .engineResources)
             taauPipeline = try createPipeline(taau, colorPass: taauRenderPass)
         }
     }

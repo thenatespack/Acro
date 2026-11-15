@@ -287,7 +287,7 @@ public final class PostProcessor {
         self.device = device
         func pipeline(_ fragment: String, _ format: TextureFormat) throws -> RenderPipeline {
             var descriptor = PipelineDescriptor(
-                shader: try ShaderSource.load(vertex: "post", fragment: fragment, bundle: .module), vertexLayout: .none)
+                shader: try ShaderSource.load(vertex: "post", fragment: fragment, bundle: .engineResources), vertexLayout: .none)
             descriptor.target = .color(format)
             descriptor.cullMode = .none
             descriptor.depthTest = false

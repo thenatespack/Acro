@@ -347,13 +347,13 @@ final class MetalRenderDevice: RenderDevice {
             occlusionBatches.append(OcclusionQueryBatch())
         }
 
-        var blit = PipelineDescriptor(shader: try ShaderSource.load(named: "blit", bundle: .module), vertexLayout: .none)
+        var blit = PipelineDescriptor(shader: try ShaderSource.load(named: "blit", bundle: .engineResources), vertexLayout: .none)
         blit.cullMode = .none
         blit.depthTest = false
         blit.depthWrite = false
         blitPipeline = try makePipeline(blit) as? MetalPipeline
 
-        var rcas = PipelineDescriptor(shader: try ShaderSource.load(named: "fsr_rcas", bundle: .module), vertexLayout: .none)
+        var rcas = PipelineDescriptor(shader: try ShaderSource.load(named: "fsr_rcas", bundle: .engineResources), vertexLayout: .none)
         rcas.cullMode = .none
         rcas.depthTest = false
         rcas.depthWrite = false
@@ -364,7 +364,7 @@ final class MetalRenderDevice: RenderDevice {
 
     /// Renders into a single-sample color texture of `format` with no depth.
     private func makeUpscalePipeline(_ name: String, format: MTLPixelFormat) throws -> MTLRenderPipelineState {
-        let functions = try makeFunctions(ShaderSource.load(named: name, bundle: .module), fragment: true)
+        let functions = try makeFunctions(ShaderSource.load(named: name, bundle: .engineResources), fragment: true)
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = functions.vertex
         descriptor.fragmentFunction = functions.fragment

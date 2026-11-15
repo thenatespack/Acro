@@ -55,7 +55,7 @@ public final class SpriteRenderer {
     private var atlases: [String: SpriteAtlas] = [:]
 
     public init(device: RenderDevice) throws {
-        let shader = try ShaderSource.load(named: "sprite", bundle: .module)
+        let shader = try ShaderSource.load(named: "sprite", bundle: .engineResources)
         var pipelines: [SpriteBlend: RenderPipeline] = [:]
         for blend in [SpriteBlend.alpha, .opaque, .additive] {
             var descriptor = PipelineDescriptor(shader: shader, vertexLayout: SpriteVertex.layout)

@@ -32,33 +32,6 @@
 // client has but the server doesn't are despawned once a snapshot shows the server lacks them
 // (complete, or listing where its entities still missing on the client would sort).
 
-/// Marks an entity for replication and names the components sent (by `componentName`).
-/// Transforms replicate as local transforms; the parent link is always sent (see above).
-public struct Replicated: Component, Equatable, Sendable {
-    public static let componentName = "Replicated"
-    public var components: [String]
-    /// How often it is sent relative to others when a snapshot can't carry every change (see
-    /// `NetServer.bandwidthLimit`): it gains this much priority per snapshot it waits.
-    public var priority: Float
-    /// Quantized (about 14 bytes) or exact (41 bytes; for entities a client predicts).
-    public var transform: NetTransformEncoding
-
-    public init(components: [String] = [Transform.componentName], priority: Float = 1, transform: NetTransformEncoding = .quantized) {
-        self.components = components
-        self.priority = priority
-        self.transform = transform
-    }
-
-    private enum CodingKeys: String, CodingKey { case components, priority, transform }
-
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        components = try c.decode([String].self, forKey: .components)
-        priority = try c.decodeIfPresent(Float.self, forKey: .priority) ?? 1
-        transform = try c.decodeIfPresent(NetTransformEncoding.self, forKey: .transform) ?? .quantized
-    }
-}
-
 /// One input command from a client: its sequence number (1, 2, ... per client) and the game's
 /// bytes (for characters, `NetCharacterInput.encoded()`).
 public struct NetInputCommand: Equatable, Sendable {

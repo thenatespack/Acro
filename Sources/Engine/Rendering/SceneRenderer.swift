@@ -349,7 +349,7 @@ public final class SceneRenderer {
     }
 
     /// Also draws `engine.debugDraw` in the screen pass.
-    public convenience init(engine: Engine) throws {
+    public convenience init(engine: some SceneRenderHost) throws {
         try self.init(device: engine.device, quality: engine.quality)
         debugDraw = engine.debugDraw
     }
@@ -357,9 +357,9 @@ public final class SceneRenderer {
     public init(device: RenderDevice, quality: RenderQuality) throws {
         self.device = device
         self.quality = quality
-        shader = try ShaderSource.load(named: "mesh", bundle: .module)
+        shader = try ShaderSource.load(named: "mesh", bundle: .engineResources)
         var shadow = PipelineDescriptor(
-            shader: try ShaderSource.load(named: "mesh_shadow", bundle: .module),
+            shader: try ShaderSource.load(named: "mesh_shadow", bundle: .engineResources),
             vertexLayout: MeshVertex.layout, instanceLayout: MeshInstance.layout)
         shadow.target = .depthOnly
         shadow.cullMode = .none  // single-sided planes still cast shadows
@@ -492,7 +492,7 @@ public final class SceneRenderer {
     }
 
     /// `prepare` and `renderShadows` in one call.
-    public func renderOffscreen(world: World, engine: Engine, frame: Frame) {
+    public func renderOffscreen(world: World, engine: some SceneRenderHost, frame: Frame) {
         prepare(world: world, engine: engine)
         renderShadows(frame: frame)
     }
@@ -502,7 +502,7 @@ public final class SceneRenderer {
     /// Sets `engine.clearColor` and `engine.clearDepth` from the camera, and
     /// `engine.postProcess` from the world's `PostProcess` component (nil without one). Without
     /// a camera, nothing is drawn this frame.
-    public func prepare(world: World, engine: Engine) {
+    public func prepare(world: World, engine: some SceneRenderHost) {
         quality = engine.quality
         let start = ContinuousClock.now
         Profiler.begin("render prep")
@@ -867,10 +867,10 @@ public final class SceneRenderer {
         if let pipeline = prepassPipelines[key] { return pipeline }
         do {
             let shader = switch (key.skinned, key.alphaTested) {
-            case (false, false): try ShaderSource.load(named: "mesh_shadow", bundle: .module)
-            case (false, true): try ShaderSource.load(named: "mesh_shadow_mask", bundle: .module)
-            case (true, false): try ShaderSource.load(named: "mesh_shadow_skinned", bundle: .module)
-            case (true, true): try ShaderSource.load(vertex: "mesh_shadow_mask_skinned", fragment: "mesh_shadow_mask", bundle: .module)
+            case (false, false): try ShaderSource.load(named: "mesh_shadow", bundle: .engineResources)
+            case (false, true): try ShaderSource.load(named: "mesh_shadow_mask", bundle: .engineResources)
+            case (true, false): try ShaderSource.load(named: "mesh_shadow_skinned", bundle: .engineResources)
+            case (true, true): try ShaderSource.load(vertex: "mesh_shadow_mask_skinned", fragment: "mesh_shadow_mask", bundle: .engineResources)
             }
             var descriptor = PipelineDescriptor(shader: shader, vertexLayout: key.skinned ? SkinnedMeshVertex.layout : MeshVertex.layout,
                                                 instanceLayout: MeshInstance.layout)
@@ -913,8 +913,8 @@ public final class SceneRenderer {
         do {
             var descriptor = PipelineDescriptor(
                 shader: alphaTested
-                    ? try ShaderSource.load(vertex: "mesh_shadow_mask_skinned", fragment: "mesh_shadow_mask", bundle: .module)
-                    : try ShaderSource.load(named: "mesh_shadow_skinned", bundle: .module),
+                    ? try ShaderSource.load(vertex: "mesh_shadow_mask_skinned", fragment: "mesh_shadow_mask", bundle: .engineResources)
+                    : try ShaderSource.load(named: "mesh_shadow_skinned", bundle: .engineResources),
                 vertexLayout: SkinnedMeshVertex.layout, instanceLayout: MeshInstance.layout)
             descriptor.target = .depthOnly
             descriptor.depthOnlyFragment = alphaTested
@@ -933,7 +933,7 @@ public final class SceneRenderer {
         if let shadowMaskPipeline { return shadowMaskPipeline }
         do {
             var descriptor = PipelineDescriptor(
-                shader: try ShaderSource.load(named: "mesh_shadow_mask", bundle: .module),
+                shader: try ShaderSource.load(named: "mesh_shadow_mask", bundle: .engineResources),
                 vertexLayout: MeshVertex.layout, instanceLayout: MeshInstance.layout)
             descriptor.target = .depthOnly
             descriptor.depthOnlyFragment = true
@@ -1048,7 +1048,7 @@ public final class SceneRenderer {
         if let pipeline = pipelines[key] { return pipeline }
         if key.alphaTested && maskShader == nil {
             do {
-                maskShader = try ShaderSource.load(vertex: "mesh", fragment: "mesh_mask", bundle: .module)
+                maskShader = try ShaderSource.load(vertex: "mesh", fragment: "mesh_mask", bundle: .engineResources)
             } catch {
                 print("SceneRenderer: alpha-tested shader unavailable: \(error)")
                 return nil
@@ -1057,7 +1057,7 @@ public final class SceneRenderer {
         if key.skinned && skinnedShaders[key.alphaTested] == nil {
             do {
                 skinnedShaders[key.alphaTested] = try ShaderSource.load(
-                    vertex: "mesh_skinned", fragment: key.alphaTested ? "mesh_mask" : "mesh", bundle: .module)
+                    vertex: "mesh_skinned", fragment: key.alphaTested ? "mesh_mask" : "mesh", bundle: .engineResources)
             } catch {
                 print("SceneRenderer: skinning shader unavailable: \(error)")
                 return nil

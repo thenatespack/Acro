@@ -14,7 +14,7 @@ public final class UIRenderer {
     public init(device: RenderDevice) throws {
         self.device = device
         var descriptor = PipelineDescriptor(
-            shader: try ShaderSource.load(named: "ui", bundle: .module), vertexLayout: UIVertex.layout)
+            shader: try ShaderSource.load(named: "ui", bundle: .engineResources), vertexLayout: UIVertex.layout)
         descriptor.cullMode = .none
         descriptor.depthTest = false
         descriptor.depthWrite = false

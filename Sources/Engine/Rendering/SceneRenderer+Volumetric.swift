@@ -38,7 +38,7 @@ struct VolumetricFogConstants {
 extension SceneRenderer {
     /// Called at the end of `prepare` with the final frame uniforms: schedules the fog pass on
     /// `engine`'s post-processor, or clears it.
-    func prepareVolumetricFog(environment: SceneEnvironment, engine: Engine, size: (width: Int, height: Int)) {
+    func prepareVolumetricFog(environment: SceneEnvironment, engine: some SceneRenderHost, size: (width: Int, height: Int)) {
         volumetric.setup = nil
         volumetric.depth = nil
         engine.postProcessor?.sceneEffect = nil
@@ -78,7 +78,7 @@ extension SceneRenderer {
         do {
             if volumetric.pipeline == nil {
                 var descriptor = PipelineDescriptor(
-                    shader: try ShaderSource.load(vertex: "post", fragment: "volumetric_fog", bundle: .module), vertexLayout: .none)
+                    shader: try ShaderSource.load(vertex: "post", fragment: "volumetric_fog", bundle: .engineResources), vertexLayout: .none)
                 descriptor.target = .color(.rgba16Float)
                 descriptor.cullMode = .none
                 descriptor.depthTest = false

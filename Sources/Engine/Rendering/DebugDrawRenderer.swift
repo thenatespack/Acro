@@ -69,9 +69,9 @@ public final class DebugDrawRenderer {
 
     public init(device: RenderDevice) throws {
         self.device = device
-        lineShader = try ShaderSource.load(named: "debug_line", bundle: .module)
-        gridShader = try ShaderSource.load(named: "debug_grid", bundle: .module)
-        fillShader = try ShaderSource.load(named: "debug_fill", bundle: .module)
+        lineShader = try ShaderSource.load(named: "debug_line", bundle: .engineResources)
+        gridShader = try ShaderSource.load(named: "debug_grid", bundle: .engineResources)
+        fillShader = try ShaderSource.load(named: "debug_fill", bundle: .engineResources)
     }
 
     /// Records `debug` into `pass` for `view`. Draws nothing when it's empty.
