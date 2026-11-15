@@ -728,7 +728,7 @@ Result:
 - `busy`: boolean
 - `components`: [string]
 - `configured`: boolean
-- `diagnostics?`: [{column: integer, file: string, line: integer, message: string}]
+- `diagnostics?`: [{column: integer, file: string, line: integer, message: string, severity?: string}]
 - `lastError?`: string
 - `lastReport?`: {added: [string], buildMode?: string, buildSeconds?: number, built: boolean, carriedStateBytes?: integer, components: [string], failed: object, fastBuildSkipped?: string, libraryTargets?: [string], linkSeconds?: number, loadSeconds: number, module: string, playing: boolean, removed: object, resetFields: object, restored: integer, swapSeconds: number, systems: [string], totalSeconds: number, undoValuesRestored?: integer, warnings: [string]}
 - `library?`: string
