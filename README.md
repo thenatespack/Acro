@@ -4,9 +4,12 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MPL--2.0-blue" alt="License: MPL 2.0"></a>
   <img src="https://img.shields.io/badge/Swift-6-orange" alt="Swift 6">
   <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey" alt="Platforms: macOS, Linux, Windows">
+  <a href="https://thenatespack.github.io/Acro/documentation/engine/"><img src="https://img.shields.io/badge/docs-API%20reference-informational" alt="Documentation"></a>
 </p>
 
 Acro is a cross-platform 3D game engine and editor written in Swift. It renders with Metal on macOS and Vulkan on Linux and Windows. You write games in plain Swift, edit scenes in the editor, and reload game code while the editor is running. An AI agent can drive the editor too, through its built-in MCP server.
+
+**Documentation:** the [Acro documentation](https://thenatespack.github.io/Acro/documentation/engine/) has the getting-started guide, articles, and the full Engine API reference.
 
 ![The Acro editor with the sample project open](docs/images/editor.png)
 
@@ -237,7 +240,10 @@ CI doesn't render the demo scenes. Check rendering changes locally with `Scripts
 
 ## Documentation
 
-- [Engine API reference](https://thenatespack.github.io/Acro/documentation/engine/) (DocC; build it locally with `Scripts/build-docs.sh`)
+The main documentation is the **[Acro documentation site](https://thenatespack.github.io/Acro/documentation/engine/)**: a getting-started guide, articles on entities and systems, and the full Engine API reference. It's built with DocC from `Sources/Engine/Engine.docc/` and published from `main`; build it locally with `Scripts/build-docs.sh`.
+
+Other guides in this repository:
+
 - [Builder tools](docs/Builders.md)
 - [Editor MCP tools](docs/MCPTools.md)
 - [Networking design and implementation](docs/Networking.md)
