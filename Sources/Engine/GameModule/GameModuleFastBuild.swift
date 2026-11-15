@@ -162,6 +162,11 @@ public struct GameModuleBuildPlan: Codable, Sendable, Equatable {
         arguments + sources + objects.map(\.path) + ["-emit-library", "-o", output.path] + GameModuleBuilder.undefinedSymbolFlags
     }
 
+    /// The command that only type-checks `sources` (no code generated, nothing written).
+    public func typecheckCommand(sources: [String]) -> [String] {
+        arguments + sources + ["-typecheck"]
+    }
+
     /// Splits a shell-quoted command line: whitespace separates words; `'…'`, `"…"` and `\x`
     /// quote (swift-build escapes `=` as `\=`).
     static func shellWords(_ line: String) -> [String] {
@@ -293,6 +298,69 @@ extension GameModuleBuilder {
             }
         }
         return builder.fullBuild(to: output, fallbackReason: fallbackReason)
+    }
+
+    /// What `typecheck(overrides:)` did.
+    public enum TypecheckOutcome: Sendable {
+        /// The compiler ran; its output names the original files, not the stand-ins for
+        /// unsaved text.
+        case checked(StepResult)
+        /// No check was possible (why).
+        case unavailable(String)
+    }
+
+    /// Type-checks the game target as it would compile now, with `overrides` (file path →
+    /// unsaved text) in place of those files on disk: the editor's as-you-type check. Replays
+    /// the cached build plan with `-typecheck`, so it needs one (a first build) and the same
+    /// source files; it generates no code and links nothing (~0.2-0.5 s for a small target).
+    /// Library targets are checked against their last built modules. Blocks.
+    public func typecheck(overrides: [String: String]) -> TypecheckOutcome {
+        guard buildCommand == nil, Self.fastBuildSupported else {
+            return .unavailable("checking as you type needs a SwiftPM game target built with the direct swiftc path")
+        }
+        guard let plan = loadCache()?.plan else { return .unavailable("build the game once to enable checking as you type") }
+        let sources = sourceFiles(of: target)
+        guard sources == plan.sources else {
+            return .unavailable("\(target)'s files were added, removed or renamed; reload the game to check again")
+        }
+        let wanted = Dictionary(overrides.map { (GameModuleBuildPlan.standardPath($0.key), $0.value) },
+                                uniquingKeysWith: { _, last in last })
+        guard wanted.keys.contains(where: sources.contains) || wanted.isEmpty else {
+            return .unavailable("not a source file of \(target)")
+        }
+        // Unsaved text goes in stand-in files with the same names (one folder each, so two
+        // files called the same can't collide); the output is mapped back to the real paths.
+        let folder = URL(fileURLWithPath: GameModuleBuildPlan.standardPath(cacheFolder.path), isDirectory: true)
+            .appendingPathComponent("check", isDirectory: true).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        var standIns: [(standIn: String, original: String)] = []
+        var checked: [String] = []
+        for (index, source) in sources.enumerated() {
+            guard let text = wanted[source] else { checked.append(source); continue }
+            let directory = folder.appendingPathComponent("\(index)", isDirectory: true)
+            let standIn = directory.appendingPathComponent(URL(fileURLWithPath: source).lastPathComponent)
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try text.write(to: standIn, atomically: false, encoding: .utf8)
+            } catch {
+                return .unavailable("couldn't write \(standIn.path): \(error)")
+            }
+            standIns.append((standIn.path, source))
+            checked.append(standIn.path)
+        }
+        var result = Self.run(plan.typecheckCommand(sources: checked), in: packageURL)
+        for (standIn, original) in standIns {
+            result.output = result.output.replacingOccurrences(of: standIn, with: original)
+        }
+        // As in `fastBuild`: errors in the game's own code are the answer; anything else
+        // (a module redefinition, a missing library module) means the plan is out of date.
+        let ownFolder = sourceFolder(of: target)
+        let ownErrors = result.output.split(separator: "\n").contains { $0.hasPrefix(ownFolder + "/") && $0.contains(": error: ") }
+        if !result.succeeded && !ownErrors {
+            let first = result.output.split(separator: "\n").first { $0.contains("error:") }.map(String.init) ?? "the compiler failed"
+            return .unavailable("the build plan is out of date (\(first.trimmingCharacters(in: .whitespaces))); reload the game to refresh it")
+        }
+        return .checked(result)
     }
 
     /// Whether the direct `swiftc` path is available here. Not on Windows yet: the plan is

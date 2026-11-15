@@ -444,12 +444,32 @@ public final class CodeEditorWidget: Widget {
     public var onSave: (() -> Void)?
     public var isEditable: Bool = true
 
+    /// Compiler errors and warnings to mark (1-based lines and columns, as the compiler gives
+    /// them): a dot in the gutter, an underline from the column to the end of the word, and the
+    /// message after the line's text. The first error on a line wins over warnings.
+    public var diagnostics: [GameBuildDiagnostic] = [] {
+        didSet {
+            guard diagnostics != oldValue else { return }
+            diagnosticsByLine = [:]
+            for diagnostic in diagnostics {
+                let index = diagnostic.line - 1
+                if let existing = diagnosticsByLine[index], existing.severity == .error || diagnostic.severity == .warning { continue }
+                diagnosticsByLine[index] = diagnostic
+            }
+            setNeedsDisplay()
+        }
+    }
+    /// The diagnostic shown on each 0-based line.
+    public private(set) var diagnosticsByLine: [Int: GameBuildDiagnostic] = [:]
+
     private var lastActivity: Double = 0
+    private var knownLineCount = 1
     private var lineOffsetsCache: [Int: [Float]] = [:]
     private var tokensCache: [Int: [SwiftSyntaxTokenizer.Token]] = [:]
 
     public init(text: String = "", name: String = "codeEditor") {
         buffer = CodeEditBuffer(text)
+        knownLineCount = buffer.lineCount
         super.init(name: name)
         padding = EdgeInsets(top: 4, left: 0, bottom: 8, right: 8)
     }
@@ -458,6 +478,8 @@ public final class CodeEditorWidget: Widget {
         get { buffer.text }
         set {
             buffer.setText(newValue)
+            knownLineCount = buffer.lineCount
+            diagnostics = []
             lineOffsetsCache.removeAll()
             tokensCache.removeAll()
             setNeedsLayout()
@@ -484,11 +506,30 @@ public final class CodeEditorWidget: Widget {
     }
 
     private func edited() {
+        shiftDiagnostics()
         touch()
         lineOffsetsCache.removeAll()
         tokensCache.removeAll()
         setNeedsLayout()
         onChange?(buffer.text)
+    }
+
+    /// Keeps the markers on their lines when an edit adds or removes lines before the next
+    /// check replaces them: lines below the edit move, removed lines lose theirs.
+    private func shiftDiagnostics() {
+        let delta = buffer.lineCount - knownLineCount
+        knownLineCount = buffer.lineCount
+        guard delta != 0, !diagnostics.isEmpty else { return }
+        let first = buffer.lineIndex(for: buffer.caret) - max(delta, 0)  // where the edit began (0-based)
+        let removedThrough = first + max(-delta, 0)
+        diagnostics = diagnostics.compactMap { diagnostic in
+            let index = diagnostic.line - 1
+            if index <= first { return diagnostic }
+            if index <= removedThrough { return nil }
+            var moved = diagnostic
+            moved.line += delta
+            return moved
+        }
     }
 
     private func offsets(for line: Int, size: Float, font: Font) -> [Float] {
@@ -788,6 +829,8 @@ public final class CodeEditorWidget: Widget {
         let commentColor = isLight ? UIColor(hex: 0x6e7781) : UIColor(hex: 0x8b949e)
         let numberColor = isLight ? UIColor(hex: 0x8250df) : UIColor(hex: 0xd2a8ff)
         let attributeColor = isLight ? UIColor(hex: 0x953800) : UIColor(hex: 0xffa657)
+        let errorColor = isLight ? UIColor(hex: 0xcf222e) : UIColor(hex: 0xff7b72)
+        let warningColor = isLight ? UIColor(hex: 0x9a6700) : UIColor(hex: 0xd29922)
 
         for l in visibleStart..<visibleEnd {
             let lineY = contentRect.y + Float(l) * lh
@@ -802,6 +845,29 @@ public final class CodeEditorWidget: Widget {
             let numWidth = Float(lineNumStr.count) * 8.5
             let numX = frame.x + gutter - 12 - numWidth
             list.drawText(lineNumStr, at: Vec2(numX, lineY), size: theme.smallFontSize, color: numColor, font: font)
+
+            // Diagnostic: gutter dot, underline, message after the text
+            if let diagnostic = diagnosticsByLine[l] {
+                let color = diagnostic.severity == .error ? errorColor : warningColor
+                list.fillRect(UIRect(x: frame.x + 4, y: lineY + lh / 2 - 3, width: 6, height: 6), color: color)
+                let lineText = Array(buffer.lineString(l))
+                var start = min(max(diagnostic.column - 1, 0), lineText.count)
+                if start == lineText.count, start > 0 { start -= 1 }  // at the end: mark the last character
+                var end = start
+                while end < lineText.count, lineText[end].isLetter || lineText[end].isNumber || lineText[end] == "_" { end += 1 }
+                end = min(max(end, start + 1), lineText.count)
+                if end > start, end < off.count {
+                    let x0 = contentRect.x + gutter + off[start]
+                    let x1 = contentRect.x + gutter + off[end]
+                    list.fillRect(UIRect(x: x0, y: lineY + lh - 3, width: max(x1 - x0, 4), height: 2), color: color)
+                } else {
+                    let x0 = contentRect.x + gutter + (off.last ?? 0)
+                    list.fillRect(UIRect(x: x0, y: lineY + lh - 3, width: 6, height: 2), color: color)
+                }
+                let messageX = contentRect.x + gutter + (off.last ?? 0) + 24
+                list.drawText(diagnostic.message, at: Vec2(messageX, lineY + 1), size: theme.smallFontSize,
+                              color: color.withAlpha(0.8), font: font)
+            }
 
             // Draw selection background if overlapping
             if buffer.hasSelection && sel.upperBound > lineStartChar && sel.lowerBound < lineEndChar {

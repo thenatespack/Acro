@@ -291,7 +291,7 @@ private let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathCompon
         #expect(GameBuildDiagnostic(compilerLine: "error: no such target") == nil)
 
         let errors = (1...7).map { "/p/A.swift:\($0):1: error: e\($0)" }
-        let message = EditorGameModule.buildFailureMessage(errors: errors, diagnostics: errors.compactMap(GameBuildDiagnostic.init(compilerLine:)),
+        let message = EditorGameModule.buildFailureMessage(errors: errors, diagnostics: errors.compactMap { GameBuildDiagnostic(compilerLine: $0) },
                                                            oldCodeRunning: true)
         #expect(message.hasPrefix("Build failed with 7 errors; the old game code keeps running:\n  A.swift:1:1: e1\n"))
         #expect(message.contains("A.swift:5:1: e5"))

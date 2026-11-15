@@ -126,7 +126,7 @@ enum Main {
 }
 ```
 
-For a larger example with custom components and systems, see [Sources/SampleGame](Sources/SampleGame). The quickest way to add behavior is a `Script`: a component with an `update(_ context:)` that runs every frame, registered with `game.script(MyScript.self)`. The editor's **New Script** writes one and registers it for you, and when a build fails the Script Editor lists each error with its file and line and can jump to it. Run it in the editor or on its own:
+For a larger example with custom components and systems, see [Sources/SampleGame](Sources/SampleGame). The quickest way to add behavior is a `Script`: a component with an `update(_ context:)` that runs every frame, registered with `game.script(MyScript.self)`. The editor's **New Script** writes one and registers it for you, and when a build fails the Script Editor lists each error with its file and line and can jump to it. While you type, the Script Editor also type-checks the game target with your unsaved text (a fraction of a second after you stop typing, without building or reloading) and marks errors and warnings on their lines; this needs one build of the game first, and isn't available on Windows yet. Run it in the editor or on its own:
 
 ```sh
 swift run Editor --game SampleGame

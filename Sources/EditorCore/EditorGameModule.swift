@@ -84,12 +84,18 @@ public struct GameBuildDiagnostic: Codable, Equatable, Sendable {
     public var line: Int
     public var column: Int
     public var message: String
+    public var severity: Severity
 
-    public init(file: String, line: Int, column: Int, message: String) {
+    public enum Severity: String, Codable, Sendable {
+        case error, warning
+    }
+
+    public init(file: String, line: Int, column: Int, message: String, severity: Severity = .error) {
         self.file = file
         self.line = line
         self.column = column
         self.message = message
+        self.severity = severity
     }
 
     /// "Player.swift:12:5: cannot find 'speeed' in scope".
@@ -97,11 +103,22 @@ public struct GameBuildDiagnostic: Codable, Equatable, Sendable {
         "\(URL(fileURLWithPath: file).lastPathComponent):\(line):\(column): \(message)"
     }
 
-    /// Parses one "path/File.swift:12:5: error: message" line; nil for anything else.
-    public init?(compilerLine line: String) {
-        guard let match = line.firstMatch(of: /^(\S.*?):(\d+):(\d+): error: (.*)$/),
-              let number = Int(match.2), let column = Int(match.3) else { return nil }
-        self.init(file: String(match.1), line: number, column: column, message: String(match.4))
+    /// Parses one "path/File.swift:12:5: error: message" line (or "warning:", when
+    /// `severities` has it); nil for anything else.
+    public init?(compilerLine line: String, severities: Set<Severity> = [.error]) {
+        guard let match = line.firstMatch(of: /^(\S.*?):(\d+):(\d+): (error|warning): (.*)$/),
+              let number = Int(match.2), let column = Int(match.3),
+              let severity = Severity(rawValue: String(match.4)), severities.contains(severity) else { return nil }
+        self.init(file: String(match.1), line: number, column: column, message: String(match.5), severity: severity)
+    }
+
+    private enum CodingKeys: String, CodingKey { case file, line, column, message, severity }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(file: try container.decode(String.self, forKey: .file), line: try container.decode(Int.self, forKey: .line),
+                  column: try container.decode(Int.self, forKey: .column), message: try container.decode(String.self, forKey: .message),
+                  severity: try container.decodeIfPresent(Severity.self, forKey: .severity) ?? .error)
     }
 }
 
@@ -336,7 +353,7 @@ public final class EditorGameModule {
             let errors = Self.compilerErrors(in: buildOutput)
             let lines = buildOutput.split(separator: "\n").map { Self.strippingEscapes(String($0)) }
             for line in errors.isEmpty ? Array(lines.suffix(30)) : errors { session.log.error(line) }
-            let diagnostics = errors.compactMap(GameBuildDiagnostic.init(compilerLine:))
+            let diagnostics = errors.compactMap { GameBuildDiagnostic(compilerLine: $0) }
             let summary = Self.buildFailureMessage(errors: errors, diagnostics: diagnostics, oldCodeRunning: loaded != nil)
             lastError = summary
             lastDiagnostics = diagnostics
@@ -375,7 +392,7 @@ public final class EditorGameModule {
         return diagnostics.isEmpty ? lines.filter { $0.contains("error:") && seen.insert($0).inserted } : diagnostics
     }
 
-    private static func strippingEscapes(_ line: String) -> String {
+    nonisolated static func strippingEscapes(_ line: String) -> String {
         line.replacingOccurrences(of: "\u{1B}\\[[0-9;]*m|\u{1B}\\]8;;[^\u{1B}]*\u{1B}\\\\", with: "", options: .regularExpression)
     }
 
