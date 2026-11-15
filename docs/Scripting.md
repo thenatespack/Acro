@@ -48,7 +48,7 @@ Swift figures are measured above; Lua and Wasm figures are typical published one
 | Debugging | Full: Xcode / lldb attach to the editor, breakpoints in game code, Swift types, the same profiler | Separate debugger (mobdebug / VS Code adapters), print debugging in practice; no engine-side types | Poor in-engine: DWARF in Wasm is patchy across runtimes; mostly logging |
 | Performance | Native, same as engine code; direct access to `World` queries, no marshalling | Interpreter 10–50× slower than Swift for math-heavy code (LuaJIT 2–5×, but no iOS JIT); every ECS access crosses a binding | Interpreted (wasm3) ~5–15× slower; JIT/AOT runtimes near native, but every host call marshals across the boundary and component data must be copied into linear memory |
 | Engine API surface | All of Engine, typed, nothing to maintain | Hand-written or generated bindings for every type and call; reflection (`FieldDescriptor`, Codable) helps for components only | Same binding problem as Lua, plus a memory-layout ABI for shared data |
-| Platforms | macOS, Linux (Windows untested). **iOS/tvOS: no** — loading code at run time is forbidden, so shipping builds link the game statically (fine) and on-device hot reload is impossible | Everywhere, including iOS (interpreted) and consoles | Everywhere with an interpreter; JITs not on iOS |
+| Platforms | macOS, Linux, Windows (linked against the host's import library; no fast rebuilds yet). **iOS/tvOS: no** — loading code at run time is forbidden, so shipping builds link the game statically (fine) and on-device hot reload is impossible | Everywhere, including iOS (interpreted) and consoles | Everywhere with an interpreter; JITs not on iOS |
 | Ship path | Link the game target into the app normally; the module ABI is only for the editor | Ship scripts as assets; patchable without an app update (store policies permitting) | Ship `.wasm` as assets; same |
 | MCP / agent friendliness | Good: agents already edit Swift files, `game.reload` returns compiler errors and a structured report; the type checker catches mistakes before they run | Agents write Lua well, errors only at run time; reload is near-instant so the loop is fast; needs docs for our bindings | Agents must also drive a second toolchain; slowest loop of the three |
 | Cost to build | Done (this card) | Weeks: runtime, bindings, ECS bridge, inspector integration, debugger story | More than Lua: runtime choice, ABI, toolchain per language |
@@ -80,7 +80,8 @@ hook, offered on the next launch), multi-target games, `willUnload` / `didLoad` 
 2. **Incremental direct compiles** for large game targets (an output file map and `-incremental`,
    or a long-lived build service), once a game target is big enough for whole-module recompiles
    to hurt.
-3. **Windows support** for game modules (DLL import libraries make `dynamic_lookup` impossible:
-   would need Engine as a real DLL).
+3. **Fast rebuilds on Windows**: game modules load there (linked against the host's import
+   library, see `GameModule.swift`), but every reload is `swift build` and a link, because the
+   captured `swiftc` plan assumes POSIX paths and quoting.
 4. **Only if needed:** a Wasm scripting spike (WAMR or wasm3) for sandboxed mods, behind the same
    `GameModule` registration shape.

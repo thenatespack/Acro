@@ -59,3 +59,8 @@ jobs:
         run: |
           dir .build\release\GameRunner.exe .build\release\GameRunner.lib
           .build\release\GameRunner.exe SampleGame --check
+          if errorlevel 1 (
+            echo Libraries the SampleGame objects ask for:
+            for %%f in (.build\release\SampleGame.objlib\*.o .build\release\SampleGame.build\*.o) do llvm-readobj --coff-directives "%%f"
+            exit /b 1
+          )

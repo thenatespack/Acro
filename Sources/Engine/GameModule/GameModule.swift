@@ -30,8 +30,12 @@ import Foundation
 // second `ComponentRegistry`). So the module is linked from the game target's object files
 // alone, with Engine's symbols left undefined and resolved against the host process when it
 // is loaded (`-undefined dynamic_lookup` on macOS; shared libraries may have undefined
-// symbols on Linux, where the host is linked with `--export-dynamic`). `GameModuleBuilder`
-// does that link. A SwiftPM `.dynamic` library product would not work: SwiftPM links a
+// symbols on Linux, where the host is linked with `--export-dynamic`). Windows DLLs can't
+// leave symbols undefined: there the module links against the host's import library
+// (`Editor.lib` beside `Editor.exe`) and imports Engine's symbols from the running executable
+// by name. That works because Engine's product is `.dynamic` on Windows, so Engine is compiled
+// with its symbols exported and game targets compile against it with dllimport (see
+// Package.swift). `GameModuleBuilder` does that link. A SwiftPM `.dynamic` library product would not work: SwiftPM links a
 // product's whole target closure statically, Engine included, and a package can't depend on
 // its own products to get a shared `libEngine`. See README "Game modules".
 //

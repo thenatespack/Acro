@@ -10,9 +10,12 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 - `PORTABLE=1 Scripts/make-editor-app.sh` builds an `Editor.app` without this checkout's paths, for distribution.
 - `CONTRIBUTING.md`, `SECURITY.md`, issue forms, and a pull request template.
 - Engine API reference built with DocC (`Scripts/build-docs.sh`, `Sources/Engine/Engine.docc`) and published to GitHub Pages by the Docs workflow.
+- Windows: the editor and `GameRunner` load game modules, so Play runs game code there. A module links against the host's import library (`Editor.lib`, shipped next to `Editor.exe`) and is loaded with `LoadLibraryW`. Reloads use `swift build` and a link; the fast direct-`swiftc` rebuild is macOS and Linux only for now.
+- `GameRunner --check` loads a game module, checks it shares the runner's Engine, and exits. Windows CI runs it on SampleGame.
 
 ### Changed
 
+- Windows: `Engine`'s library product is `.dynamic`, so Engine is compiled with its symbols exported and `swift build` also writes an `Engine.dll`.
 - CI no longer renders the demo scenes; check rendering locally with `Scripts/render-scenes.sh`.
 - Moved the cross-platform notes to `docs/cross-plat.md`.
 

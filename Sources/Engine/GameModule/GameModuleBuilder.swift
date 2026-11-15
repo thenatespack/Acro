@@ -138,11 +138,19 @@ public struct GameModuleBuilder: Sendable {
         #if os(Windows)
         var flags: [String] = []
         if let hostImportLibrary { flags.append(hostImportLibrary.path) }
+        // The objects ask for the libraries of Engine's C modules (autolinking through the
+        // module maps under Windows/). The host already has them and the module gets those
+        // symbols from it, and a machine with only the editor installed has no zlib.lib to
+        // find; Engine's own libraries would bind imports to the unused Engine.dll.
+        for library in Self.hostOnlyLibraries { flags += ["-Xlinker", "/NODEFAULTLIB:\(library).lib"] }
         return flags + ["-Xlinker", "/EXPORT:\(Self.entryPointSymbol(in: objects))"]
         #else
         return []
         #endif
     }
+
+    /// Libraries a game module's objects autolink that only the host links (Windows).
+    static let hostOnlyLibraries = ["zlib", "vulkan-1", "glfw3", "Engine", "EngineMCP"]
 
     /// The entry point the objects define: `GameModuleABI.entryPoint`, or the legacy name when
     /// only that one appears in them.
