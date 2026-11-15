@@ -8,6 +8,7 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 
 - The Script Editor checks scripts as you type: shortly after you stop typing, the game target is type-checked with the unsaved text (the cached `swiftc` plan replayed with `-typecheck`; nothing is built, saved or reloaded), and errors and warnings are marked in the gutter, underlined, and shown at the end of their lines. `GameModuleBuilder.typecheck(overrides:)`, `ScriptChecker`, and `GameBuildDiagnostic.severity` are new.
 - Release workflow: pushing a `vX.Y.Z` tag builds the editor for macOS (`Editor.app`), Linux, and Windows (`Editor.exe`) (`Scripts/package-release.sh`, `Scripts/package-release.ps1`) and publishes them as a GitHub Release.
+- Windows installer: releases include `Acro-<version>-windows-x64.msi`, which installs the editor into Program Files with Start Menu and desktop shortcuts (`Scripts\package-release.ps1 -Msi`, `Windows/Installer/Acro.wxs`, WiX v5).
 - `PORTABLE=1 Scripts/make-editor-app.sh` builds an `Editor.app` without this checkout's paths, for distribution.
 - `CONTRIBUTING.md`, `SECURITY.md`, issue forms, and a pull request template.
 - Engine API reference built with DocC (`Scripts/build-docs.sh`, `Sources/Engine/Engine.docc`) and published to GitHub Pages by the Docs workflow.
