@@ -1,0 +1,184 @@
+name: Release
+
+# Builds the Acro editor for macOS, Linux and Windows and publishes them as a GitHub Release.
+#
+# Release: move the CHANGELOG's Unreleased entries under "## [X.Y.Z] - date" (X.Y.Z being
+# `Scripts/version.sh`), commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The tag must
+# match the engine version. Running the workflow by hand (Actions > Release > Run workflow)
+# builds the archives as workflow artifacts without publishing anything.
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the version
+        id: version
+        run: |
+          version=$(sed -n 's/.*static let current = "\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p' Sources/Engine/Core/EngineVersion.swift | head -n 1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match the engine version $version (Sources/Engine/Core/EngineVersion.swift)."
+            exit 1
+          fi
+
+      - name: Release notes from the changelog
+        run: |
+          version=${{ steps.version.outputs.version }}
+          # The "## [X.Y.Z]" section, without its heading.
+          awk -v v="$version" '
+            /^## \[/ { if (found) exit; if (index($0, "## [" v "]") == 1) { found = 1; next } }
+            /^\[.*\]: / { if (found) exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::warning::CHANGELOG.md has no section for $version; the release notes will be generated from commits."
+            : > notes.md
+          fi
+          cat >> notes.md <<'EOF'
+
+          ### Downloads
+
+          | Platform | Archive | Needs |
+          | --- | --- | --- |
+          | macOS 14+ (Apple silicon) | `Acro-*-macos-arm64.zip` | `Editor.app`. Metal only, nothing else to install. |
+          | Linux x86-64 | `Acro-*-linux-x86_64.tar.gz` | Run `Editor`. Needs Vulkan, GLFW, zlib and ALSA, e.g. `apt install libvulkan1 libglfw3 zlib1g libasound2t64`. The Swift runtime is included. |
+          | Windows x64 | `Acro-*-windows-x64.zip` | Run `Editor.exe`. Needs a GPU driver with Vulkan; the Swift runtime and zlib DLLs are included next to it. |
+
+          Each archive holds the Acro editor. Building game modules in it needs the Swift toolchain and the engine's source: check out this tag and set `ACRO_ENGINE` to it.
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: notes.md
+
+  macos:
+    needs: prepare
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package
+        run: Scripts/package-release.sh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: acro-macos
+          path: dist/*.zip
+          if-no-files-found: error
+
+  linux:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    container:
+      image: swift:6.4-noble
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            libvulkan-dev libglfw3-dev zlib1g-dev pkg-config glslc libasound2-dev ca-certificates
+
+      - name: Package
+        run: Scripts/package-release.sh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: acro-linux
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  windows:
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: compnerd/gha-setup-swift@main
+        with:
+          swift-version: swift-6.4.2-release
+          swift-build: 6.4.2-RELEASE
+
+      # The SDK, GLFW and zlib setup below is the same as in windows.yml.
+      - name: Install Vulkan SDK
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe -OutFile vulkan-sdk.exe
+          .\vulkan-sdk.exe --accept-licenses --default-answer --confirm-command install
+          $sdk = (Get-ChildItem C:\VulkanSDK | Sort-Object Name -Descending | Select-Object -First 1).FullName
+          "VULKAN_SDK=$sdk" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "$sdk\Bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Install GLFW (prebuilt)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.bin.WIN64.zip -OutFile glfw.zip
+          Expand-Archive glfw.zip -DestinationPath $env:RUNNER_TEMP
+          $dir = Join-Path $env:RUNNER_TEMP 'glfw-3.4.bin.WIN64'
+          Copy-Item "$dir\lib-vc2022" "$dir\lib" -Recurse
+          "GLFW_DIR=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: Install zlib (vcpkg)
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install zlib:x64-windows
+          $dir = Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed\x64-windows'
+          if (-not (Test-Path "$dir\lib\zlib.lib") -and (Test-Path "$dir\lib\z.lib")) {
+            Copy-Item "$dir\lib\z.lib" "$dir\lib\zlib.lib"
+          }
+          "ZLIB_DIR=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "$dir\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Package
+        shell: pwsh
+        run: Scripts\package-release.ps1 -OutDir dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: acro-windows
+          path: dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    if: github.ref_type == 'tag'
+    needs: [prepare, macos, linux, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          cd artifacts
+          sha256sum acro-*/* | sed 's|  acro-[^/]*/|  |' > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          generate=
+          grep -q '^- ' release-notes/notes.md || generate=--generate-notes
+          gh release create "$GITHUB_REF_NAME" acro-*/* SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Acro $VERSION" \
+            --notes-file release-notes/notes.md \
+            --verify-tag $generate
