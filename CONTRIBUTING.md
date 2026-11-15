@@ -75,6 +75,15 @@ The pre-commit hook installed by `Scripts/version.sh install` bumps the engine v
 
 Add a line describing user-visible changes under **Unreleased** in [CHANGELOG.md](CHANGELOG.md).
 
+### Releases
+
+Maintainers publish releases from a tag. The Release workflow (`.github/workflows/release.yml`) builds the editor for macOS, Linux, and Windows with `Scripts/package-release.sh` and `Scripts/package-release.ps1`, and attaches them to a GitHub Release with checksums.
+
+1. Rename **Unreleased** in the changelog to `## [X.Y.Z] - YYYY-MM-DD`, where `X.Y.Z` is the output of `Scripts/version.sh`. Add a fresh **Unreleased** section above it. The release notes come from this section.
+2. Commit, then tag and push: `git tag vX.Y.Z && git push origin main vX.Y.Z`. The workflow fails if the tag doesn't match the engine version.
+
+To check the packaging without publishing anything, run the workflow by hand from the Actions tab. The archives are uploaded as workflow artifacts. You can also run `Scripts/package-release.sh` locally; it writes to `Build/release`.
+
 ## Pull requests
 
 1. Fork the repository and create a branch from `main`.

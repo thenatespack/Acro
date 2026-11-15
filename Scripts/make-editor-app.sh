@@ -4,11 +4,15 @@
 #   Scripts/make-editor-app.sh                  # release build -> Build/Editor.app
 #   CONFIG=debug Scripts/make-editor-app.sh     # debug build
 #   Scripts/make-editor-app.sh ~/Applications/Editor.app
+#   PORTABLE=1 Scripts/make-editor-app.sh       # for distribution (Scripts/package-release.sh)
 #
 # The app is for this machine: it uses this checkout's sources (Info.plist sets
 # ACRO_ENGINE to it, so Build Game, game modules and the Game Module template keep
 # working from Finder, where the working directory is /), and with Vulkan enabled it links
 # Homebrew's libvulkan / libglfw. Game modules are built in the app's configuration.
+# PORTABLE=1 leaves out the checkout paths (ACRO_ENGINE, EDITOR_SAMPLE_PROJECT): users point
+# ACRO_ENGINE at their own engine checkout to build game modules. Build it with
+# ENGINE_DISABLE_VULKAN=1 so it doesn't link Homebrew libraries.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -31,6 +35,13 @@ for bundle in "$BIN"/Acro_Engine.bundle "$BIN"/Acro_Editor*.bundle; do
 done
 [ -f "$ROOT/logos/AppIcon.icns" ] && cp "$ROOT/logos/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
+if [ -n "${PORTABLE:-}" ]; then
+    CHECKOUT_ENV=
+else
+    CHECKOUT_ENV="		<key>ACRO_ENGINE</key><string>$ROOT</string>
+		<key>EDITOR_SAMPLE_PROJECT</key><string>$ROOT/Projects/SampleGame</string>"
+fi
+
 cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -51,8 +62,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
 	<key>NSPrincipalClass</key><string>NSApplication</string>
 	<key>LSEnvironment</key>
 	<dict>
-		<key>ACRO_ENGINE</key><string>$ROOT</string>
-		<key>EDITOR_SAMPLE_PROJECT</key><string>$ROOT/Projects/SampleGame</string>
+$CHECKOUT_ENV
 		<key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
 	</dict>
 </dict>
@@ -61,6 +71,6 @@ EOF
 
 codesign --force --sign - "$APP" >/dev/null 2>&1 || echo "warning: ad-hoc signing failed" >&2
 # Make Launch Services pick up the new Info.plist (LSEnvironment is cached per app).
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP" 2>/dev/null || true
+[ -n "${PORTABLE:-}" ] || /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP" 2>/dev/null || true
 
 echo "$APP"

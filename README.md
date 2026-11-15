@@ -35,7 +35,7 @@ Acro is a cross-platform 3D game engine and editor written in Swift. It renders 
 
 ## Quick start
 
-Clone the repository, then run the demo and the editor with Swift Package Manager. Use release builds (`-c release`) unless you are debugging; debug builds are much slower per frame.
+Prebuilt editor builds for macOS, Linux, and Windows are on the [Releases](https://github.com/thenatespack/Acro/releases) page. To build from source, clone the repository, then run the demo and the editor with Swift Package Manager. Use release builds (`-c release`) unless you are debugging; debug builds are much slower per frame.
 
 **macOS** (Metal):
 
