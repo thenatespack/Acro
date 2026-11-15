@@ -2,6 +2,17 @@ import CZlib
 import Foundation
 import Testing
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
 /// Minimal PNG reader for 8-bit RGBA: checks chunk CRCs, inflates the concatenated IDATs with zlib
 /// and undoes the row filters. Written independently of the encoder.

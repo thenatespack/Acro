@@ -3,6 +3,17 @@ import Foundation
 import Testing
 @testable import EditorCore
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
 // Scene and entity tools: the same edits through the UI (hierarchy and inspector panels) and
 // through MCP tool calls give the same scene, undo / redo restore it exactly, queries return

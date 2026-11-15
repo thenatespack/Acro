@@ -1,6 +1,17 @@
 import Foundation
 import Testing
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
 // Vulkan descriptor pools that grow on demand: the long-lived pool list (sets 0 and 1: a dynamic
 // uniform buffer per transient-ring chunk, a combined image sampler per depth texture / target)

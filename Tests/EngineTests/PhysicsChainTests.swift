@@ -1,6 +1,17 @@
 import Foundation
 import Testing
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
 /// The physics demo's chain: 7 box links hinged about z, the first to the world, released
 /// horizontally, with a ball-jointed sphere weight at the end, and the gantry beam just above

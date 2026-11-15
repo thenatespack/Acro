@@ -3,6 +3,17 @@ import Foundation
 import Testing
 @testable import EditorCore
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
 // The command registry as MCP tools: one tool per command with schemas derived from its
 // Codable types (snapshots below), annotations, calls through a client, errors, list changes

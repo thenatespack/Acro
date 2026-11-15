@@ -2,6 +2,17 @@
 // `TransformGizmo`): the view they work in, the pointer, the selection, and the ray and
 // intersection math they are built on. Nothing here depends on an editor app; hosts feed
 // plain values every frame.
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
 
 /// A pointer event in a viewport.
 public struct ViewportPointer: Sendable, Equatable {

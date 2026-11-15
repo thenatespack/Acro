@@ -1,4 +1,15 @@
 import Foundation
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
 
 // Building a game module quickly, and games made of several targets.
 //

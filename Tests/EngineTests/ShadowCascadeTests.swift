@@ -1,6 +1,17 @@
 import Foundation
 import Testing
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
 private let toLight = normalize(Vec3(0.5, 0.75, 0.35))
 private let projection = Mat4.perspective(fovY: .pi / 3, aspect: 16 / 9, near: 0.2, far: 500)

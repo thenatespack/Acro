@@ -3,6 +3,17 @@ import Foundation
 import Testing
 @testable import EditorCore
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
 // Perception tools without a window: screenshots through a host that "renders" on the CPU (one
 // pick per pixel), so the place → screenshot → pick flow runs end to end; picking in every

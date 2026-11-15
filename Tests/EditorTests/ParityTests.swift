@@ -3,6 +3,17 @@ import Foundation
 import Testing
 @testable import EditorCore
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
 // Parity between the editor's UI and its MCP tools: every toolbar button, menu item, shortcut,
 // context-menu entry, dialog button, field and drag-and-drop target maps to a command that the

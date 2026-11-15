@@ -1,4 +1,15 @@
 import Foundation
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
 
 /// On-screen performance HUD: FPS, frame/CPU/GPU times, draw counts and a frame-time graph.
 /// Everything is drawn as solid-colored quads (text included), streamed each frame via

@@ -3,6 +3,17 @@ import Foundation
 import Testing
 @testable import EditorCore
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
 // Play mode as an AI playtester uses it, without a window: pause, step and time scale; input
 // injected over game time reaching game systems (a test system and the built-in

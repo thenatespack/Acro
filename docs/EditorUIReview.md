@@ -18,7 +18,7 @@ zoom 0.85 / 1 / 2, in all four themes, on Metal with spot checks on Vulkan.
   the window, cut off by their panel, overlapping each other or smaller than 12 pt, and saves a
   window screenshot of each state. About 600 states were captured over the runs before and after
   the fixes; the screenshots were read one by one.
-- **Headless.** `UIContext.layoutAudit()` (new, `Sources/Engine/UI/Widgets/UILayoutAudit.swift`)
+- **Headless.** `UIContext.layoutAudit()` (new, `Sources/EngineUI/UI/Widgets/UILayoutAudit.swift`)
   runs the same geometry checks on the widget tree, plus text under 9 pt (after the zoom) and
   button titles cut off without a tooltip. `Tests/EditorTests/EditorLayoutTests.swift` lays the
   editor out at the five sizes × backing 1x/2x × the smallest, default and largest zoom, walks

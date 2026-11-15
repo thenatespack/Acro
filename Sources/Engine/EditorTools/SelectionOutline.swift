@@ -1,4 +1,16 @@
 /// How `SelectionOutlineRenderer` draws the outline.
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
+
 public struct SelectionOutlineStyle: Sendable, Equatable {
     /// Width in points (times the view's pixel scale: constant on screen).
     public var width: Float

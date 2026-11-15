@@ -1,4 +1,15 @@
 import Foundation
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
 
 // Exporting a game: the project's game module and Engine linked statically into one executable
 // (release or debug, for the chosen architecture), its assets cooked into a pack (AssetCooker), laid out as something that runs on

@@ -1,4 +1,15 @@
 import Foundation
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
 
 // Game code as a dynamic library ("game module") that a host — the editor, or `GameRunner` —
 // loads at run time, so the editor can load any game and reload its code without restarting.

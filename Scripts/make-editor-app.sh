@@ -19,7 +19,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 CONFIG=${CONFIG:-release}
 APP=${1:-"$ROOT/Build/Editor.app"}
 NAME=Editor
-VERSION=$(sed -n 's/.*"\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)".*/\1/p' "$ROOT/Sources/Engine/Core/EngineVersion.swift" | head -n 1)
+VERSION=$(sed -n 's/.*"\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)".*/\1/p' "$ROOT/Sources/EngineCore/Core/EngineVersion.swift" | head -n 1)
 VERSION=${VERSION:-0.0.0}
 
 cd "$ROOT"

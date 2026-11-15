@@ -1,4 +1,15 @@
 import Foundation
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
 
 // World-space UI: widgets that follow 3D positions on screen (name tags, health bars), and a
 // whole UI drawn into a render target that a quad in the world shows, with the mouse mapped

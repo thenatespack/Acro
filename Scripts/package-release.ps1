@@ -15,7 +15,7 @@ Set-Location $Root
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $OutDir = (Resolve-Path $OutDir).Path
 
-$VersionFile = Get-Content Sources\Engine\Core\EngineVersion.swift -Raw
+$VersionFile = Get-Content Sources\EngineCore\Core\EngineVersion.swift -Raw
 if ($VersionFile -notmatch 'static let current = "(\d+\.\d+\.\d+)"') { throw "No engine version in EngineVersion.swift" }
 $Version = $Matches[1]
 $Name = "Acro-$Version-windows-x64"

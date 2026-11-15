@@ -1,4 +1,15 @@
 import Foundation
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
 
 // Cooking: a project plus a target platform in, an asset pack (AssetPack.swift) out.
 //
@@ -40,14 +51,6 @@ public struct CookTarget: Equatable, Sendable, Codable {
         self.platform = platform
         self.textureFamily = textureFamily ?? platform.defaultTextureFamily
     }
-}
-
-/// How textures are compressed for a pack.
-public enum TextureCookMode: String, Codable, Sendable, CaseIterable {
-    /// Every 8-bit texture block-compressed for the target (normal maps in two channels).
-    case compress
-    /// As the project imports them, with compressed ones moved to the target's family.
-    case asImported
 }
 
 /// Options for `AssetCooker`.

@@ -29,10 +29,10 @@ jobs:
       - name: Check the version
         id: version
         run: |
-          version=$(sed -n 's/.*static let current = "\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p' Sources/Engine/Core/EngineVersion.swift | head -n 1)
+          version=$(sed -n 's/.*static let current = "\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p' Sources/EngineCore/Core/EngineVersion.swift | head -n 1)
           echo "version=$version" >> "$GITHUB_OUTPUT"
           if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME doesn't match the engine version $version (Sources/Engine/Core/EngineVersion.swift)."
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match the engine version $version (Sources/EngineCore/Core/EngineVersion.swift)."
             exit 1
           fi
 

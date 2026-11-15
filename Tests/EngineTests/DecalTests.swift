@@ -1,6 +1,17 @@
 import Foundation
 import Testing
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
 @Test func decalRoundTripsThroughJSON() throws {
     let decal = Decal(texture: TextureHandle("graffiti"), tint: Vec3(1, 0.5, 0.25), opacity: 0.75, emissive: 2, roughness: 0.2,

@@ -2,6 +2,17 @@ import Foundation
 import Testing
 @testable import EditorCore
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
 // Hot reload follow-ups (card 657): the reload hooks carrying non-ECS state, the undo history
 // surviving reloads (values re-decoded into the new types, or kept as JSON), games of several

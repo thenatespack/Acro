@@ -1,6 +1,17 @@
 import Foundation
 import Testing
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
 /// FSR 3.1 upscaler: option parsing, the constants the host side computes (checked against the
 /// SDK's formulas), and the whole pass chain on every backend (same bytes on each).
