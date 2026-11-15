@@ -1,6 +1,17 @@
 import Foundation
 import Testing
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
 // BC6H / ASTC 4x4 HDR: the formats, encoders and decoders, the texture importer's HDR path,
 // uploads on every backend (or the RGBA16F fallback), and image-based lighting precomputed from

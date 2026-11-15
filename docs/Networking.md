@@ -1,7 +1,7 @@
 # Networking and multiplayer (cards 624, 662, 671, 672)
 
 Research notes, a recommendation and a phased plan, plus the implementation that backs the measurements
-(`Sources/Engine/Net`; `NetworkingTests`, `NetConnectionTests`, `NetPredictionTests`, `NetHierarchyTests`, `NetBacklogTests`, `EditorNetPlayTests`;
+(`Sources/EngineNet/Net`; `NetworkingTests`, `NetConnectionTests`, `NetPredictionTests`, `NetHierarchyTests`, `NetBacklogTests`, `EditorNetPlayTests`;
 the `net` and `netcharacter` demo scenes; editor network play; `GameRunner --server` / `--connect`).
 
 ## What the engine's games need
@@ -273,7 +273,7 @@ determinism requirement), gives late join and reconnect for free, and the same c
 listen server, a dedicated server and LAN play. Lockstep / rollback stays an option for
 single-platform, few-entity games, after the determinism work listed above.
 
-## The implementation (Sources/Engine/Net)
+## The implementation (Sources/EngineNet/Net)
 
 - `NetTransport` (unreliable datagrams, polled), `LoopbackNetwork` / `LoopbackTransport`
   (in-process, deterministic latency, jitter, loss and duplication on a caller-driven clock),

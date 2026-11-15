@@ -71,7 +71,7 @@ CI doesn't render scenes, so this local check is the only one for rendering chan
 
 ### Versions and the changelog
 
-The pre-commit hook installed by `Scripts/version.sh install` bumps the engine version automatically: MINOR when the public API of `Engine` or `EngineMCP` changes, PATCH for other source changes. Don't edit `Sources/Engine/Core/EngineVersion.swift` or `.engine-version` by hand. A MAJOR bump is a maintainer decision (`Scripts/version.sh major`).
+The pre-commit hook installed by `Scripts/version.sh install` bumps the engine version automatically: MINOR when the public API of `Engine` (any of its modules, `Sources/Engine*`) or `EngineMCP` changes, PATCH for other source changes. Don't edit `Sources/EngineCore/Core/EngineVersion.swift` or `.engine-version` by hand. A MAJOR bump is a maintainer decision (`Scripts/version.sh major`).
 
 Add a line describing user-visible changes under **Unreleased** in [CHANGELOG.md](CHANGELOG.md).
 

@@ -344,7 +344,7 @@ public final class MCPCallContext {
     /// The negotiated protocol revision.
     public let protocolVersion: String
     /// The client sent `notifications/cancelled` for this call: stop and return anything.
-    public internal(set) var isCancelled = false
+    public package(set) var isCancelled = false
     let reply: any MCPOutput
     private var lastProgress: Double = -.infinity
 

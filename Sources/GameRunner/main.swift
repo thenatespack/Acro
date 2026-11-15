@@ -18,9 +18,11 @@ let usage = """
            GameRunner --version
     """
 
+// Double-clicked on Windows, the console closes on exit: show errors and crashes in a message box.
+StartupErrors.install(title: "GameRunner")
+
 func fail(_ message: String) -> Never {
-    FileHandle.standardError.write(Data((message + "\n").utf8))
-    exit(1)
+    StartupErrors.fatal(message)
 }
 
 var config = EngineConfig(title: "Game", width: 1280, height: 720)

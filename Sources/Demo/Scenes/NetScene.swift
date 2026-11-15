@@ -1,7 +1,7 @@
 import Engine
 import Foundation
 
-/// The networking prototype (Sources/Engine/Net): a server world and a client world in one
+/// The networking prototype (Sources/EngineNet/Net): a server world and a client world in one
 /// process, joined by a simulated link (100 ms one way, 5% loss each way). Left: the server's
 /// authoritative movers. Right: the client's replica, built only from delta snapshots (30 Hz)
 /// and shown 100 ms behind the newest one with interpolated transforms; the faint shapes on the

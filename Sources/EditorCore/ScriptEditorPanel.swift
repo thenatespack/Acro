@@ -10,6 +10,8 @@ public final class ScriptEditorPanel {
 
     public let editor: CodeEditorWidget
     public let scroll: ScrollView
+    /// Checks the open script as you type (see `ScriptChecker`).
+    public let checker: ScriptChecker
     public private(set) var currentScriptURL: URL?
     public private(set) var isDirty: Bool = false {
         didSet {
@@ -22,6 +24,9 @@ public final class ScriptEditorPanel {
     private let titleLabel: Label
     private let dirtyLabel: Label
     private let statusLabel: Label
+    /// The as-you-type check's result: "No errors", "2 errors", "Checking…".
+    public let checkLabel: Label
+    private var checkVersion = -1
     private let saveButton: Button
     private let reloadButton: Button
     private let errorBanner: HStack
@@ -35,6 +40,7 @@ public final class ScriptEditorPanel {
 
     public init(session: EditorSession) {
         self.session = session
+        checker = ScriptChecker(session: session)
 
         editor = CodeEditorWidget(name: "scriptCodeEditor")
         scroll = ScrollView(editor, name: "scriptEditorScroll")
@@ -48,6 +54,9 @@ public final class ScriptEditorPanel {
 
         statusLabel = Label("Ready", role: .caption, name: "scriptStatusLabel")
         statusLabel.color = UIColor(hex: 0x8b949e)
+
+        checkLabel = Label("", role: .caption, name: "scriptCheckLabel")
+        checkLabel.color = UIColor(hex: 0x8b949e)
 
         saveButton = Button("Save", name: "scriptSaveButton")
         saveButton.icon = EditorIcons.named("save")
@@ -78,7 +87,7 @@ public final class ScriptEditorPanel {
 
         // The open script's name and actions above the code
         let editorToolbar = HStack(spacing: 6, padding: EdgeInsets(horizontal: 8, vertical: 4), [
-            titleLabel, dirtyLabel, Spacer(), statusLabel, saveButton, reloadButton
+            titleLabel, dirtyLabel, Spacer(), checkLabel, statusLabel, saveButton, reloadButton
         ])
         let pane = VStack(spacing: 2, padding: EdgeInsets(0), name: "scriptEditorPanel", [
             editorToolbar, errorBanner, scroll
@@ -87,8 +96,10 @@ public final class ScriptEditorPanel {
         view = pane
 
         // Wiring callbacks
-        editor.onChange = { [weak self] _ in
-            self?.isDirty = true
+        editor.onChange = { [weak self] text in
+            guard let self else { return }
+            self.isDirty = true
+            if let url = self.currentScriptURL { self.checker.textChanged(text, in: url) }
         }
 
         editor.onSave = { [weak self] in
@@ -138,6 +149,7 @@ public final class ScriptEditorPanel {
         editor.text = content
         isDirty = false
         updateHeader()
+        checker.textChanged(content, in: url, now: true)
     }
 
     public func save() {
@@ -229,6 +241,12 @@ public final class ScriptEditorPanel {
     }
 
     public func sync() {
+        checker.poll()
+        if checker.version != checkVersion {
+            checkVersion = checker.version
+            showCheck()
+        }
+
         // Check if game module reload error status changed
         if let err = session.gameModule.lastError, err != lastKnownError {
             lastKnownError = err
@@ -242,6 +260,33 @@ public final class ScriptEditorPanel {
             lastKnownReport = rep
             statusLabel.text = "Reloaded (\(String(format: "%.2f", rep.totalSeconds))s)"
             statusLabel.color = UIColor(hex: 0x7ee787)
+        }
+    }
+
+    /// The checker's result in the toolbar and as markers in the code.
+    private func showCheck() {
+        let current = currentScriptURL?.standardizedFileURL
+        editor.diagnostics = checker.checkedURL == current ? checker.diagnostics : []
+        checkLabel.tooltip = nil
+        switch checker.status {
+        case .idle:
+            checkLabel.text = ""
+        case .checking:
+            checkLabel.text = "Checking..."
+            checkLabel.color = UIColor(hex: 0x8b949e)
+        case .unavailable(let reason):
+            checkLabel.text = "Not checked"
+            checkLabel.tooltip = "Checking as you type is off: \(reason)"
+            checkLabel.color = UIColor(hex: 0x8b949e)
+        case .checked(let errors, let warnings, let other, let seconds):
+            var parts: [String] = []
+            if errors > 0 { parts.append("\(errors) error\(errors == 1 ? "" : "s")") }
+            if warnings > 0 { parts.append("\(warnings) warning\(warnings == 1 ? "" : "s")") }
+            if other > 0 { parts.append("\(other) in other files") }
+            checkLabel.text = parts.isEmpty ? "No errors" : parts.joined(separator: ", ")
+            checkLabel.color = errors + other > 0 ? UIColor(hex: 0xff7b72) : warnings > 0 ? UIColor(hex: 0xd29922) : UIColor(hex: 0x7ee787)
+            let elsewhere = checker.allDiagnostics.filter { $0.severity == .error && !editor.diagnostics.contains($0) }
+            checkLabel.tooltip = (["Checked in \(String(format: "%.2f", seconds))s"] + elsewhere.prefix(5).map(\.summary)).joined(separator: "\n")
         }
     }
 

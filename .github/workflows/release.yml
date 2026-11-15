@@ -29,10 +29,10 @@ jobs:
       - name: Check the version
         id: version
         run: |
-          version=$(sed -n 's/.*static let current = "\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p' Sources/Engine/Core/EngineVersion.swift | head -n 1)
+          version=$(sed -n 's/.*static let current = "\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p' Sources/EngineCore/Core/EngineVersion.swift | head -n 1)
           echo "version=$version" >> "$GITHUB_OUTPUT"
           if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME doesn't match the engine version $version (Sources/Engine/Core/EngineVersion.swift)."
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match the engine version $version (Sources/EngineCore/Core/EngineVersion.swift)."
             exit 1
           fi
 
@@ -57,7 +57,8 @@ jobs:
           | --- | --- | --- |
           | macOS 14+ (Apple silicon) | `Acro-*-macos-arm64.zip` | `Editor.app`. Metal only, nothing else to install. |
           | Linux x86-64 | `Acro-*-linux-x86_64.tar.gz` | Run `Editor`. Needs Vulkan, GLFW, zlib and ALSA, e.g. `apt install libvulkan1 libglfw3 zlib1g libasound2t64`. The Swift runtime is included. |
-          | Windows x64 | `Acro-*-windows-x64.zip` | Run `Editor.exe`. Needs a GPU driver with Vulkan; the Swift runtime and zlib DLLs are included next to it. |
+          | Windows x64 | `Acro-*-windows-x64.msi` | Installer: puts Acro in Program Files with Start Menu and desktop shortcuts (uninstall from Settings > Apps). Needs a GPU driver with Vulkan. |
+          | Windows x64 | `Acro-*-windows-x64.zip` | The same files without installing: run `Editor.exe`. The Swift runtime and zlib DLLs are included next to it. |
 
           Each archive holds the Acro editor. Building game modules in it needs the Swift toolchain and the engine's source: check out this tag and set `ACRO_ENGINE` to it.
           EOF
@@ -146,14 +147,20 @@ jobs:
           "ZLIB_DIR=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "$dir\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
 
+      - name: Install WiX
+        shell: pwsh
+        run: dotnet tool install --global wix --version 5.0.2
+
       - name: Package
         shell: pwsh
-        run: Scripts\package-release.ps1 -OutDir dist
+        run: Scripts\package-release.ps1 -OutDir dist -Msi
 
       - uses: actions/upload-artifact@v4
         with:
           name: acro-windows
-          path: dist/*.zip
+          path: |
+            dist/*.zip
+            dist/*.msi
           if-no-files-found: error
 
   publish:

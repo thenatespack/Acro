@@ -1,5 +1,16 @@
 import Testing
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
 @Test func haltonMatchesKnownValues() {
     #expect((1...4).map { TemporalJitter.halton($0, base: 2) } == [0.5, 0.25, 0.75, 0.125])

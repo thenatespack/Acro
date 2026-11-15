@@ -1,4 +1,15 @@
 import Foundation
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
 
 /// On-screen performance HUD: FPS, frame/CPU/GPU times, draw counts and a frame-time graph.
 /// Everything is drawn as solid-colored quads (text included), streamed each frame via
@@ -26,7 +37,7 @@ final class DebugOverlay {
     private var accumulated = (frames: 0, frameTime: 0.0, cpuTime: 0.0)
 
     init(device: RenderDevice) throws {
-        let shader = try ShaderSource.load(named: "overlay", bundle: .module)
+        let shader = try ShaderSource.load(named: "overlay", bundle: .engineResources)
         var descriptor = PipelineDescriptor(
             shader: shader,
             vertexLayout: VertexLayout(

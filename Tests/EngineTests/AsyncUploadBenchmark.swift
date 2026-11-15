@@ -1,6 +1,17 @@
 import Foundation
 import Testing
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
 // Main-thread hitches while assets load mid-game, on every backend (opt-in: set
 // ENGINE_UPLOAD_BENCH=1 and run in release, `swift test -c release --filter AsyncUploadBenchmark`).

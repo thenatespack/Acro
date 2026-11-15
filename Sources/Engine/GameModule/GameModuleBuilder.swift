@@ -1,4 +1,15 @@
 import Foundation
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
 
 /// Builds a game's SwiftPM target and links it into a game module (see GameModule.swift for
 /// why the link is ours and not SwiftPM's).
@@ -149,8 +160,12 @@ public struct GameModuleBuilder: Sendable {
         #endif
     }
 
+    /// The engine's modules (Package.swift's `engineModules`): `Engine` re-exports the rest.
+    static let engineModules = ["EngineCore", "EngineScene", "EngineGraphics", "EngineBackends", "EngineText", "EnginePhysics",
+                                "EngineAudio", "EngineAssets", "EngineNet", "EngineUI", "EngineRendering", "Engine"]
+
     /// Libraries a game module's objects autolink that only the host links (Windows).
-    static let hostOnlyLibraries = ["zlib", "vulkan-1", "glfw3", "Engine", "EngineMCP"]
+    static let hostOnlyLibraries = ["zlib", "vulkan-1", "glfw3", "EngineMCP"] + engineModules
 
     /// The entry point the objects define: `GameModuleABI.entryPoint`, or the legacy name when
     /// only that one appears in them.
@@ -198,16 +213,17 @@ public struct GameModuleBuilder: Sendable {
         return result
     }
 
-    /// Whether Engine's build products are newer than the running executable, when that
+    /// Whether the engine's build products (any of its modules) are newer than the running executable, when that
     /// executable was built in this package's bin folder (false otherwise: nothing to compare).
     public func engineChangedSinceHostBuilt() -> Bool {
         guard let executable = Bundle.main.executableURL?.resolvingSymlinksInPath(),
               executable.path.hasPrefix(binURL.path + "/"),
               let hostDate = Self.modificationDate(executable) else { return false }
         let bin = binURL
-        let candidates = [bin.appendingPathComponent("Engine.o"),
-                          bin.appendingPathComponent("Engine.swiftmodule"),
-                          bin.appendingPathComponent("Modules/Engine.swiftmodule")]
+        let candidates = Self.engineModules.flatMap { name in
+            [bin.appendingPathComponent("\(name).o"), bin.appendingPathComponent("\(name).swiftmodule"),
+             bin.appendingPathComponent("Modules/\(name).swiftmodule")]
+        }
         return candidates.compactMap(Self.modificationDate).contains { $0 > hostDate }
     }
 

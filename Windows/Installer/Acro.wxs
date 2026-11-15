@@ -1,0 +1,44 @@
+<!--
+  The Windows installer (WiX Toolset v5). Scripts\package-release.ps1 -Msi builds it from the
+  staged release folder:
+
+    wix build Windows\Installer\Acro.wxs -arch x64 -d Version=<x.y.z> -d StageDir=<stage> -o Acro.msi
+
+  It installs everything in the stage (Editor.exe, Editor.lib, the Swift runtime DLLs, the resource
+  bundles, README/LICENSE/CHANGELOG) into Program Files\Acro and adds Start Menu and desktop
+  shortcuts. UpgradeCode must never change: it is how a newer installer finds and replaces an
+  older version (MajorUpgrade), so installing 0.12 over 0.11 leaves one Acro in Settings > Apps.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Acro" Manufacturer="Acro" Version="$(Version)" UpgradeCode="EBED6368-87A4-48DD-B565-D6D2215DEEF3"
+           Scope="perMachine" Compressed="yes">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Acro is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Acro">
+        <Files Include="$(StageDir)\**" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AcroMenuFolder" Name="Acro">
+        <Component Id="StartMenuShortcut">
+          <Shortcut Id="StartMenuEditor" Name="Acro Editor" Description="The Acro game editor"
+                    Target="[INSTALLFOLDER]Editor.exe" WorkingDirectory="INSTALLFOLDER" />
+          <RemoveFolder Id="RemoveAcroMenuFolder" On="uninstall" />
+          <!-- Shortcuts can't be a component's key path; a per-user registry value is the usual one. -->
+          <RegistryValue Root="HKCU" Key="Software\Acro\Installer" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="DesktopShortcut">
+        <Shortcut Id="DesktopEditor" Name="Acro Editor" Description="The Acro game editor"
+                  Target="[INSTALLFOLDER]Editor.exe" WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\Acro\Installer" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+  </Package>
+</Wix>

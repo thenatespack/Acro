@@ -126,7 +126,7 @@ enum Main {
 }
 ```
 
-For a larger example with custom components and systems, see [Sources/SampleGame](Sources/SampleGame). The quickest way to add behavior is a `Script`: a component with an `update(_ context:)` that runs every frame, registered with `game.script(MyScript.self)`. The editor's **New Script** writes one and registers it for you, and when a build fails the Script Editor lists each error with its file and line and can jump to it. Run it in the editor or on its own:
+For a larger example with custom components and systems, see [Sources/SampleGame](Sources/SampleGame). The quickest way to add behavior is a `Script`: a component with an `update(_ context:)` that runs every frame, registered with `game.script(MyScript.self)`. The editor's **New Script** writes one and registers it for you, and when a build fails the Script Editor lists each error with its file and line and can jump to it. While you type, the Script Editor also type-checks the game target with your unsaved text (a fraction of a second after you stop typing, without building or reloading) and marks errors and warnings on their lines; this needs one build of the game first, and isn't available on Windows yet. Run it in the editor or on its own:
 
 ```sh
 swift run Editor --game SampleGame
@@ -217,8 +217,13 @@ CI doesn't render the demo scenes. Check rendering changes locally with `Scripts
 
 | Path | Contents |
 |---|---|
-| `Sources/Engine/` | Engine runtime: core, graphics, rendering, scene/ECS, assets, physics, audio, UI, text, animation, networking, and persistence |
-| `Sources/Engine/Backends/` | Metal and Vulkan graphics backends |
+| `Sources/Engine/` | The `Engine` module games import: the `Engine` class, game modules, packaging, and editor tools; it re-exports the modules below |
+| `Sources/EngineCore/` | Math, input, logging, and the engine's shaders and fonts |
+| `Sources/EngineScene/` | Scene/ECS, jobs, and persistence |
+| `Sources/EngineGraphics/`, `Sources/EngineBackends/` | The graphics device API, and the Metal and Vulkan backends and windows |
+| `Sources/EngineAssets/` | Asset database, importers, and the component data prefabs hold |
+| `Sources/EngineRendering/` | Scene renderer, animation, particles, and sprites |
+| `Sources/EnginePhysics/`, `Sources/EngineAudio/`, `Sources/EngineNet/`, `Sources/EngineUI/`, `Sources/EngineText/` | Physics (3D and 2D), audio, networking, UI widgets, and text |
 | `Sources/EditorCore/`, `Sources/Editor/` | Editor implementation and executable |
 | `Sources/Demo/` | Feature and rendering demo |
 | `Sources/SampleGame/`, `Sources/GameRunner/` | Example game module and standalone runner |
@@ -257,4 +262,4 @@ swift test
 
 Acro is licensed under the [Mozilla Public License 2.0](LICENSE). You can use it in games and other projects under any license, including closed-source and commercial ones. If you distribute changes to Acro's own source files, those files must stay under the MPL and their source must be made available.
 
-Bundled third-party code, fonts, icons, and models keep their own licenses, listed next to them (for example `Sources/CTextureCodec/LICENSES.md` and `Sources/Engine/Fonts/Inter-LICENSE.txt`).
+Bundled third-party code, fonts, icons, and models keep their own licenses, listed next to them (for example `Sources/CTextureCodec/LICENSES.md` and `Sources/EngineCore/Fonts/Inter-LICENSE.txt`).

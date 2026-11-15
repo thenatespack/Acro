@@ -1,5 +1,16 @@
 import Testing
 @testable import Engine
+@testable import EngineCore
+@testable import EngineScene
+@testable import EngineGraphics
+@testable import EngineBackends
+@testable import EngineText
+@testable import EnginePhysics
+@testable import EngineAudio
+@testable import EngineAssets
+@testable import EngineNet
+@testable import EngineUI
+@testable import EngineRendering
 
 @Test func radialDeadzoneZeroesTheCentreAndRescalesTheRest() {
     #expect(Gamepad.applyDeadzone(Vec2(0.1, 0.1), deadzone: 0.2) == .zero)  // length 0.14 < 0.2

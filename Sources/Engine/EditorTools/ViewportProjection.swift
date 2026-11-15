@@ -2,99 +2,17 @@
 // `TransformGizmo`): the view they work in, the pointer, the selection, and the ray and
 // intersection math they are built on. Nothing here depends on an editor app; hosts feed
 // plain values every frame.
-
-/// A half-line from `origin` along `direction` (unit length).
-public struct Ray: Sendable, Equatable {
-    public var origin: Vec3
-    /// Unit length, so `t` in `point(at:)` is a distance.
-    public var direction: Vec3
-
-    /// `direction` is normalized.
-    public init(origin: Vec3, direction: Vec3) {
-        self.origin = origin
-        self.direction = normalize(direction)
-    }
-
-    public func point(at t: Float) -> Vec3 { origin + direction * t }
-
-    /// Where the ray enters and leaves an axis-aligned box (slab test), as distances along it,
-    /// or nil if it misses or the box is behind the origin. `enter` is 0 when the origin is inside.
-    public func intersect(_ bounds: Bounds) -> (enter: Float, exit: Float)? {
-        Self.intersect(origin: origin, direction: direction, bounds: bounds)
-    }
-
-    /// The slab test for any direction (not necessarily unit length; distances are then in
-    /// multiples of it). Axes the direction is parallel to only pass if the origin is inside
-    /// the slab.
-    static func intersect(origin: Vec3, direction: Vec3, bounds: Bounds) -> (enter: Float, exit: Float)? {
-        let lo = bounds.center - bounds.halfExtent, hi = bounds.center + bounds.halfExtent
-        var enter: Float = 0, exit = Float.infinity
-        for axis in 0..<3 {
-            let o = origin[axis], d = direction[axis]
-            if d == 0 {
-                if o < lo[axis] || o > hi[axis] { return nil }
-                continue
-            }
-            let inverse = 1 / d
-            var t0 = (lo[axis] - o) * inverse, t1 = (hi[axis] - o) * inverse
-            if t0 > t1 { swap(&t0, &t1) }
-            enter = max(enter, t0)
-            exit = min(exit, t1)
-            if enter > exit { return nil }
-        }
-        return (enter, exit)
-    }
-
-    /// The distance to triangle `a b c` (either side), or nil if the ray misses it or it is
-    /// behind the origin (Möller–Trumbore).
-    public func intersect(_ a: Vec3, _ b: Vec3, _ c: Vec3) -> Float? {
-        Self.intersectTriangle(origin: origin, direction: direction, a, b, c)?.t
-    }
-
-    /// Möller–Trumbore for any direction: the hit's ray parameter `t` and barycentrics (u, v)
-    /// of b and c, and whether the triangle faces the ray (counter-clockwise seen from the origin).
-    static func intersectTriangle(origin: Vec3, direction: Vec3, _ a: Vec3, _ b: Vec3, _ c: Vec3)
-        -> (t: Float, u: Float, v: Float, frontFacing: Bool)? {
-        let e1 = b - a, e2 = c - a
-        let p = cross(direction, e2)
-        let det = dot(e1, p)
-        // Relative to the edge lengths, so tiny and huge triangles behave the same.
-        let scale = dot(e1, e1) * dot(e2, e2) * dot(direction, direction)
-        guard det * det > 1e-14 * scale else { return nil }  // parallel to the plane, or degenerate
-        let inverse = 1 / det
-        let s = origin - a
-        let u = dot(s, p) * inverse
-        guard u >= 0, u <= 1 else { return nil }
-        let q = cross(s, e1)
-        let v = dot(direction, q) * inverse
-        guard v >= 0, u + v <= 1 else { return nil }
-        let t = dot(e2, q) * inverse
-        guard t >= 0 else { return nil }
-        return (t, u, v, det > 0)
-    }
-
-    /// The distance to the plane through `point` with normal `normal`, or nil if the ray is
-    /// (nearly) parallel to it or the plane is behind the origin.
-    public func intersectPlane(point: Vec3, normal: Vec3) -> Float? {
-        let n = normalize(normal)
-        let denominator = dot(direction, n)
-        guard abs(denominator) > 1e-6 else { return nil }
-        let t = dot(point - origin, n) / denominator
-        return t >= 0 ? t : nil
-    }
-
-    /// The parameter `s` of the point on the infinite line `linePoint + s * lineDirection`
-    /// (unit direction) closest to this ray (treated as a full line), or nil when they are
-    /// (nearly) parallel. The constraint math of axis drags.
-    public func closestParameter(onLine linePoint: Vec3, direction lineDirection: Vec3) -> Float? {
-        let a = normalize(lineDirection)
-        let b = dot(a, direction)
-        let denominator = 1 - b * b
-        guard denominator > 1e-6 else { return nil }
-        let w = linePoint - origin
-        return (b * dot(direction, w) - dot(a, w)) / denominator
-    }
-}
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
 
 /// A pointer event in a viewport.
 public struct ViewportPointer: Sendable, Equatable {

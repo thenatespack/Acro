@@ -1,5 +1,17 @@
 /// A tiny 5x7 pixel font covering digits, uppercase letters and common punctuation.
 /// Lowercase input is drawn uppercase; unknown characters render as '?'.
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
+
 enum BitmapFont {
     static let glyphWidth = 5
     static let glyphHeight = 7

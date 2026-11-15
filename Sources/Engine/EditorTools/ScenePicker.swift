@@ -1,5 +1,17 @@
 /// Marks an entity that viewport clicks and marquees pass through (editor helpers, a floor
 /// that shouldn't steal clicks). Saved with the scene like any other component.
+import EngineAssets
+import EngineAudio
+import EngineBackends
+import EngineCore
+import EngineGraphics
+import EngineNet
+import EnginePhysics
+import EngineRendering
+import EngineScene
+import EngineText
+import EngineUI
+
 public struct Unpickable: Component, Codable, Equatable, Sendable {
     public static let componentName = "Unpickable"
     public init() {}
