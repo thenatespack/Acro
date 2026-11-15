@@ -5,13 +5,16 @@ import Darwin
 import Glibc
 #elseif canImport(Musl)
 import Musl
+#elseif os(Windows)
+import WinSDK
 #endif
 
 /// Errors from building, linking and loading game modules.
 public enum GameModuleError: Error, Equatable, CustomStringConvertible {
     /// No file at the path.
     case notFound(String)
-    /// `dlopen` failed (often a missing Engine symbol: the module was built against other Engine sources).
+    /// `dlopen` (`LoadLibraryW` on Windows) failed, often over a missing Engine symbol: the
+    /// module was built against other Engine sources.
     case loadFailed(String)
     /// The library doesn't export `GameModuleABI.entryPoint`.
     case noEntryPoint(String)
@@ -114,10 +117,53 @@ public enum GameModuleLoader {
         let loaded = LoadedGameModule(module: module, sourceURL: url, loadedURL: loadedURL, handle: handle)
         loaded.duplicateClassWarnings = duplicates
         return loaded
+        #elseif os(Windows)
+        guard FileManager.default.fileExists(atPath: url.path) else { throw GameModuleError.notFound(url.path) }
+        let loadedURL = copy ? try makeCopy(of: url) : url
+        // The module imports Engine from Engine.dll, which the host has loaded already: the
+        // loader binds the import to that copy by name, so host and module share one Engine.
+        let path = loadedURL.withUnsafeFileSystemRepresentation { String(cString: $0!) }
+        guard let module = path.withCString(encodedAs: UTF16.self, { LoadLibraryW($0) }) else {
+            throw GameModuleError.loadFailed(windowsErrorMessage(GetLastError()))
+        }
+        let handle = UnsafeMutableRawPointer(module)
+        if let theirs = GetProcAddress(module, GameModuleABI.engineMarker),
+           unsafeBitCast(theirs, to: UnsafeMutableRawPointer.self) != acroHostMarkerAddress {
+            throw GameModuleError.embedsEngine(url.lastPathComponent)
+        }
+        guard let symbol = GetProcAddress(module, GameModuleABI.entryPoint) ?? GetProcAddress(module, GameModuleABI.legacyEntryPoint) else {
+            throw GameModuleError.noEntryPoint(url.lastPathComponent)
+        }
+        typealias Entry = @convention(c) (UnsafeMutableRawPointer) -> Int32
+        let entry = unsafeBitCast(symbol, to: Entry.self)
+        let gameModule = GameModule()
+        let version = withExtendedLifetime(gameModule) { entry(Unmanaged.passUnretained(gameModule).toOpaque()) }
+        guard version == GameModuleABI.version else { throw GameModuleError.versionMismatch(version) }
+        if gameModule.name.isEmpty { gameModule.name = url.deletingPathExtension().lastPathComponent }
+        return LoadedGameModule(module: gameModule, sourceURL: url, loadedURL: loadedURL, handle: handle)
         #else
         throw GameModuleError.unsupported
         #endif
     }
+
+    #if os(Windows)
+    /// The system's text for a Win32 error code, with the code.
+    static func windowsErrorMessage(_ code: DWORD) -> String {
+        var buffer: LPWSTR?
+        let flags = DWORD(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS)
+        let length = withUnsafeMutablePointer(to: &buffer) { pointer in
+            pointer.withMemoryRebound(to: WCHAR.self, capacity: 1) {
+                FormatMessageW(flags, nil, code, 0, $0, 0, nil)
+            }
+        }
+        defer { if let buffer { LocalFree(buffer) } }
+        guard length > 0, let buffer else { return "Windows error \(code)" }
+        let text = String(decodingCString: buffer, as: UTF16.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        // 126 (module not found) is usually a missing dependency, not the module itself.
+        let hint = code == 126 ? " (a DLL it depends on wasn't found: Engine.dll or the Swift runtime)" : ""
+        return "\(text) (Windows error \(code))\(hint)"
+    }
+    #endif
 
     /// Runs `body` (a `dlopen`) with standard error going to a temporary file, then passes on
     /// what was printed except the Objective-C runtime's "Class X is implemented in both A
@@ -183,10 +229,12 @@ public enum GameModuleLoader {
         return destination
     }
 
-    /// "dylib" on Apple platforms, "so" elsewhere.
+    /// "dylib" on Apple platforms, "dll" on Windows, "so" elsewhere.
     public static var libraryExtension: String {
         #if canImport(Darwin)
         "dylib"
+        #elseif os(Windows)
+        "dll"
         #else
         "so"
         #endif

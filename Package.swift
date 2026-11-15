@@ -101,11 +101,25 @@ let textureCodecCXXFlags: [CXXSetting] = isDependencyCheckout ? [] : [.unsafeFla
 // --export-dynamic. unsafeFlags, so only in a checkout of this package (see above).
 let exportsSymbols: [LinkerSetting] = isDependencyCheckout ? [] : [.unsafeFlags(["-Xlinker", "--export-dynamic"], .when(platforms: [.linux]))]
 
+// Windows: a DLL can't leave symbols undefined, so a game module links against its host's
+// import library and imports Engine from the running Editor.exe / GameRunner.exe by name. That
+// needs Engine compiled with its public symbols exported (dllexport) and its importers using
+// dllimport. SwiftPM compiles library targets with -static on Windows, which does neither,
+// except targets in a .dynamic product. So on Windows Engine's product is .dynamic: Engine is
+// compiled for export, the hosts (same package, so still linked statically) export its symbols
+// and get Editor.lib / GameRunner.lib beside them, and game targets in other packages compile
+// against it with dllimport. swift build also writes an Engine.dll that nothing loads.
+#if os(Windows)
+let engineProductType: Product.Library.LibraryType? = .dynamic
+#else
+let engineProductType: Product.Library.LibraryType? = nil
+#endif
+
 let package = Package(
     name: "Acro",
     platforms: [.macOS(.v14)],
     products: [
-        .library(name: "Engine", targets: ["Engine"]),
+        .library(name: "Engine", type: engineProductType, targets: ["Engine"]),
         .library(name: "EngineMCP", targets: ["EngineMCP"]),
         .executable(name: "Demo", targets: ["Demo"]),
         .executable(name: "Editor", targets: ["Editor"]),

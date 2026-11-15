@@ -1,6 +1,7 @@
 name: Windows
 
-# Build-only check: there is no GPU on the hosted runner, so nothing is run.
+# Builds everything; there is no GPU on the hosted runner, so the only thing run is a game
+# module load check (GameRunner --check: build, link against GameRunner.lib, LoadLibraryW).
 on:
   push:
   pull_request:
@@ -52,3 +53,9 @@ jobs:
       - name: Build
         shell: cmd
         run: swift build -c release
+
+      - name: Load a game module
+        shell: cmd
+        run: |
+          dir .build\release\GameRunner.exe .build\release\GameRunner.lib
+          .build\release\GameRunner.exe SampleGame --check

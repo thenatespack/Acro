@@ -284,6 +284,7 @@ extension GameModuleBuilder {
         var builder = self
         if let targets = try? describeTargets() { builder.libraryTargets = targets.libraryTargets }
         let fastAllowed = allowFast && buildCommand == nil && ProcessInfo.processInfo.environment["GAME_MODULE_FAST_BUILD"] != "0"
+            && Self.fastBuildSupported
         var fallbackReason: String?
         if fastAllowed {
             switch builder.fastBuild(to: output) {
@@ -292,6 +293,17 @@ extension GameModuleBuilder {
             }
         }
         return builder.fullBuild(to: output, fallbackReason: fallbackReason)
+    }
+
+    /// Whether the direct `swiftc` path is available here. Not on Windows yet: the plan is
+    /// captured from `swift build -v` lines parsed with POSIX quoting and absolute paths that
+    /// start with "/", so every reload there uses `swift build` and a link.
+    static var fastBuildSupported: Bool {
+        #if os(Windows)
+        false
+        #else
+        true
+        #endif
     }
 
     private enum FastResult {
@@ -400,8 +412,7 @@ extension GameModuleBuilder {
         let start = Date()
         #if os(macOS) || os(Linux) || os(Windows)
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = arguments
+        (process.executableURL, process.arguments) = launch(arguments)
         process.currentDirectoryURL = folder
         let pipe = Pipe()
         process.standardOutput = pipe
