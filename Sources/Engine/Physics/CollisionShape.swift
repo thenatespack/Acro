@@ -185,8 +185,11 @@ struct ConvexPolyhedron: Sendable {
     /// `normal` points to (Andrew's monotone chain in the plane).
     private static func hull2D(_ points: [Vec3], normal: Vec3) -> [Vec3] {
         let (u, v) = tangentBasis(normal)
-        let sorted = points.map { (p: $0, q: Vec2(dot($0, u), dot($0, v))) }
-            .sorted { $0.q.x != $1.q.x ? $0.q.x < $1.q.x : $0.q.y < $1.q.y }
+        // Explicit types: inferred, this chain took ~2.5 s to type-check.
+        let projected: [(p: Vec3, q: Vec2)] = points.map { (p: Vec3) -> (p: Vec3, q: Vec2) in (p: p, q: Vec2(dot(p, u), dot(p, v))) }
+        let sorted = projected.sorted { (a: (p: Vec3, q: Vec2), b: (p: Vec3, q: Vec2)) -> Bool in
+            a.q.x != b.q.x ? a.q.x < b.q.x : a.q.y < b.q.y
+        }
         guard sorted.count >= 3 else { return sorted.map(\.p) }
         func turn(_ o: Vec2, _ a: Vec2, _ b: Vec2) -> Float { (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x) }
         var hull: [(p: Vec3, q: Vec2)] = []
