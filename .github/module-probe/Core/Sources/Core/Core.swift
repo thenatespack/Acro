@@ -6,7 +6,7 @@ public struct Health: Component, Equatable {
 }
 
 public final class Registry {
-    public static let shared = Registry()
+    nonisolated(unsafe) public static let shared = Registry()
     public var names: [String] = []
     public var healthID: ObjectIdentifier?
     public var made: Any?
