@@ -37,7 +37,14 @@ foreach ($product in $Products) {
     if (-not (Test-Path $importLibrary)) { throw "$product.lib is missing: Engine must be a .dynamic product on Windows (Package.swift)" }
     Copy-Item $importLibrary $Stage
 }
-Get-ChildItem $Bin -Directory -Filter 'Acro_*.resources' | Where-Object Name -ne 'Acro_Demo.resources' | ForEach-Object { Copy-Item $_.FullName $Stage -Recurse }
+# Resource bundles (shaders, fonts). SwiftPM names them Acro_<Target>.bundle on Windows and
+# Acro_<Target>.resources on Linux; Bundle.module looks for them next to the exe and traps if
+# Engine's is missing, so the editor would exit as soon as it starts.
+Get-ChildItem $Bin -Directory | Where-Object { $_.Name -match '^Acro_(.+)\.(bundle|resources)$' -and $Matches[1] -ne 'Demo' } |
+    ForEach-Object { Copy-Item $_.FullName $Stage -Recurse }
+if (-not (Get-ChildItem $Stage -Directory | Where-Object Name -match '^Acro_Engine\.(bundle|resources)$')) {
+    throw "Engine's resource bundle (Acro_Engine.bundle) is missing from $Bin"
+}
 Copy-Item README.md, LICENSE, CHANGELOG.md $Stage
 
 # The Swift runtime: every DLL in the folder that holds swiftCore.dll (on PATH after installing Swift).

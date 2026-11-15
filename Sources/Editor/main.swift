@@ -33,6 +33,9 @@ let usage = """
     (docs/MCPTools.md) generated from the command registry.
     """
 
+// Double-clicked on Windows, the console closes on exit: show errors and crashes in a message box.
+StartupErrors.install(title: "Editor")
+
 var config = EngineConfig(title: "Editor", width: 1440, height: 900, showDebugOverlay: false)
 config.icon = EditorAppIcon.image()
 // Below this the panels' minimum sizes no longer fit (docs/EditorUIReview.md #23).
@@ -61,8 +64,7 @@ if EditorPackagingCLI.handles(arguments) {
 }
 
 func fail(_ message: String) -> Never {
-    FileHandle.standardError.write(Data((message + "\n").utf8))
-    exit(1)
+    StartupErrors.fatal(message)
 }
 
 while !arguments.isEmpty {
