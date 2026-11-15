@@ -1,13 +1,16 @@
 # Builds the release binaries and packages them for distribution on Windows (macOS and Linux:
 # Scripts/package-release.sh). The Release workflow runs this; it also works locally.
 #
-#   Scripts\package-release.ps1 [-OutDir Build\release]
+#   Scripts\package-release.ps1 [-OutDir Build\release] [-Msi]
 #
 # Needs VULKAN_SDK, GLFW_DIR and ZLIB_DIR set as for any Windows build (see README). Writes
 # <OutDir>\Acro-<version>-windows-x64.zip containing Editor.exe, its import library Editor.lib
 # (game modules link against it), the engine's resource folder, and the Swift runtime DLLs and
 # zlib1.dll it needs next to it. vulkan-1.dll comes with the GPU driver; GLFW is linked statically.
-param([string]$OutDir = "Build\release")
+# -Msi also writes <OutDir>\Acro-<version>-windows-x64.msi, an installer of the same files with
+# Start Menu and desktop shortcuts (Windows\Installer\Acro.wxs; needs the WiX v5 `wix` tool:
+# `dotnet tool install --global wix --version 5.0.2`).
+param([string]$OutDir = "Build\release", [switch]$Msi)
 $ErrorActionPreference = 'Stop'
 
 $Root = Split-Path -Parent $PSScriptRoot
@@ -53,3 +56,11 @@ $Zip = Join-Path $OutDir "$Name.zip"
 if (Test-Path $Zip) { Remove-Item $Zip }
 Compress-Archive -Path $Stage -DestinationPath $Zip
 Write-Output $Zip
+
+if ($Msi) {
+    $Installer = Join-Path $OutDir "$Name.msi"
+    if (Test-Path $Installer) { Remove-Item $Installer }
+    wix build (Join-Path $Root 'Windows\Installer\Acro.wxs') -arch x64 -d "Version=$Version" -d "StageDir=$Stage" -o $Installer
+    if ($LASTEXITCODE -ne 0) { throw "wix build failed" }
+    Write-Output $Installer
+}
