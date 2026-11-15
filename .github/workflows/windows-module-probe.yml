@@ -1,0 +1,86 @@
+name: Windows module probe
+
+# Temporary: collects how SwiftPM compiles and links Engine on Windows, for game module support.
+on:
+  push:
+    branches: [windows-game-modules]
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: compnerd/gha-setup-swift@main
+        with:
+          swift-version: swift-6.4.2-release
+          swift-build: 6.4.2-RELEASE
+
+      - name: Install Vulkan SDK
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe -OutFile vulkan-sdk.exe
+          .\vulkan-sdk.exe --accept-licenses --default-answer --confirm-command install
+          $sdk = (Get-ChildItem C:\VulkanSDK | Sort-Object Name -Descending | Select-Object -First 1).FullName
+          "VULKAN_SDK=$sdk" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "$sdk\Bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Install GLFW (prebuilt)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.bin.WIN64.zip -OutFile glfw.zip
+          Expand-Archive glfw.zip -DestinationPath $env:RUNNER_TEMP
+          $dir = Join-Path $env:RUNNER_TEMP 'glfw-3.4.bin.WIN64'
+          Copy-Item "$dir\lib-vc2022" "$dir\lib" -Recurse
+          "GLFW_DIR=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: Install zlib (vcpkg)
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install zlib:x64-windows
+          $dir = Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed\x64-windows'
+          if (-not (Test-Path "$dir\lib\zlib.lib") -and (Test-Path "$dir\lib\z.lib")) {
+            Copy-Item "$dir\lib\z.lib" "$dir\lib\zlib.lib"
+          }
+          "ZLIB_DIR=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "$dir\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Probe
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          New-Item -ItemType Directory probe | Out-Null
+          swift --version *> probe\version.txt
+          swift build --version *>> probe\version.txt
+          Get-Content probe\version.txt
+          swift build --product GameRunner -v *> probe\build-runner.log
+          "build GameRunner exit: $LASTEXITCODE"
+          swift build --target SampleGame -v *> probe\build-game.log
+          "build SampleGame exit: $LASTEXITCODE"
+          $bin = (Resolve-Path .build\debug).Path
+          Get-ChildItem $bin -File | Select-Object Name, Length | Format-Table -AutoSize | Out-String -Width 300 | Tee-Object probe\bin-files.txt
+          Get-ChildItem "$bin\SampleGame.build" -ErrorAction SilentlyContinue | Select-Object Name | Out-String | Tee-Object probe\game-objects.txt
+          foreach ($tool in 'llvm-readobj', 'llvm-nm', 'dumpbin', 'lld-link', 'link') {
+            "$tool -> " + ((Get-Command $tool -ErrorAction SilentlyContinue).Source)
+          }
+          & llvm-readobj --coff-exports "$bin\GameRunner.exe" *> probe\runner-exports.txt
+          "exports lines: " + (Get-Content probe\runner-exports.txt).Count
+          Get-Content probe\runner-exports.txt -TotalCount 40
+          $objects = @(Get-ChildItem "$bin\SampleGame.build" -Filter *.o -ErrorAction SilentlyContinue | ForEach-Object FullName)
+          if (Test-Path "$bin\SampleGame.o") { $objects = @("$bin\SampleGame.o") }
+          "objects: $($objects.Count)"
+          if ($objects.Count -gt 0) {
+            & llvm-nm --undefined-only $objects *> probe\game-undefined.txt
+            "undefined in game objects: " + (Get-Content probe\game-undefined.txt).Count
+            if (Test-Path "$bin\GameRunner.lib") {
+              swiftc -emit-library -o probe\SampleGame.dll $objects "$bin\GameRunner.lib" -v *> probe\link-runnerlib.log
+              "link against GameRunner.lib exit: $LASTEXITCODE"
+              Get-Content probe\link-runnerlib.log -Tail 60
+            } else { "no GameRunner.lib" }
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe
+          path: probe
