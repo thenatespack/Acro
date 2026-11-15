@@ -2,9 +2,19 @@ name: Windows
 
 # Builds everything; there is no GPU on the hosted runner, so the only thing run is a game
 # module load check (GameRunner --check: build, link against GameRunner.lib, LoadLibraryW).
+# Runs on pushes to main and on pull requests, not on every branch or tag push: a pushed
+# branch is tested through its PR, and a release tag points at a commit main already tested.
+# Run it by hand on any branch from the Actions tab. A newer push to the same branch or PR
+# cancels the run in progress.
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:

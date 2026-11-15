@@ -3,9 +3,19 @@ name: Linux
 # Builds and runs the tests on the Vulkan backend with lavapipe (Mesa's software Vulkan) under a
 # virtual X display. Demo scenes aren't rendered in CI; check rendering changes locally with
 # Scripts/render-scenes.sh.
+# Runs on pushes to main and on pull requests, not on every branch or tag push: a pushed
+# branch is tested through its PR, and a release tag points at a commit main already tested.
+# Run it by hand on any branch from the Actions tab. A newer push to the same branch or PR
+# cancels the run in progress.
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
