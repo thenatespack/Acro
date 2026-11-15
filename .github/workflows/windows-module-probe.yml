@@ -28,37 +28,37 @@ jobs:
           BS: ${{ matrix.build-system }}
         run: |
           $out = Join-Path $env:GITHUB_WORKSPACE probe-out
-          New-Item -ItemType Directory $out | Out-Null
+          New-Item -ItemType Directory $out, "$out\A", "$out\B" | Out-Null
           Set-Location .github\module-probe\Core
           swift build --build-system $env:BS -v *> "$out\core.log"
           "core build exit: $LASTEXITCODE"
-          Get-ChildItem .build -Recurse -File -Include *.dll, *.lib, *.exe | ForEach-Object FullName | Tee-Object "$out\core-files.txt"
-          "Core compiled with -static: " + [bool](Select-String -Path "$out\core.log" -Pattern '-module-name Core .*-static' -Quiet)
-          $inHost = Get-ChildItem .build -Recurse -Filter InHost.exe | Select-Object -First 1
-          if ($inHost) {
-            "InHost imports:"; & llvm-readobj --coff-imports $inHost.FullName | Select-String 'Name: .*\.dll'
-            & $inHost.FullName; "InHost exit: $LASTEXITCODE"
-          }
+          $coreBin = (Resolve-Path .build\debug).Path
+          "InHost exports: " + (& llvm-readobj --coff-exports "$coreBin\InHost.exe" | Select-String 'Name:').Count
+          & llvm-readobj --coff-exports "$coreBin\InHost.exe" | Select-String 'Name:' | Select-Object -First 8
 
           Set-Location ..\Game
           swift build --build-system $env:BS -v *> "$out\game.log"
           "game build exit: $LASTEXITCODE"
-          Get-ChildItem .build -Recurse -File -Include *.dll, *.lib, *.exe, *.o, *.obj | ForEach-Object FullName | Tee-Object "$out\game-files.txt"
-          "Core compiled with -static (game pkg): " + [bool](Select-String -Path "$out\game.log" -Pattern '-module-name Core .*-static' -Quiet)
-          "Game compiled with -static: " + [bool](Select-String -Path "$out\game.log" -Pattern '-module-name Game .*-static' -Quiet)
-          $hostExe = Get-ChildItem .build -Recurse -Filter Host.exe | Select-Object -First 1
-          "Host imports:"; & llvm-readobj --coff-imports $hostExe.FullName | Select-String 'Name: .*\.dll'
-          $coreLib = Get-ChildItem .build -Recurse -Filter Core.lib | Select-Object -First 1
-          "Core.lib: $($coreLib.FullName)"
-          $objects = @(Get-ChildItem .build -Recurse -Include *.o | Where-Object { $_.FullName -match '[\\/]Game[^\\/]*\.build[\\/]|[\\/]Game\.o$|Game-t\.build' } | ForEach-Object FullName)
+          $bin = (Resolve-Path .build\debug).Path
+          $objects = @()
+          foreach ($folder in "Game.objlib", "Game.build") {
+            if ($objects.Count -eq 0 -and (Test-Path "$bin\$folder")) {
+              $objects = @(Get-ChildItem "$bin\$folder" -File | Where-Object { $_.Extension -in '.o', '.obj' } | ForEach-Object FullName)
+            }
+          }
           "game objects: $($objects -join ', ')"
-          swiftc -emit-library -o "$out\Game.dll" $objects $coreLib.FullName *> "$out\link.log"
-          "link exit: $LASTEXITCODE"; Get-Content "$out\link.log" -Tail 40
-          "Game.dll exports:"; & llvm-readobj --coff-exports "$out\Game.dll" | Select-String 'Name:'
-          "Game.dll imports:"; & llvm-readobj --coff-imports "$out\Game.dll" | Select-String 'Name: .*\.dll'
-          Set-Location $hostExe.DirectoryName
-          & $hostExe.FullName "$out\Game.dll"
-          "host exit: $LASTEXITCODE"
+
+          "--- A: game linked against Core.lib, loaded by Host (imports Core.dll)"
+          swiftc -emit-library -o "$out\A\Game.dll" $objects "$bin\Core.lib" *> "$out\link-A.log"
+          "link A exit: $LASTEXITCODE"; Get-Content "$out\link-A.log" -Tail 15
+          "Game A imports:"; & llvm-readobj --coff-imports "$out\A\Game.dll" | Select-String 'Name: .*\.dll'
+          & "$bin\Host.exe" "$out\A\Game.dll"; "host A exit: $LASTEXITCODE"
+
+          "--- B: game linked against InHost.lib, loaded by InHost (embeds Core)"
+          swiftc -emit-library -o "$out\B\Game.dll" $objects "$coreBin\InHost.lib" *> "$out\link-B.log"
+          "link B exit: $LASTEXITCODE"; Get-Content "$out\link-B.log" -Tail 15
+          "Game B imports:"; & llvm-readobj --coff-imports "$out\B\Game.dll" | Select-String 'Name: .*\.dll'
+          & "$coreBin\InHost.exe" "$out\B\Game.dll"; "host B exit: $LASTEXITCODE"
 
       - uses: actions/upload-artifact@v4
         if: always()
