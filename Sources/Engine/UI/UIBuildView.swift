@@ -241,22 +241,201 @@ public final class UIBuildView: Widget {
     /// Whether the view is shown (`show`) rather than hidden (`hide`), even while a transition plays.
     public private(set) var isShown = true
 
-    /// Shows the view.
+    /// Shows the view, playing the layout's `show` transition when it was hidden (or hiding)
+    /// and `animated`. Outside a `UIContext` it shows at once.
     public func show(animated: Bool = true) {
+        if isShown, !isHidden { return }
+        let wasHidden = isHidden, wasHiding = viewFade?.showing == false
         isShown = true
         isHidden = false
-        hideCompletion = nil
+        viewFade = nil
+        lastTime = nil
+        if animated, wasHidden || wasHiding, let t = build.show, t.animates, context != nil {
+            viewFade = Fade(transition: t, showing: true)
+            applyPose(self, base: 1, t, shown: 0)
+            setNeedsDisplay()
+        } else {
+            applyPose(self, base: 1, nil, shown: 1)
+        }
     }
 
-    /// Hides the view, then calls `completion`.
+    /// Hides the view after the layout's `hide` transition (when `animated`; at once outside a
+    /// `UIContext`), then calls `completion`. While it hides, clicks pass through it.
     public func hide(animated: Bool = true, completion: (() -> Void)? = nil) {
+        let wasShown = isShown
         isShown = false
+        if animated, wasShown, !isHidden, let t = build.hide, t.animates, context != nil {
+            viewFade = Fade(transition: t, showing: false, completion: completion)
+            lastTime = nil
+            setNeedsDisplay()
+            return
+        }
+        viewFade = nil
         isHidden = true
-        hideCompletion = nil
+        applyPose(self, base: 1, nil, shown: 1)
         completion?()
     }
 
-    private var hideCompletion: (() -> Void)?
+    // MARK: Animation
+
+    /// A show or hide transition in progress.
+    private struct Fade {
+        var transition: UIBuildTransition
+        var showing: Bool
+        var elapsed: Double = 0
+        var completion: (() -> Void)?
+
+        /// 0 hidden … 1 shown, eased.
+        var shown: Float {
+            let t = transition
+            let raw = t.duration > 0 ? Float((elapsed - Double(t.delay)) / Double(t.duration)) : (elapsed >= Double(t.delay) ? 1 : 0)
+            let eased = t.easing(raw)
+            return showing ? eased : 1 - eased
+        }
+        var isDone: Bool { elapsed >= Double(transition.delay + transition.duration) }
+    }
+
+    /// A number moving to a new value (`tween`).
+    private struct Tween {
+        var from: Double
+        var to: Double
+        var elapsed: Double = 0
+        var duration: Double
+        var integral: Bool
+
+        var current: Double { from + (to - from) * Double(Easing.quadOut(Float(min(elapsed / duration, 1)))) }
+        var value: JSONValue { integral ? .int(Int64(current.rounded())) : .double(current) }
+    }
+
+    private var viewFade: Fade?
+    private var widgetFades: [String: Fade] = [:]
+    /// Whether each widget should show (its `hidden` / `visibleWhen`), while `isHidden` lags during a hide transition.
+    private var widgetVisible: [String: Bool] = [:]
+    private var tweens: [String: Tween] = [:]
+    private var lastValues: [String: JSONValue] = [:]
+    private var lastTime: Double?
+
+    /// Whether a show / hide transition or value tween is playing.
+    public var isAnimating: Bool { viewFade != nil || !widgetFades.isEmpty || !tweens.isEmpty }
+
+    /// Moves transitions and tweens on by `dt` seconds. Drawing in a `UIContext` calls it with
+    /// the context's time, so a game needn't.
+    public func advance(by dt: Double) {
+        guard dt > 0, isAnimating else { return }
+        if var fade = viewFade {
+            fade.elapsed += dt
+            if fade.isDone {
+                viewFade = nil
+                if !fade.showing { isHidden = true }
+                applyPose(self, base: 1, nil, shown: 1)
+                fade.completion?()
+            } else {
+                viewFade = fade
+                applyPose(self, base: 1, fade.transition, shown: fade.shown)
+            }
+        }
+        for (id, var fade) in widgetFades {
+            guard let widget = byID[id], let spec = entries.first(where: { $0.widget === widget })?.spec else {
+                widgetFades[id] = nil
+                continue
+            }
+            fade.elapsed += dt
+            if fade.isDone {
+                widgetFades[id] = nil
+                widget.isHidden = !fade.showing
+                applyPose(widget, base: spec.opacity, nil, shown: 1)
+            } else {
+                widgetFades[id] = fade
+                applyPose(widget, base: spec.opacity, fade.transition, shown: fade.shown)
+            }
+        }
+        if !tweens.isEmpty {
+            for (key, var tween) in tweens {
+                tween.elapsed += dt
+                tweens[key] = tween.elapsed >= tween.duration ? nil : tween
+            }
+            applyValues()
+        }
+    }
+
+    /// Sets a widget's (or the view's) opacity, offset and scale for a transition at `shown`
+    /// (nil transition: at rest). Scales about the widget's center; slides scale with the layout.
+    private func applyPose(_ widget: Widget, base: Float, _ transition: UIBuildTransition?, shown: Float) {
+        let base = min(max(base, 0), 1)
+        guard let transition else {
+            widget.opacity = base
+            widget.visualScale = 1
+            widget.visualOffset = .zero
+            return
+        }
+        let pose = transition.pose(shown: shown)
+        widget.opacity = base * pose.opacity
+        widget.visualScale = max(pose.scale, 0.001)
+        widget.visualOffset = pose.offset * layoutScale + Vec2(widget.frame.width, widget.frame.height) * ((1 - pose.scale) / 2)
+    }
+
+    /// Shows or hides a layout widget, with its transition once the view is in a context.
+    private func setVisible(_ spec: UIBuildWidget, _ widget: Widget, _ visible: Bool) {
+        let old = widgetVisible[spec.id]
+        widgetVisible[spec.id] = visible
+        guard let old, old != visible else {
+            if old == nil { widget.isHidden = !visible }
+            return
+        }
+        if let t = visible ? spec.show : spec.hide, t.animates, context != nil {
+            widgetFades[spec.id] = Fade(transition: t, showing: visible)
+            widget.isHidden = false
+            applyPose(widget, base: spec.opacity, t, shown: visible ? 0 : 1)
+            setNeedsDisplay()
+        } else {
+            widgetFades[spec.id] = nil
+            widget.isHidden = !visible
+            applyPose(widget, base: spec.opacity, nil, shown: 1)
+        }
+    }
+
+    /// Starts tweens for numbers that changed and that a widget with a `tween` shows.
+    private func startTweens(_ values: [String: JSONValue]) {
+        var durations: [String: Double] = [:]
+        for (spec, _) in entries where spec.tween > 0 {
+            for key in spec.valueKeys { durations[key] = max(durations[key] ?? 0, Double(spec.tween)) }
+        }
+        for (key, duration) in durations {
+            guard let newValue = values[key], let new = UIBuild.number(newValue) else {
+                tweens[key] = nil
+                continue
+            }
+            guard let oldValue = lastValues[key], let old = UIBuild.number(oldValue), old != new else { continue }
+            if tweens[key]?.to == new { continue }
+            guard context != nil else {
+                tweens[key] = nil
+                continue
+            }
+            let from = tweens[key]?.current ?? old
+            tweens[key] = Tween(from: from, to: new, duration: duration,
+                                integral: Self.isIntegral(newValue) && Self.isIntegral(oldValue))
+            setNeedsDisplay()
+        }
+    }
+
+    private static func isIntegral(_ value: JSONValue) -> Bool {
+        switch value {
+        case .int: true
+        case .double(let d): d == d.rounded()
+        default: false
+        }
+    }
+
+    /// `values` with tweening numbers at their current point.
+    private func tweenedValues(_ values: [String: JSONValue]) -> [String: JSONValue] {
+        var shown = values
+        for (key, tween) in tweens { shown[key] = tween.value }
+        return shown
+    }
+
+    public override func hitTest(_ point: Vec2) -> Widget? {
+        isShown ? super.hitTest(point) : nil
+    }
 
     /// Focus the start widget the next time the view is drawn in a context.
     var wantsFocus = false
@@ -302,6 +481,9 @@ public final class UIBuildView: Widget {
     private func rebuild() {
         let theme = build.makeTheme().uiBuildScaled(by: layoutScale)
         let s = layoutScale
+        widgetFades = [:]
+        widgetVisible = [:]
+        tweens = [:]
         screen.removeAllChildren()
         entries = []
         byID = [:]
@@ -463,9 +645,13 @@ public final class UIBuildView: Widget {
 
     /// Fills text, bars, images and visibility from the current values.
     private func applyValues() {
-        let values = effectiveValues
+        let raw = effectiveValues
+        startTweens(raw)
+        let tweened = tweens.isEmpty ? raw : tweenedValues(raw)
+        lastValues = raw
         for (spec, widget) in entries {
-            widget.isHidden = spec.hidden || !UIBuild.isVisible(spec.visibleWhen, values: values)
+            setVisible(spec, widget, !spec.hidden && UIBuild.isVisible(spec.visibleWhen, values: raw))
+            let values = spec.tween > 0 ? tweened : raw
             switch spec.type {
             case .label:
                 let text = Self.text(of: spec, values: values)
@@ -520,6 +706,11 @@ public final class UIBuildView: Widget {
     }
 
     public override func draw(_ list: UIDrawList, theme: UITheme) {
+        if let context {
+            if let last = lastTime { advance(by: context.time - last) }
+            lastTime = isAnimating ? context.time : nil
+            if isAnimating { setNeedsDisplay() }
+        }
         if reloadIfChanged() { layout(in: frame) }
         if wantsFocus { focusStartWidget() }
         super.draw(list, theme: theme)

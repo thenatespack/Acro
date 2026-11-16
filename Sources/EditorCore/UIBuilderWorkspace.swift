@@ -134,8 +134,10 @@ public final class UIBuilderWorkspace {
         interact.onChange = { [unowned self] _ in dirty = true }
         status.style.shrink = 1
         let closeButton = Button("Close", name: "uiBuilderClose") { [unowned self] in self.close() }
+        let playButton = Button("Play", name: "uiBuilderPlayTransitions") { [unowned self] in playTransitions() }
+        playButton.tooltip = "Play the layout's hide transition, then its show transition, in the preview"
         let bar = HStack(spacing: 8, padding: EdgeInsets(top: 6, left: 10, bottom: 6, right: 10), name: "uiBuilderToolbar",
-                         [title, Spacer(), status, interact, sizePicker, closeButton])
+                         [title, Spacer(), status, playButton, interact, sizePicker, closeButton])
 
         tree.allowsDragAndDrop = true
         tree.style.height = 260
@@ -359,6 +361,13 @@ public final class UIBuilderWorkspace {
         apply("Move Widget", select: id) { try $0.update(id, fields: ["offset": .array([.double(Double(offset.x)), .double(Double(offset.y))])]) }
     }
 
+    /// Plays the layout's hide transition, then its show transition, in the preview.
+    public func playTransitions() {
+        let preview = canvas.preview
+        preview.hide { [weak preview] in preview?.show() }
+        canvas.setNeedsDisplay()
+    }
+
     func previewEvent(_ event: UIBuildEvent) {
         lastEvent = event
         let value = event.value.map { " = " + UIBuild.display($0) } ?? ""
@@ -506,6 +515,35 @@ public final class UIBuilderWorkspace {
         row(caption, box)
     }
 
+    /// A transition picker: its kind, then (when it has one) its time and a slide's side.
+    private func transitionRows(_ caption: String, _ transition: UIBuildTransition?, name: String, tooltip: String,
+                                _ set: @escaping (UIBuildTransition?) -> Void) {
+        let kinds = UIBuildTransitionKind.allCases
+        let picker = Dropdown(options: kinds.map(\.rawValue), selectedIndex: kinds.firstIndex(of: transition?.kind ?? .none) ?? 0,
+                              name: "uiBuilderField.\(name)")
+        picker.tooltip = tooltip
+        picker.onChange = { index in
+            guard kinds[index] != .none else { return set(nil) }
+            var t = transition ?? UIBuildTransition()
+            t.kind = kinds[index]
+            set(t)
+        }
+        row(caption, picker)
+        guard let transition else { return }
+        numberRow("\(caption) time", transition.duration, name: "\(name).duration", range: 0...30, step: 0.05) { seconds in
+            var t = transition
+            t.duration = Float(seconds)
+            set(t)
+        }
+        if transition.kind == .slide {
+            choiceRow("\(caption) from", transition.from, name: "\(name).from") { edge in
+                var t = transition
+                t.from = edge
+                set(t)
+            }
+        }
+    }
+
     private func addWidgetForm(_ w: UIBuildWidget) {
         let id = w.id
         func field(_ key: String, _ value: JSONValue) { setField(id, key, value) }
@@ -618,6 +656,19 @@ public final class UIBuilderWorkspace {
         }
         toggleRow("Hidden", w.hidden, name: "hidden") { field("hidden", .bool($0)) }
 
+        sidebar.addChild(Label("Animation", role: .secondary))
+        func transitionValue(_ t: UIBuildTransition?) -> JSONValue { t.flatMap { try? AssetJSON.value($0) } ?? .null }
+        transitionRows("Show", w.show, name: "show", tooltip: "How it appears when it becomes visible (visibleWhen, hidden)") { [unowned self] t in
+            // A first show transition also becomes the hide one, the usual pairing.
+            var fields: [String: JSONValue] = ["show": transitionValue(t)]
+            if w.show == nil, w.hide == nil { fields["hide"] = transitionValue(t) }
+            apply("Set Show Transition", select: id) { try $0.update(id, fields: fields) }
+        }
+        transitionRows("Hide", w.hide, name: "hide", tooltip: "How it goes away") { t in field("hide", transitionValue(t)) }
+        if w.type == .bar || w.type == .label || w.type == .button {
+            numberRow("Tween", w.tween, name: "tween", range: 0...30, step: 0.05) { field("tween", .double($0)) }
+        }
+
         sidebar.addChild(Label("Bindings", role: .secondary))
         if w.type == .bar || w.type == .label || w.type == .button || w.type == .image || w.type.isInput {
             let what = switch w.type {
@@ -661,6 +712,13 @@ public final class UIBuilderWorkspace {
         scalePicker.tooltip = "How the whole layout scales with the screen from the design size: none keeps points; fit shows all of it; fill covers the screen; width / height follow one side"
         scalePicker.onChange = { [unowned self] index in editLayout("Set Scale Mode", UIBuildEdit(scaleMode: modes[index])) }
         row("Scale", scalePicker)
+        let none = UIBuildTransition(kind: .none)
+        transitionRows("Show", build.show, name: "layoutShow", tooltip: "How the whole layout appears when the game shows it") { [unowned self] t in
+            editLayout("Set Show Transition", UIBuildEdit(show: t ?? none, hide: build.show == nil && build.hide == nil ? t : nil))
+        }
+        transitionRows("Hide", build.hide, name: "layoutHide", tooltip: "How the whole layout goes away when the game hides it") { [unowned self] t in
+            editLayout("Set Hide Transition", UIBuildEdit(hide: t ?? none))
+        }
         sidebar.addChild(Label("Theme colors", role: .secondary))
         let theme = build.makeTheme()
         for name in UIBuild.themeColorNames {
@@ -733,6 +791,8 @@ public final class UIBuildPreviewCanvas: Widget {
     public private(set) var previewScale: Float = 1
     private var drag: (id: String, start: Vec2, offset: Vec2, anchor: UIBuildAnchor)?
     private var forwarding = false
+    /// The editor's time at the last draw: the preview's context has no clock, so transitions and tweens step from it.
+    private var lastTime: Double?
 
     public override init(name: String = "") {
         super.init(name: name)
@@ -778,6 +838,10 @@ public final class UIBuildPreviewCanvas: Widget {
 
     public override func draw(_ list: UIDrawList, theme: UITheme) {
         list.fillRect(frame, color: theme.fieldBackground)
+        if let now = context?.time {
+            if let lastTime { preview.advance(by: now - lastTime) }
+            lastTime = preview.isAnimating ? now : nil
+        }
         placeScreen()
         list.withClip(screenRect) {
             list.fillRect(screenRect, fill: .linearGradient(start: UIColor(hex: 0x3c4a5e), end: UIColor(hex: 0x151a22)))
@@ -789,7 +853,7 @@ public final class UIBuildPreviewCanvas: Widget {
             }
         }
         list.strokeRect(screenRect, color: theme.panelBorder)
-        if previewContext.paintDirty || preview.build.widgets.contains(where: { $0.trail }) { setNeedsDisplay() }
+        if previewContext.paintDirty || preview.isAnimating || preview.build.widgets.contains(where: { $0.trail }) { setNeedsDisplay() }
     }
 
     public override func handleEvent(_ event: UIEvent) -> Bool {

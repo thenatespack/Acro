@@ -119,6 +119,97 @@ public enum UIBuildScaleMode: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// How a layout or widget appears or goes away.
+public enum UIBuildTransitionKind: String, Codable, CaseIterable, Sendable {
+    /// At once.
+    case none
+    /// Opacity only.
+    case fade
+    /// Moves `distance` points from (or to) the `from` edge while fading.
+    case slide
+    /// Grows from (or shrinks to) `scale` about its center while fading.
+    case scale
+}
+
+/// The side a slide comes from (show) or leaves toward (hide).
+public enum UIBuildEdge: String, Codable, CaseIterable, Sendable {
+    case left, right, top, bottom
+}
+
+/// A show or hide animation of a layout or widget (every key optional).
+public struct UIBuildTransition: Codable, Equatable, Sendable {
+    public var kind: UIBuildTransitionKind
+    /// Seconds.
+    public var duration: Float
+    /// Seconds before it starts.
+    public var delay: Float
+    public var easing: Easing
+    /// A slide's side.
+    public var from: UIBuildEdge
+    /// A slide's distance in points.
+    public var distance: Float
+    /// A scale transition's size at the hidden end (1: full size).
+    public var scale: Float
+
+    public init(kind: UIBuildTransitionKind = .fade, duration: Float = 0.25, delay: Float = 0, easing: Easing = .cubicOut,
+                from: UIBuildEdge = .bottom, distance: Float = 40, scale: Float = 0.85) {
+        self.kind = kind
+        self.duration = duration
+        self.delay = delay
+        self.easing = easing
+        self.from = from
+        self.distance = distance
+        self.scale = scale
+    }
+
+    private enum CodingKeys: String, CodingKey { case kind, duration, delay, easing, from, distance, scale }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = UIBuildTransition()
+        self.init(kind: try c.decodeIfPresent(UIBuildTransitionKind.self, forKey: .kind) ?? d.kind,
+                  duration: try c.decodeIfPresent(Float.self, forKey: .duration) ?? d.duration,
+                  delay: try c.decodeIfPresent(Float.self, forKey: .delay) ?? d.delay,
+                  easing: try c.decodeIfPresent(Easing.self, forKey: .easing) ?? d.easing,
+                  from: try c.decodeIfPresent(UIBuildEdge.self, forKey: .from) ?? d.from,
+                  distance: try c.decodeIfPresent(Float.self, forKey: .distance) ?? d.distance,
+                  scale: try c.decodeIfPresent(Float.self, forKey: .scale) ?? d.scale)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        let d = UIBuildTransition()
+        try c.encode(kind, forKey: .kind)
+        if duration != d.duration { try c.encode(duration, forKey: .duration) }
+        if delay != d.delay { try c.encode(delay, forKey: .delay) }
+        if easing != d.easing { try c.encode(easing, forKey: .easing) }
+        if kind == .slide, from != d.from { try c.encode(from, forKey: .from) }
+        if kind == .slide, distance != d.distance { try c.encode(distance, forKey: .distance) }
+        if kind == .scale, scale != d.scale { try c.encode(scale, forKey: .scale) }
+    }
+
+    /// Whether it animates (not `none`, and takes time).
+    public var animates: Bool { kind != .none && duration + delay > 0 }
+
+    /// Opacity, offset in points and scale at `shown` (0 hidden … 1 shown, eased).
+    public func pose(shown: Float) -> (opacity: Float, offset: Vec2, scale: Float) {
+        let away = 1 - shown
+        switch kind {
+        case .none: return (shown > 0 ? 1 : 0, .zero, 1)
+        case .fade: return (shown, .zero, 1)
+        case .slide:
+            let direction: Vec2 = switch from {
+            case .left: Vec2(-1, 0)
+            case .right: Vec2(1, 0)
+            case .top: Vec2(0, -1)
+            case .bottom: Vec2(0, 1)
+            }
+            return (shown, direction * (distance * away), 1)
+        case .scale: return (shown, .zero, scale + (1 - scale) * shown)
+        }
+    }
+}
+
 /// How a toggle looks.
 public enum UIBuildToggleStyle: String, Codable, CaseIterable, Sendable {
     case checkbox
@@ -211,6 +302,13 @@ public struct UIBuildWidget: Codable, Equatable, Sendable {
     /// The most characters a text field takes (0: no limit).
     public var maxLength: Int
 
+    // Animation.
+    /// How the widget appears when it becomes visible (`visibleWhen`, `hidden`) and goes away; nil: at once.
+    public var show: UIBuildTransition?
+    public var hide: UIBuildTransition?
+    /// Seconds a bar's fill, or the numbers a label or button shows, take to move to a new value (0: at once).
+    public var tween: Float
+
     // Bindings.
     /// The value key this widget shows: a bar's fill, a label's / button's text (unless the text has `{…}` placeholders), an image's path.
     public var bind: String
@@ -225,7 +323,11 @@ public struct UIBuildWidget: Codable, Equatable, Sendable {
                 shadow: Bool = false, image: String = "", fit: UIBuildImageFit = .fit, value: Float = 1, max: Float = 1,
                 kind: UIBuildBarKind = .progress, segments: Int = 0, trail: Bool = false, primary: Bool = false,
                 event: String = "", bind: String = "", visibleWhen: String = "", min: Float = 0, step: Float = 0, on: Bool = false,
-                toggleStyle: UIBuildToggleStyle = .checkbox, placeholder: String = "", maxLength: Int = 0) {
+                toggleStyle: UIBuildToggleStyle = .checkbox, placeholder: String = "", maxLength: Int = 0,
+                show: UIBuildTransition? = nil, hide: UIBuildTransition? = nil, tween: Float = 0) {
+        self.show = show
+        self.hide = hide
+        self.tween = tween
         self.min = min
         self.step = step
         self.on = on
@@ -271,7 +373,7 @@ public struct UIBuildWidget: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey, CaseIterable {
         case id, type, parent, anchor, offset, width, height, grow, padding, spacing, align, justify, background, borderColor,
              cornerRadius, opacity, hidden, text, fontSize, color, textAlign, wrap, shadow, image, fit, value, max, kind, segments,
-             trail, primary, event, bind, visibleWhen, min, step, on, toggleStyle, placeholder, maxLength
+             trail, primary, event, bind, visibleWhen, min, step, on, toggleStyle, placeholder, maxLength, show, hide, tween
     }
 
     /// Every key is optional.
@@ -294,6 +396,9 @@ public struct UIBuildWidget: Codable, Equatable, Sendable {
         try read(.trail, &w.trail); try read(.primary, &w.primary); try read(.event, &w.event); try read(.bind, &w.bind)
         try read(.visibleWhen, &w.visibleWhen); try read(.min, &w.min); try read(.step, &w.step); try read(.on, &w.on)
         try read(.toggleStyle, &w.toggleStyle); try read(.placeholder, &w.placeholder); try read(.maxLength, &w.maxLength)
+        w.show = try c.decodeIfPresent(UIBuildTransition.self, forKey: .show)
+        w.hide = try c.decodeIfPresent(UIBuildTransition.self, forKey: .hide)
+        try read(.tween, &w.tween)
         self = w
     }
 
@@ -320,6 +425,7 @@ public struct UIBuildWidget: Codable, Equatable, Sendable {
         try write(.min, min, d.min); try write(.step, step, d.step); try write(.on, on, d.on)
         try write(.toggleStyle, toggleStyle, d.toggleStyle); try write(.placeholder, placeholder, d.placeholder)
         try write(.maxLength, maxLength, d.maxLength)
+        try c.encodeIfPresent(show, forKey: .show); try c.encodeIfPresent(hide, forKey: .hide); try write(.tween, tween, d.tween)
     }
 
     /// The event a press of this button (or a change of this input) sends.
@@ -369,13 +475,18 @@ public struct UIBuild: Codable, Equatable, Sendable {
     public var size: Vec2
     /// How the whole layout scales with the screen, from `size`.
     public var scaleMode: UIBuildScaleMode
+    /// How the layout appears (`UIBuildView.show`) and goes away (`hide`); nil: at once.
+    public var show: UIBuildTransition?
+    public var hide: UIBuildTransition?
     /// Sample values by key: shown in the preview, and in the game until code sets the key.
     public var values: [String: JSONValue]
     public var widgets: [UIBuildWidget]
 
     public init(theme: String = "game", colors: [String: String] = [:], fontSize: Float = 0, safeArea: Float? = nil,
-                size: Vec2 = Vec2(1280, 720), scaleMode: UIBuildScaleMode = .none, values: [String: JSONValue] = [:],
-                widgets: [UIBuildWidget] = []) {
+                size: Vec2 = Vec2(1280, 720), scaleMode: UIBuildScaleMode = .none, show: UIBuildTransition? = nil,
+                hide: UIBuildTransition? = nil, values: [String: JSONValue] = [:], widgets: [UIBuildWidget] = []) {
+        self.show = show
+        self.hide = hide
         self.theme = theme
         self.scaleMode = scaleMode
         self.colors = colors
@@ -386,7 +497,7 @@ public struct UIBuild: Codable, Equatable, Sendable {
         self.widgets = widgets
     }
 
-    private enum CodingKeys: String, CodingKey { case theme, colors, fontSize, safeArea, size, scaleMode, values, widgets }
+    private enum CodingKeys: String, CodingKey { case theme, colors, fontSize, safeArea, size, scaleMode, show, hide, values, widgets }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -397,6 +508,8 @@ public struct UIBuild: Codable, Equatable, Sendable {
                   safeArea: try c.decodeIfPresent(Float.self, forKey: .safeArea),
                   size: try c.decodeIfPresent(Vec2.self, forKey: .size) ?? d.size,
                   scaleMode: try c.decodeIfPresent(UIBuildScaleMode.self, forKey: .scaleMode) ?? .none,
+                  show: try c.decodeIfPresent(UIBuildTransition.self, forKey: .show),
+                  hide: try c.decodeIfPresent(UIBuildTransition.self, forKey: .hide),
                   values: try c.decodeIfPresent([String: JSONValue].self, forKey: .values) ?? [:],
                   widgets: try c.decodeIfPresent([UIBuildWidget].self, forKey: .widgets) ?? [])
     }
@@ -409,6 +522,8 @@ public struct UIBuild: Codable, Equatable, Sendable {
         try c.encodeIfPresent(safeArea, forKey: .safeArea)
         try c.encode(size, forKey: .size)
         if scaleMode != .none { try c.encode(scaleMode, forKey: .scaleMode) }
+        try c.encodeIfPresent(show, forKey: .show)
+        try c.encodeIfPresent(hide, forKey: .hide)
         if !values.isEmpty { try c.encode(values, forKey: .values) }
         try c.encode(widgets, forKey: .widgets)
     }
@@ -598,6 +713,9 @@ public struct UIBuild: Codable, Equatable, Sendable {
             if Self.hexColor(color) == nil { issues.append(UIBuildIssue("colors.\(name): '\(color)' isn't a #RRGGBB[AA] color")) }
         }
         if size.x < 1 || size.y < 1 { issues.append(UIBuildIssue("size must be positive")) }
+        for (field, t) in [("show", show), ("hide", hide)] {
+            if let t, t.duration < 0 || t.delay < 0 { issues.append(UIBuildIssue("\(field): duration and delay can't be negative")) }
+        }
         var seen: Set<String> = []
         let types = Dictionary(widgets.map { ($0.id, $0.type) }, uniquingKeysWith: { first, _ in first })
         for w in widgets {
@@ -620,6 +738,10 @@ public struct UIBuild: Codable, Equatable, Sendable {
             if w.type == .bar, w.max <= 0 { issues.append(UIBuildIssue(widget: name, "max must be above 0")) }
             if w.type == .slider, w.max <= w.min { issues.append(UIBuildIssue(widget: name, "max must be above min")) }
             if w.type == .slider, w.step < 0 { issues.append(UIBuildIssue(widget: name, "step can't be negative")) }
+            for (field, t) in [("show", w.show), ("hide", w.hide)] {
+                if let t, t.duration < 0 || t.delay < 0 { issues.append(UIBuildIssue(widget: name, "\(field): duration and delay can't be negative")) }
+            }
+            if w.tween < 0 { issues.append(UIBuildIssue(widget: name, "tween can't be negative")) }
             if w.type == .textField, w.maxLength < 0 { issues.append(UIBuildIssue(widget: name, "maxLength can't be negative")) }
             if w.type == .image, w.image.isEmpty, w.bind.isEmpty { issues.append(UIBuildIssue(widget: name, "no image set")) }
             if w.type == .image, !w.image.isEmpty, let imageExists, !imageExists(w.image) {
@@ -683,12 +805,17 @@ public struct UIBuildEdit: Codable, Equatable, Sendable {
     public var safeArea: Float?
     public var size: Vec2?
     public var scaleMode: UIBuildScaleMode?
+    /// The layout's show / hide transitions (kind "none" removes one).
+    public var show: UIBuildTransition?
+    public var hide: UIBuildTransition?
 
     public init(removeWidgets: [String]? = nil, addWidgets: [UIBuildWidget]? = nil, updateWidgets: [String: JSONValue]? = nil,
                 moveWidgets: [UIBuildMove]? = nil, bindings: [String: String]? = nil, values: [String: JSONValue]? = nil,
                 theme: String? = nil, colors: [String: String]? = nil, fontSize: Float? = nil, safeArea: Float? = nil, size: Vec2? = nil,
-                scaleMode: UIBuildScaleMode? = nil) {
+                scaleMode: UIBuildScaleMode? = nil, show: UIBuildTransition? = nil, hide: UIBuildTransition? = nil) {
         self.scaleMode = scaleMode
+        self.show = show
+        self.hide = hide
         self.removeWidgets = removeWidgets
         self.addWidgets = addWidgets
         self.updateWidgets = updateWidgets
@@ -760,6 +887,8 @@ extension UIBuild {
         if let safeArea = edit.safeArea { build.safeArea = safeArea < 0 ? nil : safeArea }
         if let size = edit.size { build.size = Vec2(Swift.max(size.x, 1), Swift.max(size.y, 1)) }
         if let scaleMode = edit.scaleMode { build.scaleMode = scaleMode }
+        if let show = edit.show { build.show = show.kind == .none ? nil : show }
+        if let hide = edit.hide { build.hide = hide.kind == .none ? nil : hide }
         return build
     }
 

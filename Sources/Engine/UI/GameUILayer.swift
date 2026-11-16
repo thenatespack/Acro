@@ -287,6 +287,7 @@ public final class GameUILayer {
 
     private func makeView(_ build: UIBuild, entity: Entity?) -> UIBuildView {
         let view = UIBuildView(build, name: "gameUI." + (entity.map { "\($0.index)" } ?? "shown"))
+        view.isHidden = true  // `show` plays the layout's show transition
         view.images = images
         view.set(values)
         view.layerHandler = { [weak self] event in self?.dispatch(event, entity: entity) }

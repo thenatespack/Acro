@@ -125,6 +125,30 @@ private func pngData() -> Data {
         world.update(dt: 1.0 / 60)
     }
 
+    @Test func layoutsPlayTheirTransitionsOnTheLayer() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        var build = try hud()
+        build.show = UIBuildTransition(kind: .fade, duration: 0.2)
+        build.hide = UIBuildTransition(kind: .slide, duration: 0.2)
+        _ = try database.createUIBuild(build, at: "UI/pause.ui")
+        let context = UIContext.gameUI()
+        let world = World()
+        let layer = world.addGameUI(assets: { database }, in: context.root)
+        let menu = try #require(layer.show("UI/pause.ui", order: 1))
+        #expect(menu.isAnimating && menu.opacity == 0, "shows with its transition")
+        menu.advance(by: 1)
+        #expect(menu.opacity == 1)
+        layer.hide(menu)
+        #expect(layer.views.contains { $0 === menu }, "stays on the layer while its hide transition plays")
+        menu.advance(by: 0.1)
+        #expect(layer.views.contains { $0 === menu })
+        menu.advance(by: 0.2)
+        #expect(!layer.views.contains { $0 === menu } && menu.parent == nil)
+        withExtendedLifetime(context) {}
+    }
+
     @Test func scenePlaybackHostsTheLayer() throws {
         let project = try makeProject()
         defer { try? FileManager.default.removeItem(at: project.root) }

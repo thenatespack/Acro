@@ -205,4 +205,52 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(left == 0)
         #expect(throws: (any Error).self) { try call(session, "uiLayout.place", ["path": "UI/none.ui"]) }
     }
+    @Test func inputsScalingAndTransitionsThroughToolsAndTab() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = try project(folder)
+        let id = try #require(session.createUIBuildAsset(in: "", name: "menu"))
+        let edited = try call(session, "uiLayout.edit", [
+            "asset": id.description, "scaleMode": "fit",
+            "show": ["kind": "slide", "from": "top", "duration": 0.3], "hide": ["kind": "fade"],
+            "addWidgets": [["id": "volume", "type": "slider", "bind": "volume", "max": 10, "step": 1, "event": "setVolume"],
+                           ["id": "mute", "type": "toggle", "text": "Mute", "show": ["kind": "scale"]],
+                           ["id": "name", "type": "textField", "placeholder": "Name"]],
+        ])
+        #expect((edited["events"] as? [String])?.contains("setVolume") == true)
+        let build = try #require(session.assets?.uiBuild(of: id))
+        #expect(build.scaleMode == .fit && build.show?.kind == .slide && build.show?.from == .top && build.hide?.kind == .fade)
+        #expect(build.widget("volume")?.type == .slider && build.widget("mute")?.show?.kind == .scale)
+        try call(session, "uiLayout.edit", ["asset": id.description, "show": ["kind": "none"]])
+        #expect(session.assets?.uiBuild(of: id)?.show == nil)
+
+        // The tab adds the new widget types and plays the layout's transitions in the preview.
+        let workspace = UIBuilderWorkspace(session: session)
+        workspace.open(id)
+        workspace.update()
+        for type in [UIBuildWidgetType.slider, .toggle, .textField] {
+            workspace.select(nil)
+            workspace.update()
+            workspace.addWidget(type)
+            workspace.update()
+        }
+        let types = session.assets?.uiBuild(of: id)?.widgets.map(\.type) ?? []
+        #expect(types.filter { $0 == .slider }.count == 2 && types.filter { $0 == .textField }.count == 2)
+        #expect(workspace.canvas.preview.widget("slider") is Slider)
+        workspace.playTransitions()
+        #expect(workspace.canvas.preview.isAnimating && !workspace.canvas.preview.isShown)
+        workspace.canvas.preview.advance(by: 1)
+        workspace.canvas.preview.advance(by: 1)
+        #expect(workspace.canvas.preview.isShown && !workspace.canvas.preview.isHidden)
+
+        // A first show transition on a widget sets its hide too, in one undo step.
+        workspace.select("mute")
+        workspace.update()
+        let before = session.assets?.uiBuild(of: id)?.widget("slider")
+        workspace.setField("slider", "show", try AssetJSON.value(UIBuildTransition(kind: .fade)))
+        workspace.update()
+        #expect(session.assets?.uiBuild(of: id)?.widget("slider")?.show?.kind == .fade)
+        #expect(session.performUndo())
+        #expect(session.assets?.uiBuild(of: id)?.widget("slider") == before)
+    }
 }

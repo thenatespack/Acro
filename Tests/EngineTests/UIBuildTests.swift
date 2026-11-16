@@ -351,6 +351,120 @@ private let hud = """
     }
 
 
+    // MARK: Transitions and tweens
+
+    @Test func transitionsRoundTripAndPose() throws {
+        let build = try decode("""
+        {"show": {"kind": "slide", "from": "left", "distance": 100}, "hide": {"kind": "fade", "duration": 0.5},
+         "widgets": [{"id": "a", "type": "label", "show": {"kind": "scale"}, "tween": 0.3}]}
+        """)
+        #expect(build.show == UIBuildTransition(kind: .slide, from: .left, distance: 100))
+        #expect(build.hide == UIBuildTransition(kind: .fade, duration: 0.5))
+        #expect(build.widgets[0].show?.kind == .scale && build.widgets[0].hide == nil && build.widgets[0].tween == 0.3)
+        #expect(try AssetJSON.decoder().decode(UIBuild.self, from: build.fileData()) == build)
+        let text = try #require(String(data: build.fileData(), encoding: .utf8))
+        #expect(!text.contains("\"scale\" : 0.85"), "defaults aren't written")
+
+        let slide = try #require(build.show)
+        #expect(slide.pose(shown: 0).offset == Vec2(-100, 0) && slide.pose(shown: 0).opacity == 0)
+        #expect(slide.pose(shown: 1).offset == .zero && slide.pose(shown: 1).opacity == 1)
+        let scale = UIBuildTransition(kind: .scale, scale: 0.5)
+        #expect(scale.pose(shown: 0).scale == 0.5 && scale.pose(shown: 0.5).scale == 0.75)
+        #expect(!UIBuildTransition(kind: .none).animates && !UIBuildTransition(duration: 0).animates)
+
+        // Edits: kind none removes a layout transition.
+        let edited = try build.applying(UIBuildEdit(show: UIBuildTransition(kind: .none), hide: UIBuildTransition(kind: .scale)))
+        #expect(edited.show == nil && edited.hide?.kind == .scale)
+        var bad = build
+        bad.widgets[0].tween = -1
+        bad.hide?.duration = -1
+        #expect(bad.validate().map(\.description).contains("a: tween can't be negative"))
+        #expect(bad.validate().map(\.description).contains("hide: duration and delay can't be negative"))
+    }
+
+    @MainActor @Test func viewPlaysShowAndHideTransitions() throws {
+        var build = try decode(hud)
+        build.show = UIBuildTransition(kind: .fade, duration: 0.2, easing: .linear)
+        build.hide = UIBuildTransition(kind: .slide, duration: 0.2, easing: .linear, from: .bottom, distance: 50)
+        let view = UIBuildView(build)
+
+        // Outside a context, at once.
+        var hidden = 0
+        view.hide { hidden += 1 }
+        #expect(view.isHidden && !view.isShown && hidden == 1 && !view.isAnimating)
+        view.show()
+        #expect(!view.isHidden && view.opacity == 1)
+
+        let context = laidOut(view, size: Vec2(800, 600))
+        defer { withExtendedLifetime(context) {} }
+        view.hide { hidden += 1 }
+        #expect(!view.isHidden && view.isAnimating && hidden == 1)
+        #expect(view.hitTest(try #require(view.widget("go")).frame.center) == nil, "clicks pass through while hiding")
+        view.advance(by: 0.1)
+        #expect(abs(view.opacity - 0.5) < 0.01 && abs(view.visualOffset.y - 25) < 0.01)
+        view.advance(by: 0.15)
+        #expect(view.isHidden && hidden == 2 && view.opacity == 1 && view.visualOffset == .zero && !view.isAnimating)
+
+        view.show()
+        #expect(!view.isHidden && view.opacity == 0 && view.isAnimating)
+        view.advance(by: 0.05)
+        #expect(abs(view.opacity - 0.25) < 0.01)
+        view.advance(by: 1)
+        #expect(view.opacity == 1 && !view.isAnimating)
+        #expect(view.hitTest(try #require(view.widget("go")).frame.center) != nil)
+
+        // Showing again mid-hide cancels the hide (its completion never runs).
+        view.hide { hidden += 1 }
+        view.advance(by: 0.1)
+        view.show()
+        view.advance(by: 1)
+        #expect(!view.isHidden && hidden == 2)
+    }
+
+    @MainActor @Test func widgetsTransitionAndValuesTween() throws {
+        var build = try decode(hud)
+        let dead = try #require(build.index(of: "dead"))
+        build.widgets[dead].show = UIBuildTransition(kind: .scale, duration: 0.4, easing: .linear, scale: 0.5)
+        build.widgets[dead].hide = UIBuildTransition(kind: .fade, duration: 0.4, easing: .linear)
+        let hp = try #require(build.index(of: "hp"))
+        build.widgets[hp].tween = 1
+        let hpText = try #require(build.index(of: "hpText"))
+        build.widgets[hpText].tween = 1
+        let view = UIBuildView(build)
+        let context = laidOut(view, size: Vec2(800, 600))
+        defer { withExtendedLifetime(context) {} }
+        let label = try #require(view.widget("dead"))
+        let bar = try #require(view.widget("hp") as? ProgressBar)
+        #expect(!label.isHidden, "alive is unset: !alive is true")
+
+        view.set("alive", true)
+        #expect(!label.isHidden && view.isAnimating, "hiding: still drawn while it fades")
+        view.advance(by: 0.2)
+        #expect(abs(label.opacity - 0.5) < 0.01)
+        view.advance(by: 0.3)
+        #expect(label.isHidden && label.opacity == 1)
+
+        view.set("alive", false)
+        #expect(!label.isHidden && label.visualScale == 0.5)
+        view.advance(by: 0.2)
+        #expect(abs(label.visualScale - 0.75) < 0.01)
+        view.advance(by: 0.3)
+        #expect(label.visualScale == 1 && label.visualOffset == .zero)
+
+        // Numbers tween: the bar's fill and the label's {health} move to the new value.
+        #expect(bar.value == 0.5)
+        view.set("health", 100)
+        #expect(bar.value == 0.5 && (view.widget("hpText") as? Label)?.text == "HP 50 / 100")
+        #expect(view.value("health") == .int(100), "the value itself is set at once")
+        view.advance(by: 0.5)
+        #expect(bar.value > 0.5 && bar.value < 1)
+        let midway = try #require((view.widget("hpText") as? Label)?.text)
+        #expect(midway != "HP 50 / 100" && midway != "HP 100 / 100" && !midway.contains("."), "whole numbers stay whole: \(midway)")
+        view.advance(by: 0.6)
+        #expect(bar.value == 1 && (view.widget("hpText") as? Label)?.text == "HP 100 / 100" && !view.isAnimating)
+    }
+
+
     // MARK: Scaling with the screen
 
     @Test func scaleModeFactors() throws {
