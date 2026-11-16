@@ -89,7 +89,7 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
     public var sandboxRoots: [URL] { [session.project?.root ?? workspaceRoot] }
 
     /// The name `initialize` reports.
-    public static let serverName = "acro"
+    nonisolated public static let serverName = "acro"
 
     public init(session: EditorSession) {
         self.session = session

@@ -1,4 +1,5 @@
 import Engine
+import EngineMCP
 import Foundation
 
 // What every new project gets besides Project.json / Assets / Library (ProjectTemplate.create):
@@ -8,6 +9,12 @@ import Foundation
 //   Sources/<Target>/<Target>.swift   a game module: a component, a system, the entry point
 //   .gitignore                   .build/, .swiftpm/, Build/ added
 //   Project.json                 "game": {"target": "<Target>", "package": "."}
+//   .mcp.json                    an MCP client config (Claude Code reads it) that starts the
+//                                editor on this project over stdio: the running editor's
+//                                executable, else `swift run Editor` in the engine's package
+//   CLAUDE.md                    how the project is laid out and how an agent should work in it
+//
+// The two agent files are written even when the package is skipped.
 //
 // The engine's package is found above the working directory or the editor's executable
 // (`ACRO_ENGINE` overrides it); the manifest names its absolute path, which the
@@ -68,17 +75,21 @@ public enum ProjectScaffold {
     /// Writes the package into `project` and points its `game` setting at it (saved). `sources`
     /// replaces the generated Swift file: the files of that folder are copied instead.
     @discardableResult
-    public static func write(into project: inout Project, engine: URL? = findEngine(), sources: URL? = nil) throws -> Result {
+    public static func write(into project: inout Project, engine: URL? = findEngine(), sources: URL? = nil,
+                             editor: URL? = runningEditor()) throws -> Result {
         let fm = FileManager.default
         let root = project.root
         try addIgnores(in: root)
-        if fm.fileExists(atPath: root.appendingPathComponent("Package.swift").path) {
+        let hasPackage = fm.fileExists(atPath: root.appendingPathComponent("Package.swift").path)
+        let target = engine.map { targetName(for: project.name, reserved: engineTargets($0)) }
+        try writeAgentFiles(in: root, name: project.name, target: hasPackage ? project.settings.game?.target : target,
+                            engine: engine, editor: editor)
+        if hasPackage {
             return Result(target: nil, skipped: "the folder already has a Package.swift")
         }
-        guard let engine else {
+        guard let engine, let target else {
             return Result(target: nil, skipped: "the engine's package wasn't found (set \(engineEnvironmentKey) to its folder)")
         }
-        let target = targetName(for: project.name, reserved: engineTargets(engine))
         try writeIfMissing(manifest(target: target, engine: engine), to: root.appendingPathComponent("Package.swift"))
         let folder = root.appendingPathComponent("Sources/\(target)", isDirectory: true)
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -105,6 +116,107 @@ public enum ProjectScaffold {
         if !text.isEmpty && !text.hasSuffix("\n") { text += "\n" }
         text += "# SwiftPM build products, and Build Game's output.\n" + missing.joined(separator: "\n") + "\n"
         try Data(text.utf8).write(to: url, options: .atomic)
+    }
+
+    // MARK: Agent files
+
+    /// The running process's executable when it is the editor (named "…Editor"), for `.mcp.json`.
+    public static func runningEditor() -> URL? {
+        guard let url = Bundle.main.executableURL ?? CommandLine.arguments.first.map({ URL(fileURLWithPath: $0) })
+        else { return nil }
+        let name = url.deletingPathExtension().lastPathComponent.lowercased()
+        return name.hasSuffix("editor") && FileManager.default.isExecutableFile(atPath: url.path) ? url.standardizedFileURL : nil
+    }
+
+    /// Writes `.mcp.json` and `CLAUDE.md` into `root` where they're missing.
+    static func writeAgentFiles(in root: URL, name: String, target: String?, engine: URL?, editor: URL?) throws {
+        if let config = mcpConfig(engine: engine, editor: editor) {
+            try writeIfMissing(config, to: root.appendingPathComponent(".mcp.json"))
+        }
+        try writeIfMissing(claudeMarkdown(name: name, target: target, engine: engine), to: root.appendingPathComponent("CLAUDE.md"))
+    }
+
+    /// The project's `.mcp.json`: one stdio server that opens the editor on the project (the
+    /// client starts it in the project folder). The editor executable when known, else
+    /// `swift run` in the engine's package; nil without either.
+    public static func mcpConfig(engine: URL?, editor: URL?) -> String? {
+        let editorArguments: [JSON] = ["--mcp", "--project", "."]
+        let server: JSON
+        if let editor {
+            server = ["type": "stdio", "command": .string(editor.path), "args": .array(editorArguments)]
+        } else if let engine {
+            let run: [JSON] = ["run", "--package-path", .string(engine.standardizedFileURL.path), "-c", "release", "Editor"]
+            server = ["type": "stdio", "command": "swift", "args": .array(run + editorArguments)]
+        } else {
+            return nil
+        }
+        let config: JSON = ["mcpServers": .object([EditorMCP.serverName: server])]
+        return config.prettyText + "\n"
+    }
+
+    /// The project's `CLAUDE.md`: what an agent needs to work in an Acro project.
+    public static func claudeMarkdown(name: String, target: String?, engine: URL?) -> String {
+        let docs = engine.map { $0.standardizedFileURL.appendingPathComponent("docs").path }
+        let code = target.map { "`Sources/\($0)/`" } ?? "the game module's sources (see `\"game\"` in `Project.json`)"
+        var text = """
+            # \(name)
+
+            An Acro game project. Acro is a Swift game engine with an editor; this folder is
+            opened by the editor and its game code is a Swift package the editor builds and
+            hot-reloads.
+
+            ## Layout
+
+            - `Project.json`: project settings (name, build scenes, the `"game"` module).
+            - `Assets/`: the source of truth for scenes, models, textures, sounds and builder files.
+              Each file has a `.meta` sidecar holding its asset id and import settings; keep the
+              two together when moving or renaming (prefer the editor's `asset.*` tools).
+            - `Library/`: the import cache, rebuilt from `Assets/`. Never edit it; it is gitignored.
+            - \(code): game code (components, systems, the module entry point).
+            - `Package.swift`: the game's package, depending on the engine.
+            - `Build/`: output of Build Game; gitignored.
+
+            ## Driving the editor (MCP)
+
+            `.mcp.json` registers the `acro` MCP server, which starts the editor on this project
+            over stdio. Its tools are the editor's commands: scenes and entities (`scene.*`,
+            `entity.*`, `component.*`, `prefab.*`), assets (`asset.*`), play mode (`play.*`),
+            screenshots (`view.screenshot`), game code (`game.reload`) and the builders below.
+
+            - Prefer the MCP tools over hand-editing files under `Assets/`: they validate, keep
+              sidecars and references intact, and record undo steps labeled "AI:".
+            - Destructive tools need `confirm: true`.
+            - After a change, check the result: read the tool's warnings, and take a
+              `view.screenshot` for anything visual.
+
+            ## Builders
+
+            Content is authored as JSON files under `Assets/`, each with `<name>.new / .get / .set /
+            .edit / .open` tools and an editor tab: `.meshbuild` (models from shapes, `meshBuild.*`),
+            `.vfx` (particle effects), `.sfx` (synth sound effects), `.postfx` (camera looks),
+            `.table` (typed data tables, read from game code by row id) and `.terrain` (heightmap
+            terrain). Every key in these files is optional.
+
+            ## Game code
+
+            - Components are `Component` structs with a unique `componentName`; register them and
+              systems in the module's entry point (`GameModule.register`).
+            - Run `game.reload` (Reload Game Code) after editing Swift code: it rebuilds the module
+              and reloads it with the scene kept. Build errors come back in the result and the log.
+            - Don't change the module entry point's `@_cdecl` name.
+
+            """
+        if let docs {
+            text += """
+
+                ## Reference
+
+                - Builders: `\(docs)/Builders.md`
+                - Every MCP tool and its arguments: `\(docs)/MCPTools.md`
+
+                """
+        }
+        return text
     }
 
     static func writeIfMissing(_ text: String, to url: URL) throws {

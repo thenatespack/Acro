@@ -380,6 +380,15 @@ private func temporaryDirectory() -> URL {
         let ignore = try String(contentsOf: project.root.appendingPathComponent(".gitignore"), encoding: .utf8)
         #expect(ignore.contains("/Library/") && ignore.contains("/.build/") && ignore.contains("/Build/"))
 
+        // Agent files: .mcp.json starts the editor over stdio (swift run without a known editor), CLAUDE.md.
+        let mcpData = try Data(contentsOf: project.root.appendingPathComponent(".mcp.json"))
+        let server = try #require(JSON(data: mcpData)["mcpServers"]?["acro"])
+        #expect(server["type"]?.stringValue == "stdio" && server["command"]?.stringValue == "swift")
+        let args = server["args"]?.arrayValue?.compactMap(\.stringValue) ?? []
+        #expect(args.contains(engine.standardizedFileURL.path) && args.suffix(4) == ["Editor", "--mcp", "--project", "."])
+        let claude = try String(contentsOf: project.root.appendingPathComponent("CLAUDE.md"), encoding: .utf8)
+        #expect(claude.hasPrefix("# my cool-game") && claude.contains("Sources/MyCoolGame/") && claude.contains("docs/MCPTools.md"))
+
         // Again: an existing Package.swift is kept, the .gitignore isn't repeated.
         let again = try ProjectScaffold.write(into: &project, engine: engine)
         #expect(again.target == nil && again.skipped != nil)
@@ -390,6 +399,18 @@ private func temporaryDirectory() -> URL {
         let skipped = try ProjectScaffold.write(into: &bare, engine: nil)
         #expect(skipped.target == nil && skipped.skipped?.contains("ACRO_ENGINE") == true && bare.settings.game == nil)
         #expect(!FileManager.default.fileExists(atPath: bare.root.appendingPathComponent("Package.swift").path))
+        // …but CLAUDE.md still, and no .mcp.json with nothing to launch.
+        #expect(FileManager.default.fileExists(atPath: bare.root.appendingPathComponent("CLAUDE.md").path))
+        #expect(!FileManager.default.fileExists(atPath: bare.root.appendingPathComponent(".mcp.json").path))
+    }
+
+    @Test func scaffoldMCPConfigPrefersTheEditorExecutable() throws {
+        let text = try #require(ProjectScaffold.mcpConfig(engine: URL(fileURLWithPath: "/engine"),
+                                                          editor: URL(fileURLWithPath: "/apps/Editor")))
+        let server = try #require(JSON(data: Data(text.utf8))["mcpServers"]?["acro"])
+        #expect(server["command"]?.stringValue == "/apps/Editor")
+        #expect(server["args"]?.arrayValue?.compactMap(\.stringValue) == ["--mcp", "--project", "."])
+        #expect(ProjectScaffold.mcpConfig(engine: nil, editor: nil) == nil)
     }
 
     @Test func scaffoldTargetNames() {
