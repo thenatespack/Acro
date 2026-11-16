@@ -186,6 +186,8 @@ public final class EditorSession {
     public var visualScriptUILayer: Widget?
     /// A visual script node with a breakpoint ran: play pauses after this frame.
     var visualScriptBreakPending = false
+    /// Paused at a visual script breakpoint: the step of the runtime's trace shown (`vscript.step`).
+    public internal(set) var visualScriptStep: Int?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()
@@ -677,10 +679,12 @@ public final class EditorSession {
         forwardedInput.removeAll()
         inputPlayer.apply(to: gameInput)
         gameInput.endEvents()
+        visualScriptStep = nil
         world.update(dt: dt)
         if visualScriptBreakPending {
             visualScriptBreakPending = false
             isPaused = true
+            visualScriptStep = visualScriptRuntime?.trace?.steps.isEmpty == false ? 0 : nil
             changed()
         }
         if let scene = gameModule.context.takePendingScene() { loadPlayScene(scene) }
@@ -774,7 +778,7 @@ public final class EditorSession {
         scripts.host.onBreakpoint = { [weak self] hit in
             guard let self, !visualScriptBreakPending else { return }
             visualScriptBreakPending = true
-            log.warning("Breakpoint: \(hit.graph) node \(hit.node) (paused after this frame)")
+            log.warning("Breakpoint: \(hit.graph) node \(hit.node) (paused after this frame; step with F10 / F11 in the Visual Script tab or vscript.step)")
         }
     }
 

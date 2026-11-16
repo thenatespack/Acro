@@ -13,7 +13,8 @@ import Foundation
 //   collapse-to-function and comment boxes), its problems, and in play mode the variable values
 //   of an entity running it.
 // - While playing, nodes that ran in the last moments glow along their wires, output pins show
-//   their values, and a breakpoint pauses play after the frame it ran in.
+//   their values, and a breakpoint pauses play after the frame it ran in. Paused there, F10 / F11 /
+//   Shift+F11 / F5 (or the sidebar's buttons) step over / into / out of the recorded flow, or continue.
 //
 // The file is the truth: every change is written as one undo step of the editor, the graph
 // reimports and running games pick it up on their next frame. Edits from widget callbacks are
@@ -49,6 +50,8 @@ public final class VisualScriptWorkspace {
     private var newVariable = ""
     private var newFunction = ""
     private var lastPlaying = false
+    /// The trace step the debug section and canvas show (`session.visualScriptStep`), and of which trace.
+    private var shownStep: (index: Int, hit: VisualScriptBreak)?
     private static var clipboard: (nodes: [VisualScriptNode], links: [VisualScriptLink])?
 
     public init(session: EditorSession) {
@@ -223,6 +226,9 @@ public final class VisualScriptWorkspace {
         case .v where command: paste()
         case .d where command: copySelection(); paste()
         case .f9: toggleBreakpoint()
+        case .f10 where session.visualScriptStep != nil: session.stepVisualScript(.over)
+        case .f11 where session.visualScriptStep != nil: session.stepVisualScript(key.modifiers.contains(.shift) ? .out : .into)
+        case .f5 where session.visualScriptStep != nil: session.stepVisualScript(.continue)
         case .space:
             addFrom = nil
             addPosition = canvas.toGraph(Vec2(canvas.frame.x + canvas.frame.width / 2, canvas.frame.y + canvas.frame.height / 2))
@@ -373,12 +379,23 @@ public final class VisualScriptWorkspace {
 
     private func refreshLive() {
         guard session.isPlaying, let runtime = session.visualScriptRuntime else {
-            if !canvas.activity.isEmpty || !canvas.values.isEmpty {
+            if !canvas.activity.isEmpty || !canvas.values.isEmpty || canvas.pausedAt != nil {
                 canvas.activity = [:]
                 canvas.values = [:]
+                canvas.pausedAt = nil
+                shownStep = nil
                 debugHost.removeAllChildren()
             }
             return
+        }
+        if let index = session.visualScriptStep, let trace = runtime.trace, trace.steps.indices.contains(index) {
+            showStep(index, of: trace)
+            return
+        }
+        if shownStep != nil {
+            shownStep = nil
+            canvas.pausedAt = nil
+            debugHost.removeAllChildren()
         }
         let instances = liveInstances()
         let now = session.world.time.elapsed
@@ -398,6 +415,73 @@ public final class VisualScriptWorkspace {
         canvas.values = values
         canvas.setNeedsDisplay()
         if session.playFrame % 15 == 0 || debugHost.children.isEmpty { rebuildDebug(instances) }
+    }
+
+    /// Whether a trace step is in this tab's graph.
+    private func isMine(_ step: VisualScriptTraceStep) -> Bool {
+        guard let asset, let assets = session.assets else { return false }
+        return assets.visualScriptID(for: step.graph) == asset
+    }
+
+    /// Paused at a breakpoint: the current step's node outlined (its function opened), the values
+    /// the flow had produced by then on the pins, and the step's details and controls in the sidebar.
+    private func showStep(_ index: Int, of trace: VisualScriptTrace) {
+        let step = trace.steps[index]
+        let changed = shownStep?.index != index || shownStep?.hit != trace.hit
+        if changed, isMine(step), step.function != function {
+            function = step.function
+            canvasDirty = true
+            sidebarDirty = true
+            refreshCanvas()
+        }
+        canvas.activity = [:]
+        canvas.pausedAt = isMine(step) && step.function == function ? step.node : nil
+        var values: [String: String] = [:]
+        for earlier in trace.steps[...index] where earlier.graph == step.graph && earlier.entity == step.entity && earlier.function == function {
+            for (pin, value) in earlier.outputs { values["\(earlier.node).\(pin)"] = String(value.asString.prefix(24)) }
+        }
+        canvas.values = isMine(step) ? values : [:]
+        canvas.setNeedsDisplay()
+        guard changed || debugHost.children.isEmpty else { return }
+        shownStep = (index, trace.hit)
+        debugHost.removeAllChildren()
+        let place = (step.function.map { "function \($0), " } ?? "") + "node \(step.node)"
+        let header = Label("Paused at \(place) (step \(index + 1) of \(trace.steps.count)\(trace.truncated ? "+" : ""))", role: .secondary, name: "vscriptStepAt")
+        header.wraps = true
+        debugHost.addChild(header)
+        if !isMine(step) {
+            let other = Label("In \(session.assets.flatMap { a in a.visualScriptID(for: step.graph).flatMap(a.path) } ?? step.graph)", role: .caption)
+            other.wraps = true
+            debugHost.addChild(other)
+        }
+        debugHost.addChild(Label("Entity: \(session.displayName(of: step.entity))", role: .caption))
+        func button(_ title: String, _ action: VScriptStepAction, _ tip: String) -> Button {
+            let b = Button(title, name: "vscriptStep.\(action.rawValue)") { [unowned self] in session.stepVisualScript(action) }
+            b.command = VScriptStepCommand.id.rawValue
+            b.tooltip = tip
+            return b
+        }
+        let controls = HStack(spacing: 4, [button("Over", .over, "Step over (F10): the next node, skipping function calls"),
+                                           button("Into", .into, "Step into (F11): the next node, entering function calls"),
+                                           button("Out", .out, "Step out (Shift+F11): the next node in the caller"),
+                                           button("Continue", .continue, "Resume play (F5)")])
+        debugHost.addChild(controls)
+        if let error = step.error {
+            let label = Label("Error: \(error)", role: .caption)
+            label.wraps = true
+            debugHost.addChild(label)
+        }
+        for (title, values) in [("Inputs", step.inputs), ("Outputs", step.outputs), ("Variables", step.variables)] where !values.isEmpty {
+            debugHost.addChild(Label(title, role: .secondary))
+            for name in values.keys.sorted() {
+                let line = Label("\(name) = \(values[name]!.asString)", role: .caption)
+                line.wraps = true
+                debugHost.addChild(line)
+            }
+        }
+        let note = Label("Values as this node ran; the frame already finished, so the scene shows the end of it.", role: .caption)
+        note.wraps = true
+        debugHost.addChild(note)
     }
 
     private func rebuildDebug(_ instances: [VisualScriptInstance]) {

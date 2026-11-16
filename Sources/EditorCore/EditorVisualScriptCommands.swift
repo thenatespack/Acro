@@ -2,7 +2,7 @@ import Engine
 import Foundation
 
 /// The visual script tools: `vscript.new`, `vscript.get`, `vscript.set`, `vscript.edit`,
-/// `vscript.nodes`, `vscript.validate`, `vscript.attach`, `vscript.open`.
+/// `vscript.nodes`, `vscript.validate`, `vscript.attach`, `vscript.open`, `vscript.step`.
 @MainActor
 public enum EditorVisualScriptCommands {
     public static let all: [any EditorCommand.Type] = [
@@ -14,6 +14,7 @@ public enum EditorVisualScriptCommands {
         VScriptValidateCommand.self,
         VScriptAttachCommand.self,
         VScriptOpenCommand.self,
+        VScriptStepCommand.self,
     ]
 
     /// What the tool docs say about the file format, shared by the tools.
@@ -442,5 +443,105 @@ public enum VScriptOpenCommand: EditorCommand {
         session.openVisualScript = id
         session.onOpenVisualScript?(id)
         return VScriptResult(id, graph, in: session)
+    }
+}
+
+// MARK: Stepping
+
+/// How `vscript.step` moves: a `VisualScriptStepMode`, or on with play.
+public enum VScriptStepAction: String, Codable, Sendable, CaseIterable {
+    case into, over, out
+    /// Resume play (forgetting the trace).
+    case `continue`
+}
+
+extension EditorSession {
+    /// The trace step shown while paused at a visual script breakpoint.
+    public var visualScriptTraceStep: VisualScriptTraceStep? {
+        guard let index = visualScriptStep, let trace = visualScriptRuntime?.trace, trace.steps.indices.contains(index) else { return nil }
+        return trace.steps[index]
+    }
+
+    /// Steps through the flow recorded after the breakpoint. Past the end of the recording, play
+    /// resumes until the same entity's graph runs its next node, then pauses there. Returns false
+    /// when not paused at a breakpoint.
+    @discardableResult
+    public func stepVisualScript(_ action: VScriptStepAction) -> Bool {
+        guard isPlaying, let runtime = visualScriptRuntime else { return false }
+        if action == .continue {
+            runtime.clearTrace()
+            visualScriptStep = nil
+            setPaused(false)
+            return true
+        }
+        guard let index = visualScriptStep, let trace = runtime.trace, trace.steps.indices.contains(index),
+              let mode = VisualScriptStepMode(rawValue: action.rawValue) else { return false }
+        if let next = trace.next(after: index, mode) {
+            visualScriptStep = next
+            changed()
+        } else {
+            runtime.breakAtNextNode(of: trace.steps[index].entity)
+            visualScriptStep = nil
+            setPaused(false)
+        }
+        return true
+    }
+}
+
+/// One recorded node, as `vscript.step` reports it.
+public struct VScriptStepInfo: Codable, Equatable, Sendable {
+    public var graph: String
+    public var entity: EntityID?
+    /// The function the node is in (absent: the event graph).
+    public var function: String?
+    public var node: String
+    public var depth: Int
+    /// Values as text.
+    public var inputs: [String: String]
+    public var outputs: [String: String]
+    public var variables: [String: String]
+    public var error: String?
+}
+
+public enum VScriptStepCommand: EditorCommand {
+    public struct Arguments: Codable, Equatable, Sendable {
+        /// into, over, out or continue; omitted: report where play is paused without moving.
+        public var mode: VScriptStepAction?
+        public init(mode: VScriptStepAction? = nil) { self.mode = mode }
+    }
+
+    public struct Result: Codable, Equatable, Sendable {
+        public var playing: Bool
+        public var paused: Bool
+        /// Paused at a breakpoint with a recorded flow to step through.
+        public var atBreakpoint: Bool
+        /// The step shown, its index and how many the trace holds.
+        public var step: VScriptStepInfo?
+        public var index: Int?
+        public var count: Int
+        /// The trace stopped recording at its limit.
+        public var truncated: Bool
+    }
+
+    public static let id: CommandID = "vscript.step"
+    public static let title = "Step Visual Script"
+    public static let doc = "While play is paused at a visual script breakpoint: `into` shows the next node of the flow (entering function calls), `over` the next one not inside a call made here, `out` the next one in the caller, `continue` resumes play. The flow from the breakpoint to the end of its event was recorded during the frame (scripts run inside the world's update and can't stop half way), so each step shows that node's inputs, outputs and the variables as it started; past the end, play resumes until the same entity's graph runs another node and pauses there. Without `mode`, reports the current step."
+    public static func isAvailable(in session: EditorSession) -> Bool { session.isPlaying }
+    public static func unavailableReason(in session: EditorSession) -> String? { "not playing (play.start first)" }
+    public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
+        if let mode = arguments.mode, !session.stepVisualScript(mode) {
+            throw CommandError.failed("\(title): play isn't paused at a visual script breakpoint")
+        }
+        let trace = session.visualScriptRuntime?.trace
+        let step = session.visualScriptTraceStep
+        return Result(playing: session.isPlaying, paused: session.isPaused, atBreakpoint: step != nil,
+                      step: step.map { step in
+                          func text(_ values: [String: VisualScriptValue]) -> [String: String] { values.mapValues(\.asString) }
+                          return VScriptStepInfo(graph: step.graph, entity: session.world.id(of: step.entity), function: step.function, node: step.node,
+                                                 depth: step.depth, inputs: text(step.inputs), outputs: text(step.outputs),
+                                                 variables: text(step.variables), error: step.error)
+                      },
+                      index: step == nil ? nil : session.visualScriptStep, count: step == nil ? 0 : trace?.steps.count ?? 0,
+                      truncated: step == nil ? false : trace?.truncated ?? false)
     }
 }

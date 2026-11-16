@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 245 tools.
+named by its id (see README › Use the editor › AI control). 246 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -58,7 +58,7 @@ optional arguments.
 | `uiLayout` | [`uiLayout.edit`](#uilayoutedit), [`uiLayout.get`](#uilayoutget), [`uiLayout.new`](#uilayoutnew), [`uiLayout.open`](#uilayoutopen), [`uiLayout.set`](#uilayoutset) |
 | `vfx` | [`vfx.edit`](#vfxedit), [`vfx.get`](#vfxget), [`vfx.new`](#vfxnew), [`vfx.open`](#vfxopen), [`vfx.set`](#vfxset) |
 | `view` | [`view.appearance`](#viewappearance), [`view.frameSelection`](#viewframeselection), [`view.gameCamera`](#viewgamecamera), [`view.pick`](#viewpick), [`view.screenshot`](#viewscreenshot) |
-| `vscript` | [`vscript.attach`](#vscriptattach), [`vscript.edit`](#vscriptedit), [`vscript.get`](#vscriptget), [`vscript.new`](#vscriptnew), [`vscript.nodes`](#vscriptnodes), [`vscript.open`](#vscriptopen), [`vscript.set`](#vscriptset), [`vscript.validate`](#vscriptvalidate) |
+| `vscript` | [`vscript.attach`](#vscriptattach), [`vscript.edit`](#vscriptedit), [`vscript.get`](#vscriptget), [`vscript.new`](#vscriptnew), [`vscript.nodes`](#vscriptnodes), [`vscript.open`](#vscriptopen), [`vscript.set`](#vscriptset), [`vscript.step`](#vscriptstep), [`vscript.validate`](#vscriptvalidate) |
 
 ## activity
 
@@ -5142,6 +5142,26 @@ Result:
 - `path`: string
 - `variables`: [string]
 - `warnings`: [string]
+
+### `vscript.step`
+
+**Step Visual Script**
+
+While play is paused at a visual script breakpoint: `into` shows the next node of the flow (entering function calls), `over` the next one not inside a call made here, `out` the next one in the caller, `continue` resumes play. The flow from the breakpoint to the end of its event was recorded during the frame (scripts run inside the world's update and can't stop half way), so each step shows that node's inputs, outputs and the variables as it started; past the end, play resumes until the same entity's graph runs another node and pauses there. Without `mode`, reports the current step.
+
+Arguments:
+
+- `mode?`: "into" \| "over" \| "out" \| "continue"
+
+Result:
+
+- `atBreakpoint`: boolean
+- `count`: integer
+- `index?`: integer
+- `paused`: boolean
+- `playing`: boolean
+- `step?`: {depth: integer, entity?: entity id, error?: string, function?: string, graph: string, inputs: object, node: string, outputs: object, variables: object}
+- `truncated`: boolean
 
 ### `vscript.validate`
 

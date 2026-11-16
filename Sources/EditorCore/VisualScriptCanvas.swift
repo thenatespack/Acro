@@ -37,6 +37,8 @@ final class VisualScriptCanvas: Widget {
     var activity: [String: Double] = [:]
     /// Live output values by "node.pin" (play mode).
     var values: [String: String] = [:]
+    /// The node play is paused at while stepping after a breakpoint (outlined in green, with an arrow).
+    var pausedAt: String?
     var pan = Vec2(40, 40)
     var zoom: Float = 1
     var emptyText = ""
@@ -329,6 +331,11 @@ final class VisualScriptCanvas: Widget {
         let border: UIColor = selection.contains(node.id) ? UIColor(1, 0.75, 0.2)
             : worst == .error ? UIColor(1, 0.25, 0.25) : worst == .warning ? UIColor(1, 0.75, 0.2, 0.7) : UIColor(0, 0, 0, 0.6)
         list.strokeRect(rect, color: border, width: selection.contains(node.id) ? 2 : 1, radii: UICornerRadii(6 * zoom))
+        if pausedAt == node.id {
+            let paused = UIColor(0.3, 0.95, 0.45)
+            list.strokeRect(rect.inset(by: -3 * zoom), color: paused, width: 2.5, radii: UICornerRadii(8 * zoom))
+            list.drawText("▶", at: Vec2(rect.x - 16 * zoom, rect.y + 4 * zoom), size: 13 * zoom, color: paused)
+        }
         let textSize = 12 * zoom
         guard textSize > 4 else { return }
         var titleX = rect.x + 8 * zoom

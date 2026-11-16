@@ -480,6 +480,53 @@ private final class Rig {
         #expect(puff.map(world.isAlive) == false)
     }
 
+    @Test func breakpointsRecordTheFlowForStepping() throws {
+        let graph = try decode("""
+            {"variables": [{"name": "n", "type": "int"}, {"name": "ticks", "type": "int"}],
+             "nodes": [
+              {"id": "start", "type": "event.start"},
+              {"id": "a", "type": "var.set", "config": {"variable": "n"}, "inputs": {"value": 1}, "breakpoint": true},
+              {"id": "call", "type": "function.call", "config": {"function": "twice"}, "inputs": {"x": 4}},
+              {"id": "b", "type": "var.set", "config": {"variable": "n"}},
+              {"id": "tick", "type": "event.update"},
+              {"id": "count", "type": "var.set", "config": {"variable": "ticks"}, "inputs": {"value": 7}}
+             ],
+             "links": [{"from": "start.out", "to": "a.in"}, {"from": "a.out", "to": "call.in"}, {"from": "call.out", "to": "b.in"},
+                       {"from": "call.y", "to": "b.value"}, {"from": "tick.out", "to": "count.in"}],
+             "functions": [{"name": "twice", "inputs": [{"name": "x", "type": "int"}], "outputs": [{"name": "y", "type": "int"}],
+               "nodes": [{"id": "entry", "type": "function.entry"}, {"id": "mul", "type": "math.multiply", "inputs": {"b": 2}},
+                         {"id": "ret", "type": "function.return"}],
+               "links": [{"from": "entry.out", "to": "ret.in"}, {"from": "entry.x", "to": "mul.a"}, {"from": "mul.result", "to": "ret.y"}]}]}
+            """)
+        let rig = Rig(graph)
+        var hits: [String] = []
+        rig.host.onBreakpoint = { hits.append($0.node) }
+        rig.step()
+        #expect(rig.lines.isEmpty, "\(rig.lines)")
+        #expect(hits == ["a"])
+        let trace = try #require(rig.runtime.trace)
+        #expect(trace.steps.map(\.node) == ["a", "call", "ret", "b"])
+        #expect(trace.steps.map(\.depth) == [0, 0, 1, 0])
+        #expect(trace.steps[2].function == "twice")
+        #expect(trace.steps[0].variables["n"] == .int(0), "variables as the node started")
+        #expect(trace.steps[1].inputs["x"] == .int(4) && trace.steps[1].outputs["y"] == .int(8))
+        #expect(trace.steps[3].inputs["value"] == .int(8))
+        #expect(trace.next(after: 1, .into) == 2)
+        #expect(trace.next(after: 1, .over) == 3)
+        #expect(trace.next(after: 2, .out) == 3)
+        #expect(trace.next(after: 3, .into) == nil)
+
+        // Past the end: break at the next node this entity's graph runs (the update flow, next frame).
+        rig.runtime.breakAtNextNode(of: rig.entity)
+        rig.step()
+        #expect(hits == ["a", "count"])
+        #expect(rig.runtime.trace?.steps.map(\.node) == ["count"])
+        rig.step()
+        #expect(hits.count == 2, "only once")
+        rig.runtime.clearTrace()
+        #expect(rig.runtime.trace == nil)
+    }
+
     @Test func componentDefaultsListExposedVariables() {
         let graph = VisualScriptGraph(variables: [VisualScriptVariable(name: "speed", type: .float, defaultValue: .int(3)),
                                                   VisualScriptVariable(name: "secret", type: .int, exposed: false)])

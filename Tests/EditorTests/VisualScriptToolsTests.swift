@@ -134,6 +134,69 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         session.stop()
     }
 
+    @Test func stepThroughTheFlowAfterABreakpoint() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = try project(folder)
+        let id = try #require(session.create(.empty))
+        let created = try call(session, "vscript.new", ["name": "steps", "target": id.description])
+        let asset = "asset:" + (created["asset"] as! String)
+        let graph: [String: Any] = [
+            "variables": [["name": "n", "type": "int"], ["name": "ticks", "type": "int"]],
+            "nodes": [["id": "start", "type": "event.start"],
+                      ["id": "a", "type": "var.set", "config": ["variable": "n"], "inputs": ["value": 1], "breakpoint": true],
+                      ["id": "call", "type": "function.call", "config": ["function": "twice"], "inputs": ["x": 4]],
+                      ["id": "b", "type": "var.set", "config": ["variable": "n"]],
+                      ["id": "tick", "type": "event.update"],
+                      ["id": "count", "type": "var.set", "config": ["variable": "ticks"], "inputs": ["value": 7]]],
+            "links": [["from": "start.out", "to": "a.in"], ["from": "a.out", "to": "call.in"], ["from": "call.out", "to": "b.in"],
+                      ["from": "call.y", "to": "b.value"], ["from": "tick.out", "to": "count.in"]],
+            "functions": [["name": "twice", "inputs": [["name": "x", "type": "int"]], "outputs": [["name": "y", "type": "int"]],
+                           "nodes": [["id": "entry", "type": "function.entry"], ["id": "mul", "type": "math.multiply", "inputs": ["b": 2]],
+                                     ["id": "ret", "type": "function.return"]],
+                           "links": [["from": "entry.out", "to": "ret.in"], ["from": "entry.x", "to": "mul.a"], ["from": "mul.result", "to": "ret.y"]]]],
+        ]
+        try call(session, "vscript.set", ["asset": asset, "graph": graph])
+        let workspace = VisualScriptWorkspace(session: session)
+        #expect(workspace.open(try #require(AssetID(created["asset"] as! String))))
+        workspace.update()
+
+        #expect(throws: (any Error).self) { try call(session, "vscript.step", ["mode": "over"]) }
+        session.play()
+        session.tick(dt: 1.0 / 60)
+        #expect(session.isPaused)
+        var state = try call(session, "vscript.step")
+        #expect(state["atBreakpoint"] as? Bool == true && state["count"] as? Int == 4)
+        #expect((state["step"] as? [String: Any])?["node"] as? String == "a")
+        workspace.update()
+        #expect(workspace.canvas.pausedAt == "a")
+
+        state = try call(session, "vscript.step", ["mode": "into"])
+        #expect((state["step"] as? [String: Any])?["node"] as? String == "call")
+        #expect((state["step"] as? [String: Any])?["outputs"] as? [String: String] == ["y": "8"])
+        state = try call(session, "vscript.step", ["mode": "into"])
+        #expect((state["step"] as? [String: Any])?["function"] as? String == "twice")
+        workspace.update()
+        #expect(workspace.function == "twice" && workspace.canvas.pausedAt == "ret", "the tab opens the function")
+        state = try call(session, "vscript.step", ["mode": "out"])
+        #expect((state["step"] as? [String: Any])?["node"] as? String == "b")
+        workspace.update()
+        #expect(workspace.function == nil && workspace.canvas.pausedAt == "b")
+
+        // F10 past the end resumes; the next frame pauses at the update flow's first node.
+        #expect(workspace.handleKey(KeyEvent(key: .f10)))
+        #expect(!session.isPaused && session.visualScriptStep == nil)
+        session.tick(dt: 1.0 / 60)
+        #expect(session.isPaused)
+        state = try call(session, "vscript.step")
+        #expect((state["step"] as? [String: Any])?["node"] as? String == "count")
+        state = try call(session, "vscript.step", ["mode": "continue"])
+        #expect(state["paused"] as? Bool == false && state["atBreakpoint"] as? Bool == false)
+        session.tick(dt: 1.0 / 60)
+        #expect(!session.isPaused)
+        session.stop()
+    }
+
     @Test func workspaceEditsAreUndoSteps() throws {
         let folder = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: folder) }
