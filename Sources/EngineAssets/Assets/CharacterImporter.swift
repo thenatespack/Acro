@@ -131,13 +131,14 @@ public struct CharacterImporter: AssetImporter {
             asset.add(meshID, name: label, .mesh(geometry))
             var material: AssetReference?
             let materialPath = part.material.trimmingCharacters(in: .whitespaces)
-            if attachment.color == nil, !materialPath.isEmpty {
+            let recolor = attachment.color(ofPart: part.name)
+            if recolor == nil, !materialPath.isEmpty {
                 material = Self.reference(materialPath, kind: "material", &context)
                 if material == nil { context.warn("attachment '\(attachment.name)', part '\(part.name)': no material '\(materialPath)'") }
             }
             if material == nil {
                 var look = part
-                if let color = attachment.color { look.color = color }
+                if let recolor { look.color = recolor }
                 let texture = part.texture.isEmpty ? nil : Self.reference(part.texture, kind: "texture", &context)
                 let materialID = namer.id(kind: "material", name: label, index: i)
                 asset.add(materialID, name: label, .material(MeshBuildImporter.material(for: look, texture: texture)))
@@ -149,6 +150,10 @@ public struct CharacterImporter: AssetImporter {
             drew = true
         }
         if !drew { context.warn("attachment '\(attachment.name)': '\(attachment.asset)' has no shapes") }
+        let parts = Set(build.parts.map(\.name))
+        for part in attachment.partColors.keys.sorted() where !parts.contains(part) {
+            context.warn("attachment '\(attachment.name)': partColors names no part '\(part)' in '\(attachment.asset)'")
+        }
     }
 
     /// The asset `value` names: "asset:<id>[#object]" or a path under `Assets/`; a file gets `kind` as its object.

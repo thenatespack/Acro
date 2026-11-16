@@ -280,6 +280,32 @@ private func makeProject() throws -> Project {
         #expect(abs(abs(headRotation.vector.y) - abs(expected.vector.y)) < 1e-3 && abs(abs(headRotation.vector.w) - abs(expected.vector.w)) < 1e-3)
     }
 
+    @Test func partColorsRecolorSinglePartsOfAnAttachment() throws {
+        SkeletalAnimation.registerComponents()
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        try database.createMeshBuild(MeshBuild(parts: [
+            MeshBuildPart(name: "Grip", shape: .cylinder, size: Vec3(0.04, 0.2, 0.04)),
+            MeshBuildPart(name: "Blade", parent: "Grip", position: Vec3(0, 0.5, 0), size: Vec3(0.08, 0.8, 0.02)),
+        ]), at: "sword.meshbuild")
+        let sword = CharacterAttachment(name: "Sword", bone: "hand.R", asset: "sword.meshbuild", color: Vec3(0, 0, 1),
+                                        partColors: ["Blade": Vec3(1, 0, 0), "Hilt": Vec3(0, 1, 0)])
+        let round = try AssetJSON.decoder().decode(CharacterAttachment.self, from: AssetJSON.encode(sword))
+        #expect(round == sword)
+        #expect(!String(decoding: try AssetJSON.encode(CharacterAttachment()), as: UTF8.self).contains("partColors"))
+        let id = try database.createCharacter(CharacterBuild(), at: "hero.character")
+        let warnings = try database.writeCharacter(CharacterBuild(attachments: [sword]), to: id)
+        #expect(warnings.contains { $0.contains("partColors names no part 'Hilt'") }, "\(warnings)")
+        func baseColor(_ part: String) -> Vec4? {
+            guard case .material(let m)? = database.object(AssetReference(id, subAsset: "material/Sword \(part)"), kind: .material)?.value else { return nil }
+            return m.baseColor
+        }
+        let red = MeshBuildColor.linear(fromSRGB: Vec3(1, 0, 0)), blue = MeshBuildColor.linear(fromSRGB: Vec3(0, 0, 1))
+        #expect(baseColor("Blade").map { abs($0.x - red.x) < 1e-5 && $0.z < 1e-5 } == true)
+        #expect(baseColor("Grip").map { abs($0.z - blue.z) < 1e-5 && $0.x < 1e-5 } == true)
+    }
+
     @Test func importWarnsAboutMissingAssetsAndClips() throws {
         SkeletalAnimation.registerComponents()
         let project = try makeProject()

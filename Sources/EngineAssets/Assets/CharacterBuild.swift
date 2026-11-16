@@ -224,9 +224,12 @@ public struct CharacterAttachment: Codable, Equatable, Sendable {
     public var scale: Float
     /// Recolors every part of the model (nil keeps its own colors).
     public var color: Vec3?
+    /// Mesh-build part name → color ([r, g, b] 0-1 sRGB) for those parts, over `color` and
+    /// the parts' own looks.
+    public var partColors: [String: Vec3]
 
     public init(name: String = "Part", bone: String = "head", asset: String = "", position: Vec3 = .zero, rotation: Vec3 = .zero,
-                scale: Float = 1, color: Vec3? = nil) {
+                scale: Float = 1, color: Vec3? = nil, partColors: [String: Vec3] = [:]) {
         self.name = name
         self.bone = bone
         self.asset = asset
@@ -234,9 +237,10 @@ public struct CharacterAttachment: Codable, Equatable, Sendable {
         self.rotation = rotation
         self.scale = scale
         self.color = color
+        self.partColors = partColors
     }
 
-    private enum CodingKeys: String, CodingKey { case name, bone, asset, position, rotation, scale, color }
+    private enum CodingKeys: String, CodingKey { case name, bone, asset, position, rotation, scale, color, partColors }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -247,8 +251,24 @@ public struct CharacterAttachment: Codable, Equatable, Sendable {
                   position: try c.decodeIfPresent(Vec3.self, forKey: .position) ?? d.position,
                   rotation: try c.decodeIfPresent(Vec3.self, forKey: .rotation) ?? d.rotation,
                   scale: try c.decodeIfPresent(Float.self, forKey: .scale) ?? d.scale,
-                  color: try c.decodeIfPresent(Vec3.self, forKey: .color))
+                  color: try c.decodeIfPresent(Vec3.self, forKey: .color),
+                  partColors: try c.decodeIfPresent([String: Vec3].self, forKey: .partColors) ?? [:])
     }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name)
+        try c.encode(bone, forKey: .bone)
+        try c.encode(asset, forKey: .asset)
+        try c.encode(position, forKey: .position)
+        try c.encode(rotation, forKey: .rotation)
+        try c.encode(scale, forKey: .scale)
+        try c.encodeIfPresent(color, forKey: .color)
+        if !partColors.isEmpty { try c.encode(partColors, forKey: .partColors) }
+    }
+
+    /// The color `part` gets: its entry in `partColors`, else `color` (nil: the part's own look).
+    public func color(ofPart part: String) -> Vec3? { partColors[part] ?? color }
 
     public static var fieldHints: [String: FieldHints] {
         ["bone": FieldHints(tooltip: "The bone it follows"),
@@ -256,7 +276,8 @@ public struct CharacterAttachment: Codable, Equatable, Sendable {
          "position": FieldHints(step: 0.01, tooltip: "Meters in the bone's space (+Y up, +Z forward)"),
          "rotation": FieldHints(step: 1, tooltip: "Degrees"),
          "scale": FieldHints(range: 0.01...100, step: 0.01),
-         "color": FieldHints(color: true, tooltip: "Recolors every part (unset keeps the model's colors)")]
+         "color": FieldHints(color: true, tooltip: "Recolors every part (unset keeps the model's colors)"),
+         "partColors": FieldHints(tooltip: "Part name → color, over Color")]
     }
 
     public var transform: Transform {

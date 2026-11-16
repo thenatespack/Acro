@@ -22,7 +22,7 @@ public enum EditorCharacterCommands {
         neck, tail), `colors` by region (skin, body, legs, accent, eyes; [r,g,b] 0-1 sRGB; a missing one is the template's \
         default), `attachments` (each: name, bone (see character.bones), asset (a .meshbuild path under Assets/), position \
         [x,y,z] meters and rotation [x,y,z] degrees in the bone's space (+Y up, +Z forward, +X the character's left), scale, \
-        optional color recoloring every part), `clips` (stock clips to include: idle, walk, run, jump, attack, die; all by \
+        optional color recoloring every part, optional partColors {part name: [r,g,b]} recoloring single mesh-build parts over color), `clips` (stock clips to include: idle, walk, run, jump, attack, die; all by \
         default; an entry may instead be {name, clip: "asset:<id>#animation/<name>" (a glTF animation or another character's \
         clip), boneMap: {sourceNode: bone}, loops}, played by bone-name match: rotations of nodes named like bones, no rest-pose \
         correction; named like a stock clip it replaces it), `defaultClip` (the Animator's first state), `smooth` (blended skin weights at joints) and `segments` (6-32, \
@@ -183,6 +183,11 @@ enum CharacterCheck {
             }
             if session.assets?.record(id)?.importer != MeshBuildImporter().name {
                 problems.append("attachment '\(a.name)': '\(a.asset)' isn't a .meshbuild")
+            } else if let build = session.assets?.meshBuild(of: id) {
+                let parts = Set(build.parts.map(\.name))
+                for part in a.partColors.keys.sorted() where !parts.contains(part) {
+                    problems.append("attachment '\(a.name)': partColors names no part '\(part)' (parts: \(build.parts.map(\.name).joined(separator: ", ")))")
+                }
             }
         }
         for clip in character.externalClips {

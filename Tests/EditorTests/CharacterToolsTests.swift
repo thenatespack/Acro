@@ -145,6 +145,24 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         session.world.removeSystem(named: "CharacterToolsTests.animation")
     }
 
+    @Test func partColorsThroughUpdateAttachments() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
+        try call(session, "meshBuild.new", ["name": "Sword", "folder": "Models",
+                                            "build": ["parts": [["name": "Blade", "shape": "box", "size": [0.06, 0.8, 0.02]],
+                                                                ["name": "Grip", "shape": "box", "size": [0.04, 0.2, 0.04]]]]])
+        let hero = try call(session, "character.new", ["name": "Hero", "attachments": [["name": "Sword", "bone": "hand.R", "asset": "Models/Sword.meshbuild"]]])
+        let id = try #require((hero["asset"] as? String).flatMap { AssetID($0) })
+        let edited = try call(session, "character.edit", ["path": "Hero.character",
+                                                          "updateAttachments": ["Sword": ["partColors": ["Blade": [1, 0, 0], "Pommel": [0, 1, 0]]]]])
+        #expect(session.assets?.character(of: id)?.attachments.first?.partColors["Blade"] == Vec3(1, 0, 0))
+        #expect((edited["warnings"] as? [String])?.contains { $0.contains("partColors names no part 'Pommel'") } == true)
+        try call(session, "edit.undo")
+        #expect(session.assets?.character(of: id)?.attachments.first?.partColors.isEmpty == true)
+    }
+
     @Test func addClipsFromOtherAssets() throws {
         let folder = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: folder) }

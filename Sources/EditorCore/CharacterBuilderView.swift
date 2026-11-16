@@ -87,9 +87,10 @@ struct CharacterAttachmentComponent: Component {
         color = a.color ?? Vec3(0.8, 0.8, 0.8)
     }
 
-    var attachment: CharacterAttachment {
+    /// The attachment with these fields (`partColors` from `original`, which the grid doesn't show).
+    func attachment(keeping original: CharacterAttachment) -> CharacterAttachment {
         CharacterAttachment(name: name, bone: bone, asset: asset, position: position, rotation: rotation, scale: max(scale, 0.01),
-                            color: recolor ? color : nil)
+                            color: recolor ? color : nil, partColors: original.partColors)
     }
 }
 
@@ -265,8 +266,9 @@ public final class CharacterBuilderView {
             delete.tooltip = "Remove this attachment"
             view.addChild(HStack(spacing: 6, [Label(attachment.name, role: .secondary), Spacer(), delete]))
             addGrid(CharacterAttachmentComponent(attachment), name: "characterAttachmentGrid") { [unowned self] (proxy: CharacterAttachmentComponent) in
-                commitAttachment(proxy.attachment, originalName: attachment.name)
+                commitAttachment(proxy.attachment(keeping: attachment), originalName: attachment.name)
             }
+            addPartColors(attachment)
         }
 
         let problems = character.problems + CharacterCheck.problems(character, in: session)
@@ -346,6 +348,39 @@ public final class CharacterBuilderView {
         edited.attachments.removeAll { $0.name == name }
         Self.selections[asset] = edited.attachments.first?.name
         apply(edited, label: "Detach \(name)")
+    }
+
+    /// A color per part of the selected attachment's mesh build: its override (or the color
+    /// it gets now), with Reset where one is set.
+    private func addPartColors(_ attachment: CharacterAttachment) {
+        guard let id = MeshBuildCheck.resolve(attachment.asset.trimmingCharacters(in: .whitespaces), session: session),
+              let build = session.assets?.meshBuild(of: id) else { return }
+        var names: [String] = []
+        for part in build.parts where !names.contains(part.name) && part.geometry() != nil { names.append(part.name) }
+        guard !names.isEmpty else { return }
+        view.addChild(Label("Part Colors", role: .secondary))
+        for name in names {
+            let own = build.parts.first { $0.name == name }?.color ?? Vec3(0.8, 0.8, 0.8)
+            let current = attachment.color(ofPart: name) ?? own
+            let swatch = ColorSwatch(color: UIColor(current.x, current.y, current.z), name: "characterPartColor.\(name)")
+            swatch.tooltip = "The color of part \(name) (over Color)"
+            swatch.onEditEnded = { [unowned self] _, end in setPartColor(name, Vec3(end.r, end.g, end.b), of: attachment.name) }
+            var row: [Widget] = [Label(name), Spacer(), swatch]
+            if attachment.partColors[name] != nil {
+                let reset = Button("Reset", name: "characterPartColorReset.\(name)") { [unowned self] in setPartColor(name, nil, of: attachment.name) }
+                reset.tooltip = "Back to the attachment's Color (or the part's own)"
+                reset.command = CharacterEditCommand.id.rawValue
+                row.append(reset)
+            }
+            view.addChild(HStack(spacing: 6, row))
+        }
+    }
+
+    private func setPartColor(_ part: String, _ color: Vec3?, of attachmentName: String) {
+        guard let index = character.attachments.firstIndex(where: { $0.name == attachmentName }) else { return }
+        var edited = character
+        edited.attachments[index].partColors[part] = color
+        apply(edited, label: "Edit Part Color", select: attachmentName)
     }
 
     private func commitAttachment(_ updated: CharacterAttachment, originalName: String) {
