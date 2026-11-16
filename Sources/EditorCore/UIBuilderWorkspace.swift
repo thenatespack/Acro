@@ -620,6 +620,12 @@ public final class UIBuilderWorkspace {
         numberRow("Design H", build.size.y, name: "designHeight", range: 1...16384) { [unowned self] h in
             editLayout("Set Design Size", UIBuildEdit(size: Vec2(build.size.x, Float(h))))
         }
+        let modes = UIBuildScaleMode.allCases
+        let scalePicker = Dropdown(options: modes.map(\.rawValue), selectedIndex: modes.firstIndex(of: build.scaleMode) ?? 0,
+                                   name: "uiBuilderField.scaleMode")
+        scalePicker.tooltip = "How the whole layout scales with the screen from the design size: none keeps points; fit shows all of it; fill covers the screen; width / height follow one side"
+        scalePicker.onChange = { [unowned self] index in editLayout("Set Scale Mode", UIBuildEdit(scaleMode: modes[index])) }
+        row("Scale", scalePicker)
         sidebar.addChild(Label("Theme colors", role: .secondary))
         let theme = build.makeTheme()
         for name in UIBuild.themeColorNames {

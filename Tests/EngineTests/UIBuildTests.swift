@@ -280,6 +280,65 @@ private let hud = """
         #expect(view.widget("p")?.frame == UIRect(x: 200 - 32.5, y: 150 - 22.5, width: 65, height: 45).snappedForTest)
         #expect(view.widget("f")?.frame == UIRect(x: 30, y: 40, width: 340, height: 220))
     }
+
+    // MARK: Scaling with the screen
+
+    @Test func scaleModeFactors() throws {
+        let design = Vec2(800, 600)
+        #expect(UIBuildScaleMode.none.factor(screen: Vec2(1600, 900), design: design) == 1)
+        #expect(UIBuildScaleMode.fit.factor(screen: Vec2(1600, 900), design: design) == 1.5)
+        #expect(UIBuildScaleMode.fill.factor(screen: Vec2(1600, 900), design: design) == 2)
+        #expect(UIBuildScaleMode.width.factor(screen: Vec2(1600, 900), design: design) == 2)
+        #expect(UIBuildScaleMode.height.factor(screen: Vec2(1600, 900), design: design) == 1.5)
+        #expect(UIBuildScaleMode.fit.factor(screen: .zero, design: design) == 1)
+
+        let build = try decode(#"{"size": [800, 600], "scaleMode": "fit"}"#)
+        #expect(build.scaleMode == .fit)
+        let text = try #require(String(data: try decode("{}").fileData(), encoding: .utf8))
+        #expect(!text.contains("scaleMode"), "none is the default and isn't written")
+        #expect(try build.applying(UIBuildEdit(scaleMode: .height)).scaleMode == .height)
+    }
+
+    @MainActor @Test func viewScalesTheWholeLayout() throws {
+        let build = try decode("""
+        {"size": [800, 600], "safeArea": 10, "scaleMode": "fit",
+         "widgets": [
+           {"id": "box", "type": "panel", "anchor": "topLeft", "offset": [20, 30], "width": 100, "height": 50, "background": "panel"},
+           {"id": "go", "type": "button", "parent": "box", "anchor": "fill", "text": "Go"},
+           {"id": "title", "type": "label", "anchor": "top", "text": "Title", "fontSize": 20}
+         ]}
+        """)
+        let view = UIBuildView(build)
+        let context = laidOut(view, size: Vec2(800, 600))
+        #expect(view.layoutScale == 1)
+        let box = try #require(view.widget("box"))
+        #expect(box.frame == UIRect(x: 30, y: 40, width: 100, height: 50))
+        let small = try #require(view.widget("title")).measure(width: nil)
+
+        context.setViewport(size: Vec2(1600, 1500), scale: 1)
+        context.layoutIfNeeded()
+        #expect(view.layoutScale == 2)
+        let scaledBox = try #require(view.widget("box"))
+        #expect(scaledBox.frame == UIRect(x: 60, y: 80, width: 200, height: 100), "offsets, sizes and the safe area scale")
+        let big = try #require(view.widget("title")).measure(width: nil)
+        #expect(big.y > small.y * 1.8, "text scales too")
+
+        // Clicks land on the scaled widgets.
+        var pressed = 0
+        view.on("go") { pressed += 1 }
+        let go = try #require(view.widget("go"))
+        context.pointerMoved(to: go.frame.center)
+        context.pointerButton(.left, down: true)
+        context.pointerButton(.left, down: false)
+        #expect(pressed == 1)
+
+        // none keeps points.
+        var fixed = build
+        fixed.scaleMode = .none
+        view.load(fixed)
+        context.layoutIfNeeded()
+        #expect(view.layoutScale == 1 && view.widget("box")?.frame.width == 100)
+    }
 }
 
 extension UIRect {

@@ -79,6 +79,33 @@ public enum UIBuildImageFit: String, Codable, CaseIterable, Sendable {
     case stretch
 }
 
+/// How a layout scales with the screen, from its design `size`.
+public enum UIBuildScaleMode: String, Codable, CaseIterable, Sendable {
+    /// Points stay points: anchors keep widgets in place at any size (the default).
+    case none
+    /// The whole design size fits the screen (the smaller of the width and height ratios).
+    case fit
+    /// The design size covers the screen (the larger ratio); edges may leave the safe area.
+    case fill
+    /// Scales by the width ratio.
+    case width
+    /// Scales by the height ratio.
+    case height
+
+    /// The factor for a screen of `screen` points and a design size of `design`.
+    public func factor(screen: Vec2, design: Vec2) -> Float {
+        guard design.x > 0, design.y > 0, screen.x > 0, screen.y > 0 else { return 1 }
+        let sx = screen.x / design.x, sy = screen.y / design.y
+        return switch self {
+        case .none: 1
+        case .fit: Swift.min(sx, sy)
+        case .fill: Swift.max(sx, sy)
+        case .width: sx
+        case .height: sy
+        }
+    }
+}
+
 /// A bar's colors: the accent, or green → warning → danger as it empties.
 public enum UIBuildBarKind: String, Codable, CaseIterable, Sendable {
     case progress, health
@@ -297,13 +324,17 @@ public struct UIBuild: Codable, Equatable, Sendable {
     public var safeArea: Float?
     /// The screen size the layout is designed at (the editor previews it first), points.
     public var size: Vec2
+    /// How the whole layout scales with the screen, from `size`.
+    public var scaleMode: UIBuildScaleMode
     /// Sample values by key: shown in the preview, and in the game until code sets the key.
     public var values: [String: JSONValue]
     public var widgets: [UIBuildWidget]
 
     public init(theme: String = "game", colors: [String: String] = [:], fontSize: Float = 0, safeArea: Float? = nil,
-                size: Vec2 = Vec2(1280, 720), values: [String: JSONValue] = [:], widgets: [UIBuildWidget] = []) {
+                size: Vec2 = Vec2(1280, 720), scaleMode: UIBuildScaleMode = .none, values: [String: JSONValue] = [:],
+                widgets: [UIBuildWidget] = []) {
         self.theme = theme
+        self.scaleMode = scaleMode
         self.colors = colors
         self.fontSize = fontSize
         self.safeArea = safeArea
@@ -312,7 +343,7 @@ public struct UIBuild: Codable, Equatable, Sendable {
         self.widgets = widgets
     }
 
-    private enum CodingKeys: String, CodingKey { case theme, colors, fontSize, safeArea, size, values, widgets }
+    private enum CodingKeys: String, CodingKey { case theme, colors, fontSize, safeArea, size, scaleMode, values, widgets }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -322,6 +353,7 @@ public struct UIBuild: Codable, Equatable, Sendable {
                   fontSize: try c.decodeIfPresent(Float.self, forKey: .fontSize) ?? 0,
                   safeArea: try c.decodeIfPresent(Float.self, forKey: .safeArea),
                   size: try c.decodeIfPresent(Vec2.self, forKey: .size) ?? d.size,
+                  scaleMode: try c.decodeIfPresent(UIBuildScaleMode.self, forKey: .scaleMode) ?? .none,
                   values: try c.decodeIfPresent([String: JSONValue].self, forKey: .values) ?? [:],
                   widgets: try c.decodeIfPresent([UIBuildWidget].self, forKey: .widgets) ?? [])
     }
@@ -333,6 +365,7 @@ public struct UIBuild: Codable, Equatable, Sendable {
         if fontSize != 0 { try c.encode(fontSize, forKey: .fontSize) }
         try c.encodeIfPresent(safeArea, forKey: .safeArea)
         try c.encode(size, forKey: .size)
+        if scaleMode != .none { try c.encode(scaleMode, forKey: .scaleMode) }
         if !values.isEmpty { try c.encode(values, forKey: .values) }
         try c.encode(widgets, forKey: .widgets)
     }
@@ -603,10 +636,13 @@ public struct UIBuildEdit: Codable, Equatable, Sendable {
     public var fontSize: Float?
     public var safeArea: Float?
     public var size: Vec2?
+    public var scaleMode: UIBuildScaleMode?
 
     public init(removeWidgets: [String]? = nil, addWidgets: [UIBuildWidget]? = nil, updateWidgets: [String: JSONValue]? = nil,
                 moveWidgets: [UIBuildMove]? = nil, bindings: [String: String]? = nil, values: [String: JSONValue]? = nil,
-                theme: String? = nil, colors: [String: String]? = nil, fontSize: Float? = nil, safeArea: Float? = nil, size: Vec2? = nil) {
+                theme: String? = nil, colors: [String: String]? = nil, fontSize: Float? = nil, safeArea: Float? = nil, size: Vec2? = nil,
+                scaleMode: UIBuildScaleMode? = nil) {
+        self.scaleMode = scaleMode
         self.removeWidgets = removeWidgets
         self.addWidgets = addWidgets
         self.updateWidgets = updateWidgets
@@ -677,6 +713,7 @@ extension UIBuild {
         if let fontSize = edit.fontSize { build.fontSize = Swift.max(fontSize, 0) }
         if let safeArea = edit.safeArea { build.safeArea = safeArea < 0 ? nil : safeArea }
         if let size = edit.size { build.size = Vec2(Swift.max(size.x, 1), Swift.max(size.y, 1)) }
+        if let scaleMode = edit.scaleMode { build.scaleMode = scaleMode }
         return build
     }
 

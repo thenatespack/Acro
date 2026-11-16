@@ -17,7 +17,8 @@ public enum EditorUIBuildCommands {
     static let formatDoc = """
         A .ui file is a game menu or HUD: `theme` (game|dark|light|highContrast), `colors` (theme color name → \
         "#RRGGBB[AA]"; names: \(UIBuild.themeColorNames.joined(separator: ", "))), `fontSize`, `safeArea` (points kept clear \
-        of the screen edges), `size` (design screen size [w, h]), `values` (sample values by key for the preview) and \
+        of the screen edges), `size` (design screen size [w, h]), `scaleMode` (none|fit|fill|width|height: how \
+        the whole layout scales with the screen from `size`; default none), `values` (sample values by key for the preview) and \
         `widgets`, a flat list. Each widget: `id` (unique), `type` (panel|vstack|hstack|label|image|button|bar|spacer), \
         `parent` (a container id; "" is the screen). The screen and panels place children by `anchor` (topLeft|top|topRight|left|\
         center|right|bottomLeft|bottom|bottomRight|fill) and `offset` [x, y] points in from the anchored edges; stacks line \
@@ -281,10 +282,13 @@ public enum UIEditCommand: EditorCommand {
         public var safeArea: Float?
         /// The design screen size [w, h].
         public var size: Vec2?
+        /// How the whole layout scales with the screen from `size`: none|fit|fill|width|height.
+        public var scaleMode: UIBuildScaleMode?
         public init(asset: AssetReference? = nil, path: String? = nil, removeWidgets: [String]? = nil, addWidgets: [UIBuildWidget]? = nil,
                     updateWidgets: [String: JSONValue]? = nil, moveWidgets: [UIBuildMove]? = nil, bindings: [String: String]? = nil,
                     values: [String: JSONValue]? = nil, theme: String? = nil, colors: [String: String]? = nil, fontSize: Float? = nil,
-                    safeArea: Float? = nil, size: Vec2? = nil) {
+                    safeArea: Float? = nil, size: Vec2? = nil, scaleMode: UIBuildScaleMode? = nil) {
+            self.scaleMode = scaleMode
             self.asset = asset
             self.path = path
             self.removeWidgets = removeWidgets
@@ -302,13 +306,14 @@ public enum UIEditCommand: EditorCommand {
 
         var edit: UIBuildEdit {
             UIBuildEdit(removeWidgets: removeWidgets, addWidgets: addWidgets, updateWidgets: updateWidgets, moveWidgets: moveWidgets,
-                        bindings: bindings, values: values, theme: theme, colors: colors, fontSize: fontSize, safeArea: safeArea, size: size)
+                        bindings: bindings, values: values, theme: theme, colors: colors, fontSize: fontSize, safeArea: safeArea, size: size,
+                        scaleMode: scaleMode)
         }
     }
 
     public static let id: CommandID = "uiLayout.edit"
     public static let title = "Edit UI Layout"
-    public static let doc = "Changes part of a .ui file in one undoable step, in this order: removeWidgets, addWidgets, updateWidgets (id → fields; null resets; \"id\" renames), moveWidgets, bindings (widget id → value key), values (sample values), then theme / colors / fontSize / safeArea / size. Running games show the change. Returns widget ids, value keys, events and warnings."
+    public static let doc = "Changes part of a .ui file in one undoable step, in this order: removeWidgets, addWidgets, updateWidgets (id → fields; null resets; \"id\" renames), moveWidgets, bindings (widget id → value key), values (sample values), then theme / colors / fontSize / safeArea / size / scaleMode. Running games show the change. Returns widget ids, value keys, events and warnings."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }

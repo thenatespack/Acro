@@ -4653,7 +4653,7 @@ Result:
 
 **Edit UI Layout** · _undoable_
 
-Changes part of a .ui file in one undoable step, in this order: removeWidgets, addWidgets, updateWidgets (id → fields; null resets; "id" renames), moveWidgets, bindings (widget id → value key), values (sample values), then theme / colors / fontSize / safeArea / size. Running games show the change. Returns widget ids, value keys, events and warnings. Undoable (one step; edit.undo reverts it).
+Changes part of a .ui file in one undoable step, in this order: removeWidgets, addWidgets, updateWidgets (id → fields; null resets; "id" renames), moveWidgets, bindings (widget id → value key), values (sample values), then theme / colors / fontSize / safeArea / size / scaleMode. Running games show the change. Returns widget ids, value keys, events and warnings. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
@@ -4666,6 +4666,7 @@ Arguments:
 - `path?`: string
 - `removeWidgets?`: [string]
 - `safeArea?`: number
+- `scaleMode?`: "none" \| "fit" \| "fill" \| "width" \| "height"
 - `size?`: number[2] — [x, y]
 - `theme?`: string
 - `updateWidgets?`: object
@@ -4695,7 +4696,7 @@ Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `events`: [string]
-- `layout`: {colors?: object, fontSize?: number, safeArea?: number, size?: number[2], theme?: string, values?: object, widgets?: [object]}
+- `layout`: {colors?: object, fontSize?: number, safeArea?: number, scaleMode?: "none" \| "fit" \| "fill" \| "width" \| "height", size?: number[2], theme?: string, values?: object, widgets?: [object]}
 - `path`: string
 - `valueKeys`: [string]
 - `warnings`: [string]
@@ -4704,7 +4705,7 @@ Result:
 
 **New UI Layout**
 
-Writes a .ui file (a game menu or HUD) in `folder` (default: the Assets root) from a `preset` (hud, menu, empty) plus optional `widgets`, and imports it. Returns the widget ids, value keys, events and warnings. Change it with uiLayout.edit (add/update/move/remove widgets, bindings, sample values) or uiLayout.set. A .ui file is a game menu or HUD: `theme` (game|dark|light|highContrast), `colors` (theme color name → "#RRGGBB[AA]"; names: text, secondaryText, accent, accentText, panel, panelBorder, control, controlHover, barBackground, health, warning, danger, hudText, hudShadow), `fontSize`, `safeArea` (points kept clear of the screen edges), `size` (design screen size [w, h]), `values` (sample values by key for the preview) and `widgets`, a flat list. Each widget: `id` (unique), `type` (panel|vstack|hstack|label|image|button|bar|spacer), `parent` (a container id; "" is the screen). The screen and panels place children by `anchor` (topLeft|top|topRight|left|center|right|bottomLeft|bottom|bottomRight|fill) and `offset` [x, y] points in from the anchored edges; stacks line them up (`spacing`, `align` auto|start|center|end|stretch, `justify` start|center|end|spaceBetween, children's `grow`). Also: width/height (omit to fit content), padding, background/borderColor/color ("#hex" or a theme color name), cornerRadius, opacity, hidden; label/button `text` with `{key}` placeholders, fontSize, textAlign, wrap, shadow; image `image` (path under Assets/), fit fit|fill|stretch; bar value, max, kind progress|health, segments, trail; button primary, event (default: the id). `bind` ties a widget to a value key (bar fill = value / max; label/button text; image path) and `visibleWhen` shows it only while a key is truthy ("!key": falsy). Game code: let hud = UIBuildView(assets: assets, path: "UI/hud.ui"); ui.root.addChild(hud); hud.set("health", 64); hud.on("pause") { ... }.
+Writes a .ui file (a game menu or HUD) in `folder` (default: the Assets root) from a `preset` (hud, menu, empty) plus optional `widgets`, and imports it. Returns the widget ids, value keys, events and warnings. Change it with uiLayout.edit (add/update/move/remove widgets, bindings, sample values) or uiLayout.set. A .ui file is a game menu or HUD: `theme` (game|dark|light|highContrast), `colors` (theme color name → "#RRGGBB[AA]"; names: text, secondaryText, accent, accentText, panel, panelBorder, control, controlHover, barBackground, health, warning, danger, hudText, hudShadow), `fontSize`, `safeArea` (points kept clear of the screen edges), `size` (design screen size [w, h]), `scaleMode` (none|fit|fill|width|height: how the whole layout scales with the screen from `size`; default none), `values` (sample values by key for the preview) and `widgets`, a flat list. Each widget: `id` (unique), `type` (panel|vstack|hstack|label|image|button|bar|spacer), `parent` (a container id; "" is the screen). The screen and panels place children by `anchor` (topLeft|top|topRight|left|center|right|bottomLeft|bottom|bottomRight|fill) and `offset` [x, y] points in from the anchored edges; stacks line them up (`spacing`, `align` auto|start|center|end|stretch, `justify` start|center|end|spaceBetween, children's `grow`). Also: width/height (omit to fit content), padding, background/borderColor/color ("#hex" or a theme color name), cornerRadius, opacity, hidden; label/button `text` with `{key}` placeholders, fontSize, textAlign, wrap, shadow; image `image` (path under Assets/), fit fit|fill|stretch; bar value, max, kind progress|health, segments, trail; button primary, event (default: the id). `bind` ties a widget to a value key (bar fill = value / max; label/button text; image path) and `visibleWhen` shows it only while a key is truthy ("!key": falsy). Game code: let hud = UIBuildView(assets: assets, path: "UI/hud.ui"); ui.root.addChild(hud); hud.set("health", 64); hud.on("pause") { ... }.
 
 Arguments:
 
@@ -4769,7 +4770,7 @@ Replaces a .ui file's whole contents and reimports it (running games show the ne
 Arguments:
 
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
-- `layout`: {colors?: object, fontSize?: number, safeArea?: number, size?: number[2], theme?: string, values?: object, widgets?: [object]}
+- `layout`: {colors?: object, fontSize?: number, safeArea?: number, scaleMode?: "none" \| "fit" \| "fill" \| "width" \| "height", size?: number[2], theme?: string, values?: object, widgets?: [object]}
 - `path?`: string
 
 Result:

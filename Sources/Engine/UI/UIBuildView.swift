@@ -58,6 +58,9 @@ public final class UIBuildView: Widget {
     public var showsPlaceholders = false { didSet { setNeedsDisplay() } }
     /// Use the file's sample `values` for keys code hasn't set (default true).
     public var usesSampleValues = true { didSet { applyValues() } }
+    /// The factor the layout is scaled by for the view's size (its `scaleMode` from its design
+    /// `size`; 1 with `none`). Widgets are laid out at the scaled sizes, so clicks and focus match.
+    public private(set) var layoutScale: Float = 1
 
     private var handlers: [String: [() -> Void]] = [:]
     private let screen = UIBuildPanel(name: "uiBuildScreen")
@@ -262,14 +265,16 @@ public final class UIBuildView: Widget {
     // MARK: Building
 
     private func rebuild() {
-        let theme = build.makeTheme()
+        let theme = build.makeTheme().uiBuildScaled(by: layoutScale)
+        let s = layoutScale
         screen.removeAllChildren()
         entries = []
         byID = [:]
         idsByWidget = [:]
         var styles = theme.styles
         var made: [String: Widget] = [:]
-        for spec in build.widgets where !spec.id.isEmpty && made[spec.id] == nil {
+        for original in build.widgets where !original.id.isEmpty && made[original.id] == nil {
+            let spec = s == 1 ? original : original.scaled(by: s)
             let widget = makeWidget(spec, theme: theme, styles: &styles)
             made[spec.id] = widget
             entries.append((spec, widget))
@@ -279,7 +284,7 @@ public final class UIBuildView: Widget {
         var finalTheme = theme
         finalTheme.styles = styles
         themeOverride = finalTheme
-        screen.padding = EdgeInsets(build.safeArea ?? 0)
+        screen.padding = EdgeInsets((build.safeArea ?? 0) * s)
         if build.safeArea == nil { screen.padding = finalTheme.hudSafeArea }
         // Hang each widget from its (effective) parent, in file order.
         for (spec, widget) in entries {
@@ -423,6 +428,19 @@ public final class UIBuildView: Widget {
 
     public override func measureContent(width: Float?) -> Vec2 { build.size }
 
+    public override func layoutChildren() {
+        let factor = build.scaleMode.factor(screen: Vec2(frame.width, frame.height), design: build.size)
+        let wanted = factor.isFinite && factor > 0 ? min(max(factor, 0.05), 20) : 1
+        if abs(wanted - layoutScale) > 0.0005 {
+            // Keep focus on the same layout widget across the rebuild (a menu while the window resizes).
+            let focused = context?.focusedWidget.flatMap { $0.isDescendant(of: self) ? layoutID(of: $0) : nil }
+            layoutScale = wanted
+            rebuild()
+            if let focused, let widget = byID[focused], widget.acceptsFocus { context?.focus(widget, visible: true) }
+        }
+        super.layoutChildren()
+    }
+
     public override func draw(_ list: UIDrawList, theme: UITheme) {
         if reloadIfChanged() { layout(in: frame) }
         if wantsFocus { focusStartWidget() }
@@ -504,8 +522,9 @@ final class UIBuildImage: Widget {
     private var texture: GPUTexture? { path.isEmpty ? nil : owner.images?(path) }
 
     override func measureContent(width: Float?) -> Vec2 {
-        guard let texture else { return Vec2(64, 64) }
-        let size = Vec2(Float(texture.width), Float(texture.height))
+        let s = owner.layoutScale
+        guard let texture else { return Vec2(64, 64) * s }
+        let size = Vec2(Float(texture.width), Float(texture.height)) * s
         // Scale down to the proposed width, keeping the aspect.
         if let width, width > 0, size.x > width { return Vec2(width, size.y * width / size.x) }
         return size
@@ -537,6 +556,51 @@ final class UIBuildImage: Widget {
             let uw = box.width / (w * s), uh = box.height / (h * s)
             list.drawImage(texture, in: box, uv: UIRect(x: (1 - uw) / 2, y: (1 - uh) / 2, width: uw, height: uh), tint: tint)
         }
+    }
+}
+
+extension UIBuildWidget {
+    /// This widget with its sizes in points (offset, width, height, padding, spacing, corner
+    /// radius, font size) multiplied by `factor`, for a layout scaled to the screen.
+    func scaled(by factor: Float) -> UIBuildWidget {
+        var w = self
+        w.offset = offset * factor
+        w.width = width.map { $0 * factor }
+        w.height = height.map { $0 * factor }
+        w.padding = padding * factor
+        w.spacing = spacing * factor
+        w.cornerRadius = cornerRadius * factor
+        w.fontSize = fontSize * factor
+        return w
+    }
+}
+
+extension UITheme {
+    /// This theme with its sizes (text, controls, spacing, corners, safe area) multiplied by
+    /// `factor`, for a `.ui` layout scaled to the screen. Colors and timings stay.
+    func uiBuildScaled(by factor: Float) -> UITheme {
+        guard factor != 1 else { return self }
+        var t = self
+        for path: WritableKeyPath<UITheme, Float> in [
+            \.fontSize, \.smallFontSize, \.headingFontSize, \.spacing, \.panelPadding, \.controlHeight, \.controlPaddingX,
+            \.cornerRadius, \.smallCornerRadius, \.rowCornerRadius, \.popupCornerRadius, \.dialogCornerRadius, \.iconSize,
+            \.rowHeight, \.treeIndent, \.minimumHitSize, \.checkboxSize, \.sliderTrackHeight, \.sliderThumbSize,
+            \.scrollbarWidth, \.dialogPadding, \.dialogSpacing, \.buttonSpacing, \.dialogMaxWidth, \.progressBarHeight,
+            \.tooltipFontSize, \.tooltipMaxWidth,
+        ] {
+            t[keyPath: path] *= factor
+        }
+        t.hudSafeArea = EdgeInsets(top: hudSafeArea.top * factor, left: hudSafeArea.left * factor,
+                                   bottom: hudSafeArea.bottom * factor, right: hudSafeArea.right * factor)
+        t.tooltipPadding = tooltipPadding * factor
+        for (name, var style) in styles {
+            style.fontSize = style.fontSize.map { $0 * factor }
+            style.height = style.height.map { $0 * factor }
+            style.paddingX = style.paddingX.map { $0 * factor }
+            style.cornerRadius = style.cornerRadius.map { $0 * factor }
+            t.styles[name] = style
+        }
+        return t
     }
 }
 
