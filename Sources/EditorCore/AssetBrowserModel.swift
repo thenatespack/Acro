@@ -157,6 +157,8 @@ public final class AssetBrowserModel {
             session.run(DialogueOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where session.isTimelineFile(id):
             session.run(TimelineOpenCommand.self, .init(asset: AssetReference(id)))
+        case .asset(let id) where session.isAnimationGraphFile(id):
+            session.run(AnimGraphOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where entry.isExpandable:
             toggleExpanded(id)
         default:
@@ -251,6 +253,14 @@ public final class AssetBrowserModel {
     @discardableResult
     public func newPathBuild() -> AssetID? {
         guard let id = session.run(PathNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
+        invalidate()
+        selection = .asset(id)
+        return id
+    }
+    /// Creates an animation graph in the current folder (`animGraph.new`) and selects it.
+    @discardableResult
+    public func newAnimationGraph() -> AssetID? {
+        guard let id = session.run(AnimGraphNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
         invalidate()
         selection = .asset(id)
         return id
@@ -479,6 +489,7 @@ public final class AssetBrowserModel {
         case .material: .material
         case .texture: .texture
         case .prefab: .prefab
+        case .animation, .animationGraph: .file
         }
     }
 }

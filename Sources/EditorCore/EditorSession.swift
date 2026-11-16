@@ -166,6 +166,9 @@ public final class EditorSession {
     /// The timeline open in the Timeline tab (`timeline.open`), and how the app shows it.
     public var openTimeline: AssetID?
     public var onOpenTimeline: ((AssetID) -> Void)?
+    /// The graph open in the Animation Graph Builder tab (`animGraph.open`), and how the app shows it.
+    public var openAnimationGraph: AssetID?
+    public var onOpenAnimationGraph: ((AssetID) -> Void)?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()
@@ -731,6 +734,7 @@ public final class EditorSession {
             physics2D = physics
         }
         if world.count(of: SpriteAnimator.self) > 0 { world.addSpriteAnimationSystem(name: Self.spriteSystem) }
+        world.addSceneAnimationSystem(assets: { [weak self] in self?.assets }, name: Self.animationSystem)
         tweens = TweenSystem()
         if let audio = audioProvider?() {
             spatialAudio = world.addSpatialAudio(audio, assets: { [weak self] in self?.assets })
@@ -759,6 +763,7 @@ public final class EditorSession {
         }
         world.removeSystem(named: Self.spriteSystem)
         world.removeSystem(named: Self.behaviorSystem)
+        world.removeSystem(named: Self.animationSystem)
         spatialAudio?.remove()
         spatialAudio = nil
         world.removeDialogueSystem()
@@ -771,6 +776,7 @@ public final class EditorSession {
     private static let spriteSystem = "editor.spriteAnimation"
     /// Runs `BehaviorTreeRunner`s while playing (BehaviorTreeRuntime.swift).
     static let behaviorSystem = "editor.behaviorTrees"
+    private static let animationSystem = "editor.sceneAnimation"
 
     // MARK: Entities
 

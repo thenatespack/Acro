@@ -104,7 +104,7 @@ public enum GamePlayer {
         ComponentRegistry.register(Transform.self, Name.self, Camera.self, DirectionalLight.self, PointLight.self, SpotLight.self,
                                    SceneEnvironment.self, PostProcessSettings.self, PlanarReflection.self, MeshRenderer.self, LineRenderer.self, MeshArray.self, Decal.self, Saveable.self,
                                    Sprite.self, SpriteAnimator.self, PrefabInstance.self, Spin.self, FieldAnimator.self, LightFlicker.self,
-                                   CameraPath.self, TimelinePlayer.self)
+                                   CameraPath.self, TimelinePlayer.self, Animator.self)
         PhysicsWorld.registerComponents()
         PhysicsWorld2D.registerComponents()
         AudioSystem.registerComponents()

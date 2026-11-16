@@ -13,7 +13,8 @@ import EngineUI
 
 /// Plays scene files with a game module outside the editor, the way the editor's play mode
 /// does: the play systems (physics and 2D physics when the scene has colliders, sprite
-/// animation when the scene has animators, spatial audio whenever `audio` is set, the built-in
+/// animation when the scene has animators, skeletal `Animator`s with clips from the assets
+/// (`addSceneAnimationSystem`), spatial audio whenever `audio` is set, the built-in
 /// animators) and the module's systems, over one world. Spatial audio starts even when the
 /// scene has no `AudioEmitter`: a module spawns emitters while it runs. Switches scenes when
 /// game code calls `context.loadScene(_:)`: `applyPendingScene()`
@@ -49,6 +50,7 @@ public final class ScenePlayback {
 
     private static let spriteSystem = "scenePlayback.spriteAnimation"
     private static let behaviorSystem = "scenePlayback.behaviorTrees"
+    private static let animationSystem = "scenePlayback.sceneAnimation"
 
     public init(module: GameModule, context: GameContext, world: World = World(), runtime: ProjectRuntimeSettings = ProjectRuntimeSettings(),
                 audio: AudioSystem? = nil, assets: @escaping () -> AssetDatabase? = { nil },
@@ -108,6 +110,7 @@ public final class ScenePlayback {
             physics2D = physics
         }
         if world.count(of: SpriteAnimator.self) > 0 { world.addSpriteAnimationSystem(name: Self.spriteSystem) }
+        world.addSceneAnimationSystem(assets: assets, name: Self.animationSystem)
         // Not gated on an emitter already in the scene: game code spawns them after this returns.
         if let audio { spatialAudio = world.addSpatialAudio(audio, assets: assets) }
         world.addBuiltinAnimationSystems()
@@ -130,6 +133,7 @@ public final class ScenePlayback {
         }
         world.removeSystem(named: Self.spriteSystem)
         world.removeSystem(named: Self.behaviorSystem)
+        world.removeSystem(named: Self.animationSystem)
         spatialAudio?.remove()
         spatialAudio = nil
         world.removeDialogueSystem()

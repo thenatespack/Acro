@@ -208,6 +208,12 @@ public struct AdditiveAnimationLayer: Codable, Equatable, Sendable {
 /// is in the component, so it is saved with scenes and restored with snapshots.
 public struct Animator: Component, Equatable, Sendable {
     public static let componentName = "Animator"
+    public static var fieldHints: [String: FieldHints] {
+        ["targets": FieldHints(readOnly: true, tooltip: "The entities the clips drive (bound from this entity's subtree when empty)"),
+         "restPose": FieldHints(hidden: true), "playbacks": FieldHints(hidden: true), "events": FieldHints(hidden: true),
+         "fadeDuration": FieldHints(hidden: true), "fadeElapsed": FieldHints(hidden: true),
+         "graph": FieldHints(tooltip: "An .animgraph asset: its states, transitions, parameters and layers replace this animator's (hot reloaded)")]
+    }
 
     /// The entity each channel `target` index drives (for imported clips, by glTF node index;
     /// `Entity.invalid` where a node wasn't instantiated).
@@ -221,6 +227,10 @@ public struct Animator: Component, Equatable, Sendable {
     /// Multiplies dt.
     public var speed: Float
     public var isPlaying: Bool
+    /// An `.animgraph` asset (Animation Graph Builder). When set, the scene animation system
+    /// (`World.addSceneAnimationSystem`) replaces `stateMachine` and `layers` with the graph's
+    /// and adds its parameters, again whenever the file is reimported.
+    public var graph: AssetReference?
 
     /// The current state last, states fading out before it.
     public private(set) var playbacks: [AnimationPlayback] = []
@@ -248,6 +258,35 @@ public struct Animator: Component, Equatable, Sendable {
         self.init(targets: targets, restPose: restPose,
                   stateMachine: AnimationStateMachine(states: [AnimationState(clip.key, .clip(clip), loops: loops)]), speed: speed)
         playbacks = [AnimationPlayback(state: 0, normalizedTime: normalizedTime, weight: 1, fadeStart: 1)]
+    }
+
+    /// Replaces the state machine and layers (an `.animgraph` reload), adding `parameters`
+    /// that are missing or of another kind (values already set are kept; others stay). Playback carries on
+    /// in the state of the same name, or restarts in the new initial state when it is gone.
+    public mutating func replaceGraph(_ machine: AnimationStateMachine, parameters defaults: [String: AnimationParameter],
+                                      layers newLayers: [AdditiveAnimationLayer]) {
+        let current = currentState
+        let time = normalizedTime
+        stateMachine = machine
+        for (name, value) in defaults {
+            switch (parameters[name], value) {
+            case (.float?, .float), (.bool?, .bool), (.trigger?, .trigger): break
+            default: parameters[name] = value
+            }
+        }
+        // Keep each layer's running time when the clip is the same.
+        layers = newLayers.enumerated().map { i, layer in
+            var layer = layer
+            if layers.indices.contains(i), layers[i].clip == layer.clip { layer.time = layers[i].time }
+            return layer
+        }
+        if let current, let index = machine.index(of: current) {
+            playbacks = [AnimationPlayback(state: index, normalizedTime: time, weight: 1, fadeStart: 1)]
+        } else {
+            playbacks = []
+        }
+        fadeDuration = 0
+        fadeElapsed = 0
     }
 
     // MARK: Parameters

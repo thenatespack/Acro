@@ -91,6 +91,7 @@ public enum EditorComponentCatalog {
         register(BehaviorTreeRunner.self) { BehaviorTreeRunner() }
         register(DialoguePlayer.self) { DialoguePlayer() }
         register(TimelinePlayer.self) { TimelinePlayer() }
+        register(Animator.self) { Animator(targets: [], restPose: [], stateMachine: AnimationStateMachine(states: [])) }
     }
 
     /// Makes the component type registered as `name` addable, created by `make` (game modules,

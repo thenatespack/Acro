@@ -180,7 +180,11 @@ enum CompressedTextureCache {
 /// - `prefab/<file name>`, the main object: the scene's node tree, laid out like
 ///   `ImportedModel.instantiate` (multi-primitive meshes get one child node per primitive).
 ///   Skinned meshes keep their joint influences (`MeshGeometry.skin`) and their nodes a
-///   `PrefabSkin`, so instances get a `Skin` and animate.
+///   `PrefabSkin`, so instances get a `Skin` and animate;
+/// - `animation/<name>` per animation (`animation/Animation <index>` when unnamed): an `AnimationClip`
+///   whose channel targets are the prefab's node numbers (depth first, as `PrefabSkin`), so an
+///   `Animator` bound to an instance (`World.animationRig(of:)`) plays it. Channels on nodes
+///   outside the scene are dropped.
 ///
 /// External `.bin` buffers are read relative to the model's folder and recorded as
 /// dependencies (`ImportContext.readDependency`): editing one reimports the model.
@@ -241,7 +245,8 @@ public struct GLTFImporter: AssetImporter {
     public var fileExtensions: [String] { ["gltf", "glb"] }
     /// 2: PBR materials (every texture slot, metallic-roughness, emissive, alpha mask) and tangents.
     /// 3: skins (joint influences in the mesh cache, `PrefabSkin` on the prefab's nodes).
-    public var version: Int { 3 }
+    /// 4: animation clips (`animation/<name>` sub-assets).
+    public var version: Int { 4 }
     public var defaultSettings: Settings { Settings() }
 
     public func importAsset(_ context: inout ImportContext, settings: Settings) throws -> ImportedAsset {
@@ -383,6 +388,22 @@ public struct GLTFImporter: AssetImporter {
         let prefab = namer.id(kind: "prefab", name: stem, index: 0)
         asset.add(prefab, name: stem, .prefab(PrefabAsset(roots: [root])))
         asset.main = prefab
+
+        // Clips, retargeted from glTF node indices to the prefab's node numbers.
+        for (i, clip) in model.animations.enumerated() {
+            var retargeted = clip
+            retargeted.channels = clip.channels.compactMap { channel in
+                guard let number = nodeNumbers[channel.target] else { return nil }
+                var channel = channel
+                channel.target = number
+                return channel
+            }
+            if retargeted.channels.count < clip.channels.count {
+                context.warn("animation '\(clip.name)': \(clip.channels.count - retargeted.channels.count) channel(s) animate nodes outside the scene and were dropped")
+            }
+            let id = namer.id(kind: "animation", name: clip.name, index: i)
+            asset.add(id, name: clip.name, .animation(retargeted))
+        }
         return asset
     }
 }

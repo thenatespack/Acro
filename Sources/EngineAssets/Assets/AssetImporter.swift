@@ -214,6 +214,7 @@ public struct AssetImporterRegistry: Sendable {
         registry.register(UIBuildImporter())
         registry.register(DialogueImporter())
         registry.register(TimelineImporter())
+        registry.register(AnimationGraphImporter())
         return registry
     }
 

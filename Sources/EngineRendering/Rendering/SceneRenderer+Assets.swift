@@ -82,7 +82,7 @@ extension SceneRenderer {
                 try registerMaterial(resolved, key: key)
                 assetKeys[key] = signature
                 return true
-            case .texture, .prefab:
+            case .texture, .prefab, .animation, .animationGraph:
                 break
             }
         } catch {

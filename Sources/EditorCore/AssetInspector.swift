@@ -504,6 +504,16 @@ public final class AssetInspectorView {
                                      note(String(format: "A %.1f s cutscene with %d track%@. A TimelinePlayer component plays it; game code reads its events.",
                                                  timeline?.duration ?? 0, timeline?.tracks.count ?? 0, (timeline?.tracks.count ?? 0) == 1 ? "" : "s"))])
             }
+            if session.isAnimationGraphFile(id) {
+                let open = Button("Open in Animation Graph Builder", role: .primary, name: "openAnimationGraphBuilder") { [unowned self] in
+                    session.run(AnimGraphOpenCommand.self, .init(asset: AssetReference(id)))
+                }
+                open.command = AnimGraphOpenCommand.id.rawValue
+                open.tooltip = "Edit this graph's states and transitions in the Animation Graph Builder tab (or double-click it in the Assets panel)"
+                let graph = session.assets?.animationGraph(of: id)
+                content.addChildren([HStack(spacing: 6, [open, Spacer()]),
+                                     note("An animation state machine of \(graph?.states.count ?? 0) states and \(graph?.transitions.count ?? 0) transitions. Put it on a placed model with animGraph.assign (or the builder's Put on Selection).")])
+            }
             if session.isMaterialFile(id) {
                 addMaterialForm(AssetReference(id, subAsset: "material"))
             }

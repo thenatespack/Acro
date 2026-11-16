@@ -263,6 +263,10 @@ public enum EditorIcons {
     /// The kinds of asset the browser and asset inspector tell apart by icon.
     public enum AssetIconKind: String, Sendable, CaseIterable {
         case folder, model, mesh, texture, material, prefab, scene, audio, shader, font, text, data, file
+        /// An imported animation clip.
+        case animation
+        /// An animation graph (`.animgraph`).
+        case animationGraph
     }
 
     /// The icon kind of an imported object.
@@ -288,6 +292,7 @@ public enum EditorIcons {
         case "gltf", "glb", "obj", "fbx", "meshbuild": return .model
         case "vfx": return .prefab
         case "timeline": return .scene
+        case "animgraph": return .animationGraph
         case "table": return .model
         case "tilemap": return .texture
         case "ui": return .data
@@ -328,6 +333,8 @@ public enum EditorIcons {
         case .font: named("type")
         case .text: named("file-text")
         case .data: named("file-json")
+        case .animation: named("film")
+        case .animationGraph: named("network")
         case .file: named("file")
         }
     }
@@ -369,6 +376,7 @@ public enum EditorIcons {
         EditorLayout.uiBuilder: "layout-dashboard",
         EditorLayout.dialogueBuilder: "file-text",
         EditorLayout.timeline: "clapperboard",
+        EditorLayout.animationGraph: "network",
     ]
 
     /// Console lines by level.
@@ -428,6 +436,8 @@ extension EditorIcons.AssetIconKind {
         case .material: self = .material
         case .texture: self = .texture
         case .prefab: self = .prefab
+        case .animation: self = .animation
+        case .animationGraph: self = .animationGraph
         }
     }
 }

@@ -1,0 +1,187 @@
+import Foundation
+import EngineAssets
+import EngineCore
+import EngineScene
+
+// Animators in scene files: clips from the asset database and rigs bound from the hierarchy.
+//
+// A glTF file's clips are imported as `animation/<name>` sub-assets whose channel targets are the
+// file's prefab node numbers (depth first, roots first). An `Animator` on an instance of that
+// prefab plays them when its `targets` are the instance's entities in the same order
+// (`World.animationRig(of:)`) and its clip handles are the clips' asset references:
+//
+// ```swift
+// let root = world.instantiate(database.prefab(AssetReference(fox))!).first!
+// let rig = world.animationRig(of: root)
+// world.add(Animator(targets: rig.targets, restPose: rig.restPose,
+//                    clip: AnimationClipHandle("asset:\(fox)#animation/Walk")), to: root)
+// world.addSceneAnimationSystem(assets: { database })
+// ```
+//
+// An `.animgraph` asset (Animation Graph Builder) supplies a whole state machine instead:
+// `Animator.graph` names it, and the system applies it (`Animator.replaceGraph`) when it first
+// sees the animator and after every reimport of the file.
+//
+// The editor's play mode, `ScenePlayback` (exported games, GameRunner) add the system, so a
+// scene's animators play without game code.
+
+extension World {
+    /// The entities of `root`'s subtree, depth first with `root` first (the node order of the
+    /// prefab `root` is an instance of, which imported clips target), and their current local
+    /// transforms as the rest pose.
+    public func animationRig(of root: Entity) -> (targets: [Entity], restPose: [Transform]) {
+        var targets: [Entity] = [], rest: [Transform] = []
+        func visit(_ entity: Entity) {
+            targets.append(entity)
+            rest.append(get(Transform.self, for: entity) ?? Transform())
+            for child in children(of: entity) { visit(child) }
+        }
+        if isAlive(root) { visit(root) }
+        return (targets, rest)
+    }
+
+    /// Adds the system that plays a scene's asset-driven animators: every `Animator` with a
+    /// `graph` or a clip handle naming an asset (`"asset:<id>#animation/<name>"`). Each frame,
+    /// on the main thread, it applies graphs that are new or were reimported (`replaceGraph`),
+    /// binds animators with no `targets` to their entity's subtree
+    /// (`animationRig(of:)`), loads their clips from `assets` into the returned library (again
+    /// after a reimport: hot reload), advances them by the frame's dt and writes the animated
+    /// targets' `Transform`s, then reports events through `onEvent`.
+    ///
+    /// Animators whose clips are all registered in code by other keys are left to the system of
+    /// `addAnimationSystem(_:)`, so a game that runs its own isn't advanced twice.
+    @discardableResult
+    public func addSceneAnimationSystem(assets: @escaping () -> AssetDatabase?, name: String = "sceneAnimation",
+                                        stage: SystemStage = .update,
+                                        onEvent: ((Entity, FiredAnimationEvent) -> Void)? = nil) -> AnimationLibrary {
+        let library = AnimationLibrary()
+        var reported = Set<String>()
+        var appliedGraphs: [Entity: (graph: AssetReference, revision: Int)] = [:]
+        addSystem(name, stage: stage) { world in
+            guard world.count(of: Animator.self) > 0 else { return }
+            library.assets = assets()
+            var driven: [(Entity, Animator)] = []
+            world.query(Animator.self) { entity, animator in
+                if animator.isSceneDriven { driven.append((entity, animator)) }
+            }
+            guard !driven.isEmpty else { return }
+            let dt = world.time.delta
+            var fired: [(Entity, FiredAnimationEvent)] = []
+            let database = library.assets
+            for (entity, var animator) in driven {
+                if let reference = animator.graph, let database {
+                    let revision = database.revision(of: reference.asset)
+                    let applied = appliedGraphs[entity]
+                    if applied?.graph != reference || applied?.revision != revision {
+                        if let graph = database.animationGraph(reference) {
+                            animator.apply(graph)
+                        } else if reported.insert(reference.description).inserted {
+                            EngineLog.warning("no animation graph '\(reference)'", category: .animation)
+                        }
+                        appliedGraphs[entity] = (reference, database.revision(of: reference.asset))
+                    }
+                }
+                if animator.targets.isEmpty {
+                    let rig = world.animationRig(of: entity)
+                    animator.targets = rig.targets
+                    animator.restPose = rig.restPose
+                }
+                for key in library.resolveAssetClips(animator.clipHandles) where reported.insert(key).inserted {
+                    EngineLog.warning("no animation clip '\(key)'", category: .animation)
+                }
+                let pose = animator.update(dt: dt) { library.clip($0) }
+                for i in 0..<min(pose.count, animator.targets.count) where pose.animated[i] {
+                    world.modify(Transform.self, for: animator.targets[i]) { $0 = pose.transforms[i] }
+                }
+                for event in animator.events { fired.append((entity, event)) }
+                world.modify(Animator.self, for: entity) { $0 = animator }
+            }
+            if let onEvent { for (entity, event) in fired { onEvent(entity, event) } }
+        }
+        return library
+    }
+}
+
+extension Animator {
+    /// Every clip the state machine and layers refer to.
+    public var clipHandles: [AnimationClipHandle] {
+        var handles: [AnimationClipHandle] = []
+        for state in stateMachine.states {
+            switch state.motion {
+            case .clip(let clip): handles.append(clip)
+            case .blend1D(_, let entries): handles += entries.map(\.clip)
+            }
+        }
+        return handles + layers.map(\.clip)
+    }
+
+    /// Whether the scene animation system plays it: it has a graph or some clip names an asset.
+    public var isSceneDriven: Bool {
+        graph != nil || clipHandles.contains { $0.key.hasPrefix(AssetReference.scheme) }
+    }
+
+    /// Takes `graph`'s state machine, parameters and layers (`replaceGraph`).
+    public mutating func apply(_ graph: AnimationGraph) {
+        replaceGraph(graph.stateMachine, parameters: graph.parameterDefaults, layers: graph.additiveLayers)
+    }
+
+    /// An animator playing `graph` on `root`'s subtree (`World.animationRig(of:)`), with
+    /// `graph` set to `reference` so it follows the file.
+    @MainActor public init(graph: AnimationGraph, reference: AssetReference?, rigOf root: Entity, in world: World) {
+        let rig = world.animationRig(of: root)
+        self.init(targets: rig.targets, restPose: rig.restPose, stateMachine: graph.stateMachine,
+                  parameters: graph.parameterDefaults, layers: graph.additiveLayers)
+        self.graph = reference
+    }
+}
+
+extension AnimationGraph {
+    /// The `Animator` state machine: states with their clips or blend spaces, transitions
+    /// (`from` nil: any state), the initial state.
+    public var stateMachine: AnimationStateMachine {
+        let states = states.map { state -> AnimationState in
+            let motion: AnimationMotion
+            if let blend = state.blend {
+                motion = .blend1D(parameter: blend.parameter,
+                                  entries: blend.clips.map { BlendSpaceEntry(clip: AnimationClipHandle($0.clip), position: $0.position) })
+            } else {
+                motion = .clip(AnimationClipHandle(state.clip ?? ""))
+            }
+            return AnimationState(state.name, motion, speed: state.speed, speedParameter: state.speedParameter, loops: state.loops)
+        }
+        let transitions = transitions.map { t in
+            AnimationTransition(from: t.from, to: t.to, conditions: t.conditions.map(\.animationCondition), exitTime: t.exitTime,
+                                duration: max(t.duration, 0), canTransitionToSelf: t.canTransitionToSelf)
+        }
+        return AnimationStateMachine(states: states, transitions: transitions, initialState: initialState)
+    }
+
+    /// The parameters at their default values.
+    public var parameterDefaults: [String: AnimationParameter] {
+        var values: [String: AnimationParameter] = [:]
+        for parameter in parameters {
+            switch parameter.type {
+            case .float: values[parameter.name] = .float(parameter.defaultValue)
+            case .bool: values[parameter.name] = .bool(parameter.defaultValue != 0)
+            case .trigger: values[parameter.name] = .trigger(false)
+            }
+        }
+        return values
+    }
+
+    public var additiveLayers: [AdditiveAnimationLayer] {
+        layers.map { AdditiveAnimationLayer(clip: AnimationClipHandle($0.clip), weight: $0.weight, speed: $0.speed, referenceTime: $0.referenceTime) }
+    }
+}
+
+extension AnimationGraphCondition {
+    public var animationCondition: AnimationCondition {
+        switch test {
+        case .greater: .greater(parameter, value)
+        case .less: .less(parameter, value)
+        case .isTrue: .isTrue(parameter)
+        case .isFalse: .isFalse(parameter)
+        case .triggered: .triggered(parameter)
+        }
+    }
+}
