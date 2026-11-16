@@ -244,7 +244,7 @@ public final class TilemapCanvas: Widget {
             }
         }
         let caption = hoverCell.map { "cell \($0.x), \($0.y) · " } ?? ""
-        list.drawText(caption + "\(workspace.tool.title) · middle-drag pans · wheel zooms", at: Vec2(rect.x + 8, rect.maxY - 18), size: 11,
+        list.drawText(caption + "\(workspace.tool.title) (\(workspace.tool.shortcut.rawValue.uppercased())) · middle-drag pans · wheel zooms · click, then keys pick tools", at: Vec2(rect.x + 8, rect.maxY - 18), size: 11,
                       color: theme.secondaryTextColor)
     }
 
@@ -399,6 +399,8 @@ public final class TilemapWorkspace {
         map = contents
         shownRevision = session.assets?.revision(of: id) ?? 0
         title.text = session.assets?.record(id)?.fileName ?? "Tilemap Builder"
+        // The toolbar can squeeze the name to a few letters; the tooltip keeps it readable.
+        title.tooltip = session.assets?.record(id)?.path
         builder = TilemapBuilderView(workspace: self)
         reloadTexture()
         needsSidebar = true
@@ -467,6 +469,7 @@ public final class TilemapWorkspace {
 
     private func showEmpty() {
         title.text = "Tilemap Builder"
+        title.tooltip = nil
         sidebar.removeAllChildren()
         let note = Label("Double-click a .tilemap file in the Assets panel to paint it here, or make one with the Assets panel's "
                          + "New Tilemap (right-click).", role: .caption)
