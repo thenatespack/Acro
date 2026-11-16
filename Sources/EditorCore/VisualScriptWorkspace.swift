@@ -714,9 +714,86 @@ public final class VisualScriptWorkspace {
             if let result = try? graph.applying(edit) { commit(result.graph, "Add Function") }
         }
         details.addChild(HStack(spacing: 6, [field, add]))
-        let note = Label("Edit a function's inputs and outputs with vscript.edit {functions}.", role: .caption)
-        note.wraps = true
-        details.addChild(note)
+        if let open = bodyFunction {
+            addPinsForm(open, outputs: false)
+            addPinsForm(open, outputs: true)
+        } else {
+            let note = Label("Edit a function to change its inputs and outputs.", role: .caption)
+            note.wraps = true
+            details.addChild(note)
+        }
+    }
+
+    /// The inputs (or outputs) of the function being edited: rename, retype, reorder, remove, add.
+    /// Wires on its entry, return and call nodes follow (`VisualScriptFunctionSignature`).
+    private func addPinsForm(_ function: VisualScriptFunction, outputs: Bool) {
+        let side = outputs ? "Outputs" : "Inputs"
+        details.addChild(Label("\(function.name): \(side)", role: .secondary))
+        let list = outputs ? function.outputs : function.inputs
+        let tag = outputs ? "Output" : "Input"
+        func commit(_ new: [VisualScriptParameter], renamed: [String: String] = [:], _ label: String) {
+            var signature = VisualScriptFunctionSignature(function: function.name)
+            if outputs {
+                signature.outputs = new
+                signature.renamedOutputs = renamed.isEmpty ? nil : renamed
+            } else {
+                signature.inputs = new
+                signature.renamedInputs = renamed.isEmpty ? nil : renamed
+            }
+            apply(VisualScriptEdit(signatures: [signature]), label)
+        }
+        let types = VisualScriptType.allCases.filter { $0 != .exec }.map(\.rawValue)
+        for (i, parameter) in list.enumerated() {
+            let name = TextField(text: parameter.name, placeholder: "name", name: "vscriptFn\(tag)Name.\(parameter.name)")
+            name.style.grow = 1
+            name.style.width = 0
+            name.command = VScriptEditCommand.id.rawValue
+            name.onSubmit = { text in
+                let new = text.trimmingCharacters(in: .whitespaces)
+                guard !new.isEmpty, new != parameter.name else { return }
+                var changed = list
+                changed[i].name = new
+                commit(changed, renamed: [parameter.name: new], "Rename Function \(tag)")
+            }
+            name.onEndEditing = name.onSubmit
+            let type = Dropdown(options: types, selectedIndex: types.firstIndex(of: parameter.type.rawValue) ?? 0,
+                                name: "vscriptFn\(tag)Type.\(parameter.name)") { i2 in
+                var changed = list
+                changed[i].type = VisualScriptType(rawValue: types[i2]) ?? .float
+                commit(changed, "Change Function \(tag) Type")
+            }
+            type.style.width = 80
+            type.command = VScriptEditCommand.id.rawValue
+            let up = Button("↑", name: "vscriptFn\(tag)Up.\(parameter.name)") {
+                guard i > 0 else { return }
+                var changed = list
+                changed.swapAt(i, i - 1)
+                commit(changed, "Reorder Function \(tag)s")
+            }
+            up.isEnabled = i > 0
+            up.tooltip = "Move up (the order of the call node's pins)"
+            up.command = VScriptEditCommand.id.rawValue
+            let remove = Button("×", name: "vscriptFn\(tag)Remove.\(parameter.name)") {
+                var changed = list
+                changed.remove(at: i)
+                commit(changed, "Remove Function \(tag)")
+            }
+            remove.tooltip = "Remove (its wires go too)"
+            remove.command = VScriptEditCommand.id.rawValue
+            details.addChild(HStack(spacing: 4, alignment: .center, [name, type, up, remove]))
+        }
+        let field = TextField(text: "", placeholder: "New \(tag.lowercased()) name", name: "vscriptFnNew\(tag)")
+        field.style.grow = 1
+        field.command = VScriptEditCommand.id.rawValue
+        let addPin = { (text: String) in
+            let new = text.trimmingCharacters(in: .whitespaces)
+            guard !new.isEmpty, !list.contains(where: { $0.name == new }) else { return }
+            commit(list + [VisualScriptParameter(name: new, type: .float)], "Add Function \(tag)")
+        }
+        field.onSubmit = { text in addPin(text) }
+        let add = Button("Add", name: "vscriptFnAdd\(tag)") { [weak field] in addPin(field?.text ?? "") }
+        add.command = VScriptEditCommand.id.rawValue
+        details.addChild(HStack(spacing: 6, [field, add]))
     }
 
     private func addProblems() {

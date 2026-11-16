@@ -197,6 +197,53 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         session.stop()
     }
 
+    @Test func functionPinsAreEditedInTheTab() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = try project(folder)
+        let created = try call(session, "vscript.new", ["name": "pins"])
+        let asset = try #require(AssetID(created["asset"] as! String))
+        try call(session, "vscript.edit", ["asset": "asset:" + asset.description, "functions": [[
+            "name": "half", "inputs": [["name": "x", "type": "float"]],
+            "nodes": [["id": "entry", "type": "function.entry"], ["id": "ret", "type": "function.return"]],
+            "links": [["from": "entry.out", "to": "ret.in"]]]],
+            "addNodes": [["id": "call", "type": "function.call", "config": ["function": "half"], "inputs": ["x": 2]]]])
+        let workspace = VisualScriptWorkspace(session: session)
+        #expect(workspace.open(asset))
+        workspace.update()
+        func widget<W: Widget>(_ name: String, as type: W.Type = W.self) throws -> W {
+            try #require(workspace.view.descendant(named: name) as? W, "no \(name)")
+        }
+        #expect(workspace.view.descendant(named: "vscriptFnInputName.x") == nil, "pins show for the function being edited")
+        try widget("vscriptEditFunction.half", as: Button.self).action?()
+        workspace.update()
+        #expect(workspace.function == "half")
+
+        // Rename the input, add an output, change its type; each one undo step.
+        try widget("vscriptFnInputName.x", as: TextField.self).onSubmit?("value")
+        workspace.update()
+        workspace.update()
+        var graph = try #require(session.assets?.visualScript(of: asset))
+        #expect(graph.function("half")?.inputs.map(\.name) == ["value"])
+        #expect(graph.node("call")?.inputs == ["value": .int(2)], "the call's literal follows")
+        try widget("vscriptFnAddOutput", as: Button.self)
+        try widget("vscriptFnNewOutput", as: TextField.self).onSubmit?("y")
+        workspace.update()
+        workspace.update()
+        try widget("vscriptFnOutputType.y", as: Dropdown.self).onChange?(VisualScriptType.allCases.filter { $0 != .exec }.firstIndex(of: .int)!)
+        workspace.update()
+        workspace.update()
+        graph = try #require(session.assets?.visualScript(of: asset))
+        #expect(graph.function("half")?.outputs == [VisualScriptParameter(name: "y", type: .int)])
+        try widget("vscriptFnInputRemove.value", as: Button.self).action?()
+        workspace.update()
+        graph = try #require(session.assets?.visualScript(of: asset))
+        #expect(graph.function("half")?.inputs.isEmpty == true && graph.node("call")?.inputs.isEmpty == true)
+        try session.undo.undo()
+        workspace.update()
+        #expect(session.assets?.visualScript(of: asset)?.function("half")?.inputs.map(\.name) == ["value"])
+    }
+
     @Test func workspaceEditsAreUndoSteps() throws {
         let folder = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: folder) }

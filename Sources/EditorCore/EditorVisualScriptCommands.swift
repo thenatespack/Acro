@@ -270,6 +270,8 @@ public enum VScriptEditCommand: EditorCommand {
         public var removeVariables: [String]?
         /// Functions to add or replace by name.
         public var functions: [VisualScriptFunction]?
+        /// Change functions' pins keeping wires: {function, inputs?, outputs?, renamedInputs? {old: new}, renamedOutputs?}.
+        public var signatures: [VisualScriptFunctionSignature]?
         public var removeFunctions: [String]?
         public var comments: [VisualScriptComment]?
         public var removeComments: [String]?
@@ -279,7 +281,8 @@ public enum VScriptEditCommand: EditorCommand {
         public init(asset: AssetReference? = nil, path: String? = nil, function: String? = nil, removeNodes: [String]? = nil,
                     addNodes: [VisualScriptNode]? = nil, updateNodes: [VisualScriptNodePatch]? = nil, disconnect: [VisualScriptLink]? = nil,
                     connect: [VisualScriptLink]? = nil, variables: [VisualScriptVariable]? = nil, removeVariables: [String]? = nil,
-                    functions: [VisualScriptFunction]? = nil, removeFunctions: [String]? = nil, comments: [VisualScriptComment]? = nil,
+                    functions: [VisualScriptFunction]? = nil, signatures: [VisualScriptFunctionSignature]? = nil,
+                    removeFunctions: [String]? = nil, comments: [VisualScriptComment]? = nil,
                     removeComments: [String]? = nil, actions: [String: [String]]? = nil) {
             self.asset = asset
             self.path = path
@@ -292,6 +295,7 @@ public enum VScriptEditCommand: EditorCommand {
             self.variables = variables
             self.removeVariables = removeVariables
             self.functions = functions
+            self.signatures = signatures
             self.removeFunctions = removeFunctions
             self.comments = comments
             self.removeComments = removeComments
@@ -301,13 +305,13 @@ public enum VScriptEditCommand: EditorCommand {
         var edit: VisualScriptEdit {
             VisualScriptEdit(function: function, removeNodes: removeNodes, addNodes: addNodes, updateNodes: updateNodes, disconnect: disconnect,
                              connect: connect, variables: variables, removeVariables: removeVariables, functions: functions,
-                             removeFunctions: removeFunctions, comments: comments, removeComments: removeComments, actions: actions)
+                             signatures: signatures, removeFunctions: removeFunctions, comments: comments, removeComments: removeComments, actions: actions)
         }
     }
 
     public static let id: CommandID = "vscript.edit"
     public static let title = "Edit Visual Script"
-    public static let doc = "Changes part of a .vscript graph in one undoable step, in this order: removeNodes, addNodes, updateNodes, disconnect, connect (in `function` when given), then variables, removeVariables, functions, removeFunctions, comments, removeComments, actions. New nodes without an id get one from their type (returned in `added`); nodes without x/y are placed right of the others. A link into a data input that has one replaces it. Returns node ids and problems (unconnected required inputs, type mismatches, unreachable nodes). " + EditorVisualScriptCommands.formatDoc
+    public static let doc = "Changes part of a .vscript graph in one undoable step, in this order: removeNodes, addNodes, updateNodes, disconnect, connect (in `function` when given), then variables, removeVariables, functions, signatures (a function's inputs and outputs, with renames: wires on its entry, return and call nodes follow, and those to removed pins go), removeFunctions, comments, removeComments, actions. New nodes without an id get one from their type (returned in `added`); nodes without x/y are placed right of the others. A link into a data input that has one replaces it. Returns node ids and problems (unconnected required inputs, type mismatches, unreachable nodes). " + EditorVisualScriptCommands.formatDoc
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }

@@ -29,9 +29,32 @@ public struct VisualScriptNodePatch: Codable, Equatable, Sendable {
     }
 }
 
+/// A function's new input and output pins (`VisualScriptEdit.signatures`). Wires and literal
+/// values on the function's entry and return nodes and on every node calling it follow renamed
+/// pins and are dropped for removed ones.
+public struct VisualScriptFunctionSignature: Codable, Equatable, Sendable {
+    public var function: String
+    /// The new inputs (entry outputs, call inputs), in order; nil keeps them.
+    public var inputs: [VisualScriptParameter]?
+    /// The new outputs (return inputs, call outputs), in order; nil keeps them.
+    public var outputs: [VisualScriptParameter]?
+    /// Old name → new name of renamed inputs, and of renamed outputs.
+    public var renamedInputs: [String: String]?
+    public var renamedOutputs: [String: String]?
+
+    public init(function: String, inputs: [VisualScriptParameter]? = nil, outputs: [VisualScriptParameter]? = nil,
+                renamedInputs: [String: String]? = nil, renamedOutputs: [String: String]? = nil) {
+        self.function = function
+        self.inputs = inputs
+        self.outputs = outputs
+        self.renamedInputs = renamedInputs
+        self.renamedOutputs = renamedOutputs
+    }
+}
+
 /// A batch of changes to a graph, applied in this order: removeNodes, addNodes, updateNodes,
 /// disconnect, connect (in the event graph, or in `function` when given), then variables,
-/// removeVariables, functions, removeFunctions, comments, removeComments, actions.
+/// removeVariables, functions, signatures, removeFunctions, comments, removeComments, actions.
 public struct VisualScriptEdit: Codable, Equatable, Sendable {
     /// Edit the nodes and links of this function instead of the event graph.
     public var function: String?
@@ -49,6 +72,8 @@ public struct VisualScriptEdit: Codable, Equatable, Sendable {
     public var removeVariables: [String]?
     /// Functions to add or replace (by name).
     public var functions: [VisualScriptFunction]?
+    /// Changes to functions' input and output pins, keeping wires (see `VisualScriptFunctionSignature`).
+    public var signatures: [VisualScriptFunctionSignature]?
     public var removeFunctions: [String]?
     /// Comment boxes to add or replace (by id; an empty id gets one).
     public var comments: [VisualScriptComment]?
@@ -59,7 +84,7 @@ public struct VisualScriptEdit: Codable, Equatable, Sendable {
     public init(function: String? = nil, removeNodes: [String]? = nil, addNodes: [VisualScriptNode]? = nil,
                 updateNodes: [VisualScriptNodePatch]? = nil, disconnect: [VisualScriptLink]? = nil, connect: [VisualScriptLink]? = nil,
                 variables: [VisualScriptVariable]? = nil, removeVariables: [String]? = nil, functions: [VisualScriptFunction]? = nil,
-                removeFunctions: [String]? = nil, comments: [VisualScriptComment]? = nil, removeComments: [String]? = nil,
+                signatures: [VisualScriptFunctionSignature]? = nil, removeFunctions: [String]? = nil, comments: [VisualScriptComment]? = nil, removeComments: [String]? = nil,
                 actions: [String: [String]]? = nil) {
         self.function = function
         self.removeNodes = removeNodes
@@ -70,6 +95,7 @@ public struct VisualScriptEdit: Codable, Equatable, Sendable {
         self.variables = variables
         self.removeVariables = removeVariables
         self.functions = functions
+        self.signatures = signatures
         self.removeFunctions = removeFunctions
         self.comments = comments
         self.removeComments = removeComments
@@ -109,6 +135,7 @@ extension VisualScriptGraph {
             guard !function.name.isEmpty else { throw VisualScriptEditError("a function needs a name") }
             if let i = graph.functions.firstIndex(where: { $0.name == function.name }) { graph.functions[i] = function } else { graph.functions.append(function) }
         }
+        for signature in edit.signatures ?? [] { graph = try graph.setting(signature) }
         for name in edit.removeFunctions ?? [] { graph.functions.removeAll { $0.name == name } }
         for var comment in edit.comments ?? [] {
             if comment.id.isEmpty {
@@ -121,6 +148,85 @@ extension VisualScriptGraph {
         for id in edit.removeComments ?? [] { graph.comments.removeAll { $0.id == id } }
         for (name, sources) in edit.actions ?? [:] { graph.actions[name] = sources.isEmpty ? nil : sources }
         return (graph, added)
+    }
+
+    /// The graph with a function's pins changed (`VisualScriptFunctionSignature`).
+    public func setting(_ signature: VisualScriptFunctionSignature) throws -> VisualScriptGraph {
+        guard let index = functions.firstIndex(where: { $0.name == signature.function }) else {
+            throw VisualScriptEditError("no function named '\(signature.function)'")
+        }
+        let old = functions[index]
+        let inputs = signature.inputs ?? old.inputs, outputs = signature.outputs ?? old.outputs
+        for (side, list) in [("input", inputs), ("output", outputs)] {
+            var seen = Set<String>()
+            for parameter in list {
+                let name = parameter.name
+                guard !name.isEmpty, !name.contains("."), name != "in", name != "out" else {
+                    throw VisualScriptEditError("function \(old.name): '\(name)' can't name an \(side) (empty, \"in\", \"out\" or with \".\")")
+                }
+                guard parameter.type != .exec else { throw VisualScriptEditError("function \(old.name): \(side) '\(name)' can't be exec") }
+                guard seen.insert(name).inserted else { throw VisualScriptEditError("function \(old.name): two \(side)s named '\(name)'") }
+            }
+        }
+        /// Where a pin of the old signature goes: its new name, or nil when it was removed.
+        func mapper(_ renames: [String: String]?, _ new: [VisualScriptParameter], exec: String) -> (String) -> String? {
+            let names = Set(new.map(\.name))
+            return { pin in
+                if pin == exec { return pin }
+                let renamed = renames?[pin] ?? pin
+                return names.contains(renamed) ? renamed : nil
+            }
+        }
+        let mapInputsOut = mapper(signature.renamedInputs, inputs, exec: "out")   // entry outputs
+        let mapInputsIn = mapper(signature.renamedInputs, inputs, exec: "in")     // call inputs
+        let mapOutputsIn = mapper(signature.renamedOutputs, outputs, exec: "in")  // return inputs
+        let mapOutputsOut = mapper(signature.renamedOutputs, outputs, exec: "out") // call outputs
+
+        func rewrite(_ nodes: inout [VisualScriptNode], _ links: inout [VisualScriptLink], inFunction: Bool) {
+            var outputMap: [String: (String) -> String?] = [:], inputMap: [String: (String) -> String?] = [:]
+            for i in nodes.indices {
+                let node = nodes[i]
+                if inFunction && node.type == "function.entry" {
+                    outputMap[node.id] = mapInputsOut
+                } else if inFunction && node.type == "function.return" {
+                    inputMap[node.id] = mapOutputsIn
+                } else if node.type == "function.call", node.configString("function") == old.name {
+                    inputMap[node.id] = mapInputsIn
+                    outputMap[node.id] = mapOutputsOut
+                } else {
+                    continue
+                }
+                if let map = inputMap[node.id] {
+                    var literals: [String: JSONValue] = [:]
+                    for (pin, value) in node.inputs { if let moved = map(pin) { literals[moved] = value } }
+                    nodes[i].inputs = literals
+                }
+            }
+            links = links.compactMap { link in
+                guard let from = link.source, let to = link.target else { return link }
+                var link = link
+                if let map = outputMap[from.node] {
+                    guard let pin = map(from.pin) else { return nil }
+                    link.from = from.node + "." + pin
+                }
+                if let map = inputMap[to.node] {
+                    guard let pin = map(to.pin) else { return nil }
+                    link.to = to.node + "." + pin
+                }
+                return link
+            }
+        }
+        var graph = self
+        rewrite(&graph.nodes, &graph.links, inFunction: false)
+        for i in graph.functions.indices {
+            var nodes = graph.functions[i].nodes, links = graph.functions[i].links
+            rewrite(&nodes, &links, inFunction: i == index)
+            graph.functions[i].nodes = nodes
+            graph.functions[i].links = links
+        }
+        graph.functions[index].inputs = inputs
+        graph.functions[index].outputs = outputs
+        return graph
     }
 
     @MainActor

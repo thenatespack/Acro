@@ -527,6 +527,45 @@ private final class Rig {
         #expect(rig.runtime.trace == nil)
     }
 
+    @Test func functionSignaturesKeepWiresThroughRenames() throws {
+        let graph = try decode("""
+            {"variables": [{"name": "r", "type": "float"}],
+             "nodes": [
+              {"id": "start", "type": "event.start"},
+              {"id": "call", "type": "function.call", "config": {"function": "scale"}, "inputs": {"x": 3, "k": 5}},
+              {"id": "set", "type": "var.set", "config": {"variable": "r"}}
+             ],
+             "links": [{"from": "start.out", "to": "call.in"}, {"from": "call.out", "to": "set.in"}, {"from": "call.y", "to": "set.value"}],
+             "functions": [{"name": "scale", "inputs": [{"name": "x"}, {"name": "k"}], "outputs": [{"name": "y"}],
+               "nodes": [{"id": "entry", "type": "function.entry"}, {"id": "mul", "type": "math.multiply", "inputs": {"b": 2}},
+                         {"id": "ret", "type": "function.return"}],
+               "links": [{"from": "entry.out", "to": "ret.in"}, {"from": "entry.x", "to": "mul.a"}, {"from": "entry.k", "to": "mul.b"},
+                         {"from": "mul.result", "to": "ret.y"}]}]}
+            """)
+        // Rename x → value and y → result, drop k, add an int output.
+        let edited = try graph.applying(VisualScriptEdit(signatures: [VisualScriptFunctionSignature(
+            function: "scale", inputs: [VisualScriptParameter(name: "value")],
+            outputs: [VisualScriptParameter(name: "result"), VisualScriptParameter(name: "count", type: .int)],
+            renamedInputs: ["x": "value"], renamedOutputs: ["y": "result"])])).graph
+        let function = try #require(edited.function("scale"))
+        #expect(function.inputs.map(\.name) == ["value"] && function.outputs.map(\.name) == ["result", "count"])
+        #expect(Set(function.links) == [link("entry.out", "ret.in"), link("entry.value", "mul.a"), link("mul.result", "ret.result")])
+        #expect(edited.links.contains(link("call.result", "set.value")))
+        #expect(edited.node("call")?.inputs == ["value": .int(3)], "literals follow the rename; the removed pin's goes")
+        #expect(VisualScriptValidator.validate(edited).filter { $0.severity == .error }.isEmpty, "\(VisualScriptValidator.validate(edited))")
+        let rig = Rig(edited)
+        rig.step()
+        #expect(rig.variable("r") == .float(6))
+
+        #expect(throws: VisualScriptEditError.self) {
+            try graph.applying(VisualScriptEdit(signatures: [VisualScriptFunctionSignature(function: "scale", inputs: [
+                VisualScriptParameter(name: "a"), VisualScriptParameter(name: "a")])]))
+        }
+        #expect(throws: VisualScriptEditError.self) {
+            try graph.applying(VisualScriptEdit(signatures: [VisualScriptFunctionSignature(function: "scale", outputs: [VisualScriptParameter(name: "out")])]))
+        }
+    }
+
     @Test func componentDefaultsListExposedVariables() {
         let graph = VisualScriptGraph(variables: [VisualScriptVariable(name: "speed", type: .float, defaultValue: .int(3)),
                                                   VisualScriptVariable(name: "secret", type: .int, exposed: false)])
