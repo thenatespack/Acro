@@ -218,6 +218,10 @@ public struct GridMapImporter: AssetImporter {
             var out = node
             out.transform = Self.mirror(node.transform)
             if let mesh = node.mesh { out.mesh = mirroredMesh(mesh, pieceName: pieceName) }
+            if var animator = node.animator {
+                animator.tracks = animator.tracks.map(GridMapImporter.mirrored)
+                out.animator = animator
+            }
             out.children = node.children.map { mirror($0, pieceName: pieceName) }
             return out
         }
@@ -272,6 +276,25 @@ public struct GridMapImporter: AssetImporter {
             for child in node.children where appendTriangles(of: child, parent: matrix, into: &mesh) { any = true }
             return any
         }
+    }
+
+    /// A transform animation track of a node mirrored across its parent's x axis: moving along x
+    /// and turning about y or z go the other way (M·T·M again); other tracks are unchanged.
+    static func mirrored(_ track: AnimationTrack) -> AnimationTrack {
+        guard ["Transform.position.x", "Transform.rotation.y", "Transform.rotation.z"].contains(track.target) else { return track }
+        var out = track
+        out.from = -track.from
+        out.to = -track.to
+        out.amplitude = -track.amplitude
+        out.offset = -track.offset
+        out.curve = AnimationCurve(keys: track.curve.keys.map { key in
+            var key = key
+            key.value = -key.value
+            key.inTangent = key.inTangent.map { -$0 }
+            key.outTangent = key.outTangent.map { -$0 }
+            return key
+        }, wrap: track.curve.wrap)
+        return out
     }
 
     /// `geometry` mirrored across x: positions, normals and tangents flipped, winding reversed.

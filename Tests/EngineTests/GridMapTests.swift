@@ -443,4 +443,36 @@ private func approx(_ a: Vec3, _ b: Vec3, _ tolerance: Float = 1e-4) -> Bool {
         #expect(heavyAfter.flatMap { find("Box", in: $0) }?.mesh == AssetReference(id, subAsset: "mesh/builtin cone"))
     }
 
+    @MainActor @Test func mirroredPiecesMirrorTheirAnimations() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        // A blade that slides along +x and turns about y and x.
+        let build = MeshBuild(parts: [MeshBuildPart(name: "Blade", position: Vec3(0.5, 0.5, 0))], animations: [
+            MeshBuildAnimation(tracks: [
+                MeshBuildTrack(part: "Blade", property: .position, keys: [MeshBuildKey(0, .zero), MeshBuildKey(1, Vec3(1, 2, 0))]),
+                MeshBuildTrack(part: "Blade", property: .rotation, keys: [MeshBuildKey(0, .zero), MeshBuildKey(1, Vec3(10, 90, 0))]),
+            ]),
+        ])
+        try database.createMeshBuild(build, at: "Pieces/Fan.meshbuild")
+        var map = GridMap(pieces: [GridPiece(name: "Fan", asset: "Pieces/Fan.meshbuild")])
+        map.paint("Fan", at: [GridCoord(0, 0, 0)])
+        map.paint("Fan", at: [GridCoord(1, 0, 0)], flipX: true)
+        let id = try database.createGridMap(map, at: "Levels/fans.gridmap")
+
+        let chunk = try #require(database.prefab(AssetReference(id))?.roots.first?.children.first?.children.first)
+        func animator(_ name: String) -> FieldAnimator? {
+            func find(_ node: PrefabNode) -> FieldAnimator? { node.animator ?? node.children.lazy.compactMap(find).first }
+            return chunk.children.first { $0.name == name }.flatMap(find)
+        }
+        func end(_ animator: FieldAnimator?, _ target: String) -> Float? {
+            animator?.tracks.first { $0.target == target }?.curve.keys.last?.value
+        }
+        let plain = try #require(animator("Fan 0,0,0")), flipped = try #require(animator("Fan 1,0,0"))
+        #expect(end(plain, "Transform.position.x") == 1 && end(flipped, "Transform.position.x") == -1)
+        #expect(end(plain, "Transform.position.y") == 2 && end(flipped, "Transform.position.y") == 2)
+        #expect(end(plain, "Transform.rotation.y") == 90 && end(flipped, "Transform.rotation.y") == -90)
+        #expect(end(plain, "Transform.rotation.x") == 10 && end(flipped, "Transform.rotation.x") == 10)
+    }
+
 }
