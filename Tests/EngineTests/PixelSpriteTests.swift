@@ -171,6 +171,53 @@ private func rgba(_ image: Image, _ x: Int, _ y: Int) -> [UInt8] {
         #expect(String(decoding: encoded, as: UTF8.self) == "[1,2,3,4]")
     }
 
+    @Test func importsASheetBySlicingAndQuantizing() throws {
+        // A 2 x 2 grid of 3 x 2 cells with a 1-pixel margin and spacing: red, green, blue, empty.
+        let colors: [[UInt8]] = [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]]
+        var px = [UInt8](repeating: 0, count: 9 * 7 * 4)
+        func set(_ x: Int, _ y: Int, _ c: [UInt8]) { for k in 0..<4 { px[(y * 9 + x) * 4 + k] = c[k] } }
+        for (i, c) in colors.enumerated() {
+            let ox = 1 + (i % 2) * 4, oy = 1 + (i / 2) * 3
+            set(ox, oy, c)
+            set(ox + 2, oy + 1, c)
+        }
+        set(1 + 1, 1, [255, 0, 0, 40]) // nearly transparent: dropped
+        let sheet = Image(width: 9, height: 7, pixels: px)
+        let slicing = PixelSheetSlicing(frameWidth: 3, frameHeight: 2, margin: 1, spacing: 1)
+        #expect(slicing.grid(width: 9, height: 7) == (2, 2))
+
+        let (sprite, report) = try PixelSprite.importingSheet(sheet, slicing: slicing)
+        #expect(sprite.width == 3 && sprite.height == 2)
+        #expect(sprite.frames.count == 3, "the empty last cell is dropped")
+        #expect(report.columns == 2 && report.rows == 2 && report.colorsFound == 3 && !report.quantized)
+        #expect(sprite.palette.count == 3)
+        for f in 0..<3 {
+            let i = try #require(sprite.palette.firstIndex(of: PixelColor(colors[f][0], colors[f][1], colors[f][2])))
+            let ch = PixelSprite.character(for: UInt8(i + 1))
+            #expect(sprite.compositeRows(frame: f) == ["\(ch)..", "..\(ch)"])
+        }
+
+        // A given palette maps to the nearest color; frameCount limits the frames.
+        let mapped = try PixelSprite(sheet: sheet, slicing: PixelSheetSlicing(frameWidth: 3, frameHeight: 2, margin: 1, spacing: 1, frameCount: 2),
+                                     palette: [PixelColor(200, 30, 30), PixelColor(20, 20, 20)])
+        #expect(mapped.frames.count == 2)
+        #expect(mapped.compositeRows(frame: 0) == ["0..", "..0"])
+        #expect(mapped.compositeRows(frame: 1) == ["1..", "..1"], "green is nearer the dark gray")
+
+        // More colors than allowed: median cut.
+        let (reduced, reducedReport) = try PixelSprite.importingSheet(sheet, slicing: slicing, maxColors: 2)
+        #expect(reduced.palette.count == 2 && reducedReport.quantized)
+        #expect(reducedReport.warnings.contains { $0.contains("reduced to 2") })
+
+        #expect(throws: PixelSheetImportError.self) { try PixelSprite(sheet: sheet, slicing: PixelSheetSlicing(frameWidth: 20, frameHeight: 2)) }
+        #expect(throws: PixelSheetImportError.self) { try PixelSprite(sheet: sheet, slicing: PixelSheetSlicing(frameWidth: 0, frameHeight: 2)) }
+
+        // Median cut keeps clusters apart.
+        let cut = PixelSprite.medianCut([PixelColor(250, 0, 0): 5, PixelColor(240, 10, 0): 5, PixelColor(0, 0, 250): 3, PixelColor(0, 10, 240): 3], to: 2)
+        #expect(cut.count == 2)
+        #expect(cut.contains { $0.r > 200 && $0.b < 20 } && cut.contains { $0.b > 200 && $0.r < 20 })
+    }
+
     @MainActor @Test func importsAsATextureAndHotReloads() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("PixelSpriteTests-\(UUID().uuidString)", isDirectory: true)
         let project = try Project.create(at: url, name: "Sprites")

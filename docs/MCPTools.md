@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 245 tools.
+named by its id (see README › Use the editor › AI control). 246 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -46,7 +46,7 @@ optional arguments.
 | `selection` | [`selection.clear`](#selectionclear), [`selection.get`](#selectionget), [`selection.set`](#selectionset) |
 | `settings` | [`settings.get`](#settingsget), [`settings.setEditor`](#settingsseteditor), [`settings.setProject`](#settingssetproject) |
 | `sfx` | [`sfx.edit`](#sfxedit), [`sfx.get`](#sfxget), [`sfx.new`](#sfxnew), [`sfx.open`](#sfxopen), [`sfx.play`](#sfxplay), [`sfx.set`](#sfxset) |
-| `sprite` | [`sprite.draw`](#spritedraw), [`sprite.edit`](#spriteedit), [`sprite.get`](#spriteget), [`sprite.new`](#spritenew), [`sprite.open`](#spriteopen), [`sprite.set`](#spriteset) |
+| `sprite` | [`sprite.draw`](#spritedraw), [`sprite.edit`](#spriteedit), [`sprite.get`](#spriteget), [`sprite.importSheet`](#spriteimportsheet), [`sprite.new`](#spritenew), [`sprite.open`](#spriteopen), [`sprite.set`](#spriteset) |
 | `stats` | [`stats.get`](#statsget) |
 | `table` | [`table.edit`](#tableedit), [`table.exportCsv`](#tableexportcsv), [`table.get`](#tableget), [`table.importCsv`](#tableimportcsv), [`table.new`](#tablenew), [`table.open`](#tableopen), [`table.query`](#tablequery), [`table.set`](#tableset) |
 | `terrain` | [`terrain.edit`](#terrainedit), [`terrain.get`](#terrainget), [`terrain.new`](#terrainnew), [`terrain.open`](#terrainopen), [`terrain.paint`](#terrainpaint), [`terrain.scatter`](#terrainscatter), [`terrain.sculpt`](#terrainsculpt), [`terrain.set`](#terrainset) |
@@ -3399,6 +3399,7 @@ Result:
 - `path`: string
 - `preview?`: [string]
 - `previewFrame?`: integer
+- `sheet?`: {colorsFound: integer, columns: integer, quantized: boolean, rows: integer}
 - `sprite?`: {frames?: [object], height?: integer, layers?: [object], palette?: [string], pivot?: number[2], pixelsPerUnit?: number, tags?: [object], width?: integer}
 - `tags`: [{from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
 - `texture`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
@@ -3447,6 +3448,7 @@ Result:
 - `path`: string
 - `preview?`: [string]
 - `previewFrame?`: integer
+- `sheet?`: {colorsFound: integer, columns: integer, quantized: boolean, rows: integer}
 - `sprite?`: {frames?: [object], height?: integer, layers?: [object], palette?: [string], pivot?: number[2], pixelsPerUnit?: number, tags?: [object], width?: integer}
 - `tags`: [{from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
 - `texture`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
@@ -3477,6 +3479,55 @@ Result:
 - `path`: string
 - `preview?`: [string]
 - `previewFrame?`: integer
+- `sheet?`: {colorsFound: integer, columns: integer, quantized: boolean, rows: integer}
+- `sprite?`: {frames?: [object], height?: integer, layers?: [object], palette?: [string], pivot?: number[2], pixelsPerUnit?: number, tags?: [object], width?: integer}
+- `tags`: [{from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
+- `texture`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `warnings`: [string]
+- `width`: integer
+
+### `sprite.importSheet`
+
+**Import Sprite Sheet**
+
+Turns a sprite sheet image (`image` asset, `imagePath` under Assets/, or a `file` anywhere; PNG, JPEG or TGA) into a .sprite: cells of `frameWidth` x `frameHeight` (or the size that gives `columns` x `rows`), after `margin` around the sheet and `spacing` between cells, read left to right, top to bottom, become frames (at most `frames`; empty cells at the end are dropped). Pixels map to `palette` (a preset or hex colors, nearest color) or, by default, to the sheet's own colors, reduced to `maxColors` (default 62) by median cut. Pixels less opaque than `alphaThreshold` (default 128) become transparent. Every frame lasts `duration` ms (default 100); `tags`, `pivot` and `pixelsPerUnit` are set as given. Writes a new file (`folder`, `name`; default next to the image, named after it) or replaces the .sprite at `into` (undoable). Returns the sprite summary, `sheet` {columns, rows, colorsFound, quantized} and warnings.
+
+Arguments:
+
+- `alphaThreshold?`: integer
+- `columns?`: integer
+- `duration?`: integer
+- `file?`: string
+- `folder?`: string
+- `frameHeight?`: integer
+- `frameWidth?`: integer
+- `frames?`: integer
+- `image?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `imagePath?`: string
+- `into?`: string
+- `margin?`: integer
+- `maxColors?`: integer
+- `name?`: string
+- `palette?`: any — Any JSON value.
+- `pivot?`: number[2] — [x, y]
+- `pixelsPerUnit?`: number
+- `rows?`: integer
+- `spacing?`: integer
+- `tags?`: [{from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `atlasColumns`: integer
+- `clips`: [{fps: number, frames: [integer], mode: string, name: string}]
+- `frames`: [integer]
+- `height`: integer
+- `layers`: [{name: string, opacity: number, visible: boolean}]
+- `palette`: [string]
+- `path`: string
+- `preview?`: [string]
+- `previewFrame?`: integer
+- `sheet?`: {colorsFound: integer, columns: integer, quantized: boolean, rows: integer}
 - `sprite?`: {frames?: [object], height?: integer, layers?: [object], palette?: [string], pivot?: number[2], pixelsPerUnit?: number, tags?: [object], width?: integer}
 - `tags`: [{from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
 - `texture`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
@@ -3511,6 +3562,7 @@ Result:
 - `path`: string
 - `preview?`: [string]
 - `previewFrame?`: integer
+- `sheet?`: {colorsFound: integer, columns: integer, quantized: boolean, rows: integer}
 - `sprite?`: {frames?: [object], height?: integer, layers?: [object], palette?: [string], pivot?: number[2], pixelsPerUnit?: number, tags?: [object], width?: integer}
 - `tags`: [{from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
 - `texture`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
@@ -3556,6 +3608,7 @@ Result:
 - `path`: string
 - `preview?`: [string]
 - `previewFrame?`: integer
+- `sheet?`: {colorsFound: integer, columns: integer, quantized: boolean, rows: integer}
 - `sprite?`: {frames?: [object], height?: integer, layers?: [object], palette?: [string], pivot?: number[2], pixelsPerUnit?: number, tags?: [object], width?: integer}
 - `tags`: [{from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
 - `texture`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).

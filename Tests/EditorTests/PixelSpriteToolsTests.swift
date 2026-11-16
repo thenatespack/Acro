@@ -254,4 +254,40 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(builder.mirror.contains(.horizontal))
         #expect(!builder.claimsKey(KeyEvent(key: .z, modifiers: mod)), "undo stays the editor's")
     }
+
+    @Test func importSheetWritesASpriteOrReplacesOne() throws {
+        let (session, folder) = try makeProject()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        // A 4 x 1 strip of 2 x 1 frames: [red, clear], [clear, blue].
+        let png = folder.appendingPathComponent("walk.png")
+        try Image(width: 4, height: 1, pixels: [255, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255]).writePNG(to: png)
+
+        let result = try call(session, "sprite.importSheet", ["file": png.path, "frameWidth": 2, "frameHeight": 1, "duration": 80,
+                                                              "tags": [["name": "walk", "from": 0, "to": 1]]])
+        #expect(result["path"] as? String == "walk.sprite")
+        #expect(result["frames"] as? [Int] == [80, 80])
+        #expect((result["sheet"] as? [String: Any])?["columns"] as? Int == 2)
+        #expect((result["clips"] as? [[String: Any]])?.first?["name"] as? String == "walk")
+        let id = try #require((result["asset"] as? String).flatMap { AssetID($0) })
+        let sprite = try #require(session.assets?.pixelSprite(of: id))
+        #expect(sprite.palette.count == 2)
+        #expect(sprite.compositeRows(frame: 0)[0].first != ".")
+        #expect(sprite.compositeRows(frame: 1)[0].first == ".")
+
+        // columns / rows give the frame size; `into` replaces an existing sprite as one undo step.
+        try call(session, "sprite.new", ["name": "Target"])
+        let replaced = try call(session, "sprite.importSheet", ["file": png.path, "columns": 4, "rows": 1, "palette": "pico8", "into": "Target.sprite"])
+        #expect(replaced["width"] as? Int == 1)
+        #expect((replaced["frames"] as? [Int])?.count == 4)
+        #expect((replaced["sheet"] as? [String: Any])?["quantized"] as? Bool == true, "pure red and blue map to the nearest pico8 colors")
+        #expect((replaced["palette"] as? [String])?.count == 16)
+        #expect(session.performUndo())
+        let targetID = try #require(session.assets?.id(forPath: "Target.sprite"))
+        let target = try #require(session.assets?.pixelSprite(of: targetID))
+        #expect(target.width == 16)
+
+        #expect(throws: (any Error).self) { try call(session, "sprite.importSheet", ["file": png.path]) }
+        #expect(throws: (any Error).self) { try call(session, "sprite.importSheet", ["file": png.path, "frameWidth": 8, "frameHeight": 8]) }
+        #expect(throws: (any Error).self) { try call(session, "sprite.importSheet", ["frameWidth": 2]) }
+    }
 }

@@ -1,7 +1,8 @@
 import Engine
 import Foundation
 
-/// The pixel sprite tools: `sprite.new`, `sprite.get`, `sprite.set`, `sprite.edit`, `sprite.draw`, `sprite.open`.
+/// The pixel sprite tools: `sprite.new`, `sprite.get`, `sprite.set`, `sprite.edit`, `sprite.draw`, `sprite.open`,
+/// `sprite.importSheet`.
 @MainActor
 public enum EditorPixelSpriteCommands {
     public static let all: [any EditorCommand.Type] = [
@@ -11,6 +12,7 @@ public enum EditorPixelSpriteCommands {
         PixelSpriteEditCommand.self,
         PixelSpriteDrawCommand.self,
         PixelSpriteOpenCommand.self,
+        PixelSpriteImportSheetCommand.self,
     ]
 
     /// What the tool docs say about the file format, shared by the tools.
@@ -222,6 +224,18 @@ public struct PixelSpriteResult: Codable, Equatable, Sendable {
     /// That frame's visible pixels as row strings (top visible layer wins).
     public var preview: [String]?
     public var warnings: [String]
+    /// sprite.importSheet: how the sheet was read.
+    public var sheet: SheetInfo?
+
+    public struct SheetInfo: Codable, Equatable, Sendable {
+        /// Whole cells found in the image.
+        public var columns: Int
+        public var rows: Int
+        /// Distinct colors in the sliced frames.
+        public var colorsFound: Int
+        /// Whether colors were merged or mapped to the nearest palette entry.
+        public var quantized: Bool
+    }
 }
 
 extension PixelSpriteResult {
@@ -730,5 +744,136 @@ public enum PixelSpriteOpenCommand: EditorCommand {
         session.openPixelSprite = id
         session.onOpenPixelSprite?(id)
         return PathResult(path: session.assets?.path(of: id) ?? "")
+    }
+}
+
+public enum PixelSpriteImportSheetCommand: EditorCommand {
+    public struct Arguments: Codable, Equatable, Sendable {
+        /// The sheet: an image asset in the project (PNG, JPEG, TGA)…
+        public var image: AssetReference?
+        /// …or its path relative to `Assets/`…
+        public var imagePath: String?
+        /// …or an image file anywhere (absolute, or relative to the working directory).
+        public var file: String?
+        /// Frame size in pixels (1-256). Or give `columns` / `rows` and it is worked out.
+        public var frameWidth: Int?
+        public var frameHeight: Int?
+        public var columns: Int?
+        public var rows: Int?
+        /// Pixels around the sheet and between cells (default 0).
+        public var margin: Int?
+        public var spacing: Int?
+        /// At most this many frames (default: every cell; empty cells at the end are dropped).
+        public var frames: Int?
+        /// A preset name or hex colors to map the pixels to (nearest color). Default: the sheet's own colors.
+        public var palette: JSONValue?
+        /// With the sheet's own colors, at most this many (median cut; default and maximum 62).
+        public var maxColors: Int?
+        /// Pixels less opaque than this (0-255, default 128) become transparent.
+        public var alphaThreshold: Int?
+        /// Frame duration in ms (default 100).
+        public var duration: Int?
+        public var tags: [PixelSprite.Tag]?
+        public var pivot: Vec2?
+        public var pixelsPerUnit: Float?
+        /// Where the new .sprite goes (default: the image's folder, or the Assets root) and its name
+        /// (default: the image's name).
+        public var folder: String?
+        public var name: String?
+        /// Or an existing .sprite to replace (undoable).
+        public var into: String?
+        public init(image: AssetReference? = nil, imagePath: String? = nil, file: String? = nil, frameWidth: Int? = nil,
+                    frameHeight: Int? = nil, columns: Int? = nil, rows: Int? = nil, margin: Int? = nil, spacing: Int? = nil,
+                    frames: Int? = nil, palette: JSONValue? = nil, maxColors: Int? = nil, alphaThreshold: Int? = nil,
+                    duration: Int? = nil, tags: [PixelSprite.Tag]? = nil, pivot: Vec2? = nil, pixelsPerUnit: Float? = nil,
+                    folder: String? = nil, name: String? = nil, into: String? = nil) {
+            self.image = image
+            self.imagePath = imagePath
+            self.file = file
+            self.frameWidth = frameWidth
+            self.frameHeight = frameHeight
+            self.columns = columns
+            self.rows = rows
+            self.margin = margin
+            self.spacing = spacing
+            self.frames = frames
+            self.palette = palette
+            self.maxColors = maxColors
+            self.alphaThreshold = alphaThreshold
+            self.duration = duration
+            self.tags = tags
+            self.pivot = pivot
+            self.pixelsPerUnit = pixelsPerUnit
+            self.folder = folder
+            self.name = name
+            self.into = into
+        }
+    }
+
+    public static let id: CommandID = "sprite.importSheet"
+    public static let title = "Import Sprite Sheet"
+    public static let doc = "Turns a sprite sheet image (`image` asset, `imagePath` under Assets/, or a `file` anywhere; PNG, JPEG or TGA) into a .sprite: cells of `frameWidth` x `frameHeight` (or the size that gives `columns` x `rows`), after `margin` around the sheet and `spacing` between cells, read left to right, top to bottom, become frames (at most `frames`; empty cells at the end are dropped). Pixels map to `palette` (a preset or hex colors, nearest color) or, by default, to the sheet's own colors, reduced to `maxColors` (default 62) by median cut. Pixels less opaque than `alphaThreshold` (default 128) become transparent. Every frame lasts `duration` ms (default 100); `tags`, `pivot` and `pixelsPerUnit` are set as given. Writes a new file (`folder`, `name`; default next to the image, named after it) or replaces the .sprite at `into` (undoable). Returns the sprite summary, `sheet` {columns, rows, colorsFound, quantized} and warnings."
+    public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
+    public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
+    public static func run(_ arguments: Arguments, in session: EditorSession) throws -> PixelSpriteResult {
+        guard let assets = session.assets else { throw CommandError.failed(noProjectReason) }
+        // The image and the name / folder it suggests.
+        let image: Image
+        var suggested = (folder: "", name: "Sheet")
+        if let file = arguments.file {
+            guard let url = session.fileURL(forPath: file, title) else { throw CommandError.failed("\(title): \(file) is outside the allowed folders") }
+            do { image = try ImageDecoder.decode(contentsOf: url) } catch { throw CommandError.failed("\(title): can't read \(file): \(error)") }
+            suggested.name = url.deletingPathExtension().lastPathComponent
+        } else {
+            guard arguments.image != nil || arguments.imagePath != nil else {
+                throw CommandError.failed("\(title): give the sheet as `image` (an asset), `imagePath` (under Assets/) or `file`")
+            }
+            let id = try session.resolveAsset(arguments.image, path: arguments.imagePath, title)
+            let path = assets.path(of: id) ?? ""
+            do { image = try ImageDecoder.decode(assets.fileData(of: id)) } catch {
+                throw CommandError.failed("\(title): \(path) isn't a readable image: \(error)")
+            }
+            suggested = (EditorSession.parentFolder(of: path), ((path as NSString).lastPathComponent as NSString).deletingPathExtension)
+        }
+
+        let margin = max(arguments.margin ?? 0, 0), spacing = max(arguments.spacing ?? 0, 0)
+        func size(_ given: Int?, _ count: Int?, _ total: Int, _ axis: String) throws -> Int {
+            if let given { return given }
+            if let count {
+                guard count > 0 else { throw CommandError.failed("\(title): \(axis == "width" ? "columns" : "rows") must be at least 1") }
+                return (total - 2 * margin + spacing) / count - spacing
+            }
+            throw CommandError.failed("\(title): give `frameWidth` and `frameHeight` (or `columns` and `rows`) for the \(image.width) x \(image.height) sheet")
+        }
+        let fw = try size(arguments.frameWidth, arguments.columns, image.width, "width")
+        let fh = try size(arguments.frameHeight ?? (arguments.rows == nil ? arguments.frameWidth : nil), arguments.rows, image.height, "height")
+        let slicing = PixelSheetSlicing(frameWidth: fw, frameHeight: fh, margin: margin, spacing: spacing, frameCount: arguments.frames)
+        let imported: (sprite: PixelSprite, report: PixelSprite.SheetImportReport)
+        do {
+            imported = try PixelSprite.importingSheet(
+                image, slicing: slicing, palette: try arguments.palette.map(PixelSpriteArguments.palette),
+                maxColors: arguments.maxColors ?? PixelSprite.maxColors,
+                alphaThreshold: UInt8(min(max(arguments.alphaThreshold ?? 128, 0), 255)), duration: arguments.duration ?? 100)
+        } catch let error as PixelSheetImportError {
+            throw CommandError.failed("\(title): \(error)")
+        }
+        var sprite = imported.sprite
+        let report = imported.report
+        if let tags = arguments.tags { sprite.tags = tags }
+        if let pivot = arguments.pivot { sprite.pivot = pivot }
+        if let ppu = arguments.pixelsPerUnit { sprite.pixelsPerUnit = ppu }
+
+        let id: AssetID
+        var warnings = report.warnings
+        if let into = arguments.into {
+            (id, _) = try session.resolvePixelSprite(PixelSpriteGetCommand.Arguments(path: into), title)
+            warnings += try session.commands.require(session.applyPixelSprite(sprite, to: id, label: title), title)
+        } else {
+            id = try session.commands.require(session.createPixelSpriteAsset(
+                in: arguments.folder ?? suggested.folder, name: arguments.name ?? suggested.name, sprite: sprite), title)
+        }
+        var result = PixelSpriteResult(id, sprite, warnings: warnings, full: false, previewFrame: 0, in: session)
+        result.sheet = .init(columns: report.columns, rows: report.rows, colorsFound: report.colorsFound, quantized: report.quantized)
+        return result
     }
 }
