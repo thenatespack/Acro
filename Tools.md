@@ -116,7 +116,9 @@ new optional vertex paint stream (vertex buffer 2, attributes 14-15, mesh_paint.
 mesh_paint(_mask).frag; meshes without it render byte-identically), different textures cross-fade
 through alpha-blended "<sculpt>/<child> blend" layers (depth less-or-equal on the same surface, no
 dither). Leaf cards get a seeded per-card color jitter in the same stream. Mossy Stone example.
-Armchair cushions and the Teapot knob now blend. Timings: see the agent report (debug imports).
+Armchair cushions and the Teapot knob now blend. Debug editor (loaded machine), before -> after:
+Armchair new 12.1 -> 11.6 s, set+import ~6.8 -> ~7.0 s; Teapot new 5.1 -> 5.7 s, set+import ~1.85 ->
+~2.1 s; the blend pass alone on a 135k-triangle two-look sculpt is 0.37 s debug (of 5.4 s meshing).
 Blending gaps: only the nearest boundary counts (a vertex near two different looks blends with one;
 triple points get a third each at the center only); groups 8+ of one sculpt don't blend; a look with
 a `material` asset or opacity < 1 keeps a sharp line; blend layers have no edge wear and copy (not
