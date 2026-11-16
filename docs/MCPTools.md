@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 245 tools.
+named by its id (see README › Use the editor › AI control). 246 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -57,7 +57,7 @@ optional arguments.
 | `ui` | [`ui.click`](#uiclick), [`ui.drag`](#uidrag), [`ui.find`](#uifind), [`ui.hover`](#uihover), [`ui.key`](#uikey), [`ui.scroll`](#uiscroll), [`ui.snapshot`](#uisnapshot), [`ui.type`](#uitype) |
 | `uiLayout` | [`uiLayout.edit`](#uilayoutedit), [`uiLayout.get`](#uilayoutget), [`uiLayout.new`](#uilayoutnew), [`uiLayout.open`](#uilayoutopen), [`uiLayout.set`](#uilayoutset) |
 | `vfx` | [`vfx.edit`](#vfxedit), [`vfx.get`](#vfxget), [`vfx.new`](#vfxnew), [`vfx.open`](#vfxopen), [`vfx.set`](#vfxset) |
-| `view` | [`view.appearance`](#viewappearance), [`view.frameSelection`](#viewframeselection), [`view.gameCamera`](#viewgamecamera), [`view.pick`](#viewpick), [`view.screenshot`](#viewscreenshot) |
+| `view` | [`view.appearance`](#viewappearance), [`view.frameSelection`](#viewframeselection), [`view.gameCamera`](#viewgamecamera), [`view.pick`](#viewpick), [`view.scenePostFX`](#viewscenepostfx), [`view.screenshot`](#viewscreenshot) |
 | `vscript` | [`vscript.attach`](#vscriptattach), [`vscript.edit`](#vscriptedit), [`vscript.get`](#vscriptget), [`vscript.new`](#vscriptnew), [`vscript.nodes`](#vscriptnodes), [`vscript.open`](#vscriptopen), [`vscript.set`](#vscriptset), [`vscript.validate`](#vscriptvalidate) |
 
 ## activity
@@ -4945,6 +4945,22 @@ Result:
 - `normal?`: number[3] — [x, y, z]
 - `origin`: number[3] — [x, y, z]
 - `point?`: number[3] — [x, y, z]
+
+### `view.scenePostFX`
+
+**Scene View Post-FX** · _idempotent_
+
+Shows post-processing in the Scene view (the View menu's Scene Post-FX items): `mode` off (the plain scene, the default), on (the look the game would use at the editor camera: the scene camera's post-fx profile or the scene's PostProcess component, with the PostFXVolumes the editor camera is in blended over it) or split (plain left of `split`, 0.05-0.95 of the width, the look right of it). Without arguments it only returns the setting. view.screenshot {source: "window"} shows the result (the "viewport" source renders without it).
+
+Arguments:
+
+- `mode?`: "off" \| "on" \| "split"
+- `split?`: number
+
+Result:
+
+- `mode`: "off" \| "on" \| "split"
+- `split`: number
 
 ### `view.screenshot`
 

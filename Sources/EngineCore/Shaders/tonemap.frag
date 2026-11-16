@@ -17,6 +17,7 @@ layout(set = 2, binding = 9) uniform texture2D sceneImage;
 layout(set = 2, binding = 10) uniform texture2D bloomImage;     // final bloom level (half size)
 layout(set = 2, binding = 11) uniform texture2D exposureImage;  // 1x1, r: auto exposure in EV
 layout(set = 2, binding = 12) uniform texture2D lutImage;       // LUT strip: N² x N, sRGB-encoded values
+layout(set = 2, binding = 13) uniform texture2D beforeImage;    // the split preview's left: the scene before depth of field
 
 layout(push_constant) uniform PushConstants {
     float exposure;        // 2^EV
@@ -107,7 +108,7 @@ void main() {
     if (pc.fx.w > 0.0) {
         float line = pc.fx.w * float(size.x);
         if (float(p.x) < line - 1.0) {
-            vec3 c = texelFetch(sampler2D(sceneImage, pointSampler), p, 0).rgb;
+            vec3 c = texelFetch(sampler2D(beforeImage, pointSampler), p, 0).rgb;
             outColor = vec4(clamp(neutral(max(c, vec3(0.0))), 0.0, 1.0), 1.0);
             return;
         }

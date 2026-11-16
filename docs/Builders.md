@@ -55,9 +55,11 @@ Depth of field (`depthOfField`) blurs what is nearer or farther than `focusDista
 
 LUT grading (`lut`, `lutIntensity`) applies a 3D color lookup table right after tonemapping, before lift, gamma and gain (so screen fades still reach their color). `lut` is a path under `Assets/` (or `asset:<id>`) of a `.cube` file (a 3D LUT from Resolve, Photoshop and other grading tools, up to 64³) or of a LUT strip image: N² × N pixels, blue slices side by side, with `"importer": "lut"` in its `.meta` sidecar. Both import as an unmipmapped linear texture, the LUT works on sRGB-encoded values like grading tools do, and a profile ships its LUT when the game is cooked.
 
-Tools: `postfx.new`, `postfx.get`, `postfx.set`, `postfx.edit`, `postfx.assign`, `postfx.open`.
+The Scene view can show the look too: the View menu's Scene Post-FX items (or `view.scenePostFX {mode, split}`) switch between Off (the plain scene, the default), On and Split (plain on the left of the line, the look on the right). It uses the look the game would at the editor camera: the scene camera's profile or the scene's `PostProcess` component, with the volumes the editor camera is in blended over it. Gizmos drawn into the view are graded with it.
 
-The tab previews on an 8-bit image, so bloom and bokeh look weaker there than in the game.
+Tools: `postfx.new`, `postfx.get`, `postfx.set`, `postfx.edit`, `postfx.assign`, `postfx.open`, `view.scenePostFX`.
+
+The tab and the Scene view preview on an 8-bit image, so bloom and bokeh look weaker there than in the game. The split's left side is the scene before every effect (no depth of field or LUT).
 
 ## Terrain Builder
 

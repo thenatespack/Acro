@@ -12,6 +12,7 @@ public enum EditorPostFXCommands {
         PostFXEditCommand.self,
         PostFXAssignCommand.self,
         PostFXOpenCommand.self,
+        ViewScenePostFXCommand.self,
     ]
 
     /// What the tool docs say about the file format, shared by the tools.

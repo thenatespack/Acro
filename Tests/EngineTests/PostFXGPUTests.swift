@@ -198,6 +198,38 @@ import Testing
         if let metal = results["metal"], let vulkan = results["vulkan"] { #expect(metal == vulkan) }
     }
 
+    /// The before/after split the Scene view and the Post-FX tab show, with depth of field and a
+    /// LUT in the look: left of the line is the plain scene (no blur, no LUT), the same bytes as
+    /// the split of a plain look; right of it the look. Same bytes on both backends.
+    @Test func splitPreviewShowsThePlainSceneBeforeEveryEffect() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("PostFXGPUTests-\(UUID().uuidString)", isDirectory: true)
+        let project = try Project.create(at: url, name: "PostFXGPUSplit")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let assets = AssetDatabase(project: project)
+        try Data(postFXLUTTestsCube(size: 9) { Vec3($0.y, $0.z, $0.x) }.utf8).write(to: project.url(forAssetPath: "swap.cube"))
+        assets.scan()
+        var look = PostFXPreset.warm.settings
+        look.filmGrain = 0
+        look.depthOfField = true
+        look.focusDistance = 2.6
+        look.aperture = 1.4
+        look.focalLength = 100
+        look.maxBlur = 8
+        look.lut = "swap.cube"
+        let plain = try Self.render([.passthrough], split: 0.5, depth: true, assets: assets)
+        let looks = try Self.render([look], split: 0.5, depth: true, assets: assets)
+        let line = Self.size.width / 2
+        for (backend, images) in looks.sorted(by: { $0.key < $1.key }) {
+            let before = try #require(plain[backend]?.first), after = images[0]
+            print("PostFXGPUTests split \(backend): " + Self.hash(after))
+            Self.dump([before, after], "split-\(backend)")
+            #expect(Self.meanDifference(after, before, rows: 0..<Self.size.height, columns: 0..<(line - 1)) == 0, "\(backend): left is plain")
+            #expect(Self.meanDifference(after, before, rows: 0..<Self.size.height, columns: (line + 1)..<Self.size.width) > 5, "\(backend): right is the look")
+            for y in 0..<Self.size.height { #expect(after[(y * Self.size.width + line) * 4] == 255) }  // the white line
+        }
+        if let metal = looks["metal"], let vulkan = looks["vulkan"] { #expect(metal == vulkan) }
+    }
+
     /// The game path: with depth of field on (here from the scene's `PostProcess`, auto-focused
     /// on the near cube), `SceneRenderer.prepare` / `renderShadows` hand the post-processor the
     /// camera's depth at the render size; with it off they hand it none.

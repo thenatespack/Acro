@@ -458,8 +458,11 @@ public final class PostProcessor {
 
     /// What `render` produced for `drawOutput`.
     public struct Inputs {
-        /// The scene after `sceneEffect`, if it changed it.
+        /// The scene after `sceneEffect` and depth of field, if they changed it.
         var scene: GPUTexture?
+        /// What the split preview's "before" side shows: the scene after `sceneEffect`, before
+        /// depth of field (nil: `scene`).
+        var before: GPUTexture?
         var bloom: GPUTexture?
         var exposure: GPUTexture?
     }
@@ -474,6 +477,7 @@ public final class PostProcessor {
             inputs.scene = output
         }
         if settings.depthOfField, let output = renderDepthOfField(scene: scene, settings: settings) {
+            inputs.before = scene
             scene = output
             inputs.scene = output
         } else if !settings.depthOfField {
@@ -516,6 +520,7 @@ public final class PostProcessor {
         pass.setTexture(inputs.exposure ?? black, index: 3)
         let lut = settings.lut.isEmpty || settings.lutIntensity <= 0 ? nil : lutTexture(settings.lut)
         pass.setTexture(lut ?? black, index: 4)
+        pass.setTexture(inputs.before ?? scene, index: 5)
         pass.setSampler(pointSampler, index: 1)
         let bloom = inputs.bloom
         grainTime += 1.0 / 60
