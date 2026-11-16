@@ -1241,6 +1241,7 @@ public final class EditorApp: Game, EditorHost {
             if !overlayBefore { for event in input.keyPresses { _ = launcher.handleShortcut(event) } }
         } else {
             for command in shortcuts.actions(for: input.keyPresses, focus: focus) { invoke(command) }
+            if !focus.textEditing, !focus.overlayOpen { gridMapWorkspace.handleKeys(input.keyPresses, pointer: uiPoint(input.mousePosition)) }
             updateViewport(engine: engine, dt: dt, keyboardFree: !focus.textEditing)
             meshWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
             vfxWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
