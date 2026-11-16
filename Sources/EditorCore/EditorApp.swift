@@ -156,8 +156,10 @@ public final class EditorApp: Game, EditorHost {
     public private(set) var uiWorkspace: UIBuilderWorkspace!
     /// The Dialogue tab (DialogueWorkspace.swift).
     public private(set) var dialogueWorkspace: DialogueWorkspace!
-    /// Shows `DialoguePlayer` conversations over the Game view while playing.
-    let gameDialogueBox = DialogueBox(name: "gameDialogueBox")
+    /// Shows `DialoguePlayer` conversations over the Game view while playing: the default box,
+    /// or the `.ui` layout a conversation names.
+    let gameDialogue = DialogueView(box: DialogueBox(name: "gameDialogueBox"), name: "gameDialogue")
+    var gameDialogueBox: DialogueBox { gameDialogue.box }
     /// The game UI layer's place over the Game view (`UILayoutPlayer` layouts while playing).
     let gameUILayerHost = Widget(name: "gameUILayerHost")
     /// The Timeline tab (TimelineWorkspace.swift).
@@ -758,10 +760,11 @@ public final class EditorApp: Game, EditorHost {
             guard let id = session.assets?.assetID(forTableValue: path) else { return nil }
             return sceneRenderer?.texture(TextureHandle(AssetReference(id).description)) ?? thumbnails?.thumbnail(AssetReference(id), kind: .texture)
         }
-        gameDialogueBox.style.position = .absolute(UIAnchor.bottom.anchors(offset: Vec2(0, 16)))
-        gameDialogueBox.style.width = 560
-        gameWidget.addChild(gameDialogueBox)
-        session.dialoguePresenter = gameDialogueBox
+        gameDialogue.assets = { [unowned self] in session.assets }
+        gameDialogue.images = { [unowned self] path in projectTexture(path, fullSize: true) }
+        dialogueWorkspace.images = { [unowned self] path in projectTexture(path, fullSize: false) }
+        gameWidget.addChild(gameDialogue)
+        session.dialoguePresenter = gameDialogue
         visualScriptWorkspace = VisualScriptWorkspace(session: session)
         meshWorkspace.device = engine?.device
         if let quality = engine?.quality { meshWorkspace.quality = quality }
@@ -910,6 +913,17 @@ public final class EditorApp: Game, EditorHost {
         ui.root.addChild(column)
     }
 
+    /// A project texture by path under `Assets/` or "asset:<id>" (dialogue portraits and layout
+    /// images): the scene renderer's full-size copy (only while it renders, `fullSize`), else
+    /// the asset browser's thumbnail. The Dialogue tab uses thumbnails: a renderer upload started
+    /// while nothing renders the scene never finishes, which holds MCP replies (they wait for loads).
+    private func projectTexture(_ path: String, fullSize: Bool) -> GPUTexture? {
+        guard let assets = session.assets, let id = assets.assetID(forTableValue: path) else { return nil }
+        let reference = AssetReference(id)
+        let full = fullSize ? sceneRenderer?.texture(TextureHandle(reference.description)) : nil
+        return full ?? thumbnails?.thumbnail(reference, kind: .texture)
+    }
+
     /// Dropdown options: the renderer's code-registered keys, then the project's assets.
     private func makeAssetChoices() -> AssetChoices {
         AssetChoices(
@@ -929,6 +943,7 @@ public final class EditorApp: Game, EditorHost {
     private func assetsChanged() {
         sceneRenderer?.assets = session.assets
         thumbnails?.assets = session.assets
+        if session.assets !== shownAssets { gameDialogue.clearLayouts() }
         meshBoundsCache.removeAll()
         // Rebuilding the dropdowns resets the inspector's grid, so only when the choices changed
         // (not for every reimport, such as a material edited live).
@@ -1241,6 +1256,9 @@ public final class EditorApp: Game, EditorHost {
             mcp.pump()
             if mcp.stdioClientDisconnected { engine.quit(reason: "the MCP stdio client disconnected") }
         }
+        // Finished background loads, also while no view renders the scene (the scene renderer
+        // applies them when it draws; a builder tab in front would otherwise leave them loading).
+        session.assets?.pump()
 
         // What the UI does with the keyboard, before and after it handles this frame's input.
         func textEditing() -> Bool { ui.focusedWidget?.wantsTextInput == true || input.isTextInputActive }

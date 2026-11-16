@@ -23,7 +23,8 @@ public struct DialoguePlayer: Component, Codable, Equatable, Sendable {
     public static var fieldHints: [String: FieldHints] {
         ["dialogue": FieldHints(tooltip: "A .dialogue file: a path under Assets/ or asset:<id>"),
          "startNode": FieldHints(tooltip: "The node to start at (empty: the dialogue's start)"),
-         "autoStart": FieldHints(tooltip: "Start the conversation when play begins")]
+         "autoStart": FieldHints(tooltip: "Start the conversation when play begins"),
+         "uiLayout": FieldHints(tooltip: "A .ui layout that shows the conversation (empty: the dialogue's own, else the default box)")]
     }
 
     /// The `.dialogue` file: a path under `Assets/` or "asset:<id>".
@@ -32,30 +33,45 @@ public struct DialoguePlayer: Component, Codable, Equatable, Sendable {
     public var startNode: String
     /// Starts when the game starts playing.
     public var autoStart: Bool
+    /// The `.ui` layout that shows this conversation (path under `Assets/` or "asset:<id>"; see
+    /// `DialogueLayoutKeys`). "" uses the dialogue file's `uiLayout`, else the default box.
+    public var uiLayout: String
 
-    public init(dialogue: String = "", startNode: String = "", autoStart: Bool = false) {
+    public init(dialogue: String = "", startNode: String = "", autoStart: Bool = false, uiLayout: String = "") {
         self.dialogue = dialogue
         self.startNode = startNode
         self.autoStart = autoStart
+        self.uiLayout = uiLayout
     }
 
-    private enum CodingKeys: String, CodingKey { case dialogue, startNode, autoStart }
+    private enum CodingKeys: String, CodingKey { case dialogue, startNode, autoStart, uiLayout }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(dialogue: try c.decodeIfPresent(String.self, forKey: .dialogue) ?? "",
                   startNode: try c.decodeIfPresent(String.self, forKey: .startNode) ?? "",
-                  autoStart: try c.decodeIfPresent(Bool.self, forKey: .autoStart) ?? false)
+                  autoStart: try c.decodeIfPresent(Bool.self, forKey: .autoStart) ?? false,
+                  uiLayout: try c.decodeIfPresent(String.self, forKey: .uiLayout) ?? "")
     }
 }
 
-/// Shows a conversation. The default is the `DialogueBox` widget; a `.ui` layout or a game's
+/// Shows a conversation. The default is the `DialogueBox` widget; a `.ui` layout
+/// (`DialogueLayoutPresenter`, or `DialogueView`, which switches between the two) or a game's
 /// own UI can conform instead. `present` is called with the runner whenever its state changes
 /// (nil when nothing is shown); the presenter answers with `runner.advance()` and
 /// `runner.choose(_:)`.
+///
+/// The director calls `present(_:layout:)`, which passes the `.ui` layout the conversation
+/// asks for (the `DialoguePlayer`'s `uiLayout`, else the dialogue's; "" for none). Presenters
+/// that don't care implement only `present(_:)`.
 @MainActor
 public protocol DialoguePresenter: AnyObject {
     func present(_ runner: DialogueRunner?)
+    func present(_ runner: DialogueRunner?, layout: String)
+}
+
+extension DialoguePresenter {
+    public func present(_ runner: DialogueRunner?, layout: String) { present(runner) }
 }
 
 /// The runtime side of `DialoguePlayer`s in one world: a `DialogueRunner` per entity, variables
@@ -70,8 +86,8 @@ public final class DialogueDirector {
     /// Shows the active conversation (set it to a `DialogueBox` added to your UI).
     public var presenter: (any DialoguePresenter)? {
         didSet {
-            oldValue?.present(nil)
-            presenter?.present(activeRunner)
+            oldValue?.present(nil, layout: "")
+            presenter?.present(activeRunner, layout: activeLayout)
         }
     }
     /// Variables every dialogue starts with and writes back to, so state carries between
@@ -111,6 +127,14 @@ public final class DialogueDirector {
     /// The active conversation's runner.
     public var activeRunner: DialogueRunner? { activeEntity.flatMap { players[$0]?.runner } }
 
+    /// The `.ui` layout the active conversation asks for: its `DialoguePlayer`'s `uiLayout`, else
+    /// the dialogue's; "" for the default box (or when nothing is shown).
+    public var activeLayout: String {
+        guard let entity = activeEntity else { return "" }
+        if let own = world?.get(DialoguePlayer.self, for: entity)?.uiLayout, !own.isEmpty { return own }
+        return players[entity]?.runner.dialogue.uiLayout ?? ""
+    }
+
     /// The runner of `entity`'s `DialoguePlayer` (loaded now if needed); nil when it has none or
     /// its dialogue can't be read.
     public func runner(for entity: Entity) -> DialogueRunner? {
@@ -126,7 +150,7 @@ public final class DialogueDirector {
         let component = world?.get(DialoguePlayer.self, for: entity)
         activeEntity = entity
         runner.start(at: node ?? component.flatMap { $0.startNode.isEmpty ? nil : $0.startNode })
-        presenter?.present(runner.isActive ? runner : nil)
+        presenter?.present(runner.isActive ? runner : nil, layout: activeLayout)
         return runner
     }
 
@@ -166,7 +190,7 @@ public final class DialogueDirector {
         }
         for entity in seen { sync(entity) }
         for entity in players.keys where !seen.contains(entity) {
-            if activeEntity == entity { activeEntity = nil; presenter?.present(nil) }
+            if activeEntity == entity { activeEntity = nil; presenter?.present(nil, layout: "") }
             players[entity] = nil
         }
         for entity in autoStart where players[entity] != nil {
@@ -201,10 +225,10 @@ public final class DialogueDirector {
         runner.onStateChange { [weak self, weak runner] state in
             guard let self, activeEntity == entity else { return }
             switch state {
-            case .line, .choices: presenter?.present(runner)
+            case .line, .choices: presenter?.present(runner, layout: activeLayout)
             case .idle, .finished:
                 activeEntity = nil
-                presenter?.present(nil)
+                presenter?.present(nil, layout: "")
             }
         }
         let autoStarted = players[entity]?.autoStarted ?? false

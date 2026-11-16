@@ -592,17 +592,18 @@ public struct UIBuild: Codable, Equatable, Sendable {
         ])
     }
 
-    /// Layouts to start from by name: "hud" (`starter`), "menu", "empty".
+    /// Layouts to start from by name: "hud" (`starter`), "menu", "dialogue" (DialogueLayout.swift), "empty".
     public static func preset(_ name: String) -> UIBuild? {
         switch name {
         case "hud": starter
         case "menu": menu
+        case "dialogue": dialogue
         case "empty": UIBuild()
         default: nil
         }
     }
 
-    public static let presetNames = ["hud", "menu", "empty"]
+    public static let presetNames = ["hud", "menu", "dialogue", "empty"]
 
     // MARK: Lookup
 

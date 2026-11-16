@@ -5,9 +5,10 @@ import Foundation
 //
 // - The graph (DialogueGraphView) shows the nodes and links: click to select, drag to move,
 //   drag from a node's dot onto another node to link them, drag empty space to pan.
-// - Below it, a play-through preview: the game's default `DialogueBox` driven by a
-//   `DialogueRunner`, with the variables it tracks (editable) and the node it is at
-//   highlighted in the graph. It follows edits to the file live.
+// - Below it, a play-through preview: the game's default `DialogueBox` (or the dialogue's `.ui`
+//   layout through a `DialogueLayoutPresenter`) driven by a `DialogueRunner`, with the variables
+//   it tracks (editable) and the node it is at highlighted in the graph. It follows edits to the
+//   file live.
 // - The sidebar edits the selected node (type, speaker, text, key, links, options, condition,
 //   changes, event), then the start node, speakers and variables, and lists the problems.
 //
@@ -27,6 +28,17 @@ public final class DialogueWorkspace {
     /// The preview's player and its box.
     public private(set) var runner: DialogueRunner?
     public let previewBox = DialogueBox(name: "dialoguePreviewBox")
+    /// The preview's `.ui` layout when the dialogue names one (`uiLayout`); nil shows `previewBox`.
+    public private(set) var previewLayout: DialogueLayoutPresenter?
+    /// Loads textures by path (speaker portraits, layout images); the editor sets it.
+    public var images: ((String) -> GPUTexture?)? {
+        didSet {
+            previewBox.portraitTextures = images
+            previewLayout?.view.images = images
+        }
+    }
+    private var previewLayoutPath = ""
+    private let previewHost = DialogueLayoutPreviewHost()
 
     private let title = Label("Dialogue", role: .heading, name: "dialogueTitle")
     private let sidebar = VStack(spacing: 6, padding: EdgeInsets(top: 8, left: 10, bottom: 8, right: 10), name: "dialogueSidebar")
@@ -72,7 +84,7 @@ public final class DialogueWorkspace {
         asset = nil
         pending = nil
         runner = nil
-        previewBox.present(nil)
+        presentPreview(nil)
         showEmpty()
     }
 
@@ -116,11 +128,13 @@ public final class DialogueWorkspace {
         let fromSelected = Button("Play from Selected", name: "dialoguePlaySelected") { [unowned self] in playFrom(selectedNode) }
         fromSelected.tooltip = "Start the preview at the selected node, keeping the variables"
         let previewButtons = HStack(spacing: 6, [restart, fromSelected, previewStatus, Spacer()])
-        previewBox.style.grow = 1
+        previewHost.style.grow = 1
+        previewHost.style.shrink = 1
+        previewHost.addChild(previewBox)
         let variablesScroll = ScrollView(variablesHost, name: "dialoguePreviewVariablesScroll")
         variablesScroll.style.width = 240
-        let previewRow = HStack(spacing: 10, alignment: .stretch, [previewBox, variablesScroll])
-        previewRow.style.height = 190
+        let previewRow = HStack(spacing: 10, alignment: .stretch, [previewHost, variablesScroll])
+        previewRow.style.height = 230
         let preview = VStack(spacing: 6, padding: EdgeInsets(top: 8, left: 10, bottom: 8, right: 10), name: "dialoguePreview",
                              [previewButtons, previewRow])
 
@@ -293,8 +307,8 @@ public final class DialogueWorkspace {
         runner.onVariableChange { [unowned self] _, _ in variablesDirty = true }
         runner.onStateChange { [unowned self] _ in previewMoved() }
         self.runner = runner
-        previewBox.present(nil)
-        previewBox.show(.idle)
+        presentPreview(nil)
+        showPreview(.idle)
         variablesDirty = true
         previewStatus.text = "Not started"
         graph.current = nil
@@ -305,13 +319,13 @@ public final class DialogueWorkspace {
         if node == nil || runner == nil { resetPreview() }
         guard let runner else { return }
         runner.start(at: node)
-        previewBox.present(runner)
+        presentPreview(runner)
         previewMoved()
     }
 
     private func previewMoved() {
         guard let runner else { return }
-        if runner.isActive { previewBox.present(runner) } else { previewBox.show(runner.state == .idle ? .idle : .finished) }
+        if runner.isActive { presentPreview(runner) } else { showPreview(runner.state == .idle ? .idle : .finished) }
         graph.current = runner.currentNode
         switch runner.state {
         case .idle: previewStatus.text = "Not started"
@@ -321,6 +335,43 @@ public final class DialogueWorkspace {
         }
         if case .warning(let message)? = runner.history.last { previewStatus.text = (previewStatus.text) + " (\(message))" }
         variablesDirty = true
+    }
+
+    private func presentPreview(_ runner: DialogueRunner?) {
+        if let previewLayout { previewLayout.present(runner) } else { previewBox.present(runner) }
+    }
+
+    private func showPreview(_ state: DialogueRunner.State) {
+        if let previewLayout { previewLayout.show(state) } else { previewBox.show(state) }
+    }
+
+    /// Shows the preview in the dialogue's `.ui` layout, or the default box when it names none
+    /// (or one that can't be loaded).
+    private func syncPreviewLayout() {
+        let path = dialogue.uiLayout
+        guard path != previewLayoutPath else { return }
+        previewLayoutPath = path
+        previewLayout?.removeFromParent()
+        previewLayout = nil
+        if !path.isEmpty, let assets = session.assets,
+           let presenter = DialogueLayoutPresenter(assets: assets, path: path, name: "dialoguePreviewLayout") {
+            presenter.hidesWhenIdle = false
+            // Placed by the host (scaled); absolute so its larger virtual frame doesn't count as
+            // the tab's content running past the bottom.
+            presenter.style.position = .absolute(UIAnchor.topLeft.anchors())
+            presenter.charactersPerSecond = 60
+            presenter.view.images = images
+            presenter.onAdvance = { [unowned self] in previewMoved() }
+            presenter.onChoose = { [unowned self] _ in previewMoved() }
+            previewHost.addChild(presenter)
+            previewLayout = presenter
+        }
+        previewHost.layoutPresenter = previewLayout
+        previewBox.present(nil)
+        previewBox.show(.idle)
+        previewBox.isHidden = previewLayout != nil
+        guard let runner else { return }
+        if runner.isActive { presentPreview(runner) } else { showPreview(runner.state == .idle ? .idle : .finished) }
     }
 
     private func rebuildVariables() {
@@ -353,6 +404,7 @@ public final class DialogueWorkspace {
         graph.dialogue = dialogue
         graph.selected = selectedNode
         runner?.replace(dialogue)
+        syncPreviewLayout()
         sidebar.removeAllChildren()
         let issues = session.assets?.dialogueIssues(dialogue) ?? dialogue.validate()
         if let id = selectedNode, let node = dialogue.node(id) {
@@ -564,7 +616,39 @@ public final class DialogueWorkspace {
     private func addDialogueSection() {
         sidebar.addChild(Label("Dialogue", role: .secondary))
         row("Start", linkPicker(dialogue.start, name: "start") { [unowned self] t in edit("Set Start Node") { $0.start = t } })
+        row("Shown in", layoutPicker())
+        let newLayout = Button("New Dialogue Layout", name: "dialogueNewLayout") { [unowned self] in makeLayout() }
+        newLayout.tooltip = "Make a .ui file from the dialogue preset next to this file and show the dialogue in it"
+        sidebar.addChild(HStack(spacing: 6, [newLayout, Spacer()]))
         sidebar.addChild(note("Game code: a DialoguePlayer component plays this file; world.dialogues?.start(entity), world.dialogue(for:)?.setVariable(_:_:), world.dialogues?.onEvent { … }."))
+    }
+
+    /// "Default box" or a project `.ui` file, for the dialogue's `uiLayout`.
+    private func layoutPicker() -> Dropdown {
+        let paths = (session.assets?.allRecords ?? []).filter { session.isUIBuildFile($0.id) }.map(\.path)
+        var options = ["Default box"] + paths
+        let current = dialogue.uiLayout
+        var selected = current.isEmpty ? 0 : (session.assets?.assetID(forTableValue: current)
+            .flatMap { id in paths.firstIndex { session.assets?.id(forPath: $0) == id } }.map { $0 + 1 } ?? -1)
+        if selected < 0 { options.append("\(current) (missing)"); selected = options.count - 1 }
+        let dropdown = Dropdown(options: options, selectedIndex: selected, name: "dialogueLayoutPicker")
+        dropdown.tooltip = "What shows this dialogue: the game's default box or a .ui layout using the dialogue keys (a DialoguePlayer's uiLayout wins)"
+        dropdown.onChange = { [unowned self] i in
+            guard i <= paths.count else { return }
+            let path = i == 0 ? "" : paths[i - 1]
+            edit("Set Dialogue Layout") { $0.uiLayout = path }
+        }
+        return dropdown
+    }
+
+    /// Writes a `.ui` file from the "dialogue" preset beside this file and uses it.
+    func makeLayout() {
+        guard let asset, let path = session.assets?.path(of: asset) else { return }
+        let folder = (path as NSString).deletingLastPathComponent
+        let stem = ((path as NSString).lastPathComponent as NSString).deletingPathExtension
+        guard let id = session.createUIBuildAsset(in: folder, name: stem + " Box", build: .dialogue),
+              let layoutPath = session.assets?.path(of: id) else { return }
+        edit("Set Dialogue Layout") { $0.uiLayout = layoutPath }
     }
 
     private func addSpeakersSection() {
@@ -667,5 +751,91 @@ private extension JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return encoder
+    }
+}
+
+/// Holds the preview: the default box, or a `.ui` layout drawn at least `virtualWidth` points
+/// wide and scaled down to fit (layouts are made for a game screen, the preview is small).
+/// Clicks are mapped into the scaled layout here: a button presses it, anything else continues.
+@MainActor
+final class DialogueLayoutPreviewHost: Widget {
+    /// The layout shown scaled (nil: the box fills the host).
+    weak var layoutPresenter: DialogueLayoutPresenter? { didSet { setNeedsLayout() } }
+    /// The narrowest screen a layout is laid out on.
+    var virtualWidth: Float = 720 { didSet { setNeedsLayout() } }
+    /// The layout's scale in the last layout pass.
+    private(set) var layoutScale: Float = 1
+
+    init() {
+        super.init(name: "dialoguePreviewHost")
+        clipsContent = true
+        isHitTestable = false
+    }
+
+    private var shownLayout: DialogueLayoutPresenter? {
+        guard let layoutPresenter, layoutPresenter.parent === self, !layoutPresenter.isHidden else { return nil }
+        return layoutPresenter
+    }
+
+    override var acceptsFocus: Bool { shownLayout?.acceptsFocus ?? false }
+    override var showsFocusRing: Bool { false }
+
+    /// The box's size: the scaled layout fits whatever room the host gets.
+    override func measureContent(width: Float?) -> Vec2 {
+        var size = Vec2.zero
+        for child in children where !child.isHidden && child.style.position == .flow {
+            size = pointwiseMax(size, child.measure(width: width))
+        }
+        return size
+    }
+
+    override func layoutChildren() {
+        let content = contentRect
+        for child in children where !child.isHidden {
+            guard child === layoutPresenter else { child.layout(in: content); continue }
+            // Not below a quarter: text drawn smaller is unreadable (and a host squeezed to
+            // nothing mid-layout would otherwise ask for a huge virtual screen).
+            let scale = min(1, max(0.25, content.width / virtualWidth))
+            layoutScale = scale
+            child.visualScale = scale
+            child.layout(in: UIRect(x: content.x, y: content.y, width: content.width / scale, height: content.height / scale))
+        }
+    }
+
+    /// `point` (window points) in the scaled layout's coordinates.
+    func layoutPoint(_ point: Vec2) -> Vec2 {
+        let origin = Vec2(contentRect.x, contentRect.y)
+        return origin + (point - origin) / layoutScale
+    }
+
+    override func hitTest(_ point: Vec2) -> Widget? {
+        guard !isHidden, frame.contains(point) else { return nil }
+        guard let layout = shownLayout else { return super.hitTest(point) }
+        // Only where the layout draws something clickable, so the empty area stays inert.
+        return layout.hitTest(layoutPoint(point)) != nil ? self : nil
+    }
+
+    override func handleEvent(_ event: UIEvent) -> Bool {
+        guard let layout = shownLayout else { return false }
+        switch event {
+        case .pointerDown(let pointer) where pointer.button == .left:
+            context?.focus(self)
+            var widget = layout.hitTest(layoutPoint(pointer.position))
+            while let current = widget, current !== layout {
+                if current is Button, let id = layout.view.layoutID(of: current) {
+                    layout.view.press(id)
+                    return true
+                }
+                widget = current.parent
+            }
+            layout.continueOrComplete()
+            return true
+        case .pointerUp, .pointerDrag:
+            return true
+        case .key:
+            return layout.handleEvent(event)
+        default:
+            return false
+        }
     }
 }

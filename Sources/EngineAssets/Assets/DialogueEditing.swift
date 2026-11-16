@@ -49,11 +49,14 @@ public struct DialogueEdit: Codable, Equatable, Sendable {
     public var generateKeys: String?
     /// Place every node again in columns by distance from the start.
     public var layout: Bool?
+    /// The `.ui` layout that shows the dialogue ("" for the default box).
+    public var uiLayout: String?
 
     public init(speakers: [DialogueSpeaker]? = nil, removeSpeakers: [String]? = nil, variables: [DialogueVariable]? = nil,
                 removeVariables: [String]? = nil, removeNodes: [String]? = nil, addNodes: [DialogueNode]? = nil,
                 updateNodes: [String: JSONValue]? = nil, connect: [DialogueConnection]? = nil, start: String? = nil,
-                generateKeys: String? = nil, layout: Bool? = nil) {
+                generateKeys: String? = nil, layout: Bool? = nil, uiLayout: String? = nil) {
+        self.uiLayout = uiLayout
         self.speakers = speakers
         self.removeSpeakers = removeSpeakers
         self.variables = variables
@@ -123,6 +126,7 @@ extension DialogueAsset {
         }
         if let prefix = edit.generateKeys { d.generateKeys(prefix: prefix) }
         if edit.layout == true { for i in d.nodes.indices { d.nodes[i].position = nil } }
+        if let uiLayout = edit.uiLayout { d.uiLayout = uiLayout.trimmingCharacters(in: .whitespaces) }
         d.placeUnpositionedNodes()
         return d
     }

@@ -66,7 +66,16 @@ extension AssetDatabase {
     }
 
     /// Problems with `dialogue`, with portraits checked against the project.
+    /// The `uiLayout` is checked to be a `.ui` file that works as a dialogue box.
     public func dialogueIssues(_ dialogue: DialogueAsset) -> [DialogueIssue] {
-        dialogue.validate(assetExists: { [unowned self] in assetID(forTableValue: $0) != nil })
+        var issues = dialogue.validate(assetExists: { [unowned self] in assetID(forTableValue: $0) != nil })
+        if !dialogue.uiLayout.isEmpty, let id = assetID(forTableValue: dialogue.uiLayout) {
+            if let build = uiBuild(of: id) {
+                issues += DialogueLayoutKeys.problems(in: build).map { DialogueIssue("UI layout: \($0)") }
+            } else {
+                issues.append(DialogueIssue("the UI layout '\(dialogue.uiLayout)' isn't a .ui file (the default box is used)"))
+            }
+        }
+        return issues
     }
 }
