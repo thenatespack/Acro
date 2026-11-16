@@ -68,6 +68,24 @@ public final class ScenePlayback {
         self.sceneData = sceneData
     }
 
+    /// The asset database of the project a scene file is in (the nearest folder above it with
+    /// `Project.json`), scanned and imported, for hosts that run scene files from a project
+    /// rather than a pack (GameRunner), so prefabs' meshes and materials, character and glTF
+    /// clips and animation graphs load as in the editor. Nil outside a project.
+    public static func projectAssets(containing sceneURL: URL) -> AssetDatabase? {
+        var folder = sceneURL.deletingLastPathComponent().standardizedFileURL
+        while folder.path != "/" && !folder.path.isEmpty {
+            if Project.exists(at: folder) {
+                guard let project = try? Project.open(at: folder) else { return nil }
+                let database = AssetDatabase(project: project)
+                _ = database.refresh()
+                return database
+            }
+            folder = folder.deletingLastPathComponent()
+        }
+        return nil
+    }
+
     /// Replaces the world's entities with the scene at `path` and (re)starts the systems.
     /// Throws, leaving the current scene playing, when the scene can't be read or decoded.
     public func load(_ path: String) throws {

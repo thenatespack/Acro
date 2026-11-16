@@ -306,6 +306,75 @@ private func makeProject() throws -> Project {
         #expect(baseColor("Grip").map { abs($0.z - blue.z) < 1e-5 && $0.x < 1e-5 } == true)
     }
 
+    /// Built games: a placed character is cooked with its clips and plays from the mounted pack
+    /// through `ScenePlayback` (the exported player's path), with the project gone.
+    @Test func cookedCharacterPlaysFromAPackWithoutTheProject() throws {
+        SkeletalAnimation.registerComponents()
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        let id = try database.createCharacter(CharacterBuild(defaultClip: "walk"), at: "Characters/hero.character")
+        let prefab = try #require(database.prefab(AssetReference(id)))
+        let world = World()
+        _ = try world.instantiatePrefab(try prefab.template(prefabs: { database.prefab($0) }), reference: AssetReference(id))
+        let sceneURL = project.url(forAssetPath: "Scenes/Main.scene")
+        try FileManager.default.createDirectory(at: sceneURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try world.save().write(to: sceneURL)
+
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent("CharacterTests-pack-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: output) }
+        let report = try AssetCooker.cook(projectAt: project.root, options: CookOptions(scenes: ["Scenes/Main.scene"]), to: output)
+        try FileManager.default.removeItem(at: project.root)
+        let pack = try AssetPack(url: URL(fileURLWithPath: report.packPath))
+        let assets = AssetDatabase(mounting: pack)
+        #expect(assets.animationClip(AssetReference(id, subAsset: "animation/walk")) != nil)
+
+        let playback = ScenePlayback(module: GameModule(), context: GameContext(input: Input()), assets: { assets }, log: { _ in }) { path in
+            try pack.scene(path)
+        }
+        try playback.load("Scenes/Main.scene")
+        var root: Entity?
+        playback.world.query(Animator.self) { entity, _ in root = entity }
+        let animator = try #require(root.flatMap { playback.world.get(Animator.self, for: $0) })
+        let leg = animator.targets[CharacterRig(template: .humanoid).index(of: "upperLeg.L")!]
+        let rest = try #require(playback.world.get(Transform.self, for: leg)).rotation
+        for _ in 0..<10 { playback.world.update(dt: 1.0 / 30) }
+        #expect(playback.world.get(Animator.self, for: root!)?.currentState == "walk")
+        #expect(playback.world.get(Transform.self, for: leg)?.rotation.vector != rest.vector, "the walk plays from the pack")
+    }
+
+    /// GameRunner: a scene file inside a project plays its characters with the project's assets
+    /// (`ScenePlayback.projectAssets(containing:)`), from a fresh database as a new process would.
+    @Test func sceneFileInAProjectPlaysCharactersWithTheProjectsAssets() throws {
+        SkeletalAnimation.registerComponents()
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        let id = try database.createCharacter(CharacterBuild(defaultClip: "run"), at: "hero.character")
+        let prefab = try #require(database.prefab(AssetReference(id)))
+        let world = World()
+        _ = try world.instantiatePrefab(try prefab.template(prefabs: { database.prefab($0) }), reference: AssetReference(id))
+        let sceneURL = project.url(forAssetPath: "Scenes/Main.scene")
+        try FileManager.default.createDirectory(at: sceneURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try world.save().write(to: sceneURL)
+
+        #expect(ScenePlayback.projectAssets(containing: FileManager.default.temporaryDirectory.appendingPathComponent("loose.scene")) == nil)
+        let assets = try #require(ScenePlayback.projectAssets(containing: sceneURL))
+        #expect(assets.project.root.standardizedFileURL == project.root.standardizedFileURL)
+        let playback = ScenePlayback(module: GameModule(), context: GameContext(input: Input()), assets: { assets }, log: { _ in }) { path in
+            try Data(contentsOf: URL(fileURLWithPath: path))
+        }
+        try playback.load(sceneURL.path)
+        var root: Entity?
+        playback.world.query(Animator.self) { entity, _ in root = entity }
+        let animator = try #require(root.flatMap { playback.world.get(Animator.self, for: $0) })
+        let leg = animator.targets[CharacterRig(template: .humanoid).index(of: "upperLeg.L")!]
+        let rest = try #require(playback.world.get(Transform.self, for: leg)).rotation
+        for _ in 0..<10 { playback.world.update(dt: 1.0 / 30) }
+        #expect(playback.world.get(Animator.self, for: root!)?.currentState == "run")
+        #expect(playback.world.get(Transform.self, for: leg)?.rotation.vector != rest.vector)
+    }
+
     @Test func importWarnsAboutMissingAssetsAndClips() throws {
         SkeletalAnimation.registerComponents()
         let project = try makeProject()

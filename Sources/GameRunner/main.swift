@@ -5,7 +5,8 @@ import Foundation
 // `swift run GameRunner SampleGame [scene.json]` builds the SampleGame target, links it into a
 // module (GameModuleBuilder) and runs it; a path to a .dylib / .so loads that instead. A
 // module with a `Game` (`makeGame`) runs it; otherwise the scene file is loaded and drawn by a
-// SceneRenderer with the module's systems running. `--server` runs it headless as a UDP server
+// SceneRenderer with the module's systems running (a scene inside a project gets the project's
+// assets: placed models, characters and their clips, animation graphs). `--server` runs it headless as a UDP server
 // and `--connect host:port` as a client of one (NetRun.swift). `--check` only loads it and
 // checks that it shares this process's Engine, then exits (no window: CI uses it).
 
@@ -152,7 +153,12 @@ if headless && connect == nil { fail("--headless goes with --connect (--server i
         try renderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(0.6, 0.6, 0.58, 1), checker: true, specular: 0.1),
                                       key: "checker")
         let start = sceneURL
-        playback = ScenePlayback(module: module, context: GameContext(input: engine.input), audio: engine.audio) { path in
+        // A scene inside a project gets the project's assets (prefab meshes, character clips…).
+        let assets = ScenePlayback.projectAssets(containing: sceneURL)
+        renderer.assets = assets
+        if let assets { print("Assets: \(assets.project.name) (\(assets.allRecords.count) assets)") }
+        playback = ScenePlayback(module: module, context: GameContext(input: engine.input), audio: engine.audio,
+                                 assets: { assets }) { path in
             try Data(contentsOf: SceneHost.resolve(path, from: start))
         }
         try playback.load(sceneURL.path)
@@ -172,6 +178,7 @@ MainActor.assumeIsolated {
         // Scenes name components by their registered names.
         for component in module.components { ComponentRegistry.register(component.type) }
         ComponentRegistry.register(Spin.self, FieldAnimator.self, LightFlicker.self, CameraPath.self, TimelinePlayer.self)
+        SkeletalAnimation.registerComponents()  // MeshRenderer, Skin, Animator: placed models and characters
         print("Loaded \(module.name): \(module.componentNames.joined(separator: ", "))")
         if check {
             // The module filled in this process's GameModule through Engine's API (on Windows,
