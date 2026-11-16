@@ -45,7 +45,7 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
             "asset": id.description,
             "updateParts": ["Sign": ["profile": [[0, 0], [0.6, 0], [0.6, 0.2], [0.2, 0.2], [0.2, 1], [0, 1]]],
                             "Vase": ["bevel": 0.1]],
-            "addParts": [["name": "Crate", "shape": "box", "bevel": 0.05]],
+            "addParts": [["name": "Crate", "shape": "box", "bevel": 0.05, "position": [1.5, 0.5, 0]]],
         ])
         #expect((edited["warnings"] as? [String]) == ["part 'Vase': bevel only rounds box and cylinder parts; this lathe ignores it"])
         let build = try #require(session.assets?.meshBuild(of: id))

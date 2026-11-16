@@ -50,7 +50,7 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
             "build": [
                 "parts": [
                     ["name": "Top", "size": [1.2, 0.08, 0.8], "position": [0, 0.75, 0]],
-                    ["name": "Front Left Leg", "parent": "Top", "size": [0.06, 0.7, 0.06], "position": [-0.55, -0.39, 0.35],
+                    ["name": "Front Left Leg", "parent": "Top", "size": [0.06, 0.71, 0.06], "position": [-0.55, -0.395, 0.35],
                      "mirror": ["x", "z"]],
                     ["name": "Bolt", "parent": "Top", "shape": "cylinder", "size": [0.03, 0.02, 0.03], "position": [0, 0.05, 0],
                      "repeat": ["count": 6, "radial": ["radius": 0.2]]],

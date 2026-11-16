@@ -219,6 +219,10 @@ public final class EditorApp: Game, EditorHost {
     private var captureOutline: SelectionOutlineRenderer?
     /// Screenshot targets rendered this frame, kept until the next one.
     private var captureTargets: [RenderTarget] = []
+    /// Pictures of worlds apart from the scene (`capture(world:views:)`) not rendered yet.
+    private var worldCaptureJobs: [WorldCaptureJob] = []
+    /// Draws the captions of world captures.
+    private var worldCaptureText: TextRenderer?
     private var lastStats: EditorStatsSnapshot?
     /// The game has the keyboard and the mouse this frame: playing, `showsGameCamera`, the Game
     /// view in front and a Camera entity.
@@ -1775,6 +1779,7 @@ public final class EditorApp: Game, EditorHost {
     private func renderViews(frame: Frame) {
         thumbnails?.render(frame: frame)
         renderCaptures(frame: frame)
+        renderWorldCaptures(frame: frame)
         guard !isLauncherShown else { return }
         meshWorkspace.render(frame: frame)
         vfxWorkspace.render(frame: frame)
@@ -1881,6 +1886,15 @@ extension EditorApp {
 
 // MARK: - Host: picking, stats and screenshots
 
+/// Pictures of a world apart from the scene asked for through `capture(world:views:)`.
+private struct WorldCaptureJob {
+    let world: World
+    let views: [WorldCaptureView]
+    let future: CommandFuture<[Image]>
+    /// Frames the world was gathered without rendering, so its meshes and textures upload first.
+    var frames = 0
+}
+
 /// A screenshot asked for through `capture`, until its frame is read back.
 private struct CaptureJob {
     var request: ScreenshotRequest
@@ -1937,6 +1951,65 @@ extension EditorApp {
             captureJobs.append(CaptureJob(request: request, future: future))
         }
         return future
+    }
+
+    public func capture(world: World, views: [WorldCaptureView]) -> CommandFuture<[Image]>? {
+        guard engine != nil else { return nil }
+        let future = CommandFuture<[Image]>()
+        if views.isEmpty { future.resolve([]) } else { worldCaptureJobs.append(WorldCaptureJob(world: world, views: views, future: future)) }
+        return future
+    }
+
+    /// Renders queued world captures: the first two frames only gather the world (uploading its
+    /// meshes and textures), the third renders every view into a target of its own and reads it back.
+    func renderWorldCaptures(frame: Frame) {
+        guard !worldCaptureJobs.isEmpty else { return }
+        var remaining: [WorldCaptureJob] = []
+        for var job in worldCaptureJobs {
+            sceneRenderer.beginViews(world: job.world, frame: frame, shadowFocus: job.views[0].view)
+            job.frames += 1
+            guard job.frames > 2 else {
+                remaining.append(job)
+                continue
+            }
+            if worldCaptureText == nil { worldCaptureText = try? TextRenderer(device: sceneRenderer.device) }
+            var images = [Image?](repeating: nil, count: job.views.count)
+            var left = job.views.count
+            let future = job.future
+            for (index, capture) in job.views.enumerated() {
+                do {
+                    let shot = try RenderTarget(device: sceneRenderer.device, width: capture.width, height: capture.height,
+                                                label: "world capture")
+                    let overlay: (RenderPass) -> Void = { [unowned self] pass in
+                        guard !capture.title.isEmpty, let text = worldCaptureText else { return }
+                        let size: Float = max(11, Float(capture.height) / 28).rounded()
+                        let origin = Vec2((size * 0.6).rounded(), (size * 0.5).rounded())
+                        text.draw(capture.title, at: origin + Vec2(1, 1), size: size, color: Vec4(0, 0, 0, 0.85))
+                        text.draw(capture.title, at: origin, size: size, color: Vec4(1, 1, 1, 1))
+                        try? text.render(into: pass, screenSize: (shot.width, shot.height))
+                    }
+                    if !capture.outline.isEmpty, let outliner = captureOutline ?? (try? SelectionOutlineRenderer(
+                        device: sceneRenderer.device, maskLabel: "screenshot outline mask")) {
+                        captureOutline = outliner
+                        outliner.renderView(capture.view, sceneRenderer: sceneRenderer, world: job.world, selection: capture.outline,
+                                            primary: capture.outline.first, into: shot, pixelScale: 1, frame: frame,
+                                            debugDraw: capture.draw, overlay: overlay)
+                    } else {
+                        sceneRenderer.renderView(capture.view, into: shot, frame: frame, debugDraw: capture.draw, overlay: overlay)
+                    }
+                    captureTargets.append(shot)
+                    frame.readBack(shot) { image in
+                        images[index] = image
+                        left -= 1
+                        if left == 0 { future.resolve(images.compactMap { $0 }) }
+                    }
+                } catch {
+                    future.fail(error)
+                    break
+                }
+            }
+        }
+        worldCaptureJobs = remaining
     }
 
     /// Finds thumbnails that are ready (or makes texture ones); gives up on what takes too long.

@@ -54,6 +54,27 @@ The file keeps the short form. `MeshBuild.expanded()` writes the copies out as p
 
 Editor MCP clients can create and edit these assets with `meshBuild.new`, `meshBuild.edit`, `meshBuild.set`, and `meshBuild.get`, and show one in the Mesh Builder tab with `meshBuild.open`. See [MCPTools.md](MCPTools.md) for schemas and parameters.
 
+### Conventions
+
+- Units are meters. +Y is up, the model's front faces -Z (the engine's forward: cameras, lights and `transform.lookAt` look down local -Z), and +X is the model's right.
+- The origin is the model's base center, so the model stands on y = 0. A part's `position` is its center, in its parent's space: a 1 m box on the ground has position `[0, 0.5, 0]`.
+- `rotation` is in degrees, applied about X, then Y, then Z (fixed axes). Children inherit their parent's position and rotation, but not its `size`.
+- Cylinders, cones, capsules and tubes run along Y. A wheel on an axle along X (a vehicle facing -Z) needs `rotation [0, 0, 90]`; a wheel on an axle along Z needs `[90, 0, 0]`. Motions turn about the part's own axes, so that wheel spins with `axis: "y"`.
+- Reference sizes: a person is 1.8 m tall, a door 2 x 0.9 m, a table top 0.75 m high, a chair seat 0.45 m high, and a car about 4.5 m long, 1.5 m high and 1.8 m wide.
+
+### Agent feedback loop
+
+Every `meshBuild.new`, `.set`, `.edit`, `.get` and `.preview` result carries spatial checks next to the reference warnings:
+
+- `bounds`: the overall `size`, `min` and `max` in meters and `base`, the lowest point's height (0 when the model stands on the ground). `meshBuild.get` adds every part's world-space box (`parts`). Bounds are measured on each part's generated geometry placed through the parent chain (rest pose, rounded to millimeters), so they hold for every shape.
+- Warnings, each saying what to do: parts (or groups of touching parts) that touch nothing and float above the model's base, parts entirely below y = 0, a model whose lowest point is not at y = 0, parts hidden inside another opaque part, zero or negative sizes, parts far out of scale with the rest or too small to see, and whole models in the wrong unit. Contacts are judged on world-space boxes with a 1 cm tolerance, so a rotated part's box may hide a small gap but never invent one; transparent parts and parts with a `material` asset never hide others.
+
+`meshBuild.preview` returns one PNG of the model from fixed angles, tiled: front (camera at -Z looking at the model's front, so +X is on the image's left), right (from +X), top (front up) and a 3/4 perspective from the front right. `views` picks and orders them (also `back` and `left`). Front, right, top, back and left are orthographic. Each tile is framed to the model and the ground, with a grid (its spacing in the caption; on the ground the red line is z = 0 and the blue one x = 0) and a white ground line at y = 0. `size` sets the tile size in pixels (default 384), `labels` writes part names at their centers, `highlight` outlines parts, and `animation` with `time` poses an animation (default: a quarter of its length). The result also has a one-line summary (size, part count, grid spacing), the bounds and the warnings. The preview is rendered in a world of its own, so it never touches the scene or the editor camera. It needs the editor window (GPU), not a headless editor.
+
+`meshBuild.examples` returns three correct builds to copy: a street lamp (a parent chain and a glowing bulb), a wooden cart (wheels turned onto X axles and a spin animation), and a turret (a group pivot swinging its children). Each stands on y = 0, faces -Z and gives no warnings, which the tests check.
+
+The suggested loop for an agent: build with `meshBuild.new`, call `meshBuild.preview`, fix the warnings and what the picture shows with `meshBuild.edit`, and repeat.
+
 ## VFX Builder
 
 VFX Builder assets (`.vfx`, JSON under `Assets/`) describe visual effects as stacks of the engine's GPU particle emitters: fire is flames plus embers plus smoke, an explosion is a flash, a fireball, smoke and sparks. Each emitter has its own placement, particle settings and a `delay` (timing offset in seconds), and the importer produces a prefab with one `ParticleEmitter` child per emitter, so an effect is placed or spawned like any model. Presets: fire, smoke, sparks, explosion, magic hit, rain, snow, dust, portal.
