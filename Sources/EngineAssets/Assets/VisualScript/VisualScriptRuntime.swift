@@ -357,6 +357,17 @@ public final class VisualScriptRuntime {
 
     func detach() {
         if Self.byWorld[ObjectIdentifier(world)]?.runtime === self { Self.byWorld[ObjectIdentifier(world)] = nil }
+        let handlers = detachHandlers
+        detachHandlers.removeAll()
+        for handler in handlers { handler() }
+    }
+
+    private var detachHandlers: [@MainActor () -> Void] = []
+
+    /// Calls `handler` once when the runtime is removed (`World.removeVisualScripts`, `shutdown`):
+    /// higher modules undo what their nodes set up (layouts a graph showed…).
+    public func onDetach(_ handler: @escaping @MainActor () -> Void) {
+        detachHandlers.append(handler)
     }
 
     // MARK: Swift interop

@@ -749,6 +749,7 @@ public final class EditorApp: Game, EditorHost {
         gameDialogueBox.style.width = 560
         gameWidget.addChild(gameDialogueBox)
         session.dialoguePresenter = gameDialogueBox
+        session.visualScriptUILayer = gameWidget
         visualScriptWorkspace = VisualScriptWorkspace(session: session)
         meshWorkspace.device = engine?.device
         if let quality = engine?.quality { meshWorkspace.quality = quality }

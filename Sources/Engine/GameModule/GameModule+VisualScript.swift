@@ -5,6 +5,7 @@ import EngineCore
 import EnginePhysics
 import EngineRendering
 import EngineScene
+import EngineUI
 
 // Visual scripts and game code together: game modules add nodes, Swift sends events to graphs
 // and listens for theirs, and hosts install the VM with the game's input, log and scene switching.
@@ -58,11 +59,13 @@ extension GameModule {
 extension World {
     /// Runs this world's `VisualScript` components with a game's services: `context`'s input,
     /// log and scene switching, `assets` for graphs and the assets they use, and the play
-    /// session's physics. Also wires up sprite clip events. Remove with `removeVisualScripts(_:)`.
+    /// session's physics. Also wires up the engine's builder events (sprite clips, animation graphs,
+    /// dialogue, timelines, behavior trees, UI buttons). `uiLayer` is where `ui.show` puts layouts. Remove with `removeVisualScripts(_:)`.
     @MainActor @discardableResult
     public func addVisualScripts(context: GameContext, assets: @escaping () -> AssetDatabase?,
                                  physics: @escaping () -> PhysicsWorld? = { nil },
-                                 physics2D: @escaping () -> PhysicsWorld2D? = { nil }) -> VisualScriptRuntime {
+                                 physics2D: @escaping () -> PhysicsWorld2D? = { nil },
+                                 uiLayer: Widget? = nil) -> VisualScriptRuntime {
         VisualScriptEngineNodes.register()
         let host = VisualScriptHost()
         host.input = context.input
@@ -72,6 +75,7 @@ extension World {
         host.physics2D = physics2D
         host.loadScene = { [weak context] path in context?.loadScene(path) }
         host.reloadScene = { [weak context] in context?.reloadScene() }
+        if let uiLayer { host.services[VisualScriptUI.layerService] = uiLayer }
         let runtime = addVisualScripts(host: host)
         VisualScriptEngineNodes.addEventSources(to: runtime)
         return runtime
@@ -87,11 +91,24 @@ extension World {
     }
 }
 
-/// Nodes for engine features above the VM's module (sprites), registered when a host installs
-/// the VM with `addVisualScripts(context:assets:)`.
+extension VisualScriptNodes {
+    /// Registers the nodes of engine features above the VM's module (sprites, animation graphs,
+    /// dialogue, timelines, behavior trees, UI layouts), so tools and validation know them
+    /// before anything plays. `addVisualScripts(context:assets:)` calls it too. Idempotent.
+    public static func registerEngineNodes() { VisualScriptEngineNodes.register() }
+}
+
+/// Nodes for engine features above the VM's module, registered when a host installs the VM
+/// with `addVisualScripts(context:assets:)` (or `VisualScriptNodes.registerEngineNodes()`).
+/// Each builder's nodes live in their own file (Sources/Engine/VisualScript/).
 @MainActor
 enum VisualScriptEngineNodes {
     static func register() {
+        VisualScriptAnimationNodes.register()
+        VisualScriptDialogueNodes.register()
+        VisualScriptTimelineNodes.register()
+        VisualScriptBehaviorNodes.register()
+        VisualScriptUINodes.register()
         VisualScriptNodes.addProvider("engine.sprites") {
             VisualScriptNodes.register(VisualScriptNodeDefinition(
                 id: "event.spriteEvent", title: "On Sprite Event", category: "Events",
@@ -118,6 +135,11 @@ enum VisualScriptEngineNodes {
     }
 
     static func addEventSources(to runtime: VisualScriptRuntime) {
+        VisualScriptAnimationNodes.addEventSource(to: runtime)
+        VisualScriptDialogueNodes.addEventSource(to: runtime)
+        VisualScriptTimelineNodes.addEventSource(to: runtime)
+        VisualScriptBehaviorNodes.addEventSource(to: runtime)
+        VisualScriptUINodes.addEventSource(to: runtime)
         runtime.addEventSource("engine.sprites") { runtime in
             guard runtime.world.count(of: SpriteAnimator.self) > 0 else { return }
             var fired: [(Entity, [String], String?)] = []

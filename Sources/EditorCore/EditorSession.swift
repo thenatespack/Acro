@@ -182,6 +182,8 @@ public final class EditorSession {
     /// The graph open in the Visual Script tab (`vscript.open`), and how the app shows it.
     public var openVisualScript: AssetID?
     public var onOpenVisualScript: ((AssetID) -> Void)?
+    /// Where visual scripts' `ui.show` puts layouts while playing (the app's Game view).
+    public var visualScriptUILayer: Widget?
     /// A visual script node with a breakpoint ran: play pauses after this frame.
     var visualScriptBreakPending = false
 
@@ -278,6 +280,8 @@ public final class EditorSession {
         self.log = log
         EditorComponentCatalog.registerBuiltins()
         ImportSettingsForms.registerBuiltins()
+        // Builder nodes (animation graphs, dialogue, timelines…) known to tools and validation before play.
+        VisualScriptNodes.registerEngineNodes()
         document.world.addEditorSystems(input: gameInput)
         document.onReload = { [unowned self] in
             selection.prune(in: world)
@@ -764,7 +768,8 @@ public final class EditorSession {
         timelinePlayers = world.addTimelinePlayers(assets: { [weak self] in self?.assets })
         gameModule.addSystems()
         let scripts = world.addVisualScripts(context: gameModule.context, assets: { [weak self] in self?.assets },
-                                             physics: { [weak self] in self?.physics }, physics2D: { [weak self] in self?.physics2D })
+                                             physics: { [weak self] in self?.physics }, physics2D: { [weak self] in self?.physics2D },
+                                             uiLayer: visualScriptUILayer)
         scripts.recordsActivity = true
         scripts.host.onBreakpoint = { [weak self] hit in
             guard let self, !visualScriptBreakPending else { return }

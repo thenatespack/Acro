@@ -369,6 +369,12 @@ Event nodes start flows; exec wires (`in` / `out`, `true` / `false`, `body` / `d
 - **World:** self, spawn entity, spawn prefab (any `.prefab`, model, mesh build or `.vfx`), destroy (optionally after a delay), find by name, parent, transform get / set / translate / rotate / look at.
 - **Components:** `component.get` / `component.set` for every reflected field of every registered component (`config: {"component": "PointLight", "field": "intensity"}`), so game components show up with no extra code; `component.has` / `add` / `remove`. Setting a field goes through reflection (a fraction of a millisecond), fine for events, slow for thousands of entities per frame.
 - **Engine:** play sound (audio file or `.sfx`, as a one-shot emitter), spawn effect, raycast, apply force / impulse / velocity, load and reload scene, tween position / rotation / scale with easing, data table cells and row ids.
+- **Builders:** nodes for the other builders' components. An unconnected `entity` input means the script's entity, or its first child with the component. Their event nodes hear the script's entity and its children; tick **anyEntity** to hear every entity.
+  - *Animation graphs* (`Animator`): set float / bool / trigger parameters, reset a trigger, play a state with a crossfade, set speed, read the state and parameters; **On Animation Event** (clip events) and **On Animation State Entered**.
+  - *Dialogue* (`DialoguePlayer`): start (at a node), advance, choose an option, stop, get / set variables (one conversation, or the store shared by all), read the line or options on screen; **On Dialogue Event** (`event` nodes, with their args), **On Dialogue Line**, **On Dialogue Choices**, **On Dialogue Ended**.
+  - *Timelines* (`TimelinePlayer`): play (optionally another `.timeline`, adding the player), pause, resume, stop, skip, seek, read the playhead; **On Timeline Event** (event keys) and **On Timeline Finished**.
+  - *Behavior trees* (`BehaviorTreeRunner`): get / set / remove blackboard keys, start or stop the tree, read its status; **On Behavior Event** (attacks).
+  - *UI layouts* (`.ui`): show a layout over the game by name (the editor's Game view; game code hands its own over with `world.scriptUI(view, name:)`), hide it, set and get its values (bars, `{key}` texts, `visibleWhen`), press a button; **On UI Button**. Layouts a graph showed go away when play stops.
 
 The graph is interpreted by a small VM with no compile step: editing the file while the game plays applies on the next frame, keeping variable values and pending delays (start doesn't run again). A runaway graph (an endless while loop, unbounded recursion) is stopped with an error after 100 000 node runs in one event and stays stopped until its graph changes. Built games ship `.vscript` files as written, with the assets they name by `asset:<id>`.
 
@@ -386,8 +392,8 @@ world.sendScriptEvent("mygame.wave", value: .int(3))             // Swift → gr
 VisualScriptRuntime.runtime(for: world)?.onEvent("pickup") { sender, value in … }   // graphs → Swift (event.send)
 ```
 
-Other modules register nodes with `VisualScriptNodes.register(_:)` (or `addProvider` to register on first use) and raise events with `VisualScriptRuntime.addEventSource`, so builders that ship later add their own nodes.
+Other modules register nodes with `VisualScriptNodes.register(_:)` (or `addProvider` to register on first use) and raise events with `VisualScriptRuntime.addEventSource`, so builders that ship later add their own nodes. The engine's builder nodes are written that way, one file per builder in `Sources/Engine/VisualScript/`.
 
 Editor MCP clients can use `vscript.new {template, target}` (templates: empty, spinner, mover, pickup, timer), `vscript.edit {addNodes, updateNodes, connect, disconnect, removeNodes, variables, functions, comments, actions}`, `vscript.nodes {search, pinType}` (every node type with its pins), `vscript.validate`, `vscript.get`, `vscript.set`, `vscript.attach` and `vscript.open`. See [MCPTools.md](MCPTools.md) for schemas and parameters.
 
-Not yet: step over / into while paused (breakpoints pause after the frame), macros (functions cover reusable sub-graphs), reroute points and node groups, play animation / dialogue / timeline nodes (added by those builders), and a function's entry and return pins are edited through `vscript.edit {functions}` rather than in the tab.
+Not yet: step over / into while paused (breakpoints pause after the frame), macros (functions cover reusable sub-graphs), reroute points and node groups, `ui.show` in built games (they have no game UI layer yet, so game code adds layouts with `world.scriptUI`), and a function's entry and return pins are edited through `vscript.edit {functions}` rather than in the tab.
