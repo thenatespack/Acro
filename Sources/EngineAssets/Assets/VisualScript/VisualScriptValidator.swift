@@ -208,7 +208,7 @@ public enum VisualScriptValidator {
         for node in nodes {
             guard let definition = definitions[node.id] else { continue }
             switch definition.kind {
-            case .action where !reached.contains(node.id):
+            case .action where !reached.contains(node.id) && signatures[node.id]?.inputs.contains(where: { $0.type == .exec }) != false:
                 let why = execInto.contains(node.id) ? "unreachable: no event leads here" : "never runs: nothing is wired to its exec input"
                 issues.append(VisualScriptIssue(.warning, function: fn, node: node.id, why))
             case .pure where !used.contains(node.id) && node.type != "function.entry":

@@ -646,6 +646,70 @@ private final class Rig {
         #expect(!rig.runtime.instances.values.first!.program.nodeIDs.contains("r1"), "reroutes are compiled away")
     }
 
+    @Test func macrosAreInlinedPerUse() throws {
+        // A macro "alternate": flow in → flip-flop → exec outputs a / b, plus a delay on a third path,
+        // and a data input `amount` passed through to a data output `twice`.
+        let graph = try decode("""
+            {"variables": [{"name": "a", "type": "int"}, {"name": "b", "type": "int"}, {"name": "late", "type": "int"},
+                           {"name": "t", "type": "int"}],
+             "nodes": [
+              {"id": "tick", "type": "event.update"}, {"id": "tick2", "type": "event.update"},
+              {"id": "m1", "type": "function.call", "config": {"function": "alternate"}, "inputs": {"amount": 5}},
+              {"id": "m2", "type": "function.call", "config": {"function": "alternate"}, "inputs": {"amount": 1}},
+              {"id": "geta", "type": "var.get", "config": {"variable": "a"}}, {"id": "inca", "type": "math.add", "inputs": {"b": 1}},
+              {"id": "seta", "type": "var.set", "config": {"variable": "a"}},
+              {"id": "getb", "type": "var.get", "config": {"variable": "b"}}, {"id": "incb", "type": "math.add", "inputs": {"b": 1}},
+              {"id": "setb", "type": "var.set", "config": {"variable": "b"}},
+              {"id": "setLate", "type": "var.set", "config": {"variable": "late"}, "inputs": {"value": 1}},
+              {"id": "sett", "type": "var.set", "config": {"variable": "t"}}
+             ],
+             "links": [{"from": "tick.out", "to": "m1.go"}, {"from": "m1.first", "to": "seta.in"}, {"from": "m1.second", "to": "setb.in"},
+                       {"from": "geta.value", "to": "inca.a"}, {"from": "inca.result", "to": "seta.value"},
+                       {"from": "getb.value", "to": "incb.a"}, {"from": "incb.result", "to": "setb.value"},
+                       {"from": "seta.out", "to": "sett.in"}, {"from": "m1.twice", "to": "sett.value"},
+                       {"from": "m2.later", "to": "setLate.in"}, {"from": "tick2.out", "to": "m2.go"}],
+             "functions": [{"name": "alternate", "macro": true,
+               "inputs": [{"name": "go", "type": "exec"}, {"name": "amount", "type": "int"}],
+               "outputs": [{"name": "first", "type": "exec"}, {"name": "second", "type": "exec"}, {"name": "later", "type": "exec"},
+                           {"name": "twice", "type": "int"}],
+               "nodes": [{"id": "entry", "type": "function.entry"}, {"id": "ff", "type": "flow.flipFlop"},
+                         {"id": "wait", "type": "flow.delay", "inputs": {"seconds": 0.05}}, {"id": "seq", "type": "flow.sequence"},
+                         {"id": "dbl", "type": "math.multiply", "inputs": {"b": 2}}, {"id": "ret", "type": "function.return"}],
+               "links": [{"from": "entry.go", "to": "seq.in"}, {"from": "seq.out0", "to": "ff.in"}, {"from": "seq.out1", "to": "wait.in"},
+                         {"from": "ff.a", "to": "ret.first"}, {"from": "ff.b", "to": "ret.second"}, {"from": "wait.out", "to": "ret.later"},
+                         {"from": "entry.amount", "to": "dbl.a"}, {"from": "dbl.result", "to": "ret.twice"}]}]}
+            """)
+        let issues = VisualScriptValidator.validate(graph).filter { $0.severity != .info }
+        #expect(issues.isEmpty, "\(issues)")
+        #expect(VisualScriptNodes.definition("function.call")?.signature(for: graph.node("m1")!, in: graph).inputs.map(\.name) == ["go", "amount"])
+        let rig = Rig(graph)
+        rig.step(1, dt: 0.02)
+        #expect(rig.lines.isEmpty, "\(rig.lines)")
+        #expect(rig.variable("late") == .int(0), "the delay waits")
+        rig.step(2, dt: 0.02)
+        #expect(rig.variable("a") == .int(2) && rig.variable("b") == .int(1), "the flip-flop alternates: a, b, a")
+        #expect(rig.variable("t") == .int(10), "data passes through the macro (5 × 2)")
+        #expect(rig.variable("late") == .int(1), "the delay inside the macro continued the flow")
+    }
+
+    @Test func pureFunctionCallsAreComputed() throws {
+        // Collapsing pure nodes makes a pure function; its call has no exec pins and is computed when read.
+        let graph = try decode("""
+            {"variables": [{"name": "r", "type": "int"}],
+             "nodes": [{"id": "start", "type": "event.start"}, {"id": "add", "type": "math.add", "inputs": {"a": 2, "b": 3}},
+                       {"id": "mul", "type": "math.multiply", "inputs": {"b": 4}}, {"id": "set", "type": "var.set", "config": {"variable": "r"}}],
+             "links": [{"from": "start.out", "to": "set.in"}, {"from": "add.result", "to": "mul.a"}, {"from": "mul.result", "to": "set.value"}]}
+            """)
+        let collapsed = try graph.collapsingToFunction(["add", "mul"], name: "math")
+        #expect(collapsed.function("math")?.pure == true)
+        let issues = VisualScriptValidator.validate(collapsed).filter { $0.severity != .info }
+        #expect(issues.isEmpty, "\(issues)")
+        let rig = Rig(collapsed)
+        rig.step()
+        #expect(rig.lines.isEmpty, "\(rig.lines)")
+        #expect(rig.variable("r") == .int(20))
+    }
+
     @Test func componentDefaultsListExposedVariables() {
         let graph = VisualScriptGraph(variables: [VisualScriptVariable(name: "speed", type: .float, defaultValue: .int(3)),
                                                   VisualScriptVariable(name: "secret", type: .int, exposed: false)])

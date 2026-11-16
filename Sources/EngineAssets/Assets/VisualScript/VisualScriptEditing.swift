@@ -161,10 +161,12 @@ extension VisualScriptGraph {
             var seen = Set<String>()
             for parameter in list {
                 let name = parameter.name
-                guard !name.isEmpty, !name.contains("."), name != "in", name != "out" else {
+                guard !name.isEmpty, !name.contains("."), old.macro || (name != "in" && name != "out") else {
                     throw VisualScriptEditError("function \(old.name): '\(name)' can't name an \(side) (empty, \"in\", \"out\" or with \".\")")
                 }
-                guard parameter.type != .exec else { throw VisualScriptEditError("function \(old.name): \(side) '\(name)' can't be exec") }
+                guard parameter.type != .exec || old.macro else {
+                    throw VisualScriptEditError("function \(old.name): \(side) '\(name)' can't be exec (only a macro's can)")
+                }
                 guard seen.insert(name).inserted else { throw VisualScriptEditError("function \(old.name): two \(side)s named '\(name)'") }
             }
         }
@@ -172,7 +174,7 @@ extension VisualScriptGraph {
         func mapper(_ renames: [String: String]?, _ new: [VisualScriptParameter], exec: String) -> (String) -> String? {
             let names = Set(new.map(\.name))
             return { pin in
-                if pin == exec { return pin }
+                if !old.macro && pin == exec { return pin }  // a function's own exec pins; a macro's are parameters
                 let renamed = renames?[pin] ?? pin
                 return names.contains(renamed) ? renamed : nil
             }

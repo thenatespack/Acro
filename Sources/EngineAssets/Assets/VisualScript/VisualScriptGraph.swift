@@ -287,18 +287,23 @@ public struct VisualScriptFunction: Codable, Equatable, Sendable {
     public var nodes: [VisualScriptNode]
     public var links: [VisualScriptLink]
     public var pure: Bool
+    /// A macro: its nodes are copied into every node using it (`function.call`) when the graph
+    /// is prepared, so each use keeps its own state (gates, do-once, delays), and its inputs and
+    /// outputs may include several exec pins (flows enter and leave where they're wired).
+    public var macro: Bool
 
     public init(name: String, inputs: [VisualScriptParameter] = [], outputs: [VisualScriptParameter] = [],
-                nodes: [VisualScriptNode] = [], links: [VisualScriptLink] = [], pure: Bool = false) {
+                nodes: [VisualScriptNode] = [], links: [VisualScriptLink] = [], pure: Bool = false, macro: Bool = false) {
         self.name = name
         self.inputs = inputs
         self.outputs = outputs
         self.nodes = nodes
         self.links = links
         self.pure = pure
+        self.macro = macro
     }
 
-    private enum CodingKeys: String, CodingKey { case name, inputs, outputs, nodes, links, pure }
+    private enum CodingKeys: String, CodingKey { case name, inputs, outputs, nodes, links, pure, macro }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -308,6 +313,7 @@ public struct VisualScriptFunction: Codable, Equatable, Sendable {
         nodes = try c.decodeIfPresent([VisualScriptNode].self, forKey: .nodes) ?? []
         links = try c.decodeIfPresent([VisualScriptLink].self, forKey: .links) ?? []
         pure = try c.decodeIfPresent(Bool.self, forKey: .pure) ?? false
+        macro = try c.decodeIfPresent(Bool.self, forKey: .macro) ?? false
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -318,6 +324,7 @@ public struct VisualScriptFunction: Codable, Equatable, Sendable {
         try c.encode(nodes, forKey: .nodes)
         try c.encode(links, forKey: .links)
         if pure { try c.encode(pure, forKey: .pure) }
+        if macro { try c.encode(macro, forKey: .macro) }
     }
 }
 

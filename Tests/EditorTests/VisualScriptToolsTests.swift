@@ -318,6 +318,29 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(session.assets?.visualScript(of: asset)?.node("speed")?.x == 0)
     }
 
+    @Test func addAMacroInTheTab() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = try project(folder)
+        let created = try call(session, "vscript.new", ["name": "macros"])
+        let asset = try #require(AssetID(created["asset"] as! String))
+        let workspace = VisualScriptWorkspace(session: session)
+        #expect(workspace.open(asset))
+        workspace.update()
+        try #require(workspace.view.descendant(named: "vscriptNewFunction") as? TextField).onChange?("twice")
+        try #require(workspace.view.descendant(named: "vscriptAddMacro") as? Button).action?()
+        workspace.update()
+        let graph = try #require(session.assets?.visualScript(of: asset))
+        let macro = try #require(graph.function("twice"))
+        #expect(macro.macro && macro.inputs == [VisualScriptParameter(name: "in", type: .exec)] && macro.outputs == [VisualScriptParameter(name: "out", type: .exec)])
+        #expect(VisualScriptValidator.validate(graph).filter { $0.severity == .error }.isEmpty)
+        // Use it in the event graph: the node's pins are the macro's.
+        try #require(workspace.view.descendant(named: "vscriptCallFunction.twice") as? Button).action?()
+        workspace.update()
+        let use = try #require(workspace.canvas.nodes.first { $0.title == "twice (macro)" })
+        #expect(use.inputs.map(\.name) == ["in"] && use.outputs.map(\.name) == ["out"])
+    }
+
     @Test func workspaceEditsAreUndoSteps() throws {
         let folder = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: folder) }

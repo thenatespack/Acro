@@ -27,7 +27,8 @@ public enum EditorVisualScriptCommands {
         event.triggerEnter, event.custom…) start flows. Data pins are typed (bool, int, float, string, vec2, vec3, vec4, \
         color, quat, entity, asset, array, map, any) and convert automatically where it makes sense; an unconnected entity \
         input means the script's own entity. `variables`: {name, type, default, exposed}; `functions`: {name, inputs, outputs, \
-        nodes, links} called with function.call (config.function), starting at function.entry and ending at function.return. \
+        nodes, links, macro?} called with function.call (config.function), starting at function.entry and ending at function.return \
+        (a `macro` is copied into each use instead, and its inputs and outputs may be exec pins). `reroute` nodes bend a wire. \
         `actions`: input actions {"jump": ["key.space", "pad.south"]} for event.actionPressed. List node types and their \
         pins with vscript.nodes {search}.
         """

@@ -357,7 +357,7 @@ public final class VisualScriptWorkspace {
         for (name, value) in node.inputs { literals[name] = Self.text(of: value) }
         var title = definition?.title ?? node.type
         if let variable = node.configString("variable") { title += " " + variable }
-        if let call = node.configString("function") { title = "Call " + call }
+        if let call = node.configString("function") { title = graph.function(call)?.macro == true ? call + " (macro)" : "Call " + call }
         if let component = node.configString("component") {
             title = (node.type == "component.set" ? "Set " : node.type == "component.get" ? "Get " : title + " ") + component
                 + (node.configString("field").map { "." + $0 } ?? "")
@@ -737,7 +737,7 @@ public final class VisualScriptWorkspace {
     private func addFunctionsForm() {
         details.addChild(Label("Functions", role: .heading))
         for function in graph.functions {
-            let label = Label("\(function.name)(\(function.inputs.map(\.name).joined(separator: ", "))) → \(function.outputs.map(\.name).joined(separator: ", "))")
+            let label = Label((function.macro ? "macro " : "") + "\(function.name)(\(function.inputs.map(\.name).joined(separator: ", "))) → \(function.outputs.map(\.name).joined(separator: ", "))")
             label.style.grow = 1
             label.style.shrink = 1
             let edit = Button("Edit", name: "vscriptEditFunction.\(function.name)") { [unowned self] in
@@ -746,7 +746,7 @@ public final class VisualScriptWorkspace {
                 canvasDirty = true
                 sidebarDirty = true
             }
-            let call = Button("Call", name: "vscriptCallFunction.\(function.name)") { [unowned self] in
+            let call = Button(function.macro ? "Use" : "Call", name: "vscriptCallFunction.\(function.name)") { [unowned self] in
                 let previous = self.function
                 self.function = nil
                 addNode(type: "function.call", config: ["function": .string(function.name)])
@@ -761,18 +761,11 @@ public final class VisualScriptWorkspace {
         let field = TextField(text: newFunction, placeholder: "New function name", name: "vscriptNewFunction")
         field.onChange = { [unowned self] text in newFunction = text }
         field.style.grow = 1
-        let add = Button("Add", name: "vscriptAddFunction") { [unowned self] in
-            let name = newFunction.trimmingCharacters(in: .whitespaces)
-            guard !name.isEmpty, graph.function(name) == nil else { return }
-            newFunction = ""
-            let function = VisualScriptFunction(name: name, nodes: [VisualScriptNode(id: "entry", type: "function.entry"),
-                                                                    VisualScriptNode(id: "return", type: "function.return", x: 400)],
-                                                 links: [VisualScriptLink(from: "entry.out", to: "return.in")])
-            var edit = VisualScriptEdit(functions: [function])
-            edit.function = nil
-            if let result = try? graph.applying(edit) { commit(result.graph, "Add Function") }
-        }
-        details.addChild(HStack(spacing: 6, [field, add]))
+        let add = Button("Add", name: "vscriptAddFunction") { [unowned self] in addFunction(macro: false) }
+        add.tooltip = "A function: one call frame per call, one flow in and out"
+        let addMacro = Button("Add Macro", name: "vscriptAddMacro") { [unowned self] in addFunction(macro: true) }
+        addMacro.tooltip = "A macro: its nodes are copied where it's used, so delays and gates work per use, with any number of exec pins"
+        details.addChild(HStack(spacing: 6, [field, add, addMacro]))
         if let open = bodyFunction {
             addPinsForm(open, outputs: false)
             addPinsForm(open, outputs: true)
@@ -781,6 +774,21 @@ public final class VisualScriptWorkspace {
             note.wraps = true
             details.addChild(note)
         }
+    }
+
+    /// Adds a function (or macro) named by the sidebar's field: entry wired to return.
+    private func addFunction(macro: Bool) {
+        let name = newFunction.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, graph.function(name) == nil else { return }
+        newFunction = ""
+        let function = VisualScriptFunction(
+            name: name, inputs: macro ? [VisualScriptParameter(name: "in", type: .exec)] : [],
+            outputs: macro ? [VisualScriptParameter(name: "out", type: .exec)] : [],
+            nodes: [VisualScriptNode(id: "entry", type: "function.entry"), VisualScriptNode(id: "return", type: "function.return", x: 400)],
+            links: [macro ? VisualScriptLink(from: "entry.in", to: "return.out") : VisualScriptLink(from: "entry.out", to: "return.in")], macro: macro)
+        var edit = VisualScriptEdit(functions: [function])
+        edit.function = nil
+        if let result = try? graph.applying(edit) { commit(result.graph, macro ? "Add Macro" : "Add Function") }
     }
 
     /// The inputs (or outputs) of the function being edited: rename, retype, reorder, remove, add.
@@ -801,7 +809,7 @@ public final class VisualScriptWorkspace {
             }
             apply(VisualScriptEdit(signatures: [signature]), label)
         }
-        let types = VisualScriptType.allCases.filter { $0 != .exec }.map(\.rawValue)
+        let types = VisualScriptType.allCases.filter { $0 != .exec || function.macro }.map(\.rawValue)
         for (i, parameter) in list.enumerated() {
             let name = TextField(text: parameter.name, placeholder: "name", name: "vscriptFn\(tag)Name.\(parameter.name)")
             name.style.grow = 1
@@ -847,7 +855,7 @@ public final class VisualScriptWorkspace {
         let addPin = { (text: String) in
             let new = text.trimmingCharacters(in: .whitespaces)
             guard !new.isEmpty, !list.contains(where: { $0.name == new }) else { return }
-            commit(list + [VisualScriptParameter(name: new, type: .float)], "Add Function \(tag)")
+            commit(list + [VisualScriptParameter(name: new, type: function.macro ? .exec : .float)], "Add Function \(tag)")
         }
         field.onSubmit = { text in addPin(text) }
         let add = Button("Add", name: "vscriptFnAdd\(tag)") { [weak field] in addPin(field?.text ?? "") }
