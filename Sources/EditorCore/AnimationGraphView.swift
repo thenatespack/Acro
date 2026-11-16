@@ -197,7 +197,8 @@ public final class AnimGraphCanvas: Widget {
                 detail = "Sub-machine · \(machine.states.count) states"
             } else if let blend = state.blend {
                 let parameters = [blend.parameter] + (blend.parameterY.map { [$0] } ?? [])
-                detail = "Blend\(blend.is2D ? " 2D" : "") · \(parameters.map { $0.isEmpty ? "?" : $0 }.joined(separator: ", ")) · \(blend.clips.count) clips"
+                // Clip count before the parameters, so a long parameter name is what gets cut.
+                detail = "Blend\(blend.is2D ? " 2D" : "") · \(blend.clips.count) clips · \(parameters.map { $0.isEmpty ? "?" : $0 }.joined(separator: ", "))"
             } else {
                 detail = clipName(state.clip ?? "")
             }
