@@ -362,6 +362,11 @@ public struct CookPlan: Sendable {
             if let importer = source.importer { entry.settings = importer.effectiveSettings(source.settings) }
             return Cooked(entry: entry, files: [:], data: data, origin: .file, references: [], warnings: [])
         }
+        guard let importer = source.importer, importer.name != "audio", importer.name != "table", importer.name != "ui" else {
+            let data = try Data(contentsOf: source.sourceURL)
+            if let importer = source.importer { entry.settings = importer.effectiveSettings(source.settings) }
+            return Cooked(entry: entry, files: [:], data: data, origin: .file, references: [], warnings: [])
+        }
         let settings = AssetCooker.shippingSettings(importer: importer, effective: importer.effectiveSettings(source.settings), options: options)
         let canonical = AssetJSON.canonical(settings)
         entry.settings = settings

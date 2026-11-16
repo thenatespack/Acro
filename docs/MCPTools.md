@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 201 tools.
+named by its id (see README › Use the editor › AI control). 206 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -50,6 +50,7 @@ optional arguments.
 | `tool` | [`tool.set`](#toolset), [`tool.snapping`](#toolsnapping) |
 | `transform` | [`transform.lookAt`](#transformlookat), [`transform.set`](#transformset) |
 | `ui` | [`ui.click`](#uiclick), [`ui.drag`](#uidrag), [`ui.find`](#uifind), [`ui.hover`](#uihover), [`ui.key`](#uikey), [`ui.scroll`](#uiscroll), [`ui.snapshot`](#uisnapshot), [`ui.type`](#uitype) |
+| `uiLayout` | [`uiLayout.edit`](#uilayoutedit), [`uiLayout.get`](#uilayoutget), [`uiLayout.new`](#uilayoutnew), [`uiLayout.open`](#uilayoutopen), [`uiLayout.set`](#uilayoutset) |
 | `vfx` | [`vfx.edit`](#vfxedit), [`vfx.get`](#vfxget), [`vfx.new`](#vfxnew), [`vfx.open`](#vfxopen), [`vfx.set`](#vfxset) |
 | `view` | [`view.appearance`](#viewappearance), [`view.frameSelection`](#viewframeselection), [`view.gameCamera`](#viewgamecamera), [`view.pick`](#viewpick), [`view.screenshot`](#viewscreenshot) |
 
@@ -3925,6 +3926,121 @@ Result:
 - `target?`: {command?: string, depth: integer, enabled?: boolean, focused?: boolean, hovered?: boolean, label?: string, offscreen?: boolean, path: string, rect: [number], role: string (27 cases), selected?: boolean, tooltip?: string, value?: string}
 - `tooltip?`: string
 - `viewport?`: boolean
+
+## uiLayout
+
+### `uiLayout.edit`
+
+**Edit UI Layout** · _undoable_
+
+Changes part of a .ui file in one undoable step, in this order: removeWidgets, addWidgets, updateWidgets (id → fields; null resets; "id" renames), moveWidgets, bindings (widget id → value key), values (sample values), then theme / colors / fontSize / safeArea / size. Running games show the change. Returns widget ids, value keys, events and warnings. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `addWidgets?`: [{align?: "auto" \| "start" \| "center" \| "end" \| "stretch", anchor?: string (10 cases), background?: string, bind?: string, borderColor?: string, color?: string, cornerRadius?: number, event?: string, fit?: "fit" \| "fill" \| "stretch", fontSize?: number, grow?: number, height?: number, hidden?: boolean, id?: string, image?: string, justify?: "start" \| "center" \| "end" \| "spaceBetween", kind?: "progress" \| "health", max?: number, offset?: number[2], opacity?: number, padding?: number, parent?: string, primary?: boolean, segments?: integer, shadow?: boolean, spacing?: number, text?: string, textAlign?: "left" \| "center" \| "right", trail?: boolean, type?: string (8 cases), value?: number, visibleWhen?: string, width?: number, wrap?: boolean}]
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `bindings?`: object
+- `colors?`: object
+- `fontSize?`: number
+- `moveWidgets?`: [{id: string, index?: integer, parent?: string}]
+- `path?`: string
+- `removeWidgets?`: [string]
+- `safeArea?`: number
+- `size?`: number[2] — [x, y]
+- `theme?`: string
+- `updateWidgets?`: object
+- `values?`: object
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `events`: [string]
+- `path`: string
+- `valueKeys`: [string]
+- `warnings`: [string]
+- `widgets`: [string]
+
+### `uiLayout.get`
+
+**Get UI Layout** · _read-only_, _idempotent_
+
+Reads a .ui file: its theme, sample values and widgets as stored, the value keys and events game code uses, and the problems with it.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `events`: [string]
+- `layout`: {colors?: object, fontSize?: number, safeArea?: number, size?: number[2], theme?: string, values?: object, widgets?: [object]}
+- `path`: string
+- `valueKeys`: [string]
+- `warnings`: [string]
+
+### `uiLayout.new`
+
+**New UI Layout**
+
+Writes a .ui file (a game menu or HUD) in `folder` (default: the Assets root) from a `preset` (hud, menu, empty) plus optional `widgets`, and imports it. Returns the widget ids, value keys, events and warnings. Change it with uiLayout.edit (add/update/move/remove widgets, bindings, sample values) or uiLayout.set. A .ui file is a game menu or HUD: `theme` (game|dark|light|highContrast), `colors` (theme color name → "#RRGGBB[AA]"; names: text, secondaryText, accent, accentText, panel, panelBorder, control, controlHover, barBackground, health, warning, danger, hudText, hudShadow), `fontSize`, `safeArea` (points kept clear of the screen edges), `size` (design screen size [w, h]), `values` (sample values by key for the preview) and `widgets`, a flat list. Each widget: `id` (unique), `type` (panel|vstack|hstack|label|image|button|bar|spacer), `parent` (a container id; "" is the screen). The screen and panels place children by `anchor` (topLeft|top|topRight|left|center|right|bottomLeft|bottom|bottomRight|fill) and `offset` [x, y] points in from the anchored edges; stacks line them up (`spacing`, `align` auto|start|center|end|stretch, `justify` start|center|end|spaceBetween, children's `grow`). Also: width/height (omit to fit content), padding, background/borderColor/color ("#hex" or a theme color name), cornerRadius, opacity, hidden; label/button `text` with `{key}` placeholders, fontSize, textAlign, wrap, shadow; image `image` (path under Assets/), fit fit|fill|stretch; bar value, max, kind progress|health, segments, trail; button primary, event (default: the id). `bind` ties a widget to a value key (bar fill = value / max; label/button text; image path) and `visibleWhen` shows it only while a key is truthy ("!key": falsy). Game code: let hud = UIBuildView(assets: assets, path: "UI/hud.ui"); ui.root.addChild(hud); hud.set("health", 64); hud.on("pause") { ... }.
+
+Arguments:
+
+- `folder?`: string
+- `name?`: string
+- `preset?`: string
+- `theme?`: string
+- `widgets?`: [{align?: "auto" \| "start" \| "center" \| "end" \| "stretch", anchor?: string (10 cases), background?: string, bind?: string, borderColor?: string, color?: string, cornerRadius?: number, event?: string, fit?: "fit" \| "fill" \| "stretch", fontSize?: number, grow?: number, height?: number, hidden?: boolean, id?: string, image?: string, justify?: "start" \| "center" \| "end" \| "spaceBetween", kind?: "progress" \| "health", max?: number, offset?: number[2], opacity?: number, padding?: number, parent?: string, primary?: boolean, segments?: integer, shadow?: boolean, spacing?: number, text?: string, textAlign?: "left" \| "center" \| "right", trail?: boolean, type?: string (8 cases), value?: number, visibleWhen?: string, width?: number, wrap?: boolean}]
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `events`: [string]
+- `path`: string
+- `valueKeys`: [string]
+- `warnings`: [string]
+- `widgets`: [string]
+
+### `uiLayout.open`
+
+**Open in UI Builder** · _idempotent_
+
+Opens a .ui file in the editor's UI Builder tab (live preview at a chosen screen size, widget tree with drag and drop, property form) and brings the tab to the front, optionally at `previewSize` with preview `values` and a widget selected. view.screenshot {source: "panel", panel: "uiBuilder"} shows it.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+- `previewSize?`: number[2] — [x, y]
+- `select?`: string
+- `values?`: object
+
+Result:
+
+- `path`: string
+
+### `uiLayout.set`
+
+**Set UI Layout** · _undoable_, _idempotent_
+
+Replaces a .ui file's whole contents and reimports it (running games show the new layout). Undoable. For a few changes, uiLayout.edit is shorter. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `layout`: {colors?: object, fontSize?: number, safeArea?: number, size?: number[2], theme?: string, values?: object, widgets?: [object]}
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `events`: [string]
+- `path`: string
+- `valueKeys`: [string]
+- `warnings`: [string]
+- `widgets`: [string]
 
 ## vfx
 

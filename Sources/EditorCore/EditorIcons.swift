@@ -287,6 +287,7 @@ public enum EditorIcons {
         case "vfx": return .prefab
         case "table": return .model
         case "tilemap": return .texture
+        case "ui": return .data
         case "gltf", "glb", "obj", "fbx", "meshbuild", "terrain": return .model
         case "gltf", "glb", "obj", "fbx", "meshbuild", "terrain", "gridmap": return .model
         case "gltf", "glb", "obj", "fbx", "meshbuild", "terrain", "path": return .model
@@ -361,6 +362,7 @@ public enum EditorIcons {
         EditorLayout.gridMapBuilder: "boxes",
         EditorLayout.pathBuilder: "route",
         EditorLayout.behaviorTree: "network",
+        EditorLayout.uiBuilder: "layout-dashboard",
     ]
 
     /// Console lines by level.

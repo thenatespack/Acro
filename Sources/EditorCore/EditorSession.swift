@@ -153,6 +153,11 @@ public final class EditorSession {
     /// The behavior tree open in the Behavior Tree tab (`behavior.open`), and how the app shows it.
     public var openBehavior: AssetID?
     public var onOpenBehavior: ((AssetID) -> Void)?
+    /// The layout open in the UI Builder tab (`uiLayout.open`), and how the app shows it.
+    public var openUIBuild: AssetID?
+    public var onOpenUIBuild: ((AssetID) -> Void)?
+    /// Preview size, values and selection the last `uiLayout.open` asked for (the tab takes it).
+    public var uiPreviewRequest: UIPreviewRequest?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()

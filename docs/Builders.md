@@ -20,6 +20,7 @@ Builder tools let people and AI agents author game content inside the Acro edito
 | [GridMap Builder](#gridmap-builder) | `.gridmap` | 3D levels painted from modular pieces on a grid |
 | [Path Builder](#path-builder) | `.path` | Roads, rails, rivers, fences, cables and walls along splines |
 | [Behavior Tree Builder](#behavior-tree-builder) | `.behavior` | NPC AI as node trees |
+| [UI / HUD Builder](#ui--hud-builder) | `.ui` | Game menus and HUDs made from the engine's widgets |
 
 Planned builders are tracked in [Tools.md](../Tools.md).
 
@@ -186,3 +187,29 @@ In the editor, use **New Behavior Tree** in the asset browser and double-click t
 Editor MCP clients use `behavior.new {preset}`, `behavior.edit {addNodes, connect, disconnect, updateNodes, removeNodes, blackboard}`, `behavior.set`, `behavior.get`, `behavior.assign {entity, target}`, `behavior.debug` (the live running path and blackboard while playing) and `behavior.open`. See [MCPTools.md](MCPTools.md).
 
 Not yet: a node-graph canvas (the tab shows an outline) and navigation-mesh pathfinding. Movement assumes root entities.
+
+## UI / HUD Builder
+
+UI layouts (`.ui`, JSON under `Assets/`) describe game menus and HUDs built from the engine's widget toolkit: panels, vertical and horizontal stacks, labels, images, buttons, progress / health bars and spacers. Widgets are a flat list; each has a unique `id` and names its `parent` container ("" is the screen). The screen and panels place their children by `anchor` (the nine corners, edges and center, or `fill`) and an `offset` in points from the anchored edges, inside a safe area; stacks line their children up with spacing, alignment and grow. A layout picks a base theme (`game`, `dark`, `light`, `highContrast`) and can change its colors (`accent`, `text`, `panel`, `health`…); widget colors are `#RRGGBB[AA]` or one of those names.
+
+Widgets show game values in three ways: `{key}` placeholders in text (`"Score: {score}"`), `bind` (a bar's fill is the value divided by `max`; a label's or button's whole text; an image's path) and `visibleWhen` (shown while a value is truthy, `"!key"` while it is falsy). The file's `values` are samples for the preview. A button sends its `event` (or its id) when pressed.
+
+In the editor, use **New UI Layout** in the asset browser (a starter HUD), then double-click the file (or **Open in UI Builder** in the inspector) to open the **UI Builder** tab next to the Scene view. The preview in the middle is drawn by the same `UIBuildView` games use, fitted to the panel at a screen size picked from presets (16:9, 21:9, 16:10, 4:3, phone landscape and portrait). Click a widget to select it; drag one that sits on the screen or in a panel to change its offset from its anchor. With **Interact** on, clicking the preview's buttons shows the event they send. On the left are the add buttons and the widget tree (drag rows to put a widget in another container or reorder it); on the right are the selected widget's properties and bindings, then the layout's theme, colors, sample values and problems. Every change is one undo step.
+
+Game code shows a layout, sets values and handles buttons. The view follows hot reload while the game runs:
+
+```swift
+let hud = UIBuildView(assets: assets, path: "UI/hud.ui")!
+hud.useImages(renderer: sceneRenderer, assets: assets)   // project images
+ui.root.addChild(hud)                                     // fills the window; clicks between widgets reach the game
+hud.set("health", 64)
+hud.set("score", 1200)
+hud.on("pause") { openPauseMenu() }
+hud.widget("score")                                       // the engine widget, for anything the file can't express
+```
+
+`UIBuildView(build)` and `load(_:)` show a `UIBuild` value made in code, and `onEvent` reports every press. The view's widgets use the layout's theme (`Widget.themeOverride`), not the game's context theme. Cooked games ship the file as written; include layouts and their images with the cooker's `--include`.
+
+MCP clients use `uiLayout.new {preset: hud|menu|empty, widgets}`, `uiLayout.edit {addWidgets, updateWidgets, moveWidgets, removeWidgets, bindings, values, theme, colors}`, `uiLayout.get`, `uiLayout.set` and `uiLayout.open {previewSize, values, select}`; see [MCPTools.md](MCPTools.md). (The `ui.*` names belong to the editor's UI automation tools.)
+
+Not yet: per-widget animation and transitions, sliders / toggles / text fields as layout widgets, navigation order for gamepads beyond the toolkit's spatial default, and scaling the whole layout with the screen (it is laid out in points; anchors keep it in place at any size).

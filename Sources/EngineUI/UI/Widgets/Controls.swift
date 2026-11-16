@@ -7,8 +7,15 @@ import EngineScene
 import EngineText
 
 extension Widget {
-    /// The context's theme, or the default one while detached.
-    public var theme: UITheme { context?.theme ?? UITheme() }
+    /// The nearest `themeOverride` up the tree, else the context's theme, else the default one while detached.
+    public var theme: UITheme {
+        var widget: Widget? = self
+        while let current = widget {
+            if let override = current.themeOverride { return override }
+            widget = current.parent
+        }
+        return context?.theme ?? UITheme()
+    }
 
     /// A cached single-line layout at the theme font (see `UIContext.textLayout`).
     func cachedLayout(_ text: String, size: Float) -> TextLayout {

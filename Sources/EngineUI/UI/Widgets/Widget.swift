@@ -253,6 +253,18 @@ open class Widget {
     /// Picks a `UITheme.styles` override for this widget (before its type name).
     public var styleClass: String? { didSet { if styleClass != oldValue { setNeedsLayout() } } }
 
+    /// A theme for this widget and its subtree instead of the context's (a `.ui` layout's own
+    /// colors inside a game's UI). Nil inherits the parent's (or the context's).
+    public var themeOverride: UITheme? {
+        didSet {
+            func visit(_ widget: Widget) {
+                widget.setNeedsLayout()
+                for child in widget.children { visit(child) }
+            }
+            visit(self)
+        }
+    }
+
     /// Visual-only transform and fade of this widget and its subtree, applied when painting
     /// (menu transitions, world-space labels, pulses): points map through
     /// `frame.origin + (p - frame.origin) * visualScale + visualOffset`, and alpha is
@@ -569,8 +581,9 @@ open class Widget {
         if transformed { list.popTransform() }
     }
 
-    private func paintContent(_ list: UIDrawList, theme: UITheme) {
+    private func paintContent(_ list: UIDrawList, theme inherited: UITheme) {
         guard let clip = list.clipBounds else { return }
+        let theme = themeOverride ?? inherited
         // A little slack for strokes and shadows that extend past the frame.
         let slack: Float = 4
         let bounds = UIRect(x: frame.x - slack, y: frame.y - slack, width: frame.width + 2 * slack,
