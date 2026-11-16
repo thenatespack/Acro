@@ -558,6 +558,7 @@ public final class AssetBrowserPanel {
             ("New Post-FX", PostFXNewCommand.id, { [unowned self] in model.newPostFX(); sync() }),
             ("New Data Table", TableNewCommand.id, { [unowned self] in model.newDataTable(); sync() }),
             ("New Terrain", TerrainNewCommand.id, { [unowned self] in model.newTerrain(); sync() }),
+            ("New UI Layout", UINewCommand.id, { [unowned self] in model.newUILayout(); sync() }),
         ]
         if let entry {
             if case .folder = entry.item {

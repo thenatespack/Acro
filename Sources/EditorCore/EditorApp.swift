@@ -138,6 +138,8 @@ public final class EditorApp: Game, EditorHost {
     public private(set) var tableWorkspace: DataTableWorkspace!
     /// The Terrain Builder tab (TerrainBuilderWorkspace.swift).
     public private(set) var terrainWorkspace: TerrainBuilderWorkspace!
+    /// The UI Builder tab (UIBuilderWorkspace.swift).
+    public private(set) var uiWorkspace: UIBuilderWorkspace!
     private(set) var statusBar: StatusBar!
     /// The Assets panel (browser) and its thumbnails.
     public private(set) var assetBrowser: AssetBrowserPanel!
@@ -501,6 +503,14 @@ public final class EditorApp: Game, EditorHost {
             }
             dock.focusPanel(EditorLayout.terrainBuilder)
         }
+        session.onOpenUIBuild = { [unowned self] id in
+            guard uiWorkspace.open(id) else { return }
+            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.uiBuilder, EditorLayout.viewport) {
+                dock.dock(EditorLayout.uiBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
+                                                                                           : .edge(.bottom))
+            }
+            dock.focusPanel(EditorLayout.uiBuilder)
+        }
         session.onOpenScript = { [unowned self] path in
             let url = URL(fileURLWithPath: path)
             scriptEditor.openScript(at: url)
@@ -633,6 +643,8 @@ public final class EditorApp: Game, EditorHost {
         terrainWorkspace = TerrainBuilderWorkspace(session: session)
         terrainWorkspace.device = engine?.device
         if let quality = engine?.quality { terrainWorkspace.quality = quality }
+        uiWorkspace = UIBuilderWorkspace(session: session)
+        uiWorkspace.images = { [unowned self] reference in thumbnails?.thumbnail(reference, kind: .texture) }
         files.onOpen = { [unowned self] file in openFile(file) }
         files.onNewScene = { [unowned self] name in newScene(named: name) }
 
@@ -665,6 +677,7 @@ public final class EditorApp: Game, EditorHost {
         let terrainPanel = DockPanel(id: EditorLayout.terrainBuilder, title: "Terrain Builder", content: terrainWorkspace.view, minSize: Vec2(320, 200))
         terrainPanel.passesPointerThrough = true
         dock.addPanel(terrainPanel)
+        dock.addPanel(DockPanel(id: EditorLayout.uiBuilder, title: "UI Builder", content: uiWorkspace.view, minSize: Vec2(320, 200)))
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
         for (id, icon) in EditorIcons.panelIconNames { dock.panel(id)?.icon = EditorIcons.named(icon) }
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
@@ -1070,6 +1083,7 @@ public final class EditorApp: Game, EditorHost {
             postFXWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
             tableWorkspace.update()
             terrainWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
+            uiWorkspace.update()
         }
         session.tick(dt: Double(dt))
 

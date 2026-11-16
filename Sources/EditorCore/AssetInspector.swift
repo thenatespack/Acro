@@ -419,6 +419,16 @@ public final class AssetInspectorView {
                 content.addChildren([HStack(spacing: 6, [open, Spacer()]),
                                      note("A heightmap terrain, \(Int(size.x)) x \(Int(size.y)) m, split into chunks with colliders. The Terrain Builder has brushes, texture layers and scatter rules.")])
             }
+            if session.isUIBuildFile(id) {
+                let open = Button("Open in UI Builder", role: .primary, name: "openUIBuilder") { [unowned self] in
+                    session.run(UIOpenCommand.self, .init(asset: AssetReference(id)))
+                }
+                open.command = UIOpenCommand.id.rawValue
+                open.tooltip = "Lay out this menu or HUD in the UI Builder tab (or double-click it in the Assets panel)"
+                let build = session.assets?.uiBuild(of: id)
+                content.addChildren([HStack(spacing: 6, [open, Spacer()]),
+                                     note("A game menu or HUD of \(build?.widgets.count ?? 0) widgets. Game code shows it with UIBuildView(assets:path:), sets values with set(key, value) and handles buttons with on(event).")])
+            }
             if session.isMaterialFile(id) {
                 addMaterialForm(AssetReference(id, subAsset: "material"))
             }
