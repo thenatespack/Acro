@@ -179,7 +179,7 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         workspace.update()
         #expect(workspace.tree.node("idle") == nil && workspace.selectedNode == "root")
 
-        // While playing, the debugged entity's statuses tint the rows.
+        // While playing, the debugged entity's statuses tint the canvas nodes.
         let npc = try #require(session.create(.empty, name: "Walker"))
         try call(session, "behavior.assign", ["entity": npc.description, "asset": id.description])
         session.play()
@@ -189,6 +189,7 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(workspace.debugEntity == entity)
         #expect(workspace.shownStatuses["root"] == .running)
         #expect(workspace.shownStatuses["walk"] == .running)
+        #expect(workspace.canvas.statuses["walk"] == .running)
         session.stop()
         workspace.update()
         #expect(workspace.debugEntity == nil && workspace.shownStatuses.isEmpty)
@@ -198,5 +199,103 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(workspace.tree == BehaviorTree.preset(.guardian))
         workspace.close()
         #expect(workspace.asset == nil)
+    }
+
+    @Test func canvasLaysOutTheTreeAndDragsNodes() throws {
+        // Layout: parents centered over their children, children left to right, loose nodes to the right.
+        var tree = BehaviorTree.preset(.guardian)
+        let layout = BehaviorTreeLayout(tree)
+        let p = layout.positions
+        #expect(p.count == tree.nodes.count && layout.loose.isEmpty && layout.looseStartX == nil)
+        #expect(p["root"]!.y == 0 && p["retreat"]!.y == BehaviorTreeLayout.rowHeight && p["hurt"]!.y == 2 * BehaviorTreeLayout.rowHeight)
+        #expect(p["retreat"]!.x < p["fight"]!.x && p["fight"]!.x < p["patrol"]!.x)
+        #expect(p["see"]!.x < p["chase"]!.x && p["chase"]!.x < p["attack"]!.x)
+        #expect(p["fight"]!.x == p["chase"]!.x)  // centered over its three children
+        #expect(layout.edges.count == tree.nodes.count - 1)
+        tree.nodes.append(BehaviorNode("stray", .wait))
+        let withStray = BehaviorTreeLayout(tree)
+        #expect(withStray.loose == ["stray"] && withStray.positions["stray"]!.x >= withStray.looseStartX!)
+
+        // Drop targets: middle of a composite → child; edges → before / after; never into its own subtree.
+        let canvas = BehaviorTreeCanvas()
+        canvas.frame = UIRect(x: 0, y: 0, width: 1200, height: 600)
+        canvas.tree = .preset(.guardian)
+        canvas.pan = .zero
+        func point(_ id: String, _ fx: Float) -> Vec2 {
+            let r = canvas.rect(of: id)!
+            return Vec2(r.x + r.width * fx, r.y + r.height / 2)
+        }
+        #expect(canvas.node(at: point("chase", 0.5)) == "chase")
+        #expect(canvas.dropTarget(for: "patrol", at: point("retreat", 0.5)) == .child(of: "retreat"))
+        #expect(canvas.dropTarget(for: "patrol", at: point("retreat", 0.1)) == .before("retreat"))
+        #expect(canvas.dropTarget(for: "attack", at: point("see", 0.9)) == .after("see"))
+        #expect(canvas.dropTarget(for: "attack", at: point("see", 0.3)) == .before("see"))
+        #expect(canvas.dropTarget(for: "fight", at: point("chase", 0.5)) == nil)  // its own child
+        #expect(canvas.dropTarget(for: "root", at: point("hurt", 0.5)) == nil)
+
+        // Dragging with the pointer reports the drop; clicks select.
+        var dropped: (String, BehaviorDropTarget)?
+        var selected: String??
+        canvas.onDrop = { dropped = ($0, $1) }
+        canvas.onSelect = { selected = $0 }
+        _ = canvas.handleEvent(.pointerDown(PointerEvent(position: point("patrol", 0.5))))
+        #expect(selected == "patrol")
+        _ = canvas.handleEvent(.pointerDrag(PointerEvent(position: point("patrol", 0.5) + Vec2(-20, 10))))
+        _ = canvas.handleEvent(.pointerDrag(PointerEvent(position: point("retreat", 0.5))))
+        _ = canvas.handleEvent(.pointerUp(PointerEvent(position: point("retreat", 0.5))))
+        #expect(dropped?.0 == "patrol" && dropped?.1 == .child(of: "retreat"))
+        // Dragging empty space pans.
+        let before = canvas.pan
+        _ = canvas.handleEvent(.pointerDown(PointerEvent(position: Vec2(1150, 580))))
+        _ = canvas.handleEvent(.pointerDrag(PointerEvent(position: Vec2(1100, 560))))
+        _ = canvas.handleEvent(.pointerUp(PointerEvent(position: Vec2(1100, 560))))
+        #expect(canvas.pan == before + Vec2(50, 20))
+
+        // The workspace applies drops as undoable edits.
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = try project(folder)
+        let id = try #require(session.createBehaviorAsset(in: "", name: "guard", tree: .preset(.guardian)))
+        let workspace = BehaviorTreeWorkspace(session: session)
+        workspace.open(id)
+        workspace.update()
+        #expect(workspace.canvas.tree == .preset(.guardian))
+        workspace.moveNode("patrol", to: .child(of: "retreat"))
+        workspace.update()
+        #expect(workspace.tree.node("retreat")?.children == ["hurt", "flee", "patrol"])
+        #expect(workspace.tree.node("root")?.children == ["retreat", "fight"])
+        #expect(workspace.selectedNode == "patrol" && workspace.canvas.selected == "patrol")
+        workspace.moveNode("attack", to: .before("see"))
+        workspace.update()
+        #expect(workspace.tree.node("fight")?.children == ["attack", "see", "chase"])
+        workspace.moveNode("attack", to: .after("chase"))
+        workspace.update()
+        #expect(workspace.tree.node("fight")?.children == ["see", "chase", "attack"])
+        workspace.moveNode("root", to: .child(of: "fight"))  // a cycle: refused
+        workspace.update()
+        #expect(workspace.tree.rootID == "root")
+        #expect(session.performUndo())
+        workspace.update()
+        #expect(workspace.tree.node("fight")?.children == ["attack", "see", "chase"])
+        #expect(workspace.canvas.tree == workspace.tree)
+        workspace.close()
+    }
+
+    @Test func navigationToolBakesAndFindsPaths() throws {
+        let session = makeSession()
+        #expect(try call(session, "behavior.navigation")["hasGrid"] as? Bool == false, "nothing to bake")
+        let world = session.world
+        world.spawn(Transform(position: Vec3(0, -0.5, 0)), Collider(.box(Vec3(10, 0.5, 10))))
+        world.spawn(Transform(position: Vec3(0, 1, 0)), Collider(.box(Vec3(5, 1, 0.25))))
+        let result = try call(session, "behavior.navigation", ["from": [0, 0, -4], "to": [0, 0, 4]])
+        #expect(result["hasGrid"] as? Bool == true && result["baked"] as? Bool == true)
+        #expect((result["walkableCells"] as? Int ?? 0) > 100 && result["areas"] as? Int == 1)
+        #expect(result["pathFound"] as? Bool == true)
+        #expect((result["pathLength"] as? Double ?? 0) > 10, "around the wall")
+        #expect((result["path"] as? [[Double]])?.count ?? 0 >= 3)
+        // Kept until rebaked.
+        #expect(try call(session, "behavior.navigation")["baked"] as? Bool == false)
+        #expect(try call(session, "behavior.navigation", ["rebake": true])["baked"] as? Bool == true)
+        #expect(throws: (any Error).self) { try call(session, "behavior.navigation", ["from": [0, 0, 0]]) }
     }
 }

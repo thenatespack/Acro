@@ -35,6 +35,10 @@ private func decode(_ json: String) throws -> BehaviorTree {
     return (world, key)
 }
 
+private func flatDistance(_ a: Vec3, _ b: Vec3) -> Float {
+    ((a.x - b.x) * (a.x - b.x) + (a.z - b.z) * (a.z - b.z)).squareRoot()
+}
+
 @MainActor private func step(_ world: World, _ frames: Int, dt: Double = 1.0 / 60) {
     for _ in 0..<frames { world.update(dt: dt) }
 }
@@ -360,5 +364,131 @@ private func decode(_ json: String) throws -> BehaviorTree {
         try database.writeBehaviorTree(moved, to: id)
         step(world, 120)
         #expect(abs((world.get(Transform.self, for: npc)?.position.x ?? 0) + 5) < 0.05, "the edited tree runs")
+    }
+
+    // MARK: Parented entities
+
+    @MainActor @Test func parentedEntitiesMoveAndFaceInWorldSpace() throws {
+        let tree = BehaviorTree(nodes: [BehaviorNode("go", .moveTo, ["position": .array([.int(10), .int(0), .int(6)]), "arriveDistance": .double(0.02)])],
+                                speed: 6, turnSpeed: 100)
+        let (world, key) = makeWorld(tree)
+        // A turned, scaled parent: a local step isn't a world step.
+        let platform = world.spawn(Transform(position: Vec3(10, 0, 0), rotation: Quat(angle: .pi / 2, axis: Vec3(0, 1, 0)), scale: Vec3(2, 2, 2)))
+        let npc = world.spawn(Transform(), BehaviorTreeRunner(tree: key))
+        #expect(world.setParent(npc, to: platform))
+        step(world, 90)
+        let m = world.worldMatrix(of: npc)
+        let position = Vec3(m.c3.x, m.c3.y, m.c3.z)
+        #expect(flatDistance(position, Vec3(10, 0, 6)) < 0.05, "reached the world goal: \(position)")
+        let forward = Transform(matrix: m).rotation * Vec3(0, 0, -1)
+        #expect(forward.z > 0.95, "faces the way it walked (+z) in world space: \(forward)")
+        #expect(world.parent(of: npc) == platform)
+    }
+
+    // MARK: Navigation
+
+    /// A 24 m floor with a wall across z = 0 from x = -6 to 6.
+    @MainActor private func walledWorld() -> World {
+        let world = World()
+        world.assignsEntityIDs = true
+        world.spawn(Transform(position: Vec3(0, -0.5, 0)), Collider(.box(Vec3(12, 0.5, 12))))
+        world.spawn(Transform(position: Vec3(0, 1, 0)), Collider(.box(Vec3(6, 1, 0.25))))
+        return world
+    }
+
+    @MainActor @Test func navigationBakesAndFindsPathsAroundWalls() throws {
+        let world = walledWorld()
+        let grid = try #require(world.bakeNavigation(settings: NavigationSettings(cellSize: 0.5, agentRadius: 0.4)))
+        #expect(world.navigation == grid)
+        #expect(grid.isWalkable(Vec3(0, 0, -5)) && grid.isWalkable(Vec3(0, 0, 5)))
+        #expect(!grid.isWalkable(Vec3(0, 0, 0)) && !grid.isWalkable(Vec3(3, 0, 0.4)), "the wall and the agent radius around it")
+        #expect(abs((grid.height(at: Vec3(2, 0, -5)) ?? -1)) < 0.01)
+        #expect(!grid.isClear(from: Vec3(0, 0, -5), to: Vec3(0, 0, 5)))
+        #expect(grid.areConnected(Vec3(0, 0, -5), Vec3(0, 0, 5)))
+
+        let path = try #require(world.findPath(from: Vec3(0, 0, -5), to: Vec3(0, 0, 5)))
+        #expect(path.first.map { flatDistance($0, Vec3(0, 0, -5)) < 0.01 } == true)
+        #expect(path.last.map { flatDistance($0, Vec3(0, 0, 5)) < 0.01 } == true)
+        #expect(path.count >= 3 && path.count <= 6, "string-pulled to a few corners: \(path)")
+        #expect(NavigationGrid.length(of: path) > 12, "around the wall, not through it")
+        for (a, b) in zip(path, path.dropFirst()) { #expect(grid.isClear(from: a, to: b), "\(a) → \(b)") }
+        // A straight line when nothing is in the way.
+        #expect(world.findPath(from: Vec3(-3, 0, -5), to: Vec3(3, 0, -8))?.count == 2, "\(String(describing: world.findPath(from: Vec3(-3, 0, -5), to: Vec3(3, 0, -8))))")
+        // Off the grid: nil, or the nearest reachable point with partial.
+        #expect(world.findPath(from: Vec3(0, 0, -5), to: Vec3(0, 0, 40)) == nil)
+        let partial = try #require(world.findPath(from: Vec3(0, 0, -5), to: Vec3(0, 0, 40), partial: true))
+        #expect((partial.last?.z ?? 0) > 10)
+        // No colliders: no grid.
+        #expect(World().bakeNavigation() == nil)
+    }
+
+    @MainActor @Test func navigationShutsOffEnclosedAreas() throws {
+        let world = walledWorld()
+        // A closed box of walls around (8, 0, 8).
+        for (p, h) in [(Vec3(8, 1, 6), Vec3(2, 1, 0.2)), (Vec3(8, 1, 10), Vec3(2, 1, 0.2)),
+                       (Vec3(6, 1, 8), Vec3(0.2, 1, 2)), (Vec3(10, 1, 8), Vec3(0.2, 1, 2))] {
+            world.spawn(Transform(position: p), Collider(.box(h)))
+        }
+        let grid = try #require(world.bakeNavigation())
+        #expect(grid.isWalkable(Vec3(8, 0, 8)))
+        #expect(!grid.areConnected(Vec3(0, 0, -5), Vec3(8, 0, 8)))
+        #expect(grid.findPath(from: Vec3(0, 0, -5), to: Vec3(8, 0, 8)) == nil)
+        let partial = try #require(grid.findPath(from: Vec3(0, 0, -5), to: Vec3(8, 0, 8), partial: true))
+        #expect(flatDistance(partial.last!, Vec3(8, 0, 8)) < 3.5, "as close as it gets: \(partial.last!)")
+    }
+
+    @MainActor @Test func movementFollowsNavigationPaths() throws {
+        let tree = BehaviorTree(nodes: [BehaviorNode("go", .moveTo, ["position": .array([.int(0), .int(0), .int(5)]), "arriveDistance": .double(0.1)])],
+                                speed: 6, turnSpeed: 0)
+        let world = walledWorld()
+        let key = "BehaviorTreeTests.movementFollowsNavigationPaths"
+        BehaviorTreeLibrary.register(tree, as: key)
+        world.addBehaviorTrees()
+        let npc = world.spawn(Transform(position: Vec3(0, 0, -5)), BehaviorTreeRunner(tree: key))
+        var crossedThroughWall = false
+        var last = Vec3(0, 0, -5)
+        for _ in 0..<360 {
+            step(world, 1)
+            let p = world.get(Transform.self, for: npc)!.position
+            if (last.z < 0) != (p.z < 0), abs(p.x) < 6.2 { crossedThroughWall = true }
+            last = p
+        }
+        #expect(world.navigation != nil, "the system baked a grid from the colliders")
+        #expect(!crossedThroughWall)
+        #expect(flatDistance(last, Vec3(0, 0, 5)) < 0.2, "arrived around the wall: \(last)")
+        #expect(world.get(BehaviorTreeState.self, for: npc)?.rootStatus == .success)
+
+        // Without colliders the same tree walks straight (and through where the wall was).
+        let (open, openKey) = makeWorld(tree, name: "movementFollowsNavigationPaths.open")
+        let walker = open.spawn(Transform(position: Vec3(0, 0, -5)), BehaviorTreeRunner(tree: openKey))
+        step(open, 30)
+        let p = open.get(Transform.self, for: walker)!.position
+        #expect(abs(p.x) < 0.01 && p.z > -3, "\(p)")
+        #expect(open.navigation == nil)
+    }
+
+    @MainActor @Test func chaseAndFleeUseTheGrid() throws {
+        // Chasing a target behind the wall goes around it.
+        let chase = BehaviorTree(nodes: [BehaviorNode("c", .chase, ["target": .string("target"), "stopDistance": .double(0.5)])], speed: 6, turnSpeed: 0)
+        let world = walledWorld()
+        let key = "BehaviorTreeTests.chaseAndFleeUseTheGrid"
+        BehaviorTreeLibrary.register(chase, as: key)
+        world.addBehaviorTrees()
+        let prey = world.spawn(Transform(position: Vec3(0, 0, 5)), Name("Prey"))
+        let hunter = world.spawn(Transform(position: Vec3(0, 0, -5)), BehaviorTreeRunner(tree: key, target: world.ref(to: prey)))
+        step(world, 300)
+        let p = world.get(Transform.self, for: hunter)!.position
+        #expect(flatDistance(p, Vec3(0, 0, 5)) < 1, "caught up around the wall: \(p)")
+        #expect(!(world.get(BehaviorTreeState.self, for: hunter)?.path.contains { abs($0.x) < 6 && abs($0.z) < 0.3 } ?? false))
+
+        // Fleeing into a wall slides off along a path instead of pushing into it.
+        let flee = BehaviorTree(nodes: [BehaviorNode("f", .flee, ["target": .string("target"), "safeDistance": .double(8)])], speed: 4, turnSpeed: 0)
+        BehaviorTreeLibrary.register(flee, as: key + ".flee")
+        let threat = world.spawn(Transform(position: Vec3(0, 0, -6)), Name("Threat"))
+        let runner = world.spawn(Transform(position: Vec3(0, 0, -1)), BehaviorTreeRunner(tree: key + ".flee", target: world.ref(to: threat)))
+        step(world, 240)
+        let q = world.get(Transform.self, for: runner)!.position
+        #expect(flatDistance(q, Vec3(0, 0, -6)) >= 7.5, "got away: \(q)")
+        #expect(q.z < -0.25 && abs(q.x) > 2, "slid along the wall, not into it: \(q)")
     }
 }

@@ -54,6 +54,7 @@ public enum EditorIcons {
         TilemapMotion.componentName: "layers",
         CameraPath.componentName: "orbit",
         BehaviorTreeRunner.componentName: "bot",
+        NavigationArea.componentName: "route",
         DialoguePlayer.componentName: "file-text",
         VisualScript.componentName: "network",
         TimelinePlayer.componentName: "clapperboard",

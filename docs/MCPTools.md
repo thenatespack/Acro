@@ -16,7 +16,7 @@ optional arguments.
 | `ai` | [`ai.settings`](#aisettings) |
 | `animGraph` | [`animGraph.assign`](#animgraphassign), [`animGraph.edit`](#animgraphedit), [`animGraph.get`](#animgraphget), [`animGraph.new`](#animgraphnew), [`animGraph.open`](#animgraphopen), [`animGraph.set`](#animgraphset) |
 | `asset` | [`asset.applySettings`](#assetapplysettings), [`asset.assign`](#assetassign), [`asset.delete`](#assetdelete), [`asset.extractMaterials`](#assetextractmaterials), [`asset.get`](#assetget), [`asset.import`](#assetimport), [`asset.instantiate`](#assetinstantiate), [`asset.list`](#assetlist), [`asset.move`](#assetmove), [`asset.newFolder`](#assetnewfolder), [`asset.newMaterial`](#assetnewmaterial), [`asset.newProceduralTexture`](#assetnewproceduraltexture), [`asset.reimport`](#assetreimport), [`asset.rename`](#assetrename), [`asset.select`](#assetselect), [`asset.setProceduralTexture`](#assetsetproceduraltexture), [`asset.waitForImports`](#assetwaitforimports) |
-| `behavior` | [`behavior.assign`](#behaviorassign), [`behavior.debug`](#behaviordebug), [`behavior.edit`](#behavioredit), [`behavior.get`](#behaviorget), [`behavior.new`](#behaviornew), [`behavior.open`](#behavioropen), [`behavior.set`](#behaviorset) |
+| `behavior` | [`behavior.assign`](#behaviorassign), [`behavior.debug`](#behaviordebug), [`behavior.edit`](#behavioredit), [`behavior.get`](#behaviorget), [`behavior.navigation`](#behaviornavigation), [`behavior.new`](#behaviornew), [`behavior.open`](#behavioropen), [`behavior.set`](#behaviorset) |
 | `character` | [`character.bones`](#characterbones), [`character.edit`](#characteredit), [`character.get`](#characterget), [`character.new`](#characternew), [`character.open`](#characteropen), [`character.set`](#characterset) |
 | `component` | [`component.add`](#componentadd), [`component.remove`](#componentremove), [`component.setField`](#componentsetfield), [`component.types`](#componenttypes) |
 | `diagnostics` | [`diagnostics.get`](#diagnosticsget) |
@@ -610,6 +610,34 @@ Result:
 - `tree`: {blackboard?: object, nodes?: [object], root?: string, speed?: number, tickRate?: number, turnSpeed?: number}
 - `warnings`: [string]
 
+### `behavior.navigation`
+
+**Behavior Navigation** · _read-only_
+
+The navigation grid behavior trees walk on (moveTo, patrol, chase and flee follow A* paths on it, straight-line steering where there is none): bakes it from the static colliders of the current world (the play world while playing) if it has none or `rebake`, reports its size and walkable areas, and with `from` and `to` returns the path between them. A NavigationArea component sets the baked box and the agent's radius, height, step and slope; without one the bake covers the static colliders around the agents. Game code: `world.bakeNavigation()`, `world.findPath(from:to:)`.
+
+Arguments:
+
+- `from?`: number[3] — [x, y, z]
+- `partial?`: boolean
+- `rebake?`: boolean
+- `to?`: number[3] — [x, y, z]
+
+Result:
+
+- `areas`: integer
+- `baked`: boolean
+- `boundsMax?`: number[3] — [x, y, z]
+- `boundsMin?`: number[3] — [x, y, z]
+- `cellSize`: number
+- `depth`: integer
+- `hasGrid`: boolean
+- `path`: [number[3]]
+- `pathFound`: boolean
+- `pathLength`: number
+- `walkableCells`: integer
+- `width`: integer
+
 ### `behavior.new`
 
 **New Behavior Tree**
@@ -636,7 +664,7 @@ Result:
 
 **Open in Behavior Tree Builder** · _idempotent_
 
-Opens a .behavior file in the editor's Behavior Tree tab (the tree as an outline with a node form, presets and the blackboard; while playing it highlights the running path of the selected entity) and brings the tab to the front. view.screenshot {source: "panel", panel: "behaviorTree"} shows it.
+Opens a .behavior file in the editor's Behavior Tree tab (the tree as a node graph you can drag nodes on to reparent or reorder, with a node form, presets and the blackboard; while playing it tints each node with its last status for the selected entity) and brings the tab to the front. view.screenshot {source: "panel", panel: "behaviorTree"} shows it.
 
 Arguments:
 

@@ -91,6 +91,7 @@ public enum EditorComponentCatalog {
         register(TilemapMotion.self) { TilemapMotion(parallax: Vec2(0.5, 0.5)) }
         register(CameraPath.self) { CameraPath() }
         register(BehaviorTreeRunner.self) { BehaviorTreeRunner() }
+        register(NavigationArea.self) { NavigationArea() }
         register(DialoguePlayer.self) { DialoguePlayer() }
         register(TimelinePlayer.self) { TimelinePlayer() }
         register(PathFollower.self) { PathFollower() }

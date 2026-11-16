@@ -3,10 +3,12 @@ import Foundation
 
 // The Behavior Tree tab: one `.behavior` file, tabbed with the Scene view, with a sidebar form.
 //
-// - The left side draws the tree from the root as an indented outline: each row is a node
-//   (its category mark, type and label). Click a row to select it. Nodes not connected to the
-//   root are listed below it. While playing, rows are tinted with what each node returned on
-//   the last tick of the debugged entity (running yellow, success green, failure red), so the
+// - The left side is a node-graph canvas (`BehaviorTreeCanvas`): the tree drawn top-down from
+//   the root, children left to right in run order. Click a node to select it; drag it onto a
+//   composite or decorator to reparent it (with its subtree), or onto the left / right part
+//   of a node to put it before / after that node. Nodes not connected to the root are laid
+//   out to the right. While playing, boxes are tinted with what each node returned on the
+//   last tick of the debugged entity (running yellow, success green, failure red), so the
 //   running path shows live; the debugged entity is the selected one if it runs this tree,
 //   else the first that does (the toolbar's picker changes it).
 // - The sidebar edits the selected node (id, label, type, the type's parameters), adds a child
@@ -37,10 +39,11 @@ public final class BehaviorTreeWorkspace {
     private let title = Label("Behavior Tree", role: .heading, name: "behaviorTitle")
     private let debugLabel = Label("", role: .caption, name: "behaviorDebugLabel")
     private let debugPicker = Dropdown(options: ["(none)"], name: "behaviorDebugEntity")
-    private let outlineHost = VStack(spacing: 2, padding: EdgeInsets(top: 8, left: 10, bottom: 8, right: 10), name: "behaviorOutline")
+    /// The node graph.
+    public let canvas = BehaviorTreeCanvas()
     private let sidebar = VStack(spacing: 6, padding: EdgeInsets(top: 8, left: 10, bottom: 8, right: 10), name: "behaviorSidebar")
     private let liveHost = VStack(spacing: 2, name: "behaviorLive")
-    private var rows: [String: HStack] = [:]
+    private var framedAsset: AssetID?
     private var shownRevision = -1
     private var dirty = true
     private var pending: (tree: BehaviorTree, label: String, select: String?)?
@@ -97,15 +100,21 @@ public final class BehaviorTreeWorkspace {
             pinnedDebug = debugCandidates.indices.contains(k - 1) ? debugCandidates[k - 1] : nil
         }
         let closeButton = Button("Close", name: "behaviorClose") { [unowned self] in self.close() }
+        let zoomOut = Button("−", name: "behaviorZoomOut") { [unowned self] in canvas.zoom /= 1.25 }
+        zoomOut.tooltip = "Zoom out"
+        let zoomIn = Button("+", name: "behaviorZoomIn") { [unowned self] in canvas.zoom *= 1.25 }
+        zoomIn.tooltip = "Zoom in"
+        let fit = Button("Fit", name: "behaviorFit") { [unowned self] in canvas.frameAll() }
+        fit.tooltip = "Show the whole tree"
         let bar = HStack(spacing: 6, padding: EdgeInsets(top: 6, left: 10, bottom: 6, right: 10), name: "behaviorToolbar",
-                         [title, debugLabel, debugPicker, closeButton])
-        let scroll = ScrollView(outlineHost, name: "behaviorOutlineScroll")
-        scroll.scrollsHorizontally = true
-        scroll.style.grow = 1
-        scroll.style.shrink = 1
+                         [title, debugLabel, debugPicker, zoomOut, zoomIn, fit, closeButton])
+        canvas.style.grow = 1
+        canvas.style.shrink = 1
+        canvas.onSelect = { [unowned self] id in select(id) }
+        canvas.onDrop = { [unowned self] id, target in moveNode(id, to: target) }
         let side = ScrollView(sidebar, name: "behaviorSidebarScroll")
         side.style.width = 330
-        let body = HStack(spacing: 0, alignment: .stretch, name: "behaviorBody", [scroll, Separator(.vertical), side])
+        let body = HStack(spacing: 0, alignment: .stretch, name: "behaviorBody", [canvas, Separator(.vertical), side])
         body.style.grow = 1
         body.style.shrink = 1
         view.addChildren([bar, Separator(), body])
@@ -113,13 +122,14 @@ public final class BehaviorTreeWorkspace {
 
     private func showEmpty() {
         title.text = "Behavior Tree"
-        outlineHost.removeAllChildren()
+        canvas.tree = BehaviorTree()
+        canvas.statuses = [:]
+        framedAsset = nil
         sidebar.removeAllChildren()
-        rows = [:]
         debugLabel.text = ""
         let note = Label("Open a .behavior file from the Assets panel (New Behavior Tree in its menu, or behavior.open).", role: .caption)
         note.wraps = true
-        outlineHost.addChild(note)
+        sidebar.addChild(note)
     }
 
     // MARK: Per frame
@@ -186,22 +196,13 @@ public final class BehaviorTreeWorkspace {
         }
         if statuses != shownStatuses {
             shownStatuses = statuses
-            for (id, row) in rows { row.background = Self.color(for: statuses[id]) }
+            canvas.statuses = statuses
         }
         let live = state.map { s in s.blackboard.keys.sorted().map { "\($0) = \(s.blackboard[$0]!)" } + s.problems.map { "Problem: \($0)" } } ?? []
         if live != shownLive {
             shownLive = live
             liveHost.removeAllChildren()
             for line in live { liveHost.addChild(note(line)) }
-        }
-    }
-
-    static func color(for status: BehaviorStatus?) -> UIColor? {
-        switch status {
-        case .running?: UIColor(0.95, 0.75, 0.2, 0.35)
-        case .success?: UIColor(0.3, 0.8, 0.4, 0.28)
-        case .failure?: UIColor(0.9, 0.3, 0.3, 0.28)
-        case nil: nil
         }
     }
 
@@ -252,6 +253,27 @@ public final class BehaviorTreeWorkspace {
         var edited = tree
         edited.moveNode(id, by: offset)
         apply(edited, label: offset < 0 ? "Move Node Up" : "Move Node Down")
+    }
+
+    /// Moves `id` (with the nodes under it) to `target`: under a composite or decorator, or
+    /// beside a node among its siblings. What dragging a node on the canvas does.
+    public func moveNode(_ id: String, to target: BehaviorDropTarget) {
+        var edited = tree
+        let parent: String
+        var index: Int?
+        switch target {
+        case .child(let p): parent = p
+        case .before(let sibling), .after(let sibling):
+            guard let p = edited.parent(of: sibling), let k = edited.node(p)?.children.firstIndex(of: sibling) else { return }
+            parent = p
+            if case .after = target { index = k + 1 } else { index = k }
+        }
+        do { try edited.connect(id, to: parent, at: index) } catch {
+            session.log.warning("Behavior tree: \(error)")
+            return
+        }
+        guard edited != tree else { return }
+        apply(edited, label: tree.parent(of: id) == parent ? "Reorder Node" : "Move Node", select: id)
     }
 
     public func makeSelectedRoot() {
@@ -348,59 +370,26 @@ public final class BehaviorTreeWorkspace {
     // MARK: Layout
 
     private func rebuild() {
-        outlineHost.removeAllChildren()
         sidebar.removeAllChildren()
-        rows = [:]
-        let outline = tree.outline()
-        if outline.isEmpty {
-            outlineHost.addChild(note("The tree is empty: add a node in the sidebar or pick a preset."))
+        canvas.tree = tree
+        canvas.selected = selectedNode
+        canvas.statuses = shownStatuses
+        canvas.problemNodes = Set(tree.validate().compactMap(\.node))
+        if framedAsset != asset {
+            framedAsset = asset
+            canvas.pan = Vec2(-30, -30)
+            canvas.zoom = 1
+            if let b = canvas.layout.bounds { canvas.pan = Vec2(b.x - 30, b.y - 30) }
+            if canvas.frame.width > 0 { canvas.frameStart() } else { canvas.framesAtNextLayout = true }
         }
-        for item in outline { outlineHost.addChild(row(item.id, depth: item.depth)) }
-        let reached = Set(outline.map(\.id))
-        let loose = tree.nodes.filter { !reached.contains($0.id) }
-        if !loose.isEmpty {
-            outlineHost.addChild(Separator())
-            outlineHost.addChild(Label("Not connected to the root", role: .secondary))
-            for node in loose { outlineHost.addChild(row(node.id, depth: 0)) }
-        }
-        for (id, row) in rows { row.background = Self.color(for: shownStatuses[id]) }
         layOutSidebar()
-    }
-
-    private static func mark(_ category: BehaviorNodeCategory?) -> String {
-        switch category {
-        case .composite?: "▸"
-        case .decorator?: "◆"
-        case .condition?: "?"
-        case .action?: "●"
-        case nil: "✕"
-        }
-    }
-
-    private func row(_ id: String, depth: Int) -> Widget {
-        let node = tree.node(id)
-        let kind = node?.kind
-        var text = "\(Self.mark(kind?.category))  \(node?.type ?? "?")  ·  \(id)"
-        if let name = node?.name, !name.isEmpty { text += "  (\(name))" }
-        let button = Button(text, name: "behaviorNode.\(id)") { [unowned self] in select(id) }
-        button.tooltip = kind?.doc ?? "Unknown node type"
-        let indent = Spacer()
-        indent.style.width = Float(depth) * 22
-        let line = HStack(spacing: 4, padding: EdgeInsets(top: 1, left: 2, bottom: 1, right: 2), name: "behaviorRow.\(id)", [indent, button, Spacer()])
-        line.cornerRadius = 4
-        if id == selectedNode {
-            line.borderColor = UIColor(hex: 0x2a66dc)
-            line.borderWidth = 2
-        }
-        rows[id] = line
-        return line
     }
 
     private func layOutSidebar() {
         let issues = tree.validate(customLeaves: BehaviorTreeLeaves.names.isEmpty ? nil : Set(BehaviorTreeLeaves.names))
         if let id = selectedNode, let node = tree.node(id) { addNodeForm(node) } else {
             sidebar.addChild(Label("Node", role: .secondary))
-            sidebar.addChild(note("Select a node in the tree."))
+            sidebar.addChild(note("Select a node in the tree. Drag a node onto a composite to reparent it, or onto the left / right of a node to reorder."))
         }
         sidebar.addChild(Separator())
         addAddSection()
@@ -410,7 +399,7 @@ public final class BehaviorTreeWorkspace {
         addSettingsSection()
         sidebar.addChild(Separator())
         sidebar.addChild(Label("Live (while playing)", role: .secondary))
-        sidebar.addChild(note("Rows are tinted with the last tick: running, success, failure."))
+        sidebar.addChild(note("Nodes are tinted with the last tick: running yellow, success green, failure red."))
         shownLive = []
         liveHost.removeAllChildren()
         sidebar.addChild(liveHost)
