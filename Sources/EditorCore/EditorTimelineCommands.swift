@@ -16,19 +16,21 @@ public enum EditorTimelineCommands {
 
     /// What the tool docs say about the file format, shared by the tools.
     static let formatDoc = """
-        A timeline is a cutscene: `duration` (seconds), `loop`, `skippable` and `tracks`. Each track: id (unique), kind \
-        (camera | transform | animation | audio | particles | fade | event), name, target (an entity Name or "Parent/Child" \
+        A timeline is a cutscene: `duration` (seconds), `loop`, `skippable`, `holdFade` (keep the last fade on screen after \
+        the end; default it clears) and `tracks`. Each track: id (unique), kind \
+        (camera | transform | animation | audio | particles | fade | event | dialogue), name, target (an entity Name or "Parent/Child" \
         path; empty = the active camera for camera tracks, unpositioned for audio, the world origin for particles, else the \
         entity holding the TimelinePlayer), muted, keys. Every key has `time` (s); continuous kinds blend from the previous key \
         with this key's `easing` (\(Easing.allCases.prefix(7).map(\.rawValue).joined(separator: ", ")), … default linear) \
         unless `cut` is true. camera keys: position [x,y,z], lookAt [x,y,z] | lookAtEntity "Name" | rotation [x,y,z] degrees, \
-        fov (degrees), cut, path [[x,y,z]…] (spline through position, these points and the next key's position until the next \
+        fov (degrees; positions and aims are world space, also for a parented camera), cut, path [[x,y,z]…] (spline through position, these points and the next key's position until the next \
         key, constant speed), followPath (face the travel direction). transform keys: position, rotation (degrees), scale, cut. \
         animation keys: clip (Animator state or SpriteAnimator clip), blend (crossfade s), speed. audio keys: clip (audio file \
         or .sfx: path under Assets/ or asset:<id>), volume, pitch, loop, duration (s), position (offset). particles keys: effect \
         (.vfx or prefab path), duration (s; default the .vfx's), position, rotation. fade keys: amount (0 clear … 1 solid), \
-        color [r,g,b] sRGB. event keys: name, value (game code reads TimelinePlayer.events / world.timelineEvents()). Every key \
-        is optional. A TimelinePlayer component (timeline: the file's asset:<id> or path, playOnStart, speed, loop) plays it.
+        color [r,g,b] sRGB. event keys: name, value (game code reads TimelinePlayer.events / world.timelineEvents()). dialogue \
+        keys: start the target's DialoguePlayer (or its first descendant's) conversation, or `dialogue` (a .dialogue file path or \
+        asset:<id>) instead; node (start node), wait (hold the timeline until the conversation ends). Every key is optional. A TimelinePlayer component (timeline: the file's asset:<id> or path, playOnStart, speed, loop) plays it.
         """
 }
 
@@ -331,10 +333,12 @@ public enum TimelineEditCommand: EditorCommand {
         public var duration: Float?
         public var loop: Bool?
         public var skippable: Bool?
+        /// Keep the last screen fade on screen after the end (default: it clears).
+        public var holdFade: Bool?
         public init(asset: AssetReference? = nil, path: String? = nil, removeTracks: [String]? = nil, addTracks: [TimelineTrack]? = nil,
                     updateTracks: [String: JSONValue]? = nil, removeKeys: [TimelineKeyReference]? = nil,
                     addKeys: [TimelineKeyAddition]? = nil, updateKeys: [TimelineKeyUpdate]? = nil, duration: Float? = nil,
-                    loop: Bool? = nil, skippable: Bool? = nil) {
+                    loop: Bool? = nil, skippable: Bool? = nil, holdFade: Bool? = nil) {
             self.asset = asset
             self.path = path
             self.removeTracks = removeTracks
@@ -346,12 +350,13 @@ public enum TimelineEditCommand: EditorCommand {
             self.duration = duration
             self.loop = loop
             self.skippable = skippable
+            self.holdFade = holdFade
         }
     }
 
     public static let id: CommandID = "timeline.edit"
     public static let title = "Edit Timeline"
-    public static let doc = "Changes part of a .timeline file in one undoable step, in this order: removeTracks, addTracks, updateTracks (id → fields; \"id\" renames), removeKeys ({track, time | index}), addKeys (key fields plus \"track\"; replaces a key at the same time), updateKeys ({track, time | index, set: {field: value, …}}), then duration / loop / skippable. Keys are kept sorted by time. Returns the tracks and problems (e.g. a sound that doesn't exist)."
+    public static let doc = "Changes part of a .timeline file in one undoable step, in this order: removeTracks, addTracks, updateTracks (id → fields; \"id\" renames), removeKeys ({track, time | index}), addKeys (key fields plus \"track\"; replaces a key at the same time), updateKeys ({track, time | index, set: {field: value, …}}), then duration / loop / skippable / holdFade. Keys are kept sorted by time. Returns the tracks and problems (e.g. a sound that doesn't exist)."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
@@ -410,6 +415,7 @@ public enum TimelineEditCommand: EditorCommand {
         if let duration = arguments.duration { timeline.duration = duration }
         if let loop = arguments.loop { timeline.loop = loop }
         if let skippable = arguments.skippable { timeline.skippable = skippable }
+        if let holdFade = arguments.holdFade { timeline.holdFade = holdFade }
         return timeline.normalized()
     }
 

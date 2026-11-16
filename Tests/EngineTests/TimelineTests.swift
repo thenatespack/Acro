@@ -48,18 +48,18 @@ private func close(_ a: Vec3?, _ b: Vec3, _ tolerance: Float = 1e-3) -> Bool {
         let timeline = try decode("""
             {"duration": 4, "tracks": [
               {"id": "cam", "kind": "camera", "keys": [{"position": [0, 1, 2]}, {"time": 2, "fov": 40, "easing": "cubicInOut"}]},
-              {"id": "talk", "kind": "dialogue", "keys": [{"time": 1}]},
+              {"id": "talk", "kind": "subtitles", "keys": [{"time": 1}]},
               {"kind": "event", "keys": [{}]}]}
             """)
         #expect(timeline.tracks.count == 3)
         #expect(timeline.tracks[0].keys[0].time == 0 && timeline.tracks[0].keys[1].easing == .cubicInOut)
-        #expect(timeline.tracks[1].trackKind == nil && timeline.tracks[1].kind == "dialogue")
+        #expect(timeline.tracks[1].trackKind == nil && timeline.tracks[1].kind == "subtitles")
         #expect(timeline.tracks[2].id == "event", "a track without an id takes its kind")
         let again = try AssetJSON.decoder().decode(Timeline.self, from: timeline.fileData())
         #expect(again == timeline)
         let text = String(decoding: try timeline.fileData(), as: UTF8.self)
         #expect(!text.contains("lookAt"), "unset key fields are left out of the file")
-        #expect(TimelineCheck.problems(timeline).contains { $0.contains("unknown kind 'dialogue'") })
+        #expect(TimelineCheck.problems(timeline).contains { $0.contains("unknown kind 'subtitles'") })
     }
 
     @Test func normalizedSortsKeysAndUniqueIDs() {
@@ -198,13 +198,137 @@ private func close(_ a: Vec3?, _ b: Vec3, _ tolerance: Float = 1e-3) -> Bool {
         let player = try #require(world.get(TimelinePlayer.self, for: director))
         #expect(player.state == .finished && player.time == 4)
         #expect(heard == ["begin", "middle", "end"])
-        #expect(world.get(ScreenFade.self, for: director)?.amount == 1)
+        #expect(!world.has(ScreenFade.self, for: director), "a finished timeline clears its fade by default")
         #expect(close(world.get(Transform.self, for: hero)?.position, Vec3(4, 0, 0)))
 
         world.modify(TimelinePlayer.self, for: director) { $0.stop() }
         world.update(dt: 0.1)
         #expect(world.get(TimelinePlayer.self, for: director)?.state == .stopped)
         #expect(!world.has(ScreenFade.self, for: director), "stop clears the fade")
+    }
+
+    @MainActor @Test func holdFadeKeepsTheLastFadeAfterTheEnd() throws {
+        let world = World()
+        var timeline = Timeline(duration: 1, tracks: [
+            TimelineTrack(id: "fade", kind: .fade, keys: [TimelineKey(time: 0, amount: 0), TimelineKey(time: 1, amount: 1)])])
+        #expect(!String(decoding: try timeline.fileData(), as: UTF8.self).contains("holdFade"), "left out when off")
+        timeline.holdFade = true
+        let back = try AssetJSON.decoder().decode(Timeline.self, from: timeline.fileData())
+        #expect(back.holdFade)
+        var clearing = timeline
+        clearing.holdFade = false
+        world.addTimelinePlayers(source: .fixed(["hold": timeline, "clear": clearing]))
+        let holding = world.spawn(TimelinePlayer(timeline: "hold"))
+        let clears = world.spawn(TimelinePlayer(timeline: "clear"))
+        step(world, 0.5)
+        #expect((world.get(ScreenFade.self, for: clears)?.amount ?? 0) > 0.4, "fades while playing")
+        step(world, 1)
+        #expect(world.get(TimelinePlayer.self, for: holding)?.state == .finished)
+        #expect(world.get(ScreenFade.self, for: holding)?.amount == 1, "holdFade keeps it")
+        #expect(!world.has(ScreenFade.self, for: clears))
+        step(world, 0.5)
+        #expect(!world.has(ScreenFade.self, for: clears), "stays cleared")
+        // Skipping lands on the end the same way.
+        let skipped = world.spawn(TimelinePlayer(timeline: "clear"))
+        step(world, 0.5)
+        world.modify(TimelinePlayer.self, for: skipped) { $0.skip() }
+        world.update(dt: 0.016)
+        #expect(world.get(TimelinePlayer.self, for: skipped)?.state == .finished)
+        #expect(!world.has(ScreenFade.self, for: skipped))
+    }
+
+    @MainActor @Test func parentedCameraKeysAreWorldSpace() throws {
+        let world = World()
+        let rig = world.spawn(Transform(position: Vec3(10, 0, 0), rotation: Quat(eulerDegrees: Vec3(0, 90, 0)), scale: Vec3(2, 2, 2)),
+                              Name("Rig"))
+        let camera = world.spawn(Transform(), Name("Shot Camera"), Camera())
+        world.setParent(camera, to: rig)
+        let timeline = Timeline(duration: 2, tracks: [
+            TimelineTrack(id: "cam", kind: .camera, target: "Rig/Shot Camera", keys: [
+                TimelineKey(time: 0, position: Vec3(0, 3, 8), lookAt: Vec3(0, 3, 0))])])
+        world.addTimelinePlayers(source: .fixed(["t": timeline]))
+        world.spawn(TimelinePlayer(timeline: "t"))
+        world.update(dt: 0.1)
+        let m = world.worldMatrix(of: camera)
+        #expect(close(Vec3(m.c3.x, m.c3.y, m.c3.z), Vec3(0, 3, 8), 1e-3), "lands at the key's world position")
+        let forward = normalize(Vec3(-m.c2.x, -m.c2.y, -m.c2.z))
+        #expect(close(forward, Vec3(0, 0, -1), 1e-3), "aims at the world look-at point")
+        // A root camera is unchanged by the conversion.
+        let pose = TimelineCameraPose(position: Vec3(1, 2, 3), rotation: .identity, fovDegrees: nil)
+        #expect(TimelineEvaluator.localized(pose, for: rig, in: world) == pose)
+    }
+
+    @MainActor @Test func dialogueKeysStartConversationsAndWait() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        let talk = try DialogueAsset.decode(Data("""
+            {"start": "a", "nodes": [
+              {"id": "a", "type": "line", "text": "Hello.", "next": "b"},
+              {"id": "b", "type": "line", "text": "Goodbye."},
+              {"id": "c", "type": "line", "text": "Psst."}]}
+            """.utf8))
+        _ = try database.createDialogue(talk, at: "Talk/npc.dialogue")
+        let world = World()
+        let director = world.addDialogueSystem(assets: { database })
+        let npc = world.spawn(Transform(), Name("TimelineTests NPC"))
+        let mouth = world.spawn(Transform(), DialoguePlayer(dialogue: "Talk/npc.dialogue"))
+        world.setParent(mouth, to: npc)
+        let timeline = Timeline(duration: 4, tracks: [
+            TimelineTrack(id: "talk", kind: .dialogue, target: "TimelineTests NPC", keys: [TimelineKey(time: 1, wait: true)]),
+            TimelineTrack(id: "aside", kind: .dialogue, keys: [TimelineKey(time: 3, dialogue: "Talk/npc.dialogue", node: "c")]),
+            TimelineTrack(id: "e", kind: .event, keys: [TimelineKey(time: 1, name: "same"), TimelineKey(time: 1.5, name: "after")]),
+        ])
+        #expect(TimelineCheck.problems(timeline).isEmpty)
+        #expect(TimelineCheck.problems(Timeline(tracks: [TimelineTrack(id: "d", kind: .dialogue, keys: [
+            TimelineKey(time: 0, dialogue: "Talk/none.dialogue")])]), assetExists: { _ in false }).contains { $0.contains("no dialogue") })
+        world.addTimelinePlayers(source: .fixed(["t": timeline]))
+        let player = world.spawn(TimelinePlayer(timeline: "t"))
+
+        step(world, 1.5)
+        var p = try #require(world.get(TimelinePlayer.self, for: player))
+        #expect(p.isWaitingForDialogue && abs(p.time - 1) < 1e-4, "held at the wait key")
+        #expect(p.events.isEmpty || p.events.map(\.name) == ["same"])
+        #expect(director.activeEntity == mouth, "started on the target's descendant with a DialoguePlayer")
+        guard case .line(let line)? = world.dialogue(for: mouth)?.state else { Issue.record("expected a line"); return }
+        #expect(line.node == "a")
+        step(world, 2)
+        #expect(abs((world.get(TimelinePlayer.self, for: player)?.time ?? 0) - 1) < 1e-4, "still waiting")
+        world.dialogue(for: mouth)?.advance()
+        world.dialogue(for: mouth)?.advance()
+        #expect(world.dialogue(for: mouth)?.isActive == false)
+        step(world, 0.6)  // 1.6
+        p = try #require(world.get(TimelinePlayer.self, for: player))
+        #expect(!p.isWaitingForDialogue && p.time > 1.5 && p.time < 1.7, "carries on once the conversation ends")
+
+        // A key with its own file plays on a temporary DialoguePlayer at its node, and doesn't wait.
+        step(world, 1.5)  // 3.1
+        var temporary: Entity?
+        world.query(Name.self) { e, n in if n.value == "Timeline Dialogue" { temporary = e } }
+        let aside = try #require(temporary)
+        #expect(world.dialogue(for: aside)?.currentNode == "c")
+        #expect(world.get(TimelinePlayer.self, for: player)?.isWaitingForDialogue == false)
+        world.dialogue(for: aside)?.advance()
+        step(world, 0.2)
+        #expect(!world.isAlive(aside), "removed when its conversation ends")
+
+        // Skipping stops a conversation the timeline started.
+        world.modify(TimelinePlayer.self, for: player) { $0.play(from: 0) }
+        step(world, 1.2)
+        #expect(world.dialogue(for: mouth)?.isActive == true)
+        world.modify(TimelinePlayer.self, for: player) { $0.skip() }
+        world.update(dt: 0.016)
+        #expect(world.dialogue(for: mouth)?.isActive == false)
+        #expect(world.get(TimelinePlayer.self, for: player)?.state == .finished)
+
+        // Without a dialogue system the key does nothing and nothing waits.
+        let bare = World()
+        bare.spawn(Transform(), Name("TimelineTests NPC"), DialoguePlayer(dialogue: "Talk/npc.dialogue"))
+        bare.addTimelinePlayers(source: .fixed(["t": timeline]))
+        let lone = bare.spawn(TimelinePlayer(timeline: "t"))
+        step(bare, 2)
+        #expect(bare.get(TimelinePlayer.self, for: lone)?.isWaitingForDialogue == false)
+        #expect((bare.get(TimelinePlayer.self, for: lone)?.time ?? 0) > 1.9)
     }
 
     @MainActor @Test func pauseResumeSeekLoopAndSkip() throws {

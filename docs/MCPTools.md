@@ -4289,14 +4289,15 @@ Result:
 
 **Edit Timeline** · _undoable_
 
-Changes part of a .timeline file in one undoable step, in this order: removeTracks, addTracks, updateTracks (id → fields; "id" renames), removeKeys ({track, time | index}), addKeys (key fields plus "track"; replaces a key at the same time), updateKeys ({track, time | index, set: {field: value, …}}), then duration / loop / skippable. Keys are kept sorted by time. Returns the tracks and problems (e.g. a sound that doesn't exist). Undoable (one step; edit.undo reverts it).
+Changes part of a .timeline file in one undoable step, in this order: removeTracks, addTracks, updateTracks (id → fields; "id" renames), removeKeys ({track, time | index}), addKeys (key fields plus "track"; replaces a key at the same time), updateKeys ({track, time | index, set: {field: value, …}}), then duration / loop / skippable / holdFade. Keys are kept sorted by time. Returns the tracks and problems (e.g. a sound that doesn't exist). Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
-- `addKeys?`: [{amount?: number, blend?: number, clip?: string, color?: number[3], cut?: boolean, duration?: number, easing?: string (25 cases), effect?: string, followPath?: boolean, fov?: number, lookAt?: number[3], lookAtEntity?: string, loop?: boolean, name?: string, path?: [number[3]], pitch?: number, position?: number[3], rotation?: number[3], scale?: number[3], speed?: number, time?: number, track: string, value?: string, volume?: number}]
+- `addKeys?`: [{amount?: number, blend?: number, clip?: string, color?: number[3], cut?: boolean, dialogue?: string, duration?: number, easing?: string (25 cases), effect?: string, followPath?: boolean, fov?: number, lookAt?: number[3], lookAtEntity?: string, loop?: boolean, name?: string, node?: string, path?: [number[3]], pitch?: number, position?: number[3], rotation?: number[3], scale?: number[3], speed?: number, time?: number, track: string, value?: string, volume?: number, wait?: boolean}]
 - `addTracks?`: [{id?: string, keys?: [object], kind?: string, muted?: boolean, name?: string, target?: string}]
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `duration?`: number
+- `holdFade?`: boolean
 - `loop?`: boolean
 - `path?`: string
 - `removeKeys?`: [{index?: integer, time?: number, track: string}]
@@ -4331,14 +4332,14 @@ Result:
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `key`: string
 - `path`: string
-- `timeline`: {duration?: number, loop?: boolean, skippable?: boolean, tracks?: [object]}
+- `timeline`: {duration?: number, holdFade?: boolean, loop?: boolean, skippable?: boolean, tracks?: [object]}
 - `warnings`: [string]
 
 ### `timeline.new`
 
 **New Timeline**
 
-Writes a .timeline file (a cutscene) in `folder` (default: the Assets root) and imports it: the given `timeline`, else a starter of `duration` seconds with a camera track. `place` also adds an entity with a TimelinePlayer to the scene. Returns the asset, its key for TimelinePlayer.timeline, the tracks and problems. Change it with timeline.edit (tracks and keys) or timeline.set. A timeline is a cutscene: `duration` (seconds), `loop`, `skippable` and `tracks`. Each track: id (unique), kind (camera | transform | animation | audio | particles | fade | event), name, target (an entity Name or "Parent/Child" path; empty = the active camera for camera tracks, unpositioned for audio, the world origin for particles, else the entity holding the TimelinePlayer), muted, keys. Every key has `time` (s); continuous kinds blend from the previous key with this key's `easing` (linear, quadIn, quadOut, quadInOut, cubicIn, cubicOut, cubicInOut, … default linear) unless `cut` is true. camera keys: position [x,y,z], lookAt [x,y,z] | lookAtEntity "Name" | rotation [x,y,z] degrees, fov (degrees), cut, path [[x,y,z]…] (spline through position, these points and the next key's position until the next key, constant speed), followPath (face the travel direction). transform keys: position, rotation (degrees), scale, cut. animation keys: clip (Animator state or SpriteAnimator clip), blend (crossfade s), speed. audio keys: clip (audio file or .sfx: path under Assets/ or asset:<id>), volume, pitch, loop, duration (s), position (offset). particles keys: effect (.vfx or prefab path), duration (s; default the .vfx's), position, rotation. fade keys: amount (0 clear … 1 solid), color [r,g,b] sRGB. event keys: name, value (game code reads TimelinePlayer.events / world.timelineEvents()). Every key is optional. A TimelinePlayer component (timeline: the file's asset:<id> or path, playOnStart, speed, loop) plays it.
+Writes a .timeline file (a cutscene) in `folder` (default: the Assets root) and imports it: the given `timeline`, else a starter of `duration` seconds with a camera track. `place` also adds an entity with a TimelinePlayer to the scene. Returns the asset, its key for TimelinePlayer.timeline, the tracks and problems. Change it with timeline.edit (tracks and keys) or timeline.set. A timeline is a cutscene: `duration` (seconds), `loop`, `skippable`, `holdFade` (keep the last fade on screen after the end; default it clears) and `tracks`. Each track: id (unique), kind (camera | transform | animation | audio | particles | fade | event | dialogue), name, target (an entity Name or "Parent/Child" path; empty = the active camera for camera tracks, unpositioned for audio, the world origin for particles, else the entity holding the TimelinePlayer), muted, keys. Every key has `time` (s); continuous kinds blend from the previous key with this key's `easing` (linear, quadIn, quadOut, quadInOut, cubicIn, cubicOut, cubicInOut, … default linear) unless `cut` is true. camera keys: position [x,y,z], lookAt [x,y,z] | lookAtEntity "Name" | rotation [x,y,z] degrees, fov (degrees; positions and aims are world space, also for a parented camera), cut, path [[x,y,z]…] (spline through position, these points and the next key's position until the next key, constant speed), followPath (face the travel direction). transform keys: position, rotation (degrees), scale, cut. animation keys: clip (Animator state or SpriteAnimator clip), blend (crossfade s), speed. audio keys: clip (audio file or .sfx: path under Assets/ or asset:<id>), volume, pitch, loop, duration (s), position (offset). particles keys: effect (.vfx or prefab path), duration (s; default the .vfx's), position, rotation. fade keys: amount (0 clear … 1 solid), color [r,g,b] sRGB. event keys: name, value (game code reads TimelinePlayer.events / world.timelineEvents()). dialogue keys: start the target's DialoguePlayer (or its first descendant's) conversation, or `dialogue` (a .dialogue file path or asset:<id>) instead; node (start node), wait (hold the timeline until the conversation ends). Every key is optional. A TimelinePlayer component (timeline: the file's asset:<id> or path, playOnStart, speed, loop) plays it.
 
 Arguments:
 
@@ -4346,7 +4347,7 @@ Arguments:
 - `folder?`: string
 - `name?`: string
 - `place?`: boolean
-- `timeline?`: {duration?: number, loop?: boolean, skippable?: boolean, tracks?: [object]}
+- `timeline?`: {duration?: number, holdFade?: boolean, loop?: boolean, skippable?: boolean, tracks?: [object]}
 
 Result:
 
@@ -4401,7 +4402,7 @@ Arguments:
 
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `path?`: string
-- `timeline`: {duration?: number, loop?: boolean, skippable?: boolean, tracks?: [object]}
+- `timeline`: {duration?: number, holdFade?: boolean, loop?: boolean, skippable?: boolean, tracks?: [object]}
 
 Result:
 

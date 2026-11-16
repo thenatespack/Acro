@@ -8,7 +8,7 @@ import EngineScene
 // `.timeline` files: sequenced cutscenes (JSON, every key optional). A timeline has a
 // `duration` and `tracks`; each track has a `kind`, a `target` entity (by name or "Parent/Child"
 // path) and `keys` at times in seconds. Continuous tracks (camera, transform, fade) blend
-// between keys with the later key's `easing`; discrete tracks (animation, audio, particles,
+// between keys with the later key's `easing`; discrete tracks (animation, audio, particles, dialogue,
 // event) fire each key once when playback passes its time.
 //
 // {"duration": 8, "tracks": [
@@ -40,6 +40,9 @@ public enum TimelineTrackKind: String, Codable, CaseIterable, Sendable {
     case fade
     /// Fires a named event (`name`, `value`) for game code.
     case event
+    /// Starts a conversation: the target's `DialoguePlayer` (or a `.dialogue` file the key names)
+    /// at an optional `node`; `wait` holds the timeline until the conversation ends.
+    case dialogue
 
     /// Kinds whose keys blend over time (the rest fire once per key).
     public var isContinuous: Bool { self == .camera || self == .transform || self == .fade }
@@ -53,6 +56,7 @@ public enum TimelineTrackKind: String, Codable, CaseIterable, Sendable {
         case .particles: "Particles"
         case .fade: "Screen Fade"
         case .event: "Event"
+        case .dialogue: "Dialogue"
         }
     }
 
@@ -66,6 +70,7 @@ public enum TimelineTrackKind: String, Codable, CaseIterable, Sendable {
         case .particles: ["effect", "duration", "position", "rotation"]
         case .fade: ["easing", "amount", "color", "cut"]
         case .event: ["name", "value"]
+        case .dialogue: ["dialogue", "node", "wait"]
         }
     }
 }
@@ -122,12 +127,20 @@ public struct TimelineKey: Codable, Equatable, Sendable {
     public var name: String?
     /// Event: an optional payload.
     public var value: String?
+    /// Dialogue: a `.dialogue` file (path under `Assets/` or "asset:<id>") to play instead of the
+    /// target's `DialoguePlayer`.
+    public var dialogue: String?
+    /// Dialogue: the node to start at (none: the `DialoguePlayer`'s `startNode`, else the dialogue's start).
+    public var node: String?
+    /// Dialogue: hold the timeline at this key until the conversation ends.
+    public var wait: Bool?
 
     public init(time: Float = 0, easing: Easing? = nil, position: Vec3? = nil, rotation: Vec3? = nil, scale: Vec3? = nil,
                 lookAt: Vec3? = nil, lookAtEntity: String? = nil, fov: Float? = nil, cut: Bool? = nil, path: [Vec3]? = nil,
                 followPath: Bool? = nil, clip: String? = nil, blend: Float? = nil, speed: Float? = nil, volume: Float? = nil,
                 pitch: Float? = nil, loop: Bool? = nil, duration: Float? = nil, effect: String? = nil, amount: Float? = nil,
-                color: Vec3? = nil, name: String? = nil, value: String? = nil) {
+                color: Vec3? = nil, name: String? = nil, value: String? = nil, dialogue: String? = nil, node: String? = nil,
+                wait: Bool? = nil) {
         self.time = time
         self.easing = easing
         self.position = position
@@ -151,11 +164,14 @@ public struct TimelineKey: Codable, Equatable, Sendable {
         self.color = color
         self.name = name
         self.value = value
+        self.dialogue = dialogue
+        self.node = node
+        self.wait = wait
     }
 
     private enum CodingKeys: String, CodingKey {
         case time, easing, position, rotation, scale, lookAt, lookAtEntity, fov, cut, path, followPath, clip, blend, speed
-        case volume, pitch, loop, duration, effect, amount, color, name, value
+        case volume, pitch, loop, duration, effect, amount, color, name, value, dialogue, node, wait
     }
 
     /// Every key is optional (`time` defaults to 0).
@@ -184,6 +200,9 @@ public struct TimelineKey: Codable, Equatable, Sendable {
         color = try c.decodeIfPresent(Vec3.self, forKey: .color)
         name = try c.decodeIfPresent(String.self, forKey: .name)
         value = try c.decodeIfPresent(String.self, forKey: .value)
+        dialogue = try c.decodeIfPresent(String.self, forKey: .dialogue)
+        node = try c.decodeIfPresent(String.self, forKey: .node)
+        wait = try c.decodeIfPresent(Bool.self, forKey: .wait)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -211,6 +230,9 @@ public struct TimelineKey: Codable, Equatable, Sendable {
         try c.encodeIfPresent(color, forKey: .color)
         try c.encodeIfPresent(name, forKey: .name)
         try c.encodeIfPresent(value, forKey: .value)
+        try c.encodeIfPresent(dialogue, forKey: .dialogue)
+        try c.encodeIfPresent(node, forKey: .node)
+        try c.encodeIfPresent(wait, forKey: .wait)
     }
 
     /// A short description for lists and the timeline strip.
@@ -222,6 +244,10 @@ public struct TimelineKey: Codable, Equatable, Sendable {
         case .event: return name ?? "(unnamed)"
         case .fade: return String(format: "%.0f%%", (amount ?? 0) * 100)
         case .camera: return cut == true ? "cut" : (path != nil ? "path" : "")
+        case .dialogue:
+            let file = dialogue.map { (($0 as NSString).lastPathComponent as NSString).deletingPathExtension }
+            let what = [file, node].compactMap { $0?.isEmpty == false ? $0 : nil }.joined(separator: " · ")
+            return (what.isEmpty ? "talk" : what) + (wait == true ? " (waits)" : "")
         default: return ""
         }
     }
@@ -297,16 +323,21 @@ public struct Timeline: Codable, Equatable, Sendable {
     public var loop: Bool
     /// Whether `TimelinePlayer.skip()` may end it early.
     public var skippable: Bool
+    /// Keep the last screen fade on screen once the timeline finishes (default: it clears, so a
+    /// cutscene that fades out doesn't leave the game black).
+    public var holdFade: Bool
     public var tracks: [TimelineTrack]
 
-    public init(duration: Float = 10, loop: Bool = false, skippable: Bool = true, tracks: [TimelineTrack] = []) {
+    public init(duration: Float = 10, loop: Bool = false, skippable: Bool = true, holdFade: Bool = false,
+                tracks: [TimelineTrack] = []) {
         self.duration = duration
         self.loop = loop
         self.skippable = skippable
+        self.holdFade = holdFade
         self.tracks = tracks
     }
 
-    private enum CodingKeys: String, CodingKey { case duration, loop, skippable, tracks }
+    private enum CodingKeys: String, CodingKey { case duration, loop, skippable, holdFade, tracks }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -314,7 +345,17 @@ public struct Timeline: Codable, Equatable, Sendable {
         self.init(duration: try c.decodeIfPresent(Float.self, forKey: .duration) ?? d.duration,
                   loop: try c.decodeIfPresent(Bool.self, forKey: .loop) ?? d.loop,
                   skippable: try c.decodeIfPresent(Bool.self, forKey: .skippable) ?? d.skippable,
+                  holdFade: try c.decodeIfPresent(Bool.self, forKey: .holdFade) ?? d.holdFade,
                   tracks: try c.decodeIfPresent([TimelineTrack].self, forKey: .tracks) ?? [])
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(duration, forKey: .duration)
+        try c.encode(loop, forKey: .loop)
+        try c.encode(skippable, forKey: .skippable)
+        if holdFade { try c.encode(holdFade, forKey: .holdFade) }
+        try c.encode(tracks, forKey: .tracks)
     }
 
     public func fileData() throws -> Data { try AssetJSON.encode(self) }
@@ -354,7 +395,7 @@ public struct Timeline: Codable, Equatable, Sendable {
         return copy
     }
 
-    /// The (track, key) indices of discrete keys (animation, audio, particles, event) passed when
+    /// The (track, key) indices of discrete keys (animation, audio, particles, event, dialogue) passed when
     /// playback moves from `from` (exclusive; nil: from before the start, so keys at 0 fire) to
     /// `to` (inclusive), in time order. Muted and unknown tracks are skipped. No wrapping.
     public func firedKeys(from: Float?, to: Float) -> [(track: Int, key: Int)] {
@@ -482,6 +523,10 @@ public enum TimelineCheck {
                     if key.path != nil, key.position == nil { problems.append("\(at): a path needs a position to start from") }
                 case .transform:
                     break
+                case .dialogue:
+                    if let file = key.dialogue, !file.isEmpty, let assetExists, !assetExists(file) {
+                        problems.append("\(at): no dialogue '\(file)'")
+                    }
                 }
             }
         }
