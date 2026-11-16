@@ -146,6 +146,35 @@ private func approxQuat(_ a: Quat, _ b: Quat, _ eps: Float = 1e-4) -> Bool {
                 "at the end of the reloaded clip: a half turn")
     }
 
+    @MainActor @Test func sceneAnimatorsAdvanceInParallelWithTheSameResult() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        try animationClipImportGLTF().write(to: project.url(forAssetPath: "rig.gltf"))
+        let database = AssetDatabase(project: project)
+        database.refresh()
+        let id = try #require(database.id(forPath: "rig.gltf"))
+        let prefab = try #require(database.prefab(AssetReference(id)))
+        let handle = AnimationClipHandle(AssetReference(id, subAsset: "animation/Bend").description)
+        /// 40 instances at different speeds, played for a few frames on `jobs`; their poses and events.
+        func run(_ jobs: JobSystem) throws -> ([Transform], Int) {
+            let world = World()
+            var roots: [Entity] = []
+            for i in 0..<40 {
+                let root = try #require(world.instantiate(prefab).first)
+                world.add(Animator(targets: [], restPose: [], clip: handle, speed: 0.5 + Float(i) * 0.05), to: root)
+                roots.append(root)
+            }
+            var events = 0
+            world.addSceneAnimationSystem(assets: { database }, jobs: jobs) { _, _ in events += 1 }
+            for _ in 0..<5 { world.update(dt: 0.13) }
+            return (roots.flatMap { world.get(Animator.self, for: $0)!.targets.map { world.get(Transform.self, for: $0)! } }, events)
+        }
+        let serial = try run(JobSystem(threadCount: 1))
+        let parallel = try run(JobSystem(threadCount: 4))
+        #expect(serial.0.count == 160 && serial.0 == parallel.0 && serial.1 == parallel.1)
+        #expect(Set(serial.0.map(\.rotation.vector.y)).count > 10, "the instances are at different times")
+    }
+
     @MainActor @Test func codeDrivenAnimatorsAreLeftAlone() throws {
         let world = World()
         let target = world.spawn(Transform())

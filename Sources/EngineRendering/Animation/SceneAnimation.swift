@@ -45,31 +45,44 @@ extension World {
     /// on the main thread, it applies graphs that are new or were reimported (`replaceGraph`),
     /// binds animators with no `targets` to their entity's subtree
     /// (`animationRig(of:)`), loads their clips from `assets` into the returned library (again
-    /// after a reimport: hot reload), advances them by the frame's dt and writes the animated
-    /// targets' `Transform`s, then reports events through `onEvent`.
+    /// after a reimport: hot reload) and retargets them when asked. Then the animators advance
+    /// by the frame's dt and sample their clips in parallel on `jobs` (each touches only its own
+    /// copy and clips); poses are written to the targets' `Transform`s and events reported
+    /// through `onEvent` in query order, so the result is the same for any thread count.
     ///
     /// Animators whose clips are all registered in code by other keys are left to the system of
     /// `addAnimationSystem(_:)`, so a game that runs its own isn't advanced twice.
     @discardableResult
     public func addSceneAnimationSystem(assets: @escaping () -> AssetDatabase?, name: String = "sceneAnimation",
-                                        stage: SystemStage = .update,
+                                        stage: SystemStage = .update, jobs: JobSystem = .shared,
                                         onEvent: ((Entity, FiredAnimationEvent) -> Void)? = nil) -> AnimationLibrary {
         let library = AnimationLibrary()
         let clipCache = AnimatorClipCache()
         var reported = Set<String>()
         var appliedGraphs: [Entity: (graph: AssetReference, revision: Int)] = [:]
+        var entities: [Entity] = []
+        var animators: [Animator] = []
+        var clips: [[AnimationClipHandle: AnimationClip]] = []
+        var poses: [AnimationPose] = []
         addSystem(name, stage: stage) { world in
             guard world.count(of: Animator.self) > 0 else { return }
             library.assets = assets()
-            var driven: [(Entity, Animator)] = []
+            entities.removeAll(keepingCapacity: true)
+            animators.removeAll(keepingCapacity: true)
+            clips.removeAll(keepingCapacity: true)
             world.query(Animator.self) { entity, animator in
-                if animator.isSceneDriven { driven.append((entity, animator)) }
+                if animator.isSceneDriven {
+                    entities.append(entity)
+                    animators.append(animator)
+                }
             }
-            guard !driven.isEmpty else { return }
+            guard !entities.isEmpty else { return }
             let dt = world.time.delta
-            var fired: [(Entity, FiredAnimationEvent)] = []
             let database = library.assets
-            for (entity, var animator) in driven {
+            // Main thread: graphs, binding, clip loading and retargeting.
+            for i in entities.indices {
+                let entity = entities[i]
+                var animator = animators[i]
                 if let reference = animator.graph, let database {
                     let revision = database.revision(of: reference.asset)
                     let applied = appliedGraphs[entity]
@@ -91,15 +104,35 @@ extension World {
                 for key in library.resolveAssetClips(animator.clipHandles) where reported.insert(key).inserted {
                     EngineLog.warning("no animation clip '\(key)'", category: .animation)
                 }
-                let clips = clipCache.clips(for: entity, animator, in: world, library: library)
-                let pose = animator.update(dt: dt) { clips[$0] }
-                for i in 0..<min(pose.count, animator.targets.count) where pose.animated[i] {
-                    world.modify(Transform.self, for: animator.targets[i]) { $0 = pose.transforms[i] }
+                clips.append(clipCache.clips(for: entity, animator, in: world, library: library))
+                animators[i] = animator
+            }
+            // Any thread: advance and sample.
+            let count = animators.count
+            poses = Array(repeating: AnimationPose([]), count: count)
+            clips.withUnsafeBufferPointer { clips in
+                animators.withUnsafeMutableBufferPointer { animators in
+                    poses.withUnsafeMutableBufferPointer { poses in
+                        jobs.parallelFor(0..<count, batchSize: 4, name: "sceneAnimators") { range in
+                            for i in range {
+                                let set = clips[i]
+                                poses[i] = animators[i].update(dt: dt) { set[$0] }
+                            }
+                        }
+                    }
+                }
+            }
+            // Main thread, in order: poses, components, events.
+            var fired: [(Entity, FiredAnimationEvent)] = []
+            for i in 0..<count {
+                let entity = entities[i], animator = animators[i], pose = poses[i]
+                for t in 0..<min(pose.count, animator.targets.count) where pose.animated[t] {
+                    world.modify(Transform.self, for: animator.targets[t]) { $0 = pose.transforms[t] }
                 }
                 for event in animator.events { fired.append((entity, event)) }
                 world.modify(Animator.self, for: entity) { $0 = animator }
             }
-            clipCache.keepOnly(Set(driven.map { $0.0 }))
+            clipCache.keepOnly(Set(entities))
             if let onEvent { for (entity, event) in fired { onEvent(entity, event) } }
         }
         return library
