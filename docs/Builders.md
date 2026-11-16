@@ -24,6 +24,7 @@ Builder tools let people and AI agents author game content inside the Acro edito
 | [UI / HUD Builder](#ui--hud-builder) | `.ui` | Game menus and HUDs made from the engine's widgets |
 | [Dialogue Builder](#dialogue-builder) | `.dialogue` | Branching conversations with variables and events |
 | [Timeline Builder](#timeline-builder) | `.timeline` | Cutscenes: camera moves, animation, sound, effects, fades, events |
+| [Material Builder](#material-builder) | `.material` | Node-graph surface shaders compiled for Metal and Vulkan |
 
 Planned builders are tracked in [Tools.md](../Tools.md).
 
@@ -306,3 +307,34 @@ In the editor, use **New Animation Graph** in the asset browser, then double-cli
 Editor MCP clients use `animGraph.new {preview}` (a starter graph from the model's clips), `animGraph.edit {parameters, addStates, addTransitions, updateStates, updateTransitions, addLayers, remove…}`, `animGraph.get`, `animGraph.set`, `animGraph.assign {entity}` and `animGraph.open`. Clip keys may be given as paths (`Models/hero.glb#animation/Walk`); they are stored as asset references. See [MCPTools.md](MCPTools.md).
 
 Not done yet: 2D blend spaces, sub-state machines, per-layer masks and override (non-additive) layers, retargeting clips between skeletons with different node layouts, and editing clips' events.
+## Material Builder
+
+A `.material` file can hold a node graph (the `graph` key) that computes its surface instead of the fixed PBR settings: textures (images or `.proctex`), noise (value, fractal, cells), math, blend modes, fresnel, scrolling and rotating UVs, time, vertex color and triplanar mapping, wired into the PBR inputs base color, opacity, normal (tangent space), metallic, roughness, emissive and occlusion. The material's `alphaMode`, `alphaCutoff`, `doubleSided` and sampler settings still apply; use `blend` (or `mask`) for a graph that drives opacity.
+
+```json
+{
+  "shading": "pbr",
+  "alphaMode": "opaque",
+  "graph": {
+    "nodes": [
+      {"id": "flow", "type": "scrollUV", "speed": [0.03, 0.015]},
+      {"id": "heat", "type": "noise", "kind": "fbm", "uv": "flow", "scale": 5, "octaves": 5},
+      {"id": "hot", "type": "color", "value": [6, 1.6, 0.15, 1]},
+      {"id": "glow", "type": "math", "op": "multiply", "a": "hot", "b": "heat"}
+    ],
+    "output": {"baseColor": [0.06, 0.035, 0.03], "emissive": "glow.rgb", "roughness": 0.8}
+  }
+}
+```
+
+A node is `{"id", "type", ...keys}`. An input holds a constant (a number or 2-4 numbers) or a link: a node id, optionally with a swizzle (`"tex.rgb"`, `"n.x"`), or a built-in (`uv`, `position`, `normal`, `viewDir`, `vertexColor`, `time`). Sizes convert as in GLSL. Colors are linear. Up to five different textures per graph. UV-space noise isn't tileable, so it shows the mesh's UV seam; feed it `position.xz` (or use `triplanar`) for seamless world-space patterns. Problems (unknown nodes or ops, missing links, cycles, missing textures) are import warnings, and the graph still compiles with defaults in their place. Presets: basic, lava, water, hologram, stone, pulse.
+
+**How it compiles.** At import the graph becomes straight-line shader code that replaces the body of one function, `graphSurface`, in a template variant of the lit mesh shader (`mesh_graph.frag`: `mesh_surface.glsl` with `MATERIAL_GRAPH`, compiled unoptimized so the function survives). For Vulkan the code is emitted as SPIR-V and spliced into the template's SPIR-V; for Metal it is emitted as MSL and spliced into the template's MSL. No shader compiler is needed at run time, so this works in the editor and in cooked games alike. Every constant the author typed is data (a storage buffer), so changing a number doesn't recompile, and materials whose graphs differ only in constants share pipelines. Lighting, shadows, fog, IBL and the punctual lights are the same code as every other PBR material.
+
+**Using it.** Assign a graph material like any material: a MeshRenderer's `material` (`materialGraph.assign`, with `children: true` for a placed model or prefab), or a mesh build part's `material` key. Placed copies update when the file changes.
+
+In the editor, use **New Material Graph** in the asset browser, then double-click a `.material` file (or use **Open in Material Builder** in the inspector) to open the **Material Builder** tab next to the Scene view. It previews the material on a sphere, cube, plane or the selected entity's mesh, with a light and background picker and an Animate switch for time-driven graphs (right-drag orbits, Shift pans, the wheel zooms). Below the preview, the graph canvas draws the nodes and their links; click a node to edit it, drag it to move it. The sidebar has the presets, alpha mode and sidedness, the PBR outputs, Add Node, the selected node's inputs and settings, and the graph's problems. A material without a graph has **Convert to Graph**, which rebuilds its fixed settings as nodes. Every change is saved to the file as one undo step.
+
+Editor MCP clients can use `materialGraph.new {preset}`, `materialGraph.edit {addNodes, removeNodes, connect, disconnect, params, output, settings}`, `materialGraph.set`, `materialGraph.get {code}`, `materialGraph.nodes` (the node catalog), `materialGraph.assign` and `materialGraph.open`. The older `material.get` and `material.set` keep editing a material's fixed fields. See [MCPTools.md](MCPTools.md) for schemas and parameters.
+
+Not yet: terrain layers and decals can't use graph materials, graph opacity doesn't shape shadows (alpha-tested graph materials cast solid shadows), graph materials don't receive planar reflections, and the canvas can't draw links by dragging (link from the sidebar instead).

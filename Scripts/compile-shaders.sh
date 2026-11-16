@@ -24,7 +24,11 @@ while IFS= read -r dir; do includes+=(-I "$dir"); done < <(find Sources Tests -t
 
 for src in "${shaders[@]}"; do
     echo "glslc $src -> $src.spv"
-    glslc --target-env=vulkan1.1 -O ${includes[@]+"${includes[@]}"} "$src" -o "$src.spv"
+    # A shader marked "// compile-shaders: -O0" is compiled unoptimized (mesh_graph.frag: its
+    # functions must survive, by name, for the engine to replace one).
+    opt=-O
+    grep -q '^// compile-shaders: -O0' "$src" && opt=-O0
+    glslc --target-env=vulkan1.1 $opt ${includes[@]+"${includes[@]}"} "$src" -o "$src.spv"
 done
 
 # Build the SPIR-V -> MSL driver (SPIRV-Cross C API; the spirv-cross CLI can't remap our

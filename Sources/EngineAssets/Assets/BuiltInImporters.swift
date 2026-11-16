@@ -151,7 +151,9 @@ public struct OBJImporter: AssetImporter {
 /// { "baseColor" : [0.8, 0.3, 0.2, 1], "texture" : "asset:5f1c…#texture", "specular" : 0.5 }
 /// ```
 ///
-/// One sub-asset, `material`.
+/// One sub-asset, `material`. A file with a `graph` (MaterialGraph.swift) has its texture paths
+/// resolved to references and the graph compiled here: problems become import warnings, and the
+/// resolved textures fill the material's texture slots (see `MaterialAsset.graph`).
 public struct MaterialFileImporter: AssetImporter {
     public typealias Settings = NoImportSettings
 
@@ -159,14 +161,43 @@ public struct MaterialFileImporter: AssetImporter {
 
     public var name: String { "material" }
     public var fileExtensions: [String] { ["material"] }
-    public var version: Int { 1 }
+    public var version: Int { 2 }
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
-        let material = try AssetJSON.decoder().decode(MaterialAsset.self, from: context.data())
+        var material = try AssetJSON.decoder().decode(MaterialAsset.self, from: context.data())
+        if material.graph != nil { Self.compileGraph(&material, &context) }
         var asset = ImportedAsset()
         asset.add("material", name: ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension,
                   .material(material))
         return asset
+    }
+
+    /// Resolves the graph's texture settings (paths under `Assets/` or references) to
+    /// references, compiles it to report problems, and fills the texture slots.
+    static func compileGraph(_ material: inout MaterialAsset, _ context: inout ImportContext) {
+        guard var graph = material.graph else { return }
+        let byPath = context.assetsByPath
+        func resolve(_ text: String) -> AssetReference? {
+            let value = text.trimmingCharacters(in: .whitespaces)
+            if let reference = AssetReference(value) { return reference }
+            let path = value.hasPrefix("Assets/") ? String(value.dropFirst("Assets/".count)) : value
+            return byPath[path].map { AssetReference($0) }
+        }
+        for i in graph.nodes.indices {
+            guard case .string(let text)? = graph.nodes[i]["texture"], !text.isEmpty, let reference = resolve(text) else { continue }
+            graph.nodes[i]["texture"] = .string(reference.description)
+        }
+        material.graph = graph
+        let compilation = MaterialGraphCompiler.compile(graph)
+        for warning in compilation.warnings { context.warn(warning) }
+        let textures = compilation.program?.textures ?? []
+        func slot(_ i: Int) -> AssetReference? { i < textures.count ? textures[i] : nil }
+        material.shading = .pbr
+        material.texture = slot(0)
+        material.metallicRoughnessTexture = slot(1)
+        material.normalTexture = slot(2)
+        material.occlusionTexture = slot(3)
+        material.emissiveTexture = slot(4)
     }
 }
 

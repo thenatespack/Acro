@@ -379,6 +379,7 @@ public enum EditorIcons {
         EditorLayout.timeline: "clapperboard",
         EditorLayout.animationGraph: "network",
         EditorLayout.characterBuilder: "person-standing",
+        EditorLayout.materialBuilder: "palette",
     ]
 
     /// Console lines by level.

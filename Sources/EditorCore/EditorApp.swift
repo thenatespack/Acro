@@ -160,6 +160,8 @@ public final class EditorApp: Game, EditorHost {
     public private(set) var animGraphWorkspace: AnimationGraphWorkspace!
     /// The Character Builder tab (CharacterBuilderWorkspace.swift).
     public private(set) var characterWorkspace: CharacterBuilderWorkspace!
+    /// The Material Builder tab (MaterialBuilderWorkspace.swift).
+    public private(set) var materialWorkspace: MaterialBuilderWorkspace!
     private(set) var statusBar: StatusBar!
     /// The Assets panel (browser) and its thumbnails.
     public private(set) var assetBrowser: AssetBrowserPanel!
@@ -603,6 +605,15 @@ public final class EditorApp: Game, EditorHost {
             }
             dock.focusPanel(EditorLayout.timeline)
         }
+        session.onOpenMaterialGraph = { [unowned self] id in
+            guard materialWorkspace.open(id) else { return }
+            materialWorkspace.applyRequest(from: session)
+            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.materialBuilder, EditorLayout.viewport) {
+                dock.dock(EditorLayout.materialBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
+                                                                                                 : .edge(.bottom))
+            }
+            dock.focusPanel(EditorLayout.materialBuilder)
+        }
         session.onOpenScript = { [unowned self] path in
             let url = URL(fileURLWithPath: path)
             scriptEditor.openScript(at: url)
@@ -761,6 +772,9 @@ public final class EditorApp: Game, EditorHost {
         characterWorkspace = CharacterBuilderWorkspace(session: session)
         characterWorkspace.device = engine?.device
         if let quality = engine?.quality { characterWorkspace.quality = quality }
+        materialWorkspace = MaterialBuilderWorkspace(session: session)
+        materialWorkspace.device = engine?.device
+        if let quality = engine?.quality { materialWorkspace.quality = quality }
         files.onOpen = { [unowned self] file in openFile(file) }
         files.onNewScene = { [unowned self] name in newScene(named: name) }
 
@@ -814,6 +828,9 @@ public final class EditorApp: Game, EditorHost {
                                        minSize: Vec2(320, 200))
         characterPanel.passesPointerThrough = true
         dock.addPanel(characterPanel)
+        let materialPanel = DockPanel(id: EditorLayout.materialBuilder, title: "Material Builder", content: materialWorkspace.view, minSize: Vec2(320, 200))
+        materialPanel.passesPointerThrough = true
+        dock.addPanel(materialPanel)
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
         for (id, icon) in EditorIcons.panelIconNames { dock.panel(id)?.icon = EditorIcons.named(icon) }
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
@@ -1229,6 +1246,7 @@ public final class EditorApp: Game, EditorHost {
             timelineWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
             animGraphWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
             characterWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
+            materialWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
         }
         session.tick(dt: Double(dt))
 
@@ -1263,6 +1281,7 @@ public final class EditorApp: Game, EditorHost {
         timelineWorkspace.prepareFrame(pixelScale: ui.scale)
         animGraphWorkspace.prepareFrame(pixelScale: ui.scale)
         characterWorkspace.prepareFrame(pixelScale: ui.scale)
+        materialWorkspace.prepareFrame(pixelScale: ui.scale)
         buildGizmos()
         viewportWidget.texture = target.texture
         viewportWidget.billboards = transformTool.billboards
@@ -1709,6 +1728,7 @@ public final class EditorApp: Game, EditorHost {
         timelineWorkspace.render(frame: frame)
         animGraphWorkspace.render(frame: frame)
         characterWorkspace.render(frame: frame)
+        materialWorkspace.render(frame: frame)
         if let game = gameCurrentView, gameSizer.width > 0, gameWidget.isEffectivelyVisible {
             sceneRenderer.beginViews(world: session.gameWorld, frame: frame, shadowFocus: game)
             sceneRenderer.renderView(game, into: gameTarget, frame: frame, debugDraw: gameDraw)

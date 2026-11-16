@@ -568,6 +568,7 @@ public final class AssetBrowserPanel {
             ("New Timeline", TimelineNewCommand.id, { [unowned self] in model.newTimeline(); sync() }),
             ("New Animation Graph", AnimGraphNewCommand.id, { [unowned self] in model.newAnimationGraph(); sync() }),
             ("New Character", CharacterNewCommand.id, { [unowned self] in model.newCharacter(); sync() }),
+            ("New Material Graph", MaterialGraphNewCommand.id, { [unowned self] in model.newMaterialGraph(); sync() }),
         ]
         if let entry {
             if case .folder = entry.item {

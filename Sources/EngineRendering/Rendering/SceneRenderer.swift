@@ -141,6 +141,12 @@ public final class SceneRenderer {
     /// Scratch for the skinning uniform block (`SkinPose.uniformBlock`).
     private var skinBlock: [Vec4] = []
     private var pipelines: [PipelineKey: RenderPipeline] = [:]
+    /// Material graphs (`Material.graph`): each registered graph material's values as a storage
+    /// buffer (by material id), and the programs by key, for their pipelines.
+    private var graphBuffers: [Int: GPUBuffer] = [:]
+    private var graphPrograms: [String: MaterialGraphProgram] = [:]
+    /// Seconds material graphs see as their time: the gathered world's `time.elapsed`.
+    public private(set) var graphTime: Float = 0
     /// The shadow atlas: every cascade, spot-light map and point-light face of the frame in
     /// one depth texture (`ShadowAtlasLayout`). Recreated when the layout's size changes.
     public private(set) var shadowMap: GPUTexture
@@ -348,11 +354,14 @@ public final class SceneRenderer {
         var alphaTested: Bool = false
         /// The skinning vertex shader (mesh_skinned.vert) and `SkinnedMeshVertex` layout.
         var skinned: Bool = false
+        /// A material graph's shader variant (`MaterialGraphProgram.key`).
+        var graph: String? = nil
     }
 
     /// The pipeline variant a batch of `material` draws with, in the transparent pass when `blending`.
     static func pipelineKey(for material: Material, blending: Bool, reversedZ: Bool) -> PipelineKey {
-        PipelineKey(blending: blending, doubleSided: material.doubleSided, reversedZ: reversedZ, alphaTested: material.alphaTested)
+        PipelineKey(blending: blending, doubleSided: material.doubleSided, reversedZ: reversedZ, alphaTested: material.alphaTested,
+                    graph: material.graph?.key)
     }
 
     /// Also draws `engine.debugDraw` in the screen pass.
@@ -434,8 +443,11 @@ public final class SceneRenderer {
     @discardableResult
     public func registerMaterial(_ material: Material, key: String) throws -> MaterialHandle {
         let entry = (material, try device.makeSampler(material.sampler))
+        let graphBuffer = try material.graph.map { try device.makeBuffer($0.values, usage: .storage) }
         let id = prep.materials.register(MaterialTraits(blends: material.blends, alphaTested: material.alphaTested), key: key)
         if id == materials.count { materials.append(entry) } else { materials[id] = entry }
+        graphBuffers[id] = graphBuffer
+        if let program = material.graph { graphPrograms[program.key] = program }
         return MaterialHandle(key)
     }
 
@@ -582,6 +594,7 @@ public final class SceneRenderer {
     }
 
     func gather(_ world: World) {
+        graphTime = Float(world.time.elapsed.truncatingRemainder(dividingBy: 3600))
         syncAssets()
         syncLineMeshes(world)
         prep.gather(world: world)
@@ -981,7 +994,11 @@ public final class SceneRenderer {
     private func bindMaterial(_ index: Int, in pass: RenderPass, skin: Int = -1, reflection: GPUTexture? = nil) {
         let (material, sampler) = materials[index]
         // PBR materials without an occlusion map receive the planar reflection in that texture slot.
-        let reflected = reflection != nil && skin < 0 && material.shading == .pbr && material.occlusionTexture == nil
+        let reflected = reflection != nil && skin < 0 && material.shading == .pbr && material.occlusionTexture == nil && material.graph == nil
+        if let buffer = graphBuffers[index] {
+            pass.setStorageBuffer(buffer, index: 0, stage: .fragment)
+            pass.setPushConstants(Vec4(graphTime, material.alphaMode == .mask ? 1 : 0, material.alphaCutoff, 0))
+        }
         if skin >= 0 {
             bindSkin(skin, material: index, in: pass)
         } else {
@@ -1070,7 +1087,14 @@ public final class SceneRenderer {
                 return nil
             }
         }
-        let shader = key.skinned ? skinnedShaders[key.alphaTested]! : key.alphaTested ? maskShader! : shader
+        var shader = key.skinned ? skinnedShaders[key.alphaTested]! : key.alphaTested ? maskShader! : shader
+        if let graph = key.graph {
+            // The material graph's fragment stage (MaterialGraphCompiler) after the usual vertex stage.
+            guard let program = graphPrograms[graph] else { return nil }
+            shader.metalFragmentSource = program.metalFragment
+            shader.metalFragmentColor0Source = program.metalFragmentColor0
+            shader.spirvFragment = program.spirvFragment
+        }
         var descriptor = PipelineDescriptor(shader: shader, vertexLayout: key.skinned ? SkinnedMeshVertex.layout : MeshVertex.layout,
                                             instanceLayout: MeshInstance.layout)
         descriptor.cullMode = key.doubleSided ? .none : .back

@@ -147,7 +147,8 @@ struct MaterialAssetComponent: Component {
         }
         return hints
     }()
-    static var fieldHints: [String: FieldHints] { colorHints }
+    /// The node graph is edited in the Material Builder, not as rows here.
+    static var fieldHints: [String: FieldHints] { colorHints.merging(["graph": FieldHints(hidden: true)]) { a, _ in a } }
 
     var material: MaterialAsset
 
@@ -187,7 +188,7 @@ public final class MaterialAssetEditor {
 
     /// Nil when `reference` isn't a material.
     public init?(session: EditorSession, reference: AssetReference) {
-        guard let assets = session.assets, let material = assets.material(reference) else { return nil }
+        guard let assets = session.assets, let material = assets.materialFile(of: reference.asset) ?? assets.material(reference) else { return nil }
         self.session = session
         self.reference = reference
         isEditable = session.isMaterialFile(reference.asset)
@@ -203,7 +204,7 @@ public final class MaterialAssetEditor {
     public func refresh() {
         guard gestureStart == nil, let assets = session.assets else { return }
         let revision = assets.revision(of: reference.asset)
-        guard revision != shownRevision, let material = assets.material(reference) else { return }
+        guard revision != shownRevision, let material = assets.materialFile(of: reference.asset) ?? assets.material(reference) else { return }
         shownRevision = revision
         world.add(MaterialAssetComponent(material: material), to: entity)
     }
@@ -525,6 +526,15 @@ public final class AssetInspectorView {
                                      note("A rigged \(character?.template.rawValue ?? "") character with \(character?.rig.bones.count ?? 0) bones and \(character?.clipNames.count ?? 0) stock clips, imported as a skinned prefab with an Animator.")])
             }
             if session.isMaterialFile(id) {
+                let open = Button("Open in Material Builder", role: .primary, name: "openMaterialBuilder") { [unowned self] in
+                    session.run(MaterialGraphOpenCommand.self, .init(asset: AssetReference(id)))
+                }
+                open.command = MaterialGraphOpenCommand.id.rawValue
+                open.tooltip = "Build this material's look as a node graph in the Material Builder tab (or double-click it in the Assets panel)"
+                let nodes = session.assets?.materialFile(of: id)?.graph?.nodes.count
+                content.addChildren([HStack(spacing: 6, [open, Spacer()]),
+                                     note(nodes.map { "A node graph of \($0) node\($0 == 1 ? "" : "s"), compiled into a shader variant; the fields below are unused apart from alpha, sides and sampling." }
+                                          ?? "Fixed PBR settings. The Material Builder can convert them to a node graph.")])
                 addMaterialForm(AssetReference(id, subAsset: "material"))
             }
             if record.importer == GLTFImporter().name, record.objects.contains(where: { $0.kind == .material }) {

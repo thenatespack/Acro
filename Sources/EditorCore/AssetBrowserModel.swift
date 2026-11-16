@@ -161,6 +161,8 @@ public final class AssetBrowserModel {
             session.run(AnimGraphOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where session.isCharacterFile(id):
             session.run(CharacterOpenCommand.self, .init(asset: AssetReference(id)))
+        case .asset(let id) where session.isMaterialFile(id):
+            session.run(MaterialGraphOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where entry.isExpandable:
             toggleExpanded(id)
         default:
@@ -271,6 +273,14 @@ public final class AssetBrowserModel {
     @discardableResult
     public func newCharacter() -> AssetID? {
         guard let id = session.run(CharacterNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
+        invalidate()
+        selection = .asset(id)
+        return id
+    }
+    /// Creates a material with a node graph in the current folder (`materialGraph.new`) and selects it.
+    @discardableResult
+    public func newMaterialGraph() -> AssetID? {
+        guard let id = session.run(MaterialGraphNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
         invalidate()
         selection = .asset(id)
         return id

@@ -174,6 +174,11 @@ public final class EditorSession {
     public var onOpenCharacter: ((AssetID) -> Void)?
     /// The clip `character.open` asked the tab to play (nil: keep the current one).
     public var characterPreviewClip: String?
+    /// The material open in the Material Builder tab (`materialGraph.open`), how the app shows
+    /// it, and the preview settings that call asked for.
+    public var openMaterialGraph: AssetID?
+    public var onOpenMaterialGraph: ((AssetID) -> Void)?
+    public var materialPreviewRequest: MaterialPreviewRequest?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()
