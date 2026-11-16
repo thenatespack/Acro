@@ -208,11 +208,11 @@ world.setBlackboardValue(.entity(player), forKey: "target", of: guardEntity)
 for event in world.get(BehaviorTreeState.self, for: guardEntity)?.events ?? [] where event.name == "attack" { ... }
 ```
 
-In the editor, use **New Behavior Tree** in the asset browser and double-click the file (or **Open in Behavior Tree Builder** in the inspector) to open the **Behavior Tree** tab. The tab shows the tree as an outline. Click a node to edit its id, label, type and parameters in the sidebar, move it among its siblings, make it the root or delete it. The sidebar also has controls to add nodes of any type, edit the blackboard and settings, and pick a preset (empty, patrol, guard, chaser, coward). Every change is one undo step. While playing, rows are tinted with what each node returned on the last tick: running is yellow, success is green and failure is red. The tint follows the selected entity if it runs the tree, otherwise the entity chosen in the toolbar picker.
+In the editor, use **New Behavior Tree** in the asset browser and double-click the file (or **Open in Behavior Tree Builder** in the inspector) to open the **Behavior Tree** tab. The tab draws the tree as a node graph from the root down, children left to right in run order (nodes not connected to the root sit to the right). Click a node to edit its id, label, type and parameters in the sidebar, move it among its siblings, make it the root or delete it. Drag a node (with everything under it) onto a composite or decorator to make it that node's last child, or onto the left or right part of another node to put it just before or after it; a drop that would make a cycle is refused. Drag empty space or scroll to pan, and use the toolbar's zoom and **Fit** buttons. The sidebar also has controls to add nodes of any type, edit the blackboard and settings, and pick a preset (empty, patrol, guard, chaser, coward). Every change is one undo step. While playing, nodes and their links are tinted with what each node returned on the last tick: running is yellow, success is green and failure is red. The tint follows the selected entity if it runs the tree, otherwise the entity chosen in the toolbar picker.
 
 Editor MCP clients use `behavior.new {preset}`, `behavior.edit {addNodes, connect, disconnect, updateNodes, removeNodes, blackboard}`, `behavior.set`, `behavior.get`, `behavior.assign {entity, target}`, `behavior.debug` (the live running path and blackboard while playing) and `behavior.open`. See [MCPTools.md](MCPTools.md).
 
-Not yet: a node-graph canvas (the tab shows an outline) and navigation-mesh pathfinding. Movement assumes root entities.
+Not yet: navigation-mesh pathfinding. Movement assumes root entities.
 
 ## UI / HUD Builder
 
