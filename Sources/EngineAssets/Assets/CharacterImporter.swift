@@ -90,8 +90,8 @@ public struct CharacterImporter: AssetImporter {
             asset.add(id, name: clip.name, .animation(clip))
             clipKeys[clip.name] = context.reference(id).description
         }
-        scene.records[root].components["Animator"] = Self.animator(build: build, rig: rig, clipKeys: clipKeys,
-                                                                    targets: boneIDs)
+        scene.records[root].components["Animator"] = try Self.animatorJSON(
+            Self.animator(build: build, rig: rig, clipKeys: clipKeys), targets: boneIDs)
 
         let prefabID = namer.id(kind: "prefab", name: stem, index: 0)
         asset.add(prefabID, name: stem, .prefab(PrefabAsset(scene: try scene.data())))
@@ -192,63 +192,50 @@ public struct CharacterImporter: AssetImporter {
         }
     }
 
-    /// The `Animator` component as scene-file JSON (the encoding of `Animator` in EngineRendering,
-    /// which this module can't name; `CharacterTests` checks the two agree).
-    static func animator(build: CharacterBuild, rig: CharacterRig, clipKeys: [String: String], targets: [Int]) -> JSONValue {
-        func clipMotion(_ key: String) -> JSONValue { .object(["clip": .object(["_0": .string(key)])]) }
-        func number(_ v: Float) -> JSONValue { .double(Double(v)) }
-        var states: [JSONValue] = []
+    /// The character's `Animator` (targets left empty: the prefab names them by file id, see
+    /// `animatorJSON`).
+    public static func animator(build: CharacterBuild, rig: CharacterRig, clipKeys: [String: String]) -> Animator {
+        var states: [AnimationState] = []
         let names = build.clipNames
         for name in names {
             guard let key = clipKeys[name] else { continue }
-            states.append(.object(["name": .string(name), "motion": clipMotion(key), "speed": number(1),
-                                   "loops": .bool(CharacterClips.loops(name))]))
+            states.append(AnimationState(name, .clip(AnimationClipHandle(key)), loops: CharacterClips.loops(name)))
         }
         let speeds = locomotionSpeeds(rig)
-        var entries: [JSONValue] = []
+        var entries: [BlendSpaceEntry] = []
         for (name, position) in [("idle", Float(0)), ("walk", speeds.walk), ("run", speeds.run)] {
-            if let key = clipKeys[name] { entries.append(.object(["clip": .string(key), "position": number(position)])) }
+            if let key = clipKeys[name] { entries.append(BlendSpaceEntry(clip: AnimationClipHandle(key), position: position)) }
         }
         let hasLocomotion = entries.count >= 2
-        if hasLocomotion {
-            states.append(.object(["name": .string("locomotion"),
-                                   "motion": .object(["blend1D": .object(["parameter": .string("speed"), "entries": .array(entries)])]),
-                                   "speed": number(1), "loops": .bool(true)]))
-        }
+        if hasLocomotion { states.append(AnimationState("locomotion", .blend1D(parameter: "speed", entries: entries))) }
         let initial = names.contains(build.defaultClip) ? build.defaultClip : names.first
-        var transitions: [JSONValue] = []
+        var transitions: [AnimationTransition] = []
+        var parameters: [String: AnimationParameter] = [:]
+        if hasLocomotion { parameters["speed"] = .float(0) }
         for trigger in ["jump", "attack", "die"] where clipKeys[trigger] != nil {
-            transitions.append(.object(["to": .string(trigger), "conditions": .array([.object(["parameter": .string(trigger),
-                                                                                                  "test": .object(["triggered": .object([:])])])]),
-                                        "duration": number(0.12), "canTransitionToSelf": .bool(true)]))
+            transitions.append(AnimationTransition(from: nil, to: trigger, conditions: [AnimationCondition(trigger, .triggered)],
+                                                   duration: 0.12, canTransitionToSelf: true))
+            parameters[trigger] = .trigger(false)
         }
         let back = hasLocomotion ? "locomotion" : initial
         for from in ["jump", "attack"] where clipKeys[from] != nil {
             if let back, back != from {
-                transitions.append(.object(["from": .string(from), "to": .string(back), "conditions": .array([]),
-                                            "exitTime": number(1), "duration": number(0.2), "canTransitionToSelf": .bool(false)]))
+                transitions.append(AnimationTransition(from: from, to: back, exitTime: 1, duration: 0.2, canTransitionToSelf: false))
             }
         }
-        var machine: [String: JSONValue] = ["states": .array(states), "transitions": .array(transitions)]
-        if let initial { machine["initialState"] = .string(initial) }
-        var parameters: [String: JSONValue] = [:]
-        if hasLocomotion { parameters["speed"] = .object(["float": .object(["_0": number(0)])]) }
-        for trigger in ["jump", "attack", "die"] where clipKeys[trigger] != nil {
-            parameters[trigger] = .object(["trigger": .object(["_0": .bool(false)])])
+        return Animator(targets: [], restPose: rig.restPose,
+                        stateMachine: AnimationStateMachine(states: states, transitions: transitions, initialState: initial),
+                        parameters: parameters)
+    }
+
+    /// The `Animator` as scene-file JSON: `Animator`'s own encoding, with `targets` naming the
+    /// bone entities by file id (`{"$entity": id}`), which only a scene encoder can write.
+    static func animatorJSON(_ animator: Animator, targets: [Int]) throws -> JSONValue {
+        guard case .object(var fields) = try AssetJSON.value(animator), fields["targets"] != nil else {
+            throw AssetError.unreadable("Animator no longer encodes as an object with targets")
         }
-        return .object([
-            "targets": .array(targets.map { CharacterScene.entity($0) }),
-            "restPose": (try? AssetJSON.value(rig.restPose)) ?? .array([]),
-            "stateMachine": .object(machine),
-            "parameters": .object(parameters),
-            "layers": .array([]),
-            "speed": number(1),
-            "isPlaying": .bool(true),
-            "playbacks": .array([]),
-            "fadeDuration": number(0),
-            "fadeElapsed": number(0),
-            "events": .array([]),
-        ])
+        fields["targets"] = .array(targets.map { CharacterScene.entity($0) })
+        return .object(fields)
     }
 }
 

@@ -154,6 +154,12 @@ private func makeProject() throws -> Project {
         #expect(animator.targets.count == rig.bones.count)
         #expect(animator.targets.map { world.get(Name.self, for: $0)?.value } == rig.bones.map(\.name))
         #expect(animator.restPose == rig.restPose)
+        // The prefab holds `Animator`'s own encoding of the importer's value (no hand-written copy).
+        var clipKeys: [String: String] = [:]
+        for name in CharacterClips.stockNames { clipKeys[name] = AssetReference(id, subAsset: "animation/\(name)").description }
+        var expected = CharacterImporter.animator(build: character, rig: rig, clipKeys: clipKeys)
+        expected.targets = animator.targets
+        #expect(animator == expected)
         #expect(animator.stateMachine.states.map(\.name) == CharacterClips.stockNames + ["locomotion"])
         #expect(animator.stateMachine.initialState == "idle")
         #expect(animator.stateMachine.transitions.contains { $0.to == "jump" && $0.conditions == [.triggered("jump")] })
