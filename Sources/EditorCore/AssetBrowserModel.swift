@@ -141,6 +141,8 @@ public final class AssetBrowserModel {
             session.run(TableOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where session.isTerrainFile(id):
             session.run(TerrainOpenCommand.self, .init(asset: AssetReference(id)))
+        case .asset(let id) where session.isTilemapFile(id):
+            session.run(TilemapOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where entry.isExpandable:
             toggleExpanded(id)
         default:
@@ -219,6 +221,15 @@ public final class AssetBrowserModel {
     @discardableResult
     public func newTerrain() -> AssetID? {
         guard let id = session.run(TerrainNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
+        invalidate()
+        selection = .asset(id)
+        return id
+    }
+
+    /// Creates a tilemap (with the starter tile set) in the current folder (`tilemap.new`) and selects it.
+    @discardableResult
+    public func newTilemap() -> AssetID? {
+        guard let id = session.run(TilemapNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
         invalidate()
         selection = .asset(id)
         return id

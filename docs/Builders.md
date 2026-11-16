@@ -15,6 +15,7 @@ Builder tools let people and AI agents author game content inside the Acro edito
 | [Terrain Builder](#terrain-builder) | `.terrain` | Sculpted, painted heightmap terrain with scattered props |
 | [Sound Builder](#sound-builder) | `.sfx` | Synthesized sound effects |
 | [Data Table Builder](#data-table-builder) | `.table` | Typed spreadsheets for game data |
+| [Tilemap Builder](#tilemap-builder) | `.tilemap` | 2D tile levels with auto-tiling, animated tiles, 2D collision and object points |
 
 Planned builders are tracked in [Tools.md](../Tools.md).
 
@@ -76,3 +77,26 @@ let loot = enemies?.row("goblin")?.reference("drops")   // row column
 
 Cooked games ship the file as written; include tables game code loads by path with the cooker's `--include`. MCP clients use `table.new`, `table.edit`, `table.query`, `table.get`, `table.set`, `table.importCsv`, `table.exportCsv` and `table.open`; see [MCPTools.md](MCPTools.md).
 
+## Tilemap Builder
+
+Tilemaps (`.tilemap`, JSON under `Assets/`) are 2D levels painted from a tile set: a grid of `size` [columns, rows] cells of `tileSize` [w, h] pixels in several layers. The tile set's `source` is a sprite sheet sliced into tiles in reading order (`{"kind": "image", "image": "Tiles/sheet.png", "margin": 0, "spacing": 0}`, or just the path) or separate images packed into an atlas (`{"kind": "images", "images": [...]}`); the source is an enum, so more kinds (a Pixel Sprite `.sprite`) can be added later. Per-tile entries give a tile a `collision` shape (`full`, `top`, `bottom`, `slopeUp`, `slopeDown`, or a `polygon` of points), `oneWay`, `tags`, custom `properties` and an `animation` (tile frames at an fps, looping or ping-pong, played like a `SpriteClip`). Layers have a draw order, parallax, opacity, visibility and a collision switch. A cell is -1 (empty) or a tile index plus flip and quarter-turn bits (see `TileCell`); cells are addressed [x, y] with y down from the top-left. Terrain sets (`edges`: 16 tiles by the four sides; `blob`: 47 by sides and corners) auto-tile: painting a terrain picks every edge and corner tile from its neighbors. Objects are named points or areas (spawns, triggers) for game code.
+
+The importer makes the tile set texture, one unlit material per layer (nearest filtering by default) and one mesh per non-empty layer chunk, and a prefab with a node per layer, a `Collision` node holding one static `Collider2D` per merged shape (solid tiles merge into rectangles, platforms and other strips merge along their row, ramps and polygons stay one shape per tile) and an `Objects` node with a named node per object (areas with `trigger` get a trigger box). The map lies in the XY plane with its bottom-left corner at the origin; a tile is `tileSize / pixelsPerUnit` units (one unit by default). Placed copies update when the file changes.
+
+In the editor, use **New Tilemap** in the asset browser (it writes a starter tile set next to the map: a "Dirt" terrain, stone, brick, a one-way platform, ramps, spikes, animated water and torch, coin, ladder), then double-click the file (or **Open in Tilemap Builder** in the inspector) to open the **Tilemap Builder** tab. The canvas draws the map with its tile set; the toolbar has Pencil, Rect, Fill (flood), Erase, Random (Shift-click palette tiles to build the set), Terrain (Shift-drag erases it), Object (click to add or select, drag to move) and Pick (right-click picks in every tool), plus Flip X, Flip Y, Rotate, Grid and Fit. Middle-drag or Alt-drag pans, the wheel zooms. The sidebar has the tile palette, the selected tile's data, the layers (add, remove, reorder, hide in the view, dim the others, settings), terrain sets, objects and the map settings. A stroke is one undo step.
+
+Sprite games draw a map through a `SpriteBatch`, a visible chunk at a time, with parallax, opacity and animated tiles, and read its data with hot reload:
+
+```swift
+let drawer = try TilemapSpriteDrawer(assets: assets, path: "Levels/level1.tilemap", device: device)
+drawer?.draw(into: sprites.batch, camera: camera, time: elapsed)
+let level = assets.tilemap(path: "Levels/level1.tilemap")
+let spawn = level?.object(named: "Player")?.position
+let deadly = level?.hasTag("hazard", atWorld: playerPosition) ?? false
+```
+
+2D physics reads each collider entity's own `Transform` (parents are ignored), so the prefab's colliders line up when the map is placed at the world origin; elsewhere, spawn them with `world.spawnTilemapColliders(map, at: origin)`.
+
+Editor MCP clients use `tilemap.new {tileSize, size, tileset}`, `tilemap.paint {layer, tile | tiles | terrain, cells}`, `tilemap.fill {layer, tile | tiles | terrain, rect | at}`, `tilemap.erase {layer, cells | rect | all}`, `tilemap.edit` (size, tile set, per-tile data, layers, terrains, objects), `tilemap.set`, `tilemap.get` (with `layer` and `rect` for cells) and `tilemap.open`. See [MCPTools.md](MCPTools.md).
+
+Not yet: parallax and animated tiles in placed prefabs (they show the painted frame and move with the world; `TilemapSpriteDrawer` does both), one-way platforms that face other directions than up, `assets.tilemap(path:)` in cooked games (the cooker ships the imported prefab, not the JSON), and Pixel Sprite (`.sprite`) tile sets.
