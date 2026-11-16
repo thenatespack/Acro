@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 166 tools.
+named by its id (see README › Use the editor › AI control). 172 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -17,6 +17,7 @@ optional arguments.
 | `asset` | [`asset.applySettings`](#assetapplysettings), [`asset.assign`](#assetassign), [`asset.delete`](#assetdelete), [`asset.extractMaterials`](#assetextractmaterials), [`asset.get`](#assetget), [`asset.import`](#assetimport), [`asset.instantiate`](#assetinstantiate), [`asset.list`](#assetlist), [`asset.move`](#assetmove), [`asset.newFolder`](#assetnewfolder), [`asset.newMaterial`](#assetnewmaterial), [`asset.newProceduralTexture`](#assetnewproceduraltexture), [`asset.reimport`](#assetreimport), [`asset.rename`](#assetrename), [`asset.select`](#assetselect), [`asset.setProceduralTexture`](#assetsetproceduraltexture), [`asset.waitForImports`](#assetwaitforimports) |
 | `component` | [`component.add`](#componentadd), [`component.remove`](#componentremove), [`component.setField`](#componentsetfield), [`component.types`](#componenttypes) |
 | `diagnostics` | [`diagnostics.get`](#diagnosticsget) |
+| `dialogue` | [`dialogue.edit`](#dialogueedit), [`dialogue.get`](#dialogueget), [`dialogue.new`](#dialoguenew), [`dialogue.open`](#dialogueopen), [`dialogue.play`](#dialogueplay), [`dialogue.set`](#dialogueset) |
 | `edit` | [`edit.batch`](#editbatch), [`edit.beginBatch`](#editbeginbatch), [`edit.endBatch`](#editendbatch), [`edit.redo`](#editredo), [`edit.undo`](#editundo) |
 | `entity` | [`entity.create`](#entitycreate), [`entity.delete`](#entitydelete), [`entity.duplicate`](#entityduplicate), [`entity.find`](#entityfind), [`entity.get`](#entityget), [`entity.rename`](#entityrename), [`entity.reparent`](#entityreparent) |
 | `file` | [`file.openInCodeEditor`](#fileopenincodeeditor), [`file.reveal`](#filereveal) |
@@ -441,6 +442,143 @@ Result:
 - `problems`: [{level: "info" \| "warning" \| "error", message: string, sequence: integer, time: number}]
 - `validation`: [{level: "info" \| "warning" \| "error", message: string, sequence: integer, time: number}]
 - `validationEnabled`: boolean
+
+## dialogue
+
+### `dialogue.edit`
+
+**Edit Dialogue** · _undoable_
+
+Changes part of a .dialogue file in one undoable step, in this order: speakers, removeSpeakers, variables, removeVariables, removeNodes, addNodes, updateNodes, connect, start, generateKeys, layout. Returns node summaries and warnings. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `addNodes?`: [{args?: object, changes?: [object], choices?: [object], comment?: string, condition?: string, else?: string, event?: string, id?: string, key?: string, next?: string, position?: [number], speaker?: string, text?: string, type?: "line" \| "choice" \| "condition" \| "set" \| "event" \| "end"}]
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `connect?`: [{branch?: string, choice?: integer, from: string, text?: string, to: string}]
+- `generateKeys?`: string
+- `layout?`: boolean
+- `path?`: string
+- `removeNodes?`: [string]
+- `removeSpeakers?`: [string]
+- `removeVariables?`: [string]
+- `speakers?`: [{color?: string, id?: string, name?: string, portrait?: string}]
+- `start?`: string
+- `updateNodes?`: object
+- `variables?`: [{default?: any, name?: string, type?: "number" \| "bool" \| "text"}]
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `nodes`: [string]
+- `path`: string
+- `speakers`: [string]
+- `start`: string
+- `variables`: [string]
+- `warnings`: [string]
+
+### `dialogue.get`
+
+**Get Dialogue** · _read-only_, _idempotent_
+
+Reads a .dialogue file: speakers, variables and nodes as stored, its problems, and its localization keys with their text.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `dialogue`: {nodes?: [object], speakers?: [object], start?: string, variables?: [object]}
+- `localizationKeys`: object
+- `path`: string
+- `warnings`: [string]
+
+### `dialogue.new`
+
+**New Dialogue**
+
+Writes a .dialogue file in `folder` (default: the Assets root) and imports it: `dialogue` as given, else a starter conversation (or nothing with empty: true). Returns the asset, node summaries and warnings. Build it up with dialogue.edit {addNodes, connect, variables, speakers}, try it with dialogue.play. A .dialogue file is a branching conversation: `start` (node id), `speakers` [{id, name, portrait (texture path), color "#RRGGBB"}], `variables` [{name, type number|bool|text, default}] and `nodes` [{id, type, ...}]. Node types: line {speaker, text, key, next}; choice {speaker?, text? (prompt), choices [{text, key, next, condition}], next (used when no option is available)}; condition {condition, next (true), else (false)}; set {changes [{variable, op set|add|subtract|toggle, value | expression}], next}; event {event, args {}, next}; end. An empty next ends the conversation. Text fills in {variable}. Conditions/expressions: `gold >= 10 && !paid`, `visits + 1` (== != < <= > >= && || ! and or not + - * / parentheses, "strings"). `key` is a localization key per line/option. `position` [x, y] places the node in the graph view (omitted: placed automatically). Problems (missing nodes, unknown speakers/variables, bad conditions, unreachable nodes) come back as `warnings`. In game a DialoguePlayer component {dialogue: path, startNode, autoStart} plays it; game code uses world.dialogues?.start(entity), world.dialogue(for:)?.setVariable / .variable, and world.dialogues?.onEvent.
+
+Arguments:
+
+- `dialogue?`: {nodes?: [object], speakers?: [object], start?: string, variables?: [object]}
+- `empty?`: boolean
+- `folder?`: string
+- `name?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `nodes`: [string]
+- `path`: string
+- `speakers`: [string]
+- `start`: string
+- `variables`: [string]
+- `warnings`: [string]
+
+### `dialogue.open`
+
+**Open in Dialogue Builder** · _idempotent_
+
+Opens a .dialogue file in the editor's Dialogue tab (graph view, node form and a play-through preview that tracks variables) and brings the tab to the front. view.screenshot {source: "panel", panel: "dialogue"} shows it.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `path`: string
+
+### `dialogue.play`
+
+**Play Dialogue** · _read-only_, _idempotent_
+
+Plays a .dialogue file through without the game: lines are continued automatically, choices are picked from `choices` in order, variables start from the file's defaults plus `variables`. Returns the transcript (lines with speaker and filled-in text, options shown, picks, events, variable changes), where it stopped and the final variables. Use it to test branches and conditions.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `choices?`: [integer]
+- `maxLines?`: integer
+- `path?`: string
+- `start?`: string
+- `strings?`: object
+- `variables?`: object
+
+Result:
+
+- `events`: [string]
+- `node?`: string
+- `state`: string
+- `transcript`: [{args?: object, event?: string, kind: string, node?: string, options?: [string], speaker?: string, text?: string, value?: any, variable?: string}]
+- `variables`: object
+
+### `dialogue.set`
+
+**Set Dialogue** · _undoable_, _idempotent_
+
+Replaces a .dialogue file's whole contents and reimports it (running games pick it up). Undoable. Nodes without a position are placed automatically. For a few changes, dialogue.edit is shorter. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `dialogue`: {nodes?: [object], speakers?: [object], start?: string, variables?: [object]}
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `nodes`: [string]
+- `path`: string
+- `speakers`: [string]
+- `start`: string
+- `variables`: [string]
+- `warnings`: [string]
 
 ## edit
 

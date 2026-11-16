@@ -138,6 +138,10 @@ public final class EditorApp: Game, EditorHost {
     public private(set) var tableWorkspace: DataTableWorkspace!
     /// The Terrain Builder tab (TerrainBuilderWorkspace.swift).
     public private(set) var terrainWorkspace: TerrainBuilderWorkspace!
+    /// The Dialogue tab (DialogueWorkspace.swift).
+    public private(set) var dialogueWorkspace: DialogueWorkspace!
+    /// Shows `DialoguePlayer` conversations over the Game view while playing.
+    let gameDialogueBox = DialogueBox(name: "gameDialogueBox")
     private(set) var statusBar: StatusBar!
     /// The Assets panel (browser) and its thumbnails.
     public private(set) var assetBrowser: AssetBrowserPanel!
@@ -501,6 +505,14 @@ public final class EditorApp: Game, EditorHost {
             }
             dock.focusPanel(EditorLayout.terrainBuilder)
         }
+        session.onOpenDialogue = { [unowned self] id in
+            guard dialogueWorkspace.open(id) else { return }
+            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.dialogueBuilder, EditorLayout.viewport) {
+                dock.dock(EditorLayout.dialogueBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
+                                                                                                 : .edge(.bottom))
+            }
+            dock.focusPanel(EditorLayout.dialogueBuilder)
+        }
         session.onOpenScript = { [unowned self] path in
             let url = URL(fileURLWithPath: path)
             scriptEditor.openScript(at: url)
@@ -621,6 +633,11 @@ public final class EditorApp: Game, EditorHost {
         files = FilesPanel(session: session)
         meshWorkspace = MeshBuilderWorkspace(session: session)
         tableWorkspace = DataTableWorkspace(session: session)
+        dialogueWorkspace = DialogueWorkspace(session: session)
+        gameDialogueBox.style.position = .absolute(UIAnchor.bottom.anchors(offset: Vec2(0, 16)))
+        gameDialogueBox.style.width = 560
+        gameWidget.addChild(gameDialogueBox)
+        session.dialoguePresenter = gameDialogueBox
         meshWorkspace.device = engine?.device
         if let quality = engine?.quality { meshWorkspace.quality = quality }
         vfxWorkspace = VFXBuilderWorkspace(session: session)
@@ -665,6 +682,7 @@ public final class EditorApp: Game, EditorHost {
         let terrainPanel = DockPanel(id: EditorLayout.terrainBuilder, title: "Terrain Builder", content: terrainWorkspace.view, minSize: Vec2(320, 200))
         terrainPanel.passesPointerThrough = true
         dock.addPanel(terrainPanel)
+        dock.addPanel(DockPanel(id: EditorLayout.dialogueBuilder, title: "Dialogue", content: dialogueWorkspace.view, minSize: Vec2(320, 200)))
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
         for (id, icon) in EditorIcons.panelIconNames { dock.panel(id)?.icon = EditorIcons.named(icon) }
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
@@ -1069,6 +1087,7 @@ public final class EditorApp: Game, EditorHost {
             soundWorkspace.update()
             postFXWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
             tableWorkspace.update()
+            dialogueWorkspace.update()
             terrainWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
         }
         session.tick(dt: Double(dt))

@@ -109,8 +109,10 @@ public enum EditorLayout {
     /// The Data Table tab (opened with a `.table` file, tabbed with the Scene view; not in the default layout).
     public static let dataTable = "dataTable"
     public static let terrainBuilder = "terrainBuilder"
+    /// The Dialogue tab (opened with a `.dialogue` file, tabbed with the Scene view; not in the default layout).
+    public static let dialogueBuilder = "dialogue"
     public static let panelIDs = [viewport, game, hierarchy, inspector, console, stats, assets, activity, scripts, files, meshBuilder, vfxBuilder,
-                                  soundBuilder, postFXBuilder, dataTable, terrainBuilder]
+                                  soundBuilder, postFXBuilder, dataTable, terrainBuilder, dialogueBuilder]
 
     /// Hierarchy above Files on the left, inspector right, the Scene view (tabbed with the Game
     /// view and Scripts, so scripts open where the Scene view is) in the middle above an Assets / Console / Activity /

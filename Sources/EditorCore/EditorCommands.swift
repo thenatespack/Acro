@@ -41,6 +41,7 @@ public enum BuiltinCommands {
       + EditorPostFXCommands.all
       + EditorDataTableCommands.all
       + EditorTerrainCommands.all
+      + EditorDialogueCommands.all
 }
 
 extension CommandID {

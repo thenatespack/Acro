@@ -141,6 +141,8 @@ public final class AssetBrowserModel {
             session.run(TableOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where session.isTerrainFile(id):
             session.run(TerrainOpenCommand.self, .init(asset: AssetReference(id)))
+        case .asset(let id) where session.isDialogueFile(id):
+            session.run(DialogueOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where entry.isExpandable:
             toggleExpanded(id)
         default:
@@ -256,6 +258,15 @@ public final class AssetBrowserModel {
     @discardableResult
     public func newPostFX() -> AssetID? {
         guard let id = session.run(PostFXNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
+        invalidate()
+        selection = .asset(id)
+        return id
+    }
+
+    /// Creates a dialogue in the current folder (`dialogue.new`) and selects it.
+    @discardableResult
+    public func newDialogue() -> AssetID? {
+        guard let id = session.run(DialogueNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
         invalidate()
         selection = .asset(id)
         return id

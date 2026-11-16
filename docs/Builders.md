@@ -15,6 +15,7 @@ Builder tools let people and AI agents author game content inside the Acro edito
 | [Terrain Builder](#terrain-builder) | `.terrain` | Sculpted, painted heightmap terrain with scattered props |
 | [Sound Builder](#sound-builder) | `.sfx` | Synthesized sound effects |
 | [Data Table Builder](#data-table-builder) | `.table` | Typed spreadsheets for game data |
+| [Dialogue Builder](#dialogue-builder) | `.dialogue` | Branching conversations with variables and events |
 
 Planned builders are tracked in [Tools.md](../Tools.md).
 
@@ -76,3 +77,34 @@ let loot = enemies?.row("goblin")?.reference("drops")   // row column
 
 Cooked games ship the file as written; include tables game code loads by path with the cooker's `--include`. MCP clients use `table.new`, `table.edit`, `table.query`, `table.get`, `table.set`, `table.importCsv`, `table.exportCsv` and `table.open`; see [MCPTools.md](MCPTools.md).
 
+## Dialogue Builder
+
+Dialogue assets (`.dialogue`, JSON under `Assets/`) are branching conversations for NPCs, quests and tutorials. A file lists `speakers` (id, name, portrait texture, name color), `variables` (number, bool or text, with a default) and `nodes`:
+
+- `line`: a speaker says `text`, then the player continues to `next`. `{gold}` in the text shows a variable.
+- `choice`: the player picks one of `choices` (text, `next`, an optional `condition`; options whose condition is false are hidden). An optional `text` is a prompt shown above them.
+- `condition`: goes to `next` when `condition` is true, else to `else`.
+- `set`: changes variables (`set`, `add`, `subtract`, `toggle`, with a `value` or an `expression`).
+- `event`: tells game code something happened (`event` name and `args`).
+- `end`: ends the conversation, as does an empty `next`.
+
+Conditions are small expressions: `gold >= 10 && !paid`, `visits + 1 > 3`, `name == "Ann"` (comparisons, `&&` `||` `!` or `and` `or` `not`, `+ - * /`, parentheses). Every line and option can have a localization `key`; **Make Keys** (or `dialogue.edit {generateKeys: "prefix"}`) fills in missing ones. The importer warns about links to missing nodes, unknown speakers or variables, conditions that don't parse, nodes nothing reaches and missing portraits.
+
+In the editor, use **New Dialogue** in the asset browser, then double-click the file (or **Open in Dialogue Builder** in the inspector) to open the **Dialogue** tab. The graph shows each node as a box colored by type, with arrows for its links: click a node to select it, drag it to move it, drag from its dot onto another node to link them, and drag empty space or scroll to pan. The toolbar adds nodes of each type (linked from the selected node when it has a free link), deletes, re-arranges and makes keys. Below the graph, the play-through preview runs the conversation in the same `DialogueBox` the game uses, highlights the node it is at, and lists the variables it tracks (edit one to try another branch); it follows edits live. The sidebar edits the selected node, the start node, the speakers and the variables, and lists problems. Every change is one undo step.
+
+In a game, add a `DialoguePlayer` component (`dialogue`: the file, `startNode`, `autoStart`) to an entity. The dialogue system runs in play mode, in `GameRunner` and in exported games; in the editor the conversation shows in a `DialogueBox` over the Game view. Game code drives it through `world.dialogues` (a `DialogueDirector`):
+
+```swift
+world.dialogues?.start(npc)                              // talk to this NPC
+world.dialogues?.setVariable("questDone", true)          // shared by every dialogue
+let gold = world.dialogue(for: npc)?.number("gold")      // the NPC's runner
+world.dialogues?.onEvent { entity, event in
+    if event.name == "openGate" { openGate() }
+}
+```
+
+`DialogueRunner` plays a dialogue without the component (`start`, `advance`, `choose`, `variable` / `setVariable`, `onEvent`, `onStateChange`, `localize` or `useLocalization([key: text])`). The UI is anything that conforms to `DialoguePresenter`; the default `DialogueBox` widget shows a portrait (the speaker's initial in its color, or an image from `portraitImage`), the name, the line typed out, and the options as buttons (click, Enter / Space, or keys 1-9). Host one in your own UI with `world.dialogues?.presenter = box`.
+
+Editor MCP clients use `dialogue.new`, `dialogue.edit {speakers, variables, addNodes, updateNodes, removeNodes, connect, start, generateKeys, layout}`, `dialogue.set`, `dialogue.get`, `dialogue.play {variables, choices, strings}` (a play-through that returns the transcript, events and final variables) and `dialogue.open`. See [MCPTools.md](MCPTools.md).
+
+Not yet: portraits in the box come from game code (`portraitImage`), not loaded automatically from the speaker's `portrait`, and a `.ui` layout can't yet be picked as the presenter from the editor.

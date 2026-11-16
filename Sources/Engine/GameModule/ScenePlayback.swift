@@ -33,6 +33,9 @@ public final class ScenePlayback {
     public var audio: AudioSystem?
     /// Where emitters' clips load from.
     public var assets: () -> AssetDatabase?
+    /// Shows `DialoguePlayer` conversations (e.g. a `DialogueBox` in the host's UI); nil: none shown,
+    /// game code can still drive them through `world.dialogues`.
+    public var dialoguePresenter: (any DialoguePresenter)?
     /// A scene file's bytes for a path given to `loadScene`.
     public let sceneData: @MainActor (String) throws -> Data
     /// Writes a line to the host's log.
@@ -106,6 +109,7 @@ public final class ScenePlayback {
         // Not gated on an emitter already in the scene: game code spawns them after this returns.
         if let audio { spatialAudio = world.addSpatialAudio(audio, assets: assets) }
         world.addBuiltinAnimationSystems()
+        world.addDialogueSystem(assets: assets).presenter = dialoguePresenter
         for warning in module.addSystems(to: world, context: context) { log(warning) }
         systemsAdded = true
     }
@@ -123,6 +127,7 @@ public final class ScenePlayback {
         world.removeSystem(named: Self.spriteSystem)
         spatialAudio?.remove()
         spatialAudio = nil
+        world.removeDialogueSystem()
         module.removeSystems(from: world)
         systemsAdded = false
     }
