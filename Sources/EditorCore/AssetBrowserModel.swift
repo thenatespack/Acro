@@ -141,6 +141,8 @@ public final class AssetBrowserModel {
             session.run(TableOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where session.isTerrainFile(id):
             session.run(TerrainOpenCommand.self, .init(asset: AssetReference(id)))
+        case .asset(let id) where session.isPixelSpriteFile(id):
+            session.run(PixelSpriteOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where entry.isExpandable:
             toggleExpanded(id)
         default:
@@ -210,6 +212,15 @@ public final class AssetBrowserModel {
     @discardableResult
     public func newProceduralTexture() -> AssetID? {
         guard let id = session.run(AssetNewProceduralTextureCommand.self, .init(folder: targetFolder))?.asset else { return nil }
+        invalidate()
+        selection = .asset(id)
+        return id
+    }
+
+    /// Creates a pixel sprite in the current folder (`sprite.new`) and selects it.
+    @discardableResult
+    public func newPixelSprite() -> AssetID? {
+        guard let id = session.run(PixelSpriteNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
         invalidate()
         selection = .asset(id)
         return id
