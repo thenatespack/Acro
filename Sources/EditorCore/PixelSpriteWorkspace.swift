@@ -437,7 +437,7 @@ public final class PixelSpriteBuilderView {
 
     private func addLayers() {
         view.addChild(Label("Layers", role: .secondary))
-        layerList.items = sprite.layers.reversed().map { ($0.visible ? "" : "(hidden) ") + $0.name }
+        layerList.items = sprite.layers.reversed().map { ($0.visible ? "" : "(hidden) ") + $0.name + ($0.blend == .normal ? "" : "  (\($0.blend.rawValue))") }
         layerList.selectRow(sprite.layers.count - 1 - layer, reveal: true)
         view.addChild(layerList)
         let add = button("Add", "spriteAddLayer", tooltip: "Add an empty layer above the selected one") { [unowned self] in
@@ -487,7 +487,14 @@ public final class PixelSpriteBuilderView {
             let index = layer
             edit("Layer Opacity") { $0.layers[index].opacity = Float(min(max(end, 0), 1)) }
         }
-        let row = HStack(spacing: 6, [name, visible, opacity])
+        let modes = PixelSprite.BlendMode.allCases
+        let blend = Dropdown(options: modes.map(\.rawValue), selectedIndex: modes.firstIndex(of: current.blend) ?? 0, name: "spriteLayerBlend")
+        blend.tooltip = "How this layer mixes with the layers below: multiply darkens, add and screen brighten, overlay adds contrast"
+        blend.onChange = { [unowned self] i in
+            let index = layer
+            edit("Layer Blend Mode") { $0.layers[index].blend = modes[i] }
+        }
+        let row = HStack(spacing: 6, [name, visible, opacity, blend])
         row.wraps = true
         view.addChild(row)
     }

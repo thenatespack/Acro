@@ -3394,7 +3394,7 @@ Result:
 - `clips`: [{events?: [string], fps: number, frames: [integer], mode: string, name: string}]
 - `frames`: [integer]
 - `height`: integer
-- `layers`: [{name: string, opacity: number, visible: boolean}]
+- `layers`: [{blend: string, name: string, opacity: number, visible: boolean}]
 - `palette`: [string]
 - `path`: string
 - `preview?`: [string]
@@ -3410,7 +3410,7 @@ Result:
 
 **Edit Sprite** · _undoable_
 
-Changes a .sprite file's structure in one undoable step, in this order: `palette` / `addColors`, canvas `width` / `height`, layers (`addLayers`, `removeLayers`, `updateLayers` [{name, rename, visible, opacity}]), frames (`addFrames` blank or copies of `copyFrame` at `insertAt`, `removeFrames`), timing (`duration` for all, `durations` per frame, ms), `copyCels` ([{fromFrame, fromLayer, toFrame, toLayer, rect [x, y, w, h], x, y, merged, replace}]: copy / paste pixels between cels; default the whole cel to the same place, transparent pixels don't cover unless `replace`), tags (`tags` replaces all, `addTags`, `removeTags`; a tag {name, from, to, mode loop|once|pingPong, events [{frame, name}]} becomes a SpriteAnimator clip whose events fire when it reaches those frames), frame events (`addEvents` / `removeEvents` [{tag, frame, name}]), then `pivot` and `pixelsPerUnit`. Returns the summary and warnings. Undoable (one step; edit.undo reverts it).
+Changes a .sprite file's structure in one undoable step, in this order: `palette` / `addColors`, canvas `width` / `height`, layers (`addLayers`, `removeLayers`, `updateLayers` [{name, rename, visible, opacity, blend normal|multiply|add|screen|overlay}]), frames (`addFrames` blank or copies of `copyFrame` at `insertAt`, `removeFrames`), timing (`duration` for all, `durations` per frame, ms), `copyCels` ([{fromFrame, fromLayer, toFrame, toLayer, rect [x, y, w, h], x, y, merged, replace}]: copy / paste pixels between cels; default the whole cel to the same place, transparent pixels don't cover unless `replace`), tags (`tags` replaces all, `addTags`, `removeTags`; a tag {name, from, to, mode loop|once|pingPong, events [{frame, name}]} becomes a SpriteAnimator clip whose events fire when it reaches those frames), frame events (`addEvents` / `removeEvents` [{tag, frame, name}]), then `pivot` and `pixelsPerUnit`. Returns the summary and warnings. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
@@ -3435,7 +3435,7 @@ Arguments:
 - `removeLayers?`: [string]
 - `removeTags?`: [string]
 - `tags?`: [{events?: [object], from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
-- `updateLayers?`: [{name: string, opacity?: number, rename?: string, visible?: boolean}]
+- `updateLayers?`: [{blend?: "normal" \| "multiply" \| "add" \| "screen" \| "overlay", name: string, opacity?: number, rename?: string, visible?: boolean}]
 - `width?`: integer
 
 Result:
@@ -3445,7 +3445,7 @@ Result:
 - `clips`: [{events?: [string], fps: number, frames: [integer], mode: string, name: string}]
 - `frames`: [integer]
 - `height`: integer
-- `layers`: [{name: string, opacity: number, visible: boolean}]
+- `layers`: [{blend: string, name: string, opacity: number, visible: boolean}]
 - `palette`: [string]
 - `path`: string
 - `preview?`: [string]
@@ -3476,7 +3476,7 @@ Result:
 - `clips`: [{events?: [string], fps: number, frames: [integer], mode: string, name: string}]
 - `frames`: [integer]
 - `height`: integer
-- `layers`: [{name: string, opacity: number, visible: boolean}]
+- `layers`: [{blend: string, name: string, opacity: number, visible: boolean}]
 - `palette`: [string]
 - `path`: string
 - `preview?`: [string]
@@ -3524,7 +3524,7 @@ Result:
 - `clips`: [{events?: [string], fps: number, frames: [integer], mode: string, name: string}]
 - `frames`: [integer]
 - `height`: integer
-- `layers`: [{name: string, opacity: number, visible: boolean}]
+- `layers`: [{blend: string, name: string, opacity: number, visible: boolean}]
 - `palette`: [string]
 - `path`: string
 - `preview?`: [string]
@@ -3540,7 +3540,7 @@ Result:
 
 **New Sprite**
 
-Writes a .sprite file in `folder` (default: the Assets root): a blank `width` x `height` canvas with `palette` and `frames` blank frames, or `sprite`. Draw on it with sprite.draw, add frames, layers and tags with sprite.edit. Returns the asset, its texture reference, layers, frames, clips and warnings. A .sprite file is pixel art (every key optional): width and height (1-256, default 16), palette (hex colors, up to 62), layers (bottom first: name, visible, opacity 0-1, cels: one list of row strings per frame), frames ({duration} in ms), tags ({name, from, to, mode loop|once|pingPong, events [{frame, name}]}: inclusive frame ranges, one animation clip each, firing its events when it reaches those frames), pivot ([x, y] 0-1 from the bottom-left, default [0.5, 0]) and pixelsPerUnit (default 16). In a row string each character is one pixel: "." is transparent and 0-9, a-z, A-Z are palette entries 0-61 ("0" is the first color, "a" the 11th). It imports as a texture (sub-asset "texture"): the frames in a grid, frame i in cell i, so indices stay stable for SpriteAnimator clips and tile sets. Palette presets: pico8, db16, db32, gameboy, grayscale.
+Writes a .sprite file in `folder` (default: the Assets root): a blank `width` x `height` canvas with `palette` and `frames` blank frames, or `sprite`. Draw on it with sprite.draw, add frames, layers and tags with sprite.edit. Returns the asset, its texture reference, layers, frames, clips and warnings. A .sprite file is pixel art (every key optional): width and height (1-256, default 16), palette (hex colors, up to 62), layers (bottom first: name, visible, opacity 0-1, blend normal|multiply|add|screen|overlay, cels: one list of row strings per frame), frames ({duration} in ms), tags ({name, from, to, mode loop|once|pingPong, events [{frame, name}]}: inclusive frame ranges, one animation clip each, firing its events when it reaches those frames), pivot ([x, y] 0-1 from the bottom-left, default [0.5, 0]) and pixelsPerUnit (default 16). In a row string each character is one pixel: "." is transparent and 0-9, a-z, A-Z are palette entries 0-61 ("0" is the first color, "a" the 11th). It imports as a texture (sub-asset "texture"): the frames in a grid, frame i in cell i, so indices stay stable for SpriteAnimator clips and tile sets. Palette presets: pico8, db16, db32, gameboy, grayscale.
 
 Arguments:
 
@@ -3559,7 +3559,7 @@ Result:
 - `clips`: [{events?: [string], fps: number, frames: [integer], mode: string, name: string}]
 - `frames`: [integer]
 - `height`: integer
-- `layers`: [{name: string, opacity: number, visible: boolean}]
+- `layers`: [{blend: string, name: string, opacity: number, visible: boolean}]
 - `palette`: [string]
 - `path`: string
 - `preview?`: [string]
@@ -3605,7 +3605,7 @@ Result:
 - `clips`: [{events?: [string], fps: number, frames: [integer], mode: string, name: string}]
 - `frames`: [integer]
 - `height`: integer
-- `layers`: [{name: string, opacity: number, visible: boolean}]
+- `layers`: [{blend: string, name: string, opacity: number, visible: boolean}]
 - `palette`: [string]
 - `path`: string
 - `preview?`: [string]

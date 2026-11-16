@@ -171,6 +171,38 @@ private func rgba(_ image: Image, _ x: Int, _ y: Int) -> [UInt8] {
         #expect(String(decoding: encoded, as: UTF8.self) == "[1,2,3,4]")
     }
 
+    @Test func layerBlendModesApplyAtImport() throws {
+        // Base gray (128) under a top layer of (64, 255, 0); the top's right pixel has nothing below.
+        var s = PixelSprite(width: 2, height: 1, palette: [PixelColor(128, 128, 128), PixelColor(64, 255, 0)])
+        s.stamp(rows: ["0."], frame: 0, layer: 0)
+        s.insertLayer(name: "Top", at: 1)
+        s.stamp(rows: ["11"], frame: 0, layer: 1)
+        func top(_ mode: PixelSprite.BlendMode) -> [UInt8] {
+            s.layers[1].blend = mode
+            let image = s.image(frame: 0)
+            #expect(rgba(image, 1, 0) == [64, 255, 0, 255], "over nothing every mode is normal")
+            return rgba(image, 0, 0)
+        }
+        #expect(top(.normal) == [64, 255, 0, 255])
+        #expect(top(.multiply) == [32, 128, 0, 255])
+        #expect(top(.add) == [192, 255, 128, 255])
+        #expect(top(.screen) == [160, 255, 128, 255])
+        let overlay = top(.overlay)
+        #expect((63...66).contains(overlay[0]) && overlay[1] == 255 && overlay[2] <= 2, "below is mid gray: about the layer itself")
+
+        // Half opacity mixes the blended color with what is below.
+        s.layers[1].blend = .multiply
+        s.layers[1].opacity = 0.5
+        #expect(rgba(s.image(frame: 0), 0, 0) == [80, 128, 64, 255])
+
+        // In the file: "blend" only when not normal; the importer's atlas uses it.
+        let decoded = try JSONDecoder().decode(PixelSprite.self, from: s.fileData())
+        #expect(decoded.layers.map(\.blend) == [.normal, .multiply])
+        #expect(!String(decoding: try PixelSprite().fileData(), as: UTF8.self).contains("blend"))
+        let sheet = s.sheet()
+        #expect(rgba(sheet.image, sheet.frames[0].x, sheet.frames[0].y) == [80, 128, 64, 255])
+    }
+
     @Test func tagFrameEventsFireThroughTheAnimator() throws {
         var s = PixelSprite(width: 1, height: 1, frameCount: 4)
         s.frames[1].duration = 200

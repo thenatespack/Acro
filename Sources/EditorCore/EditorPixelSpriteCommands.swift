@@ -18,7 +18,7 @@ public enum EditorPixelSpriteCommands {
     /// What the tool docs say about the file format, shared by the tools.
     static let formatDoc = """
         A .sprite file is pixel art (every key optional): width and height (1-256, default 16), palette (hex colors, up \
-        to 62), layers (bottom first: name, visible, opacity 0-1, cels: one list of row strings per frame), frames \
+        to 62), layers (bottom first: name, visible, opacity 0-1, blend normal|multiply|add|screen|overlay, cels: one list of row strings per frame), frames \
         ({duration} in ms), tags ({name, from, to, mode loop|once|pingPong, events [{frame, name}]}: inclusive frame ranges, one animation clip \
         each, firing its events when it reaches those frames), pivot ([x, y] 0-1 from the bottom-left, default [0.5, 0]) and pixelsPerUnit (default 16). In a row string \
         each character is one pixel: "." is transparent and 0-9, a-z, A-Z are palette entries 0-61 ("0" is the first \
@@ -192,6 +192,7 @@ public struct PixelSpriteResult: Codable, Equatable, Sendable {
         public var name: String
         public var visible: Bool
         public var opacity: Float
+        public var blend: String
     }
 
     public struct ClipInfo: Codable, Equatable, Sendable {
@@ -246,7 +247,7 @@ extension PixelSpriteResult {
         let frame = previewFrame.flatMap { sprite.frames.indices.contains($0) ? $0 : nil }
         self.init(asset: id, path: session.assets?.path(of: id) ?? "", texture: AssetReference(id, subAsset: "texture"),
                   width: sprite.width, height: sprite.height, palette: sprite.palette.map(\.description),
-                  layers: sprite.layers.map { LayerInfo(name: $0.name, visible: $0.visible, opacity: $0.opacity) },
+                  layers: sprite.layers.map { LayerInfo(name: $0.name, visible: $0.visible, opacity: $0.opacity, blend: $0.blend.rawValue) },
                   frames: sprite.frames.map(\.duration), tags: sprite.tags,
                   clips: sprite.clips().map { clip in
                       ClipInfo(name: clip.name, frames: clip.frames, fps: clip.fps, mode: clip.mode.rawValue,
@@ -369,11 +370,14 @@ public enum PixelSpriteEditCommand: EditorCommand {
         public var rename: String?
         public var visible: Bool?
         public var opacity: Float?
-        public init(name: String, rename: String? = nil, visible: Bool? = nil, opacity: Float? = nil) {
+        /// normal, multiply, add, screen or overlay.
+        public var blend: PixelSprite.BlendMode?
+        public init(name: String, rename: String? = nil, visible: Bool? = nil, opacity: Float? = nil, blend: PixelSprite.BlendMode? = nil) {
             self.name = name
             self.rename = rename
             self.visible = visible
             self.opacity = opacity
+            self.blend = blend
         }
     }
 
@@ -491,7 +495,7 @@ public enum PixelSpriteEditCommand: EditorCommand {
 
     public static let id: CommandID = "sprite.edit"
     public static let title = "Edit Sprite"
-    public static let doc = "Changes a .sprite file's structure in one undoable step, in this order: `palette` / `addColors`, canvas `width` / `height`, layers (`addLayers`, `removeLayers`, `updateLayers` [{name, rename, visible, opacity}]), frames (`addFrames` blank or copies of `copyFrame` at `insertAt`, `removeFrames`), timing (`duration` for all, `durations` per frame, ms), `copyCels` ([{fromFrame, fromLayer, toFrame, toLayer, rect [x, y, w, h], x, y, merged, replace}]: copy / paste pixels between cels; default the whole cel to the same place, transparent pixels don't cover unless `replace`), tags (`tags` replaces all, `addTags`, `removeTags`; a tag {name, from, to, mode loop|once|pingPong, events [{frame, name}]} becomes a SpriteAnimator clip whose events fire when it reaches those frames), frame events (`addEvents` / `removeEvents` [{tag, frame, name}]), then `pivot` and `pixelsPerUnit`. Returns the summary and warnings."
+    public static let doc = "Changes a .sprite file's structure in one undoable step, in this order: `palette` / `addColors`, canvas `width` / `height`, layers (`addLayers`, `removeLayers`, `updateLayers` [{name, rename, visible, opacity, blend normal|multiply|add|screen|overlay}]), frames (`addFrames` blank or copies of `copyFrame` at `insertAt`, `removeFrames`), timing (`duration` for all, `durations` per frame, ms), `copyCels` ([{fromFrame, fromLayer, toFrame, toLayer, rect [x, y, w, h], x, y, merged, replace}]: copy / paste pixels between cels; default the whole cel to the same place, transparent pixels don't cover unless `replace`), tags (`tags` replaces all, `addTags`, `removeTags`; a tag {name, from, to, mode loop|once|pingPong, events [{frame, name}]} becomes a SpriteAnimator clip whose events fire when it reaches those frames), frame events (`addEvents` / `removeEvents` [{tag, frame, name}]), then `pivot` and `pixelsPerUnit`. Returns the summary and warnings."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
@@ -531,6 +535,7 @@ public enum PixelSpriteEditCommand: EditorCommand {
             }
             if let visible = update.visible { sprite.layers[i].visible = visible }
             if let opacity = update.opacity { sprite.layers[i].opacity = min(max(opacity, 0), 1) }
+            if let blend = update.blend { sprite.layers[i].blend = blend }
         }
         if let count = arguments.addFrames {
             guard count > 0, count <= 256 else { throw CommandError.failed("addFrames must be 1-256") }

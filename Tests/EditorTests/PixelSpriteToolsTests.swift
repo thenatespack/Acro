@@ -320,4 +320,26 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(session.performUndo())
         #expect(session.assets?.pixelSprite(of: id)?.tags[0].events.count == 1)
     }
+
+    @Test func layerBlendModesFromToolsAndTheTab() throws {
+        let (session, folder) = try makeProject()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let created = try call(session, "sprite.new", ["name": "Blend", "width": 2, "height": 2])
+        let id = try #require((created["asset"] as? String).flatMap { AssetID($0) })
+        let edited = try call(session, "sprite.edit", ["path": "Blend.sprite", "addLayers": ["Light"],
+                                                       "updateLayers": [["name": "Light", "blend": "add"]]])
+        #expect((edited["layers"] as? [[String: Any]])?.last?["blend"] as? String == "add")
+        #expect(throws: (any Error).self) { try call(session, "sprite.edit", ["path": "Blend.sprite", "updateLayers": [["name": "Light", "blend": "burn"]]]) }
+
+        let workspace = PixelSpriteWorkspace(session: session)
+        #expect(workspace.open(id))
+        let builder = try #require(workspace.builder)
+        builder.selectLayer(1)
+        workspace.update(dt: 0.016)
+        let dropdown = try #require(builder.view.descendant(named: "spriteLayerBlend") as? Dropdown)
+        #expect(dropdown.selectedIndex == PixelSprite.BlendMode.allCases.firstIndex(of: .add))
+        dropdown.onChange?(PixelSprite.BlendMode.allCases.firstIndex(of: .multiply)!)
+        workspace.update(dt: 0.016)
+        #expect(session.assets?.pixelSprite(of: id)?.layers[1].blend == .multiply)
+    }
 }
