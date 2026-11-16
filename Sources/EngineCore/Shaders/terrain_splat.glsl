@@ -16,7 +16,7 @@
 //
 // Each layer repeats every tile size meters from the terrain's center, like the baked albedo
 // (`Terrain.bakeAlbedo`). Atlas cells don't wrap by themselves, so the cell coordinate is
-// fract()ed and kept half a texel inside the cell at the level of detail sampled, which is
+// fract()ed and kept half a texel inside the cell at the coarser level of detail sampled, which is
 // picked from the unwrapped coordinate's derivatives (no seam at the repeat) and stops before
 // mip levels where cells would blend into each other.
 
@@ -31,7 +31,8 @@ vec2 terrainAtlasUV(int i, vec2 t, float lod) {
     vec4 grid = graphValues.values[2];
     float columns = grid.y;
     vec2 cell = vec2(mod(float(i), columns), floor(float(i) / columns));
-    float edge = 0.5 * exp2(lod) / grid.w;
+    // Half a texel of the coarser of the two levels trilinear filtering reads.
+    float edge = 0.5 * exp2(ceil(lod)) / grid.w;
     vec2 f = clamp(fract(t), vec2(edge), vec2(1.0 - edge));
     return (cell + f) / grid.yz;
 }
