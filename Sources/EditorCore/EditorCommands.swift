@@ -43,6 +43,7 @@ public enum BuiltinCommands {
       + EditorTerrainCommands.all
       + EditorPixelSpriteCommands.all
       + EditorTilemapCommands.all
+      + EditorGridMapCommands.all
 }
 
 extension CommandID {

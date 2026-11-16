@@ -17,6 +17,7 @@ Builder tools let people and AI agents author game content inside the Acro edito
 | [Data Table Builder](#data-table-builder) | `.table` | Typed spreadsheets for game data |
 | [Pixel Sprite Builder](#pixel-sprite-builder) | `.sprite` | Pixel art and sprite animation for `SpriteAnimator` |
 | [Tilemap Builder](#tilemap-builder) | `.tilemap` | 2D tile levels with auto-tiling, animated tiles, 2D collision and object points |
+| [GridMap Builder](#gridmap-builder) | `.gridmap` | 3D levels painted from modular pieces on a grid |
 
 Planned builders are tracked in [Tools.md](../Tools.md).
 
@@ -133,3 +134,16 @@ let deadly = level?.hasTag("hazard", atWorld: playerPosition) ?? false
 Editor MCP clients use `tilemap.new {tileSize, size, tileset}`, `tilemap.paint {layer, tile | tiles | terrain, cells}`, `tilemap.fill {layer, tile | tiles | terrain, rect | at}`, `tilemap.erase {layer, cells | rect | all}`, `tilemap.edit` (size, tile set, per-tile data, layers, terrains, objects), `tilemap.set`, `tilemap.get` (with `layer` and `rect` for cells) and `tilemap.open`. See [MCPTools.md](MCPTools.md).
 
 Not yet: parallax and animated tiles in placed prefabs (they show the painted frame and move with the world; `TilemapSpriteDrawer` does both), one-way platforms that face other directions than up, `assets.tilemap(path:)` in cooked games (the cooker ships the imported prefab, not the JSON), and Pixel Sprite (`.sprite`) tile sets.
+## GridMap Builder
+
+Grid maps (`.gridmap`, JSON under `Assets/`) are 3D levels built from modular pieces on a grid: dungeons, buildings, city blocks. The file holds a `cellSize` (x, floor height, z in meters), a list of `layers` (default `floor`, `walls`, `props`; each cell holds one piece per layer), a piece library and the painted cells. A piece names a `.meshbuild`, a model (`.gltf`, `.glb`, `.obj`), a `.prefab` or a mesh reference, with a footprint in cells, a collision `size`, a pivot `offset`, a model `rotation`, `scale`, a default layer and a `collider` mode (`auto`, `mesh`, `box`, `none`). A cell is `{"at": [x, y, z], "piece": "Floor", "layer": "floor", "rotation": 90, "flipX": true}`, where `y` is the floor; a piece is centered on the cells it covers and stands on its floor.
+
+Auto-joining pieces have a `join` instead of an asset: the names of their single, end, straight, corner, tee and cross variants (plus `joinsWith`, other pieces that count as neighbors). Each cell becomes the variant that fits its neighbors on the same floor and layer, turned to face them, so painting a run of `Wall` gives straight walls, corners and T-junctions by itself. Variants are authored connecting toward +x (end), +x and -x (straight), +x and +z (corner), and +x, -x and +z (tee).
+
+The importer runs each piece file's own importer to learn its nodes and triangles (so the map reimports when a piece file changes) and builds a prefab: a node per floor, a node per chunk (`chunkSize` cells per side) holding one merged triangle-mesh collider, and one node per placed piece that references the piece's meshes and materials, so equal pieces draw as one instanced batch. Flipped pieces get mirrored copies of their meshes. Pieces whose triangles can't be read collide as boxes.
+
+In the editor, use **New GridMap** in the asset browser (it writes starter pieces as mesh builds next to the map: Floor, an auto-joining Wall with its six variants, Crate, Pillar), then double-click the file (or use **Open in GridMap Builder** in the inspector) to open the **GridMap Builder** tab. The edited floor shows its grid; floors below are faded and floors above hidden. Pick a brush (paint, line, rectangle (Shift: hollow), fill, erase, random from a set), a piece, the rotation, flips and layer, then click or drag on the grid; each stroke is one undo step. The floor slider and Up / Down buttons change the floor. The sidebar also edits each piece (asset, footprint, pivot, collider, auto-join variants) and the map's settings.
+
+Editor MCP clients can use `gridMap.new {cellSize, library, assets, starter}`, `gridMap.paint {piece | pieces, cells, brush, rotation, flipX, flipZ, layer}` (brush: cells, line, rect, outline, fill), `gridMap.fill {piece, box, hollow}`, `gridMap.erase {cells | box, layer}`, `gridMap.edit` (settings, layers, add / update / remove pieces), `gridMap.set`, `gridMap.get` (with `mapFloor`, a text picture of one floor) and `gridMap.open`. See [MCPTools.md](MCPTools.md) for schemas and parameters.
+
+Not yet: per-piece random variation of scale, auto-joining for multi-cell pieces, and editing a `.prefab` variant as a piece.

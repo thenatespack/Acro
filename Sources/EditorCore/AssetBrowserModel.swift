@@ -145,6 +145,8 @@ public final class AssetBrowserModel {
             session.run(PixelSpriteOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where session.isTilemapFile(id):
             session.run(TilemapOpenCommand.self, .init(asset: AssetReference(id)))
+        case .asset(let id) where session.isGridMapFile(id):
+            session.run(GridMapOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where entry.isExpandable:
             toggleExpanded(id)
         default:
@@ -223,6 +225,14 @@ public final class AssetBrowserModel {
     @discardableResult
     public func newPixelSprite() -> AssetID? {
         guard let id = session.run(PixelSpriteNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
+        invalidate()
+        selection = .asset(id)
+        return id
+    }
+    /// Creates a grid map (with the starter pieces) in the current folder (`gridMap.new`) and selects it.
+    @discardableResult
+    public func newGridMap() -> AssetID? {
+        guard let id = session.run(GridMapNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
         invalidate()
         selection = .asset(id)
         return id
