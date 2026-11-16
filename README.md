@@ -152,6 +152,18 @@ Builders let you make game content inside the editor. Each one stores its asset 
 | [Terrain Builder](docs/Builders.md#terrain-builder) | `.terrain` | Sculpted, painted heightmap terrain with scattered props |
 | [Sound Builder](docs/Builders.md#sound-builder) | `.sfx` | Synthesized sound effects |
 | [Data Table Builder](docs/Builders.md#data-table-builder) | `.table` | Typed spreadsheets for game data |
+| [Pixel Sprite Builder](docs/Builders.md#pixel-sprite-builder) | `.sprite` | Pixel art and sprite animation |
+| [Tilemap Builder](docs/Builders.md#tilemap-builder) | `.tilemap` | 2D levels painted from tiles, with auto-tiling and 2D collision |
+| [GridMap Builder](docs/Builders.md#gridmap-builder) | `.gridmap` | 3D levels from modular pieces on a grid |
+| [Path Builder](docs/Builders.md#path-builder) | `.path` | Roads, rails, rivers, fences and cables along splines |
+| [Character Builder](docs/Builders.md#character-builder) | `.character` | Rigged characters with stock animations |
+| [Animation Graph Builder](docs/Builders.md#animation-graph-builder) | `.animgraph` | Animator state machines and blend spaces |
+| [Behavior Tree Builder](docs/Builders.md#behavior-tree-builder) | `.behavior` | NPC AI as behavior trees |
+| [UI / HUD Builder](docs/Builders.md#ui--hud-builder) | `.ui` | Menus and HUDs with value bindings |
+| [Dialogue Builder](docs/Builders.md#dialogue-builder) | `.dialogue` | Branching conversations |
+| [Material Builder](docs/Builders.md#material-builder) | `.material` | Node-graph surface shaders for Metal and Vulkan |
+| [Timeline Builder](docs/Builders.md#timeline-builder) | `.timeline` | Cutscenes with camera, animation, audio and event tracks |
+| [Visual Script Builder](docs/Builders.md#visual-script-builder) | `.vscript` | Game logic as node graphs |
 
 See [docs/Builders.md](docs/Builders.md) for how to use each one.
 
