@@ -534,6 +534,7 @@ public final class EditorGameModule {
         }
         ComponentRegistry.unregister(names)
         EditorComponentCatalog.unregister(names)
+        VisualScriptNodes.unregister(owner: module.module.scriptNodeOwner)
         EditorIcons.unregister(names)
         registeredNames = []
     }

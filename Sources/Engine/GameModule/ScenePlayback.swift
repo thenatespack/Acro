@@ -42,6 +42,8 @@ public final class ScenePlayback {
     public private(set) var physics2D: PhysicsWorld2D?
     private var spatialAudio: SpatialAudioHandle?
     private var systemsAdded = false
+    /// The scene's visual scripts (`VisualScript` components), while systems run.
+    public private(set) var visualScripts: VisualScriptRuntime?
 
     private static let spriteSystem = "scenePlayback.spriteAnimation"
 
@@ -107,6 +109,8 @@ public final class ScenePlayback {
         if let audio { spatialAudio = world.addSpatialAudio(audio, assets: assets) }
         world.addBuiltinAnimationSystems()
         for warning in module.addSystems(to: world, context: context) { log(warning) }
+        visualScripts = world.addVisualScripts(context: context, assets: assets, physics: { [weak self] in self?.physics },
+                                               physics2D: { [weak self] in self?.physics2D })
         systemsAdded = true
     }
 
@@ -123,6 +127,8 @@ public final class ScenePlayback {
         world.removeSystem(named: Self.spriteSystem)
         spatialAudio?.remove()
         spatialAudio = nil
+        world.removeVisualScripts(visualScripts)
+        visualScripts = nil
         module.removeSystems(from: world)
         systemsAdded = false
     }

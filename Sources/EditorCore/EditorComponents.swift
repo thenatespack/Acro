@@ -88,6 +88,10 @@ public enum EditorComponentCatalog {
         register(FieldAnimator.self) { FieldAnimator(tracks: [.wave("Transform.position.y", amplitude: 0.25, frequency: 0.5)]) }
         register(LightFlicker.self) { LightFlicker() }
         register(CameraPath.self) { CameraPath() }
+        ComponentRegistry.register(VisualScript.self)
+        register(VisualScript.self) { VisualScript() }
+        // Visual scripts list component fields from the same defaults Add Component uses.
+        VisualScriptNodes.componentDefaults = { EditorComponentCatalog.makeDefault(named: $0) }
     }
 
     /// Makes the component type registered as `name` addable, created by `make` (game modules,

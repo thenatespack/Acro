@@ -409,6 +409,21 @@ public final class AssetInspectorView {
                 content.addChildren([HStack(spacing: 6, [open, Spacer()]),
                                      note("A data table of \(table?.rows.count ?? 0) rows and \(table?.columns.count ?? 0) columns. Game code reads it with assets.dataTable(path:)?.row(id)?.number(column).")])
             }
+            if session.isVisualScriptFile(id) {
+                let open = Button("Open in Visual Script", role: .primary, name: "openVisualScript") { [unowned self] in
+                    session.run(VScriptOpenCommand.self, .init(asset: AssetReference(id)))
+                }
+                open.command = VScriptOpenCommand.id.rawValue
+                open.tooltip = "Edit this graph in the Visual Script tab (or double-click it in the Assets panel)"
+                let attach = Button("Attach to Selection", name: "attachVisualScript") { [unowned self] in
+                    if let entity = session.selection.ids.first { session.run(VScriptAttachCommand.self, .init(asset: AssetReference(id), entity: entity)) }
+                }
+                attach.command = VScriptAttachCommand.id.rawValue
+                attach.tooltip = "Run this graph on the selected entity (adds a VisualScript component)"
+                let graph = session.assets?.visualScript(of: id)
+                content.addChildren([HStack(spacing: 6, [open, attach, Spacer()]),
+                                     note("A visual script of \(graph?.nodes.count ?? 0) nodes. It runs on entities with a VisualScript component in play mode and built games.")])
+            }
             if session.isTerrainFile(id) {
                 let open = Button("Open in Terrain Builder", role: .primary, name: "openTerrainBuilder") { [unowned self] in
                     session.run(TerrainOpenCommand.self, .init(asset: AssetReference(id)))

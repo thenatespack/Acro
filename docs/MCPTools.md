@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 166 tools.
+named by its id (see README › Use the editor › AI control). 174 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -47,6 +47,7 @@ optional arguments.
 | `ui` | [`ui.click`](#uiclick), [`ui.drag`](#uidrag), [`ui.find`](#uifind), [`ui.hover`](#uihover), [`ui.key`](#uikey), [`ui.scroll`](#uiscroll), [`ui.snapshot`](#uisnapshot), [`ui.type`](#uitype) |
 | `vfx` | [`vfx.edit`](#vfxedit), [`vfx.get`](#vfxget), [`vfx.new`](#vfxnew), [`vfx.open`](#vfxopen), [`vfx.set`](#vfxset) |
 | `view` | [`view.appearance`](#viewappearance), [`view.frameSelection`](#viewframeselection), [`view.gameCamera`](#viewgamecamera), [`view.pick`](#viewpick), [`view.screenshot`](#viewscreenshot) |
+| `vscript` | [`vscript.attach`](#vscriptattach), [`vscript.edit`](#vscriptedit), [`vscript.get`](#vscriptget), [`vscript.new`](#vscriptnew), [`vscript.nodes`](#vscriptnodes), [`vscript.open`](#vscriptopen), [`vscript.set`](#vscriptset), [`vscript.validate`](#vscriptvalidate) |
 
 ## activity
 
@@ -3116,3 +3117,189 @@ Result:
 - `forward?`: number[3] — [x, y, z]
 - `image`: {data?: string, height: integer, mimeType: string, width: integer}
 - `source`: "viewport" \| "game" \| "camera" \| "window" \| "panel" \| "thumbnail"
+
+## vscript
+
+### `vscript.attach`
+
+**Attach Visual Script** · _undoable_
+
+Puts a VisualScript component running the .vscript graph on `entity` (replacing one it has), with the graph's exposed variables listed for per-entity values. Undoable. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `entity`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `path?`: string
+
+Result:
+
+- `added?`: [string]
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `attachedTo?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `functions`: [string]
+- `nodes`: [string]
+- `path`: string
+- `variables`: [string]
+- `warnings`: [string]
+
+### `vscript.edit`
+
+**Edit Visual Script** · _undoable_
+
+Changes part of a .vscript graph in one undoable step, in this order: removeNodes, addNodes, updateNodes, disconnect, connect (in `function` when given), then variables, removeVariables, functions, removeFunctions, comments, removeComments, actions. New nodes without an id get one from their type (returned in `added`); nodes without x/y are placed right of the others. A link into a data input that has one replaces it. Returns node ids and problems (unconnected required inputs, type mismatches, unreachable nodes). A .vscript file is a node graph run by the VisualScript component in play mode and built games (no game module needed; edits apply while playing). `nodes`: {id, type, x, y, config {settings such as variable, component, field, key, name}, inputs {literal values for unconnected input pins}}. `links`: {"from": "node.pin", "to": "node.pin"}, always from an output pin to an input pin. Exec pins carry the flow (most nodes: input `in`, output `out`; branch: `true`/`false`; loops: `body`/`done`); event nodes (event.start, event.update, event.keyPressed, event.triggerEnter, event.custom…) start flows. Data pins are typed (bool, int, float, string, vec2, vec3, vec4, color, quat, entity, asset, array, map, any) and convert automatically where it makes sense; an unconnected entity input means the script's own entity. `variables`: {name, type, default, exposed}; `functions`: {name, inputs, outputs, nodes, links} called with function.call (config.function), starting at function.entry and ending at function.return. `actions`: input actions {"jump": ["key.space", "pad.south"]} for event.actionPressed. List node types and their pins with vscript.nodes {search}. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `actions?`: object
+- `addNodes?`: [{breakpoint?: boolean, collapsed?: boolean, comment?: string, config?: object, id?: string, inputs?: object, type?: string, x?: number, y?: number}]
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `comments?`: [{color?: string, height?: number, id?: string, text?: string, width?: number, x?: number, y?: number}]
+- `connect?`: [string[2]]
+- `disconnect?`: [string[2]]
+- `function?`: string
+- `functions?`: [{inputs?: [object], links?: [string[2]], name?: string, nodes?: [object], outputs?: [object], pure?: boolean}]
+- `path?`: string
+- `removeComments?`: [string]
+- `removeFunctions?`: [string]
+- `removeNodes?`: [string]
+- `removeVariables?`: [string]
+- `updateNodes?`: [{breakpoint?: boolean, collapsed?: boolean, comment?: string, config?: object, id: string, inputs?: object, type?: string, x?: number, y?: number}]
+- `variables?`: [{default?: any, exposed?: boolean, name?: string, tooltip?: string, type?: string (15 cases)}]
+
+Result:
+
+- `added?`: [string]
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `attachedTo?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `functions`: [string]
+- `nodes`: [string]
+- `path`: string
+- `variables`: [string]
+- `warnings`: [string]
+
+### `vscript.get`
+
+**Get Visual Script** · _read-only_, _idempotent_
+
+Reads a .vscript graph as stored (variables, nodes, links, functions, comments, actions) and its problems.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `graph`: {actions?: object, comments?: [object], functions?: [object], links?: [string[2]], nodes?: [object], variables?: [object]}
+- `issues`: [{severity: string}]
+- `path`: string
+
+### `vscript.new`
+
+**New Visual Script** · _undoable_
+
+Writes a .vscript graph in `folder` (default: the Assets root) from `template` (empty, spinner, mover, pickup, timer) and imports it; with `target` (an entity id) also puts a VisualScript component running it on that entity (undoable). Build it with vscript.edit (addNodes, connect, variables…), find nodes with vscript.nodes. A .vscript file is a node graph run by the VisualScript component in play mode and built games (no game module needed; edits apply while playing). `nodes`: {id, type, x, y, config {settings such as variable, component, field, key, name}, inputs {literal values for unconnected input pins}}. `links`: {"from": "node.pin", "to": "node.pin"}, always from an output pin to an input pin. Exec pins carry the flow (most nodes: input `in`, output `out`; branch: `true`/`false`; loops: `body`/`done`); event nodes (event.start, event.update, event.keyPressed, event.triggerEnter, event.custom…) start flows. Data pins are typed (bool, int, float, string, vec2, vec3, vec4, color, quat, entity, asset, array, map, any) and convert automatically where it makes sense; an unconnected entity input means the script's own entity. `variables`: {name, type, default, exposed}; `functions`: {name, inputs, outputs, nodes, links} called with function.call (config.function), starting at function.entry and ending at function.return. `actions`: input actions {"jump": ["key.space", "pad.south"]} for event.actionPressed. List node types and their pins with vscript.nodes {search}. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `folder?`: string
+- `name?`: string
+- `target?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `template?`: "empty" \| "spinner" \| "mover" \| "pickup" \| "timer"
+
+Result:
+
+- `added?`: [string]
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `attachedTo?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `functions`: [string]
+- `nodes`: [string]
+- `path`: string
+- `variables`: [string]
+- `warnings`: [string]
+
+### `vscript.nodes`
+
+**Visual Script Nodes** · _read-only_, _idempotent_
+
+Lists the node types a .vscript graph can use, with their pins (name, type, default) and config settings: events, flow, math, vectors, logic, text, arrays, maps, variables, functions, world, transform, components (a get and a set node per reflected field of every registered component, e.g. type component.get with config {component: Light, field: intensity}), audio, effects, physics, scenes, tweens, data tables, and game modules' own nodes. Add one with vscript.edit {addNodes: [{type, config}]} using the entry's `type` and `config`.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `componentFields?`: boolean
+- `limit?`: integer
+- `path?`: string
+- `pinType?`: "exec" \| "any" \| "bool" \| "int" \| "float" \| "string" \| "vec2" \| "vec3" \| "vec4" \| "color" \| "quat" \| "entity" \| "asset" \| "array" \| "map"
+- `search?`: string
+
+Result:
+
+- `matched`: integer
+- `nodes`: [{category: string, kind: string, title: string, type: string}]
+
+### `vscript.open`
+
+**Open in Visual Script Editor**
+
+Shows a .vscript graph in the Visual Script tab next to the Scene view: nodes and wires on a canvas (drag to move, drag from a pin to wire, right-click or Space to search-add), problems drawn on their nodes and, while playing, the flow highlighted live.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `added?`: [string]
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `attachedTo?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `functions`: [string]
+- `nodes`: [string]
+- `path`: string
+- `variables`: [string]
+- `warnings`: [string]
+
+### `vscript.set`
+
+**Set Visual Script** · _undoable_, _idempotent_
+
+Replaces a .vscript file's whole graph and reimports it (a running game picks it up next frame, keeping variables). Undoable. For a few changes, vscript.edit is shorter. A .vscript file is a node graph run by the VisualScript component in play mode and built games (no game module needed; edits apply while playing). `nodes`: {id, type, x, y, config {settings such as variable, component, field, key, name}, inputs {literal values for unconnected input pins}}. `links`: {"from": "node.pin", "to": "node.pin"}, always from an output pin to an input pin. Exec pins carry the flow (most nodes: input `in`, output `out`; branch: `true`/`false`; loops: `body`/`done`); event nodes (event.start, event.update, event.keyPressed, event.triggerEnter, event.custom…) start flows. Data pins are typed (bool, int, float, string, vec2, vec3, vec4, color, quat, entity, asset, array, map, any) and convert automatically where it makes sense; an unconnected entity input means the script's own entity. `variables`: {name, type, default, exposed}; `functions`: {name, inputs, outputs, nodes, links} called with function.call (config.function), starting at function.entry and ending at function.return. `actions`: input actions {"jump": ["key.space", "pad.south"]} for event.actionPressed. List node types and their pins with vscript.nodes {search}. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `graph`: {actions?: object, comments?: [object], functions?: [object], links?: [string[2]], nodes?: [object], variables?: [object]}
+- `path?`: string
+
+Result:
+
+- `added?`: [string]
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `attachedTo?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `functions`: [string]
+- `nodes`: [string]
+- `path`: string
+- `variables`: [string]
+- `warnings`: [string]
+
+### `vscript.validate`
+
+**Validate Visual Script** · _read-only_, _idempotent_
+
+Checks a .vscript file (or a `graph` given inline): unknown node types, wires to missing pins or between incompatible types, several wires into one input, unconnected required inputs, literal values that don't fit their pin, unreachable nodes (info: unused pure nodes), unknown variables, functions and components, loops among data wires. `valid` means no errors.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `graph?`: {actions?: object, comments?: [object], functions?: [object], links?: [string[2]], nodes?: [object], variables?: [object]}
+- `path?`: string
+
+Result:
+
+- `errors`: integer
+- `issues`: [{severity: string}]
+- `valid`: boolean
+- `warnings`: integer
