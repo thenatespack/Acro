@@ -14,7 +14,7 @@ public struct MeshBuildExample: Codable, Equatable, Sendable {
 
 public enum MeshBuildExamples {
     public static var all: [MeshBuildExample] {
-        [streetLamp, cart, turret, crate, bench, armchair, stoneArch, teapot, sailboat, gnarledTree, deskLamp] + plants  // MeshBuildExamples+Plants.swift
+        [streetLamp, cart, turret, crate, bench, armchair, stoneArch, teapot, mossyStone, sailboat, gnarledTree, deskLamp] + plants  // MeshBuildExamples+Plants.swift
     }
 
     /// Dark green-black paint for street furniture.
@@ -153,7 +153,7 @@ extension MeshBuildExamples {
             p.lookScale = 0.3
             return p
         }
-        return MeshBuildExample(name: "Armchair", about: "0.9 m wide, seat 0.47 m high, front at -Z. One sculpt: the frame (base, back tilted 8° back, arms and rolled arm tops mirrored on x) melts together with small smooth radii (0.02-0.04 m; larger radii on faces that line up bulge at the seam) and has the sculpt's own look (green fabric with a little wear); the cushions (a bevelled box plus a flattened sphere smoothed in for a puffy top, front and back) are children that set their own look (linen-colored fabric), so the sculpt draws a mesh per look and the color changes where the surfaces meet. The tapered legs are wooden lathes mirrored on x and z, touching the frame's underside at y=0.1.", build: MeshBuild(parts: [
+        return MeshBuildExample(name: "Armchair", about: "0.9 m wide, seat 0.47 m high, front at -Z. One sculpt: the frame (base, back tilted 8° back, arms and rolled arm tops mirrored on x) melts together with small smooth radii (0.02-0.04 m; larger radii on faces that line up bulge at the seam) and has the sculpt's own look (green fabric with a little wear); the cushions (a bevelled box plus a flattened sphere smoothed in for a puffy top, front and back) are children that set their own look (linen-colored fabric), so the sculpt draws a mesh per look; the seat and back cushions join the frame with smooth 0.015, so the two fabrics blend softly over about 2 cm where they meet instead of at a hard line. The tapered legs are wooden lathes mirrored on x and z, touching the frame's underside at y=0.1.", build: MeshBuild(parts: [
             MeshBuildPart(name: "Armchair", shape: .sculpt, position: Vec3(0, 0.1, 0), color: fabric, look: "fabric", wear: 0.3)
                 .sculpting(resolution: 96),
             MeshBuildPart(name: "Base", parent: "Armchair", position: Vec3(0, 0.125, 0), size: Vec3(0.8, 0.25, 0.78), bevel: 0.05),
@@ -163,11 +163,12 @@ extension MeshBuildExamples {
                           mirror: [.x]).sculpting(smooth: 0.02),
             MeshBuildPart(name: "Left Roll", shape: .capsule, parent: "Armchair", position: Vec3(-0.355, 0.54, -0.02), rotation: Vec3(90, 0, 0),
                           size: Vec3(0.18, 0.8, 0.15), mirror: [.x]).sculpting(smooth: 0.03),
-            cushion(MeshBuildPart(name: "Seat", parent: "Armchair", position: Vec3(0, 0.31, -0.06), size: Vec3(0.53, 0.12, 0.64), bevel: 0.05)),
+            cushion(MeshBuildPart(name: "Seat", parent: "Armchair", position: Vec3(0, 0.31, -0.06), size: Vec3(0.53, 0.12, 0.64), bevel: 0.05)
+                .sculpting(smooth: 0.015)),
             cushion(MeshBuildPart(name: "Puff", shape: .sphere, parent: "Armchair", position: Vec3(0, 0.33, -0.06), size: Vec3(0.46, 0.1, 0.58))
                 .sculpting(smooth: 0.03)),
             cushion(MeshBuildPart(name: "Back Cushion", parent: "Armchair", position: Vec3(0, 0.59, 0.2), rotation: Vec3(-10, 0, 0),
-                                  size: Vec3(0.53, 0.46, 0.14), bevel: 0.06)),
+                                  size: Vec3(0.53, 0.46, 0.14), bevel: 0.06).sculpting(smooth: 0.015)),
             cushion(MeshBuildPart(name: "Back Puff", shape: .sphere, parent: "Armchair", position: Vec3(0, 0.59, 0.19), rotation: Vec3(-10, 0, 0),
                                   size: Vec3(0.44, 0.4, 0.15)).sculpting(smooth: 0.03)),
             MeshBuildPart(name: "Front Left Leg", shape: .lathe, position: Vec3(-0.35, 0, -0.32), color: Vec3(0.28, 0.17, 0.09),

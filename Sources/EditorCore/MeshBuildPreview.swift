@@ -93,7 +93,7 @@ struct MeshBuildPreviewScene {
         // A sculpt with several looks draws a mesh per look on nodes of their own (MeshBuildSculptLooks.swift).
         let expansion = build.expansion()
         let sculpting = expansion.build.gatheringSculpts(sources: expansion.sources)
-        let pieces = sculpting.splittingLooks()
+        let pieces = sculpting.splittingLooks(blending: true)  // blend layers are pieces too
         var pieceSculpt: [String: String] = [:]
         for (index, sculpt) in pieces.pieceOf { pieceSculpt[pieces.build.parts[index].name] = pieces.build.parts[sculpt].name }
 

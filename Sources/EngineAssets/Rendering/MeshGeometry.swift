@@ -83,11 +83,16 @@ public struct MeshGeometry: Sendable {
     /// One `SkinInfluence` per vertex for a skinned mesh (uploaded as `SkinnedMeshVertex`es and
     /// drawn with the skinning shaders, posed by an entity's `Skin`), nil for a rigid one.
     public var skin: [SkinInfluence]?
+    /// One `VertexPaint` per vertex for a painted mesh (uploaded to vertex buffer 2 and drawn with
+    /// the vertex paint shaders; ignored on skinned meshes), nil for none: such meshes draw exactly
+    /// as before, with no paint stream.
+    public var paint: [VertexPaint]?
 
-    public init(vertices: [MeshVertex], indices: [UInt32], skin: [SkinInfluence]? = nil) {
+    public init(vertices: [MeshVertex], indices: [UInt32], skin: [SkinInfluence]? = nil, paint: [VertexPaint]? = nil) {
         self.vertices = vertices
         self.indices = indices
         self.skin = skin
+        self.paint = paint
     }
 
     /// Bounds of the vertex positions.

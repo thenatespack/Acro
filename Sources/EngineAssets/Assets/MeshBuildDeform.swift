@@ -375,8 +375,9 @@ extension MeshGeometry {
                 if let m = midpoints[key] { return m }
                 let va = vertices[Int(a)], vb = vertices[Int(b)]
                 let n = va.normal + vb.normal
-                vertices.append(MeshVertex(position: (va.position + vb.position) * 0.5,
-                                           normal: length(n) > 1e-9 ? normalize(n) : va.normal, uv: (va.uv + vb.uv) * 0.5))
+                appendMidpoint(MeshVertex(position: (va.position + vb.position) * 0.5,
+                                          normal: length(n) > 1e-9 ? normalize(n) : va.normal, uv: (va.uv + vb.uv) * 0.5),
+                               between: Int(a), Int(b))
                 let m = UInt32(vertices.count - 1)
                 midpoints[key] = m
                 return m

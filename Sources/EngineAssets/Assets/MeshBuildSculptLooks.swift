@@ -45,14 +45,19 @@ public struct MeshBuildSculptMesh: Sendable {
     /// The triangles of `group` with their own vertices.
     public func submesh(_ group: Int) -> MeshGeometry {
         guard !triangleGroups.isEmpty else { return group == 0 ? geometry : MeshGeometry(vertices: [], indices: []) }
+        return triangles { t in Int(triangleGroups[t]) == group }
+    }
+
+    /// The triangles `keep` (by triangle number) chooses, with their own vertices (and paint).
+    func triangles(where keep: (Int) -> Bool) -> MeshGeometry {
         var result = MeshGeometry(vertices: [], indices: [])
         var remap = [Int32](repeating: -1, count: geometry.vertices.count)
-        for (t, g) in triangleGroups.enumerated() where Int(g) == group {
+        for t in 0..<geometry.indices.count / 3 where keep(t) {
             for k in 0..<3 {
                 let v = Int(geometry.indices[t * 3 + k])
                 if remap[v] < 0 {
                     remap[v] = Int32(result.vertices.count)
-                    result.vertices.append(geometry.vertices[v])
+                    result.append(vertex: geometry.vertices[v], from: geometry, v)
                 }
                 result.indices.append(UInt32(remap[v]))
             }
@@ -149,7 +154,7 @@ extension MeshBuildPart {
 
 extension MeshBuildSculptor {
     /// How close `p` is to primitive `i`'s own surface (as the field sees it: noise included).
-    @inline(__always) private func ownerScore(_ i: Int, _ p: Vec3, bump: Float) -> Float {
+    @inline(__always) func ownerScore(_ i: Int, _ p: Vec3, bump: Float) -> Float {
         let primitive = primitives[i]
         let d = primitive.distance(p.x, p.y, p.z)
         switch primitive.blend {
@@ -159,7 +164,7 @@ extension MeshBuildSculptor {
         }
     }
 
-    private func bump(_ p: Vec3) -> Float {
+    func bump(_ p: Vec3) -> Float {
         noise.map { $0.amount * Self.fbm(p / $0.scale, seed: $0.seed) } ?? 0
     }
 
@@ -211,9 +216,21 @@ extension MeshBuildSculptor {
         return (q, normal(at: q, step: cell * 0.25, active: list))
     }
 
+    /// Where `splitByOwner` cut a surface: the boundaries between its look groups.
+    struct OwnerSplit {
+        /// One group per triangle.
+        var owners: [Int32]
+        /// The group of each surface vertex from before the cuts (vertices 0..<count).
+        var vertexGroup: [Int32]
+        /// The edges cut, as their two end vertices: cut point `e` is vertex `vertexGroup.count + e`.
+        var cutEdges: [SIMD2<Int32>]
+        /// The center points of triangles with three groups: (vertex, its three corners' groups).
+        var centers: [(Int32, SIMD3<Int32>)]
+    }
+
     /// Gives every triangle of `surface` its look group, cutting triangles along the boundaries
-    /// between groups (see the notes at the top of this file). Returns one group per triangle.
-    func splitByOwner(_ surface: inout Surface, active: ActiveLists, origin: Vec3, cell: Float) -> [Int32] {
+    /// between groups (see the notes at the top of this file).
+    func splitByOwner(_ surface: inout Surface, active: ActiveLists, origin: Vec3, cell: Float) -> OwnerSplit {
         let vertexCount = surface.positions.count
         // Each vertex's owner, in parallel.
         var vertexGroup = [Int32](repeating: 0, count: vertexCount)
@@ -242,7 +259,10 @@ extension MeshBuildSculptor {
                 }
             }
         }
-        guard !cutEdges.isEmpty else { return [Int32](repeating: vertexGroup.first ?? 0, count: surface.triangles.count) }
+        guard !cutEdges.isEmpty else {
+            return OwnerSplit(owners: [Int32](repeating: vertexGroup.first ?? 0, count: surface.triangles.count), vertexGroup: vertexGroup,
+                              cutEdges: [], centers: [])
+        }
         // Where along each cut edge the two groups are equally close, moved onto the surface.
         var cutPoints = [Vec3](repeating: .zero, count: cutEdges.count)
         var cutNormals = [Vec3](repeating: .zero, count: cutEdges.count)
@@ -272,6 +292,7 @@ extension MeshBuildSculptor {
         // Split the triangles along the cuts, keeping their winding.
         var triangles: [SIMD3<Int32>] = []
         var owners: [Int32] = []
+        var centers: [(Int32, SIMD3<Int32>)] = []
         triangles.reserveCapacity(surface.triangles.count + cutEdges.count * 3)
         owners.reserveCapacity(triangles.capacity)
         func emit(_ a: Int32, _ b: Int32, _ c: Int32, _ g: Int32) {
@@ -291,6 +312,7 @@ extension MeshBuildSculptor {
                 let m = Int32(surface.positions.count)
                 surface.positions.append(p)
                 surface.normals.append(n)
+                centers.append((m, SIMD3(g[0], g[1], g[2])))
                 emit(v[0], ab, m, g[0]); emit(v[0], m, ca, g[0])
                 emit(ab, v[1], bc, g[1]); emit(ab, bc, m, g[1])
                 emit(bc, v[2], ca, g[2]); emit(bc, ca, m, g[2])
@@ -311,7 +333,7 @@ extension MeshBuildSculptor {
             }
         }
         surface.triangles = triangles
-        return owners
+        return OwnerSplit(owners: owners, vertexGroup: vertexGroup, cutEdges: cutEdges, centers: centers)
     }
 }
 
@@ -330,6 +352,12 @@ public struct MeshBuildSculptPieces: Sendable {
     public var pieceOf: [Int: Int]
     /// For each look part's name, the sculpt children (and copies) it draws.
     public var owners: [String: [String]]
+    /// With blending (`splittingLooks(blending: true)`): per split sculpt's index, how its looks
+    /// blend (MeshBuildSculptBlend.swift). Its pieces' and layers' meshes carry group weights in
+    /// their paint until `MeshBuildImporter.finishBlends`.
+    public var blends: [Int: MeshBuildSculptBlendGroups] = [:]
+    /// The blend layers' part indices (each also in `pieceOf`).
+    public var layers: Set<Int> = []
     /// The meshes of sculpts and look parts, and the sculpts' warnings.
     var meshes: [Int: MeshGeometry]
     var sculptWarnings: [Int: [String]]
@@ -353,13 +381,17 @@ public struct MeshBuildSculptPieces: Sendable {
 
 extension MeshBuildSculpting {
     /// The build the importers draw: sculpts with several looks split into a part per look.
-    public func splittingLooks() -> MeshBuildSculptPieces {
+    /// `blending`: their looks blend across the boundaries (MeshBuildSculptBlend.swift): blend
+    /// layer parts are appended after the looks, and meshes carry group weights in their paint for
+    /// `MeshBuildImporter.finishBlends` (without it, meshes have no paint).
+    public func splittingLooks(blending: Bool = false) -> MeshBuildSculptPieces {
         var out = MeshBuildSculptPieces(build: build, sculpted: sculpted, pieceOf: [:], owners: [:], meshes: [:], sculptWarnings: [:])
         var names = Set(build.parts.map(\.name))
         for (i, sculpt) in build.parts.enumerated() where sculpt.shape == .sculpt && !sculpted.contains(i) {
             var warnings = sculpt.fieldWarnings
-            let mesh = sculpt.sculptMesh(warnings: &warnings)
+            var mesh = sculpt.sculptMesh(warnings: &warnings)
             out.sculptWarnings[i] = warnings
+            if !blending { mesh?.geometry.paint = nil }
             guard let mesh else { continue }
             // Deformers and a mirror copy's reflection apply to each piece as to the whole mesh.
             func finished(_ g: MeshGeometry) -> MeshGeometry {
@@ -371,11 +403,30 @@ extension MeshBuildSculpting {
             let groups = sculpt.sculptLookGroups()
             let present = mesh.presentGroups.filter { $0 < groups.lookSources.count }
             guard present.count > 1 else {
-                out.meshes[i] = finished(mesh.geometry)
+                var whole = mesh.geometry
+                whole.paint = nil
+                out.meshes[i] = finished(whole)
                 if let g = present.first, groups.lookSources[g] != nil { out.build.parts[i] = sculpt.sculptLookPart(groups, group: g) }
                 continue
             }
             out.build.parts[i].sculptChildren = []
+            var blend = MeshBuildSculptBlendGroups(pieces: Array(repeating: nil, count: groups.lookSources.count),
+                                                   layers: Array(repeating: nil, count: groups.lookSources.count), classes: [], blends: [])
+            var classOf: [String: Int] = [:]
+            for g in groups.lookSources.indices {
+                let look = sculpt.sculptLookPart(groups, group: g)
+                let key = look.lookTextureKey
+                if classOf[key] == nil { classOf[key] = classOf.count }
+                blend.classes.append(classOf[key]!)
+                blend.blends.append(look.blendsLook)
+            }
+            func addPart(_ piece: MeshBuildPart, _ geometry: MeshGeometry) -> Int {
+                let index = out.build.parts.count
+                out.build.parts.append(piece)
+                out.meshes[index] = finished(geometry)
+                out.pieceOf[index] = i
+                return index
+            }
             for g in present {
                 let first = groups.members[g].first.map { sculpt.sculptChildren[$0].part.name } ?? "\(g + 1)"
                 var name = "\(sculpt.name)/\(first)", n = 2
@@ -391,12 +442,28 @@ extension MeshBuildSculpting {
                 (piece.position, piece.rotation, piece.size, piece.mirror, piece.repetition) = (.zero, .zero, Vec3(1, 1, 1), nil, nil)
                 (piece.deform, piece.subdivide, piece.resolution, piece.noise, piece.sculptChildren) = (nil, nil, nil, nil, [])
                 piece.reflection = Vec3(1, 1, 1)
-                let index = out.build.parts.count
-                out.build.parts.append(piece)
-                out.meshes[index] = finished(mesh.submesh(g))
-                out.pieceOf[index] = i
+                blend.pieces[g] = addPart(piece, mesh.submesh(g))
                 out.owners[name] = groups.members[g].map { sculpt.sculptChildren[$0].part.name }
             }
+            guard blending, mesh.geometry.paint != nil else { continue }
+            // Blend layers: each look over the other looks' textures where it has weight.
+            for g in present where blend.blends[g] {
+                guard let layer = mesh.blendLayer(group: g, crossFades: { h in
+                    present.contains(h) && blend.blends[h] && blend.classes[h] != blend.classes[g]
+                }), let base = blend.pieces[g] else { continue }
+                var piece = out.build.parts[base]
+                var name = piece.name + " blend", n = 2
+                while names.contains(name) {
+                    name = "\(piece.name) blend \(n)"
+                    n += 1
+                }
+                names.insert(name)
+                piece.name = name
+                let index = addPart(piece, layer)
+                blend.layers[g] = index
+                out.layers.insert(index)
+            }
+            out.blends[i] = blend
         }
         return out
     }

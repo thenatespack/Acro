@@ -8,7 +8,7 @@ import EngineScene
 import EngineText
 
 /// A mesh uploaded to the GPU (vertex buffer 0 in `MeshVertex` layout, or `SkinnedMeshVertex`
-/// for a skinned mesh; 32-bit indices).
+/// for a skinned mesh; vertex buffer 2 `VertexPaint`s for a painted one; 32-bit indices).
 public struct GPUMesh {
     public var vertexBuffer: GPUBuffer
     public var indexBuffer: GPUBuffer
@@ -17,6 +17,8 @@ public struct GPUMesh {
     public var bounds: Bounds
     /// The vertices are `SkinnedMeshVertex`es.
     public var isSkinned = false
+    /// The mesh's `VertexPaint`s (vertex buffer 2), nil when it has none.
+    public var paintBuffer: GPUBuffer?
 }
 
 /// A camera to render a world from with `SceneRenderer.renderView`: an explicit view and
@@ -133,6 +135,11 @@ public final class SceneRenderer {
     private var maskShader: ShaderSource?
     /// The skinning variants of `shader` and `maskShader` (mesh_skinned.vert), loaded with the first skinned mesh.
     private var skinnedShaders: [Bool: ShaderSource] = [:]
+    /// The vertex paint variants of `shader` and `maskShader` (mesh_paint.vert, mesh_paint(_mask).frag),
+    /// loaded with the first painted mesh.
+    private var paintShaders: [Bool: ShaderSource] = [:]
+    /// Painted pipelines failed to load or create: painted meshes draw without their paint.
+    private var paintUnavailable = false
     private let shadowPipeline: RenderPipeline
     /// The shadow pipeline for alpha-tested casters (mesh_shadow_mask), created on first use.
     private var shadowMaskPipeline: RenderPipeline?
@@ -366,6 +373,10 @@ public final class SceneRenderer {
         var skinned: Bool = false
         /// A material graph's shader variant (`MaterialGraphProgram.key`).
         var graph: String? = nil
+        /// The vertex paint shaders (mesh_paint.vert) with the mesh's `VertexPaint` stream (vertex
+        /// buffer 2). Never with `skinned` or `graph`. Blended painted batches test depth with
+        /// less-or-equal, so a painted layer can lie on the very surface it blends over.
+        var painted: Bool = false
     }
 
     /// The pipeline variant a batch of `material` draws with, in the transparent pass when `blending`.
@@ -431,12 +442,21 @@ public final class SceneRenderer {
         } else {
             vertexBuffer = try device.makeBuffer(geometry.vertices, usage: .vertex)
         }
+        // Vertex paint (skinned meshes use its attribute slots for their joints).
+        var paintBuffer: GPUBuffer?
+        if skinInfo == nil, let paint = geometry.paint {
+            guard paint.count == geometry.vertices.count else {
+                throw GraphicsError("Mesh '\(key)' has \(paint.count) vertex paints for \(geometry.vertices.count) vertices")
+            }
+            paintBuffer = try device.makeBuffer(paint, usage: .vertex)
+        }
         let mesh = GPUMesh(
             vertexBuffer: vertexBuffer,
             indexBuffer: try device.makeBuffer(geometry.indices, usage: .index),
             indexCount: geometry.indices.count,
             bounds: geometry.bounds,
-            isSkinned: skinInfo != nil)
+            isSkinned: skinInfo != nil,
+            paintBuffer: paintBuffer)
         let id = prep.meshes.register(mesh.bounds, key: key)
         prep.skinnedMeshes[id] = skinInfo
         if id == meshes.count {
@@ -1127,9 +1147,17 @@ public final class SceneRenderer {
             for batch in batches {
                 var key = Self.pipelineKey(for: materials[batch.material].material, blending: blending, reversedZ: reversedZ)
                 key.skinned = batch.skin >= 0
+                key.painted = !key.skinned && key.graph == nil && !paintUnavailable && meshes[batch.mesh].paintBuffer != nil
                 if current?.pipeline != key {
-                    guard let pipeline = pipeline(key) else { continue }
-                    pass.setPipeline(pipeline)
+                    var made = pipeline(key)
+                    if made == nil && key.painted {
+                        // No vertex paint on this device: draw the mesh without it.
+                        paintUnavailable = true
+                        key.painted = false
+                        made = pipeline(key)
+                    }
+                    guard let made else { continue }
+                    pass.setPipeline(made)
                 }
                 if current?.material != batch.material || batch.skin >= 0 || (current?.skin ?? -1) >= 0 {
                     bindMaterial(batch.material, in: pass, skin: batch.skin, reflection: reflection)
@@ -1154,6 +1182,7 @@ public final class SceneRenderer {
         pass.setVertexBuffer(mesh.vertexBuffer)
         pass.setIndexBuffer(mesh.indexBuffer, type: .uint32)
         pass.setVertexBuffer(instances.buffer, offset: instances.offset + batch.first * MemoryLayout<MeshInstance>.stride, index: 1)
+        if let paint = mesh.paintBuffer { pass.setVertexBuffer(paint, index: 2) }
         pass.drawIndexed(indexCount: mesh.indexCount, instanceCount: batch.count)
     }
 
@@ -1176,7 +1205,17 @@ public final class SceneRenderer {
                 return nil
             }
         }
-        var shader = key.skinned ? skinnedShaders[key.alphaTested]! : key.alphaTested ? maskShader! : shader
+        if key.painted && paintShaders[key.alphaTested] == nil {
+            do {
+                paintShaders[key.alphaTested] = try ShaderSource.load(
+                    vertex: "mesh_paint", fragment: key.alphaTested ? "mesh_paint_mask" : "mesh_paint", bundle: .engineResources)
+            } catch {
+                print("SceneRenderer: vertex paint shader unavailable: \(error)")
+                return nil
+            }
+        }
+        var shader = key.painted ? paintShaders[key.alphaTested]!
+            : key.skinned ? skinnedShaders[key.alphaTested]! : key.alphaTested ? maskShader! : shader
         if let graph = key.graph {
             // The material graph's fragment stage (MaterialGraphCompiler) after the usual vertex stage.
             guard let program = graphPrograms[graph] else { return nil }
@@ -1190,6 +1229,10 @@ public final class SceneRenderer {
         descriptor.alphaBlending = key.blending
         descriptor.depthWrite = !key.blending
         descriptor.depthCompare = key.reversedZ ? .greater : .less
+        if key.painted {
+            descriptor.secondVertexLayout = VertexPaint.layout
+            if key.blending { descriptor.depthCompare = key.reversedZ ? .greaterEqual : .lessEqual }
+        }
         // Blended surfaces keep the motion of what's behind them.
         descriptor.writesMotionVectors = !key.blending
         do {

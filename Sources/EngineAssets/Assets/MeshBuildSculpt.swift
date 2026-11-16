@@ -115,7 +115,9 @@ extension MeshBuildPart {
         are the default; a child that sets any look field (color, look, wear, roughness, metallic, glow, texture, \
         material…) is drawn with its own look fields (e.g. linen cushions on a green fabric chair, a cream knob on a \
         blue teapot): each point of the surface takes the look of the added child it lies on (in a smooth join, the \
-        nearer one), and the color changes cleanly along the surface where they meet. A subtracted child with its own \
+        nearer one). Where they meet with smooth > 0 the looks blend over a band about 1.5 x smooth wide (color, \
+        roughness, metallic and glow mix; different textures cross-fade), e.g. moss melting into stone; smooth 0 keeps \
+        a sharp line. A subtracted child with its own \
         look paints the cut it makes; without one, the cut takes the look of the child it cuts into. UVs are \
         world-projected in meters. A sculpt is one mesh per look: animate the sculpt part, not its children. Example: \
         {"name":"Stone","shape":"sculpt","position":[0,0.4,0]}, {"name":"Block","shape":"box","parent":"Stone",\
@@ -151,7 +153,9 @@ extension MeshBuildPart {
     /// The sculpt's mesh from its `sculptChildren` (nil, with a warning, when they make no shape),
     /// scaled by `size`. Cached by its inputs.
     func sculptGeometry(warnings: inout [String]) -> MeshGeometry? {
-        sculptMesh(warnings: &warnings)?.geometry
+        guard var geometry = sculptMesh(warnings: &warnings)?.geometry else { return nil }
+        geometry.paint = nil  // blend weights are for the importer (MeshBuildSculptBlend.swift)
+        return geometry
     }
 
     /// The sculpt's mesh with each triangle's look group (MeshBuildSculptLooks.swift). Cached by its inputs.
@@ -842,9 +846,16 @@ struct MeshBuildSculptor {
         let (values, active) = sample(origin: origin, cell: cell, n: n)
         guard var surface = contour(values, active: active, origin: origin, cell: cell, n: n, warnings: &warnings) else { return nil }
         // Several looks: each triangle's owner, triangles cut along the boundaries (MeshBuildSculptLooks.swift).
-        let owners = groupCount > 1 ? splitByOwner(&surface, active: active, origin: origin, cell: cell) : []
+        var owners: [Int32] = []
+        var weights: [VertexPaint]?
+        if groupCount > 1 {
+            let split = splitByOwner(&surface, active: active, origin: origin, cell: cell)
+            owners = split.owners
+            // Blending across the boundaries (MeshBuildSculptBlend.swift).
+            weights = blendWeights(surface, split)
+        }
         guard let geometry = assemble(positions: surface.positions, normals: surface.normals, triangles: surface.triangles,
-                                      groups: owners) else { return nil }
+                                      groups: owners, weights: weights) else { return nil }
         return MeshBuildSculptMesh(geometry: geometry, triangleGroups: owners.isEmpty ? [] : owners.map { UInt16($0) },
                                    groupCount: groupCount)
     }
@@ -1150,7 +1161,9 @@ struct MeshBuildSculptor {
 
     /// The final mesh: scaled by the sculpt's size, normals split at sharp creases, box-projected
     /// UVs, and vertices split where the triangles' look `groups` (one per triangle, or empty) change.
-    func assemble(positions rawPositions: [Vec3], normals rawNormals: [Vec3], triangles: [SIMD3<Int32>], groups: [Int32] = []) -> MeshGeometry? {
+    /// `weights` (one per position, or nil) become the vertices' paint.
+    func assemble(positions rawPositions: [Vec3], normals rawNormals: [Vec3], triangles: [SIMD3<Int32>], groups: [Int32] = [],
+                  weights: [VertexPaint]? = nil) -> MeshGeometry? {
         guard !triangles.isEmpty else { return nil }
         let inverseScale = Vec3(scale.x > 0 ? 1 / scale.x : 0, scale.y > 0 ? 1 / scale.y : 0, scale.z > 0 ? 1 / scale.z : 0)
         let positions = rawPositions.map { $0 * scale }
@@ -1213,6 +1226,7 @@ struct MeshBuildSculptor {
         }
         // Vertices: one per (grid vertex, crease side, projection face), with box-projected UVs in meters.
         var geometry = MeshGeometry(vertices: [], indices: [])
+        if weights != nil { geometry.paint = [] }
         geometry.vertices.reserveCapacity(positions.count * 3 / 2)
         geometry.indices.reserveCapacity(triangles.count * 3)
         var made: [Int: UInt32] = [:]
@@ -1239,6 +1253,7 @@ struct MeshBuildSculptor {
                 }
                 let index = UInt32(geometry.vertices.count)
                 geometry.vertices.append(MeshVertex(position: p, normal: cornerNormal[c], uv: uv))
+                if let weights { geometry.paint!.append(weights[v]) }
                 made[key] = index
                 geometry.indices.append(index)
             }

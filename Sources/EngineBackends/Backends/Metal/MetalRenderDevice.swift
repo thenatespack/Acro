@@ -8,6 +8,8 @@ import EngineGraphics
 
 // MSL buffer indices; see `RenderPass` for the full binding table.
 let metalInstanceBufferIndex = 1
+/// Vertex buffer slot 2 (`PipelineDescriptor.secondVertexLayout`): clear of uniform buffers 2-7.
+let metalSecondVertexBufferIndex = 14
 let metalUniformBufferIndex = 15
 let metalPushConstantIndex = 16
 /// MSL index of storage buffer 0 / storage texture 0 (see `ShaderSource`).
@@ -703,7 +705,8 @@ package final class MetalRenderDevice: RenderDevice {
     }
 
     private static func vertexDescriptor(_ descriptor: PipelineDescriptor) -> MTLVertexDescriptor? {
-        let layouts = [(descriptor.vertexLayout, 0), (descriptor.instanceLayout ?? .none, metalInstanceBufferIndex)]
+        let layouts = [(descriptor.vertexLayout, 0), (descriptor.instanceLayout ?? .none, metalInstanceBufferIndex),
+                       (descriptor.secondVertexLayout ?? .none, metalSecondVertexBufferIndex)]
         guard layouts.contains(where: { !$0.0.attributes.isEmpty }) else { return nil }
         let vertexDescriptor = MTLVertexDescriptor()
         for (layout, bufferIndex) in layouts where !layout.attributes.isEmpty {
@@ -713,7 +716,7 @@ package final class MetalRenderDevice: RenderDevice {
                 vertexDescriptor.attributes[attribute.location].bufferIndex = bufferIndex
             }
             vertexDescriptor.layouts[bufferIndex].stride = layout.stride
-            vertexDescriptor.layouts[bufferIndex].stepFunction = bufferIndex == 0 ? .perVertex : .perInstance
+            vertexDescriptor.layouts[bufferIndex].stepFunction = bufferIndex == metalInstanceBufferIndex ? .perInstance : .perVertex
         }
         return vertexDescriptor
     }
@@ -1426,12 +1429,12 @@ final class MetalRenderPass: RenderPass {
     }
 
     func setVertexBuffer(_ buffer: GPUBuffer, offset: Int, index: Int) {
-        encoder.setVertexBuffer((buffer as! MetalBuffer).buffer, offset: offset, index: index)
+        encoder.setVertexBuffer((buffer as! MetalBuffer).buffer, offset: offset, index: index == 2 ? metalSecondVertexBufferIndex : index)
     }
 
     func setVertexData(_ bytes: UnsafeRawBufferPointer, index: Int) {
         let allocation = upload(bytes, alignment: 16)
-        encoder.setVertexBuffer(allocation.chunk.buffer, offset: allocation.offset, index: index)
+        encoder.setVertexBuffer(allocation.chunk.buffer, offset: allocation.offset, index: index == 2 ? metalSecondVertexBufferIndex : index)
     }
 
     func setUniformData(_ bytes: UnsafeRawBufferPointer) {

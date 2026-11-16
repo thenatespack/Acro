@@ -827,9 +827,10 @@ public struct MeshBuildImporter: AssetImporter {
 
     public var name: String { "meshbuild" }
     public var fileExtensions: [String] { ["meshbuild"] }
-    public var version: Int { 9 }  // 2: mirror and repeat, 3: sculpt, 4: sweep, loft and deform, 5: looks and baked occlusion,
+    public var version: Int { 10 }  // 2: mirror and repeat, 3: sculpt, 4: sweep, loft and deform, 5: looks and baked occlusion,
                                    // 6: sculpt children's looks, sweeps / lofts / deformers in sculpts, 7: edge wear,
-                                   // 8: foliage, ribbons, leaf looks, noise budget, 9: edge wear noise in object space
+                                   // 8: foliage, ribbons, leaf looks, noise budget, 9: edge wear noise in object space,
+                                   // 10: sculpt look blending, leaf card variation
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         let file: MeshBuild
@@ -843,7 +844,8 @@ public struct MeshBuildImporter: AssetImporter {
         let sculpting = expansion.build.gatheringSculpts(sources: expansion.sources)
         for warning in sculpting.build.sculptContextWarnings(sculpting) { context.warn(warning) }
         // A sculpt with several looks draws a mesh per look on parts of their own, appended (MeshBuildSculptLooks.swift).
-        let pieces = sculpting.splittingLooks()
+        // Their looks blend across the boundaries (MeshBuildSculptBlend.swift): blend layers are parts too.
+        let pieces = sculpting.splittingLooks(blending: true)
         let build = pieces.build
         let stem = ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension
         var asset = ImportedAsset()
@@ -873,10 +875,29 @@ public struct MeshBuildImporter: AssetImporter {
             for warning in shapeWarnings { context.warn("part '\(part.name)': \(warning)") }
             return geometry
         }
-        Self.finishSurfaces(build, &geometries, occlusion: file.ao ?? true, firstIndex: firstIndex)
-        Self.finishEdgeWear(build, &geometries)
+        Self.finishSurfaces(build, &geometries, occlusion: file.ao ?? true, firstIndex: firstIndex, layers: pieces.layerSurfaces)
+        Self.finishEdgeWear(build, &geometries, skipping: pieces.layers)
         var lookTextures = LookTextureRefs()
         var leafTextures = LeafTextureRefs()  // MeshBuildImporter+Foliage.swift
+
+        // Each drawn part's material (nil: a `material` asset), then the sculpts' blends (MeshBuildSculptBlend.swift).
+        var materials: [MaterialAsset?] = build.parts.indices.map { _ in nil }
+        var materialAssets: [AssetReference?] = build.parts.indices.map { _ in nil }
+        for (i, part) in build.parts.enumerated() {
+            guard let geometry = geometries[i], !geometry.indices.isEmpty else { continue }
+            if let material = resolve(part.material, kind: "material", part: part.name, &context) {
+                materialAssets[i] = material
+                continue
+            }
+            let texture = resolve(part.texture, kind: "texture", part: part.name, &context)
+            let look = part.resolvedLook.map { lookTextures.references($0, wear: part.wear, &asset, &namer, &context) }
+            var material = Self.material(for: part, texture: texture, look: look, geometry: geometry)
+            if let leaf = part.resolvedLeafLook {
+                material = Self.leafMaterial(for: part, texture: texture, leaf: leafTextures.references(leaf, &asset, &namer, &context))
+            }
+            materials[i] = material
+        }
+        Self.finishBlends(pieces, &geometries, &materials)
 
         var nodes: [PrefabNode] = []
         for (i, part) in build.parts.enumerated() {
@@ -885,16 +906,10 @@ public struct MeshBuildImporter: AssetImporter {
                 let meshID = namer.id(kind: "mesh", name: part.name, index: i)
                 asset.add(meshID, name: part.name, .mesh(geometry))
                 node.mesh = context.reference(meshID)
-                if let material = resolve(part.material, kind: "material", part: part.name, &context) {
+                if let material = materialAssets[i] {
                     node.material = material
-                } else {
+                } else if let material = materials[i] {
                     let materialID = namer.id(kind: "material", name: part.name, index: i)
-                    let texture = resolve(part.texture, kind: "texture", part: part.name, &context)
-                    let look = part.resolvedLook.map { lookTextures.references($0, wear: part.wear, &asset, &namer, &context) }
-                    var material = Self.material(for: part, texture: texture, look: look, geometry: geometry)
-                    if let leaf = part.resolvedLeafLook {
-                        material = Self.leafMaterial(for: part, texture: texture, leaf: leafTextures.references(leaf, &asset, &namer, &context))
-                    }
                     asset.add(materialID, name: part.name, .material(material))
                     node.material = context.reference(materialID)
                 }

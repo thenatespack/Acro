@@ -13,7 +13,8 @@ import EngineScene
 //                                 size, mtime, settings and object list (decides what to reimport)
 //   Artifacts/<id>/import.json    the imported objects: materials and prefabs inline, meshes and
 //                                 textures in binary files next to it (mesh-N.bin, texture-N.bin;
-//                                 a skinned mesh's joint influences follow its indices)
+//                                 a skinned mesh's joint influences follow its indices, then a
+//                                 painted mesh's `VertexPaint`s)
 //   Artifacts/<id>/files/         the importer's own artifacts (ImportContext.artifactsDirectory)
 //   Artifacts/<id>/cache/         the importer's cache that outlives reimports (ImportContext.cacheDirectory;
 //                                 e.g. the texture importer's compressed mip chains)
@@ -100,6 +101,8 @@ package enum AssetArtifacts {
         var indexCount: Int?
         /// The mesh's file ends with one `SkinInfluence` per vertex (4 × UInt16 joints, 4 × Float weights).
         var skinned: Bool?
+        /// The mesh's file ends with one `VertexPaint` per vertex (8 × Float), after any skin.
+        var painted: Bool?
         var width: Int?
         var height: Int?
         var srgb: Bool?
@@ -149,6 +152,10 @@ package enum AssetArtifacts {
                         withUnsafeBytes(of: influence.weights) { data.append(contentsOf: $0.prefix(16)) }
                     }
                     entry.skinned = true
+                }
+                if let paint = geometry.paint, paint.count == geometry.vertices.count {
+                    paint.withUnsafeBytes { data.append(contentsOf: $0) }
+                    entry.painted = true
                 }
                 files[file] = data
                 entry.file = file
@@ -218,10 +225,21 @@ package enum AssetArtifacts {
                 let vertexBytes = vertexCount * MemoryLayout<MeshVertex>.stride
                 let indexEnd = vertexBytes + indexCount * 4
                 let skinBytes = entry.skinned == true ? vertexCount * Self.influenceBytes : 0
-                guard bytes.count == indexEnd + skinBytes else { return nil }
+                let paintBytes = entry.painted == true ? vertexCount * MemoryLayout<VertexPaint>.stride : 0
+                guard bytes.count == indexEnd + skinBytes + paintBytes else { return nil }
                 var vertices = [MeshVertex](repeating: MeshVertex(position: .zero, normal: .zero), count: vertexCount)
                 var indices = [UInt32](repeating: 0, count: indexCount)
                 var skin: [SkinInfluence]?
+                var paint: [VertexPaint]?
+                if paintBytes > 0 {
+                    var values = [VertexPaint](repeating: .none, count: vertexCount)
+                    bytes.withUnsafeBytes { raw in
+                        values.withUnsafeMutableBytes {
+                            $0.copyMemory(from: UnsafeRawBufferPointer(rebasing: raw[(indexEnd + skinBytes)..<(indexEnd + skinBytes + paintBytes)]))
+                        }
+                    }
+                    paint = values
+                }
                 bytes.withUnsafeBytes { raw in
                     vertices.withUnsafeMutableBytes { $0.copyMemory(from: UnsafeRawBufferPointer(rebasing: raw[0..<vertexBytes])) }
                     indices.withUnsafeMutableBytes { $0.copyMemory(from: UnsafeRawBufferPointer(rebasing: raw[vertexBytes..<indexEnd])) }
@@ -233,7 +251,7 @@ package enum AssetArtifacts {
                         return SkinInfluence(joints: joints, weights: weights)
                     }
                 }
-                value = .mesh(MeshGeometry(vertices: vertices, indices: indices, skin: skin))
+                value = .mesh(MeshGeometry(vertices: vertices, indices: indices, skin: skin, paint: paint))
             case .texture:
                 guard let file = entry.file, let width = entry.width, let height = entry.height,
                       let bytes = contents(file) else { return nil }

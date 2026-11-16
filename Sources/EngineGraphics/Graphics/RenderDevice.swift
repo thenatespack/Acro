@@ -177,6 +177,9 @@ public struct PipelineDescriptor: Sendable {
     public var vertexLayout: VertexLayout
     /// Per-instance data from vertex buffer slot 1.
     public var instanceLayout: VertexLayout?
+    /// More per-vertex data from vertex buffer slot 2 (an optional stream a mesh may carry, such
+    /// as `SceneRenderer`'s vertex paint), or nil. Its locations must not overlap the others.
+    public var secondVertexLayout: VertexLayout?
     public var target: PipelineTarget = .screen
     /// Front faces are counter-clockwise on both backends.
     public var cullMode: CullMode = .back

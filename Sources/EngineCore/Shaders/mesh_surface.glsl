@@ -128,6 +128,11 @@ layout(location = 8) in vec4 vTangent;
 #ifndef MATERIAL_GRAPH
 layout(location = 4) in vec3 vObjectPos;  // the vertex position before the model transform (edge wear's noise)
 #endif
+#ifdef VERTEX_PAINT
+// Vertex paint (mesh_paint(_mask).frag, `VertexPaint`): factors on the material's values.
+layout(location = 9) in vec4 vPaintColor;    // rgb: albedo, a: opacity
+layout(location = 10) in vec4 vPaintSurface; // x: roughness, y: metallic, z: emission
+#endif
 
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec2 outMotion;  // see `PipelineDescriptor.writesMotionVectors`
@@ -402,6 +407,10 @@ void main() {
     if (material.baseColor.a * texel.a < material.flags.x) discard;
     opacity = vColor.a;
 #endif
+#ifdef VERTEX_PAINT
+    albedo *= vPaintColor.rgb;
+    opacity *= vPaintColor.a;
+#endif
     if (material.params.x > 0.5) {
         vec2 cell = floor(vWorldPos.xz / 2.0);
         albedo *= (mod(abs(cell.x + cell.y), 2.0) < 0.5) ? 1.0 : 0.75;
@@ -504,8 +513,13 @@ void main() {
         float roughness = clamp(gRoughness, 0.045, 1.0);
 #else
         vec4 mr = texture(sampler2D(metallicRoughnessMap, materialSampler), uv);
+#ifdef VERTEX_PAINT
+        float metallic = clamp(material.surface.x * mr.b * vPaintSurface.y, 0.0, 1.0);
+        float roughness = clamp(material.surface.y * mr.g * vPaintSurface.x, 0.045, 1.0);
+#else
         float metallic = clamp(material.surface.x * mr.b, 0.0, 1.0);
         float roughness = clamp(material.surface.y * mr.g, 0.045, 1.0);
+#endif
         if (edgeWear > 0.0) {
             metallic = mix(metallic, edgeSurface.y, edgeWear);
             roughness = mix(roughness, max(edgeSurface.x, 0.045), edgeWear);
@@ -583,7 +597,11 @@ void main() {
 #ifdef MATERIAL_GRAPH
     color += max(gEmissive, vec3(0.0)) * (vec3(1.0) + vParams.yzw);
 #else
+#ifdef VERTEX_PAINT
+    color += material.emissive.rgb * texture(sampler2D(emissiveMap, materialSampler), uv).rgb * (vec3(1.0) + vParams.yzw) * vPaintSurface.z;
+#else
     color += material.emissive.rgb * texture(sampler2D(emissiveMap, materialSampler), uv).rgb * (vec3(1.0) + vParams.yzw);
+#endif
 #endif
 
     float dist = length(frame.cameraPos.xyz - vWorldPos);

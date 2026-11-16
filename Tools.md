@@ -102,14 +102,33 @@ resolution 64: meshing ~0.7 s debug (test), whole set+import+checks ~0.9 s debug
 (fabric frame, linen-fabric cushions); new Teapot example (lathe body/lid, swept spout and
 handle, cream knob).
 Sculpt looks / mesh field gaps: a child that sets any look field uses all its own look fields
-(no per-field inheritance, so setting only `wear` drops the sculpt's color); in a smooth join the
-color changes at the fillet's middle as a sharp line (no blending between looks); several looks
-cost a mesh, material and draw each; a mesh child must be closed (an open deformed lathe or a
+(no per-field inheritance, so setting only `wear` drops the sculpt's color); several looks
+cost a mesh, material and draw each (plus a blend layer draw per look that cross-fades textures); a mesh child must be closed (an open deformed lathe or a
 sweep crossing itself can get the wrong sign near the gap or crossing); mesh children are
 faceted at their own segments (32+), which shows on large smooth sweeps at high resolution;
 lathe profiles are polygons in the field, so a coarse profile shows bands (write ~20+ points for
 a smooth pot); terrain scatter and character attachments draw the looks but character
 `partColors` recolor every look of a sculpt at once.
+Sculpt look blending (MeshBuildSculptBlend.swift, MeshBuildImporter+Blends.swift, VertexPaint.swift):
+looks meet in a band of half-width 0.75 x the join's smooth (min 4 mm; smooth 0 stays sharp), found by
+a band-limited Dijkstra from the cut points; same-texture looks mix color/roughness/metallic/glow in a
+new optional vertex paint stream (vertex buffer 2, attributes 14-15, mesh_paint.vert /
+mesh_paint(_mask).frag; meshes without it render byte-identically), different textures cross-fade
+through alpha-blended "<sculpt>/<child> blend" layers (depth less-or-equal on the same surface, no
+dither). Leaf cards get a seeded per-card color jitter in the same stream. Mossy Stone example.
+Armchair cushions and the Teapot knob now blend. Debug editor (loaded machine), before -> after:
+Armchair new 12.1 -> 11.6 s, set+import ~6.8 -> ~7.0 s; Teapot new 5.1 -> 5.7 s, set+import ~1.85 ->
+~2.1 s; the blend pass alone on a 135k-triangle two-look sculpt is 0.37 s debug (of 5.4 s meshing).
+Blending gaps: only the nearest boundary counts (a vertex near two different looks blends with one;
+triple points get a third each at the center only); groups 8+ of one sculpt don't blend; a look with
+a `material` asset or opacity < 1 keeps a sharp line; blend layers have no edge wear and copy (not
+re-bake) occlusion; a blend layer per look costs a transparent draw and covers decals in the band;
+bands narrower than the sculpt's cells blend over one cell; deformed multi-look sculpts deform each
+piece by its own bounds (pre-existing) so layers can drift from their surface; terrain scatter keeps
+the paint but character attachments draw sculpts without blending; painted meshes use
+mesh_paint.vert, so vertex-shader effects added to mesh.vert (wind sway) must go in
+mesh_vertex.glsl to reach painted leaves; material graphs ignore vertex paint; no vertex paint
+editing tool (by design).
 Realistic surfaces (looks): parts take `look` (23 generated, tileable surfaces: woods, metals,
 stone, brick, fabric, glass, ground…), `lookScale` (m per tile), `wear` (0-1) and `grain`
 (x|y|z); `color` tints a look to its average color. Each look is albedo (sRGB) + normal map +
@@ -179,8 +198,7 @@ Plants not done: no wind (no vertex sway or shader wind); no LODs or impostors, 
 full triangles per tree (and no instancing of one foliage mesh across trees); mipmaps are plain box
 filters, so distant cards thin out a little (the low alpha cutoff hides most of it; no
 coverage-preserving mips or alpha-to-coverage); crossed tufts read as thin lines from straight
-above; colour variation between cards is only the texture's four shaded variants and the lighting
-(no vertex colors); leaves `on` a part are placed at rest, so an animated branch leaves its leaves
+above; leaves `on` a part are placed at rest, so an animated branch leaves its leaves
 behind unless the foliage is its child; the crown's bent normals come from one ellipsoid or box per
 foliage part (lobed crowns need several parts); no control of leaf arrangement on a branch
 (phyllotaxis, leaves only on top, droop); translucency is one factor per material (no thickness
