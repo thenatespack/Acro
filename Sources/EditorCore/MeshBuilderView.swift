@@ -3,7 +3,7 @@ import Foundation
 
 // The Mesh Builder: the asset inspector's form for a `.meshbuild` file. Add shapes with one
 // click, pick a part to edit its shape, size, placement, parent, color, texture and material in
-// a property grid, and give it a ready-made motion (spin, bob, swing, pulse, shake). Every
+// a property grid, its look (MeshBuilderView+Looks.swift), and give it a ready-made motion (spin, bob, swing, pulse, shake). Every
 // change is written to the file at once as one undo step (`EditorSession.applyMeshBuild`), so
 // the model reimports and placed copies update while you work; Ctrl+Z takes changes back.
 // Keyframe tracks are kept and listed, and are written by `meshBuild.edit` or by hand.
@@ -148,6 +148,7 @@ public final class MeshBuilderView {
         duplicate.tooltip = "Copy the selected part beside itself"
         delete.tooltip = "Remove the selected part (its children move up to its parent)"
         view.addChild(HStack(spacing: 6, [duplicate, delete, Spacer()]))
+        addOcclusionToggle()  // MeshBuilderView+Looks.swift
 
         guard let selectedPart, let part = build.parts.first(where: { $0.name == selectedPart }) else {
             view.addChild(note(build.parts.isEmpty ? "Add a shape to start." : "Pick a part to edit it."))
@@ -155,6 +156,7 @@ public final class MeshBuilderView {
         }
         addPartGrid(part)
         addShapeSection(for: part)
+        addLookSection(for: part)  // MeshBuilderView+Looks.swift
         addSymmetrySection(for: part)
         addAnimationSection(for: part)
     }
@@ -259,14 +261,14 @@ public final class MeshBuilderView {
         }
     }
 
-    private func rowLabel(_ text: String) -> Label {
+    func rowLabel(_ text: String) -> Label {
         let label = Label(text)
         label.style.width = 104
         return label
     }
 
     /// Changes the part `name` as one edit (applied on the next `refresh`).
-    private func editPart(_ name: String, label: String, _ change: (inout MeshBuildPart) -> Void) {
+    func editPart(_ name: String, label: String, _ change: (inout MeshBuildPart) -> Void) {
         var edited = pending?.build ?? build
         guard let i = edited.parts.firstIndex(where: { $0.name == name }) else { return }
         change(&edited.parts[i])
@@ -460,7 +462,7 @@ public final class MeshBuilderView {
         view.addChild(HStack(spacing: 6, [label, button]))
     }
 
-    private func note(_ text: String) -> Label {
+    func note(_ text: String) -> Label {
         let label = Label(text, role: .caption, name: "meshBuildNote")
         label.wraps = true
         return label
@@ -545,7 +547,7 @@ public final class MeshBuilderView {
         layout()
     }
 
-    private func apply(_ edited: MeshBuild, label: String, select name: String? = nil) {
+    func apply(_ edited: MeshBuild, label: String, select name: String? = nil) {
         pending = (edited, label, name)
     }
 

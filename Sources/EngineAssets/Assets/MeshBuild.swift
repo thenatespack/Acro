@@ -109,6 +109,16 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
     /// Copies of the part and its subtree in a line or a ring (`"repeat"` in the file; see
     /// MeshBuildExpansion.swift).
     public var repetition: MeshBuildRepeat?
+    // Looks (MeshBuildLooks.swift): a realistic surface from generated textures.
+    /// A `MeshBuildLook` name ("wood", "rustyMetal"…); `color` tints it (its average color),
+    /// leave `color` at the default for the look's own. Unknown names warn.
+    public var look: String?
+    /// Meters one texture tile of the look covers (default per look).
+    public var lookScale: Float?
+    /// 0...1: grime in low spots, scratches, chipped paint, darker creases.
+    public var wear: Float?
+    /// The part axis the look's grain runs along (default: Y for round shapes, else the longest side).
+    public var grain: MeshBuildAxis?
     /// Not in the file: the signs (±1 per axis) the mesh is reflected by, set on mirror copies by
     /// `MeshBuild.expansion()`; `geometry()` applies it.
     public var reflection = Vec3(1, 1, 1)
@@ -130,14 +140,19 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
          // Edited by the Mesh Builder's own widgets, shown only for the shapes that use them.
          "bevel": FieldHints(hidden: true), "profile": FieldHints(hidden: true),
          // Edited in the Mesh Builder's own Mirror / Repeat rows.
-         "mirror": FieldHints(hidden: true), "repeat": FieldHints(hidden: true)]
+         "mirror": FieldHints(hidden: true), "repeat": FieldHints(hidden: true),
+         // Edited in the Mesh Builder's own Look rows.
+         "look": FieldHints(hidden: true), "lookScale": FieldHints(hidden: true), "wear": FieldHints(hidden: true),
+         "grain": FieldHints(hidden: true)]
     }
 
     public init(name: String = "Part", shape: MeshBuildShape = .box, parent: String = "", position: Vec3 = .zero,
                 rotation: Vec3 = .zero, size: Vec3 = Vec3(1, 1, 1), segments: Int = 24, thickness: Float = 0.1,
                 color: Vec3 = Vec3(0.8, 0.8, 0.8), opacity: Float = 1, texture: String = "", textureScale: Vec2 = Vec2(1, 1),
                 worldUV: Bool = false, metallic: Float = 0, roughness: Float = 0.5, glow: Vec3 = .zero, glowStrength: Float = 1,
-                material: String = "", bevel: Float? = nil, profile: [Vec2]? = nil, mirror: MeshBuildMirror? = nil, repetition: MeshBuildRepeat? = nil) {
+                material: String = "", bevel: Float? = nil, profile: [Vec2]? = nil, mirror: MeshBuildMirror? = nil, repetition: MeshBuildRepeat? = nil,
+                // Looks.
+                look: String? = nil, lookScale: Float? = nil, wear: Float? = nil, grain: MeshBuildAxis? = nil) {
         self.name = name
         self.shape = shape
         self.parent = parent
@@ -160,12 +175,19 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
         self.profile = profile
         self.mirror = mirror
         self.repetition = repetition
+        // Looks.
+        self.look = look
+        self.lookScale = lookScale
+        self.wear = wear
+        self.grain = grain
     }
 
     private enum CodingKeys: String, CodingKey {
         case name, shape, parent, position, rotation, size, segments, thickness, color, opacity, texture, textureScale, worldUV,
              metallic, roughness, glow, glowStrength, material, bevel, profile, mirror
         case repetition = "repeat"
+        // Looks.
+        case look, lookScale, wear, grain
     }
 
     /// Every key is optional.
@@ -193,7 +215,12 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
                   bevel: try c.decodeIfPresent(Float.self, forKey: .bevel),
                   profile: try c.decodeIfPresent([Vec2].self, forKey: .profile),
                   mirror: try c.decodeIfPresent(MeshBuildMirror.self, forKey: .mirror),
-                  repetition: try c.decodeIfPresent(MeshBuildRepeat.self, forKey: .repetition))
+                  repetition: try c.decodeIfPresent(MeshBuildRepeat.self, forKey: .repetition),
+                  // Looks: lenient, a value of the wrong type reads as unset.
+                  look: (try? c.decodeIfPresent(String.self, forKey: .look)) ?? nil,
+                  lookScale: (try? c.decodeIfPresent(Float.self, forKey: .lookScale)) ?? nil,
+                  wear: (try? c.decodeIfPresent(Float.self, forKey: .wear)) ?? nil,
+                  grain: (try? c.decodeIfPresent(MeshBuildAxis.self, forKey: .grain)) ?? nil)
     }
 
     /// The part's local transform (its size is in the mesh, not the scale).
@@ -381,18 +408,22 @@ public struct MeshBuildAnimation: Codable, Equatable, Sendable {
 public struct MeshBuild: Codable, Equatable, Sendable {
     public var parts: [MeshBuildPart]
     public var animations: [MeshBuildAnimation]
+    /// Baked ambient occlusion: parts darken where they meet (MeshBuildAO.swift). nil is on.
+    public var ao: Bool?
 
-    public init(parts: [MeshBuildPart] = [], animations: [MeshBuildAnimation] = []) {
+    public init(parts: [MeshBuildPart] = [], animations: [MeshBuildAnimation] = [], ao: Bool? = nil) {
         self.parts = parts
         self.animations = animations
+        self.ao = ao
     }
 
-    private enum CodingKeys: String, CodingKey { case parts, animations }
+    private enum CodingKeys: String, CodingKey { case parts, animations, ao }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(parts: try c.decodeIfPresent([MeshBuildPart].self, forKey: .parts) ?? [],
-                  animations: try c.decodeIfPresent([MeshBuildAnimation].self, forKey: .animations) ?? [])
+                  animations: try c.decodeIfPresent([MeshBuildAnimation].self, forKey: .animations) ?? [],
+                  ao: (try? c.decodeIfPresent(Bool.self, forKey: .ao)) ?? nil)
     }
 
     /// A one-part starting point: a light gray unit cube resting on the ground.
@@ -661,7 +692,7 @@ public struct MeshBuildImporter: AssetImporter {
 
     public var name: String { "meshbuild" }
     public var fileExtensions: [String] { ["meshbuild"] }
-    public var version: Int { 2 }  // 2: mirror and repeat
+    public var version: Int { 3 }  // 2: mirror and repeat, 3: looks and baked occlusion
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         let file: MeshBuild
@@ -692,13 +723,20 @@ public struct MeshBuildImporter: AssetImporter {
             }
         }
 
-        var nodes: [PrefabNode] = []
-        for (i, part) in build.parts.enumerated() {
-            var node = PrefabNode(name: part.name, transform: part.transform)
+        // Every part's mesh first: looks and baked occlusion (MeshBuildImporter+Looks.swift) need them all.
+        var geometries: [MeshGeometry?] = build.parts.map { part in
             var shapeWarnings: [String] = []
             let geometry = part.geometry(warnings: &shapeWarnings)
             for warning in shapeWarnings { context.warn("part '\(part.name)': \(warning)") }
-            if let geometry, !geometry.indices.isEmpty {
+            return geometry
+        }
+        Self.finishSurfaces(build, &geometries, occlusion: file.ao ?? true, firstIndex: firstIndex)
+        var lookTextures = LookTextureRefs()
+
+        var nodes: [PrefabNode] = []
+        for (i, part) in build.parts.enumerated() {
+            var node = PrefabNode(name: part.name, transform: part.transform)
+            if let geometry = geometries[i], !geometry.indices.isEmpty {
                 let meshID = namer.id(kind: "mesh", name: part.name, index: i)
                 asset.add(meshID, name: part.name, .mesh(geometry))
                 node.mesh = context.reference(meshID)
@@ -706,8 +744,9 @@ public struct MeshBuildImporter: AssetImporter {
                     node.material = material
                 } else {
                     let materialID = namer.id(kind: "material", name: part.name, index: i)
-                    asset.add(materialID, name: part.name,
-                              .material(Self.material(for: part, texture: resolve(part.texture, kind: "texture", part: part.name, &context))))
+                    let texture = resolve(part.texture, kind: "texture", part: part.name, &context)
+                    let look = part.resolvedLook.map { lookTextures.references($0, wear: part.wear, &asset, &namer, &context) }
+                    asset.add(materialID, name: part.name, .material(Self.material(for: part, texture: texture, look: look)))
                     node.material = context.reference(materialID)
                 }
             }
