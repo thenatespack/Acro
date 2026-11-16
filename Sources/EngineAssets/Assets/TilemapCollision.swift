@@ -13,15 +13,26 @@ public struct TilemapColliderShape: Equatable, Sendable {
     public var name: String
     /// Where the shape's origin sits (the box center; the cell center for polygons).
     public var position: Vec2
+    /// In the shape's own frame, which is turned by `angle`.
     public var shape: ColliderShape2D
     public var isOneWay: Bool
     /// The layer it came from.
     public var layer: String
     /// Cells it covers.
     public var cellCount: Int
+    /// Radians about z (counterclockwise) the shape's entity is turned by: a one-way platform's
+    /// side bodies land on is its local +y, so a turned or flipped one-way tile turns its shape
+    /// (0 for every other shape, which is laid out in map space).
+    public var angle: Float = 0
 
     /// The `Collider2D` for it (static unless the entity gets a `RigidBody2D`).
     public var collider: Collider2D { Collider2D(shape, isOneWay: isOneWay) }
+
+    /// The shape entity's `Transform` with the map's bottom-left corner at `origin`.
+    public func transform(at origin: Vec2 = .zero) -> Transform {
+        Transform(position: Vec3(origin.x + position.x, origin.y + position.y, 0),
+                  rotation: angle == 0 ? Quat.identity : Quat(angle: angle, axis: Vec3(0, 0, 1)))
+    }
 }
 
 extension Tilemap {
@@ -29,6 +40,8 @@ extension Tilemap {
     private struct QuarterRect: Hashable {
         var x0, y0, x1, y1: Int
         var oneWay: Bool
+        /// A one-way rectangle's landing side in quarter turns clockwise from up (0 otherwise).
+        var facing: Int = 0
         var spansWidth: Bool { x0 == 0 && x1 == 4 }
         var isFull: Bool { x0 == 0 && y0 == 0 && x1 == 4 && y1 == 4 && !oneWay }
     }
@@ -56,7 +69,8 @@ extension Tilemap {
                     if tile.collision.isRectangle {
                         let xs = placed.map(\.x), ys = placed.map(\.y)
                         func q(_ v: Float) -> Int { Int((v * 4).rounded()) }
-                        rects[y * w + x] = QuarterRect(x0: q(xs.min()!), y0: q(ys.min()!), x1: q(xs.max()!), y1: q(ys.max()!), oneWay: tile.oneWay)
+                        rects[y * w + x] = QuarterRect(x0: q(xs.min()!), y0: q(ys.min()!), x1: q(xs.max()!), y1: q(ys.max()!), oneWay: tile.oneWay,
+                                                       facing: tile.oneWay ? Self.facing(of: cell) : 0)
                     } else {
                         polygons.append((x, y, placed))
                     }
@@ -70,10 +84,12 @@ extension Tilemap {
                 let bottom = Float(h - 1 - yBottom) * size.y + Float(r.y0) / 4 * size.y
                 let top = Float(h - 1 - yTop) * size.y + Float(r.y1) / 4 * size.y
                 guard right > left, top > bottom else { return }
+                // A turned one-way box is laid out in its own frame (width and height swap on its side).
+                let half = Vec2((right - left) / 2, (top - bottom) / 2)
                 shapes.append(TilemapColliderShape(
                     name: name, position: Vec2((left + right) / 2, (bottom + top) / 2),
-                    shape: .box(halfExtents: Vec2((right - left) / 2, (top - bottom) / 2)), isOneWay: r.oneWay, layer: layer.name,
-                    cellCount: cells))
+                    shape: .box(halfExtents: r.facing % 2 == 1 ? Vec2(half.y, half.x) : half), isOneWay: r.oneWay, layer: layer.name,
+                    cellCount: cells, angle: Self.angle(facing: r.facing)))
             }
 
             // Solid tiles: greedy rectangles.
@@ -112,14 +128,33 @@ extension Tilemap {
             // Ramps and polygons: one convex shape per cell, around the cell's center.
             for p in polygons {
                 let center = Vec2((Float(p.x) + 0.5) * size.x, (Float(h - 1 - p.y) + 0.5) * size.y)
-                let points = p.points.map { Vec2(($0.x - 0.5) * size.x, ($0.y - 0.5) * size.y) }
-                let oneWay = info[map.cell(layer: li, x: p.x, y: p.y).tile]?.oneWay ?? false
+                var points = p.points.map { Vec2(($0.x - 0.5) * size.x, ($0.y - 0.5) * size.y) }
+                let cell = map.cell(layer: li, x: p.x, y: p.y)
+                let oneWay = info[cell.tile]?.oneWay ?? false
+                let angle = oneWay ? Self.angle(facing: Self.facing(of: cell)) : 0
+                if angle != 0 {
+                    // Into the turned frame: rotate by -angle.
+                    let c = cos(angle), s = sin(angle)
+                    points = points.map { Vec2(c * $0.x + s * $0.y, -s * $0.x + c * $0.y) }
+                }
                 shapes.append(TilemapColliderShape(name: "\(layer.name) shape \(p.x)_\(p.y)", position: center,
-                                                   shape: .polygon(points: points), isOneWay: oneWay, layer: layer.name, cellCount: 1))
+                                                   shape: .polygon(points: points), isOneWay: oneWay, layer: layer.name, cellCount: 1,
+                                                   angle: angle))
             }
         }
         return shapes
     }
+
+    /// Where a cell's tile's up side points after its flips and turns, in quarter turns clockwise.
+    static func facing(of cell: TileCell) -> Int {
+        let up = cell.place(Vec2(0.5, 1)) - cell.place(Vec2(0.5, 0))
+        if up.y > 0.5 { return 0 }
+        if up.x > 0.5 { return 1 }
+        return up.y < -0.5 ? 2 : 3
+    }
+
+    /// The counterclockwise angle of `facing` quarter turns clockwise.
+    static func angle(facing: Int) -> Float { facing == 0 ? 0 : -Float(facing) * .pi / 2 }
 }
 
 extension World {
@@ -129,7 +164,7 @@ extension World {
     @MainActor @discardableResult
     public func spawnTilemapColliders(_ map: Tilemap, at origin: Vec2 = .zero) -> [Entity] {
         map.collisionShapes().map { shape in
-            spawn(Transform(position: Vec3(origin.x + shape.position.x, origin.y + shape.position.y, 0)), Name(shape.name), shape.collider)
+            spawn(shape.transform(at: origin), Name(shape.name), shape.collider)
         }
     }
 }

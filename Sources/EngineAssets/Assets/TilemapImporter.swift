@@ -95,7 +95,7 @@ public struct TilemapImporter: AssetImporter {
         let shapes = map.collisionShapes()
         if !shapes.isEmpty {
             children.append(PrefabNode(name: "Collision", children: shapes.map {
-                PrefabNode(name: $0.name, transform: Transform(position: Vec3($0.position.x, $0.position.y, 0)), collider2D: $0.collider)
+                PrefabNode(name: $0.name, transform: $0.transform(), collider2D: $0.collider)
             }))
         }
         if !map.objects.isEmpty {

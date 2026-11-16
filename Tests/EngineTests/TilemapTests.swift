@@ -152,11 +152,44 @@ private func blank(_ columns: Int = 8, _ rows: Int = 6, layers: [String] = ["Gro
         #expect(colliders.count == 3 && world.get(Transform.self, for: colliders[0])?.position.x == 14)
     }
 
-    @Test func turnedTilesTurnTheirCollision() {
+    @Test func turnedTilesTurnTheirCollision() throws {
         var map = blank(3, 1)
         map.paint(layer: 0, cells: [(0, 0)], TileCell(tile: 18, rotation: 2))   // the platform strip upside down
         let shapes = map.collisionShapes()
         #expect(shapes.count == 1 && abs(shapes[0].position.y - 0.125) < 1e-5)
+        // The upside-down platform faces down: its box is turned half way round.
+        #expect(shapes[0].isOneWay && abs(abs(shapes[0].angle) - .pi) < 1e-5 && shapes[0].shape == .box(halfExtents: Vec2(0.5, 0.125)))
+        // A platform turned a quarter clockwise is a strip on the cell's right side whose landing side faces right.
+        map.paint(layer: 0, cells: [(0, 0)], TileCell(tile: 18, rotation: 1))
+        let side = try #require(map.collisionShapes().first)
+        #expect(abs(side.position.x - 0.875) < 1e-5 && abs(side.position.y - 0.5) < 1e-5 && abs(side.angle + .pi / 2) < 1e-5)
+        #expect(side.shape == .box(halfExtents: Vec2(0.5, 0.125)), "laid out in its own (turned) frame")
+        // Flipping in x keeps an upright platform upright; plain solid tiles never turn.
+        map.paint(layer: 0, cells: [(0, 0)], TileCell(tile: 18, flipX: true))
+        #expect(map.collisionShapes().first?.angle == 0)
+        map.paint(layer: 0, cells: [(0, 0)], TileCell(tile: 16, rotation: 1))
+        #expect(map.collisionShapes().first?.angle == 0)
+    }
+
+    /// A one-way tile turned on its side stops bodies coming from its landing side only.
+    @MainActor @Test func turnedOneWayPlatformsFollowTheirTurn() {
+        var map = blank(3, 3)
+        // A wall of right-facing platforms in the middle column.
+        map.paint(layer: 0, cells: [(1, 0), (1, 1), (1, 2)], TileCell(tile: 18, rotation: 1))
+        func run(from x: Float, speed: Float) -> Float {
+            let world = World()
+            let physics = PhysicsWorld2D()
+            physics.gravity = .zero
+            world.addPhysics2D(physics)
+            world.spawnTilemapColliders(map)
+            let ball = world.spawn(Transform(position: Vec3(x, 1.5, 0)), Collider2D(.circle(radius: 0.2)), RigidBody2D(linearVelocity: Vec2(speed, 0)))
+            for _ in 0..<60 { world.update(dt: 1.0 / 60) }
+            return world.get(Transform.self, for: ball)!.position.x
+        }
+        // From the right, moving left: lands on the platform's right face (x 2) and stays right of it.
+        #expect(run(from: 2.8, speed: -3) > 1.9)
+        // From the left, moving right: passes through.
+        #expect(run(from: 0.3, speed: 3) > 2.5)
     }
 
     @MainActor @Test func importsLayersCollisionAndObjectsAndHotReloads() throws {

@@ -62,7 +62,7 @@ struct TilemapTileProxy: Component, Codable, Equatable {
     static let componentName = "Tilemap Tile"
     static var fieldHints: [String: FieldHints] {
         ["collision": FieldHints(tooltip: "The tile's collision shape (follows flips and turns)"),
-         "oneWay": FieldHints(tooltip: "Bodies pass through from below and land on top"),
+         "oneWay": FieldHints(tooltip: "Bodies pass through from below and land on top (the side the tile's top faces once turned or flipped)"),
          "tags": FieldHints(tooltip: "Comma separated (hazard, ladder…); game code asks Tilemap.hasTag"),
          "points": FieldHints(tooltip: "polygon collision: x y pairs 0-1 (y up), comma separated: 0 0, 1 0, 1 1"),
          "animationFrames": FieldHints(tooltip: "Tile indices to play, comma separated (blank: not animated)"),
