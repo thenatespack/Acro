@@ -177,4 +177,61 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(session.performUndo())
         #expect(session.assets?.materialFile(of: id)?.graph?.output["roughness"] == MaterialGraph.preset("pulse")?.output["roughness"])
     }
+
+    /// Dragging links on the canvas: from an output port onto an input row links them, a linked
+    /// input's port picked up and dropped on nothing deletes the link (or moves it onto another
+    /// input), and links that would make a cycle are refused. The workspace applies them as undo steps.
+    @Test func canvasDragsAndDeletesLinks() throws {
+        let canvas = MaterialGraphCanvas()
+        canvas.graph = MaterialGraph(nodes: [MaterialGraphNode(id: "c", type: "color"), MaterialGraphNode(id: "m", type: "math")],
+                                     output: ["baseColor": .string("c.rgb")])
+        canvas.layout(in: UIRect(x: 0, y: 0, width: 900, height: 400))
+        var links: [(String, String?, String?)] = []
+        canvas.onLink = { links.append(($0, $1, $2)) }
+        func rect(_ id: String) throws -> UIRect { try #require(canvas.nodeRects().first { $0.id == id }?.rect) }
+        func drag(_ from: Vec2, _ to: Vec2) {
+            _ = canvas.handleEvent(.pointerDown(PointerEvent(position: from)))
+            _ = canvas.handleEvent(.pointerDrag(PointerEvent(position: (from + to) / 2)))
+            _ = canvas.handleEvent(.pointerDrag(PointerEvent(position: to)))
+            _ = canvas.handleEvent(.pointerUp(PointerEvent(position: to)))
+        }
+        let m = try rect("m"), c = try rect("c"), outputs = canvas.outputsRect
+        let baseColorRow = try #require(MaterialGraph.outputs.firstIndex { $0.name == "baseColor" })
+        let emissiveRow = try #require(MaterialGraph.outputs.firstIndex { $0.name == "emissive" })
+        // c's output port onto the middle of m's first input row ("a").
+        drag(MaterialGraphCanvas.outputPort(c), MaterialGraphCanvas.inputPort(m, 0) + Vec2(40, 0))
+        #expect(links.count == 1 && links.last?.0 == "c" && links.last?.1 == "m.a" && links.last?.2 == nil)
+        // The output's baseColor link, dropped on nothing: deleted (swizzle kept as the source).
+        drag(MaterialGraphCanvas.inputPort(outputs, baseColorRow), Vec2(outputs.x - 60, 380))
+        #expect(links.count == 2 && links.last?.0 == "c.rgb" && links.last?.1 == nil && links.last?.2 == "output.baseColor")
+        // ... and moved onto emissive.
+        drag(MaterialGraphCanvas.inputPort(outputs, baseColorRow), MaterialGraphCanvas.inputPort(outputs, emissiveRow))
+        #expect(links.count == 3 && links.last?.1 == "output.emissive" && links.last?.2 == "output.baseColor")
+        // Refused: into its own input, a new link dropped on nothing, an unlinked input's port.
+        drag(MaterialGraphCanvas.outputPort(m), MaterialGraphCanvas.inputPort(m, 1))
+        drag(MaterialGraphCanvas.outputPort(m), Vec2(outputs.x - 60, 380))
+        #expect(links.count == 3 && canvas.linkDrag == nil)
+
+        // The workspace writes each one as an undo step.
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
+        let created = try call(session, "materialGraph.new", ["name": "Linked", "graph": [
+            "nodes": [["id": "c", "type": "color"], ["id": "m", "type": "math"]], "output": ["baseColor": "c.rgb"]]])
+        let id = try #require((created["asset"] as? String).flatMap { AssetID($0) })
+        let workspace = MaterialBuilderWorkspace(session: session)
+        #expect(workspace.open(id))
+        workspace.canvas.onLink?("c", "m.a", nil)
+        workspace.update(input: nil, dt: 1.0 / 60)
+        workspace.canvas.onLink?("c.rgb", "output.emissive", "output.baseColor")
+        workspace.update(input: nil, dt: 1.0 / 60)
+        let graph = try #require(session.assets?.materialFile(of: id)?.graph)
+        #expect(graph.node("m")?["a"] == .string("c") && graph.output["emissive"] == .string("c.rgb") && graph.output["baseColor"] == nil)
+        workspace.canvas.onLink?("c.rgb", nil, "output.emissive")
+        workspace.update(input: nil, dt: 1.0 / 60)
+        #expect(session.assets?.materialFile(of: id)?.graph?.output["emissive"] == nil)
+        #expect(session.performUndo())
+        #expect(session.assets?.materialFile(of: id)?.graph?.output["emissive"] == .string("c.rgb"))
+    }
 }

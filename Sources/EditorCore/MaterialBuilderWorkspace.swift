@@ -5,7 +5,9 @@ import Foundation
 // Scene view. The top left previews the material on a sphere, cube, plane or the selected
 // model's mesh, with a light and background picker (orbit with right-drag, Shift pans, the
 // wheel zooms; Animate runs the graph's time). Below it, the graph canvas shows the nodes and
-// their links: click a node to edit it, drag it to move it. The sidebar holds presets, the
+// their links: click a node to edit it, drag it to move it, drag from a node's output port
+// (the dot right of its title) to an input row to link them, and drag a linked input's port
+// away to move the link or, dropped on nothing, delete it. The sidebar holds presets, the
 // material's alpha settings, the PBR outputs, Add Node and the selected node's inputs and
 // settings. Every change is written to the file as one undo step and reimported, which compiles
 // the graph into its shader variant; the preview and placed copies update.
@@ -19,12 +21,20 @@ public final class MaterialGraphCanvas: Widget {
     public var onSelect: ((String?) -> Void)?
     /// Dragged a node to a new grid position.
     public var onMove: ((String, Vec2) -> Void)?
+    /// Dragged a link: `source` (a link such as "noise" or "tex.rgb") to `target` ("node.input"
+    /// or "output.<name>"; nil: dropped on nothing), taken off the input `detached` (nil: a new
+    /// link from an output port). One edit.
+    public var onLink: ((_ source: String, _ target: String?, _ detached: String?) -> Void)?
 
     static let columnWidth: Float = 150, rowHeight: Float = 64, boxWidth: Float = 128
     static let headerHeight: Float = 18, lineHeight: Float = 13
     private var pan = Vec2(16, 12)
     private var drag: (id: String?, start: Vec2, origin: Vec2, moved: Bool)?
     private var dragOffset = Vec2.zero
+    /// A link being dragged: its source, the pointer, and the input it was taken off.
+    private(set) var linkDrag: (source: String, position: Vec2, detached: String?)?
+    /// How close (points) the pointer must be to a port to grab it.
+    static let portRadius: Float = 8
 
     public override init(name: String = "materialGraphCanvas") {
         super.init(name: name)
@@ -71,13 +81,62 @@ public final class MaterialGraphCanvas: Widget {
         MaterialGraphNodeType.catalog[node.type]?.inputs.map(\.name) ?? node.fields.keys.sorted()
     }
 
-    private func nodeRects() -> [(id: String, rect: UIRect)] {
+    func nodeRects() -> [(id: String, rect: UIRect)] {
         let positions = layout()
         return graph.nodes.map { node in
             var grid = positions[node.id] ?? .zero
             if let drag, drag.id == node.id { grid += dragOffset }
             return (node.id, rect(at: grid, rows: inputs(of: node).count))
         }
+    }
+
+    var outputsRect: UIRect { rect(at: Vec2(outputColumn, 0), rows: MaterialGraph.outputs.count) }
+
+    static func outputPort(_ r: UIRect) -> Vec2 { Vec2(r.x + r.width, r.y + headerHeight / 2) }
+    static func inputPort(_ r: UIRect, _ row: Int) -> Vec2 { Vec2(r.x, r.y + headerHeight + (Float(row) + 0.5) * lineHeight) }
+
+    /// Every input row: its target ("node.input" / "output.name"), box and row.
+    private func inputRows() -> [(target: String, rect: UIRect, row: Int)] {
+        var rows: [(String, UIRect, Int)] = []
+        let rects = Dictionary(nodeRects().map { ($0.id, $0.rect) }, uniquingKeysWith: { a, _ in a })
+        for node in graph.nodes {
+            guard let r = rects[node.id] else { continue }
+            for (row, name) in inputs(of: node).enumerated() { rows.append((node.id + "." + name, r, row)) }
+        }
+        let outputs = outputsRect
+        for (row, output) in MaterialGraph.outputs.enumerated() { rows.append(("output." + output.name, outputs, row)) }
+        return rows
+    }
+
+    /// The link string an input holds ("node.input" / "output.name"), if it is linked.
+    func link(at target: String) -> String? {
+        guard let dot = target.lastIndex(of: ".") else { return nil }
+        let owner = String(target[..<dot]), key = String(target[target.index(after: dot)...])
+        let value = owner == "output" && graph.node("output") == nil ? graph.output[key] : graph.node(owner)?[key]
+        if case .string(let s)? = value, MaterialGraphLink(s) != nil { return s }
+        return nil
+    }
+
+    /// The input row under `point` (anywhere on the row, or its port just left of the box).
+    func dropTarget(at point: Vec2) -> String? {
+        inputRows().last { row in
+            let y = row.rect.y + Self.headerHeight + Float(row.row) * Self.lineHeight
+            return point.x >= row.rect.x - Self.portRadius && point.x <= row.rect.x + row.rect.width && point.y >= y && point.y < y + Self.lineHeight
+        }?.target
+    }
+
+    /// Whether linking `source` into `target` would make a cycle (the target's node feeds the source).
+    func makesCycle(source: String, target: String) -> Bool {
+        guard let from = MaterialGraphLink(source)?.node, let dot = target.lastIndex(of: ".") else { return false }
+        let owner = String(target[..<dot])
+        guard owner != "output" || graph.node("output") != nil else { return false }
+        var stack = [from], seen = Set<String>()
+        while let id = stack.popLast() {
+            if id == owner { return true }
+            guard seen.insert(id).inserted, let node = graph.node(id) else { continue }
+            stack += node.links
+        }
+        return false
     }
 
     public override func draw(_ list: UIDrawList, theme: UITheme) {
@@ -87,13 +146,12 @@ public final class MaterialGraphCanvas: Widget {
         list.pushClip(area)
         do {
             let rects = Dictionary(nodeRects().map { ($0.id, $0.rect) }, uniquingKeysWith: { a, _ in a })
-            let outputs = rect(at: Vec2(outputColumn, 0), rows: MaterialGraph.outputs.count)
-            func inputPoint(_ r: UIRect, _ row: Int) -> Vec2 {
-                Vec2(r.x, r.y + Self.headerHeight + (Float(row) + 0.5) * Self.lineHeight)
-            }
-            func wire(from source: String, to point: Vec2) {
-                guard let s = rects[source] else { return }
-                let start = Vec2(s.x + s.width, s.y + Self.headerHeight / 2)
+            let outputs = outputsRect
+            func inputPoint(_ r: UIRect, _ row: Int) -> Vec2 { Self.inputPort(r, row) }
+            let detached = linkDrag?.detached
+            func wire(from source: String, to point: Vec2, target: String? = nil) {
+                guard let s = rects[source], target == nil || target != detached else { return }
+                let start = Self.outputPort(s)
                 let mid = (start.x + point.x) / 2
                 let color = theme.accent.withAlpha(0.8)
                 list.drawLine(from: start, to: Vec2(mid, start.y), width: 1.5, color: color)
@@ -103,12 +161,14 @@ public final class MaterialGraphCanvas: Widget {
             for node in graph.nodes {
                 guard let r = rects[node.id] else { continue }
                 for (row, name) in inputs(of: node).enumerated() {
-                    if case .string(let s)? = node[name], let link = MaterialGraphLink(s) { wire(from: link.node, to: inputPoint(r, row)) }
+                    if case .string(let s)? = node[name], let link = MaterialGraphLink(s) {
+                        wire(from: link.node, to: inputPoint(r, row), target: node.id + "." + name)
+                    }
                 }
             }
             for (row, output) in MaterialGraph.outputs.enumerated() {
                 if case .string(let s)? = graph.output[output.name], let link = MaterialGraphLink(s) {
-                    wire(from: link.node, to: inputPoint(outputs, row))
+                    wire(from: link.node, to: inputPoint(outputs, row), target: "output." + output.name)
                 }
             }
             func box(_ r: UIRect, title: String, rows: [String], highlighted: Bool, linked: [Bool]) {
@@ -130,6 +190,28 @@ public final class MaterialGraphCanvas: Widget {
             }
             box(outputs, title: "Output", rows: MaterialGraph.outputs.map(\.name), highlighted: false,
                 linked: MaterialGraph.outputs.map { if case .string? = graph.output[$0.name] { true } else { false } })
+            // Ports: each node's output, and every input row (filled when linked).
+            func dot(_ c: Vec2, _ r: Float, _ color: UIColor) {
+                list.fillRect(UIRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2), color: color, radii: UICornerRadii(r))
+            }
+            for node in graph.nodes {
+                guard let r = rects[node.id] else { continue }
+                dot(Self.outputPort(r), 3.5, theme.accent)
+            }
+            for row in inputRows() {
+                let linked = link(at: row.target) != nil && row.target != detached
+                dot(Self.inputPort(row.rect, row.row), 3, linked ? theme.accent : theme.controlBorder)
+            }
+            // The link being dragged, to the pointer (highlighting the input it would drop on).
+            if let linkDrag, let source = MaterialGraphLink(linkDrag.source)?.node {
+                if let target = dropTarget(at: linkDrag.position), let row = inputRows().first(where: { $0.target == target }) {
+                    let y = row.rect.y + Self.headerHeight + Float(row.row) * Self.lineHeight
+                    let ok = !makesCycle(source: linkDrag.source, target: target)
+                    list.strokeRect(UIRect(x: row.rect.x, y: y, width: row.rect.width, height: Self.lineHeight),
+                                    color: ok ? theme.accent : UIColor(0.9, 0.3, 0.3, 1), width: 1, radii: UICornerRadii(2))
+                }
+                wire(from: source, to: linkDrag.position)
+            }
         }
         list.popClip()
     }
@@ -137,6 +219,18 @@ public final class MaterialGraphCanvas: Widget {
     public override func handleEvent(_ event: UIEvent) -> Bool {
         switch event {
         case .pointerDown(let e):
+            func near(_ p: Vec2) -> Bool { let d = p - e.position; return (d * d).sum() <= Self.portRadius * Self.portRadius }
+            // An output port starts a new link; a linked input's port picks its link up.
+            if let port = nodeRects().last(where: { near(Self.outputPort($0.rect)) }) {
+                linkDrag = (port.id, e.position, nil)
+                setNeedsDisplay()
+                return true
+            }
+            if let row = inputRows().last(where: { near(Self.inputPort($0.rect, $0.row)) }), let source = link(at: row.target) {
+                linkDrag = (source, e.position, row.target)
+                setNeedsDisplay()
+                return true
+            }
             let hit = nodeRects().last { r in
                 e.position.x >= r.rect.x && e.position.x <= r.rect.x + r.rect.width && e.position.y >= r.rect.y && e.position.y <= r.rect.y + r.rect.height
             }
@@ -146,6 +240,11 @@ public final class MaterialGraphCanvas: Widget {
             onSelect?(hit?.id)
             return true
         case .pointerDrag(let e):
+            if linkDrag != nil {
+                linkDrag?.position = e.position
+                setNeedsDisplay()
+                return true
+            }
             guard var d = drag else { return false }
             let delta = e.position - d.start
             if abs(delta.x) + abs(delta.y) > 3 { d.moved = true }
@@ -158,7 +257,16 @@ public final class MaterialGraphCanvas: Widget {
             }
             setNeedsDisplay()
             return true
-        case .pointerUp:
+        case .pointerUp(let e):
+            if let link = linkDrag {
+                linkDrag = nil
+                setNeedsDisplay()
+                let target = dropTarget(at: e.position)
+                if let target, target == link.detached || makesCycle(source: link.source, target: target) { return true }
+                if target == nil && link.detached == nil { return true }  // a new link dropped on nothing
+                onLink?(link.source, target, link.detached)
+                return true
+            }
             if let d = drag, let id = d.id, d.moved, dragOffset != .zero {
                 onMove?(id, Vec2(max(d.origin.x + dragOffset.x, 0), max(d.origin.y + dragOffset.y, 0)))
             }
@@ -297,6 +405,14 @@ public final class MaterialBuilderWorkspace {
         bar.addChildren([shapePicker, lightPicker, backgroundPicker, animateToggle, closeButton])
 
         canvas.onSelect = { [unowned self] id in select(id) }
+        canvas.onLink = { [unowned self] source, target, detached in
+            edit(target == nil ? "Disconnect" : "Connect") { material in
+                guard var graph = material.graph else { return }
+                if let detached { try? MaterialGraphEditCommand.setInput(detached, to: .null, in: &graph) }
+                if let target { try? MaterialGraphEditCommand.setInput(target, to: .string(source), in: &graph) }
+                material.graph = graph
+            }
+        }
         canvas.onMove = { [unowned self] id, position in
             edit("Move Node") { material in
                 guard let i = material.graph?.index(of: id) else { return }
