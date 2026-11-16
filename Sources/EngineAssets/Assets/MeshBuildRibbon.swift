@@ -61,7 +61,7 @@ extension MeshBuildPart {
         if closed && points.count < 3 { closed = false }
         var samples = (straight ?? false)
             ? MeshGeometry.cornerSamples(points, scales: scales, closed: closed)
-            : MeshGeometry.smoothSamples(points, scales: scales, closed: closed)
+            : MeshGeometry.smoothSamples(points, scales: scales, closed: closed, ringStep: curveRingStep)
         guard samples.count >= 2 else { return nil }
         MeshGeometry.frame(&samples, closed: closed)
 

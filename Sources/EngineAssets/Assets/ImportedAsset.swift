@@ -156,6 +156,8 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
     public var terrain: TerrainSplat?
     /// Worn convex edges (see `EdgeWear`; mesh builds set it).
     public var edgeWear: EdgeWear?
+    /// Sways in the scene's wind (see `MaterialWind`; mesh build plants set it). Not written when nil.
+    public var wind: MaterialWind?
 
     public init(shading: ShadingModel = .pbr, baseColor: Vec4 = Vec4(0.8, 0.8, 0.8, 1), texture: AssetReference? = nil,
                 filter: SamplerFilter = .linear, mipFilter: SamplerMipFilter = .linear, addressMode: SamplerAddressMode = .repeat,
@@ -222,6 +224,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
             emissiveColor: emissiveColor, emissiveTexture: try resolve(emissiveTexture), emissiveStrength: emissiveStrength,
             alphaMode: alphaMode, alphaCutoff: alphaCutoff, doubleSided: doubleSided)
         material.edgeWear = edgeWear
+        material.wind = wind
         material.translucency = min(max(translucency, 0), 1)
         if graph == nil, let terrain {
             // Drawn by the material graph path with the terrain shader; the textures stay in their slots.
@@ -254,7 +257,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         case shading, baseColor, texture, filter, mipFilter, addressMode, uvScale, uvOffset, uvRotation, checker, emissive
         case specular, shininess, metallic, roughness, metallicRoughnessTexture, normalTexture, normalScale
         case occlusionTexture, occlusionStrength, emissiveColor, emissiveTexture, emissiveStrength, alphaMode, alphaCutoff
-        case doubleSided, isTransparent, graph, terrain, edgeWear, translucency
+        case doubleSided, isTransparent, graph, terrain, edgeWear, translucency, wind
     }
 
     public init(from decoder: any Decoder) throws {
@@ -300,6 +303,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         graph = try c.decodeIfPresent(MaterialGraph.self, forKey: .graph)
         terrain = try c.decodeIfPresent(TerrainSplat.self, forKey: .terrain)
         edgeWear = try c.decodeIfPresent(EdgeWear.self, forKey: .edgeWear)
+        wind = try c.decodeIfPresent(MaterialWind.self, forKey: .wind)
     }
 
     /// Writes every key except unset textures. `alphaMode` is written as "opaque", "mask" or "blend".
@@ -337,6 +341,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         try c.encodeIfPresent(graph, forKey: .graph)
         try c.encodeIfPresent(terrain, forKey: .terrain)
         try c.encodeIfPresent(edgeWear, forKey: .edgeWear)
+        try c.encodeIfPresent(wind, forKey: .wind)
     }
 }
 

@@ -52,6 +52,9 @@ public final class MeshBuilderWorkspace {
     private var needsFraming = false
 
     private var renderer: SceneRenderer?
+    /// Seconds the tab has been shown: plants sway by it (`SceneRenderer.windClock`) even while
+    /// the model's world stands still.
+    private var windClock: Float = 0
     private var target: RenderTarget?
     private var outline: SelectionOutlineRenderer?
     private var toolRenderer: DebugDrawRenderer?
@@ -189,6 +192,7 @@ public final class MeshBuilderWorkspace {
         wasDragging = dragging
 
         syncSelection()
+        windClock = (windClock + max(dt, 0)).truncatingRemainder(dividingBy: 3600)
         if isPreviewingAnimation {
             world.update(dt: Double(dt))
         } else {
@@ -244,6 +248,7 @@ public final class MeshBuilderWorkspace {
     public func render(frame: Frame) {
         guard let renderer, let target, let outline, let toolRenderer, let view = currentView, sizer.width > 0 else { return }
         if renderer.assets !== session.assets { renderer.assets = session.assets }
+        renderer.windClock = windClock
         renderer.beginViews(world: world, frame: frame, shadowFocus: view)
         let debugView = DebugView(view: view.view, projection: view.projection, viewportSize: (target.width, target.height),
                                   reversedZ: view.reversedZ)

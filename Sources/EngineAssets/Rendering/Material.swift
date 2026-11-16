@@ -85,6 +85,9 @@ public struct Material {
     /// Worn convex edges (see `EdgeWear`): nil draws none. Needs a mesh with edge coordinates in
     /// its tangents (`EdgeWear.encode`); not used by material graphs.
     public var edgeWear: EdgeWear?
+    /// Sways in the scene's wind (`SceneEnvironment.wind`, see Wind.swift): drawn with the wind
+    /// vertex shaders in every pass. nil (the default) draws as before; not used by material graphs.
+    public var wind: MaterialWind?
 
     public init(shading: ShadingModel = .pbr, baseColor: Vec4 = Vec4(0.8, 0.8, 0.8, 1), texture: GPUTexture? = nil,
                 sampler: SamplerDescriptor = SamplerDescriptor(minFilter: .linear, magFilter: .linear, mipFilter: .linear, addressMode: .repeat),
@@ -133,6 +136,9 @@ public struct Material {
 
     /// Whether it draws with the alpha-tested shader variants (`alphaMode == .mask`).
     package var alphaTested: Bool { alphaMode == .mask && graph == nil }
+
+    /// Whether it draws with the wind vertex shaders (`wind`, not a graph).
+    package var sways: Bool { wind != nil && graph == nil }
 
     /// Whether its shadow and depth prepass cut out what the alpha test discards (`alphaMode ==
     /// .mask`): with the alpha-tested shadow shader, or a masked graph's own depth variant
@@ -261,7 +267,8 @@ public struct MaterialTraits: Equatable, Sendable {
     /// Always drawn in the transparent pass (`Material.isTransparent` or base alpha < 1).
     public var blends: Bool
     /// Alpha-tested (`AlphaMode.mask`): its shadow casters are batched per material, since the
-    /// shadow pass samples its base color alpha.
+    /// shadow pass samples its base color alpha. `SceneRenderer` also sets it for materials that
+    /// sway in the wind (`Material.sways`), whose depth passes need their material too.
     public var alphaTested: Bool
 
     public init(blends: Bool = false, alphaTested: Bool = false) {

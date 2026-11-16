@@ -1,6 +1,7 @@
-// SceneRenderer's lit forward vertex shader, included by mesh.vert and by mesh_paint.vert (which
+// SceneRenderer's lit forward vertex shader, included by mesh.vert, mesh_paint.vert (which
 // defines VERTEX_PAINT: the mesh's vertex paint stream, vertex buffer 2, attributes 14 and 15,
-// which unskinned meshes leave free; see `VertexPaint`). Not compiled on its own; rerun
+// which unskinned meshes leave free; see `VertexPaint`), mesh_wind.vert (which defines WIND: the
+// object-space position sways first, wind.glsl) and mesh_paint_wind.vert (both). Not compiled on its own; rerun
 // Scripts/compile-shaders.sh after editing it.
 // Must match `SceneRenderer.FrameUniforms`.
 layout(set = 0, binding = 0, std140) uniform Frame {
@@ -16,6 +17,10 @@ layout(set = 0, binding = 0, std140) uniform Frame {
     vec4 groundColor;       // rgb: hemisphere ground color, w: height fog falloff
     vec4 shadowParams;      // x: shadow-map texel size, y: depth bias, z: PCF radius in texels
 } frame;
+
+#ifdef WIND
+#include "wind.glsl"
+#endif
 
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
@@ -53,8 +58,17 @@ layout(location = 10) out vec4 vPaintSurface;
 void main() {
     mat4 model = mat4(model0, model1, model2, model3);
     mat4 previousModel = mat4(previous0, previous1, previous2, previous3);
+#ifdef WIND
+    // Sway at this frame's time, and at last frame's for the motion vector (`precise` keeps
+    // Metal and Vulkan in step). Normals don't turn with the sway.
+    vec3 swayed = windSwayed(inPosition, model, wind.clock.x);
+    vec3 previousSwayed = windSwayed(inPosition, previousModel, wind.clock.y);
+    precise vec4 world = model * vec4(swayed, 1.0);
+    precise vec4 previousWorld = previousModel * vec4(previousSwayed, 1.0);
+#else
     vec4 world = model * vec4(inPosition, 1.0);
     vec4 previousWorld = previousModel * vec4(inPosition, 1.0);
+#endif
 
     // The cofactor matrix is the inverse transpose up to a scale factor, so it transforms
     // normals correctly for any affine model matrix (non-uniform scale under a rotated

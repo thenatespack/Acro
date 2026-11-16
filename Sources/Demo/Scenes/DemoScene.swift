@@ -113,4 +113,5 @@ extension DemoScene {
     FacadesScene.self,
     FogScene.self,
     ReflectionsScene.self,
+    ForestScene.self,
 ]

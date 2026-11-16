@@ -194,8 +194,30 @@ plus a crown: 100,796 → ~8.8k triangles), new Shrub (~3k, with grass and wildf
 Fern (lathe pot, fern ribbons, ~8.7k), Small Pine (needle cards on six whorls, ~11.4k). Editor:
 Foliage button (a broadleaf crown), Leaves / Card size / Density / Count / Seed / Grows on / From
 rows, Ribbon width and Open profile on sweeps, a leaf look picker on planes and ribbons.
-Plants not done: no wind (no vertex sway or shader wind); no LODs or impostors, so a forest pays
-full triangles per tree (and no instancing of one foliage mesh across trees); mipmaps are plain box
+Game-ready plants (importer version 9): wind, detail levels with impostors, verified instancing.
+See docs/Builders.md › Game-ready plants. Wind: `SceneEnvironment.wind` (direction, strength,
+gustiness; default a 0.5 breeze; `component.setField "SceneEnvironment.wind.strength"`) sways
+materials with `MaterialWind` (flutter, bend, height, origin, up in the mesh's space); plant parts
+get one at import (leaves flutter 1, sweeps/lofts 0.08, other parts none; file `wind` scales,
+0 = still). Sway is in new vertex shaders only (wind.glsl in mesh_wind.vert / mesh_shadow_wind.vert):
+trunk bend along the wind ∝ h² / height from the plant's base, a bend²/2h drop, per-vertex flutter
+from a noise of the object position, gusts and sway phased by the plant base's world position;
+previous-frame sway for motion vectors; shadows and depth prepasses use the same displacement.
+Detail levels at import (`lod`, default on for plants; `lodDistances`): level 1 half the cards
+(1.3x, about their stems) and other parts (not sculpts) at half the segments and sweep rings, without AO tessellation (or trunk noise)
+(AO copied from the nearest full-detail vertex), level 2 a quarter (1.75x, nested subset) and a third
+of the segments, level 3 a CPU-baked impostor (3 crossed quads, 512 px albedo + tangent-space normal
+atlas; importers can't use the GPU); parts with equal materials merge at levels 1+; all parts
+measure to one plant sphere and switch at 8/16/32 x its radius. Results add `lodTriangles` and
+`lodDistances`; `meshBuild.preview` is still air at full detail; the tab sways (its own clock).
+Instancing already existed (RenderList batches equal mesh + material); verified for prefab copies.
+Shared rendering changes: `Material.wind` / `MaterialAsset.wind` (optional, not written when nil),
+`Material.sways`, `SceneEnvironment.wind`, `MeshLOD.sphere` / `.materials` / empty level meshes
+(draw nothing), `RenderPrep.lodKeys`, `SceneRenderer.windClock`, `PipelineKey.wind`,
+`DepthChoice.wind`, `MaterialTraits.alphaTested` also set for swaying materials (their depth batches
+keep the material), material buffer 2 bound to both stages for swaying materials only. Demo scene
+`forest` (200 Gnarled Trees).
+Plants not done: mipmaps are plain box
 filters, so distant cards thin out a little (the low alpha cutoff hides most of it; no
 coverage-preserving mips or alpha-to-coverage); crossed tufts read as thin lines from straight
 above; leaves `on` a part are placed at rest, so an animated branch leaves its leaves

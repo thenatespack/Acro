@@ -144,26 +144,45 @@ public struct RenderPrep {
     /// The `MeshLOD` level `entity` drew in the last gather (nil if it has none or nothing was measured).
     public func lodLevel(of entity: Entity) -> Int? { lodLevels[entity]?.level }
 
-    /// The mesh and material keys `renderer` draws with this frame under `lod`. A level or material
-    /// that isn't registered yet is reported missing (so it loads) and the entity keeps what it drew.
+    /// The mesh and material keys `renderer` draws with this frame under `lod` (an empty mesh key:
+    /// nothing at this level). A level's mesh or material that isn't registered yet is reported
+    /// missing (so it loads) and the entity keeps what it drew.
     private mutating func lodKeys(_ lod: MeshLOD, entity: Entity, renderer: MeshRenderer, model: Mat4) -> (mesh: String, material: String) {
         var materialKey = renderer.material.key
         if lowQuality, let low = lod.lowQualityMaterial?.key {
             if materials.contains(low) { materialKey = low } else { missingKeys.insert(low); missingMaterialKeys.insert(low) }
         }
-        guard let eye = lodViewpoint, let base = meshes.id(of: renderer.mesh.key) else { return (renderer.mesh.key, materialKey) }
-        let distance = MeshLOD.distance(from: eye, to: meshes[base].transformed(by: model))
+        guard let eye = lodViewpoint else { return (renderer.mesh.key, materialKey) }
+        let distance: Float
+        if let sphere = lod.sphere {
+            distance = MeshLOD.distance(from: eye, toSphere: sphere, model: model)
+        } else {
+            guard let base = meshes.id(of: renderer.mesh.key) else { return (renderer.mesh.key, materialKey) }
+            distance = MeshLOD.distance(from: eye, to: meshes[base].transformed(by: model))
+        }
         let previous = lodLevels[entity]?.level ?? -1
         var level = lod.level(distance: distance, current: previous)
-        let key = lod.mesh(level: level, base: renderer.mesh).key
-        if level > 0 && !meshes.contains(key) {
-            missingKeys.insert(key)
-            missingMeshKeys.insert(key)
+        // Whether a level's mesh and material are ready, reporting what isn't.
+        func ready(_ level: Int, report: Bool) -> Bool {
+            guard level > 0 else { return true }
+            let key = lod.mesh(level: level, base: renderer.mesh).key
+            var ok = true
+            if !key.isEmpty && !meshes.contains(key) {
+                if report { missingKeys.insert(key); missingMeshKeys.insert(key) }
+                ok = false
+            }
+            if let material = lod.material(level: level)?.key, !materials.contains(material) {
+                if report { missingKeys.insert(material); missingMaterialKeys.insert(material) }
+                ok = false
+            }
+            return ok
+        }
+        if !ready(level, report: true) {
             level = max(previous, 0)
-            if level > 0 && !meshes.contains(lod.mesh(level: level, base: renderer.mesh).key) { level = 0 }
+            if !ready(level, report: false) { level = 0 }
         }
         lodLevels[entity] = (level, lodFrame)
-        return (lod.mesh(level: level, base: renderer.mesh).key, materialKey)
+        return (lod.mesh(level: level, base: renderer.mesh).key, lod.material(level: level)?.key ?? materialKey)
     }
 
     /// Rebuilds `items` from every visible entity with a `GlobalTransform` and a
@@ -182,6 +201,7 @@ public struct RenderPrep {
             if hasLODs, let lod = world.get(MeshLOD.self, for: entity) {
                 (meshKey, materialKey) = lodKeys(lod, entity: entity, renderer: renderer, model: transform.matrix)
                 lodSeen += 1
+                if meshKey.isEmpty { return }  // nothing at this level
             }
             let mesh = meshes.id(of: meshKey), material = materials.id(of: materialKey)
             guard let mesh, let material else {

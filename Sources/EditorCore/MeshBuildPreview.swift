@@ -78,13 +78,17 @@ struct MeshBuildPreviewScene {
          meshes: (MeshHandle) -> MeshGeometry?) throws {
         world.spawn(Transform(rotation: Quat(eulerDegrees: Vec3(-55, 35, 0))), Name("Light"),
                     DirectionalLight(intensity: 2.2, castsShadows: true))
-        world.spawn(Name("Environment"), environment.sceneEnvironment)
+        // Still air, so the images don't depend on when they're taken (plants sway in the tab).
+        var still = environment.sceneEnvironment
+        still.wind = .calm
+        world.spawn(Name("Environment"), still)
         world.addBuiltinAnimationSystems()
         guard let root = world.instantiate(prefab).first else { throw CommandError.failed("The mesh build's model didn't load") }
         var stack = world.children(of: root)
         while let entity = stack.popLast() {
             if let name = world.get(Name.self, for: entity)?.value, parts[name] == nil { parts[name] = entity }
             world.remove(FieldAnimator.self, from: entity)  // the rest pose unless an animation is asked for
+            world.remove(MeshLOD.self, from: entity)  // full detail, however far the auto-framed camera is
             stack += world.children(of: entity)
         }
         world.propagateTransforms()
