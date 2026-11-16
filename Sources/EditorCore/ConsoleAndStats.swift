@@ -45,6 +45,8 @@ public final class ConsolePanel {
         clearButton.icon = EditorIcons.named("eraser")
         clearButton.action = { [unowned self] in if let onClear { onClear() } else { log.clear() } }
         clearButton.command = "log.clear"
+        // An MCP client reads the same entries with log.read (there's no clipboard to copy to).
+        copyButton.command = "log.read"
         filter.command = "log.read"
         filter.tooltip = "Show only messages at this level or above"
         clearButton.tooltip = "Clear the console"
