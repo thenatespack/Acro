@@ -343,3 +343,31 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(session.assets?.pixelSprite(of: id)?.layers[1].blend == .multiply)
     }
 }
+
+#if os(macOS)
+import QuartzCore
+
+@MainActor
+@Suite struct PixelSpriteSceneViewTests {
+    @Test func sceneViewQueuesSpriteComponentsFromSpriteAssets() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("PixelSpriteSceneViewTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
+        var sprite = PixelSprite(width: 4, height: 4, frameCount: 2)
+        sprite.stamp(rows: ["11", "11"], frame: 0, layer: 0)
+        try #require(session.createPixelSpriteAsset(in: "Sprites", name: "Hero", sprite: sprite))
+
+        let drawer = SceneSpriteDrawer(device: try MetalRenderDevice(layer: CAMetalLayer(), sampleCount: 1))
+        let world = World()
+        world.spawn(Transform(), Sprite(atlas: SpriteAtlasHandle("Sprites/Hero.sprite"), frame: 1))
+        world.spawn(Transform(), Sprite(atlas: SpriteAtlasHandle("not-a-sprite")))
+        world.spawn(Transform(), Sprite(atlas: SpriteAtlasHandle("Sprites/Hero.sprite"), visible: false))
+        world.propagateTransforms()
+        #expect(drawer.prepare(world: world, assets: session.assets, reversedZ: true) == 1, "unknown atlases and hidden sprites are skipped")
+        #expect(drawer.prepare(world: World(), assets: session.assets, reversedZ: true) == 0)
+        #expect(drawer.prepare(world: world, assets: nil, reversedZ: false) == 0, "no project: nothing to load")
+    }
+}
+#endif
