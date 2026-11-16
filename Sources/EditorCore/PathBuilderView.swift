@@ -55,6 +55,35 @@ struct PathTerrainComponent: Component {
     func encode(to encoder: any Encoder) throws { try terrain.encode(to: encoder) }
 }
 
+/// The Shape Terrain form (width 0: the widest profile).
+struct PathShapingComponent: Component {
+    static var componentName: String { "Path Terrain Shaping" }
+    static var fieldHints: [String: FieldHints] {
+        ["mode": FieldHints(tooltip: "flatten: cut and fill; carve: only lower (cuttings, river beds); raise: only raise (embankments)"),
+         "width": FieldHints(range: 0...1000, step: 0.1, tooltip: "Meters across the flat part (0: the widest profile)"),
+         "shoulder": FieldHints(range: 0...1000, step: 0.1, tooltip: "Meters over which it blends back into the terrain at each side"),
+         "depth": FieldHints(range: -100...100, step: 0.05, tooltip: "Meters below the path's ground level (a river bed, a sunken lane)"),
+         "smoothing": FieldHints(range: 0...1000, step: 0.5, tooltip: "Meters along the path the ground level is averaged over")]
+    }
+    var mode: PathTerrainShapeMode
+    var width: Float
+    var shoulder: Float
+    var depth: Float
+    var smoothing: Float
+
+    init(_ s: PathTerrainShaping) {
+        mode = s.mode
+        width = s.width ?? 0
+        shoulder = s.shoulder
+        depth = s.depth
+        smoothing = s.smoothing
+    }
+
+    var shaping: PathTerrainShaping {
+        PathTerrainShaping(mode: mode, width: width > 0 ? width : nil, shoulder: shoulder, depth: depth, smoothing: smoothing)
+    }
+}
+
 struct PathPointComponent: Component {
     static var componentName: String { "Path Point" }
     static var fieldHints: [String: FieldHints] { PathPoint.fieldHints }
@@ -137,6 +166,9 @@ public final class PathBuilderView {
     /// An edit made by a widget callback, applied on the next `refresh` so no widget is torn
     /// down while it is handling an event.
     private var pending: (build: PathBuild, label: String)?
+    /// The Shape Terrain form's settings, and what the last shaping did.
+    public var shaping = PathTerrainShaping()
+    private(set) var lastShape: String?
 
     /// Call every frame: applies the pending edit and keeps the grids in step with their proxies.
     public func refresh() {
@@ -376,6 +408,42 @@ public final class PathBuilderView {
         view.addChild(note(build.terrain.isOn
             ? "Every sample and piece sits on the terrain (point heights are ignored). Place the path where the terrain is, or set the offset."
             : "Pick a .terrain to make the path hug its ground."))
+        guard build.terrain.isOn else { return }
+
+        view.addChild(Label("Shape the terrain", role: .secondary))
+        let shapingEntity = formWorld.spawn(PathShapingComponent(shaping))
+        formEntities.append(shapingEntity)
+        let shapingGrid = makeGrid(shapingEntity, name: "pathShapingGrid")
+        shapingGrid.command = PathFlattenTerrainCommand.id.rawValue
+        shapingGrid.onFieldEdit = { [unowned self] edit in
+            do { try formWorld.setField(edit.path, of: PathShapingComponent.componentName, for: shapingEntity, to: edit.newValue) } catch {
+                session.log.error("Path terrain shaping \(edit.path): \(error)")
+                return
+            }
+            if let value = formWorld.get(PathShapingComponent.self, for: shapingEntity) { shaping = value.shaping }
+        }
+        view.addChild(shapingGrid)
+        let shape = Button("Shape Terrain", name: "pathShapeTerrain") { [unowned self] in shapeTerrain() }
+        shape.tooltip = "Writes the terrain's heights under the path (one undo step); the path then follows the new ground"
+        view.addChild(shape)
+        if let lastShape { view.addChild(note(lastShape)) }
+    }
+
+    /// Shapes the followed terrain under the path with the form's settings (one undo step).
+    public func shapeTerrain() {
+        refresh()  // a pending form edit goes in first
+        do {
+            let (terrain, report) = try session.shapeTerrain(under: asset, shaping)
+            let name = session.assets?.path(of: terrain) ?? terrain.description
+            lastShape = report.changedSamples == 0
+                ? "\(name) already fits the path."
+                : String(format: "Moved %d height samples of %@ (up to %.2f m).", report.changedSamples, name, report.largestChange)
+                    + (report.clampedSamples > 0 ? " \(report.clampedSamples) hit the terrain's height range." : "")
+        } catch {
+            lastShape = "\(error)"
+            session.log.error("Shape Terrain: \(error)")
+        }
+        reload()
     }
 
     private func addSummary() {

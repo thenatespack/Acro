@@ -113,7 +113,7 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(warnings.contains { $0.contains("at least 2 points") })
         #expect(warnings.contains { $0.contains("no terrain file") })
         #expect(warnings.contains { $0.contains("Lamp") })
-        #expect(PathOpenCommand.id == "path.open" && EditorPathCommands.all.count == 6)
+        #expect(PathOpenCommand.id == "path.open" && EditorPathCommands.all.count == 7)
     }
 }
 
@@ -232,5 +232,54 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(session.performUndo() && session.performUndo() && session.performUndo())
         view.reload()
         #expect(view.build == PathBuild.preset(.wall))
+    }
+
+    @Test func flatteningTheTerrainIsOneUndoStepAndThePathFollowsIt() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
+        let assets = try #require(session.assets)
+        var ground = Terrain(size: Vec2(64, 64), resolution: 65, heightRange: 20, chunkCells: 16)
+        ground.normalizeData()
+        for z in 0..<ground.res { for x in 0..<ground.res { ground.heightData[z * 65 + x] = UInt16((5 + Float(x % 3)) / 20 * 65535) } }
+        let terrain = try assets.createTerrain(ground, at: "Maps/rough.terrain")
+        var build = PathBuild.preset(.road)
+        build.terrain = PathTerrain(asset: "Maps/rough.terrain", height: 0.05)
+        let id = try #require(session.createPathBuildAsset(in: "", name: "Road", build: build))
+        let before = try #require(assets.terrain(of: terrain))
+
+        let result = try call(session, "path.flattenTerrain", ["path": "Road.path", "shoulder": 2])
+        #expect(result["terrain"] as? String == "Maps/rough.terrain")
+        #expect((result["changedSamples"] as? Int ?? 0) > 50)
+        let after = try #require(assets.terrain(of: terrain))
+        #expect(after.heightData != before.heightData)
+        // The road now sits on level ground: its samples barely rise and fall.
+        let samples = try #require(assets.pathSamples(of: id)).samples
+        let heights = samples.map(\.position.y)
+        #expect((heights.max() ?? 0) - (heights.min() ?? 0) < 1.2)
+
+        #expect(session.performUndo())
+        #expect(assets.terrain(of: terrain)?.heightData == before.heightData)
+        #expect(session.performRedo())
+        #expect(assets.terrain(of: terrain)?.heightData == after.heightData)
+
+        // The tab's Shape Terrain button does the same with its form's settings.
+        #expect(session.performUndo())
+        let workspace = PathBuilderWorkspace(session: session)
+        #expect(workspace.open(id))
+        let view = try #require(workspace.builder)
+        view.shaping = PathTerrainShaping(mode: .carve, width: 6, shoulder: 1, depth: 1, smoothing: 0)
+        view.shapeTerrain()
+        #expect(view.lastShape?.hasPrefix("Moved") == true)
+        let carved = try #require(assets.terrain(of: terrain))
+        #expect(zip(carved.heightData, before.heightData).allSatisfy { $0 <= $1 })
+
+        // A path that follows no terrain needs one named.
+        build.terrain = PathTerrain()
+        _ = try #require(session.createPathBuildAsset(in: "", name: "Loose", build: build))
+        #expect(throws: (any Error).self) { try call(session, "path.flattenTerrain", ["path": "Loose.path"]) }
+        let named = try call(session, "path.flattenTerrain", ["path": "Loose.path", "terrain": "Maps/rough.terrain", "smoothing": 0])
+        #expect((named["changedSamples"] as? Int ?? 0) > 0)
     }
 }

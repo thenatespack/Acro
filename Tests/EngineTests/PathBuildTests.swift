@@ -210,6 +210,62 @@ private func straight(_ length: Float = 20) -> PathBuild {
     }
 }
 
+private func bumpyTerrain() -> Terrain {
+    var t = Terrain(size: Vec2(64, 64), resolution: 65, heightRange: 20, chunkCells: 16)
+    t.normalizeData()
+    for z in 0..<t.res {
+        for x in 0..<t.res {
+            let p = t.position(x: x, z: z)
+            let h = 6 + sinf(p.y * 0.9) + p.x * 0.05
+            t.heightData[z * t.res + x] = UInt16(h / 20 * 65535)
+        }
+    }
+    return t
+}
+
+@Suite struct PathBuildTerrainShapingTests {
+    @Test func flatteningLevelsTheGroundUnderTheRoadAndBlendsAtTheShoulders() {
+        var build = straight()
+        build.terrain = PathTerrain(asset: "Maps/bumpy.terrain", height: 0.05)
+        let ground = bumpyTerrain()
+        #expect(build.profileWidth == 2)
+        let (flat, report) = build.shapeTerrain(ground, PathTerrainShaping(width: 4, shoulder: 3, smoothing: 30))
+        #expect(report.changedSamples > 0 && report.clampedSamples == 0)
+        for z in stride(from: Float(-18), through: -2, by: 2) {
+            // Level across the road, and smoothed along it (the bumps along z mostly gone).
+            #expect(abs(flat.heightAt(x: -1.5, z: z) - flat.heightAt(x: 1.5, z: z)) < 0.01)
+            #expect(abs(flat.heightAt(x: 0, z: z) - 6) < 0.35)
+        }
+        // Past the shoulder: untouched; inside it: between the two.
+        #expect(flat.heightAt(x: 8, z: -10) == ground.heightAt(x: 8, z: -10))
+        let mid = flat.heightAt(x: 3.5, z: -10), road = flat.heightAt(x: 0, z: -10), wild = ground.heightAt(x: 3.5, z: -10)
+        #expect(mid > min(road, wild) - 0.01 && mid < max(road, wild) + 0.01)
+        // Shaping again changes nothing much.
+        let (_, again) = build.shapeTerrain(flat, PathTerrainShaping(width: 4, shoulder: 3, smoothing: 30))
+        #expect(again.largestChange < 0.4)
+    }
+
+    @Test func carveOnlyLowersRaiseOnlyRaises() {
+        var build = straight()
+        build.terrain = PathTerrain(asset: "Maps/bumpy.terrain", height: 0)
+        let ground = bumpyTerrain()
+        let (carved, _) = build.shapeTerrain(ground, PathTerrainShaping(mode: .carve, width: 3, shoulder: 1, depth: 1.5, smoothing: 0))
+        let (raised, _) = build.shapeTerrain(ground, PathTerrainShaping(mode: .raise, width: 3, shoulder: 1, depth: -1.5, smoothing: 0))
+        for k in ground.heightData.indices {
+            #expect(carved.heightData[k] <= ground.heightData[k])
+            #expect(raised.heightData[k] >= ground.heightData[k])
+        }
+        #expect(abs(carved.heightAt(x: 0, z: -10) - (ground.heightAt(x: 0, z: -10) - 1.5)) < 0.05, "a bed 1.5 m down")
+        #expect(abs(raised.heightAt(x: 0, z: -10) - (ground.heightAt(x: 0, z: -10) + 1.5)) < 0.05, "an embankment 1.5 m up")
+
+        // A path that doesn't follow the terrain shapes it to its own heights.
+        var bridge = straight()
+        bridge.points = bridge.points.map { PathPoint($0.position + Vec3(0, 10, 0)) }
+        let (fill, _) = bridge.shapeTerrain(ground, PathTerrainShaping(width: 2, shoulder: 0))
+        #expect(abs(fill.heightAt(x: 0, z: -10) - 10) < 0.01)
+    }
+}
+
 // MARK: PathFollower
 
 @MainActor private func run(_ world: World, _ seconds: Double, dt: Double = 0.1) {

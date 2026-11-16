@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 245 tools.
+named by its id (see README › Use the editor › AI control). 246 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -36,7 +36,7 @@ optional arguments.
 | `meshBuild` | [`meshBuild.edit`](#meshbuildedit), [`meshBuild.get`](#meshbuildget), [`meshBuild.new`](#meshbuildnew), [`meshBuild.open`](#meshbuildopen), [`meshBuild.set`](#meshbuildset) |
 | `net` | [`net.overlay`](#netoverlay), [`net.setConditions`](#netsetconditions), [`net.start`](#netstart), [`net.stats`](#netstats), [`net.stop`](#netstop), [`net.view`](#netview) |
 | `panel` | [`panel.close`](#panelclose), [`panel.dock`](#paneldock), [`panel.focus`](#panelfocus), [`panel.list`](#panellist), [`panel.open`](#panelopen) |
-| `path` | [`path.edit`](#pathedit), [`path.get`](#pathget), [`path.new`](#pathnew), [`path.open`](#pathopen), [`path.sample`](#pathsample), [`path.set`](#pathset) |
+| `path` | [`path.edit`](#pathedit), [`path.flattenTerrain`](#pathflattenterrain), [`path.get`](#pathget), [`path.new`](#pathnew), [`path.open`](#pathopen), [`path.sample`](#pathsample), [`path.set`](#pathset) |
 | `play` | [`play.pause`](#playpause), [`play.setTimeScale`](#playsettimescale), [`play.start`](#playstart), [`play.state`](#playstate), [`play.step`](#playstep), [`play.stop`](#playstop), [`play.toggle`](#playtoggle) |
 | `postfx` | [`postfx.assign`](#postfxassign), [`postfx.edit`](#postfxedit), [`postfx.get`](#postfxget), [`postfx.new`](#postfxnew), [`postfx.open`](#postfxopen), [`postfx.set`](#postfxset) |
 | `prefab` | [`prefab.apply`](#prefabapply), [`prefab.create`](#prefabcreate), [`prefab.createVariant`](#prefabcreatevariant), [`prefab.overrides`](#prefaboverrides), [`prefab.revert`](#prefabrevert), [`prefab.unpack`](#prefabunpack) |
@@ -2313,6 +2313,30 @@ Result:
 - `profiles`: [string]
 - `terrain?`: string
 - `warnings`: [string]
+
+### `path.flattenTerrain`
+
+**Flatten Terrain Under Path**
+
+Shapes a .terrain's heights to a .path, writing them into the .terrain file as one undo step: under the path (`width` meters across, default the widest profile) the ground is set to the path's ground level (the centerline on the followed terrain averaged over `smoothing` meters, less `depth`; or the path's own heights when it doesn't follow that terrain), blending back over `shoulder` meters each side. mode: flatten (cut and fill), carve (only lower: cuttings, river beds with `depth`) or raise (only raise: embankments). The terrain is the one the path follows unless `terrain` names another. The path then reimports onto the new ground. Cross-sections come out level (banking is ignored).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `depth?`: number
+- `mode?`: "flatten" \| "carve" \| "raise"
+- `path?`: string
+- `shoulder?`: number
+- `smoothing?`: number
+- `terrain?`: string
+- `width?`: number
+
+Result:
+
+- `changedSamples`: integer
+- `clampedSamples`: integer
+- `largestChange`: number
+- `terrain`: string
 
 ### `path.get`
 
