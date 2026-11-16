@@ -74,6 +74,10 @@ public struct Material {
     public var alphaCutoff: Float
     /// Draws back faces too (no culling). PBR materials light back faces with the flipped normal.
     public var doubleSided: Bool
+    /// A compiled material graph (`MaterialAsset.graph`): draws with its shader variant, which
+    /// computes the PBR inputs itself. Its textures are in the five texture fields, in slot order;
+    /// the color, factor and UV fields are unused.
+    public var graph: MaterialGraphProgram?
 
     public init(shading: ShadingModel = .pbr, baseColor: Vec4 = Vec4(0.8, 0.8, 0.8, 1), texture: GPUTexture? = nil,
                 sampler: SamplerDescriptor = SamplerDescriptor(minFilter: .linear, magFilter: .linear, mipFilter: .linear, addressMode: .repeat),
@@ -107,6 +111,7 @@ public struct Material {
         self.alphaMode = alphaMode
         self.alphaCutoff = alphaCutoff
         self.doubleSided = doubleSided
+        graph = nil
     }
 
     /// Always draws in the transparent pass, even at full opacity (`alphaMode == .blend`).
@@ -120,7 +125,7 @@ public struct Material {
     package var blends: Bool { alphaMode == .blend || (alphaMode == .opaque && baseColor.w < 1) }
 
     /// Whether it draws with the alpha-tested shader variants (`alphaMode == .mask`).
-    package var alphaTested: Bool { alphaMode == .mask }
+    package var alphaTested: Bool { alphaMode == .mask && graph == nil }
 
     /// The UV transform as the rows of a 2x3 matrix: `uv' = (dot(row0.xy, uv) + row0.z, dot(row1.xy, uv) + row1.z)`.
     package var uvTransformRows: (Vec4, Vec4) {

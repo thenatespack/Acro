@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 166 tools.
+named by its id (see README › Use the editor › AI control). 173 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -27,6 +27,7 @@ optional arguments.
 | `layout` | [`layout.reset`](#layoutreset) |
 | `log` | [`log.clear`](#logclear), [`log.read`](#logread) |
 | `material` | [`material.get`](#materialget), [`material.set`](#materialset) |
+| `materialGraph` | [`materialGraph.assign`](#materialgraphassign), [`materialGraph.edit`](#materialgraphedit), [`materialGraph.get`](#materialgraphget), [`materialGraph.new`](#materialgraphnew), [`materialGraph.nodes`](#materialgraphnodes), [`materialGraph.open`](#materialgraphopen), [`materialGraph.set`](#materialgraphset) |
 | `meshBuild` | [`meshBuild.edit`](#meshbuildedit), [`meshBuild.get`](#meshbuildget), [`meshBuild.new`](#meshbuildnew), [`meshBuild.open`](#meshbuildopen), [`meshBuild.set`](#meshbuildset) |
 | `net` | [`net.overlay`](#netoverlay), [`net.setConditions`](#netsetconditions), [`net.start`](#netstart), [`net.stats`](#netstats), [`net.stop`](#netstop), [`net.view`](#netview) |
 | `panel` | [`panel.close`](#panelclose), [`panel.dock`](#paneldock), [`panel.focus`](#panelfocus), [`panel.list`](#panellist), [`panel.open`](#panelopen) |
@@ -987,6 +988,168 @@ Arguments:
 - `previous?`: {addressMode?: "repeat" \| "clampToEdge" \| "mirrorRepeat", alphaCutoff?: number, alphaMode?: "opaque" \| "mask" \| "blend", baseColor?: number[4], checker?: boolean, doubleSided?: boolean, emissive?: number, emissiveColor?: number[3], emissiveStrength?: number, emissiveTexture?: asset id, filter?: "linear" \| "nearest", metallic?: number, metallicRoughnessTexture?: asset id, mipFilter?: "linear" \| "nearest" \| "none", normalScale?: number, normalTexture?: asset id, occlusionStrength?: number, occlusionTexture?: asset id, roughness?: number, shading?: "pbr" \| "blinnPhong", shininess?: number, specular?: number, texture?: asset id, uvOffset?: number[2], uvRotation?: number, uvScale?: number[2]}
 - `reset?`: boolean
 - `transient?`: boolean
+
+## materialGraph
+
+### `materialGraph.assign`
+
+**Assign Material Graph** · _undoable_
+
+Sets the MeshRenderer.material of an entity (default: the selected one), and with `children: true` of every MeshRenderer below it (a placed model or prefab), to a .material file. Undoable, one step. Mesh build parts use a material through their `material` key instead. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `children?`: boolean
+- `entity?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `path?`: string
+
+Result:
+
+- `entities`: [entity id]
+- `path`: string
+
+### `materialGraph.edit`
+
+**Edit Material Graph** · _undoable_
+
+Changes a .material file's node graph in one undoable step, in this order: optional `preset` restart, `removeNodes`, `addNodes` ({type, id?, ...keys}), `params` ({nodeId: {key: value}}), `connect` ([{from, to}] with to "node.input" or "output.<pbr input>"), `disconnect` (["node.input"]), `output`, `settings`. A material without a graph gets an empty one first. Returns the full graph, the ids of added nodes and warnings. A material graph lives in a .material file's `graph` key: {"nodes": [...], "output": {...}}. A node is {"id", "type", ...keys}; an input key holds a constant (number or [2-4 numbers]) or a link "nodeId" / "nodeId.swizzle" ("tex.rgb", "n.x"); a link may also name a built-in: uv, position, normal, viewDir, vertexColor, time. Sizes convert as in GLSL (a scalar fills a vector). Node types: color, value, vector, uv, position, normal, viewDir, vertexColor, time, texture, triplanar, noise, scrollUV, rotateUV, math, blend, fresnel, combine, remap (see materialGraph.nodes for inputs and settings). `output` maps the PBR inputs baseColor (vec3, default 0.8,0.8,0.8), opacity (float, default 1), normal (vec3, default 0,0,1), metallic (float, default 0), roughness (float, default 0.5), emissive (vec3, default 0,0,0), occlusion (float, default 1); normal is tangent-space, emissive is linear light added after lighting. Colors are linear. Texture settings take a path under Assets/ (image or .proctex) or asset:<id>; up to 5 different textures. The graph compiles into a shader variant for Metal and Vulkan at import; constants are data, so changing one doesn't recompile. Opacity needs alphaMode "blend" (or "mask" with alphaCutoff). Presets: basic, lava, water, hologram, stone, pulse. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `addNodes?`: [object]
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `connect?`: [{from: any, to: string}]
+- `disconnect?`: [string]
+- `output?`: object
+- `params?`: object
+- `path?`: string
+- `preset?`: string
+- `removeNodes?`: [string]
+- `settings?`: {addressMode?: string, alphaCutoff?: number, alphaMode?: string, doubleSided?: boolean, filter?: string}
+
+Result:
+
+- `added?`: [string]
+- `alphaCutoff`: number
+- `alphaMode`: string
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `code?`: string
+- `doubleSided`: boolean
+- `graph?`: {nodes?: [object], output?: object}
+- `path`: string
+- `warnings`: [string]
+
+### `materialGraph.get`
+
+**Get Material Graph** · _read-only_, _idempotent_
+
+Reads a .material file's node graph as written, its alpha mode and sidedness, and the graph's problems (unknown nodes, missing links, cycles, missing textures). `code: true` adds the generated shader code.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `code?`: boolean
+- `path?`: string
+
+Result:
+
+- `added?`: [string]
+- `alphaCutoff`: number
+- `alphaMode`: string
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `code?`: string
+- `doubleSided`: boolean
+- `graph?`: {nodes?: [object], output?: object}
+- `path`: string
+- `warnings`: [string]
+
+### `materialGraph.new`
+
+**New Material Graph**
+
+Writes a .material file with a node graph in `folder` (default: the Assets root) from a `preset` (default basic) or a whole `graph`, with optional `settings` (alphaMode, alphaCutoff, doubleSided, filter, addressMode), and imports it. Returns the asset, the graph and warnings. Use it on a MeshRenderer (materialGraph.assign) or a mesh build part's `material`. A material graph lives in a .material file's `graph` key: {"nodes": [...], "output": {...}}. A node is {"id", "type", ...keys}; an input key holds a constant (number or [2-4 numbers]) or a link "nodeId" / "nodeId.swizzle" ("tex.rgb", "n.x"); a link may also name a built-in: uv, position, normal, viewDir, vertexColor, time. Sizes convert as in GLSL (a scalar fills a vector). Node types: color, value, vector, uv, position, normal, viewDir, vertexColor, time, texture, triplanar, noise, scrollUV, rotateUV, math, blend, fresnel, combine, remap (see materialGraph.nodes for inputs and settings). `output` maps the PBR inputs baseColor (vec3, default 0.8,0.8,0.8), opacity (float, default 1), normal (vec3, default 0,0,1), metallic (float, default 0), roughness (float, default 0.5), emissive (vec3, default 0,0,0), occlusion (float, default 1); normal is tangent-space, emissive is linear light added after lighting. Colors are linear. Texture settings take a path under Assets/ (image or .proctex) or asset:<id>; up to 5 different textures. The graph compiles into a shader variant for Metal and Vulkan at import; constants are data, so changing one doesn't recompile. Opacity needs alphaMode "blend" (or "mask" with alphaCutoff). Presets: basic, lava, water, hologram, stone, pulse.
+
+Arguments:
+
+- `folder?`: string
+- `graph?`: {nodes?: [object], output?: object}
+- `name?`: string
+- `preset?`: string
+- `settings?`: {addressMode?: string, alphaCutoff?: number, alphaMode?: string, doubleSided?: boolean, filter?: string}
+
+Result:
+
+- `added?`: [string]
+- `alphaCutoff`: number
+- `alphaMode`: string
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `code?`: string
+- `doubleSided`: boolean
+- `graph?`: {nodes?: [object], output?: object}
+- `path`: string
+- `warnings`: [string]
+
+### `materialGraph.nodes`
+
+**Material Graph Node Types** · _read-only_, _idempotent_
+
+Lists every material graph node type with its inputs (sizes, defaults), settings and output size, plus the PBR outputs, built-in link names and presets.
+
+Arguments: none.
+
+Result:
+
+- `builtins`: [string]
+- `nodes`: [{category: string, inputs: [string], output: string, settings: [string], summary: string, type: string}]
+- `outputs`: [string]
+- `presets`: [string]
+
+### `materialGraph.open`
+
+**Open in Material Builder** · _idempotent_
+
+Opens a .material file in the editor's Material Builder tab (live preview, node graph canvas, outputs and node form) and brings the tab to the front. Optional preview `shape` (sphere, cube, plane, selected), `light` (studio, sun, rim, dim), `background` (gray, dark, light, sky) and a `node` to select. view.screenshot {source: "panel", panel: "materialBuilder"} shows it.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `background?`: string
+- `light?`: string
+- `node?`: string
+- `path?`: string
+- `shape?`: string
+
+Result:
+
+- `path`: string
+
+### `materialGraph.set`
+
+**Set Material Graph** · _undoable_, _idempotent_
+
+Replaces a .material file's whole node graph (`graph` or a `preset`; `clear: true` removes it) and optional `settings`, then reimports it; everything using the material updates. Undoable. For a few changes, materialGraph.edit is shorter. A material graph lives in a .material file's `graph` key: {"nodes": [...], "output": {...}}. A node is {"id", "type", ...keys}; an input key holds a constant (number or [2-4 numbers]) or a link "nodeId" / "nodeId.swizzle" ("tex.rgb", "n.x"); a link may also name a built-in: uv, position, normal, viewDir, vertexColor, time. Sizes convert as in GLSL (a scalar fills a vector). Node types: color, value, vector, uv, position, normal, viewDir, vertexColor, time, texture, triplanar, noise, scrollUV, rotateUV, math, blend, fresnel, combine, remap (see materialGraph.nodes for inputs and settings). `output` maps the PBR inputs baseColor (vec3, default 0.8,0.8,0.8), opacity (float, default 1), normal (vec3, default 0,0,1), metallic (float, default 0), roughness (float, default 0.5), emissive (vec3, default 0,0,0), occlusion (float, default 1); normal is tangent-space, emissive is linear light added after lighting. Colors are linear. Texture settings take a path under Assets/ (image or .proctex) or asset:<id>; up to 5 different textures. The graph compiles into a shader variant for Metal and Vulkan at import; constants are data, so changing one doesn't recompile. Opacity needs alphaMode "blend" (or "mask" with alphaCutoff). Presets: basic, lava, water, hologram, stone, pulse. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `clear?`: boolean
+- `graph?`: {nodes?: [object], output?: object}
+- `path?`: string
+- `preset?`: string
+- `settings?`: {addressMode?: string, alphaCutoff?: number, alphaMode?: string, doubleSided?: boolean, filter?: string}
+
+Result:
+
+- `added?`: [string]
+- `alphaCutoff`: number
+- `alphaMode`: string
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `code?`: string
+- `doubleSided`: boolean
+- `graph?`: {nodes?: [object], output?: object}
+- `path`: string
+- `warnings`: [string]
 
 ## meshBuild
 

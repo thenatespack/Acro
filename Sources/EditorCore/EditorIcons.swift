@@ -350,6 +350,7 @@ public enum EditorIcons {
         EditorLayout.postFXBuilder: "aperture",
         EditorLayout.dataTable: "layout-grid",
         EditorLayout.terrainBuilder: "layers",
+        EditorLayout.materialBuilder: "palette",
     ]
 
     /// Console lines by level.

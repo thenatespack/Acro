@@ -29,6 +29,11 @@
 //
 // Shadows (shadows.glsl): the directional light's cascades and a few point / spot lights'
 // maps, all in one shadow atlas.
+//
+// Material graphs (MATERIAL_GRAPH, defined by mesh_graph.frag; see MaterialGraphCompiler.swift):
+// graphSurface() computes the PBR inputs from the g* globals instead of the material's fixed
+// textures. The body here is a placeholder: the engine replaces it, in this shader's SPIR-V and
+// in its MSL, with the code compiled from a `.material` file's node graph.
 
 // Must match `SceneRenderer.FrameUniforms`.
 layout(set = 0, binding = 0, std140) uniform Frame {
@@ -122,6 +127,51 @@ layout(location = 8) in vec4 vTangent;
 
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec2 outMotion;  // see `PipelineDescriptor.writesMotionVectors`
+
+#ifdef MATERIAL_GRAPH
+// The graph's editable values (`MaterialGraphProgram.values`), storage buffer 0.
+layout(set = 2, binding = 24, std430) readonly buffer MaterialGraphValues {
+    vec4 values[];
+} graphValues;
+// x: time in seconds, y: 1 to discard below the alpha cutoff (AlphaMode.mask), z: the cutoff.
+layout(push_constant) uniform MaterialGraphPush {
+    vec4 params;
+} graphPush;
+
+// Inputs (set by main before graphSurface runs).
+vec2 gUV;
+vec3 gPosition;
+vec3 gNormal;
+vec3 gView;
+vec4 gVertexColor;
+float gTime;
+// Outputs. gNormalTS is a tangent-space normal (+Z: the mesh normal).
+vec3 gBaseColor;
+float gOpacity;
+vec3 gNormalTS;
+float gMetallic;
+float gRoughness;
+vec3 gEmissive;
+float gOcclusion;
+
+// Replaced with the compiled graph. This placeholder reads every input and resource so each
+// stays a parameter of the function after SPIRV-Cross (the MSL body is swapped by name).
+void graphSurface() {
+    vec4 a = texture(sampler2D(baseColorMap, materialSampler), gUV);
+    vec4 b = texture(sampler2D(metallicRoughnessMap, materialSampler), gUV);
+    vec4 c = texture(sampler2D(normalMap, materialSampler), gUV);
+    vec4 d = texture(sampler2D(occlusionMap, materialSampler), gUV);
+    vec4 e = texture(sampler2D(emissiveMap, materialSampler), gUV);
+    vec4 v = graphValues.values[0];
+    gBaseColor = a.rgb * gVertexColor.rgb * v.rgb + (gPosition + gNormal + gView) * gTime;
+    gOpacity = a.a * v.a;
+    gNormalTS = c.xyz * 2.0 - 1.0;
+    gMetallic = b.b;
+    gRoughness = b.g;
+    gEmissive = e.rgb;
+    gOcclusion = d.r;
+}
+#endif
 
 const float PI = 3.14159265;
 
@@ -260,6 +310,21 @@ vec3 planarReflected(vec3 fallback, vec3 n, vec3 ng, float roughness) {
 }
 
 void main() {
+#ifdef MATERIAL_GRAPH
+    gUV = vUV;
+    gPosition = vWorldPos;
+    gNormal = normalize(vNormal);
+    gView = normalize(frame.cameraPos.xyz - vWorldPos);
+    gVertexColor = vColor;
+    gTime = graphPush.params.x;
+    graphSurface();
+    vec3 albedo = vColor.rgb * max(gBaseColor, vec3(0.0));
+    float opacity = vColor.a * clamp(gOpacity, 0.0, 1.0);
+    if (graphPush.params.y > 0.5) {
+        if (gOpacity < graphPush.params.z) discard;
+        opacity = vColor.a;
+    }
+#else
     vec2 uv = vec2(dot(material.uvRow0.xy, vUV) + material.uvRow0.z, dot(material.uvRow1.xy, vUV) + material.uvRow1.z);
     vec4 texel = texture(sampler2D(baseColorMap, materialSampler), uv);
     vec3 albedo = vColor.rgb * material.baseColor.rgb * texel.rgb;
@@ -274,8 +339,18 @@ void main() {
         vec2 cell = floor(vWorldPos.xz / 2.0);
         albedo *= (mod(abs(cell.x + cell.y), 2.0) < 0.5) ? 1.0 : 0.75;
     }
+#endif
 
     vec3 n = normalize(vNormal);
+#ifdef MATERIAL_GRAPH
+    vec3 gt = vTangent.xyz - n * dot(n, vTangent.xyz);
+    if (dot(gt, gt) > 1e-12 && dot(gNormalTS, gNormalTS) > 1e-12) {
+        gt = normalize(gt);
+        vec3 gb = cross(n, gt) * (vTangent.w < 0.0 ? -1.0 : 1.0);
+        vec3 m = normalize(gNormalTS);
+        n = normalize(gt * m.x + gb * m.y + n * m.z);
+    }
+#else
     if (material.flags.y > 0.5) {
         // Tangent frame from the interpolated vertex tangent, re-orthogonalized.
         vec3 t = vTangent.xyz - n * dot(n, vTangent.xyz);
@@ -296,6 +371,7 @@ void main() {
             n = normalize(t * m.x + b * m.y + n * m.z);
         }
     }
+#endif
     bool pbr = material.emissive.w > 0.5;
     // Double-sided PBR materials light their back faces from behind.
     if (pbr && !gl_FrontFacing) n = -n;
@@ -313,8 +389,12 @@ void main() {
         albedo *= cascadeTint;
     }
     vec3 light = frame.lightColor.rgb * frame.lightDir.w;
+#ifdef MATERIAL_GRAPH
+    float ao = clamp(gOcclusion, 0.0, 1.0);
+#else
     float ao = material.flags.w > 0.5 ? 1.0
         : 1.0 + material.surface.w * (texture(sampler2D(occlusionMap, materialSampler), uv).r - 1.0);
+#endif
 
     vec3 color;
     if (!pbr) {
@@ -337,9 +417,14 @@ void main() {
             }
         }
     } else {
+#ifdef MATERIAL_GRAPH
+        float metallic = clamp(gMetallic, 0.0, 1.0);
+        float roughness = clamp(gRoughness, 0.045, 1.0);
+#else
         vec4 mr = texture(sampler2D(metallicRoughnessMap, materialSampler), uv);
         float metallic = clamp(material.surface.x * mr.b, 0.0, 1.0);
         float roughness = clamp(material.surface.y * mr.g, 0.045, 1.0);
+#endif
         float a = roughness * roughness;
         vec3 diffuseColor = albedo * (1.0 - metallic);
         vec3 f0 = mix(vec3(0.04), albedo, metallic);
@@ -386,7 +471,11 @@ void main() {
     color = mix(color, albedo, material.params.y);
     // vParams.yzw: the MeshRenderer's emissive tint x strength, minus one (so zero, a default
     // instance, multiplies by exactly one). `vColor` (the tint) does not touch emission.
+#ifdef MATERIAL_GRAPH
+    color += max(gEmissive, vec3(0.0)) * (vec3(1.0) + vParams.yzw);
+#else
     color += material.emissive.rgb * texture(sampler2D(emissiveMap, materialSampler), uv).rgb * (vec3(1.0) + vParams.yzw);
+#endif
 
     float dist = length(frame.cameraPos.xyz - vWorldPos);
     float fog = 1.0 - exp(-dist * frame.fogColor.w);

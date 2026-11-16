@@ -645,6 +645,7 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
             properties["addressMode"] = cases(["repeat", "clampToEdge", "mirrorRepeat"])
             properties["alphaMode"] = cases(["opaque", "mask", "blend"])
             properties["isTransparent"] = nil
+            properties["graph"] = nil  // edited with the materialGraph.* tools
             properties["baseColor"]?["description"] = "Linear [r, g, b, a]."
             properties["emissiveColor"] = Self.floats(3, "Linear [r, g, b].")
             material["properties"] = .object(properties)

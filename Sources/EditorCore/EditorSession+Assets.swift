@@ -197,7 +197,7 @@ extension EditorSession {
     public func setMaterial(_ material: MaterialAsset, of id: AssetID, from old: MaterialAsset? = nil,
                             label: String = "Edit Material") -> Bool {
         guard let assets = requireAssets(label) else { return false }
-        guard let previous = old ?? assets.material(AssetReference(id)) else {
+        guard let previous = old ?? assets.materialFile(of: id) ?? assets.material(AssetReference(id)) else {
             log.error("\(label): \(id.description.prefix(8)) isn't a material")
             return false
         }

@@ -14,7 +14,9 @@ $shaders = Get-ChildItem Sources, Tests -Recurse -Include *.vert, *.frag, *.comp
 $includes = Get-ChildItem Sources, Tests -Recurse -Directory -Filter FidelityFX | ForEach-Object { "-I$($_.FullName)" }
 foreach ($src in $shaders) {
     Write-Host "glslc $($src.FullName) -> $($src.FullName).spv"
-    & $glslc --target-env=vulkan1.1 -O @includes $src.FullName -o "$($src.FullName).spv"
+    # "// compile-shaders: -O0" marks a shader compiled unoptimized (see compile-shaders.sh).
+    $opt = if (Select-String -Path $src.FullName -Pattern '^// compile-shaders: -O0' -Quiet) { '-O0' } else { '-O' }
+    & $glslc --target-env=vulkan1.1 $opt @includes $src.FullName -o "$($src.FullName).spv"
     if ($LASTEXITCODE -ne 0) { throw "glslc failed for $($src.Name)" }
 }
 

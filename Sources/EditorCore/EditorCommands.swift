@@ -40,7 +40,7 @@ public enum BuiltinCommands {
       + EditorSoundBuildCommands.all
       + EditorPostFXCommands.all
       + EditorDataTableCommands.all
-      + EditorTerrainCommands.all
+      + EditorTerrainCommands.all + EditorMaterialGraphCommands.all
 }
 
 extension CommandID {
@@ -1273,7 +1273,9 @@ public enum MaterialSetCommand: EditorCommand {
                                       + "To edit a model's materials, run asset.extractMaterials {asset: \"\(id)\"}, which writes "
                                       + "editable .material files and points the scene at them, then material.set one of those.")
         }
-        let base = arguments.reset == true ? MaterialAsset() : session.assets?.material(AssetReference(arguments.asset)) ?? MaterialAsset()
+        // The file as written (a graph keeps its texture paths; the importer fills slots from it).
+        let base = arguments.reset == true ? MaterialAsset()
+            : session.assets?.materialFile(of: arguments.asset) ?? session.assets?.material(AssetReference(arguments.asset)) ?? MaterialAsset()
         let material = try arguments.material.applied(to: base)
         if arguments.transient == true {
             try session.commands.check(session.previewMaterial(material, of: arguments.asset), title)

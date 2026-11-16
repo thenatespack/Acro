@@ -137,6 +137,11 @@ public final class EditorSession {
     /// The terrain open in the Terrain Builder tab (`terrain.open`), and how the app shows it.
     public var openTerrain: AssetID?
     public var onOpenTerrain: ((AssetID) -> Void)?
+    /// The material open in the Material Builder tab (`materialGraph.open`), how the app shows
+    /// it, and the preview settings that call asked for.
+    public var openMaterialGraph: AssetID?
+    public var onOpenMaterialGraph: ((AssetID) -> Void)?
+    public var materialPreviewRequest: MaterialPreviewRequest?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()

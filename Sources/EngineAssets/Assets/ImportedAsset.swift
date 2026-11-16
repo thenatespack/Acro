@@ -130,6 +130,11 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
     public var alphaMode: AlphaMode
     public var alphaCutoff: Float
     public var doubleSided: Bool
+    /// A node graph that computes the PBR inputs instead of the fields above (see
+    /// MaterialGraph.swift); `alphaMode`, `alphaCutoff`, `doubleSided`, the sampler settings and
+    /// `emissive` still apply. The importer resolves its textures to references and puts them in
+    /// the five texture slots, in the order `MaterialGraphCompiler` assigns them.
+    public var graph: MaterialGraph?
 
     public init(shading: ShadingModel = .pbr, baseColor: Vec4 = Vec4(0.8, 0.8, 0.8, 1), texture: AssetReference? = nil,
                 filter: SamplerFilter = .linear, mipFilter: SamplerMipFilter = .linear, addressMode: SamplerAddressMode = .repeat,
@@ -185,8 +190,8 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
     /// The `Material` with GPU textures from `textures`, called once per texture reference
     /// (nil draws without that texture).
     public func material(textures: (AssetReference) throws -> GPUTexture?) rethrows -> Material {
-        func resolve(_ reference: AssetReference?) throws -> GPUTexture? { try reference.flatMap(textures) }
-        return Material(
+        func resolve(_ reference: AssetReference?) throws -> GPUTexture? { graph == nil ? try reference.flatMap(textures) : nil }
+        var material = Material(
             shading: shading, baseColor: baseColor, texture: try resolve(texture),
             sampler: SamplerDescriptor(filter: filter, mipFilter: mipFilter, addressMode: addressMode),
             uvScale: uvScale, uvOffset: uvOffset, uvRotation: uvRotation, checker: checker, emissive: emissive,
@@ -195,6 +200,18 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
             normalScale: normalScale, occlusionTexture: try resolve(occlusionTexture), occlusionStrength: occlusionStrength,
             emissiveColor: emissiveColor, emissiveTexture: try resolve(emissiveTexture), emissiveStrength: emissiveStrength,
             alphaMode: alphaMode, alphaCutoff: alphaCutoff, doubleSided: doubleSided)
+        guard let graph else { return material }
+        // A graph material: compiled (cached by its code), lit as PBR, its textures in slots 1-5.
+        material.shading = .pbr
+        material.graph = MaterialGraphCompiler.compile(graph).program
+        let slots = material.graph?.textures ?? []
+        func slot(_ i: Int) throws -> GPUTexture? { i < slots.count ? try textures(slots[i]) : nil }
+        material.texture = try slot(0)
+        material.metallicRoughnessTexture = try slot(1)
+        material.normalTexture = try slot(2)
+        material.occlusionTexture = try slot(3)
+        material.emissiveTexture = try slot(4)
+        return material
     }
 
     /// The `Material` with `texture` as its base color texture and no other textures.
@@ -208,7 +225,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         case shading, baseColor, texture, filter, mipFilter, addressMode, uvScale, uvOffset, uvRotation, checker, emissive
         case specular, shininess, metallic, roughness, metallicRoughnessTexture, normalTexture, normalScale
         case occlusionTexture, occlusionStrength, emissiveColor, emissiveTexture, emissiveStrength, alphaMode, alphaCutoff
-        case doubleSided, isTransparent
+        case doubleSided, isTransparent, graph
     }
 
     public init(from decoder: any Decoder) throws {
@@ -250,6 +267,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         }
         alphaCutoff = try c.decodeIfPresent(Float.self, forKey: .alphaCutoff) ?? d.alphaCutoff
         doubleSided = try c.decodeIfPresent(Bool.self, forKey: .doubleSided) ?? d.doubleSided
+        graph = try c.decodeIfPresent(MaterialGraph.self, forKey: .graph)
     }
 
     /// Writes every key except unset textures. `alphaMode` is written as "opaque", "mask" or "blend".
@@ -283,6 +301,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         try c.encode(alphaMode.rawValue.lowercased(), forKey: .alphaMode)
         try c.encode(alphaCutoff, forKey: .alphaCutoff)
         try c.encode(doubleSided, forKey: .doubleSided)
+        try c.encodeIfPresent(graph, forKey: .graph)
     }
 }
 
