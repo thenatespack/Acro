@@ -133,6 +133,44 @@ private func rgba(_ image: Image, _ x: Int, _ y: Int) -> [UInt8] {
         #expect(clips[0].frame(at: 0.15) == 1 && clips[0].frame(at: 0.35) == 2)
     }
 
+    @Test func selectionsCopyPasteMoveAndClearBetweenCels() throws {
+        var sprite = PixelSprite(width: 4, height: 3, frameCount: 2)
+        sprite.insertLayer(name: "Top", at: 1)
+        sprite.stamp(rows: ["12..", "34.."], frame: 0, layer: 0)
+        sprite.stamp(rows: ["...5"], frame: 0, layer: 1)
+
+        let clip = try #require(sprite.copy(PixelRect(x: 0, y: 0, width: 2, height: 2), frame: 0, layer: 0))
+        #expect(clip.rows == ["12", "34"])
+        #expect(sprite.copy(PixelRect(x: 9, y: 9, width: 2, height: 2), frame: 0, layer: 0) == nil)
+        #expect(sprite.copy(PixelRect(x: 3, y: 2, width: 5, height: 5), frame: 0, layer: 0)?.width == 1, "cut to the canvas")
+
+        // Paste into another frame, partly off the canvas: the overflow is cut.
+        sprite.paste(clip, x: 3, y: 1, frame: 1, layer: 0)
+        #expect(sprite.compositeRows(frame: 1) == ["....", "...1", "...3"])
+        // Transparent clip pixels don't cover, unless opaque.
+        let holes = PixelClip(width: 2, height: 1, pixels: [0, 7])
+        sprite.paste(holes, x: 2, y: 1, frame: 1, layer: 0)
+        #expect(sprite.compositeRows(frame: 1)[1] == "...6")
+        sprite.paste(holes, x: 2, y: 1, frame: 1, layer: 0, opaque: true)
+        #expect(sprite.compositeRows(frame: 1)[1] == "...6")
+        sprite.paste(holes, x: 3, y: 1, frame: 1, layer: 0, opaque: true)
+        #expect(sprite.compositeRows(frame: 1)[1] == "....")
+
+        // Merged copies take the visible pixels of every layer.
+        #expect(sprite.copyMerged(PixelRect(x: 2, y: 0, width: 2, height: 1), frame: 0)?.rows == [".5"])
+
+        sprite.move(PixelRect(x: 0, y: 0, width: 2, height: 2), dx: 1, dy: 1, frame: 0, layer: 0)
+        #expect(sprite.compositeRows(frame: 0) == ["...5", ".12.", ".34."])
+        sprite.move(PixelRect(x: 1, y: 1, width: 1, height: 1), dx: -1, dy: -1, frame: 0, layer: 0, copy: true)
+        #expect(sprite.compositeRows(frame: 0) == ["1..5", ".12.", ".34."])
+        sprite.clear(PixelRect(x: 1, y: 1, width: 9, height: 9), frame: 0, layer: 0)
+        #expect(sprite.compositeRows(frame: 0) == ["1..5", "....", "...."])
+
+        #expect(PixelRect(corners: PixelPoint(3, 1), PixelPoint(1, 2)) == PixelRect(x: 1, y: 1, width: 3, height: 2))
+        let encoded = try JSONEncoder().encode(PixelRect(x: 1, y: 2, width: 3, height: 4))
+        #expect(String(decoding: encoded, as: UTF8.self) == "[1,2,3,4]")
+    }
+
     @MainActor @Test func importsAsATextureAndHotReloads() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("PixelSpriteTests-\(UUID().uuidString)", isDirectory: true)
         let project = try Project.create(at: url, name: "Sprites")

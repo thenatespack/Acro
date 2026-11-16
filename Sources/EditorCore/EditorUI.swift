@@ -42,6 +42,7 @@ extension EditorApp {
             ui.layoutIfNeeded()
             return
         }
+        if (ui.focusedWidget as? EditorShortcutClaiming)?.claimsShortcut(event) == true { return ui.layoutIfNeeded() }
         for command in shortcuts.actions(for: [event], focus: focus) { invoke(command) }
         ui.layoutIfNeeded()
     }

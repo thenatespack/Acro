@@ -92,6 +92,7 @@ public final class PixelSpriteBuilderView {
         layer = min(max(layer, 0), sprite.layers.count - 1)
         if Int(color) > sprite.palette.count { color = sprite.palette.isEmpty ? 0 : 1 }
         if let t = selectedTag, !sprite.tags.indices.contains(t) { selectedTag = sprite.tags.isEmpty ? nil : 0 }
+        if let r = selection?.clamped(width: sprite.width, height: sprite.height) { selection = r.isEmpty ? nil : r }
     }
 
     private func remember() {
@@ -129,6 +130,138 @@ public final class PixelSpriteBuilderView {
     /// The color picker: selects the topmost visible color at `point` in the current frame.
     public func pickColor(at point: PixelPoint) {
         selectColor(sprite.pick(frame: frame, x: point.x, y: point.y))
+    }
+
+    // MARK: Selection and clipboard
+
+    /// The selected rectangle of the canvas (always inside it), nil for none. It stays when the
+    /// frame or layer changes, so pixels can be copied in one cel and pasted in another.
+    public private(set) var selection: PixelRect?
+    /// Copied pixels, shared by every sprite tab (so they paste into other files too), with the
+    /// place they were copied from.
+    public private(set) static var clipboard: (clip: PixelClip, origin: PixelPoint)?
+
+    /// Selects `rect` (cut to the canvas; an empty rectangle deselects).
+    public func select(_ rect: PixelRect?) {
+        let r = rect?.clamped(width: sprite.width, height: sprite.height)
+        selection = r.flatMap { $0.isEmpty ? nil : $0 }
+        needsLayout = true
+        onChanged?()
+    }
+
+    public func selectAll() { select(PixelRect(x: 0, y: 0, width: sprite.width, height: sprite.height)) }
+    public func deselect() { select(nil) }
+
+    /// Copies the selected pixels of the current cel (or the whole cel without a selection).
+    @discardableResult
+    public func copySelection() -> Bool {
+        let rect = selection ?? PixelRect(x: 0, y: 0, width: sprite.width, height: sprite.height)
+        guard let clip = sprite.copy(rect, frame: frame, layer: layer) else { return false }
+        Self.clipboard = (clip, PixelPoint(rect.x, rect.y))
+        needsLayout = true
+        return true
+    }
+
+    /// Copies the selected pixels, then erases them.
+    public func cutSelection() {
+        guard copySelection() else { return }
+        deleteSelection(label: "Cut")
+    }
+
+    /// Erases the selected pixels of the current cel (the whole cel without a selection).
+    public func deleteSelection(label: String = "Delete Selection") {
+        let rect = selection ?? PixelRect(x: 0, y: 0, width: sprite.width, height: sprite.height)
+        let (f, l) = (frame, layer)
+        edit(label) { $0.clear(rect, frame: f, layer: l) }
+    }
+
+    /// Pastes the clipboard into the current cel: at the selection's top-left, else where it was
+    /// copied from. The pasted pixels become the selection (drag them to move them).
+    public func paste() {
+        guard let (clip, origin) = Self.clipboard else { return }
+        let at = selection.map { PixelPoint($0.x, $0.y) } ?? origin
+        let (f, l) = (frame, layer)
+        edit("Paste") { $0.paste(clip, x: at.x, y: at.y, frame: f, layer: l) }
+        select(PixelRect(x: at.x, y: at.y, width: clip.width, height: clip.height))
+    }
+
+    /// Moves the selected pixels of the current cel by (`dx`, `dy`) (with `copy`, a copy of them)
+    /// and the selection with them.
+    public func moveSelection(dx: Int, dy: Int, copy: Bool = false) {
+        guard let rect = selection, dx != 0 || dy != 0 else { return }
+        let (f, l) = (frame, layer)
+        edit(copy ? "Duplicate Selection" : "Move Selection") { $0.move(rect, dx: dx, dy: dy, frame: f, layer: l, copy: copy) }
+        // The selection follows the pixels, even partly off the canvas (cut to it).
+        select(rect.offsetBy(dx, dy))
+    }
+
+    // MARK: Keyboard
+
+    /// The single-key tool shortcuts.
+    public static let toolKeys: [Key: PixelTool] = [.b: .pencil, .l: .line, .u: .rect, .g: .fill, .e: .eraser, .i: .picker, .m: .select]
+
+    static func shortcutLabel(_ tool: PixelTool) -> String {
+        toolKeys.first { $0.value == tool }.map { String(describing: $0.key).uppercased() } ?? ""
+    }
+
+    /// Whether the canvas handles `event` itself (so the editor's shortcuts leave it alone).
+    public func claimsKey(_ event: KeyEvent) -> Bool {
+        let mods = event.modifiers
+        let shortcut = mods.contains(.command) || mods.contains(.control)
+        switch event.key {
+        case .delete, .backspace, .escape, .left, .right, .up, .down, .leftBracket, .rightBracket: return true
+        case .a, .c, .x, .v, .d: return shortcut && !mods.contains(.shift)
+        default: return !shortcut && !mods.contains(.alt) && (Self.toolKeys[event.key] != nil || event.key == .h || event.key == .j)
+        }
+    }
+
+    /// The canvas shortcuts: B pencil, L line, U rectangle (Shift+U toggles Filled), G fill,
+    /// E eraser, I color picker, M select; H / J mirror X / Y; [ and ] previous / next color;
+    /// Cmd/Ctrl+A select all, +C copy, +X cut, +V paste, +D or Esc deselect; Delete erases the
+    /// selection; arrows nudge the selection (Shift: 8 pixels), or step frames (Left / Right) and
+    /// layers (Up / Down) without one. Returns whether the key was used.
+    @discardableResult
+    public func handleKey(_ event: KeyEvent) -> Bool {
+        guard claimsKey(event) else { return false }
+        let mods = event.modifiers
+        let shortcut = mods.contains(.command) || mods.contains(.control)
+        let step = mods.contains(.shift) ? 8 : 1
+        switch event.key {
+        case .a where shortcut: selectAll()
+        case .c where shortcut: copySelection()
+        case .x where shortcut: cutSelection()
+        case .v where shortcut: paste()
+        case .d where shortcut: deselect()
+        case .escape: deselect()
+        case .delete, .backspace: deleteSelection()
+        case .left, .right, .up, .down:
+            let (dx, dy) = event.key == .left ? (-step, 0) : event.key == .right ? (step, 0) : event.key == .up ? (0, -step) : (0, step)
+            if selection != nil {
+                moveSelection(dx: dx, dy: dy)
+            } else if dx != 0 {
+                selectFrame((frame + (dx > 0 ? 1 : -1) + sprite.frames.count) % sprite.frames.count)
+            } else {
+                selectLayer(layer + (dy < 0 ? 1 : -1))
+            }
+        case .leftBracket, .rightBracket:
+            let count = sprite.palette.count + 1
+            selectColor(UInt8((Int(color) + (event.key == .rightBracket ? 1 : -1) + count) % count))
+        case .h:
+            if mirror.contains(.horizontal) { mirror.remove(.horizontal) } else { mirror.insert(.horizontal) }
+            needsLayout = true
+            onChanged?()
+        case .j:
+            if mirror.contains(.vertical) { mirror.remove(.vertical) } else { mirror.insert(.vertical) }
+            needsLayout = true
+            onChanged?()
+        case .u where mods.contains(.shift):
+            selectTool(.rect)
+            filled.toggle()
+        default:
+            guard let tool = Self.toolKeys[event.key], !event.isRepeat else { return true }
+            selectTool(tool)
+        }
+        return true
     }
 
     // MARK: Edits (one undo step each)
@@ -207,25 +340,40 @@ public final class PixelSpriteBuilderView {
         let tools = HStack(spacing: 4, name: "spriteTools")
         tools.wraps = true
         for t in PixelTool.allCases {
-            let b = button(Self.title(t), "spriteTool.\(t.rawValue)", primary: t == tool, tooltip: Self.tooltip(t)) { [unowned self] in selectTool(t) }
+            let b = button(Self.title(t), "spriteTool.\(t.rawValue)", primary: t == tool, tooltip: Self.tooltip(t) + " (\(Self.shortcutLabel(t)))") { [unowned self] in selectTool(t) }
             tools.addChild(b)
         }
         view.addChild(tools)
         let filledBox = Checkbox("Filled", isOn: filled, name: "spriteFilled") { [unowned self] on in filled = on }
-        filledBox.tooltip = "The rectangle tool fills the rectangle"
+        filledBox.tooltip = "The rectangle tool fills the rectangle (Shift+U)"
         let mirrorX = Checkbox("Mirror X", isOn: mirror.contains(.horizontal), name: "spriteMirrorX") { [unowned self] on in
             if on { mirror.insert(.horizontal) } else { mirror.remove(.horizontal) }
             onChanged?()
         }
-        mirrorX.tooltip = "Also draw mirrored left-right"
+        mirrorX.tooltip = "Also draw mirrored left-right (H)"
         let mirrorY = Checkbox("Mirror Y", isOn: mirror.contains(.vertical), name: "spriteMirrorY") { [unowned self] on in
             if on { mirror.insert(.vertical) } else { mirror.remove(.vertical) }
             onChanged?()
         }
-        mirrorY.tooltip = "Also draw mirrored top-bottom"
+        mirrorY.tooltip = "Also draw mirrored top-bottom (J)"
         let options = HStack(spacing: 8, [filledBox, mirrorX, mirrorY, Spacer()])
         options.wraps = true
         view.addChild(options)
+
+        let mod = EditorShortcuts().shortcutModifier == .command ? "Cmd" : "Ctrl"
+        let all = button("All", "spriteSelectAll", tooltip: "Select the whole canvas (\(mod)+A)") { [unowned self] in selectAll() }
+        let copy = button("Copy", "spriteCopy", tooltip: "Copy the selected pixels of this cel, or the whole cel (\(mod)+C)") { [unowned self] in copySelection() }
+        let cut = button("Cut", "spriteCut", tooltip: "Copy, then erase the selected pixels (\(mod)+X)") { [unowned self] in cutSelection() }
+        let paste = button("Paste", "spritePaste", tooltip: "Paste into this cel at the selection, or where the pixels came from (\(mod)+V)") { [unowned self] in self.paste() }
+        paste.isEnabled = Self.clipboard != nil
+        let delete = button("Delete", "spriteDeleteSelection", tooltip: "Erase the selected pixels of this cel (Delete)") { [unowned self] in deleteSelection() }
+        let none = button("Deselect", "spriteDeselect", tooltip: "Drop the selection (Esc or \(mod)+D)") { [unowned self] in deselect() }
+        none.isEnabled = selection != nil
+        let text = selection.map { "\($0.width) x \($0.height) at \($0.x), \($0.y)" } ?? "No selection"
+        let row = HStack(spacing: 4, name: "spriteSelectionRow", [all, copy, cut, paste, delete, none])
+        row.wraps = true
+        view.addChild(row)
+        view.addChild(Label(text, role: .caption, name: "spriteSelectionInfo"))
     }
 
     static func tooltip(_ tool: PixelTool) -> String {
@@ -236,6 +384,7 @@ public final class PixelSpriteBuilderView {
         case .fill: "Fill the area of one color on this layer"
         case .eraser: "Erase pixels"
         case .picker: "Pick the color under the pointer (or Alt+click with any tool)"
+        case .select: "Drag to select pixels; drag the selection to move it (Cmd/Ctrl+drag copies). Copy, cut and paste between frames and layers"
         }
     }
 

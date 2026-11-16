@@ -358,6 +358,37 @@ public enum PixelSpriteEditCommand: EditorCommand {
         }
     }
 
+    /// Copies pixels from one cel to another (copy / paste between cels).
+    public struct CelCopy: Codable, Equatable, Sendable {
+        public var fromFrame: Int
+        /// Layer index or name (default: the first layer).
+        public var fromLayer: JSONValue?
+        public var toFrame: Int
+        /// Default: `fromLayer`.
+        public var toLayer: JSONValue?
+        /// The part to copy [x, y, width, height] (default: the whole cel).
+        public var rect: PixelRect?
+        /// Where its top-left goes (default: the same place).
+        public var x: Int?
+        public var y: Int?
+        /// Copy the visible pixels of every layer of `fromFrame` instead of one layer.
+        public var merged: Bool?
+        /// Replace the target pixels, transparent ones included (default: transparent pixels don't cover).
+        public var replace: Bool?
+        public init(fromFrame: Int, fromLayer: JSONValue? = nil, toFrame: Int, toLayer: JSONValue? = nil, rect: PixelRect? = nil,
+                    x: Int? = nil, y: Int? = nil, merged: Bool? = nil, replace: Bool? = nil) {
+            self.fromFrame = fromFrame
+            self.fromLayer = fromLayer
+            self.toFrame = toFrame
+            self.toLayer = toLayer
+            self.rect = rect
+            self.x = x
+            self.y = y
+            self.merged = merged
+            self.replace = replace
+        }
+    }
+
     public struct Arguments: Codable, Equatable, Sendable, PixelSpriteTarget {
         public var asset: AssetReference?
         public var path: String?
@@ -382,6 +413,8 @@ public enum PixelSpriteEditCommand: EditorCommand {
         public var duration: Int?
         /// Per-frame durations (ms) from frame 0; a shorter list leaves the rest.
         public var durations: [Int]?
+        /// Copy pixels between cels (applied after the frame edits, so new frames can be targets).
+        public var copyCels: [CelCopy]?
         /// Replace all tags.
         public var tags: [PixelSprite.Tag]?
         /// Add tags (replacing ones with the same name).
@@ -393,7 +426,9 @@ public enum PixelSpriteEditCommand: EditorCommand {
                     width: Int? = nil, height: Int? = nil, addLayers: [String]? = nil, removeLayers: [String]? = nil,
                     updateLayers: [LayerUpdate]? = nil, addFrames: Int? = nil, insertAt: Int? = nil, copyFrame: Int? = nil,
                     removeFrames: [Int]? = nil, duration: Int? = nil, durations: [Int]? = nil, tags: [PixelSprite.Tag]? = nil,
-                    addTags: [PixelSprite.Tag]? = nil, removeTags: [String]? = nil, pivot: Vec2? = nil, pixelsPerUnit: Float? = nil) {
+                    addTags: [PixelSprite.Tag]? = nil, removeTags: [String]? = nil, pivot: Vec2? = nil, pixelsPerUnit: Float? = nil,
+                    copyCels: [CelCopy]? = nil) {
+            self.copyCels = copyCels
             self.asset = asset
             self.path = path
             self.palette = palette
@@ -419,7 +454,7 @@ public enum PixelSpriteEditCommand: EditorCommand {
 
     public static let id: CommandID = "sprite.edit"
     public static let title = "Edit Sprite"
-    public static let doc = "Changes a .sprite file's structure in one undoable step, in this order: `palette` / `addColors`, canvas `width` / `height`, layers (`addLayers`, `removeLayers`, `updateLayers` [{name, rename, visible, opacity}]), frames (`addFrames` blank or copies of `copyFrame` at `insertAt`, `removeFrames`), timing (`duration` for all, `durations` per frame, ms), tags (`tags` replaces all, `addTags`, `removeTags`; a tag {name, from, to, mode loop|once|pingPong} becomes a SpriteAnimator clip), then `pivot` and `pixelsPerUnit`. Returns the summary and warnings."
+    public static let doc = "Changes a .sprite file's structure in one undoable step, in this order: `palette` / `addColors`, canvas `width` / `height`, layers (`addLayers`, `removeLayers`, `updateLayers` [{name, rename, visible, opacity}]), frames (`addFrames` blank or copies of `copyFrame` at `insertAt`, `removeFrames`), timing (`duration` for all, `durations` per frame, ms), `copyCels` ([{fromFrame, fromLayer, toFrame, toLayer, rect [x, y, w, h], x, y, merged, replace}]: copy / paste pixels between cels; default the whole cel to the same place, transparent pixels don't cover unless `replace`), tags (`tags` replaces all, `addTags`, `removeTags`; a tag {name, from, to, mode loop|once|pingPong} becomes a SpriteAnimator clip), then `pivot` and `pixelsPerUnit`. Returns the summary and warnings."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
@@ -474,6 +509,18 @@ public enum PixelSpriteEditCommand: EditorCommand {
             guard duration > 0 else { throw CommandError.failed("durations must be positive (ms)") }
             sprite.frames[f].duration = duration
         }
+        for copy in arguments.copyCels ?? [] {
+            let from = try PixelSpriteArguments.frame(copy.fromFrame, in: sprite)
+            let to = try PixelSpriteArguments.frame(copy.toFrame, in: sprite)
+            let fromLayer = try PixelSpriteArguments.layer(copy.fromLayer, in: sprite)
+            let toLayer = copy.toLayer == nil ? fromLayer : try PixelSpriteArguments.layer(copy.toLayer, in: sprite)
+            let rect = copy.rect ?? PixelRect(x: 0, y: 0, width: sprite.width, height: sprite.height)
+            let clip = copy.merged == true ? sprite.copyMerged(rect, frame: from) : sprite.copy(rect, frame: from, layer: fromLayer)
+            guard let clip else { throw CommandError.failed("copyCels: rect [\(rect.x), \(rect.y), \(rect.width), \(rect.height)] is outside the canvas") }
+            let r = rect.clamped(width: sprite.width, height: sprite.height)
+            if copy.replace == true { sprite.clear(PixelRect(x: copy.x ?? r.x, y: copy.y ?? r.y, width: r.width, height: r.height), frame: to, layer: toLayer) }
+            sprite.paste(clip, x: copy.x ?? r.x, y: copy.y ?? r.y, frame: to, layer: toLayer)
+        }
         if let tags = arguments.tags { sprite.tags = tags }
         for tag in arguments.addTags ?? [] {
             if let i = sprite.tags.firstIndex(where: { $0.name == tag.name }) { sprite.tags[i] = tag } else { sprite.tags.append(tag) }
@@ -490,22 +537,52 @@ public enum PixelSpriteEditCommand: EditorCommand {
 }
 
 public enum PixelSpriteDrawCommand: EditorCommand {
+    /// What an operation does: a drawing tool, or a selection edit (`move`, `copy`, `clear`).
+    public enum Tool: String, Codable, CaseIterable, Sendable {
+        case pencil, line, rect, fill, eraser, picker
+        /// Cut the pixels in `rect` and paste them with their top-left at `to`.
+        case move
+        /// Paste the pixels in `rect` of cel (`fromFrame`, `fromLayer`) (default: this cel) with
+        /// their top-left at `to` (default: the same place).
+        case copy
+        /// Erase the pixels in `rect`.
+        case clear
+
+        /// The drawing tool (nil for the selection edits).
+        public var drawingTool: PixelTool? { PixelTool(rawValue: rawValue) }
+    }
+
     /// One drawing operation.
     public struct Operation: Codable, Equatable, Sendable {
         /// pencil (points joined by lines), line, rect (first and last point), fill (flood fill at
-        /// each point), eraser, picker (no edit).
-        public var tool: PixelTool
-        /// [[x, y], …] pixels from the top-left.
-        public var points: [PixelPoint]
+        /// each point), eraser, picker (no edit); move, copy, clear (a `rect` selection).
+        public var tool: Tool
+        /// [[x, y], …] pixels from the top-left (drawing tools).
+        public var points: [PixelPoint]?
         /// A palette index, a row character or a hex color (default: the call's `color`).
         public var color: JSONValue?
         /// rect: fill it instead of the outline.
         public var filled: Bool?
-        public init(tool: PixelTool, points: [PixelPoint], color: JSONValue? = nil, filled: Bool? = nil) {
+        /// move, copy, clear: the selection [x, y, width, height].
+        public var rect: PixelRect?
+        /// move, copy: where the selection's top-left goes [x, y].
+        public var to: PixelPoint?
+        /// copy: the cel to copy from (default: the one drawn on). A layer is an index or a name.
+        public var fromFrame: Int?
+        public var fromLayer: JSONValue?
+        /// copy: take the visible pixels of every layer of `fromFrame` instead of one layer.
+        public var merged: Bool?
+        public init(tool: Tool, points: [PixelPoint]? = nil, color: JSONValue? = nil, filled: Bool? = nil, rect: PixelRect? = nil,
+                    to: PixelPoint? = nil, fromFrame: Int? = nil, fromLayer: JSONValue? = nil, merged: Bool? = nil) {
             self.tool = tool
             self.points = points
             self.color = color
             self.filled = filled
+            self.rect = rect
+            self.to = to
+            self.fromFrame = fromFrame
+            self.fromLayer = fromLayer
+            self.merged = merged
         }
     }
 
@@ -550,7 +627,7 @@ public enum PixelSpriteDrawCommand: EditorCommand {
 
     public static let id: CommandID = "sprite.draw"
     public static let title = "Draw Sprite"
-    public static let doc = "Draws on one cel (`frame`, `layer`) of a .sprite file in one undoable step: `pixels` (row strings stamped at `x`, `y`; \".\" keeps the pixel, or erases with `clear`) then `ops` ([{tool pencil|line|rect|fill|eraser, points [[x, y], …], color, filled}], optionally mirrored with `mirrorX` / `mirrorY`). A color is a palette index (0 = first), a row character (\"3\", \"a\", \".\" transparent) or a hex color (added to the palette if missing). Returns `preview`: the frame's visible pixels as rows. " + "Rows: \".\" transparent, 0-9 a-z A-Z palette entries 0-61."
+    public static let doc = "Draws on one cel (`frame`, `layer`) of a .sprite file in one undoable step: `pixels` (row strings stamped at `x`, `y`; \".\" keeps the pixel, or erases with `clear`) then `ops` in order: drawing ({tool pencil|line|rect|fill|eraser, points [[x, y], …], color, filled}, optionally mirrored with `mirrorX` / `mirrorY`) and selections ({tool move, rect [x, y, w, h], to [x, y]} cuts and pastes; {tool copy, rect, to, fromFrame, fromLayer, merged} pastes pixels from this or another cel, `merged` takes the frame's visible pixels; {tool clear, rect} erases). Transparent pixels don't cover when pasted. A color is a palette index (0 = first), a row character (\"3\", \"a\", \".\" transparent) or a hex color (added to the palette if missing). Returns `preview`: the frame's visible pixels as rows. " + "Rows: \".\" transparent, 0-9 a-z A-Z palette entries 0-61."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
@@ -586,12 +663,49 @@ public enum PixelSpriteDrawCommand: EditorCommand {
         if arguments.mirrorX == true { mirror.insert(.horizontal) }
         if arguments.mirrorY == true { mirror.insert(.vertical) }
         for op in arguments.ops ?? [] {
-            guard !op.points.isEmpty else { throw CommandError.failed("\(op.tool.rawValue): give at least one point") }
-            let value: UInt8 = op.tool == .eraser || op.tool == .picker ? 0
+            guard let tool = op.tool.drawingTool else {
+                try applySelectionOp(op, to: &sprite, frame: frame, layer: layer, warnings: &warnings)
+                continue
+            }
+            guard let points = op.points, !points.isEmpty else { throw CommandError.failed("\(op.tool.rawValue): give at least one point") }
+            let value: UInt8 = tool == .eraser || tool == .picker ? 0
                 : try PixelSpriteArguments.value(op.color ?? arguments.color, in: &sprite, warnings: &warnings)
-            sprite.draw(op.tool, points: op.points, value: value, frame: frame, layer: layer, filled: op.filled ?? false, mirror: mirror)
+            sprite.draw(tool, points: points, value: value, frame: frame, layer: layer, filled: op.filled ?? false, mirror: mirror)
         }
         return sprite
+    }
+
+    /// move, copy and clear on cel (`frame`, `layer`).
+    static func applySelectionOp(_ op: Operation, to sprite: inout PixelSprite, frame: Int, layer: Int, warnings: inout [String]) throws {
+        guard let rect = op.rect, !rect.isEmpty else {
+            throw CommandError.failed("\(op.tool.rawValue): give `rect` [x, y, width, height] (width and height at least 1)")
+        }
+        let r = rect.clamped(width: sprite.width, height: sprite.height)
+        guard !r.isEmpty else {
+            throw CommandError.failed("\(op.tool.rawValue): rect [\(rect.x), \(rect.y), \(rect.width), \(rect.height)] is outside the \(sprite.width) x \(sprite.height) canvas")
+        }
+        if r != rect { warnings.append("\(op.tool.rawValue): rect cut to the canvas: [\(r.x), \(r.y), \(r.width), \(r.height)]") }
+        switch op.tool {
+        case .clear:
+            sprite.clear(r, frame: frame, layer: layer)
+        case .move:
+            guard let to = op.to else { throw CommandError.failed("move: give `to` [x, y], where the selection's top-left goes") }
+            sprite.move(r, dx: to.x - r.x, dy: to.y - r.y, frame: frame, layer: layer)
+        case .copy:
+            let sourceFrame = try PixelSpriteArguments.frame(op.fromFrame ?? frame, in: sprite)
+            let clip: PixelClip?
+            if op.merged == true {
+                clip = sprite.copyMerged(r, frame: sourceFrame)
+            } else {
+                let sourceLayer = op.fromLayer == nil ? layer : try PixelSpriteArguments.layer(op.fromLayer, in: sprite)
+                clip = sprite.copy(r, frame: sourceFrame, layer: sourceLayer)
+            }
+            guard let clip else { return }
+            let to = op.to ?? PixelPoint(r.x, r.y)
+            sprite.paste(clip, x: to.x, y: to.y, frame: frame, layer: layer)
+        default:
+            break
+        }
     }
 }
 

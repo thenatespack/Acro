@@ -154,4 +154,104 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(session.performUndo())
         #expect(session.assets?.pixelSprite(of: id)?.compositeRows(frame: 0)[0] == "......")
     }
+
+    @Test func selectionToolsMoveCopyAndClearBetweenCels() throws {
+        let (session, folder) = try makeProject()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let created = try call(session, "sprite.new", ["name": "Sel", "width": 4, "height": 3, "frames": 2])
+        try call(session, "sprite.draw", ["path": "Sel.sprite", "pixels": ["12..", "34.."]])
+
+        // move cuts and pastes; copy pastes from another cel; clear erases.
+        var drawn = try call(session, "sprite.draw", ["path": "Sel.sprite", "ops": [["tool": "move", "rect": [0, 0, 2, 2], "to": [2, 1]]]])
+        #expect(drawn["preview"] as? [String] == ["....", "..12", "..34"])
+        drawn = try call(session, "sprite.draw", ["path": "Sel.sprite", "frame": 1,
+                                                  "ops": [["tool": "copy", "rect": [2, 1, 2, 2], "fromFrame": 0, "to": [0, 0]],
+                                                          ["tool": "clear", "rect": [1, 0, 1, 9]]]])
+        #expect(drawn["preview"] as? [String] == ["1...", "3...", "...."])
+        #expect((drawn["warnings"] as? [String])?.contains { $0.contains("cut to the canvas") } == true)
+        #expect(throws: (any Error).self) { try call(session, "sprite.draw", ["path": "Sel.sprite", "ops": [["tool": "move", "rect": [0, 0, 1, 1]]]]) }
+        #expect(throws: (any Error).self) { try call(session, "sprite.draw", ["path": "Sel.sprite", "ops": [["tool": "clear"]]]) }
+        #expect(throws: (any Error).self) { try call(session, "sprite.draw", ["path": "Sel.sprite", "ops": [["tool": "clear", "rect": [9, 9, 1, 1]]]]) }
+
+        // sprite.edit copyCels: a new frame and layer as targets, merged and replacing.
+        try call(session, "sprite.edit", ["path": "Sel.sprite", "addFrames": 1, "addLayers": ["Top"],
+                                          "copyCels": [["fromFrame": 0, "toFrame": 2, "toLayer": "Top"],
+                                                       ["fromFrame": 1, "toFrame": 2, "rect": [0, 0, 1, 1], "x": 3, "y": 0]]])
+        let id = try #require((created["asset"] as? String).flatMap { AssetID($0) })
+        var sprite = try #require(session.assets?.pixelSprite(of: id))
+        #expect(sprite.compositeRows(frame: 2) == ["...1", "..12", "..34"])
+        try call(session, "sprite.edit", ["path": "Sel.sprite", "copyCels": [["fromFrame": 1, "toFrame": 2, "toLayer": "Top", "replace": true]]])
+        sprite = try #require(session.assets?.pixelSprite(of: id))
+        #expect(sprite.compositeRows(frame: 2) == ["1..1", "3...", "...."], "replace: the Top cel is now frame 1's")
+        #expect(throws: (any Error).self) { try call(session, "sprite.edit", ["path": "Sel.sprite", "copyCels": [["fromFrame": 0, "toFrame": 9]]]) }
+        #expect(session.performUndo())
+        #expect(session.assets?.pixelSprite(of: id)?.compositeRows(frame: 2) == ["...1", "..12", "..34"])
+    }
+
+    @Test func builderSelectsCopiesPastesAndTakesToolKeys() throws {
+        let (session, folder) = try makeProject()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        var start = PixelSprite(width: 6, height: 6, frameCount: 2)
+        start.stamp(rows: ["11", "22"], frame: 0, layer: 0)
+        let id = try #require(session.createPixelSpriteAsset(in: "", name: "S", sprite: start))
+        let workspace = PixelSpriteWorkspace(session: session)
+        #expect(workspace.open(id))
+        let builder = try #require(workspace.builder)
+        func rows(_ frame: Int) -> [String]? { session.assets?.pixelSprite(of: id)?.compositeRows(frame: frame) }
+
+        // Drag out a selection with the select tool, then drag it to move the pixels.
+        let canvas = workspace.canvas
+        canvas.layout(in: UIRect(x: 0, y: 0, width: 300, height: 300))
+        #expect(builder.handleKey(KeyEvent(key: .m)))
+        #expect(builder.tool == .select)
+        let s = canvas.pixelScale, o = canvas.origin
+        func at(_ x: Int, _ y: Int) -> Vec2 { Vec2(o.x + (Float(x) + 0.5) * s, o.y + (Float(y) + 0.5) * s) }
+        _ = canvas.handleEvent(.pointerDown(PointerEvent(position: at(0, 0))))
+        _ = canvas.handleEvent(.pointerDrag(PointerEvent(position: at(1, 1))))
+        _ = canvas.handleEvent(.pointerUp(PointerEvent(position: at(1, 1))))
+        #expect(builder.selection == PixelRect(x: 0, y: 0, width: 2, height: 2))
+        #expect(!builder.hasPendingEdit)
+        _ = canvas.handleEvent(.pointerDown(PointerEvent(position: at(1, 1))))
+        _ = canvas.handleEvent(.pointerDrag(PointerEvent(position: at(3, 2))))
+        _ = canvas.handleEvent(.pointerUp(PointerEvent(position: at(3, 2))))
+        workspace.update(dt: 0.016)
+        #expect(rows(0)?[1] == "..11..")
+        #expect(rows(0)?[2] == "..22..")
+        #expect(builder.selection == PixelRect(x: 2, y: 1, width: 2, height: 2))
+
+        // Copy, go to the next frame, paste in the same place; arrows nudge the pasted pixels.
+        let mod: KeyModifiers = EditorShortcuts().shortcutModifier == .command ? .command : .control
+        #expect(builder.claimsKey(KeyEvent(key: .c, modifiers: mod)))
+        #expect(!builder.claimsKey(KeyEvent(key: .s, modifiers: mod)), "save stays the editor's")
+        builder.handleKey(KeyEvent(key: .c, modifiers: mod))
+        builder.selectFrame(1)
+        builder.handleKey(KeyEvent(key: .v, modifiers: mod))
+        workspace.update(dt: 0.016)
+        #expect(rows(1)?[1] == "..11..")
+        builder.handleKey(KeyEvent(key: .right, modifiers: .shift))
+        workspace.update(dt: 0.016)
+        #expect(rows(1)?[1] == "......", "moved 8 pixels: off the canvas")
+        #expect(session.performUndo())
+        workspace.update(dt: 0.016)
+        #expect(rows(1)?[1] == "..11..")
+
+        // Delete erases the selection, Esc drops it; without a selection, arrows step frames.
+        builder.select(PixelRect(x: 2, y: 1, width: 1, height: 2))
+        builder.handleKey(KeyEvent(key: .delete))
+        workspace.update(dt: 0.016)
+        #expect(rows(1)?[1] == "...1..")
+        builder.handleKey(KeyEvent(key: .escape))
+        #expect(builder.selection == nil)
+        builder.handleKey(KeyEvent(key: .left))
+        #expect(builder.frame == 0)
+
+        // Tool keys and mirror toggles.
+        for (key, tool) in [(Key.b, PixelTool.pencil), (.l, .line), (.u, .rect), (.g, .fill), (.e, .eraser), (.i, .picker)] {
+            builder.handleKey(KeyEvent(key: key))
+            #expect(builder.tool == tool)
+        }
+        builder.handleKey(KeyEvent(key: .h))
+        #expect(builder.mirror.contains(.horizontal))
+        #expect(!builder.claimsKey(KeyEvent(key: .z, modifiers: mod)), "undo stays the editor's")
+    }
 }

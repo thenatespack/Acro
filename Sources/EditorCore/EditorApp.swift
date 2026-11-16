@@ -1240,7 +1240,9 @@ public final class EditorApp: Game, EditorHost {
             // The launcher has its own keys; the editor's (save, play, delete…) don't apply to it.
             if !overlayBefore { for event in input.keyPresses { _ = launcher.handleShortcut(event) } }
         } else {
-            for command in shortcuts.actions(for: input.keyPresses, focus: focus) { invoke(command) }
+            let claimer = ui.focusedWidget as? EditorShortcutClaiming
+            let presses = claimer.map { c in input.keyPresses.filter { !c.claimsShortcut($0) } } ?? input.keyPresses
+            for command in shortcuts.actions(for: presses, focus: focus) { invoke(command) }
             updateViewport(engine: engine, dt: dt, keyboardFree: !focus.textEditing)
             meshWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
             vfxWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)

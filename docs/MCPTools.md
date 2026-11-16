@@ -3370,7 +3370,7 @@ Result:
 
 **Draw Sprite** · _undoable_
 
-Draws on one cel (`frame`, `layer`) of a .sprite file in one undoable step: `pixels` (row strings stamped at `x`, `y`; "." keeps the pixel, or erases with `clear`) then `ops` ([{tool pencil|line|rect|fill|eraser, points [[x, y], …], color, filled}], optionally mirrored with `mirrorX` / `mirrorY`). A color is a palette index (0 = first), a row character ("3", "a", "." transparent) or a hex color (added to the palette if missing). Returns `preview`: the frame's visible pixels as rows. Rows: "." transparent, 0-9 a-z A-Z palette entries 0-61. Undoable (one step; edit.undo reverts it).
+Draws on one cel (`frame`, `layer`) of a .sprite file in one undoable step: `pixels` (row strings stamped at `x`, `y`; "." keeps the pixel, or erases with `clear`) then `ops` in order: drawing ({tool pencil|line|rect|fill|eraser, points [[x, y], …], color, filled}, optionally mirrored with `mirrorX` / `mirrorY`) and selections ({tool move, rect [x, y, w, h], to [x, y]} cuts and pastes; {tool copy, rect, to, fromFrame, fromLayer, merged} pastes pixels from this or another cel, `merged` takes the frame's visible pixels; {tool clear, rect} erases). Transparent pixels don't cover when pasted. A color is a palette index (0 = first), a row character ("3", "a", "." transparent) or a hex color (added to the palette if missing). Returns `preview`: the frame's visible pixels as rows. Rows: "." transparent, 0-9 a-z A-Z palette entries 0-61. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
@@ -3381,7 +3381,7 @@ Arguments:
 - `layer?`: any — Any JSON value.
 - `mirrorX?`: boolean
 - `mirrorY?`: boolean
-- `ops?`: [{color?: any, filled?: boolean, points: [integer[2]], tool: "pencil" \| "line" \| "rect" \| "fill" \| "eraser" \| "picker"}]
+- `ops?`: [{color?: any, filled?: boolean, fromFrame?: integer, fromLayer?: any, merged?: boolean, points?: [integer[2]], rect?: integer[4], to?: integer[2], tool: string (9 cases)}]
 - `path?`: string
 - `pixels?`: [string]
 - `x?`: integer
@@ -3409,7 +3409,7 @@ Result:
 
 **Edit Sprite** · _undoable_
 
-Changes a .sprite file's structure in one undoable step, in this order: `palette` / `addColors`, canvas `width` / `height`, layers (`addLayers`, `removeLayers`, `updateLayers` [{name, rename, visible, opacity}]), frames (`addFrames` blank or copies of `copyFrame` at `insertAt`, `removeFrames`), timing (`duration` for all, `durations` per frame, ms), tags (`tags` replaces all, `addTags`, `removeTags`; a tag {name, from, to, mode loop|once|pingPong} becomes a SpriteAnimator clip), then `pivot` and `pixelsPerUnit`. Returns the summary and warnings. Undoable (one step; edit.undo reverts it).
+Changes a .sprite file's structure in one undoable step, in this order: `palette` / `addColors`, canvas `width` / `height`, layers (`addLayers`, `removeLayers`, `updateLayers` [{name, rename, visible, opacity}]), frames (`addFrames` blank or copies of `copyFrame` at `insertAt`, `removeFrames`), timing (`duration` for all, `durations` per frame, ms), `copyCels` ([{fromFrame, fromLayer, toFrame, toLayer, rect [x, y, w, h], x, y, merged, replace}]: copy / paste pixels between cels; default the whole cel to the same place, transparent pixels don't cover unless `replace`), tags (`tags` replaces all, `addTags`, `removeTags`; a tag {name, from, to, mode loop|once|pingPong} becomes a SpriteAnimator clip), then `pivot` and `pixelsPerUnit`. Returns the summary and warnings. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
@@ -3418,6 +3418,7 @@ Arguments:
 - `addLayers?`: [string]
 - `addTags?`: [{from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `copyCels?`: [{fromFrame: integer, fromLayer?: any, merged?: boolean, rect?: integer[4], replace?: boolean, toFrame: integer, toLayer?: any, x?: integer, y?: integer}]
 - `copyFrame?`: integer
 - `duration?`: integer
 - `durations?`: [integer]
