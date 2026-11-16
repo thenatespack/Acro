@@ -419,6 +419,16 @@ public final class AssetInspectorView {
                 content.addChildren([HStack(spacing: 6, [open, Spacer()]),
                                      note("A grid map of \(map?.cells.count ?? 0) cells from \(map?.pieces.count ?? 0) pieces on \(map?.floors.count ?? 0) floors, drawn instanced with one collider per chunk.")])
             }
+            if session.isDialogueFile(id) {
+                let open = Button("Open in Dialogue Builder", role: .primary, name: "openDialogueBuilder") { [unowned self] in
+                    session.run(DialogueOpenCommand.self, .init(asset: AssetReference(id)))
+                }
+                open.command = DialogueOpenCommand.id.rawValue
+                open.tooltip = "Edit this conversation in the Dialogue tab (or double-click it in the Assets panel)"
+                let dialogue = session.assets?.dialogueContents(of: id)
+                content.addChildren([HStack(spacing: 6, [open, Spacer()]),
+                                     note("A conversation of \(dialogue?.nodes.count ?? 0) nodes. A DialoguePlayer component plays it in game; the Dialogue tab has a graph view and a play-through preview.")])
+            }
             if session.isTerrainFile(id) {
                 let open = Button("Open in Terrain Builder", role: .primary, name: "openTerrainBuilder") { [unowned self] in
                     session.run(TerrainOpenCommand.self, .init(asset: AssetReference(id)))

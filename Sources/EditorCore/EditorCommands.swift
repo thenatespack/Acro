@@ -47,6 +47,7 @@ public enum BuiltinCommands {
       + EditorPathCommands.all
       + EditorBehaviorCommands.all
       + EditorUIBuildCommands.all
+      + EditorDialogueCommands.all
 }
 
 extension CommandID {

@@ -212,6 +212,7 @@ public struct AssetImporterRegistry: Sendable {
         registry.register(PathBuildImporter())
         registry.register(BehaviorTreeImporter())
         registry.register(UIBuildImporter())
+        registry.register(DialogueImporter())
         return registry
     }
 

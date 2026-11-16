@@ -153,6 +153,8 @@ public final class AssetBrowserModel {
             session.run(BehaviorOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where session.isUIBuildFile(id):
             session.run(UIOpenCommand.self, .init(asset: AssetReference(id)))
+        case .asset(let id) where session.isDialogueFile(id):
+            session.run(DialogueOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where entry.isExpandable:
             toggleExpanded(id)
         default:
@@ -311,6 +313,14 @@ public final class AssetBrowserModel {
     @discardableResult
     public func newBehaviorTree() -> AssetID? {
         guard let id = session.run(BehaviorNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
+        invalidate()
+        selection = .asset(id)
+        return id
+    }
+    /// Creates a dialogue in the current folder (`dialogue.new`) and selects it.
+    @discardableResult
+    public func newDialogue() -> AssetID? {
+        guard let id = session.run(DialogueNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
         invalidate()
         selection = .asset(id)
         return id

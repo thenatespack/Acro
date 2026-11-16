@@ -134,6 +134,11 @@ public final class EditorSession {
     /// The data table open in the Data Table tab (`table.open`), and how the app shows it.
     public var openTable: AssetID?
     public var onOpenTable: ((AssetID) -> Void)?
+    /// The dialogue open in the Dialogue tab (`dialogue.open`), and how the app shows it.
+    public var openDialogue: AssetID?
+    public var onOpenDialogue: ((AssetID) -> Void)?
+    /// Shows `DialoguePlayer` conversations while playing (the app's box over the Game view).
+    public var dialoguePresenter: (any DialoguePresenter)?
     /// The terrain open in the Terrain Builder tab (`terrain.open`), and how the app shows it.
     public var openTerrain: AssetID?
     public var onOpenTerrain: ((AssetID) -> Void)?
@@ -726,6 +731,7 @@ public final class EditorSession {
             spatialAudio = world.addSpatialAudio(audio, assets: { [weak self] in self?.assets })
         }
         world.addBehaviorTrees(name: Self.behaviorSystem, assets: { [weak self] in self?.assets }, physics: { [weak self] in self?.physics })
+        world.addDialogueSystem(assets: { [weak self] in self?.assets }).presenter = dialoguePresenter
         gameModule.addSystems()
     }
 
@@ -749,6 +755,7 @@ public final class EditorSession {
         world.removeSystem(named: Self.behaviorSystem)
         spatialAudio?.remove()
         spatialAudio = nil
+        world.removeDialogueSystem()
         tweens = nil
         gameModule.removeSystems()
     }
