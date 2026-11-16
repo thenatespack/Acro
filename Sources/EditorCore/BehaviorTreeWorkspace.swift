@@ -380,6 +380,7 @@ public final class BehaviorTreeWorkspace {
             canvas.pan = Vec2(-30, -30)
             canvas.zoom = 1
             if let b = canvas.layout.bounds { canvas.pan = Vec2(b.x - 30, b.y - 30) }
+            if canvas.frame.width > 0 { canvas.frameStart() } else { canvas.framesAtNextLayout = true }
         }
         layOutSidebar()
     }

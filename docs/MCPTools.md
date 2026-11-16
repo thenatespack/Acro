@@ -664,7 +664,7 @@ Result:
 
 **Open in Behavior Tree Builder** · _idempotent_
 
-Opens a .behavior file in the editor's Behavior Tree tab (the tree as an outline with a node form, presets and the blackboard; while playing it highlights the running path of the selected entity) and brings the tab to the front. view.screenshot {source: "panel", panel: "behaviorTree"} shows it.
+Opens a .behavior file in the editor's Behavior Tree tab (the tree as a node graph you can drag nodes on to reparent or reorder, with a node form, presets and the blackboard; while playing it tints each node with its last status for the selected entity) and brings the tab to the front. view.screenshot {source: "panel", panel: "behaviorTree"} shows it.
 
 Arguments:
 

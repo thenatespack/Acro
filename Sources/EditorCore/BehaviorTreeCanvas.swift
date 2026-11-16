@@ -150,6 +150,27 @@ public final class BehaviorTreeCanvas: Widget {
         }
     }
 
+    /// Set to frame the tree (`frameStart`) at the next layout, once the canvas has a size.
+    public var framesAtNextLayout = false
+
+    public override func layoutChildren() {
+        super.layoutChildren()
+        if framesAtNextLayout, frame.width > 0, frame.height > 0 {
+            framesAtNextLayout = false
+            frameStart()
+        }
+    }
+
+    /// How a tree opens: the whole tree when it fits at a readable zoom, else the root at the
+    /// top middle at that zoom.
+    public func frameStart() {
+        guard let b = layout.bounds, frame.width > 0, frame.height > 0 else { frameAll(); return }
+        zoom = max(0.75, min(1, (frame.width - 40) / b.width, (frame.height - 40) / b.height))
+        let centerX = b.width * zoom <= frame.width - 40 ? b.x + b.width / 2
+            : (layout.positions[tree.rootID ?? ""]?.x ?? b.x) + BehaviorTreeLayout.nodeSize.x / 2
+        pan = Vec2(centerX - frame.width / zoom / 2, b.y - 20 / zoom)
+    }
+
     /// Pans so `id` is in view.
     public func reveal(_ id: String) {
         guard let r = rect(of: id), frame.width > 0 else { return }
@@ -291,7 +312,9 @@ public final class BehaviorTreeCanvas: Widget {
                 list.drawLine(from: Vec2(v.x, frame.y), to: Vec2(v.x, frame.maxY), width: 1, color: UIColor(1, 1, 1, 0.12))
                 list.drawText("Not connected to the root", at: Vec2(v.x + 8, max(frame.y + 6, v.y)), size: 11, color: theme.secondaryTextColor)
             }
-            for edge in layout.edges { drawEdge(edge.parent, edge.child, faded: moving.contains(edge.child), list: list) }
+            // Running links last, so the running path stays on top where links share a line.
+            let edges = layout.edges.filter { statuses[$0.child] != .running } + layout.edges.filter { statuses[$0.child] == .running }
+            for edge in edges { drawEdge(edge.parent, edge.child, faded: moving.contains(edge.child), list: list) }
             for node in tree.nodes where layout.positions[node.id] != nil {
                 drawNode(node, list: list, theme: theme, faded: moving.contains(node.id))
             }
