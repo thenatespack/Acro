@@ -116,7 +116,8 @@ extension MeshBuildImporter {
         let budget = max(1500, occlusionTriangleBudget / meshCount)
         for i in parts.indices {
             guard var g = geometries[i], !g.indices.isEmpty else { continue }
-            if occlusion { g = g.tessellated(maxEdge: scale.edge, maxTriangles: budget) }
+            // Foliage cards keep their four corners (splitting them only adds triangles).
+            if occlusion && parts[i].shape != .foliage { g = g.tessellated(maxEdge: scale.edge, maxTriangles: budget) }
             if parts[i].resolvedLook != nil && parts[i].material.trimmingCharacters(in: .whitespaces).isEmpty {
                 g = parts[i].applyingLookUVs(to: g)
             }

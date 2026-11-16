@@ -44,7 +44,7 @@ public final class MeshBuilderView {
     static let shapeButtons: [(MeshBuildShape, String)] = [
         (.box, "Box"), (.sphere, "Sphere"), (.hemisphere, "Dome"), (.cylinder, "Cylinder"), (.cone, "Cone"),
         (.capsule, "Capsule"), (.torus, "Torus"), (.tube, "Tube"), (.plane, "Plane"), (.wedge, "Wedge"),
-        (.pyramid, "Pyramid"), (.lathe, "Lathe"), (.extrude, "Extrude"), (.sweep, "Sweep"), (.loft, "Loft"), (.sculpt, "Sculpt"), (.group, "Group"),
+        (.pyramid, "Pyramid"), (.lathe, "Lathe"), (.extrude, "Extrude"), (.sweep, "Sweep"), (.loft, "Loft"), (.foliage, "Foliage"), (.sculpt, "Sculpt"), (.group, "Group"),
     ]
 
     /// The profile a new lathe starts with: a vase with a flared lip (radius, height in meters).
@@ -128,6 +128,7 @@ public final class MeshBuilderView {
             case .extrude: "Add a flat outline pushed out into a slab (starts as an arrow; edit its points below)"
             case .sweep: "Add a tube along a curved path: pipes, cables, handles, branches, horns (starts as a bent pipe)"
             case .loft: "Add a skin through stacked sections: bottles, hulls, fuselages, blades (starts as a flask)"
+            case .foliage: "Add leaves: cut-out leaf cards filling a volume or growing on branches (starts as a broadleaf crown)"
             case .sculpt: "Add a sculpt: its child shapes melt together and cut into each other as one smooth surface (starts as a carved stone)"
             default: "Add a \(label.lowercased()) on top of the selected part"
             }
@@ -162,6 +163,7 @@ public final class MeshBuilderView {
         addPartGrid(part)
         addShapeSection(for: part)
         addCurveSection(for: part)  // sweep path / loft sections (MeshBuilderCurves.swift)
+        addFoliageSection(for: part)  // foliage, ribbons, leaf looks (MeshBuilderView+Foliage.swift)
         addDeformSection(for: part)
         addSculptSection(for: part)
         addLookSection(for: part)  // MeshBuilderView+Looks.swift
@@ -579,6 +581,7 @@ public final class MeshBuilderView {
         if shape == .lathe { part.profile = Self.starterLathe }
         if shape == .extrude { part.profile = Self.starterExtrude; part.size = Vec3(1, 1, 0.15) }
         Self.applyCurveStarter(to: &part)  // sweep path, loft sections
+        Self.applyFoliageStarter(to: &part)  // a crown
         if shape == .sculpt { return addSculpt(named: part.name) }
         // Rest on the ground, or on top of the selected part (profile shapes aren't centered, so go by bounds).
         let bounds = part.localBounds

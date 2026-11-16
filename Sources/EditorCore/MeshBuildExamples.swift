@@ -13,7 +13,9 @@ public struct MeshBuildExample: Codable, Equatable, Sendable {
 }
 
 public enum MeshBuildExamples {
-    public static var all: [MeshBuildExample] { [streetLamp, cart, turret, crate, bench, armchair, stoneArch, sailboat, gnarledTree, deskLamp] }
+    public static var all: [MeshBuildExample] {
+        [streetLamp, cart, turret, crate, bench, armchair, stoneArch, sailboat, gnarledTree, deskLamp] + plants  // MeshBuildExamples+Plants.swift
+    }
 
     /// Dark green-black paint for street furniture.
     static let lampPaint = Vec3(0.09, 0.13, 0.11)
@@ -213,9 +215,9 @@ extension MeshBuildExamples {
         MeshBuildExample(name: "Sailboat", about: "6 m long, bow at -Z. The hull is a loft along z (axis \"z\"): each section's `at` is its center [x, y, z] (the deck centerline) and its `profile` [across, height] runs from the deck edge down to the keel and back up, so the deck edge stays a hard edge and the bottom is round; the same point count in every section keeps them matched. The deck, cabin, keel fin and bulb are lofts of superellipse sections (roundness 4 is a flat plate, 3 a rounded box, 1 an ellipse; size [0,0] ends in a point). The mast is a cylinder tapered and bent 4° aft with `deform`; the sails are thin extrudes turned onto the boat's length (rotation [0,90,0]) and bent and twisted so they fill with wind. Rigging, pulpit, pushpit and lifelines are sweeps (radius 6-18 mm; shrouds with straight:true and mirror x). The boom and mainsail hang from a group pivot turned 14° to starboard.", build: decoded(sailboatJSON))
     }
 
-    /// A 5.7 m tree with a curving, bark-rough trunk, flared roots, tapering branches and lumpy foliage.
+    /// A 5.5 m oak with a curving bark trunk, flared roots, tapering branches and a leafy crown of cut-out cards.
     public static var gnarledTree: MeshBuildExample {
-        MeshBuildExample(name: "Gnarled Tree", about: "5.7 m tall. The trunk, roots, branches and twigs are sweeps whose `radii` taper them toward their tips (1 → 0.15); the trunk's S-curved path and fine `noise` deform (2.5 cm lumps 12 cm across) read as bark. The roots are one sweep repeated 5 times around the trunk (repeat radial). Each foliage clump is a sphere roughened by large-scale noise with its own seed, so no two are alike. A low hemisphere mound keeps the base on y=0 (noise moves surfaces both ways, so noisy parts start a little above the ground).", build: decoded(treeJSON))
+        MeshBuildExample(name: "Gnarled Tree", about: "5.5 m tall, about 9k triangles. The trunk, roots, branches and twigs are sweeps whose `radii` taper them toward their tips (1 → 0.15) with the bark look, whose normal map gives the relief (only a gentle, large noise bends the trunk: fine noise would cost tens of thousands of triangles). The roots are one sweep repeated 5 times around the trunk (repeat radial). The leaves are two foliage parts with the oakLeaves look: Leaves grows `on` the branches and twigs (cards along their outer 60%), Crown fills a 3.6 x 2.4 x 3 m ellipsoid around where they end, so the crown is full and its edge ragged. Normals bent out of the crown make it shade as one volume. A dirt mound keeps the base on y=0.", build: decoded(treeJSON))
     }
 
     /// A spring-balanced desk lamp: lathe base and shade, straight swept arms, helical spring sweeps
@@ -253,23 +255,20 @@ extension MeshBuildExamples {
 
     static let treeJSON = #"""
         {"parts": [
-          {"name":"Mound","shape":"hemisphere","position":[0,0.08,0],"size":[1.9,0.16,1.9],"color":[0.3,0.24,0.16],"roughness":1},
-          {"name":"Trunk","shape":"sweep","parent":"Mound","color":[0.36,0.27,0.2],"roughness":0.95,"position":[0,-0.08,0],"radius":0.28,"segments":20,"path":[[0,0.12,0],[0.1,0.8,0.05],[-0.13,1.6,0.14],[0.07,2.3,0],[0.12,3,-0.05]],"radii":[1.35,1,0.85,0.75,0.6],"deform":[{"noise":{"amount":0.025,"scale":0.12,"seed":4}}]},
-          {"name":"Root","shape":"sweep","parent":"Trunk","color":[0.36,0.27,0.2],"roughness":0.95,"radius":0.1,"segments":12,"path":[[0.1,0.62,0],[0.38,0.3,0.02],[0.62,0.17,0.06],[0.86,0.11,0.1]],"radii":[1.6,1.1,0.6,0.15],"deform":[{"noise":{"amount":0.012,"scale":0.1,"seed":9}}],"repeat":{"count":5,"radial":{"axis":"y"}}},
-          {"name":"Branch East","shape":"sweep","parent":"Trunk","color":[0.36,0.27,0.2],"roughness":0.95,"radius":0.16,"segments":14,"path":[[0,2.35,0.05],[0.6,2.9,0.1],[1.2,3.2,0],[1.7,3.7,-0.1]],"radii":[1,0.75,0.5,0.2],"deform":[{"noise":{"amount":0.015,"scale":0.1,"seed":5}}]},
-          {"name":"Branch West","shape":"sweep","parent":"Trunk","color":[0.36,0.27,0.2],"roughness":0.95,"radius":0.15,"segments":14,"path":[[-0.05,2.05,0.1],[-0.6,2.6,0.4],[-1.1,3,0.5],[-1.5,3.6,0.7]],"radii":[1,0.75,0.5,0.2],"deform":[{"noise":{"amount":0.015,"scale":0.1,"seed":6}}]},
-          {"name":"Branch Front","shape":"sweep","parent":"Trunk","color":[0.36,0.27,0.2],"roughness":0.95,"radius":0.13,"segments":12,"path":[[0.05,2.65,0],[0.1,3.3,-0.5],[0,3.8,-0.9],[0.15,4.2,-1.1]],"radii":[1,0.7,0.45,0.2]},
-          {"name":"Leader","shape":"sweep","parent":"Trunk","color":[0.36,0.27,0.2],"roughness":0.95,"radius":0.15,"segments":12,"path":[[0.12,2.9,-0.05],[0.2,3.6,0.1],[0.1,4.3,0.2],[0.25,4.8,0.15]],"radii":[1,0.7,0.45,0.15]},
-          {"name":"Twig East","shape":"sweep","parent":"Branch East","color":[0.36,0.27,0.2],"roughness":0.95,"radius":0.06,"segments":8,"path":[[1.2,3.2,0],[1.5,3.3,0.5],[1.8,3.5,0.8]],"radii":[1,0.6,0.2]},
-          {"name":"Twig West","shape":"sweep","parent":"Branch West","color":[0.36,0.27,0.2],"roughness":0.95,"radius":0.06,"segments":8,"path":[[-1.1,3,0.5],[-1.6,3.1,0.2],[-2,3.3,0.1]],"radii":[1,0.6,0.2]},
-          {"name":"Leaves 1","shape":"sphere","parent":"Trunk","position":[1.7,3.95,-0.1],"size":[1.4,1.12,1.4],"segments":16,"color":[0.22,0.4,0.15],"roughness":0.9,"deform":[{"noise":{"amount":0.168,"scale":0.42,"seed":1}}]},
-          {"name":"Leaves 2","shape":"sphere","parent":"Trunk","position":[1.85,3.65,0.8],"size":[1.1,0.88,1.1],"segments":16,"color":[0.27,0.45,0.17],"roughness":0.9,"deform":[{"noise":{"amount":0.132,"scale":0.33,"seed":2}}]},
-          {"name":"Leaves 3","shape":"sphere","parent":"Trunk","position":[-1.5,3.85,0.7],"size":[1.4,1.12,1.4],"segments":16,"color":[0.2,0.36,0.13],"roughness":0.9,"deform":[{"noise":{"amount":0.168,"scale":0.42,"seed":3}}]},
-          {"name":"Leaves 4","shape":"sphere","parent":"Trunk","position":[-2.05,3.45,0.1],"size":[1,0.8,1],"segments":16,"color":[0.25,0.43,0.2],"roughness":0.9,"deform":[{"noise":{"amount":0.12,"scale":0.3,"seed":4}}]},
-          {"name":"Leaves 5","shape":"sphere","parent":"Trunk","position":[0.15,4.4,-1.1],"size":[1.3,1.04,1.3],"segments":16,"color":[0.22,0.4,0.15],"roughness":0.9,"deform":[{"noise":{"amount":0.156,"scale":0.39,"seed":5}}]},
-          {"name":"Leaves 6","shape":"sphere","parent":"Trunk","position":[0.25,5,0.15],"size":[1.6,1.28,1.6],"segments":16,"color":[0.27,0.45,0.17],"roughness":0.9,"deform":[{"noise":{"amount":0.192,"scale":0.48,"seed":6}}]},
-          {"name":"Leaves 7","shape":"sphere","parent":"Trunk","position":[0.6,4.45,0.45],"size":[1.4,1.12,1.4],"segments":16,"color":[0.2,0.36,0.13],"roughness":0.9,"deform":[{"noise":{"amount":0.168,"scale":0.42,"seed":7}}]},
-          {"name":"Leaves 8","shape":"sphere","parent":"Trunk","position":[-0.6,4.35,0],"size":[1.5,1.2,1.5],"segments":16,"color":[0.25,0.43,0.2],"roughness":0.9,"deform":[{"noise":{"amount":0.18,"scale":0.45,"seed":8}}]}
+          {"name":"Mound","shape":"hemisphere","position":[0,0.06,0],"size":[1.8,0.12,1.8],"segments":24,"look":"dirt"},
+          {"name":"Trunk","shape":"sweep","parent":"Mound","position":[0,-0.06,0],"look":"bark","radius":0.26,"segments":16,"path":[[0,0.08,0],[0.1,0.8,0.05],[-0.13,1.6,0.14],[0.07,2.3,0],[0.12,3,-0.05]],"radii":[1.4,1,0.85,0.75,0.6],"deform":[{"noise":{"amount":0.035,"scale":0.45,"seed":4}}]},
+          {"name":"Root","shape":"sweep","parent":"Trunk","look":"bark","radius":0.1,"segments":10,"path":[[0.1,0.62,0],[0.38,0.3,0.02],[0.62,0.17,0.06],[0.86,0.11,0.1]],"radii":[1.6,1.1,0.6,0.15],"repeat":{"count":5,"radial":{"axis":"y"}}},
+          {"name":"Branch East","shape":"sweep","parent":"Trunk","look":"bark","radius":0.15,"segments":12,"path":[[0,2.35,0.05],[0.6,2.9,0.1],[1.2,3.2,0],[1.75,3.75,-0.1]],"radii":[1,0.72,0.48,0.15]},
+          {"name":"Branch West","shape":"sweep","parent":"Trunk","look":"bark","radius":0.14,"segments":12,"path":[[-0.05,2.05,0.1],[-0.6,2.6,0.4],[-1.1,3,0.5],[-1.55,3.65,0.7]],"radii":[1,0.72,0.48,0.15]},
+          {"name":"Branch Front","shape":"sweep","parent":"Trunk","look":"bark","radius":0.12,"segments":10,"path":[[0.05,2.65,0],[0.1,3.3,-0.5],[0,3.8,-0.95],[0.15,4.25,-1.2]],"radii":[1,0.7,0.45,0.15]},
+          {"name":"Branch Back","shape":"sweep","parent":"Trunk","look":"bark","radius":0.11,"segments":10,"path":[[0.05,2.5,0.05],[0.25,3.1,0.6],[0.2,3.6,1.0],[0.4,4.0,1.35]],"radii":[1,0.7,0.45,0.15]},
+          {"name":"Leader","shape":"sweep","parent":"Trunk","look":"bark","radius":0.14,"segments":10,"path":[[0.12,2.9,-0.05],[0.2,3.6,0.1],[0.1,4.3,0.2],[0.25,4.9,0.15]],"radii":[1,0.7,0.45,0.12]},
+          {"name":"Twig East","shape":"sweep","parent":"Branch East","look":"bark","radius":0.05,"segments":8,"path":[[1.2,3.2,0],[1.5,3.35,0.5],[1.85,3.5,0.85]],"radii":[1,0.6,0.15]},
+          {"name":"Twig West","shape":"sweep","parent":"Branch West","look":"bark","radius":0.05,"segments":8,"path":[[-1.1,3,0.5],[-1.6,3.1,0.2],[-2.05,3.3,0.05]],"radii":[1,0.6,0.15]},
+          {"name":"Twig Front","shape":"sweep","parent":"Branch Front","look":"bark","radius":0.045,"segments":8,"path":[[0,3.8,-0.95],[-0.5,4.0,-1.1],[-0.9,4.3,-1.0]],"radii":[1,0.6,0.15]},
+          {"name":"Twig Top","shape":"sweep","parent":"Leader","look":"bark","radius":0.045,"segments":8,"path":[[0.1,4.3,0.2],[0.55,4.6,0.35],[0.9,4.75,0.55]],"radii":[1,0.6,0.15]},
+          {"name":"Leaves","shape":"foliage","parent":"Trunk","look":"oakLeaves","on":["Branch East","Branch West","Branch Front","Branch Back","Leader","Twig East","Twig West","Twig Front","Twig Top"],"along":[0.4,1],"cardSize":0.6,"density":1.3},
+          {"name":"Crown","shape":"foliage","parent":"Trunk","look":"oakLeaves","position":[0.05,4.0,0.05],"size":[3.6,2.4,3.0],"cardSize":0.65,"density":0.9,"seed":2}
         ]}
         """#
 
@@ -337,7 +336,7 @@ public enum MeshBuildExamplesCommand: EditorCommand {
 
     public static let id: CommandID = "meshBuild.examples"
     public static let title = "Mesh Build Examples"
-    public static let doc = "Returns small, correct mesh builds to learn from or start with (pass one's `build` to meshBuild.new; keys at their defaults are left out): a street lamp (a parent chain, glow), a wooden cart (wheels turned onto an axle, a spin animation), a turret (a group pivot swinging its children), a weathered crate (looks, wear, mirrored corner caps), a park bench (mirror and repeat, wood and painted iron), two sculpts: an armchair (parts melted together with smooth, puffy cushions) and a stone arch (carved with subtracts, roughened with noise), and three built from curves: a sailboat (lofted hull, bent mast, billowing sails, swept rigging), a gnarled tree (tapered sweeps, noise bark and foliage) and a desk lamp (lathes, swept arms, helical springs, a cable). Each stands on y=0, faces -Z and gives no warnings. `name` picks one."
+    public static let doc = "Returns small, correct mesh builds to learn from or start with (pass one's `build` to meshBuild.new; keys at their defaults are left out): a street lamp (a parent chain, glow), a wooden cart (wheels turned onto an axle, a spin animation), a turret (a group pivot swinging its children), a weathered crate (looks, wear, mirrored corner caps), a park bench (mirror and repeat, wood and painted iron), two sculpts: an armchair (parts melted together with smooth, puffy cushions) and a stone arch (carved with subtracts, roughened with noise), three built from curves: a sailboat (lofted hull, bent mast, billowing sails, swept rigging), a gnarled tree (tapered bark sweeps, leaf-card foliage on branches and in a crown) and a desk lamp (lathes, swept arms, helical springs, a cable), and plants: a flowering shrub, a potted fern (a lathe pot, ribbon fronds) and a small pine (whorls of branches with needle cards). Each stands on y=0, faces -Z and gives no warnings. `name` picks one."
     public static let isReadOnly = true
     public static let isIdempotent = true
     public static func unavailableReason(in session: EditorSession) -> String? { nil }

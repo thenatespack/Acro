@@ -10,7 +10,7 @@ extension MeshBuilderView {
     static var lookOptions: [String] { ["None"] + MeshBuildLook.allCases.map(\.title) }
 
     func addLookSection(for part: MeshBuildPart) {
-        guard part.shape != .group else { return }
+        guard part.shape != .group, part.shape != .foliage, part.leafLook == nil else { return }  // leaf looks: MeshBuilderView+Foliage.swift
         let name = part.name
         view.addChild(Separator())
         view.addChild(Label("Look", role: .secondary))

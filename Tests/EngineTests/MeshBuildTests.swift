@@ -37,8 +37,9 @@ private func expectOutwardAndUnit(_ g: MeshGeometry, _ label: String) {
 @Suite struct MeshBuildTests {
     @Test func everyShapeFitsItsSizeBox() {
         let size = Vec3(2, 1, 0.5)
-        // Profile shapes: MeshBuildShapeTests; sweep and loft: MeshBuildCurveTests; sculpt: MeshBuildSculptTests.
-        for shape in MeshBuildShape.allCases where ![.lathe, .extrude, .sweep, .loft, .sculpt].contains(shape) {
+        // Profile shapes: MeshBuildShapeTests; sweep and loft: MeshBuildCurveTests; sculpt: MeshBuildSculptTests;
+        // foliage (leaf cards, not a solid): MeshBuildFoliageTests.
+        for shape in MeshBuildShape.allCases where ![.lathe, .extrude, .sweep, .loft, .sculpt, .foliage].contains(shape) {
             let part = MeshBuildPart(shape: shape, size: size, segments: 16)
             guard let g = part.geometry() else {
                 #expect(shape == .group)

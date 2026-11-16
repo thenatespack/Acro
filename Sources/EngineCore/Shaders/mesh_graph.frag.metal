@@ -1,6 +1,6 @@
 // Generated from mesh_graph.frag by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
-// spirv-fnv1a64: 1d9d737adfd79056
+// spirv-fnv1a64: 40a09f95ae16bf95
 // glsl-fnv1a64: 1e784319ea196fd3
 
 #pragma clang diagnostic ignored "-Wmissing-prototypes"
@@ -757,16 +757,26 @@ fragment fragment_main_out fragment_main(fragment_main_in in [[stage_in]], const
         n = fast::normalize(((gt * m.x) + (gb * m.y)) + (n * m.z));
     }
     bool pbr = material.emissive.w > 0.5;
-    bool _2034;
+    float _2029;
     if (pbr)
     {
-        _2034 = !gl_FrontFacing;
+        _2029 = fast::clamp(material.params.z, 0.0, 1.0);
     }
     else
     {
-        _2034 = pbr;
+        _2029 = 0.0;
     }
-    if (_2034)
+    float translucency = _2029;
+    bool _2044;
+    if (pbr)
+    {
+        _2044 = !gl_FrontFacing;
+    }
+    else
+    {
+        _2044 = pbr;
+    }
+    if (_2044 && (translucency <= 0.0))
     {
         n = -n;
     }
@@ -781,9 +791,9 @@ fragment fragment_main_out fragment_main(fragment_main_in in [[stage_in]], const
         float3 param = in.vWorldPos;
         float3 param_1 = ng;
         float3 param_2;
-        float _2081 = directionalShadow(param, param_1, param_2, frame, shadowMap, shadowMapSmplr);
+        float _2094 = directionalShadow(param, param_1, param_2, frame, shadowMap, shadowMapSmplr);
         float3 cascadeTint = param_2;
-        shadow = _2081;
+        shadow = _2094;
         albedo *= cascadeTint;
     }
     float3 light = frame.lightColor.xyz * frame.lightDir.w;
@@ -799,18 +809,18 @@ fragment fragment_main_out fragment_main(fragment_main_in in [[stage_in]], const
         float ndotl = dot(n, l);
         float3 diffuse = light * fast::max(ndotl, 0.0);
         float3 specular = light * ((powr(fast::max(dot(n, h), 0.0), material.params.w) * material.params.z) * step(0.0, ndotl));
-        float3 _2141;
+        float3 _2154;
         if (frame.environment.x > 0.5)
         {
             float3 param_3 = n;
-            _2141 = environmentIrradiance(param_3, materialSampler, frame, environmentAtlas);
+            _2154 = environmentIrradiance(param_3, materialSampler, frame, environmentAtlas);
         }
         else
         {
             float3 param_4 = n;
-            _2141 = hemisphere(param_4, frame);
+            _2154 = hemisphere(param_4, frame);
         }
-        float3 ambient = _2141 * ao;
+        float3 ambient = _2154 * ao;
         color = (albedo * (ambient + (diffuse * shadow))) + (specular * shadow);
         if (frame.clusterGrid.w > 0.5)
         {
@@ -821,9 +831,9 @@ fragment fragment_main_out fragment_main(fragment_main_in in [[stage_in]], const
                 uint param_5 = i;
                 uint li = lightIndex(param_5, lightIndices);
                 uint param_6 = li;
-                float3 _2198 = punctualRadiance(param_6, param_7, lightPositions, in.vWorldPos, lightColors, lightDirections);
+                float3 _2211 = punctualRadiance(param_6, param_7, lightPositions, in.vWorldPos, lightColors, lightDirections);
                 float3 pl = param_7;
-                float3 radiance = _2198;
+                float3 radiance = _2211;
                 if (receivesShadows)
                 {
                     uint param_8 = li;
@@ -845,20 +855,41 @@ fragment fragment_main_out fragment_main(fragment_main_in in [[stage_in]], const
         float a = roughness * roughness;
         float3 diffuseColor = albedo * (1.0 - metallic);
         float3 f0 = mix(float3(0.039999999105930328369140625), albedo, float3(metallic));
-        float NoV = fast::max(dot(n, v), 9.9999997473787516355514526367188e-05);
+        float3 sn = n;
+        if (translucency > 0.0)
+        {
+            float3 face = cross(dfdx(in.vWorldPos), dfdy(in.vWorldPos));
+            if (dot(face, face) > 9.9999996826552253889678874634872e-21)
+            {
+                sn = fast::normalize((fast::normalize(face) * ((dot(face, v) < 0.0) ? (-1.0) : 1.0)) + (n - fast::normalize(in.vNormal)));
+            }
+        }
+        float NoV = fast::max(dot(sn, v), 9.9999997473787516355514526367188e-05);
         float NoL = fast::clamp(dot(n, l), 0.0, 1.0);
-        float NoH = fast::clamp(dot(n, h), 0.0, 1.0);
+        float sNoL = fast::clamp(dot(sn, l), 0.0, 1.0);
+        float NoH = fast::clamp(dot(sn, h), 0.0, 1.0);
         float VoH = fast::clamp(dot(v, h), 0.0, 1.0);
+        if (translucency > 0.0)
+        {
+            NoV = fast::max(NoV, 0.5);
+            VoH = fast::max(VoH, 0.5);
+        }
         float3 param_12 = f0;
         float param_13 = VoH;
         float3 F = fresnelSchlick(param_12, param_13);
         float param_14 = NoH;
         float param_15 = a;
         float param_16 = NoV;
-        float param_17 = NoL;
+        float param_17 = sNoL;
         float param_18 = a;
         float3 specular_1 = (F * (distributionGGX(param_14, param_15) * visibilitySmithGGXCorrelated(param_16, param_17, param_18))) * 3.1415927410125732421875;
-        float3 direct = (((((float3(1.0) - F) * diffuseColor) + specular_1) * NoL) * light) * shadow;
+        float3 direct = (((((float3(1.0) - F) * diffuseColor) * NoL) + (specular_1 * sNoL)) * light) * shadow;
+        if (translucency > 0.0)
+        {
+            float through = fast::clamp(-dot(sn, l), 0.0, 1.0);
+            float toward = powr(fast::clamp(dot(-v, l), 0.0, 1.0), 3.0);
+            direct += (((((diffuseColor * light) * shadow) * translucency) * through) * (0.3499999940395355224609375 + (0.64999997615814208984375 * toward)));
+        }
         float2 dfg;
         float3 irradiance;
         float3 reflected;
@@ -869,7 +900,7 @@ fragment fragment_main_out fragment_main(fragment_main_in in [[stage_in]], const
             dfg = environmentBRDFTable(param_19, param_20, brdfTable, brdfSampler);
             float3 param_21 = n;
             irradiance = environmentIrradiance(param_21, materialSampler, frame, environmentAtlas);
-            float3 param_22 = reflect(-v, n);
+            float3 param_22 = reflect(-v, sn);
             float param_23 = roughness;
             reflected = environmentRadiance(param_22, param_23, materialSampler, frame, environmentAtlas);
         }
@@ -880,20 +911,20 @@ fragment fragment_main_out fragment_main(fragment_main_in in [[stage_in]], const
             dfg = environmentBRDF(param_24, param_25);
             float3 param_26 = n;
             irradiance = hemisphere(param_26, frame);
-            float3 param_27 = reflect(-v, n);
+            float3 param_27 = reflect(-v, sn);
             reflected = mix(hemisphere(param_27, frame), irradiance, float3(roughness));
         }
-        bool _2373 = material.flags.w > 0.5;
-        bool _2379;
-        if (_2373)
+        bool _2468 = material.flags.w > 0.5;
+        bool _2474;
+        if (_2468)
         {
-            _2379 = frame.reflectionExtra.z > 0.5;
+            _2474 = frame.reflectionExtra.z > 0.5;
         }
         else
         {
-            _2379 = _2373;
+            _2474 = _2468;
         }
-        if (_2379)
+        if (_2474)
         {
             float3 param_28 = reflected;
             float3 param_29 = n;
@@ -913,9 +944,9 @@ fragment fragment_main_out fragment_main(fragment_main_in in [[stage_in]], const
                 uint param_32 = i_1;
                 uint li_1 = lightIndex(param_32, lightIndices);
                 uint param_33 = li_1;
-                float3 _2447 = punctualRadiance(param_33, param_34, lightPositions, in.vWorldPos, lightColors, lightDirections);
+                float3 _2542 = punctualRadiance(param_33, param_34, lightPositions, in.vWorldPos, lightColors, lightDirections);
                 float3 pl_1 = param_34;
-                float3 radiance_1 = _2447;
+                float3 radiance_1 = _2542;
                 if (receivesShadows)
                 {
                     uint param_35 = li_1;
@@ -949,16 +980,16 @@ fragment fragment_main_out fragment_main(fragment_main_in in [[stage_in]], const
         float k = frame.groundColor.w;
         float3 toEye = in.vWorldPos - frame.cameraPos.xyz;
         float x = k * toEye.y;
-        float _2570;
+        float _2665;
         if (abs(x) < 9.9999997473787516355514526367188e-05)
         {
-            _2570 = 1.0 - (0.5 * x);
+            _2665 = 1.0 - (0.5 * x);
         }
         else
         {
-            _2570 = (1.0 - exp(fast::min(-x, 60.0))) / x;
+            _2665 = (1.0 - exp(fast::min(-x, 60.0))) / x;
         }
-        float span = _2570;
+        float span = _2665;
         float atEye = frame.fogColor.w * exp(fast::min((-k) * (frame.cameraPos.y - frame.cameraPos.w), 30.0));
         fog = 1.0 - exp(((-dist) * atEye) * span);
     }

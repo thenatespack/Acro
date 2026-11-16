@@ -23,8 +23,11 @@ import EngineScene
 //
 // The mesh is split first so it can curve: every edge longer than its largest side / 2^(level+1)
 // is halved (`subdivide`, 0...6, default 3; 0 turns it off), and with noise also edges longer than a
-// third of its scale, up to `maxDeformTriangles`. Normals are recomputed afterwards: smooth where
-// the mesh was smooth, hard edges (a box's, a lathe's sharp rims) stay hard.
+// third of its scale, within a budget of `maxDeformTriangles` per part. When the budget stops the
+// splitting before the noise's finest lumps fit, the octaves the mesh is too coarse to show fade
+// out (instead of turning into spikes) and the part warns if even the largest lumps don't fit.
+// Normals are recomputed afterwards: smooth where the mesh was smooth, hard edges (a box's, a
+// lathe's sharp rims) stay hard.
 
 /// One deformer of a part's `deform` list; set one of its fields (see the notes at the top of this file).
 public struct MeshBuildDeform: Codable, Equatable, Sendable {
@@ -130,8 +133,8 @@ extension MeshBuildPart {
     public static let subdivideRange = 0...6
     /// The default level when a part has deformers.
     public static let defaultSubdivide = 3
-    /// The most triangles subdivision makes for one part.
-    static let maxDeformTriangles = 60_000
+    /// The most triangles subdivision makes for one part (its budget).
+    public static let maxDeformTriangles = 8_000
 
     /// Problems with `deform` and `subdivide` (cheap: no mesh is built).
     var deformWarnings: [String] {
@@ -169,6 +172,12 @@ extension MeshBuildPart {
     /// `g` (the shape in the part's space) split finely and run through `deform` in order, with
     /// its normals recomputed. Unchanged when there are no deformers.
     func deformed(_ geometry: MeshGeometry) -> MeshGeometry {
+        var warnings: [String] = []
+        return deformed(geometry, warnings: &warnings)
+    }
+
+    /// `deformed(_:)`, adding a sentence to `warnings` when the triangle budget is too small for its noise.
+    func deformed(_ geometry: MeshGeometry, warnings: inout [String]) -> MeshGeometry {
         let steps = (deform ?? []).filter { $0 != MeshBuildDeform() }
         guard !steps.isEmpty, !geometry.vertices.isEmpty else { return geometry }
         var g = geometry
@@ -181,6 +190,14 @@ extension MeshBuildPart {
             for d in steps { if let n = d.noise, n.scale.isFinite, n.scale > 0 { target = min(target, n.scale / 3) } }
             if target > 0 { g.subdivide(maxEdge: target, maxTriangles: Self.maxDeformTriangles) }
         }
+        // The finest lump the mesh can show: about two of its (typical longest) edges.
+        let resolvable = 2 * g.typicalEdge
+        if let coarsest = steps.compactMap({ $0.noise }).filter({ $0.scale.isFinite && $0.scale > 0 && $0.amount != 0 })
+            .map(\.scale).max(), coarsest < resolvable * 0.75 {
+            warnings.append(String(format: "noise lumps of %g m are finer than the %d-triangle budget lets this part show (about %.2g m); "
+                                   + "they were smoothed away: use a larger noise scale, a smaller part, or a look's normal map (bark, stone) "
+                                   + "for fine relief", coarsest, Self.maxDeformTriangles, resolvable))
+        }
         var moved = false
         for d in steps {
             if let t = d.taper, t.x.isFinite, t.y.isFinite, t.x >= 0, t.y >= 0 { g.taper(t); moved = true }
@@ -188,7 +205,7 @@ extension MeshBuildPart {
             if let b = d.bend, b.axis != .y, b.degrees.isFinite { g.bend(toward: b.axis, degrees: b.degrees); moved = true }
             if let n = d.noise, n.amount.isFinite, n.scale.isFinite, n.scale > 0 {
                 if moved { g.refreshNormals() }  // push along the deformed surface's normals
-                g.displace(noise: n)
+                g.displace(noise: n, finest: resolvable)
                 moved = true
             }
         }
@@ -251,9 +268,22 @@ extension MeshGeometry {
         }
     }
 
+    /// The mean of the triangles' longest edges (0 for no triangles).
+    var typicalEdge: Float {
+        var sum: Float = 0, count = 0
+        for t in stride(from: 0, to: indices.count - 2, by: 3) {
+            let a = vertices[Int(indices[t])].position, b = vertices[Int(indices[t + 1])].position
+            let c = vertices[Int(indices[t + 2])].position
+            sum += max(length(b - a), length(c - b), length(a - c))
+            count += 1
+        }
+        return count > 0 ? sum / Float(count) : 0
+    }
+
     /// Moves each point along the surface's (welded) normal by fractal noise of `noise`. Points at
-    /// one position move together, so hard edges don't open.
-    mutating func displace(noise: MeshBuildDeform.Noise) {
+    /// one position move together, so hard edges don't open. Octaves whose lumps are smaller than
+    /// `finest` meters (what the mesh's spacing can show) fade out.
+    mutating func displace(noise: MeshBuildDeform.Noise, finest: Float = 0) {
         let groups = weldGroups()
         let seed = UInt32(truncatingIfNeeded: noise.seed)
         let offset = Vec3(Float(MeshDeformNoise.hash(1, 2, 3, seed) % 1000), Float(MeshDeformNoise.hash(4, 5, 6, seed) % 1000),
@@ -264,7 +294,7 @@ extension MeshGeometry {
             guard length(n) > 1e-9 else { continue }
             n = normalize(n)
             let p = vertices[group[0]].position
-            let h = MeshDeformNoise.fbm(p / noise.scale + offset, seed: seed) * noise.amount
+            let h = MeshDeformNoise.fbm(p / noise.scale + offset, seed: seed, finest: finest / noise.scale) * noise.amount
             for v in group { vertices[v].position = p + n * h }
         }
     }
@@ -447,12 +477,15 @@ enum MeshDeformNoise {
                     lerp(lerp(corner(0, 0, 1), corner(1, 0, 1), u), lerp(corner(0, 1, 1), corner(1, 1, 1), u), v), w)
     }
 
-    /// Three octaves of `gradient`, about -1...1.
-    static func fbm(_ p: Vec3, seed: UInt32) -> Float {
-        var sum: Float = 0, amplitude: Float = 1, q = p
+    /// Three octaves of `gradient`, about -1...1. Octaves whose wavelength (1 for the first, then
+    /// halving) is below `finest` fade out.
+    static func fbm(_ p: Vec3, seed: UInt32, finest: Float = 0) -> Float {
+        var sum: Float = 0, amplitude: Float = 1, q = p, wavelength: Float = 1
         for octave in 0..<3 {
-            sum += gradient(q, seed: seed &+ UInt32(octave) &* 101) * amplitude
+            let keep = finest > 0 ? min(max((wavelength / finest - 0.5) * 2, 0), 1) : 1
+            if keep > 0 { sum += gradient(q, seed: seed &+ UInt32(octave) &* 101) * amplitude * keep }
             amplitude *= 0.5
+            wavelength /= 2.03
             q = q * 2.03 + Vec3(17.1, 31.7, 5.3)
         }
         return min(max(sum / 1.75 * 1.5, -1), 1)

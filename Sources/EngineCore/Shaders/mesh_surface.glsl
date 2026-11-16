@@ -379,8 +379,11 @@ void main() {
     }
 #endif
     bool pbr = material.emissive.w > 0.5;
-    // Double-sided PBR materials light their back faces from behind.
-    if (pbr && !gl_FrontFacing) n = -n;
+    // params.z: a PBR material's translucency (leaves): light through it, and back faces keep their normals.
+    float translucency = pbr ? clamp(material.params.z, 0.0, 1.0) : 0.0;
+    // Double-sided PBR materials light their back faces from behind, but translucent ones (foliage
+    // cards, whose normals are bent out of the whole canopy) keep their normals.
+    if (pbr && !gl_FrontFacing && translucency <= 0.0) n = -n;
 
     vec3 l = normalize(frame.lightDir.xyz);
     vec3 v = normalize(frame.cameraPos.xyz - vWorldPos);
@@ -439,24 +442,47 @@ void main() {
         vec3 diffuseColor = albedo * (1.0 - metallic);
         vec3 f0 = mix(vec3(0.04), albedo, metallic);
 
-        float NoV = max(dot(n, v), 1e-4);
+        // Translucent materials (foliage): diffuse light follows the bent normal n (the canopy's
+        // volume), but reflections come off each leaf card's own face (seen side), so highlights
+        // scatter like a real canopy's instead of making one shiny blob.
+        vec3 sn = n;
+        if (translucency > 0.0) {
+            vec3 face = cross(dFdx(vWorldPos), dFdy(vWorldPos));
+            // The normal map's bumps (n's lean away from the vertex normal) carried over to the face.
+            if (dot(face, face) > 1e-20) sn = normalize(normalize(face) * (dot(face, v) < 0.0 ? -1.0 : 1.0) + (n - normalize(vNormal)));
+        }
+        float NoV = max(dot(sn, v), 1e-4);
         float NoL = clamp(dot(n, l), 0.0, 1.0);
-        float NoH = clamp(dot(n, h), 0.0, 1.0);
+        float sNoL = clamp(dot(sn, l), 0.0, 1.0);
+        float NoH = clamp(dot(sn, h), 0.0, 1.0);
         float VoH = clamp(dot(v, h), 0.0, 1.0);
+        // Leaves are rough and thin, with no mirror-like sheen at grazing angles (looking toward
+        // the sun): translucent materials reflect as if seen at least half face-on.
+        if (translucency > 0.0) {
+            NoV = max(NoV, 0.5);
+            VoH = max(VoH, 0.5);
+        }
         vec3 F = fresnelSchlick(f0, VoH);
-        vec3 specular = distributionGGX(NoH, a) * visibilitySmithGGXCorrelated(NoV, NoL, a) * F * PI;
-        vec3 direct = ((vec3(1.0) - F) * diffuseColor + specular) * NoL * light * shadow;
+        vec3 specular = distributionGGX(NoH, a) * visibilitySmithGGXCorrelated(NoV, sNoL, a) * F * PI;
+        vec3 direct = ((vec3(1.0) - F) * diffuseColor * NoL + specular * sNoL) * light * shadow;
+        if (translucency > 0.0) {
+            // Light passing through a thin leaf: the side seen glows where the sun is behind it,
+            // most when looking toward the sun.
+            float through = clamp(-dot(sn, l), 0.0, 1.0);
+            float toward = pow(clamp(dot(-v, l), 0.0, 1.0), 3.0);
+            direct += diffuseColor * light * shadow * translucency * through * (0.35 + 0.65 * toward);
+        }
 
         vec2 dfg;
         vec3 irradiance, reflected;
         if (frame.environment.x > 0.5) {
             dfg = environmentBRDFTable(NoV, roughness);
             irradiance = environmentIrradiance(n);
-            reflected = environmentRadiance(reflect(-v, n), roughness);
+            reflected = environmentRadiance(reflect(-v, sn), roughness);
         } else {
             dfg = environmentBRDF(NoV, roughness);
             irradiance = hemisphere(n);
-            reflected = mix(hemisphere(reflect(-v, n)), irradiance, roughness);
+            reflected = mix(hemisphere(reflect(-v, sn)), irradiance, roughness);
         }
         if (material.flags.w > 0.5 && frame.reflectionExtra.z > 0.5) reflected = planarReflected(reflected, n, ng, roughness);
         vec3 specularAmbient = f0 * dfg.x + dfg.y;

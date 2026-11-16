@@ -175,7 +175,7 @@ private func box(_ name: String, _ position: Vec3, _ size: Vec3 = Vec3(1, 1, 1),
         try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
         let listed = try call(session, "meshBuild.examples")
         let examples = try #require(listed["examples"] as? [[String: Any]])
-        #expect(examples.count == MeshBuildExamples.all.count && examples.count == 10)
+        #expect(examples.count == MeshBuildExamples.all.count && examples.count == 13)
         for example in examples {
             let name = try #require(example["name"] as? String)
             let build = try #require(MeshBuildExamples.all.first { $0.name == name }?.build)
