@@ -230,7 +230,7 @@ public final class SceneRenderer {
     /// Shared by this frame's `renderView` calls (from `beginViews`).
     private var views: ViewsFrame?
     /// Each view's batches (`renderView`).
-    private var viewList = RenderList()
+    var viewList = RenderList()
     /// This frame's point and spot lights (`gather`), binned for the `prepare` camera and for
     /// each `renderView`, and the uniform data they're uploaded from.
     var punctualLights: [PunctualLight] = []
@@ -256,6 +256,7 @@ public final class SceneRenderer {
     var viewParticleDepthTextures: [[Int]: GPUTexture] = [:]
     /// Volumetric fog's per-frame setup and GPU objects (see `SceneRenderer+Volumetric.swift`).
     let volumetric = VolumetricFogState()
+    let depthOfField = DepthOfFieldState()
     /// The camera depth prepass's pipelines (`DepthVariant.prepass`), created on first use.
     private var prepassPipelines: [PrepassKey: RenderPipeline] = [:]
 
@@ -532,6 +533,8 @@ public final class SceneRenderer {
         gather(world)
         engine.postProcess = PostProcessSettings.find(in: world)
         volumetric.setup = nil
+        depthOfField.setup = nil
+        engine.postProcessor?.sceneDepth = nil
 
         guard let (_, camera, cameraWorld) = RenderPrep.findCamera(in: world, preferred: self.camera) else {
             uniforms = nil
@@ -583,6 +586,8 @@ public final class SceneRenderer {
         prepareParticles(world: world, cameraPosition: eye)
         prepareWorldText(world: world)
         prepareVolumetricFog(environment: environment, engine: engine, size: size)
+        prepareDepthOfField(engine: engine, projection: camera.projection(aspect: engine.aspectRatio), viewProjection: jittered,
+                            reversedZ: camera.reversedZ, size: size)
         prepareReflection(view: view, projection: camera.projection(aspect: engine.aspectRatio), reversedZ: camera.reversedZ, eye: eye,
                           size: size, clearColor: camera.clearColor)
     }
@@ -689,6 +694,7 @@ public final class SceneRenderer {
         renderReflection(frame: frame)
         renderParticleDepth(frame: frame)
         renderVolumetricDepth(frame: frame)
+        renderDepthOfFieldDepth(frame: frame)
         particles?.simulate(frame: frame)
     }
 

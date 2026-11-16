@@ -49,11 +49,13 @@ Editor MCP clients can use `vfx.new {preset}`, `vfx.edit {addEmitters, updateEmi
 
 ## Post-FX Builder
 
-A `.postfx` file is a saved camera look: tonemapper, exposure and auto exposure, bloom, color grading (contrast, lift, gamma, gain, saturation), vignette, chromatic aberration and film grain, all in one post pass on Metal and Vulkan. Make one with the Assets panel's New Post-FX (or `postfx.new {preset}`: neutral, cinematic, warm, cold, noir, retro) and open it in the Post-FX tab for a sample scene with sliders, presets and a before/after split; each change is one undo step. Use it per camera (the Camera's `postFX` field, or `postfx.assign`) or blend it by area with a `PostFXVolume` component (box or sphere, blend distance, priority, weight).
+A `.postfx` file is a saved camera look: tonemapper, exposure and auto exposure, bloom, color grading (contrast, lift, gamma, gain, saturation), vignette, chromatic aberration, film grain and depth of field, on Metal and Vulkan. Make one with the Assets panel's New Post-FX (or `postfx.new {preset}`: neutral, cinematic, warm, cold, noir, retro) and open it in the Post-FX tab for a sample scene with sliders, presets and a before/after split; each change is one undo step. Use it per camera (the Camera's `postFX` field, or `postfx.assign`) or blend it by area with a `PostFXVolume` component (box or sphere, blend distance, priority, weight).
+
+Depth of field (`depthOfField`) blurs what is nearer or farther than `focusDistance` (meters along the camera's view axis), keeping `focusRange` meters around it fully sharp. The blur is a thin lens: `aperture` is the f-number (lower blurs more) and `focalLength` the lens in millimeters (longer blurs more; the camera's field of view doesn't change), capped at `maxBlur` percent of the image height. Bright out-of-focus spots spread into soft discs (bokeh). `focusTarget` names an entity to auto-focus on every frame (its distance along the view axis replaces `focusDistance`). It runs on the HDR scene before bloom and exposure and uses a depth prepass of the opaque meshes, so transparent surfaces take the blur of what's behind them. Volumes blend it in by fading `maxBlur`.
 
 Tools: `postfx.new`, `postfx.get`, `postfx.set`, `postfx.edit`, `postfx.assign`, `postfx.open`.
 
-Not yet: depth of field and LUT grading. The tab previews on an 8-bit image, so bloom looks weaker there than in the game.
+Not yet: LUT grading. The tab previews on an 8-bit image, so bloom and bokeh look weaker there than in the game.
 
 ## Terrain Builder
 

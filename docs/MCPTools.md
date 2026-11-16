@@ -2607,7 +2607,7 @@ Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `path`: string
-- `settings`: {adaptationSpeed?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, exposure?: number, filmGrain?: number, gain?: number[3], gamma?: number[3], lift?: number[3], saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
+- `settings`: {adaptationSpeed?: number, aperture?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, depthOfField?: boolean, exposure?: number, filmGrain?: number, focalLength?: number, focusDistance?: number, focusRange?: number, focusTarget?: string, gain?: number[3], gamma?: number[3], lift?: number[3], maxBlur?: number, saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
 - `warnings`: [string]
 
 ### `postfx.get`
@@ -2625,14 +2625,14 @@ Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `path`: string
-- `settings`: {adaptationSpeed?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, exposure?: number, filmGrain?: number, gain?: number[3], gamma?: number[3], lift?: number[3], saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
+- `settings`: {adaptationSpeed?: number, aperture?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, depthOfField?: boolean, exposure?: number, filmGrain?: number, focalLength?: number, focusDistance?: number, focusRange?: number, focusTarget?: string, gain?: number[3], gamma?: number[3], lift?: number[3], maxBlur?: number, saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
 - `warnings`: [string]
 
 ### `postfx.new`
 
 **New Post-FX**
 
-Writes a .postfx profile in `folder` (default: the Assets root) from a `preset` (default neutral) with optional `settings` overrides, and imports it. Returns the asset, its contents and warnings. Assign it with postfx.assign, tweak it with postfx.edit. A post-fx profile is a camera look; every key is optional (missing = neutral): tonemapper none|reinhard|neutral|aces, exposure (EV stops, -10..10), autoExposure (bool), autoExposureMin/autoExposureMax (EV), adaptationSpeed, bloom (bool), bloomIntensity (0..1), color grading applied after tonemapping: contrast (0.5..1.5, 1 = unchanged), lift [r,g,b] (adds to shadows, 0 = unchanged), gamma [r,g,b] (midtone, 1 = unchanged), gain [r,g,b] (multiplier, 1 = unchanged), saturation (0..2, 1 = unchanged), vignette (0..1), vignetteSoftness (0..1), chromaticAberration (0..1), filmGrain (0..1). Presets: neutral, cinematic, warm, cold, noir, retro. Assign a profile to a camera (Camera.postFX) or a PostFXVolume component (profile, shape box|sphere, size, radius, blendDistance, priority, weight, isGlobal) with postfx.assign.
+Writes a .postfx profile in `folder` (default: the Assets root) from a `preset` (default neutral) with optional `settings` overrides, and imports it. Returns the asset, its contents and warnings. Assign it with postfx.assign, tweak it with postfx.edit. A post-fx profile is a camera look; every key is optional (missing = neutral): tonemapper none|reinhard|neutral|aces, exposure (EV stops, -10..10), autoExposure (bool), autoExposureMin/autoExposureMax (EV), adaptationSpeed, bloom (bool), bloomIntensity (0..1), color grading applied after tonemapping: contrast (0.5..1.5, 1 = unchanged), lift [r,g,b] (adds to shadows, 0 = unchanged), gamma [r,g,b] (midtone, 1 = unchanged), gain [r,g,b] (multiplier, 1 = unchanged), saturation (0..2, 1 = unchanged), vignette (0..1), vignetteSoftness (0..1), chromaticAberration (0..1), filmGrain (0..1); depth of field: depthOfField (bool), focusDistance (m), focusRange (m kept fully sharp around it), aperture (f-number, lower blurs more), focalLength (mm, longer blurs more; the view's field of view is unchanged), maxBlur (largest blur radius, % of the height, 0..10), focusTarget (entity name to auto-focus on). Presets: neutral, cinematic, warm, cold, noir, retro. Assign a profile to a camera (Camera.postFX) or a PostFXVolume component (profile, shape box|sphere, size, radius, blendDistance, priority, weight, isGlobal) with postfx.assign.
 
 Arguments:
 
@@ -2645,7 +2645,7 @@ Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `path`: string
-- `settings`: {adaptationSpeed?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, exposure?: number, filmGrain?: number, gain?: number[3], gamma?: number[3], lift?: number[3], saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
+- `settings`: {adaptationSpeed?: number, aperture?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, depthOfField?: boolean, exposure?: number, filmGrain?: number, focalLength?: number, focusDistance?: number, focusRange?: number, focusTarget?: string, gain?: number[3], gamma?: number[3], lift?: number[3], maxBlur?: number, saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
 - `warnings`: [string]
 
 ### `postfx.open`
@@ -2667,20 +2667,20 @@ Result:
 
 **Set Post-FX** · _undoable_, _idempotent_
 
-Replaces a .postfx profile's whole contents (`settings`, or a `preset`) and reimports it; cameras and volumes using it update. Undoable. For a few changes, postfx.edit is shorter. A post-fx profile is a camera look; every key is optional (missing = neutral): tonemapper none|reinhard|neutral|aces, exposure (EV stops, -10..10), autoExposure (bool), autoExposureMin/autoExposureMax (EV), adaptationSpeed, bloom (bool), bloomIntensity (0..1), color grading applied after tonemapping: contrast (0.5..1.5, 1 = unchanged), lift [r,g,b] (adds to shadows, 0 = unchanged), gamma [r,g,b] (midtone, 1 = unchanged), gain [r,g,b] (multiplier, 1 = unchanged), saturation (0..2, 1 = unchanged), vignette (0..1), vignetteSoftness (0..1), chromaticAberration (0..1), filmGrain (0..1). Presets: neutral, cinematic, warm, cold, noir, retro. Assign a profile to a camera (Camera.postFX) or a PostFXVolume component (profile, shape box|sphere, size, radius, blendDistance, priority, weight, isGlobal) with postfx.assign. Undoable (one step; edit.undo reverts it).
+Replaces a .postfx profile's whole contents (`settings`, or a `preset`) and reimports it; cameras and volumes using it update. Undoable. For a few changes, postfx.edit is shorter. A post-fx profile is a camera look; every key is optional (missing = neutral): tonemapper none|reinhard|neutral|aces, exposure (EV stops, -10..10), autoExposure (bool), autoExposureMin/autoExposureMax (EV), adaptationSpeed, bloom (bool), bloomIntensity (0..1), color grading applied after tonemapping: contrast (0.5..1.5, 1 = unchanged), lift [r,g,b] (adds to shadows, 0 = unchanged), gamma [r,g,b] (midtone, 1 = unchanged), gain [r,g,b] (multiplier, 1 = unchanged), saturation (0..2, 1 = unchanged), vignette (0..1), vignetteSoftness (0..1), chromaticAberration (0..1), filmGrain (0..1); depth of field: depthOfField (bool), focusDistance (m), focusRange (m kept fully sharp around it), aperture (f-number, lower blurs more), focalLength (mm, longer blurs more; the view's field of view is unchanged), maxBlur (largest blur radius, % of the height, 0..10), focusTarget (entity name to auto-focus on). Presets: neutral, cinematic, warm, cold, noir, retro. Assign a profile to a camera (Camera.postFX) or a PostFXVolume component (profile, shape box|sphere, size, radius, blendDistance, priority, weight, isGlobal) with postfx.assign. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `path?`: string
 - `preset?`: string
-- `settings?`: {adaptationSpeed?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, exposure?: number, filmGrain?: number, gain?: number[3], gamma?: number[3], lift?: number[3], saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
+- `settings?`: {adaptationSpeed?: number, aperture?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, depthOfField?: boolean, exposure?: number, filmGrain?: number, focalLength?: number, focusDistance?: number, focusRange?: number, focusTarget?: string, gain?: number[3], gamma?: number[3], lift?: number[3], maxBlur?: number, saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
 
 Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `path`: string
-- `settings`: {adaptationSpeed?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, exposure?: number, filmGrain?: number, gain?: number[3], gamma?: number[3], lift?: number[3], saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
+- `settings`: {adaptationSpeed?: number, aperture?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, depthOfField?: boolean, exposure?: number, filmGrain?: number, focalLength?: number, focusDistance?: number, focusRange?: number, focusTarget?: string, gain?: number[3], gamma?: number[3], lift?: number[3], maxBlur?: number, saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
 - `warnings`: [string]
 
 ## prefab

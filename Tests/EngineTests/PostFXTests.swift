@@ -133,3 +133,85 @@ import Testing
         #expect(warnings.contains { $0.contains("exposure") })
     }
 }
+
+// Depth of field: settings, the lens math dof.frag mirrors, blending and auto-focus.
+@Suite struct PostFXDepthOfFieldTests {
+    @Test func depthOfFieldKeysAreOptionalAndRoundTrip() throws {
+        let old = try JSONDecoder().decode(PostProcessSettings.self, from: Data(#"{"vignette":0.5}"#.utf8))
+        #expect(!old.depthOfField && old.focusDistance == 10 && old.aperture == 2.8 && old.focusTarget.isEmpty)
+        var s = PostProcessSettings()
+        s.depthOfField = true
+        s.focusDistance = 4
+        s.focusRange = 1
+        s.aperture = 1.8
+        s.maxBlur = 2
+        s.focusTarget = "Hero"
+        #expect(try AssetJSON.decoder().decode(PostProcessSettings.self, from: s.fileData()) == s)
+        #expect(s.validationWarnings().isEmpty)
+        s.aperture = 0.1
+        s.maxBlur = 20
+        #expect(s.validationWarnings().count == 2)
+    }
+
+    @Test func circleOfConfusionFollowsTheThinLens() {
+        var s = PostProcessSettings()
+        s.depthOfField = true
+        s.focusDistance = 3
+        s.focusRange = 0
+        s.aperture = 2.8
+        s.maxBlur = 100
+        let lens = PostProcessMath.depthOfFieldLens(s)  // 50 mm
+        let f: Float = 0.05, a = f / 2.8
+        let expected = a * f * 7 / (10 * (3 - f)) / 0.024
+        #expect(abs(PostProcessMath.circleOfConfusion(distance: 10, lens: lens) - expected) < 1e-5)
+        #expect(PostProcessMath.circleOfConfusion(distance: 3, lens: lens) == 0)
+        #expect(PostProcessMath.circleOfConfusion(distance: 1, lens: lens) < 0, "in front of the focus is negative")
+        // Wider aperture (lower f-number) blurs more; the sharp range keeps a band at 0; maxBlur caps it.
+        s.aperture = 1.4
+        #expect(PostProcessMath.circleOfConfusion(distance: 10, lens: PostProcessMath.depthOfFieldLens(s)) > expected * 1.9)
+        s.focusRange = 2
+        #expect(PostProcessMath.circleOfConfusion(distance: 3.9, lens: PostProcessMath.depthOfFieldLens(s)) == 0)
+        s.focalLength = 100
+        #expect(PostProcessMath.circleOfConfusion(distance: 20, lens: PostProcessMath.depthOfFieldLens(s))
+            > PostProcessMath.circleOfConfusion(distance: 20, lens: PostProcessMath.depthOfFieldLens({ var t = s; t.focalLength = 50; return t }())) * 3.5)
+        s.maxBlur = 0.5
+        #expect(PostProcessMath.circleOfConfusion(distance: 1000, lens: PostProcessMath.depthOfFieldLens(s)) == 0.005)
+        // About depthOfFieldTaps taps reach the largest radius.
+        let step = PostProcessMath.depthOfFieldStep(maxRadius: 40)
+        var radius = step, taps = 0
+        while radius < 40 { radius += step / radius; taps += 1 }
+        #expect(abs(taps - PostProcessMath.depthOfFieldTaps) < 10)
+        #expect(PostProcessMath.depthOfFieldStep(maxRadius: 2) == 0.5)
+    }
+
+    @Test func depthOfFieldBlendsInByMaxBlur() {
+        let off = PostProcessSettings()
+        var on = PostProcessSettings()
+        on.depthOfField = true
+        on.focusDistance = 4
+        on.maxBlur = 2
+        on.focusTarget = "Hero"
+        let quarter = off.blended(to: on, weight: 0.25)
+        #expect(quarter.depthOfField && quarter.maxBlur == 0.5 && quarter.focusDistance == 4)
+        #expect(quarter.focusTarget.isEmpty && off.blended(to: on, weight: 0.75).focusTarget == "Hero")
+        var other = on
+        other.focusDistance = 8
+        #expect(on.blended(to: other, weight: 0.5).focusDistance == 6)
+    }
+
+    @MainActor @Test func autoFocusMeasuresAlongTheViewAxis() {
+        let world = World()
+        world.spawn(Transform(position: Vec3(2, 0, -5)), Name("PostFXDepthOfFieldTestsTarget"))
+        world.propagateTransforms()
+        var s = PostProcessSettings()
+        s.depthOfField = true
+        s.focusTarget = "PostFXDepthOfFieldTestsTarget"
+        let camera = Mat4.translation(Vec3(0, 0, 1))  // looking down -Z from z = 1
+        #expect(PostFXResolver.autoFocused(s, world: world, cameraWorld: camera)?.focusDistance == 6)
+        s.focusTarget = "nobody"
+        #expect(PostFXResolver.autoFocused(s, world: world, cameraWorld: camera)?.focusDistance == 10)
+        s.focusTarget = "PostFXDepthOfFieldTestsTarget"
+        s.depthOfField = false
+        #expect(PostFXResolver.autoFocused(s, world: world, cameraWorld: camera)?.focusDistance == 10)
+    }
+}

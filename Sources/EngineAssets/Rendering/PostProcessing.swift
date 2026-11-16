@@ -65,13 +65,42 @@ public struct PostProcessSettings: Component, Codable, Equatable, Sendable {
     public var chromaticAberration: Float
     /// Animated noise strength (0 = off).
     public var filmGrain: Float
+    /// Depth of field: blurs what is nearer or farther than the focus (a thin-lens circle of
+    /// confusion of a `focalLength` lens on a 24 mm high sensor), gathered over a disc
+    /// of taps so bright out-of-focus spots spread into soft bokeh. Runs on the HDR scene before
+    /// bloom and exposure, and needs the scene's depth (`SceneRenderer` renders a depth prepass
+    /// of the opaque meshes when it is on; transparent ones take the blur of what's behind them).
+    public var depthOfField: Bool
+    /// Distance from the camera (meters, along its view axis) that is sharpest.
+    public var focusDistance: Float
+    /// Depth around `focusDistance` (meters, in total) that stays fully sharp.
+    public var focusRange: Float
+    /// Lens f-number: lower blurs more (1.4 is shallow, 16 nearly everything sharp).
+    public var aperture: Float
+    /// Lens focal length in millimeters: longer blurs more (the blur grows with its square).
+    /// Only the blur uses it; the camera's field of view stays as it is.
+    public var focalLength: Float
+    /// The largest blur radius, in percent of the image height.
+    public var maxBlur: Float
+    /// Auto-focus: the name of an entity whose distance from the camera (along its view axis)
+    /// replaces `focusDistance` every frame. Empty = manual focus.
+    public var focusTarget: String
 
     public init(tonemapper: Tonemapper = .neutral, exposure: Float = 0, autoExposure: Bool = false,
                 autoExposureMin: Float = -6, autoExposureMax: Float = 6, adaptationSpeed: Float = 1.5,
                 bloom: Bool = false, bloomIntensity: Float = 0.04,
                 lift: Vec3 = Vec3(0, 0, 0), gamma: Vec3 = Vec3(1, 1, 1), gain: Vec3 = Vec3(1, 1, 1),
                 saturation: Float = 1, contrast: Float = 1, vignette: Float = 0, vignetteSoftness: Float = 0.5,
-                chromaticAberration: Float = 0, filmGrain: Float = 0) {
+                chromaticAberration: Float = 0, filmGrain: Float = 0,
+                depthOfField: Bool = false, focusDistance: Float = 10, focusRange: Float = 2, aperture: Float = 2.8,
+                focalLength: Float = 50, maxBlur: Float = 1.5, focusTarget: String = "") {
+        self.focalLength = focalLength
+        self.depthOfField = depthOfField
+        self.focusDistance = focusDistance
+        self.focusRange = focusRange
+        self.aperture = aperture
+        self.maxBlur = maxBlur
+        self.focusTarget = focusTarget
         self.lift = lift
         self.gamma = gamma
         self.gain = gain
@@ -98,6 +127,7 @@ public struct PostProcessSettings: Component, Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case tonemapper, exposure, autoExposure, autoExposureMin, autoExposureMax, adaptationSpeed, bloom, bloomIntensity
         case lift, gamma, gain, saturation, contrast, vignette, vignetteSoftness, chromaticAberration, filmGrain
+        case depthOfField, focusDistance, focusRange, aperture, focalLength, maxBlur, focusTarget
     }
 
     /// Missing keys take their defaults, so scene files stay loadable when fields are added.
@@ -121,6 +151,13 @@ public struct PostProcessSettings: Component, Codable, Equatable, Sendable {
         vignetteSoftness = try c.decodeIfPresent(Float.self, forKey: .vignetteSoftness) ?? d.vignetteSoftness
         chromaticAberration = try c.decodeIfPresent(Float.self, forKey: .chromaticAberration) ?? d.chromaticAberration
         filmGrain = try c.decodeIfPresent(Float.self, forKey: .filmGrain) ?? d.filmGrain
+        depthOfField = try c.decodeIfPresent(Bool.self, forKey: .depthOfField) ?? d.depthOfField
+        focusDistance = try c.decodeIfPresent(Float.self, forKey: .focusDistance) ?? d.focusDistance
+        focusRange = try c.decodeIfPresent(Float.self, forKey: .focusRange) ?? d.focusRange
+        aperture = try c.decodeIfPresent(Float.self, forKey: .aperture) ?? d.aperture
+        focalLength = try c.decodeIfPresent(Float.self, forKey: .focalLength) ?? d.focalLength
+        maxBlur = try c.decodeIfPresent(Float.self, forKey: .maxBlur) ?? d.maxBlur
+        focusTarget = try c.decodeIfPresent(String.self, forKey: .focusTarget) ?? d.focusTarget
     }
 
     public static var fieldHints: [String: FieldHints] {
@@ -137,6 +174,12 @@ public struct PostProcessSettings: Component, Codable, Equatable, Sendable {
             "vignetteSoftness": FieldHints(range: 0.01...1, step: 0.01),
             "chromaticAberration": FieldHints(range: 0...1, step: 0.01),
             "filmGrain": FieldHints(range: 0...1, step: 0.01),
+            "focusDistance": FieldHints(range: 0.1...1000, step: 0.1, tooltip: "Sharpest distance from the camera (m)"),
+            "focusRange": FieldHints(range: 0...100, step: 0.1, tooltip: "Depth that stays fully sharp (m)"),
+            "aperture": FieldHints(range: 0.7...32, step: 0.1, tooltip: "f-number: lower blurs more"),
+            "focalLength": FieldHints(range: 10...300, step: 1, displayName: "Focal length (mm)", tooltip: "Longer blurs more"),
+            "maxBlur": FieldHints(range: 0...5, step: 0.05, displayName: "Max blur (% of height)"),
+            "focusTarget": FieldHints(tooltip: "Auto-focus on the entity with this name"),
         ]
     }
 
@@ -239,6 +282,47 @@ public enum PostProcessMath {
         return sizes
     }
 
+    /// Depth of field's lens (dof.frag): the circle of confusion of a point at distance z (meters
+    /// along the view axis) is `scale · max(|z − focus| − halfRange, 0) / z` as a fraction of the
+    /// image height, at most `maxFraction`. That is the thin-lens formula A·f·|z − S| / (z (S − f))
+    /// over a 24 mm sensor, with focal length f = `focalLength` and aperture diameter A = f / N.
+    public struct DepthOfFieldLens: Equatable, Sendable {
+        public var focus: Float
+        public var halfRange: Float
+        public var scale: Float
+        public var maxFraction: Float
+    }
+
+    /// Height of the sensor depth of field's lens model uses (meters; full frame).
+    public static let sensorHeight: Float = 0.024
+
+    public static func depthOfFieldLens(_ settings: PostProcessSettings) -> DepthOfFieldLens {
+        let focal = min(max(settings.focalLength, 1), 2000) / 1000
+        let focus = max(settings.focusDistance, focal + 0.01)
+        let n = max(settings.aperture, 0.5)
+        return DepthOfFieldLens(focus: focus, halfRange: max(settings.focusRange, 0) * 0.5,
+                                scale: focal * focal / (n * (focus - focal) * sensorHeight),
+                                maxFraction: min(max(settings.maxBlur, 0), 10) / 100)
+    }
+
+    /// The circle of confusion (radius, fraction of the image height) of a point `distance`
+    /// meters away, negative in front of the focus. As dof.frag computes it.
+    public static func circleOfConfusion(distance z: Float, lens: DepthOfFieldLens) -> Float {
+        let z = min(max(z, 1e-4), 1e6)
+        let c = min(lens.scale * max(abs(z - lens.focus) - lens.halfRange, 0) / z, lens.maxFraction)
+        return z < lens.focus ? -c : c
+    }
+
+    /// Depth of field gathers on a golden-angle spiral whose radius grows by `step / radius` per
+    /// tap from `step`, so about maxRadius² / (2 step) taps reach the largest blur: this step
+    /// keeps that near `depthOfFieldTaps` (and at least half a pixel apart).
+    public static func depthOfFieldStep(maxRadius: Float) -> Float {
+        max(0.5, maxRadius * maxRadius / (2 * Float(depthOfFieldTaps)))
+    }
+
+    /// About how many taps depth of field gathers per pixel at most (dof.frag stops at 160).
+    public static let depthOfFieldTaps = 96
+
     /// The linear value an sRGB attachment stores exactly as an 8-bit code: `c`'s channels moved
     /// to the nearest code (alpha, stored linearly, to the nearest 1/255). Clearing to such a
     /// value gives the same bytes on every GPU path; a value near the midpoint between two
@@ -272,6 +356,8 @@ public final class PostProcessor {
     private let exposureReduce: RenderPipeline
     private let exposureAdapt: RenderPipeline
     private let tonemap: RenderPipeline
+    private let depthOfFieldPipeline: RenderPipeline
+    private var depthOfFieldTarget: GPURenderTarget?
     private let pointSampler: GPUSampler
     /// Bound in place of inputs a pass doesn't use (Vulkan wants every declared binding valid).
     private let black: GPUTexture
@@ -304,6 +390,7 @@ public final class PostProcessor {
         exposureReduce = try pipeline("exposure_reduce", .rgba16Float)
         exposureAdapt = try pipeline("exposure_adapt", .rgba16Float)
         tonemap = try pipeline("tonemap", .rgba8Srgb)
+        depthOfFieldPipeline = try pipeline("dof", .rgba16Float)
         pointSampler = try device.makeSampler(SamplerDescriptor(filter: .nearest))
         black = try device.makeTexture(pixels: [UInt8](repeating: 0, count: 8), width: 1, height: 1, format: .rgba16Float)
     }
@@ -311,6 +398,21 @@ public final class PostProcessor {
     /// Runs on the HDR scene image before bloom, exposure and tonemapping: returns the image to use
     /// instead (volumetric fog), or nil to keep the scene. `SceneRenderer` sets it each frame.
     public var sceneEffect: ((GPUTexture) -> GPUTexture?)?
+
+    /// The scene's depth, for depth of field: a depth texture the size of the scene image and the
+    /// (unjittered) projection it was rendered with. `SceneRenderer` sets it each frame while
+    /// depth of field is on; without it depth of field is skipped.
+    public struct Depth {
+        public var texture: GPUTexture
+        public var projection: Mat4
+
+        public init(texture: GPUTexture, projection: Mat4) {
+            self.texture = texture
+            self.projection = projection
+        }
+    }
+
+    public var sceneDepth: Depth?
 
     /// Makes the next auto-exposure frame converge at once instead of adapting (camera cuts).
     public func resetExposure() {
@@ -334,6 +436,12 @@ public final class PostProcessor {
             scene = output
             inputs.scene = output
         }
+        if settings.depthOfField, let output = renderDepthOfField(scene: scene, settings: settings) {
+            scene = output
+            inputs.scene = output
+        } else if !settings.depthOfField {
+            depthOfFieldTarget = nil
+        }
         if settings.bloom && settings.bloomIntensity > 0 {
             inputs.bloom = renderBloom(scene: scene)
         } else {
@@ -350,7 +458,12 @@ public final class PostProcessor {
     /// Post-processes `scene` (any texture, e.g. an editor view; its values are already clamped to
     /// 0...1, so highlights can't bloom as in the HDR path) into `target`, a color-only
     /// `.rgba8Srgb` target. Call between passes, not inside one.
-    public func renderPreview(scene: GPUTexture, settings: PostProcessSettings, into target: GPURenderTarget, dt: Float) {
+    /// `depth` (the scene's depth and projection) enables depth of field.
+    public func renderPreview(scene: GPUTexture, settings: PostProcessSettings, into target: GPURenderTarget, dt: Float,
+                              depth: Depth? = nil) {
+        let saved = sceneDepth
+        sceneDepth = depth
+        defer { sceneDepth = saved }
         let inputs = render(scene: scene, settings: settings, dt: dt)
         let pass = device.beginPass(target: target, clearColor: .zero, clearDepth: 1, label: "post fx preview")
         drawOutput(into: pass, scene: scene, settings: settings, inputs: inputs)
@@ -384,6 +497,35 @@ public final class PostProcessor {
             fx: SIMD4(max(settings.chromaticAberration, 0), max(settings.filmGrain, 0), grainTime,
                       min(max(splitPreview, 0), 1))))
         pass.draw(vertexCount: 3)
+    }
+
+    /// Blurs `scene` by its depth into a target of its size (dof.frag); nil without depth or
+    /// when the largest blur is under half a pixel.
+    private func renderDepthOfField(scene: GPUTexture, settings: PostProcessSettings) -> GPUTexture? {
+        guard let depth = sceneDepth, depth.texture.width == scene.width, depth.texture.height == scene.height else { return nil }
+        let lens = PostProcessMath.depthOfFieldLens(settings)
+        let height = Float(scene.height)
+        let maxRadius = lens.maxFraction * height
+        guard maxRadius >= 0.5 else { return nil }
+        if depthOfFieldTarget.map({ $0.texture.width != scene.width || $0.texture.height != scene.height }) ?? true {
+            do {
+                depthOfFieldTarget = try device.makeRenderTarget(.color(width: scene.width, height: scene.height, format: .rgba16Float))
+            } catch {
+                print("PostProcessor: depth of field unavailable: \(error)")
+                depthOfFieldTarget = nil
+                return nil
+            }
+        }
+        guard let target = depthOfFieldTarget else { return nil }
+        let inverse = depth.projection.inverse
+        fullscreen(into: target, label: "depth of field", pipeline: depthOfFieldPipeline, textures: [scene, depth.texture]) { pass in
+            pass.setPushConstants(DepthOfFieldConstants(
+                linearize: SIMD4(inverse.c2.z, inverse.c3.z, inverse.c2.w, inverse.c3.w),
+                lens: SIMD4(lens.focus, lens.halfRange, lens.scale * height, maxRadius),
+                maxTexel: SIMD2(Int32(scene.width - 1), Int32(scene.height - 1)),
+                step: PostProcessMath.depthOfFieldStep(maxRadius: maxRadius), pad: 0))
+        }
+        return target.texture
     }
 
     /// Downsamples `scene` into the chain, then upsamples back to the first level, which it returns.
@@ -486,6 +628,17 @@ struct ExposureAdaptConstants {
     var key: Float
     var minEV: Float
     var maxEV: Float
+}
+
+struct DepthOfFieldConstants {
+    /// View distance from depth d: (x d + y) / (z d + w) (rows of the inverse projection).
+    var linearize: SIMD4<Float>
+    /// x focus, y half range, z circle of confusion scale in pixels, w largest radius in pixels.
+    var lens: SIMD4<Float>
+    var maxTexel: SIMD2<Int32>
+    /// The spiral's radius step (dof.frag).
+    var step: Float
+    var pad: Float
 }
 
 struct TonemapConstants {
