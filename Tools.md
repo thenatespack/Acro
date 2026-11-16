@@ -16,7 +16,7 @@ programs. Each one follows the same pattern as the Mesh Builder:
 ### Mesh Builder (`.meshbuild`)
 
 Models built from shapes (box, sphere, dome, cylinder, cone, capsule, torus, tube, plane,
-wedge, pyramid, group pivots) with a part hierarchy, colors, textures, PBR settings, glow, and
+wedge, pyramid, lathe, extrude, sculpt, group pivots) with a part hierarchy, colors, textures, PBR settings, glow, and
 keyframe or ready-made animations (spin, bob, swing, pulse, shake). The Mesh Builder tab shows
 the model in its own viewport with picking, Move / Rotate / Scale gizmos and live animation
 preview. Tools: `meshBuild.new`, `meshBuild.get`, `meshBuild.set`, `meshBuild.edit`,
@@ -45,6 +45,23 @@ UVs; the 40° sharp-edge threshold is fixed. No `mirrorName` key (naming rule is
 a source doesn't rename tracks or `partColors` that name its copies explicitly; a drag starting
 on a copy may move it for that one drag before selection jumps to the source; mirrored textures
 read backwards.
+Sculpts: shape `sculpt` combines its subtree as signed distance fields in file order (child
+`blend` add/subtract/intersect, `smooth` m), sculpt `resolution` (cells on the longest side,
+8-128, default 64) and `noise` {amount, scale, seed} (intersects trim cleanly). Every solid shape
+works, lathe and extrude included; mirror/repeat copies join after their source. Meshed by dual
+contouring (crisp carved edges, gradient normals split above 40°, box-projected UVs in meters),
+closed and outward; cached; children stay pivot nodes without meshes; spatial checks, bounds and
+`parts(of:)` see only the sculpt; tracks on children warn. Editor: Sculpt button (carved stone
+starter), Resolution / Noise rows, Blend / Smooth rows on children, wireframe ghost of a
+selected child. Examples: Armchair, Stone Arch. Importer version 3. About 0.6 s for a 20-child
+sculpt at resolution 64 (debug build, loaded machine).
+Not done: children's colors (the renderer has no vertex colors; use a second sculpt), no
+decimation of flat regions (a carved box has as many triangles as a curved one), no per-child
+noise, ellipsoids and oval round shapes use approximate fields (smooth radii vary a little
+around them), thin features under about a cell vanish or may leave non-manifold edges, the
+ghost is a wireframe of the shape (not the blended result) and `meshBuild.preview` can't
+highlight a child (it has no mesh), import of a large sculpt at resolution 128 takes seconds in
+a debug build, and `segments` of children is ignored (fields are exact).
 
 ### VFX Builder (`.vfx`)
 

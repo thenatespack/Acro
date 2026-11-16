@@ -10,6 +10,8 @@ import Foundation
 //   written to the file when it ends (scale grows the part's size).
 // - Orbit with right-drag (or middle-drag, or Alt + left-drag), pan with Shift, zoom with the wheel.
 // - Animate plays the model's autoplay animations live; turning it off puts the parts back.
+// - A sculpt's children have no mesh of their own (they are part of the sculpt's surface): a
+//   selected one shows its shape as a wireframe ghost.
 //
 // The file is the truth: every edit is written as one undo step of the editor (Ctrl+Z), the model
 // reimports, and the workspace rebuilds its copy (also after edits from MCP or other panels).
@@ -59,6 +61,8 @@ public final class MeshBuilderWorkspace {
     private let gizmos = DebugDraw()
     private let toolDraw = DebugDraw()
     private var wasDragging = false
+    /// The wireframe of the last sculpt child shown as a ghost, by its part.
+    private var ghost: (part: MeshBuildPart, lines: [(Vec3, Vec3)])?
 
     public init(session: EditorSession) {
         self.session = session
@@ -218,9 +222,16 @@ public final class MeshBuilderWorkspace {
         toolDraw.removeAll()
         let context = toolContext(view: view)
         for entity in selection.entities(in: world) where world.get(MeshRenderer.self, for: entity) == nil {
-            // Groups have no mesh to outline: show their axes.
+            // Groups have no mesh to outline: show their axes; a sculpt child shows its shape as a ghost.
             let matrix = world.get(GlobalTransform.self, for: entity)?.matrix ?? world.worldMatrix(of: entity)
             gizmos.axes(matrix, length: 0.4, style: DebugDraw.Style(width: 2, depth: .onTop))
+            if let name = part(of: entity), let lines = ghostLines(for: name) {
+                let color = Vec4(1, 0.75, 0.3, 0.55)
+                for (a, b) in lines {
+                    gizmos.line(MeshBuildSpatial.point(matrix, a), MeshBuildSpatial.point(matrix, b), color: color,
+                                style: DebugDraw.Style(width: 1, depth: .onTop))
+                }
+            }
         }
         if !isPreviewingAnimation { transformTool?.draw(into: toolDraw, context: context) }
         viewportWidget.texture = target?.texture
@@ -272,6 +283,35 @@ public final class MeshBuilderWorkspace {
     }
 
     private func part(of entity: Entity) -> String? { partEntities.first { $0.value == entity }?.key }
+
+    /// The edges of the shape of `name` when it is a sculpt child (in its own space), else nil.
+    private func ghostLines(for name: String) -> [(Vec3, Vec3)]? {
+        guard let build = builder?.build, let part = build.parts.first(where: { $0.name == name }), part.shape != .group,
+              build.gatheringSculpts().sculptOf[name] != nil else { return nil }
+        if let ghost, ghost.part == part { return ghost.lines }
+        var shape = part
+        shape.segments = min(part.segments, 16)
+        guard let g = shape.geometry() else { return nil }
+        // Each edge once, seams welded.
+        var ids: [SIMD3<Int32>: Int] = [:], points: [Vec3] = []
+        let welded = g.vertices.map { v -> Int in
+            let key = SIMD3<Int32>(Int32((v.position.x * 1e4).rounded()), Int32((v.position.y * 1e4).rounded()), Int32((v.position.z * 1e4).rounded()))
+            if let id = ids[key] { return id }
+            ids[key] = points.count
+            points.append(v.position)
+            return points.count - 1
+        }
+        var seen: Set<SIMD2<Int>> = [], lines: [(Vec3, Vec3)] = []
+        for t in stride(from: 0, to: g.indices.count - 2, by: 3) {
+            for k in 0..<3 {
+                let a = welded[Int(g.indices[t + k])], b = welded[Int(g.indices[t + (k + 1) % 3])]
+                guard a != b, seen.insert(SIMD2(min(a, b), max(a, b))).inserted else { continue }
+                lines.append((points[a], points[b]))
+            }
+        }
+        ghost = (part, lines)
+        return lines
+    }
 
     /// The form and the view's selection follow each other: a part picked in the form is
     /// selected in the view, an entity clicked in the view picks its part in the form.

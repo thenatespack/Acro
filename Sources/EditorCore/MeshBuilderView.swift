@@ -44,7 +44,7 @@ public final class MeshBuilderView {
     static let shapeButtons: [(MeshBuildShape, String)] = [
         (.box, "Box"), (.sphere, "Sphere"), (.hemisphere, "Dome"), (.cylinder, "Cylinder"), (.cone, "Cone"),
         (.capsule, "Capsule"), (.torus, "Torus"), (.tube, "Tube"), (.plane, "Plane"), (.wedge, "Wedge"),
-        (.pyramid, "Pyramid"), (.lathe, "Lathe"), (.extrude, "Extrude"), (.group, "Group"),
+        (.pyramid, "Pyramid"), (.lathe, "Lathe"), (.extrude, "Extrude"), (.sculpt, "Sculpt"), (.group, "Group"),
     ]
 
     /// The profile a new lathe starts with: a vase with a flared lip (radius, height in meters).
@@ -126,6 +126,7 @@ public final class MeshBuilderView {
             case .group: "An invisible pivot: attach parts to it and animate it (a hinge, a turret)"
             case .lathe: "Add a round solid spun from a profile (starts as a vase; edit its points below)"
             case .extrude: "Add a flat outline pushed out into a slab (starts as an arrow; edit its points below)"
+            case .sculpt: "Add a sculpt: its child shapes melt together and cut into each other as one smooth surface (starts as a carved stone)"
             default: "Add a \(label.lowercased()) on top of the selected part"
             }
             shapes.addChild(button)
@@ -134,10 +135,12 @@ public final class MeshBuilderView {
 
         view.addChild(Label("Parts", role: .secondary))
         listedParts = orderedParts()
+        let sculptOf = build.gatheringSculpts().sculptOf
         partList.items = listedParts.map { name in
             let depth = self.depth(of: name)
             let part = build.parts.first { $0.name == name }
             return String(repeating: "    ", count: depth) + name + "  ·  " + (part?.shape.rawValue ?? "") + (part.map(Self.copiesSummary) ?? "")
+                + (part.map { sculptOf[$0.name] != nil ? Self.blendSummary($0) : "" } ?? "")
         }
         if let selectedPart, let row = listedParts.firstIndex(of: selectedPart) { partList.selectRow(row, reveal: true) }
         view.addChild(partList)
@@ -155,6 +158,7 @@ public final class MeshBuilderView {
         }
         addPartGrid(part)
         addShapeSection(for: part)
+        addSculptSection(for: part)
         addSymmetrySection(for: part)
         addAnimationSection(for: part)
     }
@@ -565,17 +569,137 @@ public final class MeshBuilderView {
         if shape == .torus { part.size = Vec3(1, 0.25, 1) }
         if shape == .lathe { part.profile = Self.starterLathe }
         if shape == .extrude { part.profile = Self.starterExtrude; part.size = Vec3(1, 1, 0.15) }
+        if shape == .sculpt { return addSculpt(named: part.name) }
         // Rest on the ground, or on top of the selected part (profile shapes aren't centered, so go by bounds).
         let bounds = part.localBounds
         let bottom = shape == .plane ? 0 : bounds.center.y - bounds.halfExtent.y
         part.position = Vec3(0, -bottom, 0)
         if let selected = build.parts.first(where: { $0.name == selectedPart }) {
-            let below = selected.localBounds
+            let below = partBounds(of: selected)
             part.parent = selected.parent
             part.position = selected.position + Vec3(0, below.center.y + below.halfExtent.y - bottom, 0)
         }
         edited.parts.append(part)
         apply(edited, label: "Add \(label)", select: part.name)
+    }
+
+    /// A part's box in its own space; a sculpt's from its children.
+    private func partBounds(of part: MeshBuildPart) -> Bounds {
+        guard part.shape == .sculpt else { return part.localBounds }
+        return build.gatheringSculpts().build.parts.first { $0.name == part.name }?.localBounds ?? part.localBounds
+    }
+
+    /// A new sculpt with a starter: a rounded block with a dome melted onto it and a hole cut
+    /// through, stacked like `addPart`.
+    private func addSculpt(named name: String) {
+        var edited = build
+        var sculpt = MeshBuildPart(name: name, shape: .sculpt, color: Vec3(0.62, 0.6, 0.56))
+        sculpt.roughness = 0.85
+        if let selected = build.parts.first(where: { $0.name == selectedPart }) {
+            let below = partBounds(of: selected)
+            sculpt.parent = selected.parent
+            sculpt.position = selected.position + Vec3(0, below.center.y + below.halfExtent.y, 0)
+        }
+        edited.parts.append(sculpt)
+        for var child in Self.starterSculpt {
+            child.name = edited.uniquePartName(child.name)
+            child.parent = name
+            edited.parts.append(child)
+        }
+        apply(edited, label: "Add Sculpt", select: name)
+    }
+
+    /// The children a new sculpt starts with (its origin is their base).
+    static var starterSculpt: [MeshBuildPart] {
+        var dome = MeshBuildPart(name: "Dome", shape: .sphere, position: Vec3(0, 0.5, 0), size: Vec3(0.6, 0.5, 0.45))
+        dome.smooth = 0.12
+        var hole = MeshBuildPart(name: "Hole", shape: .cylinder, position: Vec3(0, 0.28, 0), rotation: Vec3(90, 0, 0),
+                                 size: Vec3(0.22, 0.7, 0.22))
+        hole.blend = .subtract
+        hole.smooth = 0.02
+        return [MeshBuildPart(name: "Block", position: Vec3(0, 0.25, 0), size: Vec3(0.8, 0.5, 0.5), bevel: 0.04), dome, hole]
+    }
+
+    /// "  ·  subtract, smooth 0.05" for a sculpt child that isn't a plain add, else "".
+    static func blendSummary(_ part: MeshBuildPart) -> String {
+        var notes: [String] = []
+        if let blend = part.blend, blend != .add { notes.append(blend.rawValue) }
+        if let smooth = part.smooth, smooth > 0 { notes.append(String(format: "smooth %g", smooth)) }
+        return notes.isEmpty ? "" : "  ·  " + notes.joined(separator: ", ")
+    }
+
+    // MARK: Sculpt
+
+    /// A sculpt's grid and noise rows, or a sculpt child's blend and smooth rows.
+    private func addSculptSection(for part: MeshBuildPart) {
+        let name = part.name
+        if part.shape == .sculpt {
+            view.addChild(Separator())
+            view.addChild(Label("Sculpt", role: .secondary))
+            let resolution = NumberField(value: Double(part.sculptResolution), isInteger: true,
+                                         range: Double(MeshBuildPart.sculptResolutionRange.lowerBound)...Double(MeshBuildPart.sculptResolutionRange.upperBound),
+                                         step: 8, name: "meshBuildSculptResolution")
+            resolution.tooltip = "Grid cells along the sculpt's longest side: more is finer detail and a slower import"
+            resolution.onEditEnded = { [unowned self] start, end in
+                guard start != end else { return }
+                updatePart(name, label: "Sculpt Resolution") { p in
+                    let n = Int(end.rounded())
+                    p.resolution = n == MeshBuildPart.defaultSculptResolution ? nil : n
+                }
+            }
+            resolution.style.grow = 1
+            view.addChild(HStack(spacing: 6, [rowLabel("Resolution"), resolution]))
+            let noise = part.noise
+            let fields: [(String, Double, ClosedRange<Double>, Double, (inout MeshBuildNoise, Double) -> Void, String)] = [
+                ("amount", Double(noise?.amount ?? 0), 0...1, 0.005, { $0.amount = Float($1) }, "Bump height, meters (0: smooth)"),
+                ("scale", Double(noise?.scale ?? MeshBuildNoise().scale), 0.005...100, 0.01, { $0.scale = Float($1) }, "Bump size, meters across"),
+                ("seed", Double(noise?.seed ?? 0), 0...100_000, 1, { $0.seed = Int($1.rounded()) }, "Another seed, another pattern"),
+            ]
+            var row: [Widget] = [rowLabel("Noise")]
+            for (key, value, range, step, set, tooltip) in fields {
+                let field = NumberField(value: value, isInteger: key == "seed", range: range, step: step, name: "meshBuildSculptNoise.\(key)")
+                field.prefix = String(key.prefix(1))
+                field.tooltip = tooltip
+                field.style.grow = 1
+                field.onEditEnded = { [unowned self] start, end in
+                    guard start != end else { return }
+                    updatePart(name, label: "Sculpt Noise") { p in
+                        var n = p.noise ?? MeshBuildNoise(amount: 0)
+                        set(&n, end)
+                        p.noise = n.amount == 0 ? nil : n
+                    }
+                }
+                row.append(field)
+            }
+            view.addChild(HStack(spacing: 4, row))
+            view.addChild(note("Its children melt into one surface, in list order: each adds, subtracts or intersects, smoothed by its Smooth. "
+                               + "The sculpt's color and material cover it all; size multiplies the mesh."))
+            var warnings: [String] = []
+            if let gathered = build.gatheringSculpts().build.parts.first(where: { $0.name == name }) { _ = gathered.geometry(warnings: &warnings) }
+            if !warnings.isEmpty { view.addChild(note("⚠ " + warnings.joined(separator: " "))) }
+            return
+        }
+        guard let sculpt = build.gatheringSculpts().sculptOf[name] else { return }
+        view.addChild(Separator())
+        view.addChild(Label("In sculpt \(sculpt)", role: .secondary))
+        let blends = MeshBuildBlend.allCases
+        let blend = Dropdown(options: ["Add", "Subtract", "Intersect"], selectedIndex: blends.firstIndex(of: part.blend ?? .add) ?? 0,
+                             name: "meshBuildSculptBlend") { [unowned self] index in
+            updatePart(name, label: "Sculpt Blend") { p in p.blend = blends[index] == .add ? nil : blends[index] }
+        }
+        blend.tooltip = "Join this shape on, cut it out, or keep only where it overlaps the shapes before it"
+        blend.style.grow = 1
+        view.addChild(HStack(spacing: 6, [rowLabel("Blend"), blend]))
+        let smooth = NumberField(value: Double(part.smooth ?? 0), range: 0...10, step: 0.01, name: "meshBuildSculptSmooth")
+        smooth.tooltip = "Meters over which this shape melts into the ones before it (0: a sharp seam)"
+        smooth.precision = 3
+        smooth.onEditEnded = { [unowned self] start, end in
+            guard start != end else { return }
+            updatePart(name, label: "Sculpt Smooth") { p in p.smooth = end > 0 ? Float(end) : nil }
+        }
+        smooth.style.grow = 1
+        view.addChild(HStack(spacing: 6, [rowLabel("Smooth"), smooth]))
+        view.addChild(note("Part of \(sculpt)'s surface (outlined in the view when selected); it isn't drawn on its own and can't be animated on its own."))
     }
 
     func duplicateSelected() {

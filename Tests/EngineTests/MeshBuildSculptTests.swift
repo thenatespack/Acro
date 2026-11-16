@@ -198,6 +198,20 @@ private func expectSolid(_ g: MeshGeometry, _ label: String, sourceLocation: Sou
         #expect(try #require(other.geometry()).vertices.map(\.position) != g.vertices.map(\.position))
     }
 
+    @Test func noiseLeavesIntersectTrimsClean() throws {
+        // A rough rock with its base cut flat at y = 0 (the sculpt's origin).
+        var parts = [MeshBuildPart(name: "Rock", shape: .sculpt),
+                     MeshBuildPart(name: "Lump", shape: .sphere, parent: "Rock", position: Vec3(0, 0.3, 0), size: Vec3(1, 0.8, 0.9)),
+                     MeshBuildPart(name: "Trim", parent: "Rock", position: Vec3(0, 1, 0), size: Vec3(2, 2, 2))]
+        parts[0].noise = MeshBuildNoise(amount: 0.04, scale: 0.15, seed: 1)
+        parts[2].blend = .intersect
+        let g = try #require(MeshBuild(parts: parts).gatheringSculpts().build.parts[0].geometry())
+        expectSolid(g, "flat-based rock")
+        #expect(abs(g.bounds.center.y - g.bounds.halfExtent.y) < 1e-3, "the base is exactly at y = 0: \(g.bounds.center.y - g.bounds.halfExtent.y)")
+        let base = g.vertices.filter { abs($0.position.y) < 1e-3 }
+        #expect(base.count > 20 && base.contains { $0.normal.y < -0.99 })
+    }
+
     @Test func childrenKeepTheirPlacementAndShapesTheirSize() throws {
         let g = try #require(sculpt([child("Bar", .capsule, at: Vec3(1, 0.5, 0), rotation: Vec3(0, 0, 90), size: Vec3(0.2, 1, 0.2))]).geometry())
         let b = g.bounds

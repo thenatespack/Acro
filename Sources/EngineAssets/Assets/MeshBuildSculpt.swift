@@ -25,7 +25,8 @@ import EngineScene
 //   the part they copy, so a hole cut after mirrored legs cuts both.
 // - The sculpt's own `size` multiplies the mesh (leave it [1, 1, 1]); `resolution` is cells along
 //   the longest side of the shape (8...128, default 64); `noise` {amount, scale, seed} roughens the
-//   surface. Its look (color, texture, material…) is the whole mesh's: the renderer has no vertex
+//   surface (added and subtracted shapes alike; intersects trim it cleanly, so intersecting a big
+//   box that stands on y = 0 gives a rough rock a flat base). Its look (color, texture, material…) is the whole mesh's: the renderer has no vertex
 //   colors, so children's colors are not used. UVs are box-projected in meters (as `worldUV`).
 // - Meshing: the distance field is sampled on a grid (coarse blocks far from the surface are
 //   skipped), then dual contouring places one vertex per surface cell where the crossing planes
@@ -104,7 +105,8 @@ extension MeshBuildPart {
         in the sculpt's space; every solid shape works (box with bevel, sphere/ellipsoid, hemisphere, cylinder, cone, \
         capsule, torus, tube, wedge, pyramid, lathe, extrude; groups are pivots; planes are skipped); mirror/repeat \
         children join too. Sculpt fields: resolution (cells along the longest side, 8-128, default 64: more = finer \
-        detail, slower), noise {amount m, scale m, seed} for rough rock/bark surfaces, size multiplies the mesh (keep \
+        detail, slower), noise {amount m, scale m, seed} roughens the surface for rock/bark/weathered stone \
+        (intersects trim cleanly: intersect a big box standing on y=0, as the last child, for a flat base), size multiplies the mesh (keep \
         [1,1,1]). The sculpt's color/texture/material cover the whole mesh (children's colors are ignored: use another \
         part for another color); UVs are world-projected in meters. A sculpt is one mesh: animate the sculpt part, not \
         its children. Example: {"name":"Stone","shape":"sculpt","position":[0,0.4,0]}, {"name":"Block","shape":"box",\
@@ -651,14 +653,16 @@ struct MeshBuildSculptor {
     func field(_ x: Float, _ y: Float, _ z: Float, active: [Int32]?) -> Float {
         var d = Float.greatestFiniteMagnitude
         var empty = true
+        // Noise roughens added and subtracted shapes alike; intersected ones trim cleanly.
+        let bump = noise.map { $0.amount * Self.fbm(Vec3(x, y, z) / $0.scale, seed: $0.seed) } ?? 0
         func combine(_ primitive: SculptPrimitive) {
             let b = primitive.distance(x, y, z)
             switch primitive.blend {
             case .add:
-                d = empty ? b : Self.union(d, b, primitive.smooth)
+                d = empty ? b + bump : Self.union(d, b + bump, primitive.smooth)
                 empty = false
             case .subtract:
-                if !empty { d = Self.subtract(d, b, primitive.smooth) }
+                if !empty { d = Self.subtract(d, b - bump, primitive.smooth) }
             case .intersect:
                 if !empty { d = Self.intersect(d, b, primitive.smooth) }
             }
@@ -668,7 +672,6 @@ struct MeshBuildSculptor {
         } else {
             for i in primitives.indices { combine(primitives[i]) }
         }
-        if let noise { d += noise.amount * Self.fbm(Vec3(x, y, z) / noise.scale, seed: noise.seed) }
         return d
     }
 
@@ -942,9 +945,14 @@ struct MeshBuildSculptor {
                             points.append(crossingPoints[Int(e)])
                             planeNormals.append(crossingNormals[Int(e)])
                         }
-                        let p = Self.solveQEF(points: points, normals: planeNormals, cellMin: base, cellSize: cell)
+                        var p = Self.solveQEF(points: points, normals: planeNormals, cellMin: base, cellSize: cell)
+                        let list = active.list(x, y, z)
+                        let n = normal(at: p, step: cell * 0.25, active: list)
+                        // One Newton step onto the surface (where the planes' best meeting point missed it a little).
+                        let f = field(p, active: list)
+                        if abs(f) < cell * 0.5 { p -= n * f }
                         positionPointer[v] = p
-                        normalPointer[v] = normal(at: p, step: cell * 0.25, active: active.list(x, y, z))
+                        normalPointer[v] = n
                     }
                 }
             }

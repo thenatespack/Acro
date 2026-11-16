@@ -319,10 +319,15 @@ public enum MeshBuildPreviewCommand: EditorDeferredCommand {
             }
         let check = MeshBuildResult(id, build, in: session)
         let size = scene.hi - scene.lo
-        let meshParts = build.parts.filter { $0.geometry() != nil }.count
+        // Parts inside a sculpt are drawn as part of its mesh.
+        let sculpting = build.gatheringSculpts()
+        let inSculpts = sculpting.sculpted.count
+        let meshParts = sculpting.drawnParts.filter { $0.geometry() != nil }.count
         var summary = "\(check.path): \(MeshBuildSpatial.meters(size.x)) x \(MeshBuildSpatial.meters(size.y)) x "
             + "\(MeshBuildSpatial.meters(size.z)) m (x, y, z), \(build.parts.count) part\(build.parts.count == 1 ? "" : "s")"
-        if meshParts != build.parts.count { summary += " (\(build.parts.count - meshParts) without a mesh)" }
+        let unmeshed = build.parts.count - inSculpts - meshParts
+        let notes = (inSculpts > 0 ? ["\(inSculpts) in sculpts"] : []) + (unmeshed > 0 ? ["\(unmeshed) without a mesh"] : [])
+        if !notes.isEmpty { summary += " (\(notes.joined(separator: ", ")))" }
         summary += ", lowest point at y=\(MeshBuildSpatial.meters(scene.lo.y)); grid \(MeshBuildSpatial.meters(scene.gridSpacing)) m"
         if let animation = arguments.animation { summary += "; posed: \(animation)" }
         summary += check.warnings.isEmpty ? "; no warnings" : "; \(check.warnings.count) warning\(check.warnings.count == 1 ? "" : "s")"
