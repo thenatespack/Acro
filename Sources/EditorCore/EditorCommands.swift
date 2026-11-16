@@ -51,7 +51,7 @@ public enum BuiltinCommands {
       + EditorTimelineCommands.all
       + EditorAnimationGraphCommands.all
       + EditorCharacterCommands.all
-      + EditorTerrainCommands.all + EditorMaterialGraphCommands.all
+      + EditorMaterialGraphCommands.all
 }
 
 extension CommandID {

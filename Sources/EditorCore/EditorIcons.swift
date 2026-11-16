@@ -54,6 +54,7 @@ public enum EditorIcons {
         CameraPath.componentName: "orbit",
         BehaviorTreeRunner.componentName: "bot",
         DialoguePlayer.componentName: "file-text",
+        VisualScript.componentName: "network",
         TimelinePlayer.componentName: "clapperboard",
         "Pulse": "gauge",
     ]

@@ -137,7 +137,9 @@ public enum CookError: Error, Equatable, CustomStringConvertible {
 public enum AssetCooker {
     /// Importers whose source files ship unchanged: audio is streamed, and builder files that
     /// game code reads as written at run time (data tables, behavior trees, UI layouts…).
-    public static let shippedAsWritten: Set<String> = ["audio", "table", "behavior", "ui", "timeline"]
+    public static let shippedAsWritten: Set<String> = ["audio", "table", "behavior", "ui", "timeline", "vscript"]
+    /// Of those, the ones whose `asset:<id>` references are cooked along with them.
+    public static let followsReferences: Set<String> = ["timeline", "vscript"]
 
     /// Opens the project at `url`, scans it and cooks it to `output` (a folder). Blocks.
     @MainActor
@@ -364,16 +366,9 @@ public struct CookPlan: Sendable {
         guard let importer = source.importer, !AssetCooker.shippedAsWritten.contains(importer.name) else {
             let data = try Data(contentsOf: source.sourceURL)
             if let importer = source.importer { entry.settings = importer.effectiveSettings(source.settings) }
-            // A timeline's sounds and effects named "asset:<id>" ship with it.
-            let references = source.importer?.name == "timeline" ? Self.unique(Self.references(in: data)).filter { $0 != source.id } : []
-            return Cooked(entry: entry, files: [:], data: data, origin: .file, references: references, warnings: [])
-        }
-        // Audio and files without an importer ship as they are.
-        guard let importer = source.importer, importer.name != "audio", importer.name != "table", importer.name != "vscript" else {
-            let data = try Data(contentsOf: source.sourceURL)
-            if let importer = source.importer { entry.settings = importer.effectiveSettings(source.settings) }
-            // A visual script ships the sounds, prefabs and tables it names by asset:<id>.
-            let references = source.importer?.name == "vscript" ? Self.unique(Self.references(in: data)).filter { $0 != source.id } : []
+            // Timelines and visual scripts ship the sounds, effects, prefabs and tables they name by "asset:<id>".
+            let follows = source.importer.map { AssetCooker.followsReferences.contains($0.name) } ?? false
+            let references = follows ? Self.unique(Self.references(in: data)).filter { $0 != source.id } : []
             return Cooked(entry: entry, files: [:], data: data, origin: .file, references: references, warnings: [])
         }
         let settings = AssetCooker.shippingSettings(importer: importer, effective: importer.effectiveSettings(source.settings), options: options)
