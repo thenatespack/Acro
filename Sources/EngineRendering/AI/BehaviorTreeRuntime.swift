@@ -20,10 +20,14 @@ import EngineScene
 // - Custom leaves: `BehaviorTreeLeaves.register("openDoor") { leaf in … return .success }`,
 //   used by `{"type": "custom", "leaf": "openDoor"}` nodes.
 //
-// Movement is simple steering on the XZ plane (no navigation mesh): a `CharacterController`
-// gets `moveVelocity`, a dynamic `RigidBody` its horizontal velocity, anything else has its
-// `Transform.position` moved (for root entities; a parented entity's local position is moved
-// as if it were world space). The entity turns to face where it walks (`turnSpeed`).
+// Movement is steering on the XZ plane along a path on the world's navigation grid
+// (Navigation.swift; baked from the static colliders the first time a tree walks somewhere,
+// or set by game code), straight toward the goal when there is no grid or no path. Paths are
+// replanned when the goal moves (at most five times a second) and every few seconds. Fleeing
+// picks a reachable point away from the threat. A `CharacterController` gets `moveVelocity`,
+// a dynamic `RigidBody` its horizontal velocity, anything else has its `Transform` moved.
+// Everything happens in world space: a parented entity's local position and rotation are
+// worked out through its parent. The entity turns to face where it walks (`turnSpeed`).
 
 /// What a node returned on a tick.
 public enum BehaviorStatus: String, Codable, Sendable {
@@ -175,6 +179,8 @@ struct BehaviorSteering: Sendable {
     var away = false
     var speed: Float
     var stopDistance: Float
+    /// For fleeing: how far from the threat counts as safe.
+    var range: Float = 0
 }
 
 /// The live state of an entity's tree: blackboard, node memory and the last tick's statuses.
@@ -210,6 +216,12 @@ public struct BehaviorTreeState: Component, Sendable {
     var origin: Vec3?
     var steering: BehaviorSteering?
     var face: Vec3?
+    /// The path being followed on the navigation grid, the next point and what it leads to.
+    var navPath: [Vec3] = []
+    var navIndex = 0
+    var navGoal: Vec3?
+    var navAway = false
+    var navPlannedAt: Double = -1
     var clock: Double = 0
     var lastTick: Double = -1
     var random: UInt64 = 0
@@ -223,6 +235,9 @@ public struct BehaviorTreeState: Component, Sendable {
         guard let i = nodeIDs.firstIndex(of: id), statuses.indices.contains(i) else { return nil }
         return statuses[i]
     }
+
+    /// The path the entity is walking on the navigation grid (empty: none, or straight steering).
+    public var path: [Vec3] { navPath }
 
     /// The ids of the nodes that returned running on the last tick, root first.
     public var runningPath: [String] {
@@ -313,6 +328,12 @@ public final class BehaviorLeafContext {
 
     /// Turns to face `point`.
     public func face(_ point: Vec3) { ticker.state.face = point - position }
+
+    /// A walkable path from the entity to `point` on the world's navigation grid (nil without
+    /// a grid or a path). `walk(to:)` follows one by itself.
+    public func path(to point: Vec3, partial: Bool = false) -> [Vec3]? {
+        world.findPath(from: position, to: point, partial: partial)
+    }
 
     /// Records an event in `BehaviorTreeState.events`.
     public func raise(_ name: String, target: Entity? = nil, amount: Double = 0) {
@@ -420,8 +441,16 @@ final class BehaviorTicker {
 
     var defaultSpeed: Float { runner.speed > 0 ? runner.speed : Float(compiled.tree.speed) }
 
+    /// `entity`'s world position (through its parents).
     func position(of entity: Entity) -> Vec3 {
-        world.get(GlobalTransform.self, for: entity)?.position ?? world.get(Transform.self, for: entity)?.position ?? .zero
+        let c = world.worldMatrix(of: entity).c3
+        return Vec3(c.x, c.y, c.z)
+    }
+
+    /// The local-to-world matrix of `entity`'s transform parent (identity for a root).
+    func parentMatrix(of entity: Entity) -> Mat4 {
+        guard let parent = world.parent(of: entity), world.has(Transform.self, for: parent) else { return .identity }
+        return world.worldMatrix(of: parent)
     }
 
     var position: Vec3 { position(of: entity) }
@@ -600,7 +629,8 @@ final class BehaviorTicker {
         case .flee:
             guard let target = target(node.string("target")) else { return .failure }
             if flatDistance(position, target.position) >= Float(node.number("safeDistance")) { return .success }
-            state.steering = BehaviorSteering(goal: target.position, entity: target.entity, away: true, speed: speed(node), stopDistance: 0)
+            state.steering = BehaviorSteering(goal: target.position, entity: target.entity, away: true, speed: speed(node), stopDistance: 0,
+                                              range: Float(node.number("safeDistance")))
             return .running
         case .attack: return attack(i, node)
         case .wait:
@@ -709,7 +739,7 @@ final class BehaviorTicker {
         let distance = length(offset)
         guard distance <= Float(node.number("range")) else { return .failure }
         if distance > 1e-4 {
-            let rotation = world.get(Transform.self, for: entity)?.rotation ?? .identity
+            let rotation = Transform(matrix: world.worldMatrix(of: entity)).rotation
             let forward = rotation * Vec3(0, 0, -1)
             let flatForward = Vec3(forward.x, 0, forward.z)
             let flatOffset = Vec3(offset.x, 0, offset.z)
@@ -778,42 +808,119 @@ final class BehaviorTicker {
 
     // MARK: Movement
 
-    /// Moves and turns the entity for one frame from the stored steering.
-    func move(frameDt: Float, turnSpeed: Float) {
+    /// Moves and turns the entity for one frame from the stored steering, along a path on
+    /// `navigation` when there is one.
+    func move(frameDt: Float, turnSpeed: Float, navigation: NavigationGrid? = nil) {
         var velocity = Vec3.zero
         let here = position
         if let steering = state.steering {
             let goal = steering.entity.flatMap { world.isAlive($0) ? position(of: $0) : nil } ?? steering.goal
-            var offset = goal - here
-            offset.y = 0
-            let distance = length(offset)
-            if steering.away {
+            let waypoint = navigation.flatMap { self.waypoint(on: $0, steering: steering, goal: goal, from: here) }
+            if waypoint == nil { clearPath() }
+            if steering.away, waypoint == nil {
+                var offset = goal - here
+                offset.y = 0
+                let distance = length(offset)
                 velocity = distance > 1e-4 ? -offset / distance * steering.speed : Vec3(steering.speed, 0, 0)
-            } else if distance > steering.stopDistance + 1e-4 {
-                let step = frameDt > 0 ? (distance - steering.stopDistance) / frameDt : steering.speed
-                velocity = offset / distance * min(steering.speed, step)
+            } else {
+                let aim = waypoint?.point ?? goal
+                let last = waypoint?.last ?? true
+                var offset = aim - here
+                offset.y = 0
+                let distance = length(offset)
+                let stop = last && !steering.away ? steering.stopDistance : 0
+                if distance > stop + 1e-4 {
+                    let step = frameDt > 0 && last ? (distance - stop) / frameDt : steering.speed
+                    velocity = offset / distance * min(steering.speed, step)
+                }
             }
+        } else {
+            clearPath()
         }
         if world.has(CharacterController.self, for: entity) {
             world.modify(CharacterController.self, for: entity) { $0.moveVelocity = Vec3(velocity.x, 0, velocity.z) }
         } else if let body = world.get(RigidBody.self, for: entity), body.motion == .dynamic {
             world.modify(RigidBody.self, for: entity) { $0.linearVelocity = Vec3(velocity.x, $0.linearVelocity.y, velocity.z) }
         } else if velocity != .zero {
-            world.modify(Transform.self, for: entity) { $0.position += velocity * frameDt }
+            // A world-space step, written as the local position under the parent.
+            let local = parentMatrix(of: entity).inverse * Vec4(here + velocity * frameDt, 1)
+            world.modify(Transform.self, for: entity) { $0.position = Vec3(local.x, local.y, local.z) }
         }
         let facing = length(velocity) > 1e-3 ? velocity : (state.face ?? .zero)
-        guard turnSpeed > 0, length(Vec3(facing.x, 0, facing.z)) > 1e-4 else { return }
-        world.modify(Transform.self, for: entity) { transform in
-            let forward = transform.rotation * Vec3(0, 0, -1)
-            let current = atan2(-forward.x, -forward.z)
-            let wanted = atan2(-facing.x, -facing.z)
-            var delta = wanted - current
-            while delta > .pi { delta -= 2 * .pi }
-            while delta < -.pi { delta += 2 * .pi }
-            let maxStep = turnSpeed * frameDt
-            let yaw = current + max(-maxStep, min(maxStep, delta))
-            transform.rotation = Quat(angle: yaw, axis: Vec3(0, 1, 0))
+        guard turnSpeed > 0, length(Vec3(facing.x, 0, facing.z)) > 1e-4, world.has(Transform.self, for: entity) else { return }
+        let worldRotation = Transform(matrix: world.worldMatrix(of: entity)).rotation
+        let forward = worldRotation * Vec3(0, 0, -1)
+        let current = atan2(-forward.x, -forward.z)
+        let wanted = atan2(-facing.x, -facing.z)
+        var delta = wanted - current
+        while delta > .pi { delta -= 2 * .pi }
+        while delta < -.pi { delta += 2 * .pi }
+        let maxStep = turnSpeed * frameDt
+        let yaw = current + max(-maxStep, min(maxStep, delta))
+        let parent = parentMatrix(of: entity)
+        let parentRotation = parent == .identity ? Quat.identity : Transform(matrix: parent).rotation
+        let rotation = (parentRotation.inverse * Quat(angle: yaw, axis: Vec3(0, 1, 0))).normalized
+        world.modify(Transform.self, for: entity) { $0.rotation = rotation }
+    }
+
+    private func clearPath() {
+        guard !state.navPath.isEmpty || state.navGoal != nil else { return }
+        state.navPath = []
+        state.navIndex = 0
+        state.navGoal = nil
+    }
+
+    /// The point to walk toward this frame on `nav` and whether it is the path's last, or nil
+    /// when there is no path (walk straight).
+    private func waypoint(on nav: NavigationGrid, steering: BehaviorSteering, goal: Vec3, from here: Vec3) -> (point: Vec3, last: Bool)? {
+        let reach = max(nav.cellSize * 0.75, 0.3)
+        var target = goal
+        if steering.away {
+            if let kept = state.navGoal, state.navAway, !state.navPath.isEmpty, flatDistance(here, kept) > reach,
+               flatDistance(kept, goal) > flatDistance(here, goal), state.clock - state.navPlannedAt < 2 {
+                target = kept
+            } else {
+                guard let flee = fleeGoal(on: nav, from: here, threat: goal, distance: max(steering.range, 6)) else { return nil }
+                target = flee
+                state.navPath = []
+            }
         }
+        let age = state.clock - state.navPlannedAt
+        let moved = state.navGoal.map { flatDistance($0, target) } ?? .infinity
+        let stale = state.navPath.isEmpty || state.navAway != steering.away || (moved > max(nav.cellSize, 0.5) && age >= 0.2) || age > 3
+        if stale {
+            guard let path = nav.findPath(from: here, to: target, partial: true), path.count >= 2 else { return nil }
+            state.navPath = path
+            state.navIndex = 1
+            state.navGoal = target
+            state.navAway = steering.away
+            state.navPlannedAt = state.clock
+        }
+        while state.navIndex < state.navPath.count - 1, flatDistance(here, state.navPath[state.navIndex]) <= reach { state.navIndex += 1 }
+        guard state.navIndex < state.navPath.count else { return nil }
+        let last = state.navIndex == state.navPath.count - 1
+        if last, !steering.away, let end = state.navPath.last, flatDistance(end, goal) <= nav.cellSize * 1.5 { return (goal, true) }
+        return (state.navPath[state.navIndex], last)
+    }
+
+    /// A reachable point about `distance` away that takes the entity away from `threat`.
+    private func fleeGoal(on nav: NavigationGrid, from here: Vec3, threat: Vec3, distance: Float) -> Vec3? {
+        guard let start = nav.nearestWalkablePoint(to: here, maxDistance: 3) else { return nil }
+        var away = Vec3(here.x - threat.x, 0, here.z - threat.z)
+        away = length(away) > 1e-4 ? normalize(away) : Vec3(1, 0, 0)
+        let now = flatDistance(here, threat)
+        var best: (point: Vec3, score: Float)?
+        for k in 0..<16 {
+            let angle = Float(k) * .pi / 8
+            let dir = Vec3(away.x * cos(angle) - away.z * sin(angle), 0, away.x * sin(angle) + away.z * cos(angle))
+            guard let p = nav.nearestWalkablePoint(to: here + dir * distance, maxDistance: nav.cellSize * 3),
+                  nav.areConnected(start, p) else { continue }
+            var score = flatDistance(p, threat) - flatDistance(p, here) * 0.25
+            if nav.isClear(from: start, to: p) { score += distance * 0.5 }
+            if best == nil || score > best!.score { best = (p, score) }
+        }
+        guard let best, flatDistance(best.point, threat) > now + 0.5 else { return nil }
+        return best.point
     }
 }
 
@@ -830,7 +937,7 @@ public enum BehaviorTreeSystem {
 
     /// Registers the behavior tree components with `ComponentRegistry`.
     @MainActor public static func registerComponents() {
-        ComponentRegistry.register(BehaviorTreeRunner.self, BehaviorTreeState.self)
+        ComponentRegistry.register(BehaviorTreeRunner.self, BehaviorTreeState.self, NavigationArea.self)
     }
 }
 
@@ -843,6 +950,18 @@ extension World {
                                             physics: @escaping () -> PhysicsWorld? = { nil }) {
         guard !systemNames(in: .update).contains(name) else { return }
         BehaviorTreeSystem.registerComponents()
+        // A grid this system baked during an earlier run may be out of date: bake it again.
+        if navigationIsAutomatic { NavigationStore.set(nil, for: self, automatic: true) }
+        var triedBaking = false
+        func navigation(_ world: World) -> NavigationGrid? {
+            if let grid = world.navigation { return grid }
+            guard !triedBaking else { return nil }
+            triedBaking = true
+            guard world.count(of: Collider.self) > 0, let grid = world.makeNavigation() else { return nil }
+            NavigationStore.set(grid, for: world, automatic: true)
+            EngineLog.info("Navigation: baked a \(grid.width)×\(grid.depth) grid (\(grid.walkableCount) walkable cells of \(grid.cellSize) m)")
+            return grid
+        }
         var cache: [String: (key: String, revision: Int, compiled: CompiledBehaviorTree)] = [:]
         var missing = Set<String>()
         func compiled(_ reference: String) -> (key: String, revision: Int, compiled: CompiledBehaviorTree)? {
@@ -892,8 +1011,7 @@ extension World {
                     var state = existing ?? BehaviorTreeState()
                     if state.revision != tree.revision || state.tree != runner.tree {
                         state = World.prepare(state, tree.compiled, runner: runner, seed: UInt64(entity.index) &+ 1,
-                                              origin: world.get(GlobalTransform.self, for: entity)?.position
-                                                  ?? world.get(Transform.self, for: entity)?.position ?? .zero,
+                                              origin: { let c = world.worldMatrix(of: entity).c3; return Vec3(c.x, c.y, c.z) }(),
                                               fresh: existing == nil || state.tree != runner.tree)
                         state.revision = tree.revision
                         state.tree = runner.tree
@@ -910,7 +1028,8 @@ extension World {
                             ticker.halt(root)  // finished: start over on the next tick
                         }
                     }
-                    ticker.move(frameDt: frameDt, turnSpeed: Float(tree.compiled.tree.turnSpeed))
+                    ticker.move(frameDt: frameDt, turnSpeed: Float(tree.compiled.tree.turnSpeed),
+                                navigation: ticker.state.steering != nil ? navigation(world) : nil)
                     world.add(ticker.state, to: entity)
                 }
             }

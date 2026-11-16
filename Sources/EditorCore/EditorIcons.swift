@@ -53,6 +53,7 @@ public enum EditorIcons {
         LightFlicker.componentName: "gauge",
         CameraPath.componentName: "orbit",
         BehaviorTreeRunner.componentName: "bot",
+        NavigationArea.componentName: "route",
         DialoguePlayer.componentName: "file-text",
         VisualScript.componentName: "network",
         TimelinePlayer.componentName: "clapperboard",

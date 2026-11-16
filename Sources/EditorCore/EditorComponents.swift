@@ -90,6 +90,7 @@ public enum EditorComponentCatalog {
         register(LightFlicker.self) { LightFlicker() }
         register(CameraPath.self) { CameraPath() }
         register(BehaviorTreeRunner.self) { BehaviorTreeRunner() }
+        register(NavigationArea.self) { NavigationArea() }
         register(DialoguePlayer.self) { DialoguePlayer() }
         register(TimelinePlayer.self) { TimelinePlayer() }
         register(Animator.self) { Animator(targets: [], restPose: [], stateMachine: AnimationStateMachine(states: [])) }

@@ -2,7 +2,7 @@ import Engine
 import Foundation
 
 /// The behavior tree tools: `behavior.new`, `behavior.get`, `behavior.set`, `behavior.edit`,
-/// `behavior.assign`, `behavior.debug`, `behavior.open`.
+/// `behavior.assign`, `behavior.debug`, `behavior.navigation`, `behavior.open`.
 @MainActor
 public enum EditorBehaviorCommands {
     public static let all: [any EditorCommand.Type] = [
@@ -12,6 +12,7 @@ public enum EditorBehaviorCommands {
         BehaviorEditCommand.self,
         BehaviorAssignCommand.self,
         BehaviorDebugCommand.self,
+        BehaviorNavigationCommand.self,
         BehaviorOpenCommand.self,
     ]
 
@@ -405,6 +406,70 @@ public enum BehaviorDebugCommand: EditorCommand {
         return Result(entity: world.id(of: entity), tree: runner?.tree ?? "", playing: session.isPlaying,
                       status: state?.rootStatus?.rawValue ?? "", runningPath: state?.runningPath ?? [], nodes: nodes,
                       blackboard: blackboard, ticks: state?.tickCount ?? 0, problems: state?.problems ?? [])
+    }
+}
+
+public enum BehaviorNavigationCommand: EditorCommand {
+    public struct Arguments: Codable, Equatable, Sendable {
+        /// Bake again even if the world has a grid (default: bake only when it has none).
+        public var rebake: Bool?
+        /// Find a path between these world points ([x, y, z]).
+        public var from: Vec3?
+        public var to: Vec3?
+        /// Path to the reachable point nearest `to` when `to` can't be reached.
+        public var partial: Bool?
+        public init(rebake: Bool? = nil, from: Vec3? = nil, to: Vec3? = nil, partial: Bool? = nil) {
+            self.rebake = rebake
+            self.from = from
+            self.to = to
+            self.partial = partial
+        }
+    }
+
+    public struct Result: Codable, Equatable, Sendable {
+        /// Whether the world has a grid (false: no colliders to bake from).
+        public var hasGrid: Bool
+        public var baked: Bool
+        public var cellSize: Float
+        /// Cells along x and z.
+        public var width: Int
+        public var depth: Int
+        public var walkableCells: Int
+        /// Separate walkable areas (cells in different ones can't reach each other).
+        public var areas: Int
+        public var boundsMin: Vec3?
+        public var boundsMax: Vec3?
+        /// The path from `from` to `to` (empty when there is none or none was asked for).
+        public var path: [Vec3]
+        public var pathLength: Float
+        public var pathFound: Bool
+    }
+
+    public static let id: CommandID = "behavior.navigation"
+    public static let title = "Behavior Navigation"
+    public static let doc = "The navigation grid behavior trees walk on (moveTo, patrol, chase and flee follow A* paths on it, straight-line steering where there is none): bakes it from the static colliders of the current world (the play world while playing) if it has none or `rebake`, reports its size and walkable areas, and with `from` and `to` returns the path between them. A NavigationArea component sets the baked box and the agent's radius, height, step and slope; without one the bake covers the static colliders around the agents. Game code: `world.bakeNavigation()`, `world.findPath(from:to:)`."
+    public static let isReadOnly = true
+    public static func isAvailable(in session: EditorSession) -> Bool { true }
+    public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
+        let world = session.world
+        var baked = false
+        if arguments.rebake == true || world.navigation == nil {
+            baked = world.bakeNavigation() != nil
+        }
+        guard let grid = world.navigation else {
+            return Result(hasGrid: false, baked: false, cellSize: 0, width: 0, depth: 0, walkableCells: 0, areas: 0,
+                          path: [], pathLength: 0, pathFound: false)
+        }
+        var path: [Vec3] = []
+        if let from = arguments.from, let to = arguments.to {
+            path = grid.findPath(from: from, to: to, partial: arguments.partial ?? false) ?? []
+        } else if (arguments.from == nil) != (arguments.to == nil) {
+            throw CommandError.failed("\(title): give both `from` and `to` for a path")
+        }
+        let bounds = grid.bounds
+        return Result(hasGrid: true, baked: baked, cellSize: grid.cellSize, width: grid.width, depth: grid.depth,
+                      walkableCells: grid.walkableCount, areas: grid.regionCount, boundsMin: bounds.min, boundsMax: bounds.max,
+                      path: path, pathLength: NavigationGrid.length(of: path), pathFound: !path.isEmpty)
     }
 }
 

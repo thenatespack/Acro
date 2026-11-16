@@ -198,7 +198,17 @@ Behavior trees (`.behavior`, JSON under `Assets/`) describe NPC AI as nodes inst
 
 Problems such as unknown types, missing children, nodes with two parents, cycles, unconnected nodes and wrong parameters are reported as import warnings. At runtime a broken node fails.
 
-An entity runs a tree with a **BehaviorTreeRunner** component: `tree` (the asset), `target` (the entity that target-based nodes aim at unless the blackboard's `target` names one by entity name), `speed` and per-entity blackboard values. In play mode and in built games, the behavior tree system ticks every runner and steers movement nodes on the XZ plane. A `CharacterController` gets its `moveVelocity`, a dynamic `RigidBody` gets its horizontal velocity, and anything else has its `Transform` moved. The live state is a `BehaviorTreeState` component (not saved), which holds the blackboard, each node's last status and this frame's events. Editing the file while playing switches running NPCs to the new tree and keeps their blackboard. There is no navigation mesh yet, so NPCs walk straight toward their goal.
+An entity runs a tree with a **BehaviorTreeRunner** component: `tree` (the asset), `target` (the entity that target-based nodes aim at unless the blackboard's `target` names one by entity name), `speed` and per-entity blackboard values. In play mode and in built games, the behavior tree system ticks every runner and steers movement nodes on the XZ plane. A `CharacterController` gets its `moveVelocity`, a dynamic `RigidBody` gets its horizontal velocity, and anything else has its `Transform` moved. The live state is a `BehaviorTreeState` component (not saved), which holds the blackboard, each node's last status and this frame's events. Editing the file while playing switches running NPCs to the new tree and keeps their blackboard. Movement happens in world space, so an NPC parented to a moving or turned entity still walks to world goals and faces where it walks.
+
+**Navigation.** Move to, patrol, chase and flee follow paths on a navigation grid instead of walking straight into walls. The first time a tree walks somewhere in a world with colliders, the system bakes a walkable grid from the static colliders (anything without a `RigidBody` or with a static one; never NPCs or character controllers): each cell is walkable when its ground is flat enough, the agent fits above it and no wall or drop is closer than the agent's radius. Paths are A* on that grid with the corners pulled straight, replanned when the goal moves; a fleeing NPC picks a reachable point away from the threat. Where there is no grid or no path, NPCs steer straight as before. Add a **NavigationArea** component to set the baked box (centered on its entity) and the agent's radius, height, step height, maximum slope and the cell size; without one the bake covers the static colliders around the NPCs. Game code can use the same grid:
+
+```swift
+world.bakeNavigation()                              // again after the static level changes
+if let path = world.findPath(from: npcPosition, to: goal) { ... }  // [Vec3], corners on the ground
+world.navigation?.isWalkable(point)
+```
+
+Custom leaves get `leaf.path(to:)`, and `BehaviorTreeState.path` is the path an NPC is walking. The grid has one walkable layer per cell (no stacked floors or walking under bridges), and moving obstacles aren't avoided.
 
 ```swift
 BehaviorTreeLeaves.register("hasAmmo") { leaf in
@@ -210,9 +220,9 @@ for event in world.get(BehaviorTreeState.self, for: guardEntity)?.events ?? [] w
 
 In the editor, use **New Behavior Tree** in the asset browser and double-click the file (or **Open in Behavior Tree Builder** in the inspector) to open the **Behavior Tree** tab. The tab draws the tree as a node graph from the root down, children left to right in run order (nodes not connected to the root sit to the right). Click a node to edit its id, label, type and parameters in the sidebar, move it among its siblings, make it the root or delete it. Drag a node (with everything under it) onto a composite or decorator to make it that node's last child, or onto the left or right part of another node to put it just before or after it; a drop that would make a cycle is refused. Drag empty space or scroll to pan, and use the toolbar's zoom and **Fit** buttons. The sidebar also has controls to add nodes of any type, edit the blackboard and settings, and pick a preset (empty, patrol, guard, chaser, coward). Every change is one undo step. While playing, nodes and their links are tinted with what each node returned on the last tick: running is yellow, success is green and failure is red. The tint follows the selected entity if it runs the tree, otherwise the entity chosen in the toolbar picker.
 
-Editor MCP clients use `behavior.new {preset}`, `behavior.edit {addNodes, connect, disconnect, updateNodes, removeNodes, blackboard}`, `behavior.set`, `behavior.get`, `behavior.assign {entity, target}`, `behavior.debug` (the live running path and blackboard while playing) and `behavior.open`. See [MCPTools.md](MCPTools.md).
+Editor MCP clients use `behavior.new {preset}`, `behavior.edit {addNodes, connect, disconnect, updateNodes, removeNodes, blackboard}`, `behavior.set`, `behavior.get`, `behavior.assign {entity, target}`, `behavior.debug` (the live running path and blackboard while playing), `behavior.navigation {rebake, from, to, partial}` (bakes the grid and returns its size and a path) and `behavior.open`. See [MCPTools.md](MCPTools.md).
 
-Not yet: navigation-mesh pathfinding. Movement assumes root entities.
+Not yet: a true navigation mesh (the grid is one layer, static only), local avoidance between NPCs, and drawing the grid in the Scene view.
 
 ## UI / HUD Builder
 

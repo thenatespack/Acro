@@ -280,4 +280,22 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(workspace.canvas.tree == workspace.tree)
         workspace.close()
     }
+
+    @Test func navigationToolBakesAndFindsPaths() throws {
+        let session = makeSession()
+        #expect(try call(session, "behavior.navigation")["hasGrid"] as? Bool == false, "nothing to bake")
+        let world = session.world
+        world.spawn(Transform(position: Vec3(0, -0.5, 0)), Collider(.box(Vec3(10, 0.5, 10))))
+        world.spawn(Transform(position: Vec3(0, 1, 0)), Collider(.box(Vec3(5, 1, 0.25))))
+        let result = try call(session, "behavior.navigation", ["from": [0, 0, -4], "to": [0, 0, 4]])
+        #expect(result["hasGrid"] as? Bool == true && result["baked"] as? Bool == true)
+        #expect((result["walkableCells"] as? Int ?? 0) > 100 && result["areas"] as? Int == 1)
+        #expect(result["pathFound"] as? Bool == true)
+        #expect((result["pathLength"] as? Double ?? 0) > 10, "around the wall")
+        #expect((result["path"] as? [[Double]])?.count ?? 0 >= 3)
+        // Kept until rebaked.
+        #expect(try call(session, "behavior.navigation")["baked"] as? Bool == false)
+        #expect(try call(session, "behavior.navigation", ["rebake": true])["baked"] as? Bool == true)
+        #expect(throws: (any Error).self) { try call(session, "behavior.navigation", ["from": [0, 0, 0]]) }
+    }
 }
