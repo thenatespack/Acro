@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 166 tools.
+named by its id (see README › Use the editor › AI control). 174 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -22,6 +22,7 @@ optional arguments.
 | `file` | [`file.openInCodeEditor`](#fileopenincodeeditor), [`file.reveal`](#filereveal) |
 | `files` | [`files.list`](#fileslist), [`files.newScene`](#filesnewscene), [`files.open`](#filesopen) |
 | `game` | [`game.build`](#gamebuild), [`game.info`](#gameinfo), [`game.load`](#gameload), [`game.reload`](#gamereload), [`game.unload`](#gameunload) |
+| `gridMap` | [`gridMap.edit`](#gridmapedit), [`gridMap.erase`](#gridmaperase), [`gridMap.fill`](#gridmapfill), [`gridMap.get`](#gridmapget), [`gridMap.new`](#gridmapnew), [`gridMap.open`](#gridmapopen), [`gridMap.paint`](#gridmappaint), [`gridMap.set`](#gridmapset) |
 | `input` | [`input.clear`](#inputclear), [`input.inject`](#inputinject), [`input.state`](#inputstate) |
 | `launcher` | [`launcher.dismiss`](#launcherdismiss), [`launcher.settings`](#launchersettings), [`launcher.show`](#launchershow) |
 | `layout` | [`layout.reset`](#layoutreset) |
@@ -818,6 +819,249 @@ Result:
 Unloads the game module: its systems stop, its components stay in the scene (and the undo history) as JSON (saved unchanged) until game code with those types is loaded again; its willUnload state is kept for the next load.
 
 Arguments: none.
+
+## gridMap
+
+### `gridMap.edit`
+
+**Edit GridMap** · _undoable_
+
+Changes a .gridmap file's settings and piece library in one undoable step, in this order: clear / clearFloor, cellSize, chunkSize, collider, layers, removePieces (their cells go too), addPieces, updatePieces (name → fields; "name" renames and cells follow). Placed copies update. Cells are painted with gridMap.paint, gridMap.fill and gridMap.erase. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `addPieces?`: [{asset?: string, collider?: "auto" \| "mesh" \| "box" \| "none", footprint?: integer[2], join?: object, layer?: string, material?: string, name?: string, offset?: number[3], rotation?: number, scale?: number[3], size?: number[3]}]
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `cellSize?`: number[3] — [x, y, z]
+- `chunkSize?`: integer
+- `clear?`: boolean
+- `clearFloor?`: integer
+- `collider?`: boolean
+- `layers?`: [string]
+- `path?`: string
+- `removePieces?`: [string]
+- `updatePieces?`: object
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `cellSize`: number[3] — [x, y, z]
+- `cells`: integer
+- `changed?`: integer
+- `entities?`: [entity id]
+- `floors`: [integer]
+- `layers`: [string]
+- `max?`: [integer]
+- `min?`: [integer]
+- `path`: string
+- `pieces`: [string]
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `warnings`: [string]
+
+### `gridMap.erase`
+
+**Erase GridMap** · _undoable_
+
+Clears cells of a .gridmap file in one undoable step: `cells` ([x, y, z] list) and/or `box` (two opposite corners), on `layer` or every layer. A multi-cell piece goes when any cell it covers is erased. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `box?`: [[integer]]
+- `cells?`: [[integer]]
+- `layer?`: string
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `cellSize`: number[3] — [x, y, z]
+- `cells`: integer
+- `changed?`: integer
+- `entities?`: [entity id]
+- `floors`: [integer]
+- `layers`: [string]
+- `max?`: [integer]
+- `min?`: [integer]
+- `path`: string
+- `pieces`: [string]
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `warnings`: [string]
+
+### `gridMap.fill`
+
+**Fill GridMap** · _undoable_
+
+Fills a box of cells (`box`: two opposite [x, y, z] corners, every floor between them) with a piece in one undoable step; `hollow` paints only each floor's edge (a ring of walls; auto-joining walls form corners by themselves). `rotation` 0/90/180/270, `layer` (default: the piece's). Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `box`: [[integer]]
+- `hollow?`: boolean
+- `layer?`: string
+- `path?`: string
+- `piece`: string
+- `rotation?`: integer
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `cellSize`: number[3] — [x, y, z]
+- `cells`: integer
+- `changed?`: integer
+- `entities?`: [entity id]
+- `floors`: [integer]
+- `layers`: [string]
+- `max?`: [integer]
+- `min?`: [integer]
+- `path`: string
+- `pieces`: [string]
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `warnings`: [string]
+
+### `gridMap.get`
+
+**Get GridMap** · _read-only_, _idempotent_
+
+Reads a .gridmap file: settings, the piece library (every field, defaults included), the cells (optionally one `floor`, up to `cellLimit`), a summary (floors, bounds, problems), and with `mapFloor` a text picture of one floor.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `cellLimit?`: integer
+- `floor?`: integer
+- `mapFloor?`: integer
+- `path?`: string
+
+Result:
+
+- `cellSize`: number[3] — [x, y, z]
+- `cells`: [{at?: [integer], flipX?: boolean, flipZ?: boolean, layer?: string, piece?: string, rotation?: integer}]
+- `chunkSize`: integer
+- `collider`: boolean
+- `layers`: [string]
+- `map?`: [string]
+- `mapOrigin?`: [integer]
+- `pieces`: [{asset?: string, collider?: "auto" \| "mesh" \| "box" \| "none", footprint?: integer[2], join?: object, layer?: string, material?: string, name?: string, offset?: number[3], rotation?: number, scale?: number[3], size?: number[3]}]
+- `summary`: {asset: asset id, cellSize: number[3], cells: integer, changed?: integer, entities?: [entity id], floors: [integer], layers: [string], max?: [integer], min?: [integer], path: string, pieces: [string], prefab: asset id, warnings: [string]}
+- `truncated`: boolean
+
+### `gridMap.new`
+
+**New GridMap**
+
+Writes a .gridmap file in `folder` (default: the Assets root) with a piece library: `library` pieces, `assets` paths (each a piece named after its file), and unless a library is given the starter pieces (Floor, auto-joining Wall with its Wall Single/End/Straight/Corner/Tee/Cross variants, Crate, Pillar) written as mesh builds next to it. Optionally places it in the scene. Then paint with gridMap.paint, gridMap.fill and gridMap.erase. A grid map is a level built from modular pieces on a grid: `cellSize` [x, floor height, z] meters, `chunkSize` (cells per chunk side; one merged collider per chunk and floor), `collider`, `layers` (default floor, walls, props; one piece per cell per layer), `pieces` (the library; each: name, asset (a .meshbuild, .gltf/.glb/.obj model or .prefab path under Assets/, or "asset:<id>#mesh/<name>" with `material`), footprint [w, d] cells, size [x,y,z] collision box meters (0: footprint by one floor), offset [x,y,z] pivot meters, rotation degrees (fixes how the model faces), scale, layer (default layer), collider (auto, mesh, box, none), join (auto-joining: single, end, straight, corner, tee, cross piece names, plus joinsWith)) and `cells` (each: at [x, y, z] (y is the floor), piece, layer, rotation 0/90/180/270, flipX, flipZ). Cell (x,y,z) spans x*cellSize.x...(x+1)*cellSize.x and z likewise, standing on y*cellSize.y; a piece is centered on its footprint, which runs from the anchor toward +x and +z. An auto-joining piece becomes the variant that fits its neighbors on the same floor and layer, turned to face them (variants are authored connecting toward +x (end), +x/-x (straight), +x/+z (corner), +x/-x/+z (tee)). Every key is optional.
+
+Arguments:
+
+- `assets?`: [string]
+- `cellSize?`: number[3] — [x, y, z]
+- `chunkSize?`: integer
+- `folder?`: string
+- `layers?`: [string]
+- `library?`: [{asset?: string, collider?: "auto" \| "mesh" \| "box" \| "none", footprint?: integer[2], join?: object, layer?: string, material?: string, name?: string, offset?: number[3], rotation?: number, scale?: number[3], size?: number[3]}]
+- `name?`: string
+- `place?`: boolean
+- `position?`: number[3] — [x, y, z]
+- `starter?`: boolean
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `cellSize`: number[3] — [x, y, z]
+- `cells`: integer
+- `changed?`: integer
+- `entities?`: [entity id]
+- `floors`: [integer]
+- `layers`: [string]
+- `max?`: [integer]
+- `min?`: [integer]
+- `path`: string
+- `pieces`: [string]
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `warnings`: [string]
+
+### `gridMap.open`
+
+**Open in GridMap Builder** · _idempotent_
+
+Opens a .gridmap file in the editor's GridMap Builder tab (a viewport showing the map with the edited floor's grid, the floors below faded and the ones above hidden, brushes you click or drag, and the piece library form) and brings the tab to the front. view.screenshot {source: "panel", panel: "gridMapBuilder"} shows it.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `floor?`: integer
+- `path?`: string
+
+Result:
+
+- `path`: string
+
+### `gridMap.paint`
+
+**Paint GridMap** · _undoable_
+
+Paints a piece (or a random one of `pieces`) onto a .gridmap file's cells in one undoable step and reimports it. `cells` are [x, y, z] (y is the floor); `brush` reads them as: cells (each one), line or rect / outline (between the first two), fill (flood fill from the first). `rotation` 0/90/180/270, `flipX` / `flipZ` mirror, `layer` (default: the piece's) — a piece replaces what it overlaps on its layer only. Auto-joining pieces (like the starter Wall) pick their straight/corner/tee/end shape from neighbors by themselves. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `brush?`: "cells" \| "line" \| "rect" \| "outline" \| "fill"
+- `cells`: [[integer]]
+- `flipX?`: boolean
+- `flipZ?`: boolean
+- `layer?`: string
+- `path?`: string
+- `piece?`: string
+- `pieces?`: [string]
+- `randomRotation?`: boolean
+- `rotation?`: integer
+- `seed?`: integer
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `cellSize`: number[3] — [x, y, z]
+- `cells`: integer
+- `changed?`: integer
+- `entities?`: [entity id]
+- `floors`: [integer]
+- `layers`: [string]
+- `max?`: [integer]
+- `min?`: [integer]
+- `path`: string
+- `pieces`: [string]
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `warnings`: [string]
+
+### `gridMap.set`
+
+**Set GridMap** · _undoable_, _idempotent_
+
+Replaces a .gridmap file's whole contents (library and cells) and reimports it; placed copies update. Undoable. For library or settings changes gridMap.edit is shorter; paint with gridMap.paint / gridMap.fill / gridMap.erase. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `map`: {cellSize?: number[3], cells?: [object], chunkSize?: integer, collider?: boolean, layers?: [string], pieces?: [object]}
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `cellSize`: number[3] — [x, y, z]
+- `cells`: integer
+- `changed?`: integer
+- `entities?`: [entity id]
+- `floors`: [integer]
+- `layers`: [string]
+- `max?`: [integer]
+- `min?`: [integer]
+- `path`: string
+- `pieces`: [string]
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `warnings`: [string]
 
 ## input
 

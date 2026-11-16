@@ -285,7 +285,7 @@ public enum EditorIcons {
         case "gltf", "glb", "obj", "fbx", "meshbuild": return .model
         case "vfx": return .prefab
         case "table": return .model
-        case "gltf", "glb", "obj", "fbx", "meshbuild", "terrain": return .model
+        case "gltf", "glb", "obj", "fbx", "meshbuild", "terrain", "gridmap": return .model
         case "png", "jpg", "jpeg", "tga", "hdr", "exr", "ktx", "ktx2", "dds", "bmp", "proctex": return .texture
         case "material": return .material
         case "postfx": return .material
@@ -350,6 +350,7 @@ public enum EditorIcons {
         EditorLayout.postFXBuilder: "aperture",
         EditorLayout.dataTable: "layout-grid",
         EditorLayout.terrainBuilder: "layers",
+        EditorLayout.gridMapBuilder: "boxes",
     ]
 
     /// Console lines by level.

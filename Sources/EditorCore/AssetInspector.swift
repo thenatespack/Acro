@@ -409,6 +409,16 @@ public final class AssetInspectorView {
                 content.addChildren([HStack(spacing: 6, [open, Spacer()]),
                                      note("A data table of \(table?.rows.count ?? 0) rows and \(table?.columns.count ?? 0) columns. Game code reads it with assets.dataTable(path:)?.row(id)?.number(column).")])
             }
+            if session.isGridMapFile(id) {
+                let open = Button("Open in GridMap Builder", role: .primary, name: "openGridMapBuilder") { [unowned self] in
+                    session.run(GridMapOpenCommand.self, .init(asset: AssetReference(id)))
+                }
+                open.command = GridMapOpenCommand.id.rawValue
+                open.tooltip = "Paint this level from its piece library in the GridMap Builder tab (or double-click it in the Assets panel)"
+                let map = session.assets?.gridMap(of: id)
+                content.addChildren([HStack(spacing: 6, [open, Spacer()]),
+                                     note("A grid map of \(map?.cells.count ?? 0) cells from \(map?.pieces.count ?? 0) pieces on \(map?.floors.count ?? 0) floors, drawn instanced with one collider per chunk.")])
+            }
             if session.isTerrainFile(id) {
                 let open = Button("Open in Terrain Builder", role: .primary, name: "openTerrainBuilder") { [unowned self] in
                     session.run(TerrainOpenCommand.self, .init(asset: AssetReference(id)))

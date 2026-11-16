@@ -137,6 +137,10 @@ public final class EditorSession {
     /// The terrain open in the Terrain Builder tab (`terrain.open`), and how the app shows it.
     public var openTerrain: AssetID?
     public var onOpenTerrain: ((AssetID) -> Void)?
+    /// The grid map open in the GridMap Builder tab (`gridMap.open`), the floor to edit, and how the app shows it.
+    public var openGridMap: AssetID?
+    public var openGridMapFloor = 0
+    public var onOpenGridMap: ((AssetID) -> Void)?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()
