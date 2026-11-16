@@ -320,6 +320,11 @@ public final class AssetDatabase {
         return nil
     }
 
+    public func animationClip(_ reference: AssetReference) -> AnimationClip? {
+        if case .animation(let clip)? = object(reference, kind: .animation)?.value { return clip }
+        return nil
+    }
+
     // MARK: Settings
 
     /// The asset's effective import settings (sidecar values over the importer's defaults).

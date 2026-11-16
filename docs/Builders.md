@@ -13,6 +13,7 @@ Builder tools let people and AI agents author game content inside the Acro edito
 | [VFX Builder](#vfx-builder) | `.vfx` | Effects made of stacked GPU particle emitters |
 | [Post-FX Builder](#post-fx-builder) | `.postfx` | Camera looks: tonemapping, bloom, grading, vignette, grain |
 | [Terrain Builder](#terrain-builder) | `.terrain` | Sculpted, painted heightmap terrain with scattered props |
+| [Character Builder](#character-builder) | `.character` | Rigged, animated characters from body templates and parts |
 | [Sound Builder](#sound-builder) | `.sfx` | Synthesized sound effects |
 | [Data Table Builder](#data-table-builder) | `.table` | Typed spreadsheets for game data |
 
@@ -51,6 +52,27 @@ Terrain assets (`.terrain`, JSON under `Assets/`) describe outdoor ground as a h
 In the editor, use **New Terrain** in the asset browser, then double-click the file (or use **Open in Terrain Builder** in the inspector) to open the **Terrain Builder** tab next to the Scene view. Left-drag on the terrain with the chosen brush (raise, lower, smooth, flatten, noise, paint, erase paint) using the sidebar's radius, strength and falloff; a stroke is one undo step. The sidebar also edits the terrain's size, resolution and height range, its texture layers (a flat color, an image, or a `.proctex`, tiled per meter) and its scatter rules (a mesh build or mesh, candidate density, slope, height and layer rules, scale, seed).
 
 Editor MCP clients can create and edit these assets with `terrain.new {size, resolution, seed}`, `terrain.sculpt {brush, points}`, `terrain.paint {layer, points}`, `terrain.scatter {asset, density, rules}`, `terrain.edit`, `terrain.set` and `terrain.get`, and show one in the Terrain Builder tab with `terrain.open`. Brush points are `[x, z]` meters from the terrain's center. See [MCPTools.md](MCPTools.md) for schemas and parameters.
+
+## Character Builder
+
+Character assets (`.character`, JSON under `Assets/`) describe rigged characters and creatures built from a body template: **humanoid**, **quadruped**, **bird** or **blob**. The template generates the skeleton and body shapes; `proportions` stretch it (height, head, torso, width, arms, legs, neck, tail; 1 is the template as designed, 0.25 to 3), `colors` paint its regions (skin, body, legs, accent, eyes), and `attachments` hang `.meshbuild` models (hair, hats, armor, weapons) on bones, placed in the bone's space and optionally recolored. Bones rest unrotated, facing +Z with +Y up; `.L` bones are on the character's left (+X).
+
+The importer produces a skinned body (one mesh and material per color region, weights blended across joints when `smooth` is on), the attachments' meshes, the template's stock clips as animation sub-assets (`clip/idle`, `walk`, `run`, `jump`, `attack`, `die`, generated in code for that skeleton so they always fit) and a prefab: the root carries an `Animator`, the bones are entities (attachments under theirs), and the body meshes have a `Skin` bound to the bones. Placed copies update when the file or an attached mesh build changes.
+
+The `Animator` has one state per clip (idle, walk and run loop) plus `locomotion`, a blend of idle, walk and run on the float parameter `speed` in meters per second; it starts in `defaultClip`. The triggers `jump`, `attack` and `die` play those clips from any state, and jump and attack return to locomotion. Clips fire events: `footstep` (walk, run), `takeoff` and `land` (jump), `hit` (attack), `down` (die). Characters animate in play mode and built games without game code; drive them from scripts:
+
+```swift
+world.modify(Animator.self, for: hero) { animator in
+    animator.setFloat("speed", velocity.length)   // idle → walk → run
+    if attackPressed { animator.setTrigger("attack") }
+}
+```
+
+In the editor, use **New Character** in the asset browser, then double-click the file (or use **Open in Character Builder** in the inspector) to open the **Character Builder** tab next to the Scene view. The character plays a clip in a viewport of its own (right-drag orbits, Shift pans, the wheel zooms) with Restart, Pause and a Bones overlay. The sidebar has the template picker, clip buttons and the starting clip, proportion sliders, region colors, and the attachments list (pick a mesh build and a bone, then **Attach**; edit the selected one's bone, placement, scale and recolor). Every change is saved to the file as one undo step.
+
+Editor MCP clients can use `character.new {template, proportions, colors}`, `character.edit {proportions, colors, attach, detach, updateAttachments, template, clips}`, `character.set`, `character.get` (bones, clips and their references), `character.bones {template}` (a template's bones without a file) and `character.open {clip}`. See [MCPTools.md](MCPTools.md) for schemas and parameters.
+
+Not yet: importing glTF clips onto a character skeleton (clips are the procedural stock set), editing the skeleton or adding bones, per-part colors inside an attachment, and authored clip curves; the Animation Graph Builder is meant to replace the generated state machine.
 
 ## Sound Builder
 

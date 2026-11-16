@@ -141,6 +141,8 @@ public final class AssetBrowserModel {
             session.run(TableOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where session.isTerrainFile(id):
             session.run(TerrainOpenCommand.self, .init(asset: AssetReference(id)))
+        case .asset(let id) where session.isCharacterFile(id):
+            session.run(CharacterOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where entry.isExpandable:
             toggleExpanded(id)
         default:
@@ -210,6 +212,15 @@ public final class AssetBrowserModel {
     @discardableResult
     public func newProceduralTexture() -> AssetID? {
         guard let id = session.run(AssetNewProceduralTextureCommand.self, .init(folder: targetFolder))?.asset else { return nil }
+        invalidate()
+        selection = .asset(id)
+        return id
+    }
+
+    /// Creates a character in the current folder (`character.new`) and selects it.
+    @discardableResult
+    public func newCharacter() -> AssetID? {
+        guard let id = session.run(CharacterNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
         invalidate()
         selection = .asset(id)
         return id
@@ -395,6 +406,7 @@ public final class AssetBrowserModel {
         case .material: .material
         case .texture: .texture
         case .prefab: .prefab
+        case .animation: .file
         }
     }
 }

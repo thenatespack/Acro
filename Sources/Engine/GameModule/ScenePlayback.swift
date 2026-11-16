@@ -44,6 +44,9 @@ public final class ScenePlayback {
     private var systemsAdded = false
 
     private static let spriteSystem = "scenePlayback.spriteAnimation"
+    /// Skeletal animation (`Animator`s, with clips from assets), when the scene has animators.
+    private static let animationSystem = "scenePlayback.animation"
+    private var animationAdded = false
 
     public init(module: GameModule, context: GameContext, world: World = World(), runtime: ProjectRuntimeSettings = ProjectRuntimeSettings(),
                 audio: AudioSystem? = nil, assets: @escaping () -> AssetDatabase? = { nil },
@@ -106,6 +109,10 @@ public final class ScenePlayback {
         // Not gated on an emitter already in the scene: game code spawns them after this returns.
         if let audio { spatialAudio = world.addSpatialAudio(audio, assets: assets) }
         world.addBuiltinAnimationSystems()
+        if world.count(of: Animator.self) > 0 {
+            world.addAssetAnimationSystem(assets: assets, name: Self.animationSystem)
+            animationAdded = true
+        }
         for warning in module.addSystems(to: world, context: context) { log(warning) }
         systemsAdded = true
     }
@@ -121,6 +128,10 @@ public final class ScenePlayback {
             physics2D = nil
         }
         world.removeSystem(named: Self.spriteSystem)
+        if animationAdded {
+            world.removeAssetAnimationSystem(name: Self.animationSystem)
+            animationAdded = false
+        }
         spatialAudio?.remove()
         spatialAudio = nil
         module.removeSystems(from: world)

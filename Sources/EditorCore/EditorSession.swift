@@ -137,6 +137,11 @@ public final class EditorSession {
     /// The terrain open in the Terrain Builder tab (`terrain.open`), and how the app shows it.
     public var openTerrain: AssetID?
     public var onOpenTerrain: ((AssetID) -> Void)?
+    /// The character open in the Character Builder tab (`character.open`), and how the app shows it.
+    public var openCharacter: AssetID?
+    public var onOpenCharacter: ((AssetID) -> Void)?
+    /// The clip `character.open` asked the tab to play (nil: keep the current one).
+    public var characterPreviewClip: String?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()
@@ -700,6 +705,9 @@ public final class EditorSession {
             physics2D = physics
         }
         if world.count(of: SpriteAnimator.self) > 0 { world.addSpriteAnimationSystem(name: Self.spriteSystem) }
+        if world.count(of: Animator.self) > 0 {
+            world.addAssetAnimationSystem(assets: { [weak self] in self?.assets }, name: Self.skeletalSystem)
+        }
         tweens = TweenSystem()
         if let audio = audioProvider?() {
             spatialAudio = world.addSpatialAudio(audio, assets: { [weak self] in self?.assets })
@@ -724,6 +732,7 @@ public final class EditorSession {
             physics2D = nil
         }
         world.removeSystem(named: Self.spriteSystem)
+        world.removeAssetAnimationSystem(name: Self.skeletalSystem)
         spatialAudio?.remove()
         spatialAudio = nil
         tweens = nil
@@ -731,6 +740,8 @@ public final class EditorSession {
     }
 
     private static let spriteSystem = "editor.spriteAnimation"
+    /// Skeletal animation (`Animator`s, clips from assets such as a `.character`'s).
+    private static let skeletalSystem = "editor.skeletalAnimation"
 
     // MARK: Entities
 

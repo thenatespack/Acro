@@ -419,6 +419,16 @@ public final class AssetInspectorView {
                 content.addChildren([HStack(spacing: 6, [open, Spacer()]),
                                      note("A heightmap terrain, \(Int(size.x)) x \(Int(size.y)) m, split into chunks with colliders. The Terrain Builder has brushes, texture layers and scatter rules.")])
             }
+            if session.isCharacterFile(id) {
+                let open = Button("Open in Character Builder", role: .primary, name: "openCharacterBuilder") { [unowned self] in
+                    session.run(CharacterOpenCommand.self, .init(asset: AssetReference(id)))
+                }
+                open.command = CharacterOpenCommand.id.rawValue
+                open.tooltip = "Shape, color, gear up and preview this character in the Character Builder tab (or double-click it in the Assets panel)"
+                let character = session.assets?.character(of: id)
+                content.addChildren([HStack(spacing: 6, [open, Spacer()]),
+                                     note("A rigged \(character?.template.rawValue ?? "") character with \(character?.rig.bones.count ?? 0) bones and \(character?.clipNames.count ?? 0) stock clips, imported as a skinned prefab with an Animator.")])
+            }
             if session.isMaterialFile(id) {
                 addMaterialForm(AssetReference(id, subAsset: "material"))
             }

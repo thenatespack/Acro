@@ -138,6 +138,8 @@ public final class EditorApp: Game, EditorHost {
     public private(set) var tableWorkspace: DataTableWorkspace!
     /// The Terrain Builder tab (TerrainBuilderWorkspace.swift).
     public private(set) var terrainWorkspace: TerrainBuilderWorkspace!
+    /// The Character Builder tab (CharacterBuilderWorkspace.swift).
+    public private(set) var characterWorkspace: CharacterBuilderWorkspace!
     private(set) var statusBar: StatusBar!
     /// The Assets panel (browser) and its thumbnails.
     public private(set) var assetBrowser: AssetBrowserPanel!
@@ -493,6 +495,14 @@ public final class EditorApp: Game, EditorHost {
             }
             dock.focusPanel(EditorLayout.dataTable)
         }
+        session.onOpenCharacter = { [unowned self] id in
+            guard characterWorkspace.open(id) else { return }
+            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.characterBuilder, EditorLayout.viewport) {
+                dock.dock(EditorLayout.characterBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
+                                                                                                  : .edge(.bottom))
+            }
+            dock.focusPanel(EditorLayout.characterBuilder)
+        }
         session.onOpenTerrain = { [unowned self] id in
             guard terrainWorkspace.open(id) else { return }
             if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.terrainBuilder, EditorLayout.viewport) {
@@ -633,6 +643,9 @@ public final class EditorApp: Game, EditorHost {
         terrainWorkspace = TerrainBuilderWorkspace(session: session)
         terrainWorkspace.device = engine?.device
         if let quality = engine?.quality { terrainWorkspace.quality = quality }
+        characterWorkspace = CharacterBuilderWorkspace(session: session)
+        characterWorkspace.device = engine?.device
+        if let quality = engine?.quality { characterWorkspace.quality = quality }
         files.onOpen = { [unowned self] file in openFile(file) }
         files.onNewScene = { [unowned self] name in newScene(named: name) }
 
@@ -665,6 +678,10 @@ public final class EditorApp: Game, EditorHost {
         let terrainPanel = DockPanel(id: EditorLayout.terrainBuilder, title: "Terrain Builder", content: terrainWorkspace.view, minSize: Vec2(320, 200))
         terrainPanel.passesPointerThrough = true
         dock.addPanel(terrainPanel)
+        let characterPanel = DockPanel(id: EditorLayout.characterBuilder, title: "Character Builder", content: characterWorkspace.view,
+                                       minSize: Vec2(320, 200))
+        characterPanel.passesPointerThrough = true
+        dock.addPanel(characterPanel)
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
         for (id, icon) in EditorIcons.panelIconNames { dock.panel(id)?.icon = EditorIcons.named(icon) }
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
@@ -1070,6 +1087,7 @@ public final class EditorApp: Game, EditorHost {
             postFXWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
             tableWorkspace.update()
             terrainWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
+            characterWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
         }
         session.tick(dt: Double(dt))
 
@@ -1099,6 +1117,7 @@ public final class EditorApp: Game, EditorHost {
         vfxWorkspace.prepareFrame(pixelScale: ui.scale)
         postFXWorkspace.prepareFrame(pixelScale: ui.scale)
         terrainWorkspace.prepareFrame(pixelScale: ui.scale)
+        characterWorkspace.prepareFrame(pixelScale: ui.scale)
         buildGizmos()
         viewportWidget.texture = target.texture
         viewportWidget.billboards = transformTool.billboards
@@ -1540,6 +1559,7 @@ public final class EditorApp: Game, EditorHost {
         vfxWorkspace.render(frame: frame)
         postFXWorkspace.render(frame: frame)
         terrainWorkspace.render(frame: frame)
+        characterWorkspace.render(frame: frame)
         if let game = gameCurrentView, gameSizer.width > 0, gameWidget.isEffectivelyVisible {
             sceneRenderer.beginViews(world: session.gameWorld, frame: frame, shadowFocus: game)
             sceneRenderer.renderView(game, into: gameTarget, frame: frame, debugDraw: gameDraw)

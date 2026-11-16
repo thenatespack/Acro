@@ -64,6 +64,8 @@ public struct ImportedObject: Sendable {
 /// The kinds of objects importers can produce.
 public enum AssetKind: String, Codable, Sendable, CaseIterable {
     case mesh, material, texture, prefab
+    /// A skeletal `AnimationClip` (character builds make them).
+    case animation
 }
 
 /// An imported object. Each kind is plain CPU data:
@@ -72,11 +74,14 @@ public enum AssetKind: String, Codable, Sendable, CaseIterable {
 /// - `.texture`: RGBA8 pixels (`TextureAsset`).
 /// - `.prefab`: a node hierarchy (`PrefabAsset`) whose nodes reference meshes and materials;
 ///   `World.instantiate(_:)` spawns it as entities.
+/// - `.animation`: a skeletal `AnimationClip`; an `Animator` names it by its reference's text
+///   (`AnimationClipHandle("asset:<id>#clip/walk")`) and `World.addAssetAnimationSystem` loads it.
 public enum AssetObject: Sendable {
     case mesh(MeshGeometry)
     case material(MaterialAsset)
     case texture(TextureAsset)
     case prefab(PrefabAsset)
+    case animation(AnimationClip)
 
     public var kind: AssetKind {
         switch self {
@@ -84,6 +89,7 @@ public enum AssetObject: Sendable {
         case .material: .material
         case .texture: .texture
         case .prefab: .prefab
+        case .animation: .animation
         }
     }
 }

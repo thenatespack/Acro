@@ -259,7 +259,7 @@ public enum EditorIcons {
 
     /// The kinds of asset the browser and asset inspector tell apart by icon.
     public enum AssetIconKind: String, Sendable, CaseIterable {
-        case folder, model, mesh, texture, material, prefab, scene, audio, shader, font, text, data, file
+        case folder, model, mesh, texture, material, prefab, animation, scene, audio, shader, font, text, data, file
     }
 
     /// The icon kind of an imported object.
@@ -283,6 +283,7 @@ public enum EditorIcons {
         let ext = path.split(separator: ".").last.map { $0.lowercased() } ?? ""
         switch ext {
         case "gltf", "glb", "obj", "fbx", "meshbuild": return .model
+        case "character": return .model
         case "vfx": return .prefab
         case "table": return .model
         case "gltf", "glb", "obj", "fbx", "meshbuild", "terrain": return .model
@@ -317,6 +318,7 @@ public enum EditorIcons {
         case .font: named("type")
         case .text: named("file-text")
         case .data: named("file-json")
+        case .animation: named("film")
         case .file: named("file")
         }
     }
@@ -350,6 +352,7 @@ public enum EditorIcons {
         EditorLayout.postFXBuilder: "aperture",
         EditorLayout.dataTable: "layout-grid",
         EditorLayout.terrainBuilder: "layers",
+        EditorLayout.characterBuilder: "person-standing",
     ]
 
     /// Console lines by level.
@@ -409,6 +412,7 @@ extension EditorIcons.AssetIconKind {
         case .material: self = .material
         case .texture: self = .texture
         case .prefab: self = .prefab
+        case .animation: self = .animation
         }
     }
 }
