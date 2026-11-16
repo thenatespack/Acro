@@ -4,6 +4,8 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-11-15
+
 ### Added
 
 - The Script Editor checks scripts as you type: shortly after you stop typing, the game target is type-checked with the unsaved text (the cached `swiftc` plan replayed with `-typecheck`; nothing is built, saved or reloaded), and errors and warnings are marked in the gutter, underlined, and shown at the end of their lines. `GameModuleBuilder.typecheck(overrides:)`, `ScriptChecker`, and `GameBuildDiagnostic.severity` are new.
@@ -17,6 +19,7 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 
 ### Changed
 
+- Engine is split into twelve modules (EngineCore, EngineScene, EngineGraphics, EngineBackends, EngineText, EnginePhysics, EngineAudio, EngineAssets, EngineNet, EngineUI, EngineRendering, and `Engine`, which re-exports the rest), so release builds compile them in parallel: a release build of the editor takes about 96 s instead of 118 s, and after an edit in asset code 20 s instead of 68 s. `import Engine` and the `Engine` product are unchanged. The engine's resource bundle is now `Acro_EngineCore`, and `EngineVersion.swift` is in `Sources/EngineCore/Core/`. `SceneRenderer` takes a `SceneRenderHost` (`Engine` conforms) where it took an `Engine`.
 - Windows: `Engine`'s library product is `.dynamic`, so Engine is compiled with its symbols exported and `swift build` also writes an `Engine.dll`.
 - CI no longer renders the demo scenes; check rendering locally with `Scripts/render-scenes.sh`.
 - Moved the cross-platform notes to `docs/cross-plat.md`.
@@ -124,7 +127,8 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 
 First versioned release. Includes the Metal and Vulkan renderers, entity-component system, editor, MCP server, game modules with hot reload, asset pipeline, physics, audio, networking, packaging, decals, and planar reflections.
 
-[Unreleased]: https://github.com/thenatespack/Acro/compare/78f2983...HEAD
+[Unreleased]: https://github.com/thenatespack/Acro/compare/v0.14.1...HEAD
+[0.14.1]: https://github.com/thenatespack/Acro/compare/78f2983...v0.14.1
 [0.8.4]: https://github.com/thenatespack/Acro/commit/78f2983
 [0.8.3]: https://github.com/thenatespack/Acro/commit/e52e5d5
 [0.8.2]: https://github.com/thenatespack/Acro/commit/aef9fc1
