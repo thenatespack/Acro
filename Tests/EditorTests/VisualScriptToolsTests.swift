@@ -270,6 +270,54 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(workspace.canvas.link(at: mid) == VisualScriptLink(from: "\(id).out", to: "rotate.in"))
     }
 
+    @Test func groupsMoveTheirNodes() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = try project(folder)
+        let created = try call(session, "vscript.new", ["name": "group", "template": "spinner"])
+        let asset = try #require(AssetID(created["asset"] as! String))
+        let workspace = VisualScriptWorkspace(session: session)
+        #expect(workspace.open(asset))
+        workspace.update()
+        // Group the speed and multiply nodes from the sidebar.
+        workspace.canvas.onSelect?(["speed", "mul"])
+        workspace.update()
+        try #require(workspace.view.descendant(named: "vscriptCommentBox") as? Button).action?()
+        workspace.update()
+        var graph = try #require(session.assets?.visualScript(of: asset))
+        let group = try #require(graph.comments.first)
+        #expect(group.text == "Group")
+        #expect(Set(workspace.canvas.nodes(in: group)) == ["speed", "mul"])
+
+        // Drag its title bar 100 right: the box and both nodes move, in one undo step.
+        let canvas = workspace.canvas
+        let start = canvas.toScreen(Vec2(group.x + 20, group.y + 8))
+        #expect(canvas.group(at: start)?.id == group.id)
+        _ = canvas.handleEvent(.pointerDown(PointerEvent(position: start)))
+        _ = canvas.handleEvent(.pointerDrag(PointerEvent(position: start + Vec2(100 * canvas.zoom, 0))))
+        _ = canvas.handleEvent(.pointerUp(PointerEvent(position: start + Vec2(100 * canvas.zoom, 0))))
+        workspace.update()
+        graph = try #require(session.assets?.visualScript(of: asset))
+        #expect(graph.comments.first?.x == group.x + 100)
+        #expect(graph.node("speed")?.x == 100 && graph.node("mul")?.x == 320, "the nodes inside moved (from 0 and 220)")
+        #expect(graph.node("update")?.x == 0, "outside nodes stay")
+        #expect(workspace.selection == ["speed", "mul"])
+
+        // Rename it, then remove it (the nodes stay).
+        try #require(workspace.view.descendant(named: "vscriptGroupText.\(group.id)") as? TextField).onSubmit?("Speed math")
+        workspace.update()
+        #expect(session.assets?.visualScript(of: asset)?.comments.first?.text == "Speed math")
+        try #require(workspace.view.descendant(named: "vscriptGroupRemove.\(group.id)") as? Button).action?()
+        workspace.update()
+        graph = try #require(session.assets?.visualScript(of: asset))
+        #expect(graph.comments.isEmpty && graph.node("speed") != nil)
+        try session.undo.undo()
+        try session.undo.undo()
+        try session.undo.undo()
+        workspace.update()
+        #expect(session.assets?.visualScript(of: asset)?.node("speed")?.x == 0)
+    }
+
     @Test func workspaceEditsAreUndoSteps() throws {
         let folder = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: folder) }

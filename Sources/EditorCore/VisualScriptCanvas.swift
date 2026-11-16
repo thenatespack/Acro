@@ -53,6 +53,8 @@ final class VisualScriptCanvas: Widget {
     /// Search-to-add at a graph position, optionally from a dragged pin ("node.pin", is it an output, its type).
     var onRequestAdd: ((Vec2, (pin: String, isOutput: Bool, type: VisualScriptType)?) -> Void)?
     var onKey: ((KeyEvent) -> Bool)?
+    /// A group (comment box) was dragged by its title bar: its id, new position, and the nodes inside moved along.
+    var onMoveGroup: ((String, Vec2, [String: Vec2]) -> Void)?
     /// A wire was double-clicked: put a reroute point on it at this graph position.
     var onInsertReroute: ((VisualScriptLink, Vec2) -> Void)?
 
@@ -62,6 +64,24 @@ final class VisualScriptCanvas: Widget {
         case move(start: Vec2, original: [String: Vec2], moved: Bool)
         case pan(start: Vec2, original: Vec2, button: MouseButton, moved: Bool)
         case wire(pin: String, isOutput: Bool, type: VisualScriptType, from: Vec2, to: Vec2)
+        case group(id: String, start: Vec2, box: Vec2, original: [String: Vec2], moved: Bool)
+    }
+
+    /// The height of a group's title bar (drag it to move the group).
+    static let groupTitleHeight: Float = 24
+
+    /// The group whose title bar is under `screen` (topmost first).
+    func group(at screen: Vec2) -> VisualScriptComment? {
+        let p = toGraph(screen)
+        return comments.last { p.x >= $0.x && p.x <= $0.x + $0.width && p.y >= $0.y && p.y <= $0.y + Self.groupTitleHeight }
+    }
+
+    /// The nodes inside a group's box (their centers).
+    func nodes(in comment: VisualScriptComment) -> [String] {
+        nodes.filter { node in
+            let c = node.position + node.size / 2
+            return c.x >= comment.x && c.x <= comment.x + comment.width && c.y >= comment.y && c.y <= comment.y + comment.height
+        }.map(\.id)
     }
     private var drag = Drag.none
     private var hover: Vec2?
@@ -161,7 +181,14 @@ final class VisualScriptCanvas: Widget {
                     drag = .none
                     return true
                 }
-                if let pin = pin(at: e.position) {
+                if pin(at: e.position) == nil, node(at: e.position) == nil, let group = group(at: e.position) {
+                    // A group's title bar: select what is inside and drag them with the box.
+                    let inside = Set(nodes(in: group))
+                    if inside != selection { selection = inside; onSelect?(inside) }
+                    var original: [String: Vec2] = [:]
+                    for id in inside { if let i = index[id] { original[id] = nodes[i].position } }
+                    drag = .group(id: group.id, start: e.position, box: Vec2(group.x, group.y), original: original, moved: false)
+                } else if let pin = pin(at: e.position) {
                     drag = .wire(pin: pin.ref, isOutput: pin.isOutput, type: pin.type, from: pin.position, to: toGraph(e.position))
                 } else if let node = node(at: e.position) {
                     var selected = selection
@@ -194,6 +221,14 @@ final class VisualScriptCanvas: Widget {
                 drag = .pan(start: start, original: original, button: button, moved: moved || ((e.position - start) * (e.position - start)).sum() > 9)
             case .wire(let pin, let isOutput, let type, let from, _):
                 drag = .wire(pin: pin, isOutput: isOutput, type: type, from: from, to: toGraph(e.position))
+            case .group(let id, let start, let box, let original, _):
+                let delta = (e.position - start) / zoom
+                for (node, position) in original { if let i = index[node] { nodes[i].position = position + delta } }
+                if let c = comments.firstIndex(where: { $0.id == id }) {
+                    comments[c].x = box.x + delta.x
+                    comments[c].y = box.y + delta.y
+                }
+                drag = .group(id: id, start: start, box: box, original: original, moved: true)
             case .none: break
             }
             setNeedsDisplay()
@@ -239,6 +274,11 @@ final class VisualScriptCanvas: Widget {
             } else if pin(at: position) == nil {
                 onRequestAdd?(toGraph(position), (from, isOutput, type))
             }
+        case .group(let id, _, _, let original, let moved):
+            guard moved, let comment = comments.first(where: { $0.id == id }) else { return }
+            var moves: [String: Vec2] = [:]
+            for node in original.keys { if let i = index[node] { moves[node] = nodes[i].position } }
+            onMoveGroup?(id, Vec2(comment.x, comment.y), moves)
         case .none: break
         }
     }
@@ -300,6 +340,9 @@ final class VisualScriptCanvas: Widget {
             let r = UIRect(x: origin.x, y: origin.y, width: comment.width * zoom, height: comment.height * zoom)
             let tint = comment.color.flatMap { VisualScriptValue(json: .string($0), as: .color)?.asVec4 } ?? Vec4(0.4, 0.45, 0.55, 1)
             list.fillRect(r, color: UIColor(tint.x, tint.y, tint.z, 0.12), radii: UICornerRadii(6))
+            // The title bar: drag it to move the group with its nodes.
+            list.fillRect(UIRect(x: r.x, y: r.y, width: r.width, height: min(Self.groupTitleHeight * zoom, r.height)),
+                          color: UIColor(tint.x, tint.y, tint.z, 0.22), radii: UICornerRadii(topLeft: 6, topRight: 6, bottomRight: 0, bottomLeft: 0))
             list.strokeRect(r, color: UIColor(tint.x, tint.y, tint.z, 0.5), width: 1, radii: UICornerRadii(6))
             list.drawText(comment.text, at: origin + Vec2(8, 6), size: 13 * zoom, color: UIColor(0.9, 0.9, 0.9, 0.9))
         }

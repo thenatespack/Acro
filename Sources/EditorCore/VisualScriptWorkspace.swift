@@ -10,7 +10,7 @@ import Foundation
 //   duplicate, F9 toggles a breakpoint, Space searches.
 // - The sidebar: which body to edit (event graph or a function), the node search, the selected
 //   node's settings and input values, the graph's variables and functions (with
-//   collapse-to-function and comment boxes), its problems, and in play mode the variable values
+//   collapse-to-function and groups: comment boxes whose title bar drags the nodes inside), its problems, and in play mode the variable values
 //   of an entity running it.
 // - While playing, nodes that ran in the last moments glow along their wires, output pins show
 //   their values, and a breakpoint pauses play after the frame it ran in. Paused there, F10 / F11 /
@@ -204,6 +204,15 @@ public final class VisualScriptWorkspace {
         apply(VisualScriptEdit(updateNodes: nodes.map { VisualScriptNodePatch(id: $0.id, breakpoint: on) }), on ? "Add Breakpoint" : "Remove Breakpoint")
     }
 
+    /// Moves group (comment box) `id` to `position` with the nodes inside it, as one undo step.
+    func moveGroup(_ id: String, to position: Vec2, nodes moves: [String: Vec2]) {
+        guard function == nil, var comment = graph.comments.first(where: { $0.id == id }) else { return }
+        comment.x = position.x.rounded()
+        comment.y = position.y.rounded()
+        apply(VisualScriptEdit(updateNodes: moves.sorted { $0.key < $1.key }.map { VisualScriptNodePatch(id: $0.key, x: $0.value.x.rounded(), y: $0.value.y.rounded()) },
+                               comments: [comment]), "Move Group")
+    }
+
     /// Puts a reroute point on `link` at `position` (graph space): the wire then runs through it.
     @discardableResult
     func insertReroute(on link: VisualScriptLink, at position: Vec2) -> String? {
@@ -295,6 +304,7 @@ public final class VisualScriptWorkspace {
         }
         canvas.onKey = { [unowned self] key in handleKey(key) }
         canvas.onInsertReroute = { [unowned self] link, position in insertReroute(on: link, at: position) }
+        canvas.onMoveGroup = { [unowned self] id, position, moves in moveGroup(id, to: position, nodes: moves) }
         searchField.onChange = { [unowned self] _ in refreshResults() }
         searchField.onSubmit = { [unowned self] _ in
             if let first = catalog().first { addNode(type: first.type, config: first.config ?? [:]) }
@@ -559,6 +569,7 @@ public final class VisualScriptWorkspace {
         if selected.count == 1 { addNodeForm(selected[0]) } else if selected.count > 1 { addSelectionForm(selected) }
         addVariablesForm()
         addFunctionsForm()
+        addGroupsForm()
         addProblems()
     }
 
@@ -632,15 +643,48 @@ public final class VisualScriptWorkspace {
         details.addChild(Label("\(nodes.count) nodes selected", role: .heading))
         let collapse = Button("Collapse to Function", name: "vscriptCollapse") { [unowned self] in collapseSelection() }
         collapse.tooltip = "Move these nodes into a new function and call it from here"
-        let comment = Button("Comment Box", name: "vscriptCommentBox") { [unowned self] in
+        let comment = Button("Group", name: "vscriptCommentBox") { [unowned self] in
             let xs = nodes.map(\.x), ys = nodes.map(\.y)
-            let box = VisualScriptComment(text: "Comment", x: (xs.min() ?? 0) - 30, y: (ys.min() ?? 0) - 50,
+            let box = VisualScriptComment(text: "Group", x: (xs.min() ?? 0) - 30, y: (ys.min() ?? 0) - 50,
                                           width: (xs.max() ?? 0) - (xs.min() ?? 0) + 260, height: (ys.max() ?? 0) - (ys.min() ?? 0) + 200)
-            apply(VisualScriptEdit(comments: [box]), "Add Comment")
+            apply(VisualScriptEdit(comments: [box]), "Add Group")
         }
+        comment.tooltip = "Frame these nodes in a named box; drag its title bar to move them together"
+        comment.isEnabled = function == nil
         let delete = Button("Delete", name: "vscriptDeleteNodes") { [unowned self] in deleteSelection() }
         details.addChild(HStack(spacing: 6, [collapse, comment, delete]))
         details.addChild(Separator())
+    }
+
+    /// The event graph's groups (comment boxes): rename, select their nodes, remove (the nodes stay).
+    private func addGroupsForm() {
+        guard function == nil, !graph.comments.isEmpty else { return }
+        details.addChild(Label("Groups", role: .heading))
+        for comment in graph.comments {
+            let text = TextField(text: comment.text, placeholder: "Group name", name: "vscriptGroupText.\(comment.id)")
+            text.style.grow = 1
+            text.style.width = 0
+            text.command = VScriptEditCommand.id.rawValue
+            text.onSubmit = { [unowned self] value in
+                guard value != comment.text else { return }
+                var changed = comment
+                changed.text = value
+                apply(VisualScriptEdit(comments: [changed]), "Rename Group")
+            }
+            text.onEndEditing = text.onSubmit
+            let select = Button("Select", name: "vscriptGroupSelect.\(comment.id)") { [unowned self] in
+                selection = Set(canvas.nodes(in: comment))
+                sidebarDirty = true
+            }
+            select.tooltip = "Select the nodes inside"
+            select.command = VScriptEditCommand.id.rawValue
+            let remove = Button("×", name: "vscriptGroupRemove.\(comment.id)") { [unowned self] in
+                apply(VisualScriptEdit(removeComments: [comment.id]), "Remove Group")
+            }
+            remove.tooltip = "Remove the box (the nodes stay)"
+            remove.command = VScriptEditCommand.id.rawValue
+            details.addChild(HStack(spacing: 4, alignment: .center, [text, select, remove]))
+        }
     }
 
     private func addVariablesForm() {
