@@ -53,6 +53,7 @@ public enum EditorIcons {
         LightFlicker.componentName: "gauge",
         CameraPath.componentName: "orbit",
         BehaviorTreeRunner.componentName: "bot",
+        DialoguePlayer.componentName: "file-text",
         "Pulse": "gauge",
     ]
 
