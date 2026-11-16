@@ -141,8 +141,10 @@ public enum AssetCooker {
     /// Of those, the ones whose references are cooked along with them: `asset:<id>`s, and string
     /// values naming a file by its path under `Assets/` (see `pathReferences`).
     public static let followsReferences: Set<String> = ["timeline", "vscript"]
-    /// Importers whose source files ship next to their imported assets, for game code that reads them as written.
-    public static let keepsSource: Set<String> = ["sprite", "tilemap"]
+    /// Imported assets that also ship their source, which games read at run time: sprite frames
+    /// and tags, tilemaps (`assets.tilemap(path:)`), path curves (`PathFollower`) and the terrain
+    /// heights paths follow.
+    public static let keepsSource: Set<String> = ["sprite", "tilemap", "path", "terrain"]
 
     /// Opens the project at `url`, scans it and cooks it to `output` (a folder). Blocks.
     @MainActor
@@ -361,6 +363,14 @@ public struct CookPlan: Sendable {
         return report
     }
 
+    /// The `.terrain` the `.path` `source` follows, if it is in the project.
+    private func pathTerrain(_ source: Source) -> AssetID? {
+        guard let data = try? Data(contentsOf: source.sourceURL),
+              let build = try? AssetJSON.decoder().decode(PathBuild.self, from: data), build.terrain.isOn else { return nil }
+        let value = build.terrain.asset.trimmingCharacters(in: .whitespaces)
+        return assetsByPath[value.hasPrefix("Assets/") ? String(value.dropFirst("Assets/".count)) : value]
+    }
+
     /// Cooks one asset: from the Library, the cook cache, or a fresh import.
     private func cook(_ source: Source) throws -> Cooked {
         var entry = AssetPackManifest.Asset(id: source.id, path: source.path, importer: source.importer?.name, settings: nil,
@@ -384,8 +394,10 @@ public struct CookPlan: Sendable {
             entry.objects = manifest.objects
             let text = (try? AssetJSON.encode(manifest.objects.filter { $0.material != nil || $0.prefab != nil || $0.animationGraph != nil })) ?? Data()
             var references = Self.unique(Self.references(in: text)).filter { $0 != source.id }
-            // A `.sprite` keeps its source too: games read its frames and tags (AssetDatabase.spriteSheet).
-            // So does a `.tilemap` (assets.tilemap(path:)), with a `.sprite` tile set for its tag animations.
+            // A `.path` that follows a terrain ships it: `PathFollower` rides the same ground.
+            if importer.name == "path", let terrain = pathTerrain(source), !references.contains(terrain) { references.append(terrain) }
+            // Sources in `keepsSource` ship too: games read sprite frames and tags (AssetDatabase.spriteSheet),
+            // tilemaps (assets.tilemap(path:)) with a `.sprite` tile set for its tag animations, and paths.
             let data = AssetCooker.keepsSource.contains(importer.name) ? try? Data(contentsOf: source.sourceURL) : nil
             if importer.name == "tilemap", let data, let map = try? AssetJSON.decoder().decode(Tilemap.self, from: data),
                case .sprite(let path) = map.tileset.source, let id = assetsByPath[TilemapImporter.normalized(path)], !references.contains(id) {

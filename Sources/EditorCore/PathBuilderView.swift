@@ -55,6 +55,44 @@ struct PathTerrainComponent: Component {
     func encode(to encoder: any Encoder) throws { try terrain.encode(to: encoder) }
 }
 
+struct PathJunctionComponent: Component {
+    static var componentName: String { "Path Junction" }
+    static var fieldHints: [String: FieldHints] { PathJunction.fieldHints }
+    var junction: PathJunction
+    init(_ junction: PathJunction) { self.junction = junction }
+    init(from decoder: any Decoder) throws { junction = try PathJunction(from: decoder) }
+    func encode(to encoder: any Encoder) throws { try junction.encode(to: encoder) }
+}
+
+/// The Shape Terrain form (width 0: the widest profile).
+struct PathShapingComponent: Component {
+    static var componentName: String { "Path Terrain Shaping" }
+    static var fieldHints: [String: FieldHints] {
+        ["mode": FieldHints(tooltip: "flatten: cut and fill; carve: only lower (cuttings, river beds); raise: only raise (embankments)"),
+         "width": FieldHints(range: 0...1000, step: 0.1, tooltip: "Meters across the flat part (0: the widest profile)"),
+         "shoulder": FieldHints(range: 0...1000, step: 0.1, tooltip: "Meters over which it blends back into the terrain at each side"),
+         "depth": FieldHints(range: -100...100, step: 0.05, tooltip: "Meters below the path's ground level (a river bed, a sunken lane)"),
+         "smoothing": FieldHints(range: 0...1000, step: 0.5, tooltip: "Meters along the path the ground level is averaged over")]
+    }
+    var mode: PathTerrainShapeMode
+    var width: Float
+    var shoulder: Float
+    var depth: Float
+    var smoothing: Float
+
+    init(_ s: PathTerrainShaping) {
+        mode = s.mode
+        width = s.width ?? 0
+        shoulder = s.shoulder
+        depth = s.depth
+        smoothing = s.smoothing
+    }
+
+    var shaping: PathTerrainShaping {
+        PathTerrainShaping(mode: mode, width: width > 0 ? width : nil, shoulder: shoulder, depth: depth, smoothing: smoothing)
+    }
+}
+
 struct PathPointComponent: Component {
     static var componentName: String { "Path Point" }
     static var fieldHints: [String: FieldHints] { PathPoint.fieldHints }
@@ -137,6 +175,9 @@ public final class PathBuilderView {
     /// An edit made by a widget callback, applied on the next `refresh` so no widget is torn
     /// down while it is handling an event.
     private var pending: (build: PathBuild, label: String)?
+    /// The Shape Terrain form's settings, and what the last shaping did.
+    public var shaping = PathTerrainShaping()
+    private(set) var lastShape: String?
 
     /// Call every frame: applies the pending edit and keeps the grids in step with their proxies.
     public func refresh() {
@@ -193,6 +234,8 @@ public final class PathBuilderView {
         addProfileSection()
         view.addChild(Separator())
         addPieceSection()
+        view.addChild(Separator())
+        addJunctionSection()
         view.addChild(Separator())
         addTerrainSection()
         addSummary()
@@ -353,6 +396,64 @@ public final class PathBuilderView {
         view.addChild(grid)
     }
 
+    private func addJunctionSection() {
+        view.addChild(Label("Junctions", role: .secondary))
+        let others = otherPathPaths()
+        for (index, junction) in build.junctions.enumerated() {
+            let entity = formWorld.spawn(PathJunctionComponent(junction))
+            formEntities.append(entity)
+            let grid = makeGrid(entity, name: "pathJunctionGrid.\(index)")
+            grid.stringChoices = { [unowned self] _, path in
+                path == "path" ? others + current(build.junctions.indices.contains(index) ? build.junctions[index].path : "", in: others) : nil
+            }
+            grid.onFieldEdit = { [unowned self] edit in
+                do { try formWorld.setField(edit.path, of: PathJunctionComponent.componentName, for: entity, to: edit.newValue) } catch {
+                    session.log.error("Path junction \(edit.path): \(error)")
+                    return
+                }
+                guard edit.phase == .ended, let value = formWorld.get(PathJunctionComponent.self, for: entity)?.junction else { return }
+                var edited = pending?.build ?? build
+                guard edited.junctions.indices.contains(index) else { return }
+                edited.junctions[index] = value
+                apply(edited, label: "Edit Junction")
+            }
+            view.addChild(grid)
+            let remove = Button("Remove Junction", name: "pathRemoveJunction.\(index)") { [unowned self] in removeJunction(index) }
+            remove.command = PathEditCommand.id.rawValue
+            view.addChild(HStack(spacing: 6, [remove, Spacer()]))
+        }
+        let add = Button("Add Junction", name: "pathAddJunction") { [unowned self] in addJunction() }
+        add.command = PathEditCommand.id.rawValue
+        add.isEnabled = !others.isEmpty
+        add.tooltip = others.isEmpty ? "Make another .path for this one to meet" : "Join another path: a T where this one ends at it, an X where it crosses it"
+        view.addChild(HStack(spacing: 6, [add, Spacer()]))
+        view.addChild(note(build.junctions.isEmpty
+            ? "Where this road ends at or crosses another path it can join it: it stops at the other road's edges and rounded corners pave the gap."
+            : "This path stops at the other roads' edges; its widest flat or box profile paves the corners. The other road stays whole."))
+    }
+
+    /// The project's other `.path` files.
+    private func otherPathPaths() -> [String] {
+        let mine = session.assets?.path(of: asset)
+        return assetPaths(extensions: ["path"]).filter { $0 != mine }
+    }
+
+    /// Joins the first other path not joined yet (one undo step).
+    public func addJunction(_ path: String? = nil) {
+        let joined = Set(build.junctions.map(\.path))
+        guard let other = path ?? otherPathPaths().first(where: { !joined.contains($0) }) ?? otherPathPaths().first else { return }
+        var edited = pending?.build ?? build
+        edited.junctions.append(PathJunction(path: other))
+        apply(edited, label: "Add Junction")
+    }
+
+    public func removeJunction(_ index: Int) {
+        var edited = pending?.build ?? build
+        guard edited.junctions.indices.contains(index) else { return }
+        edited.junctions.remove(at: index)
+        apply(edited, label: "Remove Junction")
+    }
+
     private func addTerrainSection() {
         view.addChild(Label("Terrain following", role: .secondary))
         let entity = formWorld.spawn(PathTerrainComponent(build.terrain))
@@ -376,6 +477,43 @@ public final class PathBuilderView {
         view.addChild(note(build.terrain.isOn
             ? "Every sample and piece sits on the terrain (point heights are ignored). Place the path where the terrain is, or set the offset."
             : "Pick a .terrain to make the path hug its ground."))
+        guard build.terrain.isOn else { return }
+
+        view.addChild(Separator())
+        view.addChild(Label("Shape the terrain", role: .secondary))
+        let shapingEntity = formWorld.spawn(PathShapingComponent(shaping))
+        formEntities.append(shapingEntity)
+        let shapingGrid = makeGrid(shapingEntity, name: "pathShapingGrid")
+        shapingGrid.command = PathFlattenTerrainCommand.id.rawValue
+        shapingGrid.onFieldEdit = { [unowned self] edit in
+            do { try formWorld.setField(edit.path, of: PathShapingComponent.componentName, for: shapingEntity, to: edit.newValue) } catch {
+                session.log.error("Path terrain shaping \(edit.path): \(error)")
+                return
+            }
+            if let value = formWorld.get(PathShapingComponent.self, for: shapingEntity) { shaping = value.shaping }
+        }
+        view.addChild(shapingGrid)
+        let shape = Button("Shape Terrain", name: "pathShapeTerrain") { [unowned self] in shapeTerrain() }
+        shape.tooltip = "Writes the terrain's heights under the path (one undo step); the path then follows the new ground"
+        view.addChild(HStack(spacing: 6, [shape, Spacer()]))
+        if let lastShape { view.addChild(note(lastShape)) }
+    }
+
+    /// Shapes the followed terrain under the path with the form's settings (one undo step).
+    public func shapeTerrain() {
+        refresh()  // a pending form edit goes in first
+        do {
+            let (terrain, report) = try session.shapeTerrain(under: asset, shaping)
+            let name = session.assets?.path(of: terrain) ?? terrain.description
+            lastShape = report.changedSamples == 0
+                ? "\(name) already fits the path."
+                : String(format: "Moved %d height samples of %@ (up to %.2f m).", report.changedSamples, name, report.largestChange)
+                    + (report.clampedSamples > 0 ? " \(report.clampedSamples) hit the terrain's height range." : "")
+        } catch {
+            lastShape = "\(error)"
+            session.log.error("Shape Terrain: \(error)")
+        }
+        reload()
     }
 
     private func addSummary() {
@@ -483,6 +621,28 @@ public final class PathBuilderView {
         selectedPoint = edited.points.count - 1
         remember()
         apply(edited, label: "Add Point")
+    }
+
+    /// A new point at `position` (a click on the ground): before the first point when the first is
+    /// selected (an open path grows from that end), else after the last. One undo step.
+    public func addPoint(at position: Vec3) {
+        var edited = build
+        let atStart = selectedPoint == 0 && edited.points.count > 1 && !edited.wraps
+        let neighbor = atStart ? edited.points.first : edited.points.last
+        let point = PathPoint(position, bank: neighbor?.bank ?? 0, width: neighbor?.width ?? 1)
+        if atStart { edited.points.insert(point, at: 0) } else { edited.points.append(point) }
+        selectedPoint = atStart ? 0 : edited.points.count - 1
+        remember()
+        apply(edited, label: "Add Point")
+    }
+
+    /// A new point on the curve at parameter `u` (a click on the curve). One undo step.
+    public func insertPoint(atU u: Float) {
+        var edited = build
+        guard let index = edited.insertPoint(atU: u) else { return }
+        selectedPoint = index
+        remember()
+        apply(edited, label: "Insert Point")
     }
 
     /// A new point on the curve halfway between the selected point and the next (or the previous, at the end).

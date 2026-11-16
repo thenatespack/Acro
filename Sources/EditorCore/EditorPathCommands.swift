@@ -1,7 +1,7 @@
 import Engine
 import Foundation
 
-/// The path builder tools: `path.new`, `.get`, `.set`, `.edit`, `.open`, `.sample`.
+/// The path builder tools: `path.new`, `.get`, `.set`, `.edit`, `.open`, `.sample`, `.flattenTerrain`.
 @MainActor
 public enum EditorPathCommands {
     public static let all: [any EditorCommand.Type] = [
@@ -11,6 +11,7 @@ public enum EditorPathCommands {
         PathEditCommand.self,
         PathOpenCommand.self,
         PathSampleCommand.self,
+        PathFlattenTerrainCommand.self,
     ]
 
     /// What the tool docs say about the file format, shared by the tools.
@@ -26,7 +27,12 @@ public enum EditorPathCommands {
         shape/size/color, a Mesh Builder shape such as box or cylinder), spacing meters, start, offset [right, up, forward], \
         rotation degrees, scale, upright, mirror (also on the other side), collider) and `terrain` {asset (a .terrain path), \
         offset (the terrain's origin in the path's space), height (meters above the ground)}: with a terrain every sample and \
-        piece sits on its surface (point y is ignored). Forward is the direction of travel, right is level with the ground. \
+        piece sits on its surface (point y is ignored). `junctions` (other paths this one meets; each: path (a .path under \
+        Assets/ or "asset:<id>"), radius (meters of corner rounding, default 3), offset (the other path's origin in this \
+        path's space)): where this path's end stops at, just short of or just past the other road it makes a T, where it \
+        crosses the other road it makes an X; this path is cut back from the other road's edges (its profiles and pieces \
+        leave a gap) and a patch with rounded corners paves the gap with its widest flat or box profile, at both roads' \
+        heights. The other road stays whole. Forward is the direction of travel, right is level with the ground. \
         Every key is optional.
         """
 }
@@ -182,6 +188,13 @@ enum PathBuildCheck {
         for piece in build.pieces where !piece.asset.isEmpty
             && MeshBuildCheck.resolve(piece.asset.components(separatedBy: "#")[0], session: session) == nil {
             problems.append("piece '\(piece.name)': no asset '\(piece.asset)'")
+        }
+        for junction in build.junctions {
+            if let id = MeshBuildCheck.resolve(junction.path, session: session) {
+                if !session.isPathBuildFile(id) { problems.append("junction: '\(junction.path)' isn't a .path file") }
+            } else {
+                problems.append("junction: no path '\(junction.path)'")
+            }
         }
         return problems
     }
@@ -351,13 +364,18 @@ public enum PathEditCommand: EditorCommand {
         public var updatePieces: [String: JSONValue]?
         /// Fields to change on the terrain following ({"asset": ""} turns it off).
         public var terrain: JSONValue?
+        /// Other paths (by `path`) to stop joining, then junctions to add or replace (matched by `path`).
+        public var removeJunctions: [String]?
+        public var addJunctions: [PathJunction]?
         public init(asset: AssetReference? = nil, path: String? = nil, kind: PathKind? = nil, points: [PathPoint]? = nil,
                     removePoints: [Int]? = nil, insertPoints: [PathPointInsert]? = nil, addPoints: [PathPoint]? = nil,
                     updatePoints: [PathPointUpdate]? = nil, closed: Bool? = nil, smooth: Bool? = nil, spacing: Float? = nil,
                     bank: Float? = nil, autoBank: Float? = nil, profile: JSONValue? = nil, profileName: String? = nil,
                     removeProfiles: [String]? = nil, addProfiles: [PathProfile]? = nil, updateProfiles: [String: JSONValue]? = nil,
                     removePieces: [String]? = nil, addPieces: [PathPiece]? = nil, updatePieces: [String: JSONValue]? = nil,
-                    terrain: JSONValue? = nil) {
+                    terrain: JSONValue? = nil, removeJunctions: [String]? = nil, addJunctions: [PathJunction]? = nil) {
+            self.removeJunctions = removeJunctions
+            self.addJunctions = addJunctions
             self.asset = asset
             self.path = path
             self.kind = kind
@@ -385,7 +403,7 @@ public enum PathEditCommand: EditorCommand {
 
     public static let id: CommandID = "path.edit"
     public static let title = "Edit Path"
-    public static let doc = "Changes a .path file in one undoable step, in this order: kind (applies that preset's profiles and pieces), points (replace all), removePoints, insertPoints, addPoints, updatePoints ({index, position?, bank?, width?}), the curve settings (closed, smooth, spacing, bank, autoBank), profile (fields to change on `profileName` or the first profile), removeProfiles, addProfiles, updateProfiles (name → fields), removePieces, addPieces, updatePieces, terrain (fields: asset, offset, height). Placed copies update. Returns the length, piece counts and warnings."
+    public static let doc = "Changes a .path file in one undoable step, in this order: kind (applies that preset's profiles and pieces), points (replace all), removePoints, insertPoints, addPoints, updatePoints ({index, position?, bank?, width?}), the curve settings (closed, smooth, spacing, bank, autoBank), profile (fields to change on `profileName` or the first profile), removeProfiles, addProfiles, updateProfiles (name → fields), removePieces, addPieces, updatePieces, terrain (fields: asset, offset, height), removeJunctions (other paths' paths), addJunctions ({path, radius, offset}; replaces one with the same path). Placed copies update. Returns the length, piece counts and warnings."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
@@ -468,6 +486,15 @@ public enum PathEditCommand: EditorCommand {
             try update(&b.pieces, at: i, with: changes, label: "updatePieces[\(name)]")
         }
         if let changes = arguments.terrain { b.terrain = try TerrainEditCommand.merged(b.terrain, changes, "terrain") }
+        if let paths = arguments.removeJunctions, !paths.isEmpty {
+            let missing = paths.filter { path in !b.junctions.contains { $0.path == path } }
+            guard missing.isEmpty else { throw CommandError.failed("No junction with \(missing.joined(separator: ", "))") }
+            b.junctions.removeAll { paths.contains($0.path) }
+        }
+        for junction in arguments.addJunctions ?? [] {
+            guard !junction.path.trimmingCharacters(in: .whitespaces).isEmpty else { throw CommandError.failed("addJunctions: give the other path's `path`") }
+            if let i = b.junctions.firstIndex(where: { $0.path == junction.path }) { b.junctions[i] = junction } else { b.junctions.append(junction) }
+        }
         return b
     }
 
@@ -545,7 +572,7 @@ public enum PathSampleCommand: EditorCommand {
 
     public static let id: CommandID = "path.sample"
     public static let title = "Sample Path"
-    public static let doc = "Returns points along a .path's centerline (on its terrain when it follows one), in the path's space: position, forward (direction of travel), right and up (after banking), and the distance in meters. Use it to place things along a road or river (add the placed path entity's position)."
+    public static let doc = "Returns points along a .path's centerline (on its terrain when it follows one), in the path's space: position, forward (direction of travel), right and up (after banking), and the distance in meters. Use it to place things along a road or river (add the placed path entity's position). To move an entity along the path at run time, give it a PathFollower component (path: \"asset:<id>\", speed, mode once | loop | pingPong, orient, placedAt: the placed path entity's name)."
     public static let isReadOnly = true
     public static let isIdempotent = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
@@ -569,5 +596,129 @@ public enum PathSampleCommand: EditorCommand {
             }
         }
         return Result(length: total, points: points)
+    }
+}
+
+// MARK: Shaping the terrain
+
+/// Writes a terrain's heights as one undo step: performing writes `new` to the `.terrain` file,
+/// reverting writes `old` back (the paths following it reimport either way).
+public struct PathTerrainShapeCommand: UndoCommand {
+    public var label: String
+    public let terrain: AssetID
+    public let old: Terrain
+    public let new: Terrain
+    private weak var database: AssetDatabase?
+
+    public init(terrain: AssetID, old: Terrain, new: Terrain, in database: AssetDatabase, label: String = "Flatten Terrain Under Path") {
+        self.terrain = terrain
+        self.old = old
+        self.new = new
+        self.database = database
+        self.label = label
+    }
+
+    public mutating func perform(in world: World) throws { try write(new) }
+    public mutating func revert(in world: World) throws { try write(old) }
+
+    private func write(_ value: Terrain) throws {
+        guard let database else { throw AssetError.noSuchAsset(terrain.description) }
+        try database.writeTerrain(value, to: terrain)
+    }
+}
+
+extension EditorSession {
+    /// Shapes the heights of the terrain the path `id` follows (or `terrainID`) to the path, as
+    /// one undo step. Returns the terrain and what changed.
+    public func shapeTerrain(under id: AssetID, _ shaping: PathTerrainShaping, terrain terrainID: AssetID? = nil,
+                             label: String = "Flatten Terrain Under Path") throws -> (terrain: AssetID, report: PathTerrainShapeReport) {
+        guard let assets, isPathBuildFile(id), var build = assets.pathBuild(of: id) else {
+            throw CommandError.failed("\(label): \(id) isn't a readable .path file")
+        }
+        let target: AssetID
+        if let terrainID {
+            target = terrainID
+            // Shape against the given terrain: follow it only when the path already follows it.
+            if followedTerrainID(of: build) != terrainID { build.terrain.asset = "" }
+        } else if let followed = followedTerrainID(of: build) {
+            target = followed
+        } else {
+            throw CommandError.failed("\(label): the path doesn't follow a terrain; set its terrain.asset or name a `terrain`")
+        }
+        guard assets.record(target)?.importer == TerrainImporter().name, let old = assets.terrain(of: target) else {
+            throw CommandError.failed("\(label): \(assets.path(of: target) ?? target.description) isn't a readable .terrain file")
+        }
+        let (new, report) = build.shapeTerrain(old, shaping)
+        if report.changedSamples > 0 {
+            guard perform(PathTerrainShapeCommand(terrain: target, old: old, new: new, in: assets, label: label)) else {
+                throw CommandError.failed("\(label): couldn't write \(assets.path(of: target) ?? target.description)")
+            }
+        }
+        return (target, report)
+    }
+
+    private func followedTerrainID(of build: PathBuild) -> AssetID? {
+        guard build.terrain.isOn else { return nil }
+        return MeshBuildCheck.resolve(build.terrain.asset, session: self)
+    }
+}
+
+public enum PathFlattenTerrainCommand: EditorCommand {
+    public struct Arguments: Codable, Equatable, Sendable, PathBuildTarget {
+        public var asset: AssetReference?
+        public var path: String?
+        /// The `.terrain` to shape (a path under Assets/ or asset:<id>); default: the one the path follows.
+        public var terrain: String?
+        /// flatten (cut and fill, default), carve (only lower) or raise (only raise).
+        public var mode: PathTerrainShapeMode?
+        /// Meters across the flat part (default: the widest profile).
+        public var width: Float?
+        /// Meters over which it blends back into the terrain at each side (default 3).
+        public var shoulder: Float?
+        /// Meters below the path's ground level for the flat part (default 0).
+        public var depth: Float?
+        /// Meters along the path the ground level is averaged over (default 8; 0: none).
+        public var smoothing: Float?
+        public init(asset: AssetReference? = nil, path: String? = nil, terrain: String? = nil, mode: PathTerrainShapeMode? = nil,
+                    width: Float? = nil, shoulder: Float? = nil, depth: Float? = nil, smoothing: Float? = nil) {
+            self.asset = asset
+            self.path = path
+            self.terrain = terrain
+            self.mode = mode
+            self.width = width
+            self.shoulder = shoulder
+            self.depth = depth
+            self.smoothing = smoothing
+        }
+    }
+
+    public struct Result: Codable, Equatable, Sendable {
+        /// The terrain written.
+        public var terrain: String
+        /// Height samples moved, and the largest move in meters.
+        public var changedSamples: Int
+        public var largestChange: Float
+        /// Samples clamped to the terrain's height range (raise heightRange if this isn't 0).
+        public var clampedSamples: Int
+    }
+
+    public static let id: CommandID = "path.flattenTerrain"
+    public static let title = "Flatten Terrain Under Path"
+    public static let doc = "Shapes a .terrain's heights to a .path, writing them into the .terrain file as one undo step: under the path (`width` meters across, default the widest profile) the ground is set to the path's ground level (the centerline on the followed terrain averaged over `smoothing` meters, less `depth`; or the path's own heights when it doesn't follow that terrain), blending back over `shoulder` meters each side. mode: flatten (cut and fill), carve (only lower: cuttings, river beds with `depth`) or raise (only raise: embankments). The terrain is the one the path follows unless `terrain` names another. The path then reimports onto the new ground. Cross-sections come out level (banking is ignored)."
+    public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
+    public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
+    public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
+        let (id, _) = try session.resolvePathBuild(arguments, title)
+        var terrainID: AssetID?
+        if let name = arguments.terrain?.trimmingCharacters(in: .whitespaces), !name.isEmpty {
+            guard let resolved = MeshBuildCheck.resolve(name, session: session) else { throw CommandError.failed("\(title): no terrain '\(name)'") }
+            terrainID = resolved
+        }
+        let d = PathTerrainShaping()
+        let shaping = PathTerrainShaping(mode: arguments.mode ?? d.mode, width: arguments.width, shoulder: arguments.shoulder ?? d.shoulder,
+                                         depth: arguments.depth ?? d.depth, smoothing: arguments.smoothing ?? d.smoothing)
+        let (terrain, report) = try session.shapeTerrain(under: id, shaping, terrain: terrainID, label: title)
+        return Result(terrain: session.assets?.path(of: terrain) ?? terrain.description, changedSamples: report.changedSamples,
+                      largestChange: report.largestChange, clampedSamples: report.clampedSamples)
     }
 }

@@ -260,6 +260,7 @@ public final class EditorSession {
     private var spatialAudio: SpatialAudioHandle?
     /// Plays `TimelinePlayer`s while playing.
     private var timelinePlayers: TimelinePlayerSystem?
+    private var pathFollowers: PathFollowerSystem?
     /// The play session's physics, when the scene has colliders (see `addPlaySystems`).
     public private(set) var physics: PhysicsWorld?
     /// The play session's 2D physics, when the scene has `Collider2D`s.
@@ -762,6 +763,7 @@ public final class EditorSession {
         world.addBehaviorTrees(name: Self.behaviorSystem, assets: { [weak self] in self?.assets }, physics: { [weak self] in self?.physics })
         world.addDialogueSystem(assets: { [weak self] in self?.assets }).presenter = dialoguePresenter
         timelinePlayers = world.addTimelinePlayers(assets: { [weak self] in self?.assets })
+        pathFollowers = world.addPathFollowers(assets: { [weak self] in self?.assets })
         gameModule.addSystems()
         let scripts = world.addVisualScripts(context: gameModule.context, assets: { [weak self] in self?.assets },
                                              physics: { [weak self] in self?.physics }, physics2D: { [weak self] in self?.physics2D })
@@ -797,6 +799,8 @@ public final class EditorSession {
         world.removeDialogueSystem()
         timelinePlayers?.remove()
         timelinePlayers = nil
+        pathFollowers?.remove()
+        pathFollowers = nil
         tweens = nil
         world.removeVisualScripts()
         visualScriptBreakPending = false

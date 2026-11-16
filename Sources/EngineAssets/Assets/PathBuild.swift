@@ -351,6 +351,15 @@ public struct PathSample: Equatable, Sendable {
     /// Bank in degrees, and the width multiplier.
     public var bank: Float
     public var width: Float
+    /// At a sharp corner the cross-section is stretched by `miter` along `miterAxis` (in its plane,
+    /// across the turn), so a profile keeps its thickness round the corner. 1 elsewhere.
+    public var miter: Float = 1
+    public var miterAxis: Vec3 = .zero
+
+    /// `offset` (from the centerline, in the sample's frame) stretched by the miter.
+    public func mitered(_ offset: Vec3) -> Vec3 {
+        miter == 1 ? offset : offset + miterAxis * (dot(offset, miterAxis) * (miter - 1))
+    }
 }
 
 /// One placed piece, in the path's space.
@@ -364,6 +373,10 @@ public struct PathPieceInstance: Equatable, Sendable {
 public struct PathBuild: Codable, Equatable, Sendable {
     public static let maxSamples = 20_000
     public static let maxPieces = 10_000
+    /// Turns sharper than this (the cosine of 10°) get mitered cross-sections.
+    static let miterThreshold: Float = cosf(10 * .pi / 180)
+    /// The most a cross-section is stretched at a corner (very sharp corners are cut short instead of spiking).
+    public static let miterLimit: Float = 4
 
     public var kind: PathKind
     public var points: [PathPoint]
@@ -380,6 +393,8 @@ public struct PathBuild: Codable, Equatable, Sendable {
     public var profiles: [PathProfile]
     public var pieces: [PathPiece]
     public var terrain: PathTerrain
+    /// Other paths this one meets: T junctions at its ends, X junctions where it crosses them.
+    public var junctions: [PathJunction]
 
     public static var fieldHints: [String: FieldHints] {
         ["closed": FieldHints(tooltip: "Join the end back to the start (a loop)"),
@@ -391,7 +406,8 @@ public struct PathBuild: Codable, Equatable, Sendable {
 
     public init(kind: PathKind = .custom, points: [PathPoint] = [PathPoint(Vec3(-10, 0, 0)), PathPoint(Vec3(10, 0, 0))],
                 closed: Bool = false, smooth: Bool = true, spacing: Float = 0.5, bank: Float = 0, autoBank: Float = 0,
-                profiles: [PathProfile] = [PathProfile()], pieces: [PathPiece] = [], terrain: PathTerrain = PathTerrain()) {
+                profiles: [PathProfile] = [PathProfile()], pieces: [PathPiece] = [], terrain: PathTerrain = PathTerrain(),
+                junctions: [PathJunction] = []) {
         self.kind = kind
         self.points = points
         self.closed = closed
@@ -402,9 +418,10 @@ public struct PathBuild: Codable, Equatable, Sendable {
         self.profiles = profiles
         self.pieces = pieces
         self.terrain = terrain
+        self.junctions = junctions
     }
 
-    private enum CodingKeys: String, CodingKey { case kind, points, closed, smooth, spacing, bank, autoBank, profiles, pieces, terrain }
+    private enum CodingKeys: String, CodingKey { case kind, points, closed, smooth, spacing, bank, autoBank, profiles, pieces, terrain, junctions }
 
     /// Every key is optional.
     public init(from decoder: any Decoder) throws {
@@ -419,7 +436,24 @@ public struct PathBuild: Codable, Equatable, Sendable {
                   autoBank: try c.decodeIfPresent(Float.self, forKey: .autoBank) ?? d.autoBank,
                   profiles: try c.decodeIfPresent([PathProfile].self, forKey: .profiles) ?? d.profiles,
                   pieces: try c.decodeIfPresent([PathPiece].self, forKey: .pieces) ?? d.pieces,
-                  terrain: try c.decodeIfPresent(PathTerrain.self, forKey: .terrain) ?? d.terrain)
+                  terrain: try c.decodeIfPresent(PathTerrain.self, forKey: .terrain) ?? d.terrain,
+                  junctions: try c.decodeIfPresent([PathJunction].self, forKey: .junctions) ?? d.junctions)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(kind, forKey: .kind)
+        try c.encode(points, forKey: .points)
+        try c.encode(closed, forKey: .closed)
+        try c.encode(smooth, forKey: .smooth)
+        try c.encode(spacing, forKey: .spacing)
+        try c.encode(bank, forKey: .bank)
+        try c.encode(autoBank, forKey: .autoBank)
+        try c.encode(profiles, forKey: .profiles)
+        try c.encode(pieces, forKey: .pieces)
+        try c.encode(terrain, forKey: .terrain)
+        // Left out when there are none, so files without junctions read as before.
+        if !junctions.isEmpty { try c.encode(junctions, forKey: .junctions) }
     }
 
     public func fileData() throws -> Data { try AssetJSON.encode(self) }
@@ -499,7 +533,16 @@ public struct PathBuild: Codable, Equatable, Sendable {
     public var controlPositions: [Vec3] { points.map(\.position) }
 
     var segmentCount: Int { CatmullRom.segmentCount(points.count, closed: closed) }
-    var wraps: Bool { closed && points.count > 2 }
+    /// Closed with enough points to loop (the last sample repeats the first).
+    public var wraps: Bool { closed && points.count > 2 }
+
+    /// A `.terrain` file's contents, ready for `heightAt` (nil when unreadable).
+    public static func decodeTerrain(_ data: Data) -> Terrain? {
+        guard var terrain = try? AssetJSON.decoder().decode(Terrain.self, from: data) else { return nil }
+        terrain.resolution = terrain.res
+        terrain.normalizeData()
+        return terrain
+    }
 
     /// The curve at parameter `u` (control point i at u = i), before terrain following.
     public func curvePosition(at u: Float) -> Vec3 {
@@ -513,6 +556,22 @@ public struct PathBuild: Codable, Equatable, Sendable {
             return p[i % p.count] + (p[(i + 1) % p.count] - p[i % p.count]) * t
         }
         return CatmullRom.position(at: u, points: p, closed: closed)
+    }
+
+    /// Inserts a control point on the curve at parameter `u` (inside the span from point ⌊u⌋ to
+    /// the next), with bank and width blended from its neighbors. Returns its index, or nil when
+    /// `u` is on (or too near) an existing point or outside the curve.
+    @discardableResult
+    public mutating func insertPoint(atU u: Float) -> Int? {
+        let segments = segmentCount
+        guard segments > 0, u > 0, u < Float(segments) else { return nil }
+        let i = min(Int(u), segments - 1)
+        let t = u - Float(i)
+        guard t > 0.01, t < 0.99 else { return nil }
+        let a = points[i % points.count], b = points[(i + 1) % points.count]
+        let point = PathPoint(curvePosition(at: u), bank: a.bank + (b.bank - a.bank) * t, width: a.width + (b.width - a.width) * t)
+        points.insert(point, at: i + 1)
+        return i + 1
     }
 
     /// Bank (degrees, before auto bank) and width at parameter `u`, linear between control points.
@@ -590,6 +649,19 @@ public struct PathBuild: Codable, Equatable, Sendable {
             var forward = ahead - behind
             if !(EngineCore.length(forward) > 1e-6) { forward = result.last?.forward ?? Vec3(0, 0, -1) }
             forward = normalize(forward)
+            // A sharp corner: the cross-section lies on the bisector and is stretched across the
+            // turn by 1 / cos(half the turn), capped like an SVG miter limit.
+            var miter: Float = 1, miterAxis = Vec3.zero
+            let incoming = positions[i] - behind, outgoing = ahead - positions[i]
+            if EngineCore.length(incoming) > 1e-5, EngineCore.length(outgoing) > 1e-5 {
+                let a = normalize(incoming), b = normalize(outgoing)
+                let cosTurn = min(max(dot(a, b), -1), 1)
+                if cosTurn < Self.miterThreshold, EngineCore.length(a + b) > 1e-4 {
+                    forward = normalize(a + b)
+                    miter = min(1 / max(((1 + cosTurn) / 2).squareRoot(), 1e-4), Self.miterLimit)
+                    miterAxis = normalize(b - a)  // in the turn's plane, across the bisector
+                }
+            }
             var right = cross(forward, Vec3(0, 1, 0))
             if EngineCore.length(right) > 1e-4 { right = normalize(right); lastRight = right } else { right = lastRight }
             var up = normalize(cross(right, forward))
@@ -613,7 +685,7 @@ public struct PathBuild: Codable, Equatable, Sendable {
                 right = banked
             }
             result.append(PathSample(position: positions[i], forward: forward, right: right, up: up, distance: distance, u: us[i],
-                                     bank: bankDegrees, width: max(values.width, 0.001)))
+                                     bank: bankDegrees, width: max(values.width, 0.001), miter: miter, miterAxis: miterAxis))
         }
         return result
     }
@@ -641,7 +713,9 @@ public struct PathBuild: Codable, Equatable, Sendable {
         func unit(_ v: Vec3, _ fallback: Vec3) -> Vec3 { EngineCore.length(v) > 1e-6 ? normalize(v) : fallback }
         return PathSample(position: mix(a.position, b.position), forward: unit(mix(a.forward, b.forward), a.forward),
                           right: unit(mix(a.right, b.right), a.right), up: unit(mix(a.up, b.up), a.up), distance: d,
-                          u: a.u + (b.u - a.u) * f, bank: a.bank + (b.bank - a.bank) * f, width: a.width + (b.width - a.width) * f)
+                          u: a.u + (b.u - a.u) * f, bank: a.bank + (b.bank - a.bank) * f, width: a.width + (b.width - a.width) * f,
+                          miter: f < 1e-4 ? a.miter : (f > 1 - 1e-4 ? b.miter : 1),
+                          miterAxis: f < 1e-4 ? a.miterAxis : (f > 1 - 1e-4 ? b.miterAxis : .zero))
     }
 
     // MARK: Geometry
@@ -669,7 +743,8 @@ public struct PathBuild: Codable, Equatable, Sendable {
                 let chord = EngineCore.length(p[(i + 1) % p.count] - p[i % p.count])
                 center.y -= profile.sag * CableSag.profile(catenary: true, t: t, sag: profile.sag, chord: chord)
             }
-            rings.append(outline.map { center + s.right * $0.x + s.up * $0.y })
+            let offset = center - s.position
+            rings.append(outline.map { s.position + s.mitered(offset + s.right * $0.x + s.up * $0.y) })
         }
         // Distance across the outline for U.
         var across = [Float](repeating: 0, count: k + 1)
@@ -750,7 +825,7 @@ public struct PathBuild: Codable, Equatable, Sendable {
 
     /// Where `piece` goes along `samples` (on `ground` when given), at most `limit` of them.
     public func instances(of piece: PathPiece, samples: [PathSample], on ground: Terrain? = nil,
-                          limit: Int = PathBuild.maxPieces) -> [PathPieceInstance] {
+                          limit: Int = PathBuild.maxPieces, excluding cuts: [ClosedRange<Float>] = []) -> [PathPieceInstance] {
         guard let total = samples.last?.distance, total > 0, limit > 0 else { return [] }
         let spacing = max(piece.spacing, 0.05)
         var result: [PathPieceInstance] = []
@@ -759,6 +834,10 @@ public struct PathBuild: Codable, Equatable, Sendable {
         // A closed path doesn't repeat a piece at its end (it is the start).
         let end = wraps ? total - spacing * 0.5 : total + 1e-4
         while d <= end, result.count < limit {
+            if cuts.contains(where: { $0.contains(d) }) {
+                d += spacing
+                continue
+            }
             guard let s = Self.sample(samples, atDistance: d, closed: wraps) else { break }
             var forward = s.forward, right = s.right, up = s.up
             if piece.upright {
