@@ -365,6 +365,33 @@ private func road(_ from: Vec3, _ to: Vec3) -> PathBuild {
     }
 }
 
+@Suite struct PathBuildMiterTests {
+    @Test func sharpCornersKeepTheProfilesThickness() throws {
+        let points = [Vec3(0, 0, 0), Vec3(10, 0, 0), Vec3(10, 0, 10)].map { PathPoint($0) }
+        let build = PathBuild(points: points, smooth: false, profiles: [PathProfile(shape: .box, width: 1, height: 2)])
+        let samples = build.samples()
+        let corner = try #require(samples.first { length($0.position - Vec3(10, 0, 0)) < 1e-4 })
+        #expect(abs(corner.miter - Float(2).squareRoot()) < 1e-3)
+        #expect(length(corner.forward - normalize(Vec3(1, 0, 1))) < 1e-4, "on the bisector")
+        let mesh = try #require(build.mesh(build.profiles[0], samples: samples))
+        // The outer and inner corners of the wall are where its straight sides meet.
+        for spot in [Vec3(10.5, 0, -0.5), Vec3(9.5, 0, 0.5), Vec3(10.5, 2, -0.5), Vec3(9.5, 2, 0.5)] {
+            #expect(mesh.vertices.contains { length($0.position - spot) < 1e-3 }, "a vertex at \(spot)")
+        }
+        // Straight runs aren't touched; smooth curves aren't either.
+        #expect(samples.filter { $0.miter != 1 }.count == 1)
+        #expect(PathBuild.preset(.road).samples().allSatisfy { $0.miter == 1 })
+
+        // A hairpin is capped instead of spiking.
+        let hairpin = PathBuild(points: [Vec3(0, 0, 0), Vec3(10, 0, 0), Vec3(0, 0, 0.5)].map { PathPoint($0) }, smooth: false)
+        #expect(hairpin.samples().map(\.miter).max() == PathBuild.miterLimit)
+        // A closed straight loop is mitered where it closes too.
+        let square = PathBuild(points: [Vec3(0, 0, 0), Vec3(10, 0, 0), Vec3(10, 0, 10), Vec3(0, 0, 10)].map { PathPoint($0) }, closed: true, smooth: false)
+        let loop = square.samples()
+        #expect(loop.first?.miter ?? 1 > 1.4 && loop.last?.miter ?? 1 > 1.4)
+    }
+}
+
 // MARK: PathFollower
 
 @MainActor private func run(_ world: World, _ seconds: Double, dt: Double = 0.1) {

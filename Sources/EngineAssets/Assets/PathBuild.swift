@@ -351,6 +351,15 @@ public struct PathSample: Equatable, Sendable {
     /// Bank in degrees, and the width multiplier.
     public var bank: Float
     public var width: Float
+    /// At a sharp corner the cross-section is stretched by `miter` along `miterAxis` (in its plane,
+    /// across the turn), so a profile keeps its thickness round the corner. 1 elsewhere.
+    public var miter: Float = 1
+    public var miterAxis: Vec3 = .zero
+
+    /// `offset` (from the centerline, in the sample's frame) stretched by the miter.
+    public func mitered(_ offset: Vec3) -> Vec3 {
+        miter == 1 ? offset : offset + miterAxis * (dot(offset, miterAxis) * (miter - 1))
+    }
 }
 
 /// One placed piece, in the path's space.
@@ -364,6 +373,10 @@ public struct PathPieceInstance: Equatable, Sendable {
 public struct PathBuild: Codable, Equatable, Sendable {
     public static let maxSamples = 20_000
     public static let maxPieces = 10_000
+    /// Turns sharper than this (the cosine of 10°) get mitered cross-sections.
+    static let miterThreshold: Float = cosf(10 * .pi / 180)
+    /// The most a cross-section is stretched at a corner (very sharp corners are cut short instead of spiking).
+    public static let miterLimit: Float = 4
 
     public var kind: PathKind
     public var points: [PathPoint]
@@ -636,6 +649,19 @@ public struct PathBuild: Codable, Equatable, Sendable {
             var forward = ahead - behind
             if !(EngineCore.length(forward) > 1e-6) { forward = result.last?.forward ?? Vec3(0, 0, -1) }
             forward = normalize(forward)
+            // A sharp corner: the cross-section lies on the bisector and is stretched across the
+            // turn by 1 / cos(half the turn), capped like an SVG miter limit.
+            var miter: Float = 1, miterAxis = Vec3.zero
+            let incoming = positions[i] - behind, outgoing = ahead - positions[i]
+            if EngineCore.length(incoming) > 1e-5, EngineCore.length(outgoing) > 1e-5 {
+                let a = normalize(incoming), b = normalize(outgoing)
+                let cosTurn = min(max(dot(a, b), -1), 1)
+                if cosTurn < Self.miterThreshold, EngineCore.length(a + b) > 1e-4 {
+                    forward = normalize(a + b)
+                    miter = min(1 / max(((1 + cosTurn) / 2).squareRoot(), 1e-4), Self.miterLimit)
+                    miterAxis = normalize(b - a)  // in the turn's plane, across the bisector
+                }
+            }
             var right = cross(forward, Vec3(0, 1, 0))
             if EngineCore.length(right) > 1e-4 { right = normalize(right); lastRight = right } else { right = lastRight }
             var up = normalize(cross(right, forward))
@@ -659,7 +685,7 @@ public struct PathBuild: Codable, Equatable, Sendable {
                 right = banked
             }
             result.append(PathSample(position: positions[i], forward: forward, right: right, up: up, distance: distance, u: us[i],
-                                     bank: bankDegrees, width: max(values.width, 0.001)))
+                                     bank: bankDegrees, width: max(values.width, 0.001), miter: miter, miterAxis: miterAxis))
         }
         return result
     }
@@ -687,7 +713,9 @@ public struct PathBuild: Codable, Equatable, Sendable {
         func unit(_ v: Vec3, _ fallback: Vec3) -> Vec3 { EngineCore.length(v) > 1e-6 ? normalize(v) : fallback }
         return PathSample(position: mix(a.position, b.position), forward: unit(mix(a.forward, b.forward), a.forward),
                           right: unit(mix(a.right, b.right), a.right), up: unit(mix(a.up, b.up), a.up), distance: d,
-                          u: a.u + (b.u - a.u) * f, bank: a.bank + (b.bank - a.bank) * f, width: a.width + (b.width - a.width) * f)
+                          u: a.u + (b.u - a.u) * f, bank: a.bank + (b.bank - a.bank) * f, width: a.width + (b.width - a.width) * f,
+                          miter: f < 1e-4 ? a.miter : (f > 1 - 1e-4 ? b.miter : 1),
+                          miterAxis: f < 1e-4 ? a.miterAxis : (f > 1 - 1e-4 ? b.miterAxis : .zero))
     }
 
     // MARK: Geometry
@@ -715,7 +743,8 @@ public struct PathBuild: Codable, Equatable, Sendable {
                 let chord = EngineCore.length(p[(i + 1) % p.count] - p[i % p.count])
                 center.y -= profile.sag * CableSag.profile(catenary: true, t: t, sag: profile.sag, chord: chord)
             }
-            rings.append(outline.map { center + s.right * $0.x + s.up * $0.y })
+            let offset = center - s.position
+            rings.append(outline.map { s.position + s.mitered(offset + s.right * $0.x + s.up * $0.y) })
         }
         // Distance across the outline for U.
         var across = [Float](repeating: 0, count: k + 1)
