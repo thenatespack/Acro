@@ -257,7 +257,10 @@ private func makeProject() throws -> Project {
         let rig = character.rig
         let clip = try #require(database.animationClip(AssetReference(id, subAsset: "animation/bend")))
         let head = rig.index(of: "head")!, hand = rig.index(of: "hand.R")!
-        #expect(clip.channels.map(\.target) == [head, hand] && clip.channels.map(\.path) == [.rotation, .scale])
+        // Retargeted (AnimationRetarget.swift): the mapped bones are driven, and a glTF source keeps no translation.
+        #expect(Set(clip.channels.map(\.target)).isSuperset(of: [head, hand]), "\(clip.channels.map { ($0.target, $0.path) })")
+        #expect(clip.channels.contains { $0.target == head && $0.path == .rotation })
+        #expect(!clip.channels.contains { $0.path == .translation })
         let jump = try #require(database.animationClip(AssetReference(id, subAsset: "animation/jump")))
         #expect(jump.channels.count == CharacterClips.clip("jump", rig: CharacterBuild().rig)!.channels.count)
         #expect(jump.channels.contains { $0.path == .translation }, "the same skeleton keeps its root moves")

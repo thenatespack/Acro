@@ -143,9 +143,19 @@ public final class ScenePlayback {
         if let audio { spatialAudio = world.addSpatialAudio(audio, assets: assets) }
         world.addBuiltinAnimationSystems()
         world.addBehaviorTrees(name: Self.behaviorSystem, assets: assets, physics: { [weak self] in self?.physics })
-        world.addDialogueSystem(assets: assets).presenter = dialoguePresenter
+        let dialogues = world.addDialogueSystem(assets: assets)
         gameUI = world.addGameUI(assets: assets, in: uiRoot)
         gameUI?.images = uiImages
+        if let dialoguePresenter {
+            dialogues.presenter = dialoguePresenter
+        } else if uiRoot != nil, let gameUI {
+            // No host presenter: conversations show on the game UI layer, in the default box or the
+            // `.ui` layout they name (GameRunner and exported games).
+            let view = DialogueView(assets: assets)
+            view.images = uiImages
+            gameUI.add(view, order: 100)
+            dialogues.presenter = view
+        }
         timelines = world.addTimelinePlayers(assets: assets)
         pathFollowers = world.addPathFollowers(assets: assets)
         for warning in module.addSystems(to: world, context: context) { log(warning) }

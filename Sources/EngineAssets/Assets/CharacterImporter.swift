@@ -211,7 +211,7 @@ public struct CharacterImporter: AssetImporter {
         let folder = (path as NSString).deletingLastPathComponent
         let reader = context
         // The source clip, and the name of each target it drives.
-        let source: AnimationClip?, targetNames: [String?]
+        let source: AnimationClip?, sourceSkeleton: AnimationSkeleton
         var keepsTranslation = false
         switch (path as NSString).pathExtension.lowercased() {
         case "gltf", "glb":
@@ -225,7 +225,7 @@ public struct CharacterImporter: AssetImporter {
             // The glTF importer's ids: `animation/<name>`, or the index when unnamed.
             var namer = SubAssetNamer()
             source = model.animations.enumerated().first { namer.id(kind: "animation", name: $0.element.name, index: $0.offset) == subAsset }?.element
-            targetNames = model.nodes.map(\.name)
+            sourceSkeleton = AnimationSkeleton(model: model)
         case "character":
             guard let data = try? reader.readDependency(relativePath: up + path),
                   let other = try? AssetJSON.decoder().decode(CharacterBuild.self, from: data) else {
@@ -234,7 +234,7 @@ public struct CharacterImporter: AssetImporter {
             }
             let otherRig = other.rig
             source = CharacterClips.clip(String(subAsset.dropFirst("animation/".count)), rig: otherRig)
-            targetNames = otherRig.bones.map(\.name)
+            sourceSkeleton = otherRig.animationSkeleton
             // The same skeleton: its root moves (a jump's rise) fit too.
             keepsTranslation = other.template == rig.template
         default:
@@ -245,19 +245,14 @@ public struct CharacterImporter: AssetImporter {
             context.warn("\(label): '\(path)' has no '\(subAsset)'")
             return nil
         }
-        var unmatched = Set<String>()
-        let channels = source.channels.compactMap { channel -> AnimationChannel? in
-            guard channel.path != .translation || keepsTranslation, channel.target >= 0, channel.target < targetNames.count,
-                  let name = targetNames[channel.target] else { return nil }
-            guard let bone = rig.index(of: external.boneMap[name] ?? name) else {
-                unmatched.insert(name)
-                return nil
-            }
-            var channel = channel
-            channel.target = bone
-            return channel
-        }
-        guard !channels.isEmpty else {
+        // Retargeted onto the rig (AnimationRetarget.swift): bones paired by `boneMap`, then by name,
+        // with rotations corrected for differing rest poses (both rigs should rest alike, e.g. T-pose).
+        let target = rig.animationSkeleton
+        let options = AnimationRetargetOptions(boneMap: external.boneMap, translation: keepsTranslation ? .root : .none)
+        let map = AnimationRetargetMap(source: sourceSkeleton, target: target, options: options)
+        let animated = Set(source.channels.compactMap { sourceSkeleton.bones.indices.contains($0.target) ? sourceSkeleton.bones[$0.target].name : nil })
+        let unmatched = map.unmatchedSources.filter(animated.contains)
+        guard map.matchedCount > 0 else {
             context.warn("\(label): none of the animated nodes in '\(path)' is named like a bone of the \(rig.template.rawValue) "
                          + "template (map them with boneMap): \(unmatched.sorted().prefix(12).joined(separator: ", "))")
             return nil
@@ -266,7 +261,9 @@ public struct CharacterImporter: AssetImporter {
             context.warn("\(label): \(unmatched.count) animated node(s) match no bone and were dropped: "
                          + unmatched.sorted().prefix(12).joined(separator: ", "))
         }
-        return AnimationClip(name: external.name, channels: channels, duration: source.duration, events: source.events)
+        var clip = source.retargeted(from: sourceSkeleton, to: target, options: options)
+        clip.name = external.name
+        return clip
     }
 
     // MARK: Animator
