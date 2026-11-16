@@ -1,11 +1,9 @@
 import Foundation
-import EngineAssets
 import EngineAudio
 import EngineCore
 import EngineGraphics
 import EnginePhysics
 import EngineScene
-import EngineText
 
 /// A clip placed at a position along a 1D blend space's parameter.
 public struct BlendSpaceEntry: Codable, Equatable, Sendable {
