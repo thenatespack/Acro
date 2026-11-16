@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 224 tools.
+named by its id (see README › Use the editor › AI control). 230 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -17,6 +17,7 @@ optional arguments.
 | `animGraph` | [`animGraph.assign`](#animgraphassign), [`animGraph.edit`](#animgraphedit), [`animGraph.get`](#animgraphget), [`animGraph.new`](#animgraphnew), [`animGraph.open`](#animgraphopen), [`animGraph.set`](#animgraphset) |
 | `asset` | [`asset.applySettings`](#assetapplysettings), [`asset.assign`](#assetassign), [`asset.delete`](#assetdelete), [`asset.extractMaterials`](#assetextractmaterials), [`asset.get`](#assetget), [`asset.import`](#assetimport), [`asset.instantiate`](#assetinstantiate), [`asset.list`](#assetlist), [`asset.move`](#assetmove), [`asset.newFolder`](#assetnewfolder), [`asset.newMaterial`](#assetnewmaterial), [`asset.newProceduralTexture`](#assetnewproceduraltexture), [`asset.reimport`](#assetreimport), [`asset.rename`](#assetrename), [`asset.select`](#assetselect), [`asset.setProceduralTexture`](#assetsetproceduraltexture), [`asset.waitForImports`](#assetwaitforimports) |
 | `behavior` | [`behavior.assign`](#behaviorassign), [`behavior.debug`](#behaviordebug), [`behavior.edit`](#behavioredit), [`behavior.get`](#behaviorget), [`behavior.new`](#behaviornew), [`behavior.open`](#behavioropen), [`behavior.set`](#behaviorset) |
+| `character` | [`character.bones`](#characterbones), [`character.edit`](#characteredit), [`character.get`](#characterget), [`character.new`](#characternew), [`character.open`](#characteropen), [`character.set`](#characterset) |
 | `component` | [`component.add`](#componentadd), [`component.remove`](#componentremove), [`component.setField`](#componentsetfield), [`component.types`](#componenttypes) |
 | `diagnostics` | [`diagnostics.get`](#diagnosticsget) |
 | `dialogue` | [`dialogue.edit`](#dialogueedit), [`dialogue.get`](#dialogueget), [`dialogue.new`](#dialoguenew), [`dialogue.open`](#dialogueopen), [`dialogue.play`](#dialogueplay), [`dialogue.set`](#dialogueset) |
@@ -664,6 +665,154 @@ Result:
 - `outline`: [string]
 - `path`: string
 - `root`: string
+- `warnings`: [string]
+
+## character
+
+### `character.bones`
+
+**Character Bones** · _read-only_, _idempotent_
+
+Lists a body template's bones (name, parent, rest position in meters; +Y up, +Z forward, ".L" on the character's left at +X) and stock clips, without a file: pick bones for character.edit {attach}.
+
+Arguments:
+
+- `proportions?`: object
+- `template?`: "humanoid" \| "quadruped" \| "bird" \| "blob"
+
+Result:
+
+- `bones`: [{name: string, parent?: string, position: number[3]}]
+- `clips`: [string]
+- `handBone`: string
+- `template`: "humanoid" \| "quadruped" \| "bird" \| "blob"
+
+### `character.edit`
+
+**Edit Character** · _undoable_
+
+Changes a .character file in one undoable step, in this order: template, proportions (name → multiplier), colors (region → [r,g,b]), resetColors, detach, attach, updateAttachments (name → fields; "name" renames), clips, defaultClip, smooth, segments. Placed copies update. Bone names for attach come from character.bones or character.get. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `attach?`: [{asset?: string, bone?: string, color?: number[3], name?: string, position?: number[3], rotation?: number[3], scale?: number}]
+- `clips?`: [string]
+- `colors?`: object
+- `defaultClip?`: string
+- `detach?`: [string]
+- `path?`: string
+- `proportions?`: object
+- `resetColors?`: [string]
+- `segments?`: integer
+- `smooth?`: boolean
+- `template?`: "humanoid" \| "quadruped" \| "bird" \| "blob"
+- `updateAttachments?`: object
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `attachments`: [string]
+- `bones`: [string]
+- `clips`: [string]
+- `entities?`: [entity id]
+- `height`: number
+- `parameters`: [string]
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `template`: "humanoid" \| "quadruped" \| "bird" \| "blob"
+- `warnings`: [string]
+
+### `character.get`
+
+**Get Character** · _read-only_, _idempotent_
+
+Reads a .character file: template, proportions, colors (the ones in use, defaults included), attachments, the generated bones (name, parent, rest position) and clips (state name, clip reference, duration, looping, events), and a summary with problems.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `bones`: [{name: string, parent?: string, position: number[3]}]
+- `character`: {attachments?: [object], clips?: [string], colors?: {accent?: number[3], body?: number[3], eyes?: number[3], legs?: number[3], skin?: number[3]}, defaultClip?: string, proportions?: {arms?: number, head?: number, height?: number, legs?: number, neck?: number, tail?: number, torso?: number, width?: number}, segments?: integer, smooth?: boolean, template?: "humanoid" \| "quadruped" \| "bird" \| "blob"}
+- `clips`: [{clip: string, duration: number, events: [string], loops: boolean, name: string}]
+- `colors`: object
+- `summary`: {asset: asset id, attachments: [string], bones: [string], clips: [string], entities?: [entity id], height: number, parameters: [string], path: string, prefab: asset id, template: "humanoid" \| "quadruped" \| "bird" \| "blob", warnings: [string]}
+
+### `character.new`
+
+**New Character**
+
+Writes a .character file in `folder` (default: the Assets root) from a body template, imported as a skinned prefab with an Animator and the stock clips (idle, walk, run, jump, attack, die), optionally placed in the scene. Then change it with character.edit {proportions, colors, attach}. A character is a body `template` (humanoid, quadruped, bird, blob) with a generated skeleton, `proportions` (multipliers, 1 = as designed, 0.25-3: height (scales everything), head, torso, width, arms (a bird's wings), legs, neck, tail), `colors` by region (skin, body, legs, accent, eyes; [r,g,b] 0-1 sRGB; a missing one is the template's default), `attachments` (each: name, bone (see character.bones), asset (a .meshbuild path under Assets/), position [x,y,z] meters and rotation [x,y,z] degrees in the bone's space (+Y up, +Z forward, +X the character's left), scale, optional color recoloring every part), `clips` (stock clips to include: idle, walk, run, jump, attack, die; all by default), `defaultClip` (the Animator's first state), `smooth` (blended skin weights at joints) and `segments` (6-32, roundness). It imports as a skinned prefab with an Animator whose states are the clips plus `locomotion` (idle/walk/run blended by the float parameter `speed` in m/s), with triggers `jump`, `attack`, `die`. Every key is optional.
+
+Arguments:
+
+- `attachments?`: [{asset?: string, bone?: string, color?: number[3], name?: string, position?: number[3], rotation?: number[3], scale?: number}]
+- `colors?`: object
+- `folder?`: string
+- `name?`: string
+- `place?`: boolean
+- `position?`: number[3] — [x, y, z]
+- `proportions?`: object
+- `template?`: "humanoid" \| "quadruped" \| "bird" \| "blob"
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `attachments`: [string]
+- `bones`: [string]
+- `clips`: [string]
+- `entities?`: [entity id]
+- `height`: number
+- `parameters`: [string]
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `template`: "humanoid" \| "quadruped" \| "bird" \| "blob"
+- `warnings`: [string]
+
+### `character.open`
+
+**Open in Character Builder** · _idempotent_
+
+Opens a .character file in the editor's Character Builder tab (the character alone in a viewport playing a clip, with the template, proportion sliders, colors, attachments and clip buttons) and brings the tab to the front; `clip` picks the clip it plays. view.screenshot {source: "panel", panel: "characterBuilder"} shows it.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `clip?`: string
+- `path?`: string
+
+Result:
+
+- `path`: string
+
+### `character.set`
+
+**Set Character** · _undoable_, _idempotent_
+
+Replaces a .character file's whole contents and reimports it; placed copies update. Undoable. For a few changes character.edit is shorter. A character is a body `template` (humanoid, quadruped, bird, blob) with a generated skeleton, `proportions` (multipliers, 1 = as designed, 0.25-3: height (scales everything), head, torso, width, arms (a bird's wings), legs, neck, tail), `colors` by region (skin, body, legs, accent, eyes; [r,g,b] 0-1 sRGB; a missing one is the template's default), `attachments` (each: name, bone (see character.bones), asset (a .meshbuild path under Assets/), position [x,y,z] meters and rotation [x,y,z] degrees in the bone's space (+Y up, +Z forward, +X the character's left), scale, optional color recoloring every part), `clips` (stock clips to include: idle, walk, run, jump, attack, die; all by default), `defaultClip` (the Animator's first state), `smooth` (blended skin weights at joints) and `segments` (6-32, roundness). It imports as a skinned prefab with an Animator whose states are the clips plus `locomotion` (idle/walk/run blended by the float parameter `speed` in m/s), with triggers `jump`, `attack`, `die`. Every key is optional. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `character`: {attachments?: [object], clips?: [string], colors?: {accent?: number[3], body?: number[3], eyes?: number[3], legs?: number[3], skin?: number[3]}, defaultClip?: string, proportions?: {arms?: number, head?: number, height?: number, legs?: number, neck?: number, tail?: number, torso?: number, width?: number}, segments?: integer, smooth?: boolean, template?: "humanoid" \| "quadruped" \| "bird" \| "blob"}
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `attachments`: [string]
+- `bones`: [string]
+- `clips`: [string]
+- `entities?`: [entity id]
+- `height`: number
+- `parameters`: [string]
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `template`: "humanoid" \| "quadruped" \| "bird" \| "blob"
 - `warnings`: [string]
 
 ## component

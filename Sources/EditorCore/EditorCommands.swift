@@ -50,6 +50,7 @@ public enum BuiltinCommands {
       + EditorDialogueCommands.all
       + EditorTimelineCommands.all
       + EditorAnimationGraphCommands.all
+      + EditorCharacterCommands.all
 }
 
 extension CommandID {

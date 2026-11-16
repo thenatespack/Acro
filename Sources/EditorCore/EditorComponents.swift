@@ -78,6 +78,7 @@ public enum EditorComponentCatalog {
         ParticleSystem.registerComponents()
         register(ParticleEmitter.self) { ParticleEmitter() }
         TextMeshComponents.registerComponents()
+        SkeletalAnimation.registerComponents()
         register(TextMesh.self) { TextMesh("Neon", emissiveStrength: 4) }
         register(Decal.self) { Decal() }
         register(Sprite.self) { Sprite(atlas: SpriteAtlasHandle("sprites")) }

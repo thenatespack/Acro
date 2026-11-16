@@ -290,6 +290,7 @@ public enum EditorIcons {
         let ext = path.split(separator: ".").last.map { $0.lowercased() } ?? ""
         switch ext {
         case "gltf", "glb", "obj", "fbx", "meshbuild": return .model
+        case "character": return .model
         case "vfx": return .prefab
         case "timeline": return .scene
         case "animgraph": return .animationGraph
@@ -377,6 +378,7 @@ public enum EditorIcons {
         EditorLayout.dialogueBuilder: "file-text",
         EditorLayout.timeline: "clapperboard",
         EditorLayout.animationGraph: "network",
+        EditorLayout.characterBuilder: "person-standing",
     ]
 
     /// Console lines by level.

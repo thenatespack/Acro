@@ -159,6 +159,8 @@ public final class AssetBrowserModel {
             session.run(TimelineOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where session.isAnimationGraphFile(id):
             session.run(AnimGraphOpenCommand.self, .init(asset: AssetReference(id)))
+        case .asset(let id) where session.isCharacterFile(id):
+            session.run(CharacterOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where entry.isExpandable:
             toggleExpanded(id)
         default:
@@ -261,6 +263,14 @@ public final class AssetBrowserModel {
     @discardableResult
     public func newAnimationGraph() -> AssetID? {
         guard let id = session.run(AnimGraphNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
+        invalidate()
+        selection = .asset(id)
+        return id
+    }
+    /// Creates a character in the current folder (`character.new`) and selects it.
+    @discardableResult
+    public func newCharacter() -> AssetID? {
+        guard let id = session.run(CharacterNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
         invalidate()
         selection = .asset(id)
         return id
@@ -490,6 +500,7 @@ public final class AssetBrowserModel {
         case .texture: .texture
         case .prefab: .prefab
         case .animation, .animationGraph: .file
+        case .animation: .file
         }
     }
 }

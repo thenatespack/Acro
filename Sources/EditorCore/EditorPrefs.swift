@@ -127,9 +127,11 @@ public enum EditorLayout {
     public static let timeline = "timeline"
     /// The Animation Graph Builder tab (opened with an `.animgraph` file, tabbed with the Scene view).
     public static let animationGraph = "animationGraph"
+    /// The Character Builder tab (opened with a `.character` file, tabbed with the Scene view; not in the default layout).
+    public static let characterBuilder = "characterBuilder"
     public static let panelIDs = [viewport, game, hierarchy, inspector, console, stats, assets, activity, scripts, files, meshBuilder, vfxBuilder,
                                   soundBuilder, postFXBuilder, dataTable, terrainBuilder, spriteBuilder, tilemapBuilder, gridMapBuilder, pathBuilder,
-                                  behaviorTree, uiBuilder, dialogueBuilder, timeline, animationGraph]
+                                  behaviorTree, uiBuilder, dialogueBuilder, timeline, animationGraph, characterBuilder]
 
     /// Hierarchy above Files on the left, inspector right, the Scene view (tabbed with the Game
     /// view and Scripts, so scripts open where the Scene view is) in the middle above an Assets / Console / Activity /

@@ -215,6 +215,7 @@ public struct AssetImporterRegistry: Sendable {
         registry.register(DialogueImporter())
         registry.register(TimelineImporter())
         registry.register(AnimationGraphImporter())
+        registry.register(CharacterImporter())
         return registry
     }
 

@@ -110,6 +110,7 @@ public enum GamePlayer {
         AudioSystem.registerComponents()
         ParticleSystem.registerComponents()
         TextMeshComponents.registerComponents()
+        SkeletalAnimation.registerComponents()
     }
 
     /// Calls a statically linked module's entry point (`GameModuleABI.entryPoint`) and checks

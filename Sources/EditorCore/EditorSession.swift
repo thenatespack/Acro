@@ -169,6 +169,11 @@ public final class EditorSession {
     /// The graph open in the Animation Graph Builder tab (`animGraph.open`), and how the app shows it.
     public var openAnimationGraph: AssetID?
     public var onOpenAnimationGraph: ((AssetID) -> Void)?
+    /// The character open in the Character Builder tab (`character.open`), and how the app shows it.
+    public var openCharacter: AssetID?
+    public var onOpenCharacter: ((AssetID) -> Void)?
+    /// The clip `character.open` asked the tab to play (nil: keep the current one).
+    public var characterPreviewClip: String?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()

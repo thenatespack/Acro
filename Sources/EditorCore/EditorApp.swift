@@ -158,6 +158,8 @@ public final class EditorApp: Game, EditorHost {
     public private(set) var timelineWorkspace: TimelineWorkspace!
     /// The Animation Graph Builder tab (AnimationGraphWorkspace.swift).
     public private(set) var animGraphWorkspace: AnimationGraphWorkspace!
+    /// The Character Builder tab (CharacterBuilderWorkspace.swift).
+    public private(set) var characterWorkspace: CharacterBuilderWorkspace!
     private(set) var statusBar: StatusBar!
     /// The Assets panel (browser) and its thumbnails.
     public private(set) var assetBrowser: AssetBrowserPanel!
@@ -530,6 +532,14 @@ public final class EditorApp: Game, EditorHost {
             }
             dock.focusPanel(EditorLayout.animationGraph)
         }
+        session.onOpenCharacter = { [unowned self] id in
+            guard characterWorkspace.open(id) else { return }
+            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.characterBuilder, EditorLayout.viewport) {
+                dock.dock(EditorLayout.characterBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
+                                                                                                  : .edge(.bottom))
+            }
+            dock.focusPanel(EditorLayout.characterBuilder)
+        }
         session.onOpenTerrain = { [unowned self] id in
             guard terrainWorkspace.open(id) else { return }
             if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.terrainBuilder, EditorLayout.viewport) {
@@ -748,6 +758,9 @@ public final class EditorApp: Game, EditorHost {
         animGraphWorkspace = AnimationGraphWorkspace(session: session)
         animGraphWorkspace.device = engine?.device
         if let quality = engine?.quality { animGraphWorkspace.quality = quality }
+        characterWorkspace = CharacterBuilderWorkspace(session: session)
+        characterWorkspace.device = engine?.device
+        if let quality = engine?.quality { characterWorkspace.quality = quality }
         files.onOpen = { [unowned self] file in openFile(file) }
         files.onNewScene = { [unowned self] name in newScene(named: name) }
 
@@ -797,6 +810,10 @@ public final class EditorApp: Game, EditorHost {
         let animGraphPanel = DockPanel(id: EditorLayout.animationGraph, title: "Animation Graph", content: animGraphWorkspace.view, minSize: Vec2(320, 200))
         animGraphPanel.passesPointerThrough = true
         dock.addPanel(animGraphPanel)
+        let characterPanel = DockPanel(id: EditorLayout.characterBuilder, title: "Character Builder", content: characterWorkspace.view,
+                                       minSize: Vec2(320, 200))
+        characterPanel.passesPointerThrough = true
+        dock.addPanel(characterPanel)
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
         for (id, icon) in EditorIcons.panelIconNames { dock.panel(id)?.icon = EditorIcons.named(icon) }
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
@@ -1211,6 +1228,7 @@ public final class EditorApp: Game, EditorHost {
             uiWorkspace.update()
             timelineWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
             animGraphWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
+            characterWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
         }
         session.tick(dt: Double(dt))
 
@@ -1244,6 +1262,7 @@ public final class EditorApp: Game, EditorHost {
         pathWorkspace.prepareFrame(pixelScale: ui.scale)
         timelineWorkspace.prepareFrame(pixelScale: ui.scale)
         animGraphWorkspace.prepareFrame(pixelScale: ui.scale)
+        characterWorkspace.prepareFrame(pixelScale: ui.scale)
         buildGizmos()
         viewportWidget.texture = target.texture
         viewportWidget.billboards = transformTool.billboards
@@ -1689,6 +1708,7 @@ public final class EditorApp: Game, EditorHost {
         pathWorkspace.render(frame: frame)
         timelineWorkspace.render(frame: frame)
         animGraphWorkspace.render(frame: frame)
+        characterWorkspace.render(frame: frame)
         if let game = gameCurrentView, gameSizer.width > 0, gameWidget.isEffectivelyVisible {
             sceneRenderer.beginViews(world: session.gameWorld, frame: frame, shadowFocus: game)
             sceneRenderer.renderView(game, into: gameTarget, frame: frame, debugDraw: gameDraw)
