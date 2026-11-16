@@ -82,6 +82,15 @@ private func pngData() -> Data {
         hudView.press("go")
         #expect(heard.count == 2 && all.count == 2)
 
+        // An input bound to a key writes the layer's value, which every layout sees.
+        hudView.load(try hud().applying(UIBuildEdit(addWidgets: [UIBuildWidget(id: "vol", type: .slider, bind: "volume")])))
+        menuView.load(UIBuild(widgets: [UIBuildWidget(id: "resume", type: .button, text: "Resume"),
+                                        UIBuildWidget(id: "volText", type: .label, text: "{volume}")]))
+        #expect(hudView.change("vol", to: .double(0.5)))
+        #expect(layer.value("volume") == .double(0.5))
+        #expect((menuView.widget("volText") as? Label)?.text == "0.5")
+        #expect(all.count == 2, "the removed listener heard nothing")
+
         // The component drives visibility and order.
         world.modify(UILayoutPlayer.self, for: hudEntity) { $0.visible = false }
         world.update(dt: 1.0 / 60)

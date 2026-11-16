@@ -24,7 +24,9 @@ import EngineScene
 // Colors are "#RRGGBB[AA]" (sRGB) or a theme color name (`UIBuild.themeColorNames`: "accent",
 // "text", "panel", "health"…). Text may hold `{key}` placeholders, filled from the values game
 // code sets (and the file's `values` until it does). `bind` ties a widget to one value: a bar's
-// fill (value / `max`), a label's or button's whole text, an image's path. `visibleWhen` shows a
+// fill (value / `max`), a label's or button's whole text, an image's path, a slider's number, a
+// toggle's state, a text field's text (inputs write the key back as the player changes them, then
+// send their event). `visibleWhen` shows a
 // widget only while a value is truthy ("!key": while it is falsy).
 
 /// What a widget is.
@@ -45,6 +47,17 @@ public enum UIBuildWidgetType: String, Codable, CaseIterable, Sendable {
     case bar
     /// Empty space that grows in a stack.
     case spacer
+    /// A number the player drags between `min` and `max` (a volume setting); sends its event on change.
+    case slider
+    /// An on / off checkbox or switch with a `text` title; sends its event on change.
+    case toggle
+    /// A line of text the player types; sends its event on Enter.
+    case textField
+
+    /// Whether the player changes its value (slider, toggle, text field): it writes its bound key and sends its event.
+    public var isInput: Bool { self == .slider || self == .toggle || self == .textField }
+    /// Whether it sends an event (a button or an input).
+    public var sendsEvents: Bool { self == .button || isInput }
 
     /// Whether children can hang from it.
     public var isContainer: Bool { self == .panel || self == .vstack || self == .hstack }
@@ -106,6 +119,12 @@ public enum UIBuildScaleMode: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// How a toggle looks.
+public enum UIBuildToggleStyle: String, Codable, CaseIterable, Sendable {
+    case checkbox
+    case `switch`
+}
+
 /// A bar's colors: the accent, or green → warning → danger as it empties.
 public enum UIBuildBarKind: String, Codable, CaseIterable, Sendable {
     case progress, health
@@ -162,11 +181,15 @@ public struct UIBuildWidget: Codable, Equatable, Sendable {
     public var image: String
     public var fit: UIBuildImageFit
 
-    // Bar.
-    /// The fill shown without a binding (0...max).
+    // Bar and slider.
+    /// The fill shown without a binding (0...max); a slider's starting value.
     public var value: Float
-    /// The value that fills the bar.
+    /// The value that fills the bar; a slider's highest value.
     public var max: Float
+    /// A slider's lowest value.
+    public var min: Float
+    /// A slider's step (0: any value).
+    public var step: Float
     public var kind: UIBuildBarKind
     /// Tick marks dividing the bar into this many parts.
     public var segments: Int
@@ -176,8 +199,17 @@ public struct UIBuildWidget: Codable, Equatable, Sendable {
     // Button.
     /// Accent-colored (the main action).
     public var primary: Bool
-    /// The event name a press sends ("" sends the id).
+    /// The event name a press (or an input's change) sends ("" sends the id).
     public var event: String
+
+    // Toggle and text field.
+    /// A toggle's starting state (without a binding).
+    public var on: Bool
+    public var toggleStyle: UIBuildToggleStyle
+    /// A text field's hint while empty.
+    public var placeholder: String
+    /// The most characters a text field takes (0: no limit).
+    public var maxLength: Int
 
     // Bindings.
     /// The value key this widget shows: a bar's fill, a label's / button's text (unless the text has `{…}` placeholders), an image's path.
@@ -192,7 +224,14 @@ public struct UIBuildWidget: Codable, Equatable, Sendable {
                 fontSize: Float = 0, color: String = "", textAlign: UIBuildTextAlign = .left, wrap: Bool = false,
                 shadow: Bool = false, image: String = "", fit: UIBuildImageFit = .fit, value: Float = 1, max: Float = 1,
                 kind: UIBuildBarKind = .progress, segments: Int = 0, trail: Bool = false, primary: Bool = false,
-                event: String = "", bind: String = "", visibleWhen: String = "") {
+                event: String = "", bind: String = "", visibleWhen: String = "", min: Float = 0, step: Float = 0, on: Bool = false,
+                toggleStyle: UIBuildToggleStyle = .checkbox, placeholder: String = "", maxLength: Int = 0) {
+        self.min = min
+        self.step = step
+        self.on = on
+        self.toggleStyle = toggleStyle
+        self.placeholder = placeholder
+        self.maxLength = maxLength
         self.id = id
         self.type = type
         self.parent = parent
@@ -232,7 +271,7 @@ public struct UIBuildWidget: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey, CaseIterable {
         case id, type, parent, anchor, offset, width, height, grow, padding, spacing, align, justify, background, borderColor,
              cornerRadius, opacity, hidden, text, fontSize, color, textAlign, wrap, shadow, image, fit, value, max, kind, segments,
-             trail, primary, event, bind, visibleWhen
+             trail, primary, event, bind, visibleWhen, min, step, on, toggleStyle, placeholder, maxLength
     }
 
     /// Every key is optional.
@@ -253,7 +292,8 @@ public struct UIBuildWidget: Codable, Equatable, Sendable {
         try read(.wrap, &w.wrap); try read(.shadow, &w.shadow); try read(.image, &w.image); try read(.fit, &w.fit)
         try read(.value, &w.value); try read(.max, &w.max); try read(.kind, &w.kind); try read(.segments, &w.segments)
         try read(.trail, &w.trail); try read(.primary, &w.primary); try read(.event, &w.event); try read(.bind, &w.bind)
-        try read(.visibleWhen, &w.visibleWhen)
+        try read(.visibleWhen, &w.visibleWhen); try read(.min, &w.min); try read(.step, &w.step); try read(.on, &w.on)
+        try read(.toggleStyle, &w.toggleStyle); try read(.placeholder, &w.placeholder); try read(.maxLength, &w.maxLength)
         self = w
     }
 
@@ -277,9 +317,12 @@ public struct UIBuildWidget: Codable, Equatable, Sendable {
         try write(.fit, fit, d.fit); try write(.value, value, d.value); try write(.max, max, d.max); try write(.kind, kind, d.kind)
         try write(.segments, segments, d.segments); try write(.trail, trail, d.trail); try write(.primary, primary, d.primary)
         try write(.event, event, d.event); try write(.bind, bind, d.bind); try write(.visibleWhen, visibleWhen, d.visibleWhen)
+        try write(.min, min, d.min); try write(.step, step, d.step); try write(.on, on, d.on)
+        try write(.toggleStyle, toggleStyle, d.toggleStyle); try write(.placeholder, placeholder, d.placeholder)
+        try write(.maxLength, maxLength, d.maxLength)
     }
 
-    /// The event a press of this button sends.
+    /// The event a press of this button (or a change of this input) sends.
     public var eventName: String { event.isEmpty ? id : event }
 
     /// The value keys the widget reads: `bind`, `visibleWhen` and the text's `{key}` placeholders.
@@ -451,8 +494,8 @@ public struct UIBuild: Codable, Equatable, Sendable {
     /// Every value key a widget reads, sorted.
     public var valueKeys: [String] { Array(Set(widgets.flatMap(\.valueKeys))).sorted() }
 
-    /// Every event a button sends, sorted.
-    public var events: [String] { Array(Set(widgets.filter { $0.type == .button }.map(\.eventName))).sorted() }
+    /// Every event a button or input sends, sorted.
+    public var events: [String] { Array(Set(widgets.filter(\.type.sendsEvents).map(\.eventName))).sorted() }
 
     // MARK: Text
 
@@ -575,6 +618,9 @@ public struct UIBuild: Codable, Equatable, Sendable {
                 issues.append(UIBuildIssue(widget: name, "\(field) '\(color)' isn't a #RRGGBB[AA] color or theme color name"))
             }
             if w.type == .bar, w.max <= 0 { issues.append(UIBuildIssue(widget: name, "max must be above 0")) }
+            if w.type == .slider, w.max <= w.min { issues.append(UIBuildIssue(widget: name, "max must be above min")) }
+            if w.type == .slider, w.step < 0 { issues.append(UIBuildIssue(widget: name, "step can't be negative")) }
+            if w.type == .textField, w.maxLength < 0 { issues.append(UIBuildIssue(widget: name, "maxLength can't be negative")) }
             if w.type == .image, w.image.isEmpty, w.bind.isEmpty { issues.append(UIBuildIssue(widget: name, "no image set")) }
             if w.type == .image, !w.image.isEmpty, let imageExists, !imageExists(w.image) {
                 issues.append(UIBuildIssue(widget: name, "no image asset '\(w.image)'"))

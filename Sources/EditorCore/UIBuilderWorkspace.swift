@@ -264,6 +264,9 @@ public final class UIBuilderWorkspace {
         case .button: UIBuildWidget(type: .button, text: "Button")
         case .bar: UIBuildWidget(type: .bar, width: 200, value: 0.6)
         case .spacer: UIBuildWidget(type: .spacer, grow: 1)
+        case .slider: UIBuildWidget(type: .slider, width: 200, value: 0.5)
+        case .toggle: UIBuildWidget(type: .toggle, text: "Toggle")
+        case .textField: UIBuildWidget(type: .textField, width: 200, placeholder: "Type here")
         }
     }
 
@@ -358,7 +361,8 @@ public final class UIBuilderWorkspace {
 
     func previewEvent(_ event: UIBuildEvent) {
         lastEvent = event
-        status.text = "Event: \(event.name)  (from \(event.widget))"
+        let value = event.value.map { " = " + UIBuild.display($0) } ?? ""
+        status.text = "Event: \(event.name)\(value)  (from \(event.widget))"
     }
 
     // MARK: Layout
@@ -440,6 +444,9 @@ public final class UIBuilderWorkspace {
         case .button: EditorIcons.named("mouse-pointer-ban")
         case .bar: EditorIcons.named("gauge")
         case .spacer: EditorIcons.named("square-dashed")
+        case .slider: EditorIcons.named("sliders-horizontal")
+        case .toggle: EditorIcons.named("circle-dot")
+        case .textField: EditorIcons.named("keyboard")
         }
     }
 
@@ -572,8 +579,29 @@ public final class UIBuilderWorkspace {
                 row("Image", picker)
             }
             choiceRow("Fit", w.fit, name: "fit") { field("fit", .string($0.rawValue)) }
+        case .slider:
+            numberRow("Value", w.value, name: "value", step: 0.01) { field("value", .double($0)) }
+            numberRow("Min", w.min, name: "min", step: 0.1) { field("min", .double($0)) }
+            numberRow("Max", w.max, name: "max", step: 0.1) { field("max", .double($0)) }
+            numberRow("Step", w.step, name: "step", range: 0...1_000_000, step: 0.01) { field("step", .double($0)) }
+        case .toggle:
+            textRow("Text", w.text, name: "text", tooltip: "{key} shows a value") { field("text", .string($0)) }
+            toggleRow("On", w.on, name: "on") { field("on", .bool($0)) }
+            choiceRow("Style", w.toggleStyle, name: "toggleStyle") { field("toggleStyle", .string($0.rawValue)) }
+            numberRow("Font size", w.fontSize, name: "fontSize", range: 0...400) { field("fontSize", .double($0)) }
+        case .textField:
+            textRow("Text", w.text, name: "text", tooltip: "The starting text") { field("text", .string($0)) }
+            textRow("Placeholder", w.placeholder, name: "placeholder", tooltip: "The hint shown while it is empty") { field("placeholder", .string($0)) }
+            numberRow("Max length", Float(w.maxLength), name: "maxLength", isInteger: true, range: 0...10_000) { field("maxLength", .int(Int64($0))) }
+            numberRow("Font size", w.fontSize, name: "fontSize", range: 0...400) { field("fontSize", .double($0)) }
         case .spacer:
             break
+        }
+        if w.type.isInput {
+            let when = w.type == .textField ? "on Enter" : "when the player changes it"
+            textRow("Event", w.event, placeholder: w.id, name: "event", tooltip: "Sent \(when), with the new value; game code listens with on(\"…\")") {
+                field("event", .string($0.trimmingCharacters(in: .whitespaces)))
+            }
         }
 
         if w.type != .spacer {
@@ -591,8 +619,15 @@ public final class UIBuilderWorkspace {
         toggleRow("Hidden", w.hidden, name: "hidden") { field("hidden", .bool($0)) }
 
         sidebar.addChild(Label("Bindings", role: .secondary))
-        if w.type == .bar || w.type == .label || w.type == .button || w.type == .image {
-            let what = w.type == .bar ? "fill (value / max)" : w.type == .image ? "image path" : "whole text (unless it has {…})"
+        if w.type == .bar || w.type == .label || w.type == .button || w.type == .image || w.type.isInput {
+            let what = switch w.type {
+            case .bar: "fill (value / max)"
+            case .image: "image path"
+            case .slider: "value (the player's changes write it back)"
+            case .toggle: "state (the player's changes write it back)"
+            case .textField: "text (the player's typing writes it back)"
+            default: "whole text (unless it has {…})"
+            }
             textRow("Bind", w.bind, placeholder: "value key", name: "bind", tooltip: "The value key that sets the \(what)") {
                 field("bind", .string($0.trimmingCharacters(in: .whitespaces)))
             }
@@ -781,7 +816,8 @@ public final class UIBuildPreviewCanvas: Widget {
                 return true
             }
             guard let drag else { return true }
-            let delta = (e.position - drag.start) / previewScale
+            // Panel points → the layout's design points (a scaled layout moves less per point).
+            let delta = (e.position - drag.start) / (previewScale * max(preview.layoutScale, 0.05))
             var offset = drag.offset
             switch drag.anchor {
             case .topRight, .right, .bottomRight: offset.x -= delta.x

@@ -188,6 +188,11 @@ public final class TextField: Widget {
     public var onEndEditing: ((String) -> Void)?
     /// Minimum width when measured (points).
     public var preferredWidth: Float = 160 { didSet { setNeedsLayout() } }
+    /// The most characters the user can type (nil: no limit).
+    public var maxLength: Int? {
+        get { buffer.maxLength }
+        set { buffer.maxLength = newValue }
+    }
 
     private var scrollX: Float = 0
     private var lastActivity: Double = 0

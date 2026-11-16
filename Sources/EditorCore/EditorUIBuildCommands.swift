@@ -19,17 +19,19 @@ public enum EditorUIBuildCommands {
         "#RRGGBB[AA]"; names: \(UIBuild.themeColorNames.joined(separator: ", "))), `fontSize`, `safeArea` (points kept clear \
         of the screen edges), `size` (design screen size [w, h]), `scaleMode` (none|fit|fill|width|height: how \
         the whole layout scales with the screen from `size`; default none), `values` (sample values by key for the preview) and \
-        `widgets`, a flat list. Each widget: `id` (unique), `type` (panel|vstack|hstack|label|image|button|bar|spacer), \
+        `widgets`, a flat list. Each widget: `id` (unique), `type` (panel|vstack|hstack|label|image|button|bar|spacer|slider|toggle|textField), \
         `parent` (a container id; "" is the screen). The screen and panels place children by `anchor` (topLeft|top|topRight|left|\
         center|right|bottomLeft|bottom|bottomRight|fill) and `offset` [x, y] points in from the anchored edges; stacks line \
         them up (`spacing`, `align` auto|start|center|end|stretch, `justify` start|center|end|spaceBetween, children's `grow`). \
         Also: width/height (omit to fit content), padding, background/borderColor/color ("#hex" or a theme color name), \
         cornerRadius, opacity, hidden; label/button `text` with `{key}` placeholders, fontSize, textAlign, wrap, shadow; \
         image `image` (path under Assets/), fit fit|fill|stretch; bar value, max, kind progress|health, segments, trail; \
-        button primary, event (default: the id). `bind` ties a widget to a value key (bar fill = value / max; label/button \
-        text; image path) and `visibleWhen` shows it only while a key is truthy ("!key": falsy). Game code: \
-        let hud = UIBuildView(assets: assets, path: "UI/hud.ui"); ui.root.addChild(hud); hud.set("health", 64); \
-        hud.on("pause") { ... }.
+        button primary, event (default: the id); slider value, min, max, step; toggle text, on, toggleStyle checkbox|switch; \
+        textField text, placeholder, maxLength. Sliders and toggles send their event when the player changes them, text \
+        fields on Enter, with the new value. `bind` ties a widget to a value key (bar fill = value / max; label/button \
+        text; image path; slider / toggle / text field value, written back as the player changes it) and `visibleWhen` \
+        shows it only while a key is truthy ("!key": falsy). In a game, a UILayoutPlayer component (uiLayout.place) shows \
+        a layout with no code; game code uses world.gameUI: set("health", 64), on("pause") { event, entity in ... }.
         """
 }
 

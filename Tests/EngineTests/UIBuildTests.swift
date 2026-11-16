@@ -142,7 +142,7 @@ private let hud = """
         #expect(throws: UIBuildError.self) { try build.applying(UIBuildEdit(addWidgets: [UIBuildWidget(type: .label, parent: "score")])) }
         #expect(throws: UIBuildError.self) { try build.applying(UIBuildEdit(updateWidgets: ["hp": .object(["colour": .string("#fff")])])) }
         #expect(throws: UIBuildError.self) { try build.applying(UIBuildEdit(updateWidgets: ["hp": .object(["id": .string("score")])])) }
-        #expect(throws: UIBuildError.self) { try build.applying(UIBuildEdit(updateWidgets: ["hp": .object(["type": .string("slider")])])) }
+        #expect(throws: UIBuildError.self) { try build.applying(UIBuildEdit(updateWidgets: ["hp": .object(["type": .string("dial")])])) }
         #expect(throws: UIBuildError.self) { try build.applying(UIBuildEdit(moveWidgets: [UIBuildMove(id: "status", parent: "status")])) }
         #expect(throws: UIBuildError.self) { try build.applying(UIBuildEdit(bindings: ["nobody": "x"])) }
     }
@@ -264,7 +264,7 @@ private let hud = """
         #expect((view.widget("hp") as? ProgressBar)?.value == 0.8, "values set by code survive a reload")
 
         // Garbage doesn't import.
-        try Data("{\"widgets\": [{\"type\": \"slider\"}]}".utf8).write(to: project.assetsURL.appendingPathComponent("bad.ui"))
+        try Data("{\"widgets\": [{\"type\": \"dial\"}]}".utf8).write(to: project.assetsURL.appendingPathComponent("bad.ui"))
         let report = database.refresh()
         #expect(report.errors.contains { $0.path == "bad.ui" })
     }
@@ -280,6 +280,76 @@ private let hud = """
         #expect(view.widget("p")?.frame == UIRect(x: 200 - 32.5, y: 150 - 22.5, width: 65, height: 45).snappedForTest)
         #expect(view.widget("f")?.frame == UIRect(x: 30, y: 40, width: 340, height: 220))
     }
+
+    // MARK: Sliders, toggles and text fields
+
+    @MainActor @Test func inputsBindAndSendEvents() throws {
+        let build = try decode("""
+        {"size": [800, 600], "values": {"volume": 0.25, "muted": false, "name": "Ana"},
+         "widgets": [
+           {"id": "settings", "type": "vstack", "anchor": "center", "width": 300},
+           {"id": "vol", "type": "slider", "parent": "settings", "bind": "volume", "min": 0, "max": 1, "step": 0.25, "event": "volumeChanged"},
+           {"id": "volText", "type": "label", "parent": "settings", "text": "Volume {volume}"},
+           {"id": "mute", "type": "toggle", "parent": "settings", "text": "Mute", "bind": "muted", "toggleStyle": "switch"},
+           {"id": "name", "type": "textField", "parent": "settings", "bind": "name", "placeholder": "Your name", "maxLength": 5, "event": "rename"},
+           {"id": "loose", "type": "toggle", "parent": "settings", "text": "Loose", "on": true}
+         ]}
+        """)
+        #expect(build.validate().isEmpty)
+        #expect(build.events == ["loose", "mute", "rename", "volumeChanged"])
+        let reread = try AssetJSON.decoder().decode(UIBuild.self, from: build.fileData())
+        #expect(reread == build)
+        var bad = build
+        bad.widgets[1].max = 0
+        #expect(bad.validate().contains { $0.description == "vol: max must be above min" })
+
+        let view = UIBuildView(build)
+        let context = laidOut(view, size: Vec2(800, 600))
+        let slider = try #require(view.widget("vol") as? Slider)
+        let toggle = try #require(view.widget("mute") as? Checkbox)
+        let field = try #require(view.widget("name") as? TextField)
+        #expect(slider.value == 0.25 && slider.range == 0...1 && !toggle.isOn && toggle.kind == .toggleSwitch)
+        #expect(field.text == "Ana" && field.placeholder == "Your name" && field.maxLength == 5)
+        #expect((view.widget("loose") as? Checkbox)?.isOn == true, "unbound toggles start at on")
+
+        // Code sets the bound keys.
+        view.set("volume", 0.75)
+        view.set("muted", true)
+        view.set("name", "Bo")
+        #expect(slider.value == 0.75 && toggle.isOn && field.text == "Bo")
+
+        // The player changes them: the key follows, text reading it updates, the event carries the value.
+        var events: [UIBuildEvent] = []
+        view.onEvent = { events.append($0) }
+        #expect(view.change("vol", to: .double(0.4)))
+        #expect(slider.value == 0.5, "snapped to the step")
+        #expect(view.value("volume") == .double(0.5))
+        #expect((view.widget("volText") as? Label)?.text == "Volume 0.5")
+        #expect(events.last == UIBuildEvent(name: "volumeChanged", widget: "vol", value: .double(0.5), key: "volume"))
+        #expect(view.change("mute", to: .bool(false)))
+        #expect(events.last == UIBuildEvent(name: "mute", widget: "mute", value: .bool(false), key: "muted"))
+        #expect(view.change("name", to: .string("Cy")))
+        #expect(events.last == UIBuildEvent(name: "rename", widget: "name", value: .string("Cy"), key: "name"))
+        #expect(!view.change("vol", to: .string("loud")) && !view.change("volText", to: .bool(true)) && !view.press("vol"))
+
+        // A real click on the toggle.
+        context.pointerMoved(to: toggle.frame.center)
+        context.pointerButton(.left, down: true)
+        context.pointerButton(.left, down: false)
+        #expect(toggle.isOn && view.value("muted") == .bool(true))
+        #expect(events.last?.name == "mute" && events.last?.value == .bool(true))
+
+        // Typing updates the key at once; Enter sends the event.
+        context.focus(field)
+        let before = events.count
+        context.textEntered("Zed")
+        #expect(view.value("name") == .string("CyZed") && events.count == before)
+        context.textEntered("Long")
+        #expect(field.text == "CyZed", "maxLength")
+        context.keyPressed(KeyEvent(key: .enter))
+        #expect(events.last == UIBuildEvent(name: "rename", widget: "name", value: .string("CyZed"), key: "name"))
+    }
+
 
     // MARK: Scaling with the screen
 

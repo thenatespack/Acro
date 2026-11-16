@@ -191,6 +191,41 @@ public final class UIBuildView: Widget {
         return true
     }
 
+    /// Changes the input `id` (slider: a number, toggle: a bool, text field: a string) as if the
+    /// player did (tests, scripted tutorials): writes its bound key and sends its event. Returns
+    /// false if there is no such input or the value is of the wrong kind.
+    @discardableResult
+    public func change(_ id: String, to value: JSONValue) -> Bool {
+        guard let spec = build.widget(id), spec.type.isInput, let widget = byID[id], widget.isEffectivelyEnabled,
+              widget.isEffectivelyVisible else { return false }
+        switch (widget, value) {
+        case (let slider as Slider, _):
+            guard let number = UIBuild.number(value) else { return false }
+            slider.setValue(Float(number))
+            inputChanged(id, to: .double(Double(slider.value)), sends: true)
+        case (let toggle as Checkbox, .bool(let on)):
+            toggle.isOn = on
+            inputChanged(id, to: .bool(on), sends: true)
+        case (let field as TextField, .string(let text)):
+            field.text = text
+            inputChanged(id, to: .string(field.text), sends: true)
+        default:
+            return false
+        }
+        return true
+    }
+
+    /// The player changed input `id`: its bound key takes the value (text and bars reading it
+    /// follow), then it sends its event when `sends`.
+    private func inputChanged(_ id: String, to value: JSONValue, sends: Bool) {
+        guard let spec = build.widget(id) else { return }
+        if !spec.bind.isEmpty, values[spec.bind] != value {
+            values[spec.bind] = value
+            applyValues()
+        }
+        if sends { send(spec, value: value) }
+    }
+
     private func send(_ spec: UIBuildWidget, value: JSONValue? = nil) {
         let event = UIBuildEvent(name: spec.eventName, widget: spec.id, value: value, key: value == nil || spec.bind.isEmpty ? nil : spec.bind)
         for handler in handlers[event.name] ?? [] { handler() }
@@ -379,6 +414,39 @@ public final class UIBuildView: Widget {
         case .spacer:
             widget = Spacer(grow: spec.grow > 0 ? spec.grow : 1)
             widget.name = spec.id
+        case .slider:
+            let upper = spec.max > spec.min ? spec.max : spec.min + 1
+            let slider = Slider(value: spec.value, in: spec.min...upper, step: max(spec.step, 0), name: spec.id)
+            slider.onChange = { [unowned self] value in inputChanged(spec.id, to: .double(Double(value)), sends: true) }
+            if spec.width == nil { slider.style.minWidth = 160 * layoutScale }
+            widget = slider
+        case .toggle:
+            let toggle = Checkbox(spec.text, isOn: spec.on, kind: spec.toggleStyle == .switch ? .toggleSwitch : .checkbox, name: spec.id)
+            toggle.onChange = { [unowned self] on in inputChanged(spec.id, to: .bool(on), sends: true) }
+            if textColor != nil || fontSize != nil {
+                var style = UIWidgetStyle()
+                style.textColor = textColor
+                style.fontSize = fontSize
+                styles[styleClass] = style
+                toggle.styleClass = styleClass
+            }
+            widget = toggle
+        case .textField:
+            let field = TextField(text: spec.text, placeholder: spec.placeholder, name: spec.id)
+            field.maxLength = spec.maxLength > 0 ? spec.maxLength : nil
+            field.preferredWidth = 160 * layoutScale
+            // The bound key follows every edit; Enter sends the event.
+            field.onChange = { [unowned self] text in inputChanged(spec.id, to: .string(text), sends: false) }
+            field.onSubmit = { [unowned self] text in inputChanged(spec.id, to: .string(text), sends: true) }
+            if textColor != nil || fontSize != nil || spec.height != nil {
+                var style = UIWidgetStyle()
+                style.textColor = textColor
+                style.fontSize = fontSize
+                if let height = spec.height { style.height = height }
+                styles[styleClass] = style
+                field.styleClass = styleClass
+            }
+            widget = field
         }
         if spec.type != .button && spec.type != .bar {
             widget.background = theme.uiBuildColor(spec.background)
@@ -412,6 +480,16 @@ public final class UIBuildView: Widget {
             case .image:
                 guard let image = widget as? UIBuildImage else { continue }
                 if !spec.bind.isEmpty, case .string(let path)? = values[spec.bind] { image.path = path } else { image.path = spec.image }
+            case .slider:
+                if !spec.bind.isEmpty, let number = UIBuild.number(values[spec.bind]) { (widget as? Slider)?.setValue(Float(number)) }
+            case .toggle:
+                guard let toggle = widget as? Checkbox else { continue }
+                toggle.title = UIBuild.fill(spec.text, values: values)
+                if !spec.bind.isEmpty, values[spec.bind] != nil { toggle.isOn = UIBuild.truthy(values[spec.bind]) }
+            case .textField:
+                guard let field = widget as? TextField, !spec.bind.isEmpty, let value = values[spec.bind] else { continue }
+                let text = UIBuild.display(value)
+                if field.text != text { field.text = text }
             default: break
             }
         }

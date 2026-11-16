@@ -219,8 +219,9 @@ public final class GameUILayer {
     public func removeHandlers(for event: String) { handlers[event] = nil }
 
     private func dispatch(_ event: UIBuildEvent, entity: Entity?) {
-        // A widget bound to a key the layer holds writes the layer's value too, so every layout sees it.
-        if let key = event.key, let value = event.value, values[key] != nil {
+        // An input bound to a key writes the layer's value, so every layout sees it (a volume slider's
+        // menu and the HUD showing it) and `value(_:)` reads it.
+        if let key = event.key, let value = event.value {
             values[key] = value
             for view in views where view.value(key) != value { view.set(key, value) }
         }
