@@ -38,7 +38,7 @@ public final class DialogueWorkspace {
         }
     }
     private var previewLayoutPath = ""
-    private let previewHost = Widget(name: "dialoguePreviewHost")
+    private let previewHost = DialogueLayoutPreviewHost()
 
     private let title = Label("Dialogue", role: .heading, name: "dialogueTitle")
     private let sidebar = VStack(spacing: 6, padding: EdgeInsets(top: 8, left: 10, bottom: 8, right: 10), name: "dialogueSidebar")
@@ -356,6 +356,9 @@ public final class DialogueWorkspace {
         if !path.isEmpty, let assets = session.assets,
            let presenter = DialogueLayoutPresenter(assets: assets, path: path, name: "dialoguePreviewLayout") {
             presenter.hidesWhenIdle = false
+            // Placed by the host (scaled); absolute so its larger virtual frame doesn't count as
+            // the tab's content running past the bottom.
+            presenter.style.position = .absolute(UIAnchor.topLeft.anchors())
             presenter.charactersPerSecond = 60
             presenter.view.images = images
             presenter.onAdvance = { [unowned self] in previewMoved() }
@@ -363,6 +366,7 @@ public final class DialogueWorkspace {
             previewHost.addChild(presenter)
             previewLayout = presenter
         }
+        previewHost.layoutPresenter = previewLayout
         previewBox.present(nil)
         previewBox.show(.idle)
         previewBox.isHidden = previewLayout != nil
@@ -747,5 +751,91 @@ private extension JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return encoder
+    }
+}
+
+/// Holds the preview: the default box, or a `.ui` layout drawn at least `virtualWidth` points
+/// wide and scaled down to fit (layouts are made for a game screen, the preview is small).
+/// Clicks are mapped into the scaled layout here: a button presses it, anything else continues.
+@MainActor
+final class DialogueLayoutPreviewHost: Widget {
+    /// The layout shown scaled (nil: the box fills the host).
+    weak var layoutPresenter: DialogueLayoutPresenter? { didSet { setNeedsLayout() } }
+    /// The narrowest screen a layout is laid out on.
+    var virtualWidth: Float = 720 { didSet { setNeedsLayout() } }
+    /// The layout's scale in the last layout pass.
+    private(set) var layoutScale: Float = 1
+
+    init() {
+        super.init(name: "dialoguePreviewHost")
+        clipsContent = true
+        isHitTestable = false
+    }
+
+    private var shownLayout: DialogueLayoutPresenter? {
+        guard let layoutPresenter, layoutPresenter.parent === self, !layoutPresenter.isHidden else { return nil }
+        return layoutPresenter
+    }
+
+    override var acceptsFocus: Bool { shownLayout?.acceptsFocus ?? false }
+    override var showsFocusRing: Bool { false }
+
+    /// The box's size: the scaled layout fits whatever room the host gets.
+    override func measureContent(width: Float?) -> Vec2 {
+        var size = Vec2.zero
+        for child in children where !child.isHidden && child.style.position == .flow {
+            size = pointwiseMax(size, child.measure(width: width))
+        }
+        return size
+    }
+
+    override func layoutChildren() {
+        let content = contentRect
+        for child in children where !child.isHidden {
+            guard child === layoutPresenter else { child.layout(in: content); continue }
+            // Not below a quarter: text drawn smaller is unreadable (and a host squeezed to
+            // nothing mid-layout would otherwise ask for a huge virtual screen).
+            let scale = min(1, max(0.25, content.width / virtualWidth))
+            layoutScale = scale
+            child.visualScale = scale
+            child.layout(in: UIRect(x: content.x, y: content.y, width: content.width / scale, height: content.height / scale))
+        }
+    }
+
+    /// `point` (window points) in the scaled layout's coordinates.
+    func layoutPoint(_ point: Vec2) -> Vec2 {
+        let origin = Vec2(contentRect.x, contentRect.y)
+        return origin + (point - origin) / layoutScale
+    }
+
+    override func hitTest(_ point: Vec2) -> Widget? {
+        guard !isHidden, frame.contains(point) else { return nil }
+        guard let layout = shownLayout else { return super.hitTest(point) }
+        // Only where the layout draws something clickable, so the empty area stays inert.
+        return layout.hitTest(layoutPoint(point)) != nil ? self : nil
+    }
+
+    override func handleEvent(_ event: UIEvent) -> Bool {
+        guard let layout = shownLayout else { return false }
+        switch event {
+        case .pointerDown(let pointer) where pointer.button == .left:
+            context?.focus(self)
+            var widget = layout.hitTest(layoutPoint(pointer.position))
+            while let current = widget, current !== layout {
+                if current is Button, let id = layout.view.layoutID(of: current) {
+                    layout.view.press(id)
+                    return true
+                }
+                widget = current.parent
+            }
+            layout.continueOrComplete()
+            return true
+        case .pointerUp, .pointerDrag:
+            return true
+        case .key:
+            return layout.handleEvent(event)
+        default:
+            return false
+        }
     }
 }

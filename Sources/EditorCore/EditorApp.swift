@@ -748,8 +748,8 @@ public final class EditorApp: Game, EditorHost {
         tableWorkspace = DataTableWorkspace(session: session)
         dialogueWorkspace = DialogueWorkspace(session: session)
         gameDialogue.assets = { [unowned self] in session.assets }
-        gameDialogue.images = { [unowned self] path in projectTexture(path) }
-        dialogueWorkspace.images = { [unowned self] path in projectTexture(path) }
+        gameDialogue.images = { [unowned self] path in projectTexture(path, fullSize: true) }
+        dialogueWorkspace.images = { [unowned self] path in projectTexture(path, fullSize: false) }
         gameWidget.addChild(gameDialogue)
         session.dialoguePresenter = gameDialogue
         visualScriptWorkspace = VisualScriptWorkspace(session: session)
@@ -901,11 +901,14 @@ public final class EditorApp: Game, EditorHost {
     }
 
     /// A project texture by path under `Assets/` or "asset:<id>" (dialogue portraits and layout
-    /// images): the scene renderer's full-size copy, else the asset browser's thumbnail.
-    private func projectTexture(_ path: String) -> GPUTexture? {
+    /// images): the scene renderer's full-size copy (only while it renders, `fullSize`), else
+    /// the asset browser's thumbnail. The Dialogue tab uses thumbnails: a renderer upload started
+    /// while nothing renders the scene never finishes, which holds MCP replies (they wait for loads).
+    private func projectTexture(_ path: String, fullSize: Bool) -> GPUTexture? {
         guard let assets = session.assets, let id = assets.assetID(forTableValue: path) else { return nil }
         let reference = AssetReference(id)
-        return sceneRenderer?.texture(TextureHandle(reference.description)) ?? thumbnails?.thumbnail(reference, kind: .texture)
+        let full = fullSize ? sceneRenderer?.texture(TextureHandle(reference.description)) : nil
+        return full ?? thumbnails?.thumbnail(reference, kind: .texture)
     }
 
     /// Dropdown options: the renderer's code-registered keys, then the project's assets.
@@ -1240,6 +1243,9 @@ public final class EditorApp: Game, EditorHost {
             mcp.pump()
             if mcp.stdioClientDisconnected { engine.quit(reason: "the MCP stdio client disconnected") }
         }
+        // Finished background loads, also while no view renders the scene (the scene renderer
+        // applies them when it draws; a builder tab in front would otherwise leave them loading).
+        session.assets?.pump()
 
         // What the UI does with the keyboard, before and after it handles this frame's input.
         func textEditing() -> Bool { ui.focusedWidget?.wantsTextInput == true || input.isTextInputActive }

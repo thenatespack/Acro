@@ -207,10 +207,31 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(workspace.previewBox.isHidden)
         workspace.playFrom(nil)
         #expect(preview.view.value("speaker") != .string("") && preview.view.value("isLine") == .bool(true))
+
+        // The layout is scaled down to fit the preview, and clicks are mapped into it.
+        let ui = UIContext()
+        ui.setViewport(size: Vec2(1000, 700), scale: 1)
+        ui.root.addChild(workspace.view)
+        ui.layoutIfNeeded()
+        let host = try #require(preview.parent as? DialogueLayoutPreviewHost)
+        #expect(host.layoutScale < 1 && preview.visualScale == host.layoutScale)
+        #expect(host.measure(width: nil).y < 300, "the layout's virtual screen doesn't size the preview")
+        preview.completeText()
+        ui.layoutIfNeeded()
+        let button = try #require(preview.view.widget("continue"))
+        let origin = Vec2(host.contentRect.x, host.contentRect.y)
+        let shown = origin + (button.frame.center - origin) * host.layoutScale
+        #expect(host.frame.contains(shown), "the scaled Continue button is inside the preview")
+        #expect(ui.hitTest(shown) === host)
+        ui.pointerMoved(to: shown)
+        ui.pointerButton(.left, down: true)
+        ui.pointerButton(.left, down: false)
+        #expect(workspace.graph.current == "ask", "a click on the scaled Continue button continues")
+        #expect(preview.view.value("isChoice") == .bool(true))
         try call(session, "dialogue.edit", ["asset": id.description, "uiLayout": ""])
         workspace.update()
         #expect(workspace.previewLayout == nil && !workspace.previewBox.isHidden)
-        #expect(workspace.previewBox.textView.text == "Hello there, traveler.", "the preview carries on in the box")
+        #expect(workspace.previewBox.optionButtons.count == 2, "the preview carries on in the box")
 
         // New Dialogue Layout writes one beside the file and uses it.
         workspace.makeLayout()
