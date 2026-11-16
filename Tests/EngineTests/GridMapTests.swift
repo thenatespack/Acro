@@ -150,6 +150,42 @@ private func approx(_ a: Vec3, _ b: Vec3, _ tolerance: Float = 1e-4) -> Bool {
         #expect(warnings == ["no piece named 'Ghost' in the library"])
     }
 
+    @Test func multiCellAutoJoinPieces() {
+        var map = library()
+        // A 2x2 wall (its variants are the starter ones, drawn centered on the 2x2 block).
+        map.pieces.append(GridPiece(name: "Big Wall", footprint: SIMD2(2, 2), layer: "walls",
+                                    join: GridJoin(single: "Wall Single", end: "Wall End", straight: "Wall Straight", corner: "Wall Corner",
+                                                   tee: "Wall Tee", cross: "Wall Cross")))
+        // A line of three blocks along x, laid side by side (not once per cell).
+        let steps = map.footprintSteps(GridMap.line(from: GridCoord(0, 0, 0), to: GridCoord(5, 0, 0)), piece: "Big Wall", rotation: 0)
+        #expect(steps == [GridCoord(0, 0, 0), GridCoord(2, 0, 0), GridCoord(4, 0, 0)])
+        map.paint("Big Wall", at: steps)
+        // One more block below the last, touching it along its +z side only by one cell's offset.
+        map.paint("Big Wall", at: [GridCoord(5, 0, 2)])
+        #expect(map.cells.count == 4)
+        var warnings: [String] = []
+        let placements = map.placements(warnings: &warnings)
+        #expect(warnings.isEmpty)
+        func at(_ x: Int, _ z: Int) -> GridPlacement? { placements.first { $0.cell.at == GridCoord(x, 0, z) } }
+        func name(_ x: Int, _ z: Int) -> String? { at(x, z).map { map.pieces[$0.piece].name } }
+        #expect(name(0, 0) == "Wall End" && at(0, 0)?.turns == 0)
+        #expect(name(2, 0) == "Wall Straight")
+        #expect(name(4, 0) == "Wall Corner", "neighbors at -x and along its +z side (the block at 5,2 overlaps half of it)")
+        #expect(name(5, 2) == "Wall End" && at(5, 2)?.turns == 1, "its neighbor is on its -z side")
+        // Centered on the block, colliding as the block.
+        let first = at(0, 0)!
+        #expect(first.block == 2)
+        #expect(approx(map.transform(of: first).position, Vec3(2, 0, 2)))
+        let box = map.box(of: first)
+        #expect(approx(box.halfExtent, Vec3(2, 1.5, 2)))
+        // The block is what it covers: painting a crate inside it on the same layer replaces it.
+        #expect(map.cellIndex(at: GridCoord(1, 0, 1), layer: "walls") != nil)
+        // Rectangles only keep whole footprints.
+        let inside = map.footprintSteps(GridMap.rectangle(from: GridCoord(0, 0, 4), to: GridCoord(4, 0, 6)), piece: "Big Wall", rotation: 0,
+                                        inside: true)
+        #expect(inside == [GridCoord(0, 0, 4), GridCoord(2, 0, 4)])
+    }
+
     @Test func placementTransforms() {
         var map = library()
         map.pieces.append(GridPiece(name: "Offset", asset: "Pieces/Crate.meshbuild", offset: Vec3(0.5, 0, 0), rotation: 90))
@@ -275,4 +311,168 @@ private func approx(_ a: Vec3, _ b: Vec3, _ tolerance: Float = 1e-4) -> Bool {
         database.refresh()
         #expect(database.revision(of: id) != before, "the map follows its pieces")
     }
+
+    /// The highest collider vertex of the ramp's chunk (cells 0...3 of floor 0).
+    @MainActor private func rampTop(_ database: AssetDatabase, _ id: AssetID) -> Float? {
+        guard let root = database.prefab(AssetReference(id))?.roots.first, let chunk = root.children.first?.children.first,
+              case .triangleMesh(let vertices, _)? = chunk.collider else { return nil }
+        return vertices.map(\.y).max()
+    }
+
+    @MainActor @Test func pieceImportsAreCachedAcrossReimports() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        let objURL = project.url(forAssetPath: "Models/ramp.obj")
+        try FileManager.default.createDirectory(at: objURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let ramp = "v -1 0 -1\nv 1 0 -1\nv 1 1 1\nv -1 1 1\nf 1 2 3\nf 1 3 4\n"
+        try ramp.write(to: objURL, atomically: true, encoding: .utf8)
+        // A whole-second mtime, so restoring it below gives back exactly the same one.
+        let stamp = Date(timeIntervalSinceReferenceDate: (Date().timeIntervalSinceReferenceDate - 60).rounded(.down))
+        try FileManager.default.setAttributes([.modificationDate: stamp], ofItemAtPath: objURL.path)
+        database.refresh()
+        let objID = try #require(database.id(forPath: "Models/ramp.obj"))
+
+        var map = GridMap(pieces: [GridPiece(name: "Ramp", asset: "Models/ramp.obj", collider: .mesh)])
+        map.paint("Ramp", at: [GridCoord(0, 0, 0)])
+        let id = try database.createGridMap(map, at: "Levels/ramps.gridmap")
+        #expect(rampTop(database, id) == 1)
+
+        // The map keeps the piece's meshes and prefab (not its textures) with what the import read.
+        let entry = database.artifactsURL(id).appendingPathComponent("cache/pieces/\(objID)", isDirectory: true)
+        let keyData = try Data(contentsOf: entry.appendingPathComponent(GridMapPieceCache.keyName))
+        let key = try AssetJSON.decoder().decode(GridMapPieceCache.Key.self, from: keyData)
+        #expect(key.importer == "obj" && key.source.path == "Models/ramp.obj")
+        let cached = try #require(AssetArtifacts.read(from: entry.appendingPathComponent(GridMapPieceCache.importFolder)))
+        #expect(cached.objects.contains { $0.kind == .mesh } && !cached.objects.contains { $0.kind == .texture })
+
+        // Same size and mtime counts as unchanged: a reimport of the map reuses the cached import,
+        // so a sneaky edit that keeps both shows the old ramp (a fresh import would read y = 5).
+        try ramp.replacingOccurrences(of: "v 1 1 1", with: "v 1 5 1").write(to: objURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: stamp], ofItemAtPath: objURL.path)
+        map.paint("Ramp", at: [GridCoord(1, 0, 0)])
+        _ = try database.writeGridMap(map, to: id)
+        #expect(rampTop(database, id) == 1, "from the map's cache")
+
+        // Without the map's cache, the database's own (up to date) import of the piece is read.
+        try FileManager.default.removeItem(at: entry)
+        map.paint("Ramp", at: [GridCoord(2, 0, 0)])
+        _ = try database.writeGridMap(map, to: id)
+        #expect(rampTop(database, id) == 1, "from the database's import")
+
+        // A real change (new mtime) reimports the piece and the map follows it.
+        try ramp.replacingOccurrences(of: "v 1 1 1", with: "v 1 5 1").write(to: objURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: objURL.path)
+        database.refresh()
+        #expect(rampTop(database, id) == 5)
+
+        // Entries of pieces the map no longer uses are removed.
+        map.pieces = [GridPiece(name: "Box", asset: "asset:\(objID)#mesh", collider: .box)]
+        map.cells = [GridCell(at: GridCoord(0, 0, 0), piece: "Box")]
+        _ = try database.writeGridMap(map, to: id)
+        #expect(!FileManager.default.fileExists(atPath: entry.path))
+    }
+
+    @MainActor @Test func prefabVariantsAndBuiltInMeshesAsPieces() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        let root = "00000000000000000000000000000a00", box = "00000000000000000000000000000a01"
+        let gone = "00000000000000000000000000000a02", extra = "00000000000000000000000000000a03"
+        let base = """
+            {"format": "Acro.Scene", "version": 2, "entities": [
+              {"id": 0, "uid": "\(root)", "components": {"Name": {"value": "Base"}}},
+              {"id": 1, "parent": 0, "uid": "\(box)", "components": {"Name": {"value": "Box"}, "MeshRenderer": {"mesh": "cube"}}},
+              {"id": 2, "parent": 0, "uid": "\(gone)", "components": {"Name": {"value": "Gone"}, "MeshRenderer": {"mesh": "sphere"}}}
+            ]}
+            """
+        let baseID = try database.createPrefab(Data(base.utf8), at: "Pieces/Base.prefab")
+        let added = """
+            {"format": "Acro.Scene", "version": 2, "entities": [
+              {"id": 0, "uid": "\(extra)", "components": {"Name": {"value": "Extra"}, "MeshRenderer": {"mesh": "cylinder"}}}
+            ]}
+            """
+        let addedValue = try JSONDecoder().decode(JSONValue.self, from: Data(added.utf8))
+        try database.createPrefabVariant(of: AssetReference(baseID), overrides: [
+            PrefabOverride(kind: .field, entity: box, component: "Transform", path: "position", value: .array([.int(0), .int(2), .int(0)])),
+            PrefabOverride(kind: .removedEntity, entity: gone),
+            PrefabOverride(kind: .addedEntity, entity: root, path: extra, value: addedValue),
+        ], at: "Pieces/Heavy.prefab")
+
+        var map = GridMap(pieces: [GridPiece(name: "Base", asset: "Pieces/Base.prefab", collider: .mesh),
+                                   GridPiece(name: "Heavy", asset: "Pieces/Heavy.prefab", collider: .mesh)])
+        map.paint("Base", at: [GridCoord(0, 0, 0)])
+        map.paint("Heavy", at: [GridCoord(1, 0, 0)])
+        let id = try database.createGridMap(GridMap(), at: "Levels/variants.gridmap")
+        let warnings = try database.writeGridMap(map, to: id)
+        #expect(warnings.isEmpty, "\(warnings)")
+
+        // Built-in primitives become meshes of the map.
+        let cube = AssetReference(id, subAsset: "mesh/builtin cube")
+        let imported = try #require(database.asset(id))
+        #expect(imported.object("mesh/builtin cube", kind: .mesh) != nil)
+        #expect(imported.object("mesh/builtin sphere", kind: .mesh) != nil)
+
+        let chunk = try #require(database.prefab(AssetReference(id))?.roots.first?.children.first?.children.first)
+        func placed(_ name: String) -> PrefabNode? { chunk.children.first { $0.name.hasPrefix(name + " ") } }
+        func find(_ name: String, in node: PrefabNode) -> PrefabNode? {
+            node.name == name ? node : node.children.lazy.compactMap { find(name, in: $0) }.first
+        }
+        let basePiece = try #require(placed("Base"))
+        #expect(find("Box", in: basePiece)?.mesh == cube && find("Gone", in: basePiece) != nil)
+
+        // The variant: the base with its box moved up, "Gone" removed and "Extra" added.
+        let heavy = try #require(placed("Heavy"))
+        let movedBox = try #require(find("Box", in: heavy))
+        #expect(movedBox.mesh == cube && movedBox.transform.position == Vec3(0, 2, 0))
+        #expect(find("Gone", in: heavy) == nil)
+        #expect(find("Extra", in: heavy)?.mesh == AssetReference(id, subAsset: "mesh/builtin cylinder"))
+
+        // Their triangles collide: the raised cube reaches y = 2.5.
+        guard case .triangleMesh(let vertices, _)? = chunk.collider else { Issue.record("no collider"); return }
+        #expect(vertices.map(\.y).max() == 2.5)
+
+        // The map follows the variant's base.
+        let before = database.revision(of: id)
+        try Data(base.replacingOccurrences(of: "\"cube\"", with: "\"cone\"").utf8)
+            .write(to: project.url(forAssetPath: "Pieces/Base.prefab"), options: .atomic)
+        database.refresh()
+        #expect(database.revision(of: id) != before)
+        let heavyAfter = database.prefab(AssetReference(id))?.roots.first?.children.first?.children.first?.children
+            .first { $0.name.hasPrefix("Heavy ") }
+        #expect(heavyAfter.flatMap { find("Box", in: $0) }?.mesh == AssetReference(id, subAsset: "mesh/builtin cone"))
+    }
+
+    @MainActor @Test func mirroredPiecesMirrorTheirAnimations() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        // A blade that slides along +x and turns about y and x.
+        let build = MeshBuild(parts: [MeshBuildPart(name: "Blade", position: Vec3(0.5, 0.5, 0))], animations: [
+            MeshBuildAnimation(tracks: [
+                MeshBuildTrack(part: "Blade", property: .position, keys: [MeshBuildKey(0, .zero), MeshBuildKey(1, Vec3(1, 2, 0))]),
+                MeshBuildTrack(part: "Blade", property: .rotation, keys: [MeshBuildKey(0, .zero), MeshBuildKey(1, Vec3(10, 90, 0))]),
+            ]),
+        ])
+        try database.createMeshBuild(build, at: "Pieces/Fan.meshbuild")
+        var map = GridMap(pieces: [GridPiece(name: "Fan", asset: "Pieces/Fan.meshbuild")])
+        map.paint("Fan", at: [GridCoord(0, 0, 0)])
+        map.paint("Fan", at: [GridCoord(1, 0, 0)], flipX: true)
+        let id = try database.createGridMap(map, at: "Levels/fans.gridmap")
+
+        let chunk = try #require(database.prefab(AssetReference(id))?.roots.first?.children.first?.children.first)
+        func animator(_ name: String) -> FieldAnimator? {
+            func find(_ node: PrefabNode) -> FieldAnimator? { node.animator ?? node.children.lazy.compactMap(find).first }
+            return chunk.children.first { $0.name == name }.flatMap(find)
+        }
+        func end(_ animator: FieldAnimator?, _ target: String) -> Float? {
+            animator?.tracks.first { $0.target == target }?.curve.keys.last?.value
+        }
+        let plain = try #require(animator("Fan 0,0,0")), flipped = try #require(animator("Fan 1,0,0"))
+        #expect(end(plain, "Transform.position.x") == 1 && end(flipped, "Transform.position.x") == -1)
+        #expect(end(plain, "Transform.position.y") == 2 && end(flipped, "Transform.position.y") == 2)
+        #expect(end(plain, "Transform.rotation.y") == 90 && end(flipped, "Transform.rotation.y") == -90)
+        #expect(end(plain, "Transform.rotation.x") == 10 && end(flipped, "Transform.rotation.x") == 10)
+    }
+
 }

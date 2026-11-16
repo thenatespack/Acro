@@ -307,7 +307,7 @@ extension World {
     }
 
     /// A 128-bit hash of `path` (two 64-bit FNV-1a variants, finalized).
-    static func stableID(_ path: String) -> EntityID {
+    nonisolated static func stableID(_ path: String) -> EntityID {
         var a: UInt64 = 0xcbf2_9ce4_8422_2325, b: UInt64 = 0x6c62_272e_07bb_0142
         for byte in path.utf8 {
             a = (a ^ UInt64(byte)) &* 0x0000_0100_0000_01b3

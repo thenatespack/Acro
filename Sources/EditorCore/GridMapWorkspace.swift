@@ -9,6 +9,8 @@ import Foundation
 // - Left-click or drag paints with the form's brush (line and rectangle go from the press to the
 //   release cell; Shift makes a rectangle hollow); the stroke is written when you let go (one undo step).
 // - Orbit with right-drag (or middle-drag, or Alt + left-drag), pan with Shift, zoom with the wheel.
+// - Keys while the pointer is over the tab: 1-6 pick the brush, R / Shift+R rotate, X and Z flip,
+//   Page Up / Page Down (or ] / [) change the floor (`GridMapView.handleKey`).
 //
 // The file is the truth: every edit is written as one undo step of the editor (Ctrl+Z), the map
 // reimports, and the workspace rebuilds its copy (also after edits from MCP or other panels).
@@ -239,6 +241,17 @@ public final class GridMapWorkspace {
 
     // MARK: Per frame
 
+    /// The tab's keyboard shortcuts (`GridMapView.handleKey`), for key presses made while the
+    /// pointer is over the tab (`point`, in UI points) and the keyboard is free. Returns whether
+    /// any key was used.
+    @discardableResult
+    public func handleKeys(_ events: [KeyEvent], pointer point: Vec2) -> Bool {
+        guard let builder, view.isEffectivelyVisible, view.frame.contains(point) else { return false }
+        var used = false
+        for event in events where builder.handleKey(event) { used = true }
+        return used
+    }
+
     /// Handles this frame's pointer (`input`: nil when the keyboard and mouse belong elsewhere)
     /// and keeps the copy in step with the file. Call before layout.
     public func update(input: ViewportInput?, dt: Float) {
@@ -336,6 +349,9 @@ public final class GridMapWorkspace {
             while let entity = stack.popLast() {
                 world.modify(MeshRenderer.self, for: entity) { renderer in
                     renderer.opacity = opacity
+                    // Glow fades too: emission is added on top of the blended color, so a lamp
+                    // on a faded floor would otherwise shine as brightly as on the edited one.
+                    renderer.emissiveStrength = opacity
                     renderer.isVisible = visible
                 }
                 stack += world.children(of: entity)

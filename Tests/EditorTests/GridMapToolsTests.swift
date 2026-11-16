@@ -169,6 +169,10 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(!renderers("Floor 1").isEmpty && renderers("Floor 1").allSatisfy { !$0.isVisible })
         workspace.builder?.setFloor(2)
         #expect(renderers("Floor 0").allSatisfy { $0.isVisible && $0.opacity < 1 })
+        #expect(renderers("Floor 0").allSatisfy { $0.emissiveStrength == $0.opacity }, "glow fades with the floor")
+        workspace.builder?.setFloor(0)
+        #expect(renderers("Floor 0").allSatisfy { $0.opacity == 1 && $0.emissiveStrength == 1 })
+        workspace.builder?.setFloor(2)
 
         _ = session.performUndo()
         _ = session.performUndo()
@@ -176,4 +180,37 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         workspace.update(input: nil, dt: 0)
         #expect(workspace.builder?.map.cells.count == 10, "the form follows undo")
     }
+
+    @Test func builderKeyboardShortcuts() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
+        let created = try call(session, "gridMap.new", ["name": "Keys"])
+        let id = try #require((created["asset"] as? String).flatMap { AssetID($0) })
+        let workspace = GridMapWorkspace(session: session)
+        #expect(workspace.open(id, floor: 0))
+        let view = try #require(workspace.builder)
+        let brush = workspace.brush
+
+        #expect(view.handleKey(KeyEvent(key: .num3)) && brush.tool == .rect)
+        #expect(view.handleKey(KeyEvent(key: .num5)) && brush.tool == .erase)
+        #expect(view.handleKey(KeyEvent(key: .r)) && brush.rotation == 90)
+        #expect(view.handleKey(KeyEvent(key: .r, isRepeat: true)) && brush.rotation == 180)
+        #expect(view.handleKey(KeyEvent(key: .r, modifiers: .shift)) && brush.rotation == 90)
+        #expect(view.handleKey(KeyEvent(key: .x)) && brush.flipX)
+        #expect(!view.handleKey(KeyEvent(key: .x, isRepeat: true)) && brush.flipX, "a held key doesn't flicker the flip")
+        #expect(view.handleKey(KeyEvent(key: .z)) && brush.flipZ)
+        #expect(view.handleKey(KeyEvent(key: .pageUp)) && brush.floor == 1)
+        #expect(view.handleKey(KeyEvent(key: .leftBracket)) && brush.floor == 0)
+        // Shortcut combinations (Cmd+Z undo) and other keys are left alone.
+        #expect(!view.handleKey(KeyEvent(key: .z, modifiers: .shortcut)) && brush.flipZ)
+        #expect(!view.handleKey(KeyEvent(key: .q)))
+        // The workspace only takes keys while the pointer is over the tab.
+        #expect(!workspace.handleKeys([KeyEvent(key: .num1)], pointer: Vec2(-100, -100)) && brush.tool == .erase)
+        // The buttons show their keys.
+        let rotate = try #require(view.view.descendant(named: "gridMapRotate"))
+        #expect(rotate.tooltip?.contains("(R") == true)
+    }
+
 }

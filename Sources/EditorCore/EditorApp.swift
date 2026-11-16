@@ -1274,6 +1274,7 @@ public final class EditorApp: Game, EditorHost {
             let claimer = ui.focusedWidget as? EditorShortcutClaiming
             let presses = claimer.map { c in input.keyPresses.filter { !c.claimsShortcut($0) } } ?? input.keyPresses
             for command in shortcuts.actions(for: presses, focus: focus) { invoke(command) }
+            if !focus.textEditing, !focus.overlayOpen { gridMapWorkspace.handleKeys(input.keyPresses, pointer: uiPoint(input.mousePosition)) }
             updateViewport(engine: engine, dt: dt, keyboardFree: !focus.textEditing)
             meshWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
             vfxWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)

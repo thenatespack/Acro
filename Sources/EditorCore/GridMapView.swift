@@ -25,6 +25,9 @@ public enum GridMapBrushTool: String, CaseIterable, Sendable {
 
     /// Whether a drag collects every cell passed over (the others use the press and release cells).
     public var strokes: Bool { self == .paint || self == .erase || self == .random }
+
+    /// Its number key in the tab (1 for Paint ... 6 for Random).
+    public var shortcut: Int { (Self.allCases.firstIndex(of: self) ?? 0) + 1 }
 }
 
 /// The brush the workspace's viewport uses; shared between the form (sets it) and the view tool.
@@ -231,6 +234,44 @@ public final class GridMapView {
         onFloorChange?()
     }
 
+    // MARK: Keys
+
+    /// The tab's keys, while the pointer is over it (see `GridMapWorkspace.handleKeys`):
+    ///
+    /// | Keys | Does |
+    /// |---|---|
+    /// | 1 to 6 | Paint, Line, Rectangle, Fill, Erase, Random brush |
+    /// | R / Shift+R | Rotate a quarter turn clockwise / back |
+    /// | X / Z | Flip X / Flip Z |
+    /// | Page Up / Page Down, or ] / [ | Floor up / down |
+    ///
+    /// Returns whether the key did something. Repeats only rotate and change floors.
+    @discardableResult
+    public func handleKey(_ event: KeyEvent) -> Bool {
+        let mods = event.modifiers.subtracting(.shift)
+        guard mods.isEmpty else { return false }
+        let shift = event.modifiers.contains(.shift)
+        let numbers: [Key] = [.num1, .num2, .num3, .num4, .num5, .num6]
+        if let i = numbers.firstIndex(of: event.key), !shift, !event.isRepeat, GridMapBrushTool.allCases.indices.contains(i) {
+            brush.tool = GridMapBrushTool.allCases[i]
+        } else {
+            switch event.key {
+            case .r: brush.rotation = (brush.rotation + (shift ? 270 : 90)) % 360
+            case .x where !shift && !event.isRepeat: brush.flipX.toggle()
+            case .z where !shift && !event.isRepeat: brush.flipZ.toggle()
+            case .pageUp, .rightBracket:
+                setFloor(brush.floor + 1)
+                return true
+            case .pageDown, .leftBracket:
+                setFloor(brush.floor - 1)
+                return true
+            default: return false
+            }
+        }
+        layout()
+        return true
+    }
+
     // MARK: Layout
 
     func layout() {
@@ -276,7 +317,7 @@ public final class GridMapView {
             case .erase: "Click or drag to clear cells (on the chosen layer, or every layer on Auto)"
             case .random: "Paint a random piece of the random set, each turned at random"
             }
-            tools.addChild(toggle(tool.title, on: tool == brush.tool, name: "gridMapBrush.\(tool.rawValue)", tooltip: tip) { [unowned self] in
+            tools.addChild(toggle(tool.title, on: tool == brush.tool, name: "gridMapBrush.\(tool.rawValue)", tooltip: "\(tip) (\(tool.shortcut))") { [unowned self] in
                 brush.tool = tool
                 layout()
             })
@@ -287,12 +328,12 @@ public final class GridMapView {
             brush.rotation = (brush.rotation + 90) % 360
             layout()
         }
-        rotate.tooltip = "Turn the piece a quarter turn"
-        let flipX = toggle("Flip X", on: brush.flipX, name: "gridMapFlipX", tooltip: "Mirror the piece left to right") { [unowned self] in
+        rotate.tooltip = "Turn the piece a quarter turn (R; Shift+R turns back)"
+        let flipX = toggle("Flip X", on: brush.flipX, name: "gridMapFlipX", tooltip: "Mirror the piece left to right (X)") { [unowned self] in
             brush.flipX.toggle()
             layout()
         }
-        let flipZ = toggle("Flip Z", on: brush.flipZ, name: "gridMapFlipZ", tooltip: "Mirror the piece front to back") { [unowned self] in
+        let flipZ = toggle("Flip Z", on: brush.flipZ, name: "gridMapFlipZ", tooltip: "Mirror the piece front to back (Z)") { [unowned self] in
             brush.flipZ.toggle()
             layout()
         }
@@ -335,7 +376,7 @@ public final class GridMapView {
         caption.style.width = 48
         let slider = Slider(value: Float(brush.floor), in: Float(lo)...Float(hi), step: 1, name: "gridMapFloor")
         slider.style.grow = 1
-        slider.tooltip = "The floor you paint on; floors below are faded, floors above hidden"
+        slider.tooltip = "The floor you paint on; floors below are faded, floors above hidden (Page Up / Page Down, or ] / [)"
         let readout = Label("\(brush.floor)", role: .caption, name: "gridMapFloorValue")
         readout.style.width = 28
         slider.onChange = { [unowned self] v in
@@ -488,7 +529,10 @@ public final class GridMapView {
                 session.log.warning("GridMap Builder: a map holds at most \(GridMap.maxCells) cells")
                 return
             }
-            edited.paint(brush.piece, at: area, rotation: brush.rotation, flipX: brush.flipX, flipZ: brush.flipZ, layer: layer)
+            // A multi-cell piece is laid side by side along a stroke or across an area, not once per cell.
+            let steps = edited.footprintSteps(area, piece: brush.piece, rotation: brush.rotation,
+                                              inside: brush.tool == .fill || (brush.tool == .rect && !outline))
+            edited.paint(brush.piece, at: steps, rotation: brush.rotation, flipX: brush.flipX, flipZ: brush.flipZ, layer: layer)
         }
         apply(edited, label: brush.tool.title + " GridMap")
     }

@@ -625,7 +625,11 @@ public enum GridMapPaintCommand: EditorCommand {
             count = m.paintRandom(set, at: coords, seed: arguments.seed ?? 1, rotation: arguments.rotation ?? 0,
                                   randomRotation: arguments.randomRotation ?? false, layer: arguments.layer)
         } else {
-            count = m.paint(first, at: coords, rotation: arguments.rotation ?? 0, flipX: arguments.flipX ?? false, flipZ: arguments.flipZ ?? false,
+            // A multi-cell piece is laid side by side along a line or across an area, not once per cell.
+            let brush = arguments.brush ?? .cells
+            let steps = brush == .cells ? coords
+                : m.footprintSteps(coords, piece: first, rotation: arguments.rotation ?? 0, inside: brush == .rect || brush == .fill)
+            count = m.paint(first, at: steps, rotation: arguments.rotation ?? 0, flipX: arguments.flipX ?? false, flipZ: arguments.flipZ ?? false,
                             layer: arguments.layer)
         }
         return (m, count)
@@ -676,8 +680,11 @@ public enum GridMapFillCommand: EditorCommand {
         let a = arguments.box[0], b = arguments.box[1]
         let volume = (abs(a.x - b.x) + 1) * (abs(a.y - b.y) + 1) * (abs(a.z - b.z) + 1)
         guard volume <= 100_000, m.cells.count + volume <= GridMap.maxCells else { throw CommandError.failed("\(title): the box is too big") }
+        let hollow = arguments.hollow ?? false
         let coords = (Swift.min(a.y, b.y)...Swift.max(a.y, b.y)).flatMap { y in
-            GridMap.rectangle(from: GridCoord(a.x, y, a.z), to: GridCoord(b.x, y, b.z), outline: arguments.hollow ?? false)
+            m.footprintSteps(GridMap.rectangle(from: GridCoord(Swift.min(a.x, b.x), y, Swift.min(a.z, b.z)),
+                                               to: GridCoord(Swift.max(a.x, b.x), y, Swift.max(a.z, b.z)), outline: hollow),
+                             piece: arguments.piece, rotation: arguments.rotation ?? 0, inside: !hollow)
         }
         let count = m.paint(arguments.piece, at: coords, rotation: arguments.rotation ?? 0, layer: arguments.layer)
         return (m, count)

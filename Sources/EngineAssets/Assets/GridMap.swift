@@ -32,7 +32,9 @@ import EngineScene
 // single, end, straight, corner, tee or cross piece that fits its neighbors (cells on the same
 // floor and layer holding the same piece, one of its variants or a `joinsWith` piece), turned to
 // face them. Variants are authored connecting toward +x (end), +x and -x (straight), +x and +z
-// (corner), and +x, -x and +z (tee).
+// (corner), and +x, -x and +z (tee). An auto piece with a footprint bigger than one cell covers
+// a square block (its footprint's larger side), looks for neighbors along each whole side of the
+// block, and its variants are centered on the block.
 
 /// A grid position: x and z across, y the floor.
 public struct GridCoord: Hashable, Comparable, Codable, Sendable, CustomStringConvertible {
@@ -182,6 +184,10 @@ public struct GridPiece: Codable, Equatable, Sendable {
 
     /// The footprint clamped to 1...64 cells per side.
     public var cells: SIMD2<Int> { SIMD2(min(max(footprint.x, 1), 64), min(max(footprint.y, 1), 64)) }
+
+    /// An auto-joining piece's block: it covers this many cells per side (its footprint's larger
+    /// side, since a joined piece turns to face its neighbors).
+    public var joinBlock: Int { max(cells.x, cells.y) }
 }
 
 /// One painted cell: a piece at a grid position on a layer.
@@ -240,6 +246,9 @@ public struct GridPlacement: Equatable, Sendable {
     public var mirrored: Bool
     /// The layer it ends up on.
     public var layer: String
+    /// For an auto-joined cell, the cells per side of the auto piece's square block: the variant
+    /// is centered on (and by default collides as) that block, whatever its own footprint.
+    public var block: Int? = nil
 }
 
 /// The contents of a `.gridmap` file. See the notes at the top of this file.
@@ -318,7 +327,7 @@ public struct GridMap: Codable, Equatable, Sendable {
 
     /// The cells a piece anchored at `at` covers with `turns` quarter turns.
     public func covered(by piece: GridPiece?, at: GridCoord, turns: Int) -> [GridCoord] {
-        let size = piece?.cells ?? SIMD2(1, 1)
+        let size = piece.map { $0.join != nil ? SIMD2(repeating: $0.joinBlock) : $0.cells } ?? SIMD2(1, 1)
         let (w, d) = turns % 2 == 0 ? (size.x, size.y) : (size.y, size.x)
         guard w > 1 || d > 1 else { return [at] }
         var out: [GridCoord] = []
@@ -535,7 +544,10 @@ public struct GridMap: Codable, Equatable, Sendable {
     /// `warnings`.
     public func placements(warnings: inout [String]) -> [GridPlacement] {
         var occupant: [String: [GridCoord: String]] = [:]
-        for cell in cells { occupant[layer(of: cell), default: [:]][cell.at] = cell.piece }
+        for cell in cells {
+            let layer = layer(of: cell)
+            for c in covered(by: cell) { occupant[layer, default: [:]][c] = cell.piece }
+        }
         var out: [GridPlacement] = []
         var missing = Set<String>(), emptyVariants = Set<String>()
         for cell in cells {
@@ -552,9 +564,11 @@ public struct GridMap: Codable, Equatable, Sendable {
                 continue
             }
             let friends = Set([piece.name] + join.variants + join.joinsWith)
+            let n = piece.joinBlock
             var mask = 0
-            for (i, d) in Self.directions.enumerated() {
-                if let n = occupant[layer]?[GridCoord(cell.at.x + d.0, cell.at.y, cell.at.z + d.1)], friends.contains(n) { mask |= 1 << i }
+            for (i, side) in Self.blockSides(cell.at, size: n).enumerated()
+            where side.contains(where: { occupant[layer]?[$0].map(friends.contains) == true }) {
+                mask |= 1 << i
             }
             let (variant, turns) = Self.joinShape(mask)
             let name = join[keyPath: variant]
@@ -566,7 +580,37 @@ public struct GridMap: Codable, Equatable, Sendable {
                 }
                 continue
             }
-            out.append(GridPlacement(cell: cell, piece: drawn, turns: turns, mirrored: false, layer: layer))
+            out.append(GridPlacement(cell: cell, piece: drawn, turns: turns, mirrored: false, layer: layer, block: n > 1 ? n : nil))
+        }
+        return out
+    }
+
+    /// The cells just outside each side of the `size` x `size` block anchored at `at`, in
+    /// `directions` order (+x, -z, -x, +z): where an auto-joining piece looks for neighbors.
+    static func blockSides(_ at: GridCoord, size: Int) -> [[GridCoord]] {
+        let span = 0..<size
+        return [span.map { GridCoord(at.x + size, at.y, at.z + $0) }, span.map { GridCoord(at.x + $0, at.y, at.z - 1) },
+                span.map { GridCoord(at.x - 1, at.y, at.z + $0) }, span.map { GridCoord(at.x + $0, at.y, at.z + size) }]
+    }
+
+    /// `coords` snapped to whole footprints of `piece` turned by `rotation`, counted from the first
+    /// coordinate, without repeats: a line or rectangle of a 2x2 piece puts pieces side by side
+    /// instead of each one replacing the last. With `inside`, only footprints wholly within
+    /// `coords` are kept (a fill stays inside its region). One-cell pieces come back unchanged.
+    public func footprintSteps(_ coords: [GridCoord], piece name: String, rotation: Int, inside: Bool = false) -> [GridCoord] {
+        guard let first = coords.first, let p = piece(named: name) else { return coords }
+        let size = p.join != nil ? SIMD2(repeating: p.joinBlock) : p.cells
+        let (w, d) = Self.quarterTurns(rotation) % 2 == 0 ? (size.x, size.y) : (size.y, size.x)
+        guard w > 1 || d > 1 else { return coords }
+        func floorDiv(_ a: Int, _ b: Int) -> Int { a >= 0 ? a / b : -((-a + b - 1) / b) }
+        let all = inside ? Set(coords) : []
+        var seen = Set<GridCoord>()
+        var out: [GridCoord] = []
+        for c in coords {
+            let anchor = GridCoord(first.x + floorDiv(c.x - first.x, w) * w, c.y, first.z + floorDiv(c.z - first.z, d) * d)
+            guard seen.insert(anchor).inserted else { continue }
+            if inside, covered(by: p, at: anchor, turns: Self.quarterTurns(rotation)).contains(where: { !all.contains($0) }) { continue }
+            out.append(anchor)
         }
         return out
     }
@@ -587,7 +631,9 @@ public struct GridMap: Codable, Equatable, Sendable {
 
     /// The middle of the cells a placement covers, on its floor.
     public func footprintCenter(of placement: GridPlacement) -> Vec3 {
-        let area = covered(by: pieces[placement.piece], at: placement.cell.at, turns: placement.turns)
+        let area = placement.block.map { n in
+            [placement.cell.at, GridCoord(placement.cell.at.x + n - 1, placement.cell.at.y, placement.cell.at.z + n - 1)]
+        } ?? covered(by: pieces[placement.piece], at: placement.cell.at, turns: placement.turns)
         let lo = area.first ?? placement.cell.at, hi = area.last ?? placement.cell.at
         let center = (origin(of: lo) + origin(of: hi) + Vec3(cell.x, 0, cell.z)) / 2
         return Vec3(center.x, origin(of: lo).y, center.z)
@@ -597,7 +643,7 @@ public struct GridMap: Codable, Equatable, Sendable {
     /// and the turn.
     public func box(of placement: GridPlacement) -> (center: Vec3, halfExtent: Vec3, rotation: Quat) {
         let piece = pieces[placement.piece]
-        let fp = piece.cells
+        let fp = placement.block.map { SIMD2(repeating: $0) } ?? piece.cells
         var size = piece.size
         if size.x <= 0 { size.x = Float(fp.x) * cell.x }
         if size.y <= 0 { size.y = cell.y }
