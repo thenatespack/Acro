@@ -264,6 +264,71 @@ public struct CharacterAttachment: Codable, Equatable, Sendable {
     }
 }
 
+/// A clip from another asset on the character's skeleton: a `clips` entry that is an object
+/// (`{"name": "wave", "clip": "asset:<id>#animation/Wave", "boneMap": {"mixamorig:Head": "head"}}`)
+/// or an asset reference string (named after its animation). The source is a glTF / GLB file's
+/// animation or another `.character`'s clip. Imported by plain name match: each channel on a
+/// source node whose name (after `boneMap`) is one of the character's bones drives that bone's
+/// rotation and scale; translations (except from a `.character` of the same template) and
+/// unmatched nodes are dropped. There is no rest-pose correction: rigs whose bones rest rotated
+/// differently from the character's (unrotated) need retargeting. Named like a stock clip, it
+/// replaces that clip (a glTF walk in the locomotion blend).
+public struct CharacterExternalClip: Codable, Equatable, Sendable {
+    /// The Animator state (and the character's `animation/<name>` sub-asset).
+    public var name: String
+    /// "asset:<id>#animation/<name>".
+    public var clip: String
+    /// Source node name → character bone name, for bones named differently; names not listed
+    /// match as they are.
+    public var boneMap: [String: String]
+    /// Repeats; default: as the stock clip of that name (idle, walk, run loop), else true.
+    public var loops: Bool?
+
+    public init(name: String, clip: String, boneMap: [String: String] = [:], loops: Bool? = nil) {
+        self.name = name
+        self.clip = clip
+        self.boneMap = boneMap
+        self.loops = loops
+    }
+
+    private enum CodingKeys: String, CodingKey { case name, clip, boneMap, loops }
+
+    public init(from decoder: any Decoder) throws {
+        if let text = try? decoder.singleValueContainer().decode(String.self) {
+            self.init(name: Self.defaultName(text), clip: text)
+            return
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let clip = try c.decode(String.self, forKey: .clip)
+        self.init(name: try c.decodeIfPresent(String.self, forKey: .name) ?? Self.defaultName(clip), clip: clip,
+                  boneMap: try c.decodeIfPresent([String: String].self, forKey: .boneMap) ?? [:],
+                  loops: try c.decodeIfPresent(Bool.self, forKey: .loops))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name)
+        try c.encode(clip, forKey: .clip)
+        if !boneMap.isEmpty { try c.encode(boneMap, forKey: .boneMap) }
+        try c.encodeIfPresent(loops, forKey: .loops)
+    }
+
+    /// The source reference, when `clip` is "asset:<id>#animation/<name>".
+    public var reference: AssetReference? {
+        guard let reference = AssetReference(clip.trimmingCharacters(in: .whitespaces)),
+              reference.subAsset?.hasPrefix("animation/") == true else { return nil }
+        return reference
+    }
+
+    /// The animation's name in `reference` ("Wave" for "asset:<id>#animation/Wave").
+    static func defaultName(_ reference: String) -> String {
+        guard let range = reference.range(of: "#animation/") else { return reference }
+        return String(reference[range.upperBound...])
+    }
+
+    var repeats: Bool { loops ?? (CharacterClips.stockNames.contains(name) ? CharacterClips.loops(name) : true) }
+}
+
 /// A character: the contents of a `.character` file.
 public struct CharacterBuild: Codable, Equatable, Sendable {
     public var template: CharacterTemplate
@@ -272,6 +337,9 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
     public var attachments: [CharacterAttachment]
     /// The stock clips to include (names from `CharacterClips.stockNames`); all of them by default.
     public var clips: [String]
+    /// Clips from other assets (objects or asset references in the file's `clips` list, after
+    /// the stock names).
+    public var externalClips: [CharacterExternalClip]
     /// The state the `Animator` starts in.
     public var defaultClip: String
     /// Blends skin weights across joints, so elbows and knees bend smoothly instead of as rigid pieces.
@@ -281,12 +349,14 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
 
     public init(template: CharacterTemplate = .humanoid, proportions: CharacterProportions = CharacterProportions(),
                 colors: CharacterColors = CharacterColors(), attachments: [CharacterAttachment] = [],
-                clips: [String] = CharacterClips.stockNames, defaultClip: String = "idle", smooth: Bool = true, segments: Int = 12) {
+                clips: [String] = CharacterClips.stockNames, externalClips: [CharacterExternalClip] = [], defaultClip: String = "idle",
+                smooth: Bool = true, segments: Int = 12) {
         self.template = template
         self.proportions = proportions
         self.colors = colors
         self.attachments = attachments
         self.clips = clips
+        self.externalClips = externalClips
         self.defaultClip = defaultClip
         self.smooth = smooth
         self.segments = segments
@@ -294,17 +364,48 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey { case template, proportions, colors, attachments, clips, defaultClip, smooth, segments }
 
+    /// A `clips` entry: a stock name, or a clip from another asset.
+    private enum ClipEntry: Decodable {
+        case stock(String)
+        case external(CharacterExternalClip)
+
+        init(from decoder: any Decoder) throws {
+            if let name = try? decoder.singleValueContainer().decode(String.self), !name.hasPrefix(AssetReference.scheme) {
+                self = .stock(name)
+            } else {
+                self = .external(try CharacterExternalClip(from: decoder))
+            }
+        }
+    }
+
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = CharacterBuild()
+        let entries = try c.decodeIfPresent([ClipEntry].self, forKey: .clips)
         self.init(template: try c.decodeIfPresent(CharacterTemplate.self, forKey: .template) ?? d.template,
                   proportions: try c.decodeIfPresent(CharacterProportions.self, forKey: .proportions) ?? d.proportions,
                   colors: try c.decodeIfPresent(CharacterColors.self, forKey: .colors) ?? d.colors,
                   attachments: try c.decodeIfPresent([CharacterAttachment].self, forKey: .attachments) ?? d.attachments,
-                  clips: try c.decodeIfPresent([String].self, forKey: .clips) ?? d.clips,
+                  clips: entries.map { $0.compactMap { if case .stock(let name) = $0 { name } else { nil } } } ?? d.clips,
+                  externalClips: entries.map { $0.compactMap { if case .external(let clip) = $0 { clip } else { nil } } } ?? [],
                   defaultClip: try c.decodeIfPresent(String.self, forKey: .defaultClip) ?? d.defaultClip,
                   smooth: try c.decodeIfPresent(Bool.self, forKey: .smooth) ?? d.smooth,
                   segments: try c.decodeIfPresent(Int.self, forKey: .segments) ?? d.segments)
+    }
+
+    /// `clips` holds the stock names, then the external clips' objects.
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(template, forKey: .template)
+        try c.encode(proportions, forKey: .proportions)
+        try c.encode(colors, forKey: .colors)
+        try c.encode(attachments, forKey: .attachments)
+        var list = c.nestedUnkeyedContainer(forKey: .clips)
+        for name in clips { try list.encode(name) }
+        for clip in externalClips { try list.encode(clip) }
+        try c.encode(defaultClip, forKey: .defaultClip)
+        try c.encode(smooth, forKey: .smooth)
+        try c.encode(segments, forKey: .segments)
     }
 
     public func fileData() throws -> Data { try AssetJSON.encode(self) }
@@ -315,9 +416,23 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
     /// The skeleton and body shapes for the template and proportions.
     public var rig: CharacterRig { CharacterRig(template: template, proportions: proportions) }
 
-    /// The clips that will be generated: `clips` filtered to stock names, without repeats, in stock order.
+    /// The Animator's clip states: `clips` filtered to stock names, without repeats, in stock
+    /// order (an external clip of the same name takes its place), then the other external clips.
     public var clipNames: [String] {
-        CharacterClips.stockNames.filter { clips.contains($0) }
+        let external = externalClips.map(\.name)
+        var names = CharacterClips.stockNames.filter { clips.contains($0) || external.contains($0) }
+        for name in external where !names.contains(name) && !name.isEmpty { names.append(name) }
+        return names
+    }
+
+    /// The stock clips generated in code (those no external clip replaces).
+    public var stockClipNames: [String] {
+        CharacterClips.stockNames.filter { name in clips.contains(name) && !externalClips.contains { $0.name == name } }
+    }
+
+    /// Whether the clip state `name` repeats.
+    public func loops(_ name: String) -> Bool {
+        externalClips.first { $0.name == name }?.repeats ?? CharacterClips.loops(name)
     }
 
     /// `base`, or "`base` 2", "`base` 3"… whichever no attachment has.
@@ -341,6 +456,19 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
         }
         for clip in clips where !CharacterClips.stockNames.contains(clip) {
             problems.append("no stock clip '\(clip)' (stock clips: \(CharacterClips.stockNames.joined(separator: ", ")))")
+        }
+        var clipNamesSeen = Set<String>()
+        for clip in externalClips {
+            let label = clip.name.isEmpty ? "'\(clip.clip)'" : "'\(clip.name)'"
+            if clip.name.trimmingCharacters(in: .whitespaces).isEmpty { problems.append("clip '\(clip.clip)' has no name") }
+            if !clipNamesSeen.insert(clip.name).inserted { problems.append("two clips are named '\(clip.name)'") }
+            if clip.name == "locomotion" { problems.append("clip 'locomotion': the name is the locomotion blend's") }
+            if clip.reference == nil {
+                problems.append("clip \(label): '\(clip.clip)' isn't an animation reference (asset:<id>#animation/<name>)")
+            }
+            for (source, bone) in clip.boneMap.sorted(by: { $0.key < $1.key }) where !bones.contains(bone) {
+                problems.append("clip \(label): boneMap '\(source)' → no bone '\(bone)' in the \(template.rawValue) template")
+            }
         }
         if !clipNames.isEmpty && !clipNames.contains(defaultClip) {
             problems.append("defaultClip '\(defaultClip)' isn't one of the clips; the Animator starts in '\(clipNames[0])'")

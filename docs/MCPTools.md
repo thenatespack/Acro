@@ -693,10 +693,11 @@ Result:
 
 **Edit Character** · _undoable_
 
-Changes a .character file in one undoable step, in this order: template, proportions (name → multiplier), colors (region → [r,g,b]), resetColors, detach, attach, updateAttachments (name → fields; "name" renames), clips, defaultClip, smooth, segments. Placed copies update. Bone names for attach come from character.bones or character.get. Undoable (one step; edit.undo reverts it).
+Changes a .character file in one undoable step, in this order: template, proportions (name → multiplier), colors (region → [r,g,b]), resetColors, detach, attach, updateAttachments (name → fields; "name" renames), clips (stock), removeClips, addClips (clips from glTF animations or other characters, played by bone-name match; boneMap maps source node names to bones), defaultClip, smooth, segments. Placed copies update. Bone names for attach come from character.bones or character.get. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
+- `addClips?`: [string]
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `attach?`: [{asset?: string, bone?: string, color?: number[3], name?: string, position?: number[3], rotation?: number[3], scale?: number}]
 - `clips?`: [string]
@@ -705,6 +706,7 @@ Arguments:
 - `detach?`: [string]
 - `path?`: string
 - `proportions?`: object
+- `removeClips?`: [string]
 - `resetColors?`: [string]
 - `segments?`: integer
 - `smooth?`: boolean
@@ -740,7 +742,7 @@ Result:
 
 - `bones`: [{name: string, parent?: string, position: number[3]}]
 - `character`: {attachments?: [object], clips?: [string], colors?: {accent?: number[3], body?: number[3], eyes?: number[3], legs?: number[3], skin?: number[3]}, defaultClip?: string, proportions?: {arms?: number, head?: number, height?: number, legs?: number, neck?: number, tail?: number, torso?: number, width?: number}, segments?: integer, smooth?: boolean, template?: "humanoid" \| "quadruped" \| "bird" \| "blob"}
-- `clips`: [{clip: string, duration: number, events: [string], loops: boolean, name: string}]
+- `clips`: [{clip: string, duration: number, events: [string], loops: boolean, name: string, source?: string}]
 - `colors`: object
 - `summary`: {asset: asset id, attachments: [string], bones: [string], clips: [string], entities?: [entity id], height: number, parameters: [string], path: string, prefab: asset id, template: "humanoid" \| "quadruped" \| "bird" \| "blob", warnings: [string]}
 
@@ -748,7 +750,7 @@ Result:
 
 **New Character**
 
-Writes a .character file in `folder` (default: the Assets root) from a body template, imported as a skinned prefab with an Animator and the stock clips (idle, walk, run, jump, attack, die), optionally placed in the scene. Then change it with character.edit {proportions, colors, attach}. A character is a body `template` (humanoid, quadruped, bird, blob) with a generated skeleton, `proportions` (multipliers, 1 = as designed, 0.25-3: height (scales everything), head, torso, width, arms (a bird's wings), legs, neck, tail), `colors` by region (skin, body, legs, accent, eyes; [r,g,b] 0-1 sRGB; a missing one is the template's default), `attachments` (each: name, bone (see character.bones), asset (a .meshbuild path under Assets/), position [x,y,z] meters and rotation [x,y,z] degrees in the bone's space (+Y up, +Z forward, +X the character's left), scale, optional color recoloring every part), `clips` (stock clips to include: idle, walk, run, jump, attack, die; all by default), `defaultClip` (the Animator's first state), `smooth` (blended skin weights at joints) and `segments` (6-32, roundness). It imports as a skinned prefab with an Animator whose states are the clips plus `locomotion` (idle/walk/run blended by the float parameter `speed` in m/s), with triggers `jump`, `attack`, `die`. Every key is optional.
+Writes a .character file in `folder` (default: the Assets root) from a body template, imported as a skinned prefab with an Animator and the stock clips (idle, walk, run, jump, attack, die), optionally placed in the scene. Then change it with character.edit {proportions, colors, attach}. A character is a body `template` (humanoid, quadruped, bird, blob) with a generated skeleton, `proportions` (multipliers, 1 = as designed, 0.25-3: height (scales everything), head, torso, width, arms (a bird's wings), legs, neck, tail), `colors` by region (skin, body, legs, accent, eyes; [r,g,b] 0-1 sRGB; a missing one is the template's default), `attachments` (each: name, bone (see character.bones), asset (a .meshbuild path under Assets/), position [x,y,z] meters and rotation [x,y,z] degrees in the bone's space (+Y up, +Z forward, +X the character's left), scale, optional color recoloring every part), `clips` (stock clips to include: idle, walk, run, jump, attack, die; all by default; an entry may instead be {name, clip: "asset:<id>#animation/<name>" (a glTF animation or another character's clip), boneMap: {sourceNode: bone}, loops}, played by bone-name match: rotations of nodes named like bones, no rest-pose correction; named like a stock clip it replaces it), `defaultClip` (the Animator's first state), `smooth` (blended skin weights at joints) and `segments` (6-32, roundness). It imports as a skinned prefab with an Animator whose states are the clips plus `locomotion` (idle/walk/run blended by the float parameter `speed` in m/s), with triggers `jump`, `attack`, `die`. Every key is optional.
 
 Arguments:
 
@@ -795,7 +797,7 @@ Result:
 
 **Set Character** · _undoable_, _idempotent_
 
-Replaces a .character file's whole contents and reimports it; placed copies update. Undoable. For a few changes character.edit is shorter. A character is a body `template` (humanoid, quadruped, bird, blob) with a generated skeleton, `proportions` (multipliers, 1 = as designed, 0.25-3: height (scales everything), head, torso, width, arms (a bird's wings), legs, neck, tail), `colors` by region (skin, body, legs, accent, eyes; [r,g,b] 0-1 sRGB; a missing one is the template's default), `attachments` (each: name, bone (see character.bones), asset (a .meshbuild path under Assets/), position [x,y,z] meters and rotation [x,y,z] degrees in the bone's space (+Y up, +Z forward, +X the character's left), scale, optional color recoloring every part), `clips` (stock clips to include: idle, walk, run, jump, attack, die; all by default), `defaultClip` (the Animator's first state), `smooth` (blended skin weights at joints) and `segments` (6-32, roundness). It imports as a skinned prefab with an Animator whose states are the clips plus `locomotion` (idle/walk/run blended by the float parameter `speed` in m/s), with triggers `jump`, `attack`, `die`. Every key is optional. Undoable (one step; edit.undo reverts it).
+Replaces a .character file's whole contents and reimports it; placed copies update. Undoable. For a few changes character.edit is shorter. A character is a body `template` (humanoid, quadruped, bird, blob) with a generated skeleton, `proportions` (multipliers, 1 = as designed, 0.25-3: height (scales everything), head, torso, width, arms (a bird's wings), legs, neck, tail), `colors` by region (skin, body, legs, accent, eyes; [r,g,b] 0-1 sRGB; a missing one is the template's default), `attachments` (each: name, bone (see character.bones), asset (a .meshbuild path under Assets/), position [x,y,z] meters and rotation [x,y,z] degrees in the bone's space (+Y up, +Z forward, +X the character's left), scale, optional color recoloring every part), `clips` (stock clips to include: idle, walk, run, jump, attack, die; all by default; an entry may instead be {name, clip: "asset:<id>#animation/<name>" (a glTF animation or another character's clip), boneMap: {sourceNode: bone}, loops}, played by bone-name match: rotations of nodes named like bones, no rest-pose correction; named like a stock clip it replaces it), `defaultClip` (the Animator's first state), `smooth` (blended skin weights at joints) and `segments` (6-32, roundness). It imports as a skinned prefab with an Animator whose states are the clips plus `locomotion` (idle/walk/run blended by the float parameter `speed` in m/s), with triggers `jump`, `attack`, `die`. Every key is optional. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 

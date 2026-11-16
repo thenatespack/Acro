@@ -210,6 +210,76 @@ private func makeProject() throws -> Project {
         #expect(birdWorld.get(Animator.self, for: birdRoot)?.targets.count == CharacterRig(template: .bird).bones.count)
     }
 
+    @Test func externalClipEntriesRoundTripAndAreValidated() throws {
+        let file = try AssetJSON.decoder().decode(CharacterBuild.self, from: Data("""
+            {"clips": ["idle", "asset:0123456789abcdef0123456789abcdef#animation/Wave",
+                       {"name": "walk", "clip": "asset:0123456789abcdef0123456789abcdef#animation/Walk", "boneMap": {"Hips": "hips"}}]}
+            """.utf8))
+        #expect(file.clips == ["idle"])
+        #expect(file.externalClips.map(\.name) == ["Wave", "walk"] && file.externalClips[1].boneMap == ["Hips": "hips"])
+        #expect(file.clipNames == ["idle", "walk", "Wave"], "a same-named external clip takes the stock clip's place")
+        #expect(file.stockClipNames == ["idle"] && file.loops("walk") && file.loops("Wave"))
+        #expect(try AssetJSON.decoder().decode(CharacterBuild.self, from: file.fileData()) == file)
+        var bad = file
+        bad.externalClips += [CharacterExternalClip(name: "Wave", clip: "Models/wave.gltf"),
+                              CharacterExternalClip(name: "x", clip: "asset:0123456789abcdef0123456789abcdef#animation/X", boneMap: ["A": "tentacle"])]
+        let problems = bad.problems.joined(separator: "\n")
+        #expect(problems.contains("two clips are named 'Wave'") && problems.contains("isn't an animation reference"))
+        #expect(problems.contains("boneMap 'A' → no bone 'tentacle'"))
+    }
+
+    @Test func externalClipsFromGLTFAndCharactersPlayByBoneName() throws {
+        SkeletalAnimation.registerComponents()
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let url = project.url(forAssetPath: "Models/rig.gltf")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try animationClipImportGLTF().write(to: url)
+        let database = AssetDatabase(project: project)
+        database.refresh()
+        let gltf = try #require(database.id(forPath: "Models/rig.gltf"))
+        let other = try database.createCharacter(CharacterBuild(), at: "other.character")
+        let bend = AssetReference(gltf, subAsset: "animation/Bend").description
+        // glTF nodes Root (rotation) and Tip (translation, scale) mapped onto bones; a stock jump
+        // from another humanoid replaces this one's; a clip with no matching node is dropped.
+        let character = CharacterBuild(clips: ["idle", "walk"], externalClips: [
+            CharacterExternalClip(name: "bend", clip: bend, boneMap: ["Root": "head", "Tip": "hand.R"], loops: false),
+            CharacterExternalClip(name: "jump", clip: AssetReference(other, subAsset: "animation/jump").description),
+            CharacterExternalClip(name: "lost", clip: bend),
+        ])
+        let id = try database.createCharacter(CharacterBuild(), at: "hero.character")
+        let warnings = try database.writeCharacter(character, to: id).joined(separator: "\n")
+        let record = try #require(database.record(id))
+        #expect(record.importError == nil)
+        #expect(record.objects.filter { $0.kind == .animation }.map(\.id) == ["animation/idle", "animation/walk", "animation/bend", "animation/jump"])
+        #expect(warnings.contains("clip 'lost': none of the animated nodes"), "\(warnings)")
+
+        let rig = character.rig
+        let clip = try #require(database.animationClip(AssetReference(id, subAsset: "animation/bend")))
+        let head = rig.index(of: "head")!, hand = rig.index(of: "hand.R")!
+        #expect(clip.channels.map(\.target) == [head, hand] && clip.channels.map(\.path) == [.rotation, .scale])
+        let jump = try #require(database.animationClip(AssetReference(id, subAsset: "animation/jump")))
+        #expect(jump.channels.count == CharacterClips.clip("jump", rig: CharacterBuild().rig)!.channels.count)
+        #expect(jump.channels.contains { $0.path == .translation }, "the same skeleton keeps its root moves")
+        #expect(jump.events.map(\.name) == ["takeoff", "land"])
+
+        // The Animator has them as states, and the glTF rotation plays on the head.
+        let world = World()
+        let prefab = try #require(database.prefab(AssetReference(id)))
+        let root = try #require(world.instantiate(prefab).first)
+        let animator = try #require(world.get(Animator.self, for: root))
+        #expect(animator.stateMachine.states.map(\.name) == ["idle", "walk", "jump", "bend", "locomotion"])
+        #expect(animator.stateMachine.states.first { $0.name == "bend" }?.loops == false)
+        #expect(animator.stateMachine.transitions.contains { $0.to == "jump" })
+        world.propagateTransforms()
+        _ = world.addSceneAnimationSystem(assets: { database })
+        world.modify(Animator.self, for: root) { $0.play("bend", fade: 0) }
+        for _ in 0..<40 { world.update(dt: 1.0 / 30) }
+        let headRotation = try #require(world.get(Transform.self, for: animator.targets[head])).rotation
+        let expected = Quat(angle: .pi / 2, axis: Vec3(0, 1, 0))
+        #expect(abs(abs(headRotation.vector.y) - abs(expected.vector.y)) < 1e-3 && abs(abs(headRotation.vector.w) - abs(expected.vector.w)) < 1e-3)
+    }
+
     @Test func importWarnsAboutMissingAssetsAndClips() throws {
         SkeletalAnimation.registerComponents()
         let project = try makeProject()

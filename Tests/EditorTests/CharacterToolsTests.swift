@@ -145,6 +145,36 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         session.world.removeSystem(named: "CharacterToolsTests.animation")
     }
 
+    @Test func addClipsFromOtherAssets() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
+        let source = try call(session, "character.new", ["name": "Source"])
+        let hero = try call(session, "character.new", ["name": "Hero"])
+        let sourceID = try #require(source["asset"] as? String)
+        let wave = "asset:\(sourceID)#animation/attack"
+        #expect(throws: CommandError.self) {
+            try call(session, "character.edit", ["path": "Hero.character", "addClips": [["name": "wave", "clip": wave, "boneMap": ["A": "tentacle"]]]])
+        }
+        #expect(throws: CommandError.self) { try call(session, "character.edit", ["path": "Hero.character", "addClips": [["name": "wave", "clip": "wave.gltf"]]]) }
+        let edited = try call(session, "character.edit", ["path": "Hero.character", "addClips": [["name": "wave", "clip": wave, "loops": true]],
+                                                          "defaultClip": "wave"])
+        #expect((edited["clips"] as? [String])?.last == "wave")
+        #expect((edited["warnings"] as? [String]) == [], "\(edited["warnings"] ?? "")")
+        let got = try call(session, "character.get", ["path": "Hero.character"])
+        let info = try #require((got["clips"] as? [[String: Any]])?.first { $0["name"] as? String == "wave" })
+        #expect(info["source"] as? String == wave && info["loops"] as? Bool == true && (info["duration"] as? Double ?? 0) > 0)
+        #expect(info["events"] as? [String] == ["hit"])
+        let id = try #require((hero["asset"] as? String).flatMap { AssetID($0) })
+        #expect(session.assets?.character(of: id)?.defaultClip == "wave")
+        // Missing sources are reported without importing.
+        let missing = try call(session, "character.edit", ["path": "Hero.character", "addClips": [["name": "gone", "clip": "asset:0123456789abcdef0123456789abcdef#animation/x"]]])
+        #expect((missing["warnings"] as? [String])?.contains { $0.contains("clip 'gone': no asset") } == true)
+        let removed = try call(session, "character.edit", ["path": "Hero.character", "removeClips": ["gone"]])
+        #expect((removed["clips"] as? [String])?.contains("gone") == false)
+    }
+
     @Test func editModeAnimationShowsAPoseWithoutChangingTheScene() throws {
         let folder = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: folder) }
