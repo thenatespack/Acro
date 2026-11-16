@@ -22,7 +22,13 @@ public enum EditorVFXCommands {
         spiralTwist, armWidth, size [min,max] (half-width m), spin, sizeOverLife [{time, value}] (up to 4), color \
         [{time, color [r,g,b,a] linear}] (up to 4, alpha fades), intensity (HDR glow), brightnessVariation, blend \
         additive|alpha (alpha = smoke/dust, sorted, at most 262144 particles), stretch, stretchMode scaled|streak, \
-        collidesWithGround, groundHeight, bounce, friction, softness, lit, seed), plus `duration` (seconds one run lasts; \
+        collidesWithGround, groundHeight, bounce, friction, killOnCollision, softness, lit, seed, texture (an image, \
+        .proctex or .sprite by path relative to Assets/ or "asset:<id>"; its RGBA multiplies the color; "" = soft disc), \
+        atlasColumns / atlasRows (an image's flipbook grid; a .sprite sets its own from its frames), spriteTag (a .sprite's \
+        tag to play; "" = every frame), frameCount (0 = every cell), frameRate (fps looping; 0 = once over each particle's \
+        life), randomStartFrame, frameBlending, subEmitters [{trigger birth|death|collision, emitter (another emitter's \
+        name), count (particles per event, 1-1024), inheritVelocity}] (at most 2; the target emits only from those events: \
+        its rate, bursts, delay and position are ignored; targets can't have links of their own)), plus `duration` (seconds one run lasts; \
         the editor preview loops after it), `background` [r,g,b] and `ground` (preview only). Every key is optional. \
         Presets: \(VFXBuild.presetNames.joined(separator: ", ")).
         """
@@ -129,6 +135,11 @@ public struct VFXResult: Codable, Equatable, Sendable {
 }
 
 extension VFXResult {
+    /// `problems`, then the import's own warnings (missing textures…) not already among them.
+    static func merged(_ problems: [String], _ imported: [String]) -> [String] {
+        problems + imported.filter { !problems.contains($0) }
+    }
+
     @MainActor init(_ id: AssetID, _ build: VFXBuild, warnings: [String], entities: [EntityID]? = nil, in session: EditorSession) {
         let record = session.assets?.record(id)
         let prefab = record?.objects.first { $0.kind == .prefab }.map { AssetReference(id, subAsset: $0.id) } ?? AssetReference(id)
@@ -243,8 +254,8 @@ public enum VFXSetCommand: EditorCommand {
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> VFXResult {
         let (id, _) = try session.resolveVFX(arguments, title)
-        _ = try session.commands.require(session.applyVFX(arguments.effect, to: id, label: title), title)
-        return VFXResult(id, arguments.effect, warnings: VFXBuildCheck.problems(arguments.effect), in: session)
+        let imported = try session.commands.require(session.applyVFX(arguments.effect, to: id, label: title), title)
+        return VFXResult(id, arguments.effect, warnings: VFXResult.merged(VFXBuildCheck.problems(arguments.effect), imported), in: session)
     }
 }
 
@@ -281,15 +292,15 @@ public enum VFXEditCommand: EditorCommand {
 
     public static let id: CommandID = "vfx.edit"
     public static let title = "Edit VFX"
-    public static let doc = "Changes part of a .vfx file in one undoable step, in this order: removeEmitters, addEmitters, updateEmitters (name → fields to change; \"name\" renames), then duration / background / ground. Placed copies update. Returns the emitter names and import warnings."
+    public static let doc = "Changes part of a .vfx file in one undoable step, in this order: removeEmitters (links to them go too), addEmitters, updateEmitters (name → fields to change; \"name\" renames, and links follow; e.g. {\"Sparks\": {\"subEmitters\": [{\"trigger\": \"death\", \"emitter\": \"Pops\", \"count\": 6}]}} or {\"Smoke\": {\"texture\": \"Textures/puff.png\", \"atlasColumns\": 4, \"atlasRows\": 4}}), then duration / background / ground. Placed copies update. Returns the emitter names and import warnings."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> VFXResult {
         let (id, original) = try session.resolveVFX(arguments, title)
         let build = try edited(original, with: arguments)
-        _ = try session.commands.require(session.applyVFX(build, to: id, label: title), title)
-        return VFXResult(id, build, warnings: VFXBuildCheck.problems(build), in: session)
+        let imported = try session.commands.require(session.applyVFX(build, to: id, label: title), title)
+        return VFXResult(id, build, warnings: VFXResult.merged(VFXBuildCheck.problems(build), imported), in: session)
     }
 
     /// `build` with the edits of `arguments` applied (pure, for tests and the UI).
@@ -298,7 +309,7 @@ public enum VFXEditCommand: EditorCommand {
         if let names = arguments.removeEmitters, !names.isEmpty {
             let missing = names.filter { name in !build.emitters.contains { $0.name == name } }
             guard missing.isEmpty else { throw CommandError.failed("No emitter named \(missing.joined(separator: ", "))") }
-            build.emitters.removeAll { names.contains($0.name) }
+            build.removeEmitters(named: Set(names))
         }
         for var emitter in arguments.addEmitters ?? [] {
             emitter.name = build.uniqueEmitterName(emitter.name)
@@ -318,6 +329,8 @@ public enum VFXEditCommand: EditorCommand {
                 throw CommandError.failed("An emitter is already named \(updated.name)")
             }
             build.emitters[index] = updated
+            // Sub-emitter links to a renamed emitter follow it.
+            if updated.name != name { build.renameEmitter(name, to: updated.name) }
         }
         if let duration = arguments.duration { build.duration = max(duration, 0.1) }
         if let background = arguments.background { build.background = background }

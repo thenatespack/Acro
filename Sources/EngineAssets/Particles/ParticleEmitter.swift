@@ -115,13 +115,15 @@ public struct ParticleCollider: Codable, Sendable, Equatable {
 
 /// What makes a parent's particle fire its sub-emitter.
 public enum ParticleSubEmitterTrigger: String, Codable, Sendable, CaseIterable {
+    /// The particle was just spawned (muzzle flashes, puffs at each spark's start).
+    case birth
     /// The particle's life ended (its lifetime, or a collision with `killOnCollision`).
     case death
     /// It bounced off the ground, a collider or the depth buffer.
     case collision
 }
 
-/// Spawns particles of another emitter where this emitter's particles die or collide
+/// Spawns particles of another emitter where this emitter's particles are born, die or collide
 /// (`ParticleEmitter.subEmitters`), entirely on the GPU: the child's own rate, bursts, prewarm
 /// and position are ignored; its shape and cone (turned by its entity's rotation and scale)
 /// are centered on each event.
@@ -251,7 +253,7 @@ public struct ParticleEmitter: Component, Codable, Equatable, Sendable {
     public var colliders: [ParticleCollider]
     /// A collision (ground, collider or depth) ends the particle's life.
     public var killOnCollision: Bool
-    /// Emitters spawned where this one's particles die or collide (at most `maxSubEmitters`).
+    /// Emitters spawned where this one's particles are born, die or collide (at most `maxSubEmitters`).
     public var subEmitters: [ParticleSubEmitter]
     /// A texture atlas (flipbook) of `atlasColumns` × `atlasRows` cells, row by row from the top
     /// left; its RGBA multiplies the color. nil: a soft round disc.

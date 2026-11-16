@@ -137,7 +137,7 @@ public final class ParticleSystem {
         var groups: Int { capacity / 256 }
         /// `capacity` × 48-byte particles.
         let particles: GPUBuffer
-        /// Draw arguments (16 bytes), then per workgroup of 256 slots: live, died and collided counts.
+        /// Draw arguments (16 bytes), then per workgroup of 256 slots: live, died, collided and born counts.
         let state: GPUBuffer
         /// Live slots in draw order.
         let drawList: GPUBuffer
@@ -171,7 +171,7 @@ public final class ParticleSystem {
             self.emitter = emitter
             capacity = key.capacity
             particles = try device.makeBuffer(length: capacity * 48, usage: .storage)
-            state = try device.makeBuffer(length: 16 + capacity / 256 * 3 * 4, usage: .storage)
+            state = try device.makeBuffer(length: 16 + capacity / 256 * 4 * 4, usage: .storage)
             drawList = try device.makeBuffer(length: capacity * 4, usage: .storage)
             if key.blend == .alpha {
                 sortCapacity = ParticleSystem.sortCapacity(for: capacity)
@@ -419,8 +419,13 @@ public final class ParticleSystem {
         }
         guard let spawner = child.spawner, let events = parent.eventLists[index]?.buffer else { return }
         let perEvent = min(max(link.sub.count, 1), ParticleEmitter.maxSubEmitterCount)
-        let mask: UInt32 = link.sub.trigger == .death ? 1 : 2
-        let countsOffset = 4 + parent.groups * (link.sub.trigger == .death ? 1 : 2)
+        // Event flags and per-workgroup counts (particle_simulate.comp): the counts follow the live ones.
+        let (mask, counts): (UInt32, Int) = switch link.sub.trigger {
+        case .death: (1, 1)
+        case .collision: (2, 2)
+        case .birth: (4, 3)
+        }
+        let countsOffset = 4 + parent.groups * counts
         pass.setPipeline(eventsPipeline)
         pass.setStorageBuffer(parent.particles, index: 0)
         pass.setStorageBuffer(parent.state, index: 1)

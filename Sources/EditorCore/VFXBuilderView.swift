@@ -3,7 +3,8 @@ import Foundation
 
 // The VFX Builder form for a `.vfx` file: preset buttons, the emitter list (add, duplicate,
 // delete) and a property grid for the selected emitter's fields and for the effect's own
-// settings (loop length, preview background and ground). Every change is written to the file as
+// settings (loop length, preview background and ground). The texture field picks an image,
+// `.proctex` or `.sprite` (and a sprite's tag), and sub-emitter links pick another emitter. Every change is written to the file as
 // one undo step (`EditorSession.applyVFX`), so the prefab reimports and placed copies update.
 
 /// The proxy component for one emitter: encodes and decodes as `VFXEmitter`.
@@ -123,9 +124,13 @@ public final class VFXBuilderView {
 
         view.addChild(Label("Emitters", role: .secondary))
         listed = build.emitters.map(\.name)
+        let targets = build.subEmitterTargets
         emitterList.items = build.emitters.map { e in
-            let timing = e.delay > 0 ? String(format: "  ·  +%gs", e.delay) : ""
-            return e.name + "  ·  " + e.blend.rawValue + timing
+            let timing = e.delay > 0 && !targets.contains(e.name) ? String(format: "  ·  +%gs", e.delay) : ""
+            let texture = e.texture.isEmpty ? "" : "  ·  " + ((e.texture as NSString).lastPathComponent as NSString).deletingPathExtension
+            let spawned = targets.contains(e.name) ? "  ·  sub-emitter" : ""
+            let links = e.subEmitters.prefix(ParticleEmitter.maxSubEmitters).map { "  →  \($0.emitter) on \($0.trigger.rawValue)" }.joined()
+            return e.name + "  ·  " + e.blend.rawValue + timing + texture + spawned + links
         }
         if let selectedEmitter, let row = listed.firstIndex(of: selectedEmitter) { emitterList.selectRow(row, reveal: true) }
         view.addChild(emitterList)
@@ -157,6 +162,11 @@ public final class VFXBuilderView {
         grid.labelWidth = 104
         grid.entity = entity
         grid.command = VFXEditCommand.id.rawValue
+        grid.stringChoices = { [unowned self] component, path in
+            guard component == VFXEmitterComponent.componentName else { return nil }
+            let current = gridWorld.get(VFXEmitterComponent.self, for: entity)?.emitter ?? emitter
+            return Self.choices(for: path, emitter: current, build: build, assets: session.assets)
+        }
         grid.onFieldEdit = { [unowned self] edit in
             do { try gridWorld.setField(edit.path, of: VFXEmitterComponent.componentName, for: entity, to: edit.newValue) } catch {
                 session.log.error("VFX \(edit.path): \(error)")
@@ -166,7 +176,30 @@ public final class VFXBuilderView {
         }
         emitterGrid = grid
         view.addChild(Label("Emitter: \(emitter.name)", role: .secondary))
+        if build.subEmitterTargets.contains(emitter.name) {
+            view.addChild(note("Another emitter's sub-emitter link spawns this one where its particles are born, die or collide: "
+                               + "its own rate, bursts, delay and position don't run."))
+        }
         view.addChild(grid)
+    }
+
+    /// Dropdown options for an emitter's string fields: textures, a sprite's tags, link targets.
+    static func choices(for path: String, emitter: VFXEmitter, build: VFXBuild, assets: AssetDatabase?) -> [String]? {
+        func keep(_ value: String, _ list: [String]) -> [String] { value.isEmpty || list.contains(value) ? list : list + [value] }
+        switch path {
+        case "texture":
+            let extensions = ["png", "jpg", "jpeg", "tga", "proctex", "sprite"]
+            let found = (assets?.allRecords ?? []).map(\.path).filter { p in extensions.contains { p.lowercased().hasSuffix("." + $0) } }.sorted()
+            return keep(emitter.texture, [""] + found)
+        case "spriteTag":
+            let path = emitter.texture.hasPrefix("Assets/") ? String(emitter.texture.dropFirst("Assets/".count)) : emitter.texture
+            guard path.lowercased().hasSuffix(".sprite"), let assets, let id = assets.id(forPath: path),
+                  let sprite = assets.pixelSprite(of: id) else { return keep(emitter.spriteTag, [""]) }
+            return keep(emitter.spriteTag, [""] + sprite.tags.map(\.name))
+        default:
+            guard path.hasPrefix("subEmitters"), path.hasSuffix("emitter") else { return nil }
+            return [""] + build.emitters.map(\.name).filter { $0 != emitter.name }
+        }
     }
 
     private func addSettingsGrid() {
@@ -275,7 +308,7 @@ public final class VFXBuilderView {
     func deleteSelected() {
         guard let name = selectedEmitter else { return }
         var edited = build
-        edited.emitters.removeAll { $0.name == name }
+        edited.removeEmitters(named: [name])
         Self.selections[asset] = edited.emitters.first?.name
         apply(edited, label: "Delete Emitter")
     }
@@ -296,6 +329,8 @@ public final class VFXBuilderView {
             }
         }
         edited.emitters[index] = emitter
+        // Links to the renamed emitter follow it.
+        if selectName != originalName { edited.renameEmitter(originalName, to: selectName) }
         apply(edited, label: "Edit Emitter", select: selectName)
     }
 }

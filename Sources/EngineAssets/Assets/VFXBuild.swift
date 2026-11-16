@@ -15,10 +15,22 @@ import EngineScene
 //   "emitters": [
 //     {"name": "Flames", "rate": 700, "lifetime": [0.5, 1.1], "shape": "sphere", "gravity": [0, 2.2, 0],
 //      "color": [{"time": 0, "color": [1, 0.8, 0.4, 0.9]}, {"time": 1, "color": [0.2, 0.03, 0, 0]}]},
-//     {"name": "Smoke", "delay": 0.3, "position": [0, 1.2, 0], "blend": "alpha", "rate": 40}
+//     {"name": "Smoke", "delay": 0.3, "position": [0, 1.2, 0], "blend": "alpha", "rate": 40,
+//      "texture": "Textures/puff.png", "atlasColumns": 4, "atlasRows": 4},
+//     {"name": "Sparks", "rate": 0, "subEmitters": [{"trigger": "death", "emitter": "Pops", "count": 6}]},
+//     {"name": "Pops"}
 //   ]
 // }
 // ```
+//
+// Textures: `texture` names an image, a `.proctex` or a `.sprite` by path relative to `Assets/`
+// (or "asset:<id>"). An image or `.proctex` is a flipbook of `atlasColumns` x `atlasRows` cells; a
+// `.sprite`'s frames (all of them, or the tag `spriteTag`) are baked by the importer into a
+// texture of the effect, one frame per cell in play order, so the grid comes from the sprite.
+//
+// Sub-emitters: `subEmitters` link an emitter to others of the same effect by name. Each of its
+// particles spawns `count` of the target's particles when it is born, dies or collides; the
+// target then emits only that way (its own rate, bursts, delay and position are ignored).
 
 /// One emitter of an effect: a curated view of `ParticleEmitter` plus its placement and `delay`.
 /// Colors are linear RGBA; angles of `rotation` are degrees (the others follow `ParticleEmitter`,
@@ -67,6 +79,25 @@ public struct VFXEmitter: Codable, Equatable, Sendable {
     public var softness: Float = 0
     public var lit = false
     public var seed: UInt32 = 1
+    /// A collision (ground) ends the particle's life (for collision sub-emitters: rain splashes).
+    public var killOnCollision = false
+    /// An image, `.proctex` or `.sprite` by path relative to `Assets/` (or "asset:<id>"); "" draws a soft disc.
+    public var texture = ""
+    /// A `.sprite` texture: the tag whose frames play ("": every frame).
+    public var spriteTag = ""
+    /// An image or `.proctex` texture: its flipbook grid, row by row from the top left.
+    public var atlasColumns = 1
+    public var atlasRows = 1
+    /// Frames used (0: every cell; a `.sprite`: every frame of the tag).
+    public var frameCount = 0
+    /// Frames per second, looping; 0 plays the frames once over each particle's life.
+    public var frameRate: Float = 0
+    /// Each particle starts at a random frame (and loops).
+    public var randomStartFrame = false
+    /// Cross-fades each frame into the next.
+    public var frameBlending = false
+    /// Other emitters of the effect spawned by this one's particles (at most `ParticleEmitter.maxSubEmitters`).
+    public var subEmitters: [VFXSubEmitter] = []
 
     public init() {}
 
@@ -78,6 +109,13 @@ public struct VFXEmitter: Codable, Equatable, Sendable {
         hints["lifetime"] = FieldHints(step: 0.05, tooltip: "Random lifetime range, seconds (min, max)")
         hints["speed"] = FieldHints(step: 0.1, tooltip: "Random initial speed range (min, max)")
         hints["size"] = FieldHints(step: 0.005, tooltip: "Random particle size range (half-width)")
+        hints["texture"] = FieldHints(tooltip: "An image, .proctex or .sprite (empty: a soft disc). Its RGBA multiplies the color")
+        hints["spriteTag"] = FieldHints(tooltip: "A .sprite texture: the tag whose frames play (empty: every frame)")
+        hints["atlasColumns"] = FieldHints(range: 1...64, step: 1, tooltip: "Image textures: flipbook columns (a .sprite sets its own grid)")
+        hints["atlasRows"] = FieldHints(range: 1...64, step: 1, tooltip: "Image textures: flipbook rows (a .sprite sets its own grid)")
+        hints["killOnCollision"] = FieldHints(tooltip: "A ground collision ends the particle (pair it with a collision sub-emitter)")
+        hints["subEmitters"] = FieldHints(tooltip: "Emitters of this effect spawned where this one's particles are born, die or collide (at most \(ParticleEmitter.maxSubEmitters))")
+        hints["inheritVelocity"] = FieldHints(range: 0...2, step: 0.05, tooltip: "Fraction of the parent particle's velocity the new ones get")
         return hints
     }
 
@@ -120,6 +158,13 @@ public struct VFXEmitter: Codable, Equatable, Sendable {
         e.softness = softness
         e.lit = lit
         e.seed = seed
+        e.killOnCollision = killOnCollision
+        e.atlasColumns = min(max(atlasColumns, 1), 64)
+        e.atlasRows = min(max(atlasRows, 1), 64)
+        e.frameCount = max(frameCount, 0)
+        e.frameRate = max(frameRate, 0)
+        e.randomStartFrame = randomStartFrame
+        e.frameBlending = frameBlending
         return e
     }
 
@@ -129,7 +174,8 @@ public struct VFXEmitter: Codable, Equatable, Sendable {
         case name, position, rotation, delay, rate, bursts, capacity, prewarm, lifetime, shape, shapeSize, direction, spread, speed,
              gravity, drag, turbulence, turbulenceFrequency, attraction, orbit, spiralArms, spiralTwist, armWidth, size, spin,
              sizeOverLife, color, intensity, brightnessVariation, blend, stretch, stretchMode, collidesWithGround, groundHeight,
-             bounce, friction, softness, lit, seed
+             bounce, friction, softness, lit, seed, killOnCollision, texture, spriteTag, atlasColumns, atlasRows, frameCount,
+             frameRate, randomStartFrame, frameBlending, subEmitters
     }
 
     /// Every key is optional.
@@ -150,6 +196,43 @@ public struct VFXEmitter: Codable, Equatable, Sendable {
         try read(.stretchMode, &stretchMode); try read(.collidesWithGround, &collidesWithGround)
         try read(.groundHeight, &groundHeight); try read(.bounce, &bounce); try read(.friction, &friction)
         try read(.softness, &softness); try read(.lit, &lit); try read(.seed, &seed)
+        try read(.killOnCollision, &killOnCollision); try read(.texture, &texture); try read(.spriteTag, &spriteTag)
+        try read(.atlasColumns, &atlasColumns); try read(.atlasRows, &atlasRows); try read(.frameCount, &frameCount)
+        try read(.frameRate, &frameRate); try read(.randomStartFrame, &randomStartFrame); try read(.frameBlending, &frameBlending)
+        try read(.subEmitters, &subEmitters)
+    }
+}
+
+/// A sub-emitter link of a `VFXEmitter`: each particle of the emitter spawns `count` particles of
+/// the effect's emitter named `emitter` when the `trigger` happens to it, on the GPU
+/// (`ParticleSubEmitter`). The target emits only that way: its rate, bursts, delay and position
+/// are ignored; its shape and cone (turned by its rotation) are centered on each event. Targets
+/// can't have sub-emitters of their own.
+public struct VFXSubEmitter: Codable, Equatable, Sendable {
+    public var trigger = ParticleSubEmitterTrigger.death
+    /// The target emitter's name.
+    public var emitter = ""
+    /// Particles per event (1 to `ParticleEmitter.maxSubEmitterCount`).
+    public var count = 8
+    /// Fraction of the parent particle's velocity the new ones get.
+    public var inheritVelocity: Float = 0
+
+    public init(_ trigger: ParticleSubEmitterTrigger = .death, emitter: String = "", count: Int = 8, inheritVelocity: Float = 0) {
+        self.trigger = trigger
+        self.emitter = emitter
+        self.count = count
+        self.inheritVelocity = inheritVelocity
+    }
+
+    private enum CodingKeys: String, CodingKey { case trigger, emitter, count, inheritVelocity }
+
+    /// Every key is optional.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        trigger = try c.decodeIfPresent(ParticleSubEmitterTrigger.self, forKey: .trigger) ?? .death
+        emitter = try c.decodeIfPresent(String.self, forKey: .emitter) ?? ""
+        count = try c.decodeIfPresent(Int.self, forKey: .count) ?? 8
+        inheritVelocity = try c.decodeIfPresent(Float.self, forKey: .inheritVelocity) ?? 0
     }
 }
 
@@ -185,6 +268,27 @@ public struct VFXBuild: Codable, Equatable, Sendable {
 
     /// The default for a new effect: a smoke plume.
     public static var starter: VFXBuild { preset("smoke") ?? VFXBuild(emitters: [VFXEmitter()]) }
+
+    /// Renames emitter `old` to `new`, and the sub-emitter links that name it.
+    public mutating func renameEmitter(_ old: String, to new: String) {
+        for i in emitters.indices {
+            if emitters[i].name == old { emitters[i].name = new }
+            for j in emitters[i].subEmitters.indices where emitters[i].subEmitters[j].emitter == old {
+                emitters[i].subEmitters[j].emitter = new
+            }
+        }
+    }
+
+    /// Removes the emitters named in `names`, and the sub-emitter links to them.
+    public mutating func removeEmitters(named names: Set<String>) {
+        emitters.removeAll { names.contains($0.name) }
+        for i in emitters.indices { emitters[i].subEmitters.removeAll { names.contains($0.emitter) } }
+    }
+
+    /// Emitters spawned by another one's sub-emitter links (their own rate, bursts and delay don't run).
+    public var subEmitterTargets: Set<String> {
+        Set(emitters.flatMap { e in e.subEmitters.prefix(ParticleEmitter.maxSubEmitters).map(\.emitter) }.filter { !$0.isEmpty })
+    }
 
     /// A name not used by any emitter: `base`, else "`base` 2"…
     public func uniqueEmitterName(_ base: String) -> String {
@@ -403,7 +507,7 @@ public struct VFXBuildImporter: AssetImporter {
 
     public var name: String { "vfx" }
     public var fileExtensions: [String] { ["vfx"] }
-    public var version: Int { 1 }
+    public var version: Int { 2 }
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         let build: VFXBuild
@@ -414,13 +518,103 @@ public struct VFXBuildImporter: AssetImporter {
         var asset = ImportedAsset()
         var namer = SubAssetNamer()
         for problem in VFXBuildCheck.problems(build) { context.warn(problem) }
-        let nodes = build.emitters.map { e in
-            PrefabNode(name: e.name, transform: e.transform, particles: e.particleEmitter())
+        // Prefab node numbers: the root is 0, emitter i is i + 1 (the first of a name wins).
+        var nodeByName: [String: Int] = [:]
+        for (i, e) in build.emitters.enumerated() where nodeByName[e.name] == nil { nodeByName[e.name] = i + 1 }
+        var nodes: [PrefabNode] = []
+        for (i, e) in build.emitters.enumerated() {
+            var particles = e.particleEmitter()
+            if let texture = Self.texture(of: e, index: i, &particles, &asset, &namer, &context) {
+                particles.texture = TextureHandle(texture)
+            }
+            let links = e.subEmitters.prefix(ParticleEmitter.maxSubEmitters).filter { !$0.emitter.isEmpty && $0.emitter != e.name }
+            particles.subEmitters = links.map {
+                ParticleSubEmitter($0.trigger, emitter: .none, count: min(max($0.count, 1), ParticleEmitter.maxSubEmitterCount),
+                                   inheritVelocity: $0.inheritVelocity)
+            }
+            let targets = links.map { nodeByName[$0.emitter] ?? -1 }
+            nodes.append(PrefabNode(name: e.name, transform: e.transform, particles: particles,
+                                    subEmitterNodes: targets.isEmpty ? nil : targets))
         }
         let prefab = namer.id(kind: "prefab", name: stem, index: 0)
         asset.add(prefab, name: stem, .prefab(PrefabAsset(roots: [PrefabNode(name: stem, children: nodes)])))
         asset.main = prefab
         return asset
+    }
+}
+
+extension VFXBuildImporter {
+    /// The texture emitter `e` names, as a reference: an image's or `.proctex`'s own texture, or
+    /// for a `.sprite` a texture of this asset with the frames baked into a grid (which also sets
+    /// `particles`' atlas and frame count). nil (with a warning) when it can't be found.
+    static func texture(of e: VFXEmitter, index: Int, _ particles: inout ParticleEmitter, _ asset: inout ImportedAsset,
+                        _ namer: inout SubAssetNamer, _ context: inout ImportContext) -> AssetReference? {
+        let value = e.texture.trimmingCharacters(in: .whitespaces)
+        guard !value.isEmpty else { return nil }
+        var id: AssetID?
+        var subAsset: SubAssetID?
+        var path: String?
+        if value.hasPrefix(AssetReference.scheme) {
+            if let reference = AssetReference(value) {
+                id = reference.asset
+                subAsset = reference.subAsset
+                path = context.assetsByPath.first { $0.value == reference.asset }?.key
+            }
+        } else {
+            let relative = value.hasPrefix("Assets/") ? String(value.dropFirst("Assets/".count)) : value
+            if let found = context.assetsByPath[relative] {
+                id = found
+                path = relative
+            } else if let found = context.asset(atRelativePath: relative) {
+                id = found
+                path = context.assetsByPath.first { $0.value == found }?.key
+            }
+        }
+        guard let id else {
+            context.warn("emitter '\(e.name)': no texture '\(value)'")
+            return nil
+        }
+        guard let path, (path as NSString).pathExtension.lowercased() == "sprite" else {
+            return AssetReference(id, subAsset: subAsset ?? "texture")
+        }
+        // A sprite: its frames (the tag's, in order) become a flipbook texture of this effect.
+        let depth = context.assetPath.split(separator: "/").count - 1
+        guard let data = try? context.readDependency(relativePath: String(repeating: "../", count: depth) + path),
+              let sprite = try? AssetJSON.decoder().decode(PixelSprite.self, from: data), !sprite.frames.isEmpty,
+              sprite.width > 0, sprite.height > 0 else {
+            context.warn("emitter '\(e.name)': can't read the sprite '\(path)'")
+            return nil
+        }
+        var frames = Array(sprite.frames.indices)
+        let tagName = e.spriteTag.trimmingCharacters(in: .whitespaces)
+        if !tagName.isEmpty {
+            if let tag = sprite.tags.first(where: { $0.name == tagName }) {
+                let from = min(max(tag.from, 0), sprite.frames.count - 1)
+                frames = Array(from...min(max(tag.to, from), sprite.frames.count - 1))
+            } else {
+                context.warn("emitter '\(e.name)': the sprite '\(path)' has no tag '\(tagName)'; every frame plays")
+            }
+        }
+        frames = Array(frames.prefix(64 * 64))
+        let columns = min(PixelSprite.sheetColumns(frameCount: frames.count), 64)
+        let rows = (frames.count + columns - 1) / columns
+        let width = columns * sprite.width
+        var pixels = [UInt8](repeating: 0, count: width * rows * sprite.height * 4)
+        for (cell, frame) in frames.enumerated() {
+            let image = sprite.image(frame: frame)
+            let left = (cell % columns) * sprite.width, top = (cell / columns) * sprite.height
+            for y in 0..<sprite.height {
+                let src = y * sprite.width * 4, dst = ((top + y) * width + left) * 4
+                pixels.replaceSubrange(dst..<(dst + sprite.width * 4), with: image.pixels[src..<(src + sprite.width * 4)])
+            }
+        }
+        particles.atlasColumns = columns
+        particles.atlasRows = rows
+        particles.frameCount = frames.count
+        let texture = namer.id(kind: "texture", name: e.name, index: index)
+        asset.add(texture, name: e.name, .texture(TextureAsset(image: Image(width: width, height: rows * sprite.height, pixels: pixels),
+                                                               isSRGB: true, generatesMipmaps: false)))
+        return context.reference(texture)
     }
 }
 
@@ -431,14 +625,32 @@ public enum VFXBuildCheck {
         if build.emitters.isEmpty { problems.append("the effect has no emitters") }
         let names = build.emitters.map(\.name)
         if Set(names).count != names.count { problems.append("some emitters share a name") }
+        let targets = build.subEmitterTargets
         for e in build.emitters {
             if e.blend == .alpha && e.capacity > ParticleEmitter.maxSortedCapacity {
                 problems.append("emitter '\(e.name)': alpha emitters hold at most \(ParticleEmitter.maxSortedCapacity) particles")
             }
             if e.color.count > 4 || e.sizeOverLife.count > 4 { problems.append("emitter '\(e.name)': only the first 4 color / size keys are used") }
             if e.lifetime.x > e.lifetime.y { problems.append("emitter '\(e.name)': lifetime min is above max") }
-            if e.rate <= 0 && e.bursts.isEmpty { problems.append("emitter '\(e.name)' has no rate and no bursts, so it never emits") }
+            if e.rate <= 0 && e.bursts.isEmpty && !targets.contains(e.name) { problems.append("emitter '\(e.name)' has no rate and no bursts, so it never emits") }
             if e.delay < 0 { problems.append("emitter '\(e.name)': delay is negative") }
+            if e.subEmitters.count > ParticleEmitter.maxSubEmitters {
+                problems.append("emitter '\(e.name)': only the first \(ParticleEmitter.maxSubEmitters) sub-emitters are used")
+            }
+            for link in e.subEmitters.prefix(ParticleEmitter.maxSubEmitters) {
+                if link.emitter.isEmpty || link.emitter == e.name {
+                    problems.append("emitter '\(e.name)': a sub-emitter link names no other emitter")
+                } else if let target = build.emitters.first(where: { $0.name == link.emitter }) {
+                    if !target.subEmitters.isEmpty {
+                        problems.append("emitter '\(e.name)': sub-emitter '\(link.emitter)' has sub-emitters of its own, which don't run")
+                    }
+                } else {
+                    problems.append("emitter '\(e.name)': no emitter '\(link.emitter)' for its sub-emitter")
+                }
+                if link.count < 1 || link.count > ParticleEmitter.maxSubEmitterCount {
+                    problems.append("emitter '\(e.name)': sub-emitter count must be 1 to \(ParticleEmitter.maxSubEmitterCount)")
+                }
+            }
         }
         return problems
     }

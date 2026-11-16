@@ -514,6 +514,9 @@ public struct PrefabNode: Equatable, Sendable, Codable {
     public var animator: FieldAnimator?
     /// A particle emitter on the node (instantiating adds the `ParticleEmitter`); VFX builds use it.
     public var particles: ParticleEmitter?
+    /// The targets of `particles.subEmitters`, in order, as prefab node numbers (depth first, roots
+    /// first, as `PrefabSkin`; -1 for none): instantiating points each link at that node's entity.
+    public var subEmitterNodes: [Int]?
     /// A `.postfx` import's profile (the prefab spawns nothing for it; cameras and volumes read it).
     public var postFX: PostProcessSettings?
     /// A static collision shape (instantiating adds a `Collider`); terrains use it for their chunks.
@@ -525,7 +528,8 @@ public struct PrefabNode: Equatable, Sendable, Codable {
     public init(name: String, transform: Transform = Transform(), mesh: AssetReference? = nil,
                 material: AssetReference? = nil, skin: PrefabSkin? = nil, animator: FieldAnimator? = nil,
                 children: [PrefabNode] = [], particles: ParticleEmitter? = nil, postFX: PostProcessSettings? = nil,
-                collider: ColliderShape? = nil, collider2D: Collider2D? = nil) {
+                collider: ColliderShape? = nil, collider2D: Collider2D? = nil, subEmitterNodes: [Int]? = nil) {
+        self.subEmitterNodes = subEmitterNodes
         self.collider2D = collider2D
         self.postFX = postFX
         self.collider = collider
@@ -567,6 +571,7 @@ extension World {
         }
         var order: [Entity] = []
         var skinned: [(Entity, PrefabSkin)] = []
+        var linked: [(Entity, ParticleEmitter, [Int])] = []
         func spawn(_ node: PrefabNode, parent: Entity?) -> Entity {
             let entity = self.spawn(node.transform, Name(node.name))
             order.append(entity)
@@ -574,7 +579,10 @@ extension World {
                 add(MeshRenderer(mesh: MeshHandle(mesh), material: node.material.map { MaterialHandle($0) } ?? .default), to: entity)
             }
             if let animator = node.animator { add(animator, to: entity) }
-            if let particles = node.particles { add(particles, to: entity) }
+            if let particles = node.particles {
+                add(particles, to: entity)
+                if let nodes = node.subEmitterNodes, !nodes.isEmpty { linked.append((entity, particles, nodes)) }
+            }
             if let shape = node.collider { add(Collider(shape), to: entity) }
             if let collider2D = node.collider2D { add(collider2D, to: entity) }
             if let skin = node.skin { skinned.append((entity, skin)) }
@@ -587,6 +595,13 @@ extension World {
         for (entity, skin) in skinned {
             add(Skin(joints: skin.joints.map { order.indices.contains($0) ? order[$0] : .invalid },
                      inverseBindMatrices: skin.inverseBindMatrices), to: entity)
+        }
+        // Sub-emitter links name entities, which all exist only now.
+        for (entity, var particles, nodes) in linked {
+            for (i, node) in nodes.enumerated() where particles.subEmitters.indices.contains(i) {
+                particles.subEmitters[i].emitter = order.indices.contains(node) ? ref(to: order[node]) : .none
+            }
+            add(particles, to: entity)
         }
         return roots
     }
