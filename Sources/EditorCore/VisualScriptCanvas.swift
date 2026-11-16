@@ -329,6 +329,22 @@ final class VisualScriptCanvas: Widget {
 
     override func draw(_ list: UIDrawList, theme: UITheme) {
         super.draw(list, theme: theme)
+        // Nodes and wires panned past the edges stay inside the canvas (not over the toolbar or sidebar).
+        list.withClip(frame) { drawContent(list, theme: theme) }
+    }
+
+    /// Pans so node `id` is in view (centered) when it isn't already.
+    func reveal(_ id: String) {
+        guard let i = index[id], frame.width > 0, frame.height > 0 else { return }
+        let node = nodes[i]
+        let a = toScreen(node.position), b = toScreen(node.position + node.size)
+        guard a.x < frame.x || a.y < frame.y || b.x > frame.maxX || b.y > frame.maxY else { return }
+        let center = node.position + node.size / 2
+        pan = Vec2(frame.width, frame.height) / (2 * zoom) - center
+        setNeedsDisplay()
+    }
+
+    private func drawContent(_ list: UIDrawList, theme: UITheme) {
         let rect = frame
         list.fillRect(rect, color: UIColor(0.09, 0.095, 0.11))
         drawGrid(list, rect)

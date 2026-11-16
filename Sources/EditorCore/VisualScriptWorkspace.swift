@@ -50,6 +50,8 @@ public final class VisualScriptWorkspace {
     private var newVariable = ""
     private var newFunction = ""
     private var lastPlaying = false
+    /// The node search is open (Space, a dropped wire, right-click): results show even with no text.
+    private var searching = false
     /// The trace step the debug section and canvas show (`session.visualScriptStep`), and of which trace.
     private var shownStep: (index: Int, hit: VisualScriptBreak)?
     private static var clipboard: (nodes: [VisualScriptNode], links: [VisualScriptLink])?
@@ -157,6 +159,7 @@ public final class VisualScriptWorkspace {
         }
         added = apply(edit, "Add Node")
         addFrom = nil
+        searching = false
         selection = Set(added)
         addPosition += Vec2(30, 30)
         return added.first
@@ -260,6 +263,7 @@ public final class VisualScriptWorkspace {
     }
 
     private func focusSearch() {
+        searching = true
         searchHint.text = addFrom.map { "Wiring from \($0.pin) (\($0.type.rawValue)): pick a node" } ?? "Pick a node to add"
         refreshResults()
         view.context?.focus(searchField)
@@ -316,7 +320,7 @@ public final class VisualScriptWorkspace {
         body.style.shrink = 1
         view.addChildren([bar, Separator(), body])
         searchHint.wraps = true
-        sidebar.addChildren([searchField, searchHint, results, Separator(), details, debugHost])
+        sidebar.addChildren([searchField, searchHint, results, debugHost, Separator(), details])
     }
 
     private func showEmpty() {
@@ -461,6 +465,7 @@ public final class VisualScriptWorkspace {
         }
         canvas.activity = [:]
         canvas.pausedAt = isMine(step) && step.function == function ? step.node : nil
+        if changed, let node = canvas.pausedAt { canvas.reveal(node) }
         var values: [String: String] = [:]
         for earlier in trace.steps[...index] where earlier.graph == step.graph && earlier.entity == step.entity && earlier.function == function {
             for (pin, value) in earlier.outputs { values["\(earlier.node).\(pin)"] = String(value.asString.prefix(24)) }
@@ -537,6 +542,11 @@ public final class VisualScriptWorkspace {
     private func refreshResults() {
         results.removeAllChildren()
         guard asset != nil else { return }
+        // The catalog shows while searching, so the node form and play controls stay in view otherwise.
+        guard searching || addFrom != nil || !searchField.text.trimmingCharacters(in: .whitespaces).isEmpty else {
+            searchHint.text = "Type to search nodes, or press Space / right-click the canvas."
+            return
+        }
         let entries = catalog()
         for entry in entries.prefix(30) {
             let button = Button(entry.title, name: "vscriptAdd.\(entry.type)") { [unowned self] in
@@ -700,6 +710,7 @@ public final class VisualScriptWorkspace {
             type.style.width = 80
             let value = TextField(text: variable.defaultValue.map(Self.text(of:)) ?? "", placeholder: "default", name: "vscriptVarDefault.\(variable.name)")
             value.style.grow = 1
+            value.style.width = 0
             value.onSubmit = { [unowned self] text in
                 var changed = variable
                 changed.defaultValue = variable.type == .string || variable.type == .asset ? .string(text) : Self.json(from: text)
@@ -716,8 +727,12 @@ public final class VisualScriptWorkspace {
                 apply(VisualScriptEdit(removeVariables: [variable.name]), "Remove Variable")
             }
             let name = Label(variable.name)
-            name.style.width = 70
-            details.addChild(HStack(spacing: 4, [name, type, value, get, set, remove]))
+            name.style.grow = 1
+            name.style.shrink = 1
+            name.style.width = 0
+            // Two rows: the sidebar is too narrow for name, type, value and three buttons on one.
+            details.addChild(HStack(spacing: 4, alignment: .center, [name, type, remove]))
+            details.addChild(HStack(spacing: 4, alignment: .center, [value, get, set]))
         }
         let field = TextField(text: newVariable, placeholder: "New variable name", name: "vscriptNewVariable")
         field.onChange = { [unowned self] text in newVariable = text }
@@ -761,6 +776,7 @@ public final class VisualScriptWorkspace {
         let field = TextField(text: newFunction, placeholder: "New function name", name: "vscriptNewFunction")
         field.onChange = { [unowned self] text in newFunction = text }
         field.style.grow = 1
+        field.style.width = 0
         let add = Button("Add", name: "vscriptAddFunction") { [unowned self] in addFunction(macro: false) }
         add.tooltip = "A function: one call frame per call, one flow in and out"
         let addMacro = Button("Add Macro", name: "vscriptAddMacro") { [unowned self] in addFunction(macro: true) }
