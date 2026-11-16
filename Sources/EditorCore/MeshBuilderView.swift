@@ -44,7 +44,7 @@ public final class MeshBuilderView {
     static let shapeButtons: [(MeshBuildShape, String)] = [
         (.box, "Box"), (.sphere, "Sphere"), (.hemisphere, "Dome"), (.cylinder, "Cylinder"), (.cone, "Cone"),
         (.capsule, "Capsule"), (.torus, "Torus"), (.tube, "Tube"), (.plane, "Plane"), (.wedge, "Wedge"),
-        (.pyramid, "Pyramid"), (.lathe, "Lathe"), (.extrude, "Extrude"), (.sculpt, "Sculpt"), (.group, "Group"),
+        (.pyramid, "Pyramid"), (.lathe, "Lathe"), (.extrude, "Extrude"), (.sweep, "Sweep"), (.loft, "Loft"), (.sculpt, "Sculpt"), (.group, "Group"),
     ]
 
     /// The profile a new lathe starts with: a vase with a flared lip (radius, height in meters).
@@ -126,6 +126,8 @@ public final class MeshBuilderView {
             case .group: "An invisible pivot: attach parts to it and animate it (a hinge, a turret)"
             case .lathe: "Add a round solid spun from a profile (starts as a vase; edit its points below)"
             case .extrude: "Add a flat outline pushed out into a slab (starts as an arrow; edit its points below)"
+            case .sweep: "Add a tube along a curved path: pipes, cables, handles, branches, horns (starts as a bent pipe)"
+            case .loft: "Add a skin through stacked sections: bottles, hulls, fuselages, blades (starts as a flask)"
             case .sculpt: "Add a sculpt: its child shapes melt together and cut into each other as one smooth surface (starts as a carved stone)"
             default: "Add a \(label.lowercased()) on top of the selected part"
             }
@@ -158,6 +160,8 @@ public final class MeshBuilderView {
         }
         addPartGrid(part)
         addShapeSection(for: part)
+        addCurveSection(for: part)  // sweep path / loft sections (MeshBuilderCurves.swift)
+        addDeformSection(for: part)
         addSculptSection(for: part)
         addSymmetrySection(for: part)
         addAnimationSection(for: part)
@@ -263,7 +267,7 @@ public final class MeshBuilderView {
         }
     }
 
-    private func rowLabel(_ text: String) -> Label {
+    func rowLabel(_ text: String) -> Label {
         let label = Label(text)
         label.style.width = 104
         return label
@@ -335,11 +339,13 @@ public final class MeshBuilderView {
             title.style.width = 104
             view.addChild(HStack(spacing: 6, [title, slider, caption]))
         }
-        guard part.shape == .lathe || part.shape == .extrude else { return }
-        let isLathe = part.shape == .lathe
+        // A sweep's profile, when it has one instead of a circle, is edited with the same rows.
+        guard part.shape == .lathe || part.shape == .extrude || (part.shape == .sweep && part.profile != nil) else { return }
+        let isLathe = part.shape == .lathe, isSweep = part.shape == .sweep
         let points = part.profile ?? []
         view.addChild(Separator())
-        view.addChild(Label(isLathe ? "Profile: radius, height (m), bottom to top" : "Outline: x, y (m), around the shape",
+        view.addChild(Label(isLathe ? "Profile: radius, height (m), bottom to top"
+                            : isSweep ? "Section: x across, y up (m), around it" : "Outline: x, y (m), around the shape",
                             role: .secondary))
         let minimum = isLathe ? 2 : 3
         for (i, point) in points.enumerated() {
@@ -384,6 +390,7 @@ public final class MeshBuilderView {
         add.command = MeshBuildEditCommand.id.rawValue
         add.tooltip = isLathe ? "A new point above the last, continuing the profile" : "A new corner after the last, continuing the outline"
         view.addChild(HStack(spacing: 6, [add, Spacer()]))
+        if isSweep { return }  // the sweep's own rows follow, with its notes and warnings
         view.addChild(note(isLathe
             ? "The profile spins around the part's Y axis; ends with a radius get flat caps, bends sharper than 40° stay hard. Size multiplies it."
             : "The outline is pushed out along Z, size.z meters deep. Concave is fine; edges must not cross. Size multiplies x and y."))
@@ -392,7 +399,7 @@ public final class MeshBuilderView {
     }
 
     /// Changes the part named `name` as one edit (applied on the next `refresh`).
-    private func updatePart(_ name: String, label: String, _ change: (inout MeshBuildPart) -> Void) {
+    func updatePart(_ name: String, label: String, _ change: (inout MeshBuildPart) -> Void) {
         guard let index = build.parts.firstIndex(where: { $0.name == name }) else { return }
         var edited = build
         change(&edited.parts[index])
@@ -464,7 +471,7 @@ public final class MeshBuilderView {
         view.addChild(HStack(spacing: 6, [label, button]))
     }
 
-    private func note(_ text: String) -> Label {
+    func note(_ text: String) -> Label {
         let label = Label(text, role: .caption, name: "meshBuildNote")
         label.wraps = true
         return label
@@ -569,6 +576,7 @@ public final class MeshBuilderView {
         if shape == .torus { part.size = Vec3(1, 0.25, 1) }
         if shape == .lathe { part.profile = Self.starterLathe }
         if shape == .extrude { part.profile = Self.starterExtrude; part.size = Vec3(1, 1, 0.15) }
+        Self.applyCurveStarter(to: &part)  // sweep path, loft sections
         if shape == .sculpt { return addSculpt(named: part.name) }
         // Rest on the ground, or on top of the selected part (profile shapes aren't centered, so go by bounds).
         let bounds = part.localBounds

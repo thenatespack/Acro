@@ -60,6 +60,12 @@ public enum MeshBuildShape: String, Codable, CaseIterable, Sendable {
     /// Its children (the whole subtree) melted, cut and combined into one smooth surface instead
     /// of drawn on their own. See MeshBuildSculpt.swift and `MeshBuildPart.sculptDoc`.
     case sculpt
+    // Curves (MeshBuildCurves.swift):
+    /// A section (a circle of `radius` or a `profile`) moved along a smooth 3D `path`, like a pipe,
+    /// cable, handle, railing, branch or horn. See `MeshBuildPart.curvesDoc`.
+    case sweep
+    /// A skin through a stack of `sections` along `axis`, like a hull, bottle, fuselage or blade.
+    case loft
 }
 
 /// One shape of a mesh build: geometry, placement in its parent and its look.
@@ -112,6 +118,29 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
     /// Copies of the part and its subtree in a line or a ring (`"repeat"` in the file; see
     /// MeshBuildExpansion.swift).
     public var repetition: MeshBuildRepeat?
+
+    // Curves and deformers (MeshBuildCurves.swift, MeshBuildDeform.swift); all optional, left out of the file when nil.
+    /// A `sweep`'s path, `[x, y, z]` points in meters in the part's space.
+    public var path: [Vec3]?
+    /// A `sweep`'s circle radius, meters (default 0.05; unused with a `profile`).
+    public var radius: Float?
+    /// A `sweep`'s section multiplier at each path point (taper).
+    public var radii: [Float]?
+    /// A `sweep` whose path loops back to its start.
+    public var closed: Bool?
+    /// A `sweep` or `loft` made of straight segments with sharp corners (true) instead of a
+    /// smooth spline through its points (nil or false, the default). Not `smooth`: that key is a
+    /// sculpt child's melt radius.
+    public var straight: Bool?
+    /// A `loft`'s cross-sections.
+    public var sections: [MeshBuildSection]?
+    /// The axis a `loft` runs along (default y).
+    public var axis: MeshBuildAxis?
+    /// Deformers applied in order to the part's mesh, before mirroring.
+    public var deform: [MeshBuildDeform]?
+    /// How finely the mesh is split before deforming (0...6, default 3).
+    public var subdivide: Int?
+
     /// Not in the file: the signs (±1 per axis) the mesh is reflected by, set on mirror copies by
     /// `MeshBuild.expansion()`; `geometry()` applies it.
     public var reflection = Vec3(1, 1, 1)
@@ -148,14 +177,21 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
          "mirror": FieldHints(hidden: true), "repeat": FieldHints(hidden: true),
          // Edited in the Mesh Builder's Sculpt rows.
          "blend": FieldHints(hidden: true), "smooth": FieldHints(hidden: true), "resolution": FieldHints(hidden: true),
-         "noise": FieldHints(hidden: true)]
+         "noise": FieldHints(hidden: true),
+         // Curves and deformers: edited in the Mesh Builder's own rows.
+         "path": FieldHints(hidden: true), "radius": FieldHints(hidden: true), "radii": FieldHints(hidden: true),
+         "closed": FieldHints(hidden: true), "straight": FieldHints(hidden: true), "sections": FieldHints(hidden: true),
+         "axis": FieldHints(hidden: true), "deform": FieldHints(hidden: true), "subdivide": FieldHints(hidden: true)]
     }
 
     public init(name: String = "Part", shape: MeshBuildShape = .box, parent: String = "", position: Vec3 = .zero,
                 rotation: Vec3 = .zero, size: Vec3 = Vec3(1, 1, 1), segments: Int = 24, thickness: Float = 0.1,
                 color: Vec3 = Vec3(0.8, 0.8, 0.8), opacity: Float = 1, texture: String = "", textureScale: Vec2 = Vec2(1, 1),
                 worldUV: Bool = false, metallic: Float = 0, roughness: Float = 0.5, glow: Vec3 = .zero, glowStrength: Float = 1,
-                material: String = "", bevel: Float? = nil, profile: [Vec2]? = nil, mirror: MeshBuildMirror? = nil, repetition: MeshBuildRepeat? = nil) {
+                material: String = "", bevel: Float? = nil, profile: [Vec2]? = nil, mirror: MeshBuildMirror? = nil, repetition: MeshBuildRepeat? = nil,
+                // Curves and deformers.
+                path: [Vec3]? = nil, radius: Float? = nil, radii: [Float]? = nil, closed: Bool? = nil, straight: Bool? = nil,
+                sections: [MeshBuildSection]? = nil, axis: MeshBuildAxis? = nil, deform: [MeshBuildDeform]? = nil, subdivide: Int? = nil) {
         self.name = name
         self.shape = shape
         self.parent = parent
@@ -178,6 +214,16 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
         self.profile = profile
         self.mirror = mirror
         self.repetition = repetition
+        // Curves and deformers.
+        self.path = path
+        self.radius = radius
+        self.radii = radii
+        self.closed = closed
+        self.straight = straight
+        self.sections = sections
+        self.axis = axis
+        self.deform = deform
+        self.subdivide = subdivide
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -186,6 +232,8 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
         case repetition = "repeat"
         // Sculpt fields (MeshBuildSculpt.swift).
         case blend, smooth, resolution, noise
+        // Curves and deformers.
+        case path, radius, radii, closed, straight, sections, axis, deform, subdivide
     }
 
     /// Every key is optional.
@@ -213,7 +261,18 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
                   bevel: try c.decodeIfPresent(Float.self, forKey: .bevel),
                   profile: try c.decodeIfPresent([Vec2].self, forKey: .profile),
                   mirror: try c.decodeIfPresent(MeshBuildMirror.self, forKey: .mirror),
-                  repetition: try c.decodeIfPresent(MeshBuildRepeat.self, forKey: .repetition))
+                  repetition: try c.decodeIfPresent(MeshBuildRepeat.self, forKey: .repetition),
+                  // Curves and deformers (a single deform object is taken as a list of one).
+                  path: try c.decodeIfPresent([Vec3].self, forKey: .path),
+                  radius: try? c.decodeIfPresent(Float.self, forKey: .radius),
+                  radii: try c.decodeIfPresent([Float].self, forKey: .radii),
+                  closed: try? c.decodeIfPresent(Bool.self, forKey: .closed),
+                  straight: try? c.decodeIfPresent(Bool.self, forKey: .straight),
+                  sections: try c.decodeIfPresent([MeshBuildSection].self, forKey: .sections),
+                  axis: try? c.decodeIfPresent(MeshBuildAxis.self, forKey: .axis),
+                  deform: (try? c.decodeIfPresent([MeshBuildDeform].self, forKey: .deform))
+                      ?? (try? c.decodeIfPresent(MeshBuildDeform.self, forKey: .deform)).flatMap { $0.map { [$0] } },
+                  subdivide: try? c.decodeIfPresent(Int.self, forKey: .subdivide))
         // Sculpt fields (MeshBuildSculpt.swift).
         blend = try c.decodeIfPresent(MeshBuildBlend.self, forKey: .blend)
         smooth = try c.decodeIfPresent(Float.self, forKey: .smooth)
@@ -505,7 +564,9 @@ extension MeshBuildPart {
     /// The part's mesh, adding a sentence to `warnings` for each problem with its fields (a
     /// `lathe` or `extrude` whose profile can't be built is nil).
     public func geometry(warnings: inout [String]) -> MeshGeometry? {
-        let shaped = shapeGeometry(warnings: &warnings)
+        var shaped = shapeGeometry(warnings: &warnings)
+        // Deformers bend the finished shape before the reflection, so mirror copies match (MeshBuildDeform.swift).
+        if let g = shaped, !(deform ?? []).isEmpty { shaped = deformed(g) }
         guard reflection != Vec3(1, 1, 1), var g = shaped else { return shaped }
         g.scale(by: reflection)  // flips the normals, and the winding when it is a mirror image
         return g
@@ -537,6 +598,11 @@ extension MeshBuildPart {
             guard let extrude = MeshGeometry.extrude(profile: (profile ?? []).map { $0 * Vec2(s.x, s.y) }, depth: s.z,
                                                      warnings: &warnings) else { return nil }
             return finish(extrude)
+        case .sweep, .loft:
+            // Curves (MeshBuildCurves.swift): meters as written, `size` multiplies them like a profile's.
+            guard var curve = curveGeometry(segments: segments, warnings: &warnings) else { return nil }
+            curve.scale(by: s)
+            return finish(curve)
         case .sphere: g = .sphere(radius: 0.5, segments: segments, rings: max(segments / 2, 2))
         case .hemisphere: g = MeshGeometry.hemisphere(segments: segments)
         case .cylinder: g = .cylinder(radius: 0.5, height: 1, segments: segments)
@@ -687,7 +753,7 @@ public struct MeshBuildImporter: AssetImporter {
 
     public var name: String { "meshbuild" }
     public var fileExtensions: [String] { ["meshbuild"] }
-    public var version: Int { 3 }  // 2: mirror and repeat, 3: sculpt
+    public var version: Int { 4 }  // 2: mirror and repeat, 3: sculpt, 4: sweep, loft and deform
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         let file: MeshBuild

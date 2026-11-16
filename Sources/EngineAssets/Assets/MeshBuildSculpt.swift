@@ -572,6 +572,9 @@ struct MeshBuildSculptor {
         case .plane:
             warnings.append("a plane has no inside, so it can't be part of a sculpt; it is left out (use a thin box)")
             return nil
+        case .sweep, .loft:
+            warnings.append("a \(part.shape.rawValue) can't be part of a sculpt yet; it is left out (use capsules, cylinders or lathes, or keep it outside the sculpt)")
+            return nil
         case .box:
             kind = .box(half: h, radius: min(bevel, min(h.x, min(h.y, h.z))))
         case .sphere:
