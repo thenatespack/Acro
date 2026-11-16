@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 246 tools.
+named by its id (see README › Use the editor › AI control). 248 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -14,7 +14,7 @@ optional arguments.
 |---|---|
 | `activity` | [`activity.clear`](#activityclear), [`activity.list`](#activitylist), [`activity.revert`](#activityrevert) |
 | `ai` | [`ai.settings`](#aisettings) |
-| `animGraph` | [`animGraph.assign`](#animgraphassign), [`animGraph.edit`](#animgraphedit), [`animGraph.get`](#animgraphget), [`animGraph.new`](#animgraphnew), [`animGraph.open`](#animgraphopen), [`animGraph.set`](#animgraphset) |
+| `animGraph` | [`animGraph.assign`](#animgraphassign), [`animGraph.bones`](#animgraphbones), [`animGraph.clipEvents`](#animgraphclipevents), [`animGraph.edit`](#animgraphedit), [`animGraph.get`](#animgraphget), [`animGraph.new`](#animgraphnew), [`animGraph.open`](#animgraphopen), [`animGraph.set`](#animgraphset), [`animGraph.setClipEvents`](#animgraphsetclipevents) |
 | `asset` | [`asset.applySettings`](#assetapplysettings), [`asset.assign`](#assetassign), [`asset.delete`](#assetdelete), [`asset.extractMaterials`](#assetextractmaterials), [`asset.get`](#assetget), [`asset.import`](#assetimport), [`asset.instantiate`](#assetinstantiate), [`asset.list`](#assetlist), [`asset.move`](#assetmove), [`asset.newFolder`](#assetnewfolder), [`asset.newMaterial`](#assetnewmaterial), [`asset.newProceduralTexture`](#assetnewproceduraltexture), [`asset.reimport`](#assetreimport), [`asset.rename`](#assetrename), [`asset.select`](#assetselect), [`asset.setProceduralTexture`](#assetsetproceduraltexture), [`asset.waitForImports`](#assetwaitforimports) |
 | `behavior` | [`behavior.assign`](#behaviorassign), [`behavior.debug`](#behaviordebug), [`behavior.edit`](#behavioredit), [`behavior.get`](#behaviorget), [`behavior.new`](#behaviornew), [`behavior.open`](#behavioropen), [`behavior.set`](#behaviorset) |
 | `character` | [`character.bones`](#characterbones), [`character.edit`](#characteredit), [`character.get`](#characterget), [`character.new`](#characternew), [`character.open`](#characteropen), [`character.set`](#characterset) |
@@ -57,7 +57,7 @@ optional arguments.
 | `ui` | [`ui.click`](#uiclick), [`ui.drag`](#uidrag), [`ui.find`](#uifind), [`ui.hover`](#uihover), [`ui.key`](#uikey), [`ui.scroll`](#uiscroll), [`ui.snapshot`](#uisnapshot), [`ui.type`](#uitype) |
 | `uiLayout` | [`uiLayout.edit`](#uilayoutedit), [`uiLayout.get`](#uilayoutget), [`uiLayout.new`](#uilayoutnew), [`uiLayout.open`](#uilayoutopen), [`uiLayout.set`](#uilayoutset) |
 | `vfx` | [`vfx.edit`](#vfxedit), [`vfx.get`](#vfxget), [`vfx.new`](#vfxnew), [`vfx.open`](#vfxopen), [`vfx.set`](#vfxset) |
-| `view` | [`view.animateInEditMode`](#viewanimateineditmode), [`view.appearance`](#viewappearance), [`view.frameSelection`](#viewframeselection), [`view.gameCamera`](#viewgamecamera), [`view.pick`](#viewpick), [`view.screenshot`](#viewscreenshot) |
+| `view` | [`view.appearance`](#viewappearance), [`view.frameSelection`](#viewframeselection), [`view.gameCamera`](#viewgamecamera), [`view.pick`](#viewpick), [`view.screenshot`](#viewscreenshot) |
 | `vscript` | [`vscript.attach`](#vscriptattach), [`vscript.edit`](#vscriptedit), [`vscript.get`](#vscriptget), [`vscript.new`](#vscriptnew), [`vscript.nodes`](#vscriptnodes), [`vscript.open`](#vscriptopen), [`vscript.set`](#vscriptset), [`vscript.validate`](#vscriptvalidate) |
 
 ## activity
@@ -140,26 +140,69 @@ Result:
 - `targets`: integer
 - `warnings`: [string]
 
+### `animGraph.bones`
+
+**Match Animation Bones** · _read-only_, _idempotent_
+
+Shows how a clip's bones pair with a model's when retargeted by name: matched pairs, model bones left at rest, and animated clip bones that drive nothing, under the graph's `retarget` options (or `retarget` given here). Use it to write a `boneMap` before setting `retarget` with animGraph.edit. `model` (a glTF file, prefab or .character) defaults to the graph's preview.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `clip`: string
+- `model?`: string
+- `path?`: string
+- `retarget?`: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}
+
+Result:
+
+- `clipBones`: [string]
+- `matched`: object
+- `modelBones`: [string]
+- `needsRetarget`: boolean
+- `unmatchedClipBones`: [string]
+- `unmatchedModelBones`: [string]
+
+### `animGraph.clipEvents`
+
+**Get Clip Events** · _read-only_, _idempotent_
+
+Lists an animation clip's events ({time (seconds), name}, by time) and its duration. Animators report events as their clip plays past them (FiredAnimationEvent, VisualScript animation events); `editable` says whether animGraph.setClipEvents can change them.
+
+Arguments:
+
+- `clip`: string
+
+Result:
+
+- `clip`: string
+- `duration`: number
+- `editable`: boolean
+- `events`: [{name: string, time: number}]
+
 ### `animGraph.edit`
 
 **Edit Animation Graph** · _undoable_
 
-Changes part of an .animgraph file in one undoable step, in this order: removeTransitions (indices), removeStates, removeParameters, removeLayers, parameters (add or replace by name), addStates, updateStates (name → fields; "name" renames everywhere), addTransitions, updateTransitions (index → fields), addLayers, updateLayers, initialState, preview. Clip paths become asset references. Returns the states, numbered transitions, parameters and problems. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` (additive) [{name, clip, weight, speed, referenceTime}], `initialState`. Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes. Undoable (one step; edit.undo reverts it).
+Changes part of an .animgraph file in one undoable step, in this order: removeTransitions (indices), removeStates, removeParameters, removeLayers, parameters (add or replace by name), addStates, updateStates (name → fields; "name" renames everywhere), addTransitions, updateTransitions (index → fields), addLayers, updateLayers, initialState, preview, retarget / removeRetarget. With `level` (a sub-state machine's path, e.g. "Combat"), the state and transition edits and initialState apply inside that machine, and its transitions may also go to states of enclosing levels (by name). Clip paths become asset references. Returns the states, numbered transitions, parameters and problems. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `retarget` {boneMap {source bone: target bone}, matchNames (default true), rotation world|local|copy, translation root|none|all, rootScale, sampleRate} (plays clips made for another skeleton by matching bones by name; see animGraph.bones), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space; add parameterY (a second float) and give each clip a `y` for a 2D one, e.g. moveX / moveY for strafing), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` [{name, clip, weight, speed, referenceTime, blend additive|override (override replaces the bones the clip animates), mask [bone names: the layer only touches their subtrees]}], `initialState`. A state with `machine` {states, transitions, initialState} instead of a clip is a sub-state machine: entering it enters its initial state, its own transitions leave from any state inside, and transitions inside may go to states outside it by name (edit inside with animGraph.edit `level`). Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
-- `addLayers?`: [{clip?: string, name?: string, referenceTime?: number, speed?: number, weight?: number}]
-- `addStates?`: [{blend?: object, clip?: string, loops?: boolean, name?: string, position?: number[2], speed?: number, speedParameter?: string}]
+- `addLayers?`: [{blend?: "additive" \| "override", clip?: string, mask?: [string], name?: string, referenceTime?: number, speed?: number, weight?: number}]
+- `addStates?`: [{blend?: object, clip?: string, loops?: boolean, machine?: object, name?: string, position?: number[2], speed?: number, speedParameter?: string}]
 - `addTransitions?`: [{canTransitionToSelf?: boolean, conditions?: [object], duration?: number, exitTime?: number, from?: string, to?: string}]
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `initialState?`: string
+- `level?`: string
 - `parameters?`: [{default?: boolean, name?: string, type?: "float" \| "bool" \| "trigger"}]
 - `path?`: string
 - `preview?`: string
 - `removeLayers?`: [string]
 - `removeParameters?`: [string]
+- `removeRetarget?`: boolean
 - `removeStates?`: [string]
 - `removeTransitions?`: [integer]
+- `retarget?`: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}
 - `updateLayers?`: object
 - `updateStates?`: object
 - `updateTransitions?`: object
@@ -169,6 +212,8 @@ Result:
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `initialState?`: string
 - `layers`: [string]
+- `level?`: string
+- `machines?`: [string]
 - `parameters`: [string]
 - `path`: string
 - `states`: [string]
@@ -190,7 +235,7 @@ Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `clips`: [string]
-- `graph`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, states?: [object], transitions?: [object]}
+- `graph`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
 - `path`: string
 - `warnings`: [string]
 
@@ -198,12 +243,12 @@ Result:
 
 **New Animation Graph**
 
-Writes an .animgraph file in `folder` (default: the Assets root) and imports it: `graph` contents, or a starter (Idle, plus Move on a `speed` parameter when the `preview` model has two clips or more, using its clips). Returns the states, transitions, parameters and warnings. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` (additive) [{name, clip, weight, speed, referenceTime}], `initialState`. Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes.
+Writes an .animgraph file in `folder` (default: the Assets root) and imports it: `graph` contents, or a starter (Idle, plus Move on a `speed` parameter when the `preview` model has two clips or more, using its clips). Returns the states, transitions, parameters and warnings. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `retarget` {boneMap {source bone: target bone}, matchNames (default true), rotation world|local|copy, translation root|none|all, rootScale, sampleRate} (plays clips made for another skeleton by matching bones by name; see animGraph.bones), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space; add parameterY (a second float) and give each clip a `y` for a 2D one, e.g. moveX / moveY for strafing), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` [{name, clip, weight, speed, referenceTime, blend additive|override (override replaces the bones the clip animates), mask [bone names: the layer only touches their subtrees]}], `initialState`. A state with `machine` {states, transitions, initialState} instead of a clip is a sub-state machine: entering it enters its initial state, its own transitions leave from any state inside, and transitions inside may go to states outside it by name (edit inside with animGraph.edit `level`). Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes.
 
 Arguments:
 
 - `folder?`: string
-- `graph?`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, states?: [object], transitions?: [object]}
+- `graph?`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
 - `name?`: string
 - `preview?`: string
 
@@ -212,6 +257,8 @@ Result:
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `initialState?`: string
 - `layers`: [string]
+- `level?`: string
+- `machines?`: [string]
 - `parameters`: [string]
 - `path`: string
 - `states`: [string]
@@ -242,7 +289,7 @@ Replaces an .animgraph file's whole contents and reimports it; animators using i
 Arguments:
 
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
-- `graph`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, states?: [object], transitions?: [object]}
+- `graph`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
 - `path?`: string
 
 Result:
@@ -250,11 +297,31 @@ Result:
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `initialState?`: string
 - `layers`: [string]
+- `level?`: string
+- `machines?`: [string]
 - `parameters`: [string]
 - `path`: string
 - `states`: [string]
 - `transitions`: [string]
 - `warnings`: [string]
+
+### `animGraph.setClipEvents`
+
+**Set Clip Events** · _undoable_, _idempotent_
+
+Replaces the events of a clip imported from a glTF file ({time, name}; footsteps, hits, sounds). They are kept in the model's import settings, so they survive reimports and apply wherever the clip plays. Undoable. Times outside the clip are clamped to it. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `clip`: string
+- `events`: [{name: string, time: number}]
+
+Result:
+
+- `clip`: string
+- `duration`: number
+- `editable`: boolean
+- `events`: [{name: string, time: number}]
 
 ## asset
 
@@ -693,20 +760,18 @@ Result:
 
 **Edit Character** · _undoable_
 
-Changes a .character file in one undoable step, in this order: template, proportions (name → multiplier), colors (region → [r,g,b]), resetColors, detach, attach, updateAttachments (name → fields; "name" renames), clips (stock), removeClips, addClips (clips from glTF animations or other characters, played by bone-name match; boneMap maps source node names to bones), defaultClip, smooth, segments. Placed copies update. Bone names for attach come from character.bones or character.get. Undoable (one step; edit.undo reverts it).
+Changes a .character file in one undoable step, in this order: template, proportions (name → multiplier), colors (region → [r,g,b]), resetColors, detach, attach, updateAttachments (name → fields; "name" renames), clips, defaultClip, smooth, segments. Placed copies update. Bone names for attach come from character.bones or character.get. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
-- `addClips?`: [string]
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
-- `attach?`: [{asset?: string, bone?: string, color?: number[3], name?: string, partColors?: object, position?: number[3], rotation?: number[3], scale?: number}]
+- `attach?`: [{asset?: string, bone?: string, color?: number[3], name?: string, position?: number[3], rotation?: number[3], scale?: number}]
 - `clips?`: [string]
 - `colors?`: object
 - `defaultClip?`: string
 - `detach?`: [string]
 - `path?`: string
 - `proportions?`: object
-- `removeClips?`: [string]
 - `resetColors?`: [string]
 - `segments?`: integer
 - `smooth?`: boolean
@@ -742,7 +807,7 @@ Result:
 
 - `bones`: [{name: string, parent?: string, position: number[3]}]
 - `character`: {attachments?: [object], clips?: [string], colors?: {accent?: number[3], body?: number[3], eyes?: number[3], legs?: number[3], skin?: number[3]}, defaultClip?: string, proportions?: {arms?: number, head?: number, height?: number, legs?: number, neck?: number, tail?: number, torso?: number, width?: number}, segments?: integer, smooth?: boolean, template?: "humanoid" \| "quadruped" \| "bird" \| "blob"}
-- `clips`: [{clip: string, duration: number, events: [string], loops: boolean, name: string, source?: string}]
+- `clips`: [{clip: string, duration: number, events: [string], loops: boolean, name: string}]
 - `colors`: object
 - `summary`: {asset: asset id, attachments: [string], bones: [string], clips: [string], entities?: [entity id], height: number, parameters: [string], path: string, prefab: asset id, template: "humanoid" \| "quadruped" \| "bird" \| "blob", warnings: [string]}
 
@@ -750,11 +815,11 @@ Result:
 
 **New Character**
 
-Writes a .character file in `folder` (default: the Assets root) from a body template, imported as a skinned prefab with an Animator and the stock clips (idle, walk, run, jump, attack, die), optionally placed in the scene. Then change it with character.edit {proportions, colors, attach}. A character is a body `template` (humanoid, quadruped, bird, blob) with a generated skeleton, `proportions` (multipliers, 1 = as designed, 0.25-3: height (scales everything), head, torso, width, arms (a bird's wings), legs, neck, tail), `colors` by region (skin, body, legs, accent, eyes; [r,g,b] 0-1 sRGB; a missing one is the template's default), `attachments` (each: name, bone (see character.bones), asset (a .meshbuild path under Assets/), position [x,y,z] meters and rotation [x,y,z] degrees in the bone's space (+Y up, +Z forward, +X the character's left), scale, optional color recoloring every part, optional partColors {part name: [r,g,b]} recoloring single mesh-build parts over color), `clips` (stock clips to include: idle, walk, run, jump, attack, die; all by default; an entry may instead be {name, clip: "asset:<id>#animation/<name>" (a glTF animation or another character's clip), boneMap: {sourceNode: bone}, loops}, played by bone-name match: rotations of nodes named like bones, no rest-pose correction; named like a stock clip it replaces it), `defaultClip` (the Animator's first state), `smooth` (blended skin weights at joints) and `segments` (6-32, roundness). It imports as a skinned prefab with an Animator whose states are the clips plus `locomotion` (idle/walk/run blended by the float parameter `speed` in m/s), with triggers `jump`, `attack`, `die`. Every key is optional.
+Writes a .character file in `folder` (default: the Assets root) from a body template, imported as a skinned prefab with an Animator and the stock clips (idle, walk, run, jump, attack, die), optionally placed in the scene. Then change it with character.edit {proportions, colors, attach}. A character is a body `template` (humanoid, quadruped, bird, blob) with a generated skeleton, `proportions` (multipliers, 1 = as designed, 0.25-3: height (scales everything), head, torso, width, arms (a bird's wings), legs, neck, tail), `colors` by region (skin, body, legs, accent, eyes; [r,g,b] 0-1 sRGB; a missing one is the template's default), `attachments` (each: name, bone (see character.bones), asset (a .meshbuild path under Assets/), position [x,y,z] meters and rotation [x,y,z] degrees in the bone's space (+Y up, +Z forward, +X the character's left), scale, optional color recoloring every part), `clips` (stock clips to include: idle, walk, run, jump, attack, die; all by default), `defaultClip` (the Animator's first state), `smooth` (blended skin weights at joints) and `segments` (6-32, roundness). It imports as a skinned prefab with an Animator whose states are the clips plus `locomotion` (idle/walk/run blended by the float parameter `speed` in m/s), with triggers `jump`, `attack`, `die`. Every key is optional.
 
 Arguments:
 
-- `attachments?`: [{asset?: string, bone?: string, color?: number[3], name?: string, partColors?: object, position?: number[3], rotation?: number[3], scale?: number}]
+- `attachments?`: [{asset?: string, bone?: string, color?: number[3], name?: string, position?: number[3], rotation?: number[3], scale?: number}]
 - `colors?`: object
 - `folder?`: string
 - `name?`: string
@@ -797,7 +862,7 @@ Result:
 
 **Set Character** · _undoable_, _idempotent_
 
-Replaces a .character file's whole contents and reimports it; placed copies update. Undoable. For a few changes character.edit is shorter. A character is a body `template` (humanoid, quadruped, bird, blob) with a generated skeleton, `proportions` (multipliers, 1 = as designed, 0.25-3: height (scales everything), head, torso, width, arms (a bird's wings), legs, neck, tail), `colors` by region (skin, body, legs, accent, eyes; [r,g,b] 0-1 sRGB; a missing one is the template's default), `attachments` (each: name, bone (see character.bones), asset (a .meshbuild path under Assets/), position [x,y,z] meters and rotation [x,y,z] degrees in the bone's space (+Y up, +Z forward, +X the character's left), scale, optional color recoloring every part, optional partColors {part name: [r,g,b]} recoloring single mesh-build parts over color), `clips` (stock clips to include: idle, walk, run, jump, attack, die; all by default; an entry may instead be {name, clip: "asset:<id>#animation/<name>" (a glTF animation or another character's clip), boneMap: {sourceNode: bone}, loops}, played by bone-name match: rotations of nodes named like bones, no rest-pose correction; named like a stock clip it replaces it), `defaultClip` (the Animator's first state), `smooth` (blended skin weights at joints) and `segments` (6-32, roundness). It imports as a skinned prefab with an Animator whose states are the clips plus `locomotion` (idle/walk/run blended by the float parameter `speed` in m/s), with triggers `jump`, `attack`, `die`. Every key is optional. Undoable (one step; edit.undo reverts it).
+Replaces a .character file's whole contents and reimports it; placed copies update. Undoable. For a few changes character.edit is shorter. A character is a body `template` (humanoid, quadruped, bird, blob) with a generated skeleton, `proportions` (multipliers, 1 = as designed, 0.25-3: height (scales everything), head, torso, width, arms (a bird's wings), legs, neck, tail), `colors` by region (skin, body, legs, accent, eyes; [r,g,b] 0-1 sRGB; a missing one is the template's default), `attachments` (each: name, bone (see character.bones), asset (a .meshbuild path under Assets/), position [x,y,z] meters and rotation [x,y,z] degrees in the bone's space (+Y up, +Z forward, +X the character's left), scale, optional color recoloring every part), `clips` (stock clips to include: idle, walk, run, jump, attack, die; all by default), `defaultClip` (the Animator's first state), `smooth` (blended skin weights at joints) and `segments` (6-32, roundness). It imports as a skinned prefab with an Animator whose states are the clips plus `locomotion` (idle/walk/run blended by the float parameter `speed` in m/s), with triggers `jump`, `attack`, `die`. Every key is optional. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
@@ -900,7 +965,7 @@ Result:
 
 **Edit Dialogue** · _undoable_
 
-Changes part of a .dialogue file in one undoable step, in this order: speakers, removeSpeakers, variables, removeVariables, removeNodes, addNodes, updateNodes, connect, start, generateKeys, layout, uiLayout. Returns node summaries and warnings. Undoable (one step; edit.undo reverts it).
+Changes part of a .dialogue file in one undoable step, in this order: speakers, removeSpeakers, variables, removeVariables, removeNodes, addNodes, updateNodes, connect, start, generateKeys, layout. Returns node summaries and warnings. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
@@ -915,7 +980,6 @@ Arguments:
 - `removeVariables?`: [string]
 - `speakers?`: [{color?: string, id?: string, name?: string, portrait?: string}]
 - `start?`: string
-- `uiLayout?`: string
 - `updateNodes?`: object
 - `variables?`: [{default?: any, name?: string, type?: "number" \| "bool" \| "text"}]
 
@@ -943,7 +1007,7 @@ Arguments:
 Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
-- `dialogue`: {nodes?: [object], speakers?: [object], start?: string, uiLayout?: string, variables?: [object]}
+- `dialogue`: {nodes?: [object], speakers?: [object], start?: string, variables?: [object]}
 - `localizationKeys`: object
 - `path`: string
 - `warnings`: [string]
@@ -952,11 +1016,11 @@ Result:
 
 **New Dialogue**
 
-Writes a .dialogue file in `folder` (default: the Assets root) and imports it: `dialogue` as given, else a starter conversation (or nothing with empty: true). Returns the asset, node summaries and warnings. Build it up with dialogue.edit {addNodes, connect, variables, speakers}, try it with dialogue.play. A .dialogue file is a branching conversation: `start` (node id), `speakers` [{id, name, portrait (texture path), color "#RRGGBB"}], `variables` [{name, type number|bool|text, default}] and `nodes` [{id, type, ...}]. Node types: line {speaker, text, key, next}; choice {speaker?, text? (prompt), choices [{text, key, next, condition}], next (used when no option is available)}; condition {condition, next (true), else (false)}; set {changes [{variable, op set|add|subtract|toggle, value | expression}], next}; event {event, args {}, next}; end. An empty next ends the conversation. Text fills in {variable}. Conditions/expressions: `gold >= 10 && !paid`, `visits + 1` (== != < <= > >= && || ! and or not + - * / parentheses, "strings"). `key` is a localization key per line/option. `position` [x, y] places the node in the graph view (omitted: placed automatically). `uiLayout` (path or asset:<id>) shows the dialogue in a .ui layout instead of the default box: it sets the values speaker, speakerColor, text, portrait, hasPortrait, isLine, isChoice, active, choiceCount, choice1…9, hasChoice1…9 and answers the button events continue and choice1…9 (uiLayout.new {preset: "dialogue"} makes one). Problems (missing nodes, unknown speakers/variables, bad conditions, unreachable nodes) come back as `warnings`. In game a DialoguePlayer component {dialogue: path, startNode, autoStart, uiLayout} plays it; game code uses world.dialogues?.start(entity), world.dialogue(for:)?.setVariable / .variable, and world.dialogues?.onEvent.
+Writes a .dialogue file in `folder` (default: the Assets root) and imports it: `dialogue` as given, else a starter conversation (or nothing with empty: true). Returns the asset, node summaries and warnings. Build it up with dialogue.edit {addNodes, connect, variables, speakers}, try it with dialogue.play. A .dialogue file is a branching conversation: `start` (node id), `speakers` [{id, name, portrait (texture path), color "#RRGGBB"}], `variables` [{name, type number|bool|text, default}] and `nodes` [{id, type, ...}]. Node types: line {speaker, text, key, next}; choice {speaker?, text? (prompt), choices [{text, key, next, condition}], next (used when no option is available)}; condition {condition, next (true), else (false)}; set {changes [{variable, op set|add|subtract|toggle, value | expression}], next}; event {event, args {}, next}; end. An empty next ends the conversation. Text fills in {variable}. Conditions/expressions: `gold >= 10 && !paid`, `visits + 1` (== != < <= > >= && || ! and or not + - * / parentheses, "strings"). `key` is a localization key per line/option. `position` [x, y] places the node in the graph view (omitted: placed automatically). Problems (missing nodes, unknown speakers/variables, bad conditions, unreachable nodes) come back as `warnings`. In game a DialoguePlayer component {dialogue: path, startNode, autoStart} plays it; game code uses world.dialogues?.start(entity), world.dialogue(for:)?.setVariable / .variable, and world.dialogues?.onEvent.
 
 Arguments:
 
-- `dialogue?`: {nodes?: [object], speakers?: [object], start?: string, uiLayout?: string, variables?: [object]}
+- `dialogue?`: {nodes?: [object], speakers?: [object], start?: string, variables?: [object]}
 - `empty?`: boolean
 - `folder?`: string
 - `name?`: string
@@ -1019,7 +1083,7 @@ Replaces a .dialogue file's whole contents and reimports it (running games pick 
 Arguments:
 
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
-- `dialogue`: {nodes?: [object], speakers?: [object], start?: string, uiLayout?: string, variables?: [object]}
+- `dialogue`: {nodes?: [object], speakers?: [object], start?: string, variables?: [object]}
 - `path?`: string
 
 Result:
@@ -1827,7 +1891,7 @@ Arguments:
 
 **Assign Material Graph** · _undoable_
 
-Sets the MeshRenderer.material of an entity (default: the selected one), and with `children: true` of every MeshRenderer below it (a placed model or prefab), to a .material file. A Decal gets it as its `material` (it paints the graph instead of its texture). Undoable, one step. Mesh build parts use a material through their `material` key instead. Undoable (one step; edit.undo reverts it).
+Sets the MeshRenderer.material of an entity (default: the selected one), and with `children: true` of every MeshRenderer below it (a placed model or prefab), to a .material file. Undoable, one step. Mesh build parts use a material through their `material` key instead. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
@@ -3773,7 +3837,7 @@ Changes a .terrain file's settings, layers or scatter rules in one undoable step
 
 Arguments:
 
-- `addLayers?`: [{color?: number[3], material?: string, name?: string, normalMap?: string, texture?: string, tileSize?: number}]
+- `addLayers?`: [{color?: number[3], name?: string, texture?: string, tileSize?: number}]
 - `addScatter?`: [{alignToNormal?: boolean, asset?: string, density?: number, layer?: string, material?: string, maxCount?: integer, maxHeight?: number, maxScale?: number, maxSlope?: number, minHeight?: number, minScale?: number, minSlope?: number, name?: string, seed?: integer}]
 - `albedoSize?`: integer
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
@@ -3781,7 +3845,6 @@ Arguments:
 - `collider?`: boolean
 - `colliderLod?`: integer
 - `heightRange?`: number
-- `lodDistance?`: number
 - `lods?`: integer
 - `path?`: string
 - `removeLayers?`: [string]
@@ -3829,8 +3892,7 @@ Result:
 - `colliderLod`: integer
 - `heightRange`: number
 - `heights?`: [[number]]
-- `layers`: [{color?: number[3], material?: string, name?: string, normalMap?: string, texture?: string, tileSize?: number}]
-- `lodDistance`: number
+- `layers`: [{color?: number[3], name?: string, texture?: string, tileSize?: number}]
 - `lods`: integer
 - `resolution`: integer
 - `scatter`: [{alignToNormal?: boolean, asset?: string, density?: number, layer?: string, material?: string, maxCount?: integer, maxHeight?: number, maxScale?: number, maxSlope?: number, minHeight?: number, minScale?: number, minSlope?: number, name?: string, seed?: integer}]
@@ -3842,7 +3904,7 @@ Result:
 
 **New Terrain**
 
-Writes a .terrain file in `folder` (default: the Assets root): rolling hills generated from `seed` with grass, rock and dirt layers (grass everywhere), imported as chunk meshes with colliders and per-pixel blended layers (a baked albedo on low quality), optionally placed in the scene. Then shape it with terrain.sculpt, texture it with terrain.paint, and add props with terrain.scatter. A terrain is a heightmap centered on its origin: `size` [x,z] meters, `resolution` height samples per side (3-1025), `heightRange` (meters at full height; heights span 0 to heightRange), `chunkCells` (cells per chunk mesh), `lods` (detail levels per chunk, swapped by camera distance), `lodDistance` (meters where level 1 starts, doubling per level; 0: 1.5 chunk widths), `collider` (a triangle-mesh collider per chunk), `colliderLod`, `albedoSize`, `seed`, `layers` (each: name, color [r,g,b] 0-1 sRGB, texture (path under Assets/: an image or .proctex), tileSize meters per repeat, normalMap (an optional tangent-space normal map path, tiled like texture), material (an optional graph .material path drawn where the layer is painted, its UVs repeating every tileSize, instead of texture)); up to 8 layers blend per pixel on the GPU (more are baked into one albedo, which low quality always draws), `scatter` rules (each: name, asset (a .meshbuild path, or "asset:<id>#mesh/<name>"), material, density (candidate spots per 100 m²), minSlope/maxSlope degrees, minHeight/maxHeight meters, minScale/maxScale, layer (only where this layer is painted), alignToNormal, seed, maxCount), and the data `heights` (base64 UInt16) and `splat` (base64 UInt8 weights per layer). Positions in tools are terrain-space [x,z] meters from the center (x and z each run -size/2 to size/2). Every key is optional; use terrain.sculpt / terrain.paint to change the data rather than writing it.
+Writes a .terrain file in `folder` (default: the Assets root): rolling hills generated from `seed` with grass, rock and dirt layers (grass everywhere), imported as chunk meshes with colliders and a baked albedo, optionally placed in the scene. Then shape it with terrain.sculpt, texture it with terrain.paint, and add props with terrain.scatter. A terrain is a heightmap centered on its origin: `size` [x,z] meters, `resolution` height samples per side (3-1025), `heightRange` (meters at full height; heights span 0 to heightRange), `chunkCells` (cells per chunk mesh), `lods` (extra detail meshes per chunk), `collider` (a triangle-mesh collider per chunk), `colliderLod`, `albedoSize`, `seed`, `layers` (each: name, color [r,g,b] 0-1 sRGB, texture (path under Assets/: an image or .proctex), tileSize meters per repeat), `scatter` rules (each: name, asset (a .meshbuild path, or "asset:<id>#mesh/<name>"), material, density (candidate spots per 100 m²), minSlope/maxSlope degrees, minHeight/maxHeight meters, minScale/maxScale, layer (only where this layer is painted), alignToNormal, seed, maxCount), and the data `heights` (base64 UInt16) and `splat` (base64 UInt8 weights per layer). Positions in tools are terrain-space [x,z] meters from the center (x and z each run -size/2 to size/2). Every key is optional; use terrain.sculpt / terrain.paint to change the data rather than writing it.
 
 Arguments:
 
@@ -4000,7 +4062,7 @@ Arguments:
 
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `path?`: string
-- `terrain`: {albedoSize?: integer, chunkCells?: integer, collider?: boolean, colliderLod?: integer, heightRange?: number, heights?: string, layers?: [object], lodDistance?: number, lods?: integer, resolution?: integer, scatter?: [object], seed?: integer, size?: number[2], splat?: [string]}
+- `terrain`: {albedoSize?: integer, chunkCells?: integer, collider?: boolean, colliderLod?: integer, heightRange?: number, heights?: string, layers?: [object], lods?: integer, resolution?: integer, scatter?: [object], seed?: integer, size?: number[2], splat?: [string]}
 
 Result:
 
@@ -4709,7 +4771,7 @@ Result:
 
 **New UI Layout**
 
-Writes a .ui file (a game menu or HUD) in `folder` (default: the Assets root) from a `preset` (hud, menu, dialogue, empty) plus optional `widgets`, and imports it. Returns the widget ids, value keys, events and warnings. Change it with uiLayout.edit (add/update/move/remove widgets, bindings, sample values) or uiLayout.set. A .ui file is a game menu or HUD: `theme` (game|dark|light|highContrast), `colors` (theme color name → "#RRGGBB[AA]"; names: text, secondaryText, accent, accentText, panel, panelBorder, control, controlHover, barBackground, health, warning, danger, hudText, hudShadow), `fontSize`, `safeArea` (points kept clear of the screen edges), `size` (design screen size [w, h]), `values` (sample values by key for the preview) and `widgets`, a flat list. Each widget: `id` (unique), `type` (panel|vstack|hstack|label|image|button|bar|spacer), `parent` (a container id; "" is the screen). The screen and panels place children by `anchor` (topLeft|top|topRight|left|center|right|bottomLeft|bottom|bottomRight|fill) and `offset` [x, y] points in from the anchored edges; stacks line them up (`spacing`, `align` auto|start|center|end|stretch, `justify` start|center|end|spaceBetween, children's `grow`). Also: width/height (omit to fit content), padding, background/borderColor/color ("#hex" or a theme color name), cornerRadius, opacity, hidden; label/button `text` with `{key}` placeholders, fontSize, textAlign, wrap, shadow; image `image` (path under Assets/), fit fit|fill|stretch; bar value, max, kind progress|health, segments, trail; button primary, event (default: the id). `bind` ties a widget to a value key (bar fill = value / max; label/button text; image path) and `visibleWhen` shows it only while a key is truthy ("!key": falsy). Game code: let hud = UIBuildView(assets: assets, path: "UI/hud.ui"); ui.root.addChild(hud); hud.set("health", 64); hud.on("pause") { ... }.
+Writes a .ui file (a game menu or HUD) in `folder` (default: the Assets root) from a `preset` (hud, menu, empty) plus optional `widgets`, and imports it. Returns the widget ids, value keys, events and warnings. Change it with uiLayout.edit (add/update/move/remove widgets, bindings, sample values) or uiLayout.set. A .ui file is a game menu or HUD: `theme` (game|dark|light|highContrast), `colors` (theme color name → "#RRGGBB[AA]"; names: text, secondaryText, accent, accentText, panel, panelBorder, control, controlHover, barBackground, health, warning, danger, hudText, hudShadow), `fontSize`, `safeArea` (points kept clear of the screen edges), `size` (design screen size [w, h]), `values` (sample values by key for the preview) and `widgets`, a flat list. Each widget: `id` (unique), `type` (panel|vstack|hstack|label|image|button|bar|spacer), `parent` (a container id; "" is the screen). The screen and panels place children by `anchor` (topLeft|top|topRight|left|center|right|bottomLeft|bottom|bottomRight|fill) and `offset` [x, y] points in from the anchored edges; stacks line them up (`spacing`, `align` auto|start|center|end|stretch, `justify` start|center|end|spaceBetween, children's `grow`). Also: width/height (omit to fit content), padding, background/borderColor/color ("#hex" or a theme color name), cornerRadius, opacity, hidden; label/button `text` with `{key}` placeholders, fontSize, textAlign, wrap, shadow; image `image` (path under Assets/), fit fit|fill|stretch; bar value, max, kind progress|health, segments, trail; button primary, event (default: the id). `bind` ties a widget to a value key (bar fill = value / max; label/button text; image path) and `visibleWhen` shows it only while a key is truthy ("!key": falsy). Game code: let hud = UIBuildView(assets: assets, path: "UI/hud.ui"); ui.root.addChild(hud); hud.set("health", 64); hud.on("pause") { ... }.
 
 Arguments:
 
@@ -4878,21 +4940,6 @@ Result:
 - `warnings`: [string]
 
 ## view
-
-### `view.animateInEditMode`
-
-**Animate in Scene View**
-
-Turns on (or off, or toggles without `on`) animation in the edit-mode Scene view: characters, glTF models with asset clips and animation graphs play their Animator (from its initial state, e.g. a character's idle) while you edit, without entering play mode. Editor-only and never saved: the pose is shown, not written into the scene, so saving, undo and the inspector see the authored transforms. Returns whether it is on and how many animators play.
-
-Arguments:
-
-- `on?`: boolean
-
-Result:
-
-- `animators`: integer
-- `on`: boolean
 
 ### `view.appearance`
 

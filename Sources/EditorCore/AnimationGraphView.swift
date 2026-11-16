@@ -37,6 +37,10 @@ public final class AnimGraphCanvas: Widget {
     /// A transition was drawn from a state (nil: Any State) to a state.
     public var onConnect: ((String?, String) -> Void)?
     public var onDelete: (() -> Void)?
+    /// A state node was double-clicked (opens a sub-state machine).
+    public var onOpen: ((String) -> Void)?
+    /// States of the enclosing levels, when the canvas shows a sub-state machine.
+    public var outerStates: [String] = [] { didSet { setNeedsDisplay() } }
 
     static let nodeSize = Vec2(156, 46)
     static let anyStateName = "\u{1}any"
@@ -97,13 +101,25 @@ public final class AnimGraphCanvas: Widget {
 
     /// The two ends of a transition's arrow, offset sideways when the opposite one exists too.
     private func segment(_ transition: AnimationGraphTransition) -> (Vec2, Vec2)? {
-        guard graph.state(named: transition.to) != nil, transition.from.map({ graph.state(named: $0) != nil }) ?? true else { return nil }
+        guard transition.from.map({ graph.state(named: $0) != nil }) ?? true else { return nil }
+        if graph.state(named: transition.to) == nil {
+            // Out of a sub-state machine (to a state of an enclosing level): a stub down from the node.
+            guard isLeaving(transition) else { return nil }
+            let r = rect(of: transition.from)
+            let a = Vec2(r.x + r.width - 18, r.y + r.height)
+            return (a, a + Vec2(0, 34))
+        }
         let a = center(rect(of: transition.from)), b = center(rect(of: transition.to))
         let d = b - a
         let len = length(d)
         guard len > 1 else { return nil }
         let side = Vec2(-d.y, d.x) / len * 7
         return (a + side, b + side)
+    }
+
+    /// Whether `transition` goes to a state outside this level (only inside a sub-state machine).
+    func isLeaving(_ transition: AnimationGraphTransition) -> Bool {
+        outerStates.contains(transition.to) && graph.state(named: transition.to) == nil
     }
 
     func transition(at point: Vec2) -> Int? {
@@ -147,6 +163,7 @@ public final class AnimGraphCanvas: Widget {
             let tip = mid + dir * 6
             list.drawLine(from: tip, to: tip - dir * 10 + side * 6, width: 2, color: color)
             list.drawLine(from: tip, to: tip - dir * 10 - side * 6, width: 2, color: color)
+            if isLeaving(t) { list.drawText("↑ " + t.to, at: b + Vec2(-10, 3), size: 11, color: color) }
         }
         if case .connect(let from, let to)? = drag {
             list.drawLine(from: port(of: from), to: to, width: 2, color: theme.accent)
@@ -167,13 +184,21 @@ public final class AnimGraphCanvas: Widget {
             let selected = selection == .state(state.name)
             let border = selected ? theme.accent : active ? UIColor(0.35, 0.8, 0.5, 1) : UIColor(0.32, 0.36, 0.46, 1)
             list.strokeRect(box, color: border, width: selected || active ? 2 : 1, radii: UICornerRadii(6))
+            if state.machine != nil {
+                list.strokeRect(UIRect(x: box.x + 3, y: box.y + 3, width: box.width - 6, height: box.height - 6), color: border.withAlpha(0.6),
+                                width: 1, radii: UICornerRadii(4))
+            }
             if state.name == initial {
                 list.fillRect(UIRect(x: box.x, y: box.y + 6, width: 4, height: box.height - 12), color: UIColor(0.95, 0.7, 0.25, 1))
             }
             list.drawText(state.name, at: Vec2(box.x + 10, box.y + 6), size: 13, color: theme.textColor)
             let detail: String
-            if let blend = state.blend {
-                detail = "Blend · \(blend.parameter.isEmpty ? "?" : blend.parameter) · \(blend.clips.count) clips"
+            if let machine = state.machine {
+                detail = "Sub-machine · \(machine.states.count) states"
+            } else if let blend = state.blend {
+                let parameters = [blend.parameter] + (blend.parameterY.map { [$0] } ?? [])
+                // Clip count before the parameters, so a long parameter name is what gets cut.
+                detail = "Blend\(blend.is2D ? " 2D" : "") · \(blend.clips.count) clips · \(parameters.map { $0.isEmpty ? "?" : $0 }.joined(separator: ", "))"
             } else {
                 detail = clipName(state.clip ?? "")
             }
@@ -211,6 +236,10 @@ public final class AnimGraphCanvas: Widget {
                 return true
             }
             if let hit = node(at: p) {
+                if e.clickCount == 2, let name = hit, graph.state(named: name)?.machine != nil {
+                    onOpen?(name)
+                    return true
+                }
                 select(hit.map { .state($0) } ?? .anyState)
                 drag = .node(hit, grab: p - origin - position(of: hit), moved: false)
             } else if let t = transition(at: p) {
@@ -336,7 +365,13 @@ public final class AnimationGraphView {
     public let session: EditorSession
     public let asset: AssetID
     public let view: VStack
+    /// The level the canvas and form show and edit: the whole graph, or a sub-state machine's
+    /// (`AnimationGraph.level(at:)`) with the graph-wide settings.
     public private(set) var graph: AnimationGraph
+    /// The file's whole graph.
+    public private(set) var fileGraph: AnimationGraph
+    /// The sub-state machine shown (state names from the root); empty for the top level.
+    public private(set) var path: [String] = []
     public private(set) var selection: AnimGraphSelection = .none
     /// The selected parameter (its name and default grid).
     public private(set) var selectedParameter: String?
@@ -346,6 +381,8 @@ public final class AnimationGraphView {
     /// Live parameter values for the preview (not saved).
     public var liveValue: (String) -> AnimationParameter? = { _ in nil }
     public var onSetLive: ((String, AnimationParameter) -> Void)?
+    /// The state the preview plays (a flattened name) and how far through its cycle (0...1).
+    public var previewPlayback: () -> (state: String, phase: Float)? = { nil }
     /// Assigns the graph to the scene selection.
     public var onAssign: (() -> Void)?
 
@@ -355,12 +392,17 @@ public final class AnimationGraphView {
     private var pending: (graph: AnimationGraph, label: String)?
     private var liveControls: [(name: String, refresh: () -> Void)] = []
     private static var selections: [AssetID: AnimGraphSelection] = [:]
+    private static var paths: [AssetID: [String]] = [:]
+    /// The clip whose events the state editor shows, when the state plays several.
+    private var eventsClip: String?
 
     public init?(session: EditorSession, asset: AssetID) {
         guard session.isAnimationGraphFile(asset), let graph = session.assets?.animationGraph(of: asset) else { return nil }
         self.session = session
         self.asset = asset
-        self.graph = graph
+        fileGraph = graph
+        path = Self.paths[asset] ?? []
+        if let level = graph.level(at: path) { self.graph = level } else { self.graph = graph; path = [] }
         view = VStack(spacing: 6, name: "animGraphForm")
         selection = Self.selections[asset] ?? .none
         canvas.clipName = { [unowned session] in session.clipDisplayName($0) }
@@ -368,6 +410,7 @@ public final class AnimationGraphView {
         canvas.onMove = { [unowned self] name, p in moveNode(name, to: p) }
         canvas.onConnect = { [unowned self] from, to in connect(from: from, to: to) }
         canvas.onDelete = { [unowned self] in deleteSelected() }
+        canvas.onOpen = { [unowned self] name in enter(name) }
         sanitizeSelection()
         layout()
     }
@@ -387,9 +430,60 @@ public final class AnimationGraphView {
     /// Rereads the file (after an undo or an edit from elsewhere) and lays the form out again.
     public func reload() {
         guard pending == nil, let graph = session.assets?.animationGraph(of: asset) else { return }
-        self.graph = graph
+        setFileGraph(graph)
         sanitizeSelection()
         layout()
+    }
+
+    /// Takes the file's graph and shows the current level of it (the nearest one that still exists).
+    private func setFileGraph(_ whole: AnimationGraph) {
+        fileGraph = whole
+        while !path.isEmpty, whole.level(at: path) == nil { path.removeLast() }
+        Self.paths[asset] = path
+        graph = whole.level(at: path) ?? whole
+    }
+
+    /// Shows the sub-state machine `name` of the current level.
+    public func enter(_ name: String) {
+        guard let level = fileGraph.level(at: path + [name]) else { return }
+        path.append(name)
+        Self.paths[asset] = path
+        graph = level
+        selection = .none
+        Self.selections[asset] = selection
+        sanitizeSelection()
+        layout()
+    }
+
+    /// Shows the level `depth` steps from the top (0: the whole graph).
+    public func goUp(to depth: Int? = nil) {
+        guard !path.isEmpty else { return }
+        let left = path.last!
+        path = Array(path.prefix(depth ?? path.count - 1))
+        Self.paths[asset] = path
+        graph = fileGraph.level(at: path) ?? fileGraph
+        selection = graph.state(named: left) != nil ? .state(left) : .none
+        Self.selections[asset] = selection
+        sanitizeSelection()
+        layout()
+    }
+
+    /// States of the levels enclosing the current one (innermost first), which its transitions may go to.
+    var outerStateNames: [String] {
+        var names: [String] = []
+        for depth in stride(from: path.count - 1, through: 0, by: -1) {
+            for name in fileGraph.level(at: Array(path.prefix(depth)))?.states.map(\.name) ?? [] where !names.contains(name) {
+                names.append(name)
+            }
+        }
+        return names.filter { graph.state(named: $0) == nil }
+    }
+
+    /// The node of the current level a playing state (a flattened name, "Combat/Slash") is in.
+    public func levelState(ofPlaying name: String?) -> String? {
+        guard let parts = name?.components(separatedBy: AnimationGraph.levelSeparator), parts.count > path.count,
+              Array(parts.prefix(path.count)) == path else { return nil }
+        return parts[path.count]
     }
 
     private func sanitizeSelection() {
@@ -401,6 +495,7 @@ public final class AnimationGraphView {
         if let p = selectedParameter, graph.parameter(named: p) == nil { selectedParameter = nil }
         if let l = selectedLayer, !graph.layers.contains(where: { $0.name == l }) { selectedLayer = nil }
         canvas.graph = graph
+        canvas.outerStates = outerStateNames
         canvas.selection = selection
     }
 
@@ -411,8 +506,9 @@ public final class AnimationGraphView {
     }
 
     private func commit(_ edited: AnimationGraph, label: String) {
-        guard session.applyAnimationGraph(edited, to: asset, label: label) != nil else { return }
-        graph = session.assets?.animationGraph(of: asset) ?? edited
+        let whole = fileGraph.replacingLevel(at: path, with: edited) ?? edited
+        guard session.applyAnimationGraph(whole, to: asset, label: label) != nil else { return }
+        setFileGraph(session.assets?.animationGraph(of: asset) ?? whole)
         sanitizeSelection()
         layout()
     }
@@ -499,14 +595,16 @@ public final class AnimationGraphView {
         assign.command = AnimGraphAssignCommand.id.rawValue
         assign.tooltip = "Give the entity selected in the scene (a placed model's root) an Animator playing this graph"
         view.addChild(HStack(spacing: 6, [assign, Spacer()]))
+        addLevelBar()
 
         addPreviewSection()
+        addRetargetSection()
         addParametersSection()
         view.addChild(Separator())
         addSelectionSection()
         view.addChild(Separator())
         addLayersSection()
-        let problems = session.animationGraphProblems(graph)
+        let problems = session.animationGraphProblems(fileGraph)
         if !problems.isEmpty {
             view.addChild(Separator())
             view.addChild(Label("Problems", role: .secondary))
@@ -516,6 +614,27 @@ public final class AnimationGraphView {
                 view.addChild(label)
             }
         }
+    }
+
+    /// Where the canvas is: the top level or a sub-state machine, with a way back up.
+    private func addLevelBar() {
+        guard !path.isEmpty else { return }
+        let row = HStack(spacing: 4, name: "animGraphLevel")
+        let top = Button("Graph", name: "animGraphLevelTop") { [unowned self] in goUp(to: 0) }
+        top.tooltip = "Back to the top level"
+        row.addChild(top)
+        for (depth, name) in path.enumerated() {
+            row.addChild(Label("›", role: .secondary))
+            let step = Button(name, name: "animGraphLevelStep") { [unowned self] in goUp(to: depth + 1) }
+            step.isEnabled = depth + 1 < path.count
+            row.addChild(step)
+        }
+        row.addChild(Spacer())
+        let up = Button("Up", name: "animGraphLevelUp") { [unowned self] in goUp() }
+        up.tooltip = "Leave this sub-state machine"
+        row.addChild(up)
+        view.addChild(row)
+        view.addChild(note("Inside a sub-state machine: transitions may go to its states or to states outside it (by name); Any State here means any state inside. Parameters and layers belong to the whole graph."))
     }
 
     private func note(_ text: String) -> Label {
@@ -544,6 +663,80 @@ public final class AnimationGraphView {
         }
         picker.tooltip = "The model the graph is previewed on (a glTF file with clips, or any prefab)"
         view.addChild(picker)
+    }
+
+    /// The skeleton of the graph's first clip that records one, and that clip's animated bones.
+    private func clipSkeleton() -> (skeleton: AnimationSkeleton, animated: Set<Int>)? {
+        guard let assets = session.assets else { return nil }
+        for key in graph.clipKeys {
+            if let clip = AssetReference(key).flatMap({ assets.animationClip($0) }), let skeleton = clip.skeleton {
+                return (skeleton, Set(clip.channels.map(\.target)))
+            }
+        }
+        return nil
+    }
+
+    private func addRetargetSection() {
+        let on = graph.retarget != nil
+        let toggle = Checkbox("Retarget clips by bone name", isOn: on, kind: .toggleSwitch, name: "animGraphRetarget") { [unowned self] isOn in
+            var edited = graph
+            edited.retarget = isOn ? AnimationRetargetOptions() : nil
+            apply(edited, label: isOn ? "Retarget Clips" : "Stop Retargeting Clips")
+        }
+        toggle.tooltip = "Play clips made for another skeleton (another glTF file, a .character) by matching bones by name"
+        view.addChild(toggle)
+        guard let options = graph.retarget else { return }
+        func set(_ label: String, _ change: @escaping (inout AnimationRetargetOptions) -> Void) {
+            var edited = graph
+            var options = edited.retarget ?? AnimationRetargetOptions()
+            change(&options)
+            edited.retarget = options
+            apply(edited, label: label)
+        }
+        let rotations = AnimationRetargetOptions.Rotation.allCases, translations = AnimationRetargetOptions.Translation.allCases
+        let rotation = Dropdown(options: ["Rotation: model space", "Rotation: local", "Rotation: copy"],
+                                selectedIndex: rotations.firstIndex(of: options.rotation) ?? 0, name: "animGraphRetargetRotation") { index in
+            set("Set Retarget Rotation") { $0.rotation = rotations[index] }
+        }
+        rotation.tooltip = "Model space handles bones whose rest orientations differ (resampled); local keeps the keys; copy takes values as they are"
+        let translation = Dropdown(options: ["Move: none", "Move: root", "Move: all"],
+                                   selectedIndex: translations.firstIndex(of: options.translation) ?? 0, name: "animGraphRetargetTranslation") { index in
+            set("Set Retarget Translation") { $0.translation = translations[index] }
+        }
+        translation.tooltip = "Which bones keep their clip movement (scaled to the model's size); the others keep the model's bone lengths"
+        view.addChild(HStack(spacing: 6, [rotation, translation]))
+
+        let target = graph.preview.flatMap(AssetReference.init).flatMap { session.assets?.animationSkeleton(of: $0) }
+        let source = clipSkeleton()
+        if let target, let source {
+            let map = AnimationRetargetMap(source: source.skeleton, target: target, options: options)
+            let used = Set(map.sourceOfTarget.compactMap { $0 })
+            let loose = source.animated.filter { !used.contains($0) }.map { source.skeleton.bones[$0].name }.sorted()
+            var summary = "\(map.matchedCount) of \(target.count) model bones matched"
+            if !loose.isEmpty { summary += "; animated clip bones with no match: " + loose.prefix(8).joined(separator: ", ") + (loose.count > 8 ? "…" : "") }
+            view.addChild(note(summary))
+        } else {
+            view.addChild(note("Pick a preview model and a clip from an imported file to see which bones match."))
+        }
+        for (from, to) in options.boneMap.sorted(by: { $0.key < $1.key }) {
+            let remove = Button("✕", name: "animGraphBoneMapRemove") { set("Remove Bone Mapping") { $0.boneMap[from] = nil } }
+            remove.tooltip = "Remove this mapping"
+            view.addChild(HStack(spacing: 6, [Label("\(from) → \(to)", role: .caption, name: "animGraphBoneMap"), Spacer(), remove]))
+        }
+        if let target, let source {
+            let sourceNames = source.skeleton.names, targetNames = target.names
+            var pickedSource = 0, pickedTarget = 0
+            let from = Dropdown(options: sourceNames, selectedIndex: 0, name: "animGraphBoneMapFrom") { pickedSource = $0 }
+            from.tooltip = "A bone of the clip"
+            let to = Dropdown(options: targetNames, selectedIndex: 0, name: "animGraphBoneMapTo") { pickedTarget = $0 }
+            to.tooltip = "The model bone it drives"
+            let add = Button("Map", name: "animGraphBoneMapAdd") {
+                guard sourceNames.indices.contains(pickedSource), targetNames.indices.contains(pickedTarget) else { return }
+                set("Map Bone") { $0.boneMap[sourceNames[pickedSource]] = targetNames[pickedTarget] }
+            }
+            add.tooltip = "Drive the model bone with this clip bone, whatever their names"
+            view.addChild(HStack(spacing: 6, [from, to, add]))
+        }
     }
 
     private func addParametersSection() {
@@ -709,22 +902,58 @@ public final class AnimationGraphView {
             }
             apply(edited, label: "Edit State")
         }
-        let motion = Dropdown(options: ["One clip", "1D blend space"], selectedIndex: state.blend == nil ? 0 : 1, name: "animGraphMotion") {
+        let motionIndex = state.machine != nil ? 3 : state.blend == nil ? 0 : state.blend!.is2D ? 2 : 1
+        let motion = Dropdown(options: ["One clip", "1D blend space", "2D blend space", "Sub-state machine"], selectedIndex: motionIndex,
+                              name: "animGraphMotion") {
             [unowned self] index in
             editState("Change Motion") { s in
-                if index == 1, s.blend == nil {
-                    let floatParam = graph.parameters.first { $0.type == .float }?.name ?? ""
-                    s.blend = AnimationGraphBlend(parameter: floatParam, clips: s.clip.map { [AnimationGraphBlendClip(clip: $0, position: 0)] } ?? [])
+                let floats = graph.parameters.filter { $0.type == .float }.map(\.name)
+                if index == 3 {
+                    guard s.machine == nil else { return }
+                    // The state's motion becomes the machine's first state.
+                    var inner = s
+                    inner.name = "Start"
+                    inner.position = .zero
+                    s.machine = AnimationGraphMachine(states: [inner], initialState: inner.name)
                     s.clip = nil
-                } else if index == 0, let blend = s.blend {
+                    s.blend = nil
+                    return
+                }
+                if let machine = s.machine {
+                    // Back to a clip: the machine's first clip.
+                    s.machine = nil
+                    s.clip = machine.states.flatMap(\.clips).first
+                    if index == 0 { return }
+                }
+                if index == 0, let blend = s.blend {
                     s.clip = blend.clips.first?.clip
                     s.blend = nil
+                    return
+                }
+                guard index > 0 else { return }
+                if s.blend == nil {
+                    s.blend = AnimationGraphBlend(parameter: floats.first ?? "", clips: s.clip.map { [AnimationGraphBlendClip(clip: $0, position: 0)] } ?? [])
+                    s.clip = nil
+                }
+                if index == 2, s.blend?.parameterY == nil {
+                    let x = s.blend?.parameter
+                    s.blend?.parameterY = floats.first { $0 != x } ?? floats.first ?? ""
+                    for k in s.blend!.clips.indices where s.blend!.clips[k].y == nil { s.blend!.clips[k].y = 0 }
+                } else if index == 1, s.blend?.parameterY != nil {
+                    s.blend?.parameterY = nil
+                    for k in s.blend!.clips.indices { s.blend!.clips[k].y = nil }
                 }
             }
         }
-        motion.tooltip = "Play one clip, or mix clips by a float parameter"
+        motion.tooltip = "Play one clip, mix clips by one float parameter (1D) or two (2D, e.g. strafe direction), or nest a state machine"
         view.addChild(HStack(spacing: 6, [Label("Motion"), Spacer(), motion]))
-        if let blend = state.blend {
+        if let machine = state.machine {
+            let open = Button("Open Sub-Machine", role: .primary, name: "animGraphOpenMachine") { [unowned self] in enter(state.name) }
+            open.tooltip = "Edit the states inside (or double-click the node)"
+            view.addChild(HStack(spacing: 6, [open, Spacer()]))
+            let entry = machine.initialState ?? machine.states.first?.name ?? "none"
+            view.addChild(note("\(machine.states.count) state\(machine.states.count == 1 ? "" : "s") inside, entered at \(entry). This state's transitions leave from any of them."))
+        } else if let blend = state.blend {
             let floats = graph.parameters.filter { $0.type == .float }.map(\.name)
             let options = floats.isEmpty ? ["(add a float parameter)"] : floats
             let parameter = Dropdown(options: options, selectedIndex: floats.firstIndex(of: blend.parameter) ?? 0, name: "animGraphBlendParam") {
@@ -733,7 +962,17 @@ public final class AnimationGraphView {
                 editState("Set Blend Parameter") { $0.blend?.parameter = floats[index] }
             }
             parameter.isEnabled = !floats.isEmpty
-            view.addChild(HStack(spacing: 6, [Label("Parameter"), Spacer(), parameter]))
+            view.addChild(HStack(spacing: 6, [Label(blend.is2D ? "Parameter X" : "Parameter"), Spacer(), parameter]))
+            if let parameterY = blend.parameterY {
+                let y = Dropdown(options: options, selectedIndex: floats.firstIndex(of: parameterY) ?? 0, name: "animGraphBlendParamY") {
+                    [unowned self] index in
+                    guard floats.indices.contains(index) else { return }
+                    editState("Set Blend Parameter") { $0.blend?.parameterY = floats[index] }
+                }
+                y.isEnabled = !floats.isEmpty
+                view.addChild(HStack(spacing: 6, [Label("Parameter Y"), Spacer(), y]))
+                addBlend2DPlot(blend, x: blend.parameter, y: parameterY)
+            }
             for (k, entry) in blend.clips.enumerated() {
                 let clip = clipDropdown(entry.clip, name: "animGraphBlendClip") { [unowned self] key in
                     editState("Set Blend Clip") { $0.blend?.clips[k].clip = key }
@@ -746,19 +985,30 @@ public final class AnimationGraphView {
                 let remove = Button("✕", name: "animGraphBlendRemove") { [unowned self] in
                     editState("Remove Blend Clip") { _ = $0.blend?.clips.remove(at: k) }
                 }
-                view.addChild(HStack(spacing: 4, [clip, position, remove]))
+                if blend.is2D {
+                    position.tooltip = "Where this clip sits along parameter X"
+                    let y = NumberField(value: Double(entry.y ?? 0), step: 0.05, name: "animGraphBlendPositionY")
+                    y.preferredWidth = 56
+                    y.tooltip = "Where this clip sits along parameter Y"
+                    y.onEditEnded = { [unowned self] _, end in editState("Move Blend Clip") { $0.blend?.clips[k].y = Float(end) } }
+                    view.addChild(HStack(spacing: 4, [clip, position, y, remove]))
+                } else {
+                    view.addChild(HStack(spacing: 4, [clip, position, remove]))
+                }
             }
             let addClip = Button("Add Clip", name: "animGraphBlendAdd") { [unowned self] in
                 editState("Add Blend Clip") { s in
                     let next = (s.blend?.clips.map(\.position).max() ?? -1) + 1
                     let key = session.animationClipChoices(for: graph).first ?? ""
-                    s.blend?.clips.append(AnimationGraphBlendClip(clip: key, position: next))
+                    let is2D = s.blend?.is2D == true
+                    s.blend?.clips.append(AnimationGraphBlendClip(clip: key, position: next, y: is2D ? 0 : nil))
                 }
             }
             view.addChild(HStack(spacing: 6, [addClip, Spacer()]))
         } else {
             view.addChild(clipDropdown(state.clip, name: "animGraphClip") { [unowned self] key in editState("Set Clip") { $0.clip = key } })
         }
+        if state.machine == nil { addEventsSection(state) }
         view.addChild(Label("Transitions from \(state.name)", role: .secondary))
         for (i, t) in graph.transitions.enumerated() where t.from == state.name {
             let go = Button("→ \(t.to)  ·  \(t.conditions.count) condition\(t.conditions.count == 1 ? "" : "s")", name: "animGraphGoTransition") {
@@ -769,11 +1019,107 @@ public final class AnimationGraphView {
         addNewTransitionRow(from: state.name)
     }
 
+    /// The 2D blend space's points, with the live value as a cross that dragging moves.
+    private func addBlend2DPlot(_ blend: AnimationGraphBlend, x: String, y: String) {
+        let plot = BlendSpace2DPlot()
+        plot.points = blend.clips.map { BlendSpace2DPlot.Point(label: session.clipDisplayName($0.clip).components(separatedBy: " › ").last ?? $0.clip,
+                                                               position: Vec2($0.position, $0.y ?? 0)) }
+        plot.axisNames = (x, y)
+        func live(_ name: String) -> Float {
+            if case .float(let v)? = liveValue(name) { return v }
+            return graph.parameter(named: name)?.defaultValue ?? 0
+        }
+        plot.value = Vec2(live(x), live(y))
+        plot.onPick = { [unowned self] p in
+            onSetLive?(x, .float(p.x))
+            onSetLive?(y, .float(p.y))
+        }
+        plot.tooltip = "Clips at their points (bigger: more weight now); drag to try values on the preview"
+        liveControls.append((x, { [unowned plot] in plot.value = Vec2(live(x), live(y)) }))
+        view.addChild(plot)
+    }
+
+    /// The events of the selected state's clip (one of them, for a blend space), editable when
+    /// the clip comes from a glTF file (`EditorSession.setClipEvents`).
+    private func addEventsSection(_ state: AnimationGraphState) {
+        var clips: [String] = []
+        for key in state.clips where !key.isEmpty && !clips.contains(key) { clips.append(key) }
+        guard !clips.isEmpty else { return }
+        let key = eventsClip.flatMap { clips.contains($0) ? $0 : nil } ?? clips[0]
+        view.addChild(Label("Clip Events", role: .secondary))
+        if clips.count > 1 {
+            let pick = Dropdown(options: clips.map { session.clipDisplayName($0) }, selectedIndex: clips.firstIndex(of: key) ?? 0,
+                                name: "animGraphEventsClip") { [unowned self] index in
+                eventsClip = clips[index]
+                layout()
+            }
+            pick.tooltip = "Which of the state's clips to show events of"
+            view.addChild(pick)
+        }
+        guard let events = session.clipEvents(key) else {
+            view.addChild(note("The clip isn't imported yet."))
+            return
+        }
+        let editable = session.editableClip(key) != nil
+        let duration = session.assets.flatMap { AssetReference(key).flatMap($0.animationClip) }?.duration ?? 0
+        func write(_ events: [AnimationEvent], _ label: String) {
+            session.setClipEvents(events, of: key, label: label)
+            layout()
+        }
+        if events.isEmpty { view.addChild(note(editable ? "No events. Add one to fire it as the clip plays past its time." : "No events.")) }
+        for (k, event) in events.enumerated() {
+            let time = NumberField(value: Double(event.time), step: 0.01, name: "animGraphEventTime")
+            time.preferredWidth = 64
+            time.tooltip = "Seconds from the clip's start (it lasts \(String(format: "%.2f", duration)) s)"
+            time.isEnabled = editable
+            time.onEditEnded = { _, end in
+                var edited = events
+                edited[k].time = min(max(Float(end), 0), duration)
+                write(edited, "Move Clip Event")
+            }
+            let name = TextField(text: event.name, placeholder: "event name", name: "animGraphEventName")
+            name.isEnabled = editable
+            name.style.shrink = 1
+            name.onEndEditing = { text in
+                let trimmed = text.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty, trimmed != event.name else { return }
+                var edited = events
+                edited[k].name = trimmed
+                write(edited, "Rename Clip Event")
+            }
+            let remove = Button("✕", name: "animGraphEventRemove") {
+                var edited = events
+                edited.remove(at: k)
+                write(edited, "Remove Clip Event")
+            }
+            remove.isEnabled = editable
+            view.addChild(HStack(spacing: 4, [time, name, remove]))
+        }
+        guard editable else {
+            view.addChild(note("Only clips imported from glTF files have editable events."))
+            return
+        }
+        let add = Button("Add Event", name: "animGraphEventAdd") { [unowned self] in
+            // At the preview's time when it plays this state, else at the start.
+            var time: Float = 0
+            if let playing = previewPlayback(), levelState(ofPlaying: playing.state) == state.name, path.count + 1 == playing.state.components(separatedBy: "/").count {
+                time = playing.phase * duration
+            }
+            var name = "event", n = 2
+            while events.contains(where: { $0.name == name }) { name = "event\(n)"; n += 1 }
+            write(events + [AnimationEvent(time: time, name: name)], "Add Clip Event")
+        }
+        add.command = AnimGraphSetClipEventsCommand.id.rawValue
+        add.tooltip = "Add an event at the preview's current time in this state (game code and scripts receive it as the clip passes it)"
+        view.addChild(HStack(spacing: 6, [add, Spacer()]))
+    }
+
     private func addNewTransitionRow(from: String?) {
-        let targets = graph.states.map(\.name).filter { $0 != from || from == nil }
+        let targets = graph.states.map(\.name).filter { $0 != from || from == nil } + outerStateNames
         guard !targets.isEmpty else { return }
         var target = 0
-        let to = Dropdown(options: targets, selectedIndex: 0, name: "animGraphNewTransitionTarget") { index in target = index }
+        let labels = targets.map { graph.state(named: $0) == nil ? "↑ " + $0 : $0 }
+        let to = Dropdown(options: labels, selectedIndex: 0, name: "animGraphNewTransitionTarget") { index in target = index }
         let add = Button("Add Transition", name: "animGraphAddTransition") { [unowned self] in
             if targets.indices.contains(target) { connect(from: from, to: targets[target]) }
         }
@@ -857,7 +1203,7 @@ public final class AnimationGraphView {
     // MARK: Layers
 
     private func addLayersSection() {
-        view.addChild(Label("Additive Layers", role: .secondary))
+        view.addChild(Label("Layers", role: .secondary))
         for layer in graph.layers {
             let name = Button(layer.name, name: "animGraphLayerName") { [unowned self] in
                 selectedLayer = selectedLayer == layer.name ? nil : layer.name
@@ -891,6 +1237,7 @@ public final class AnimationGraphView {
                     }
                     apply(edited, label: "Edit Layer")
                 }
+                addLayerBlendAndMask(layer)
             }
         }
         let add = Button("Add Layer", name: "animGraphAddLayer") { [unowned self] in
@@ -901,7 +1248,60 @@ public final class AnimationGraphView {
             apply(edited, label: "Add Layer")
         }
         add.command = AnimGraphEditCommand.id.rawValue
-        add.tooltip = "Add a clip on top of the states (its difference from its first frame is added)"
+        add.tooltip = "Add a clip on top of the states (additive: its difference from its first frame is added; override: it replaces the bones it animates)"
         view.addChild(HStack(spacing: 6, [add, Spacer()]))
+    }
+
+    private func editLayer(_ name: String, _ label: String, _ change: (inout AnimationGraphLayer) -> Void) {
+        var edited = graph
+        guard let i = edited.layers.firstIndex(where: { $0.name == name }) else { return }
+        change(&edited.layers[i])
+        apply(edited, label: label)
+    }
+
+    /// The selected layer's blend mode and bone mask.
+    private func addLayerBlendAndMask(_ layer: AnimationGraphLayer) {
+        let blend = Dropdown(options: ["Additive", "Override"], selectedIndex: layer.isOverride ? 1 : 0, name: "animGraphLayerBlend") {
+            [unowned self] index in
+            editLayer(layer.name, "Set Layer Blend") { $0.blend = index == 1 ? .override : nil }
+        }
+        blend.tooltip = "Additive adds the clip's motion; override replaces the bones the clip animates, mixed in by the weight"
+        view.addChild(HStack(spacing: 6, [Label("Blend"), Spacer(), blend]))
+        let skeleton = graph.preview.flatMap(AssetReference.init).flatMap { session.assets?.animationSkeleton(of: $0) }
+        let mask = layer.mask ?? []
+        if mask.isEmpty {
+            view.addChild(note("Affects every bone. Add a mask bone to limit the layer to that bone and the bones below it."))
+        } else {
+            if let skeleton {
+                let count = Animator.maskTargets(mask, in: skeleton).count
+                view.addChild(note("Affects \(count) of \(skeleton.count) bones of the preview model."))
+            }
+            for bone in mask {
+                let remove = Button("✕", name: "animGraphLayerMaskRemove") { [unowned self] in
+                    editLayer(layer.name, "Remove Mask Bone") { l in
+                        l.mask?.removeAll { $0 == bone }
+                        if l.mask?.isEmpty == true { l.mask = nil }
+                    }
+                }
+                remove.tooltip = "Stop limiting the layer to this bone's subtree"
+                view.addChild(HStack(spacing: 6, [Label("Mask: " + bone, role: .caption, name: "animGraphLayerMaskBone"), Spacer(), remove]))
+            }
+        }
+        guard let skeleton else {
+            view.addChild(note("Pick a preview model to choose mask bones."))
+            return
+        }
+        let depths = skeleton.depths
+        let names = skeleton.names
+        let labels = names.indices.map { String(repeating: "  ", count: min(depths[$0], 12)) + (names[$0].isEmpty ? "(unnamed)" : names[$0]) }
+        var picked = 0
+        let bones = Dropdown(options: labels, selectedIndex: 0, name: "animGraphLayerMaskPick") { picked = $0 }
+        bones.tooltip = "A bone of the preview model; the layer affects it and every bone below it"
+        bones.style.shrink = 1
+        let add = Button("Add to Mask", name: "animGraphLayerMaskAdd") { [unowned self] in
+            guard names.indices.contains(picked), !names[picked].isEmpty, !mask.contains(names[picked]) else { return }
+            editLayer(layer.name, "Add Mask Bone") { $0.mask = ($0.mask ?? []) + [names[picked]] }
+        }
+        view.addChild(HStack(spacing: 6, [bones, add]))
     }
 }

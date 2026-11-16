@@ -162,3 +162,217 @@ private func locomotion() -> AnimationGraph {
         #expect(broken == ["state 'A' has no clip"])
     }
 }
+
+@Suite struct AnimationGraphBlend2DTests {
+    @Test func gradientBandWeights() {
+        let cross = [Vec2(0, 0), Vec2(0, 1), Vec2(-1, 0), Vec2(1, 0), Vec2(0, -1)]
+        func weights(_ v: Vec2) -> [Float] { AnimationMotion.blendWeights2D(points: cross, value: v) }
+        #expect(weights(Vec2(0, 0)) == [1, 0, 0, 0, 0])
+        #expect(weights(Vec2(1, 0)) == [0, 0, 0, 1, 0])
+        let half = weights(Vec2(0, 0.5))
+        #expect(abs(half[0] - 0.5) < 1e-5 && abs(half[1] - 0.5) < 1e-5 && half[2...].allSatisfy { $0 == 0 })
+        // Between forward and right: forward, right and the center share; the sum is 1.
+        let diagonal = weights(Vec2(0.5, 0.5))
+        #expect(abs(diagonal.reduce(0, +) - 1) < 1e-5 && diagonal[1] > 0 && diagonal[3] > 0 && diagonal[2] == 0 && diagonal[4] == 0)
+        #expect(abs(diagonal[1] - diagonal[3]) < 1e-5, "symmetric")
+        // Far outside: the nearest point takes it all.
+        #expect(weights(Vec2(5, 0)) == [0, 0, 0, 1, 0])
+        #expect(AnimationMotion.blendWeights2D(points: [Vec2(3, 3)], value: .zero) == [1])
+        #expect(AnimationMotion.blendWeights2D(points: [], value: .zero).isEmpty)
+        let shared = AnimationMotion.blendWeights2D(points: [Vec2(0, 0), Vec2(0, 0), Vec2(1, 0)], value: Vec2(0, 0))
+        #expect(shared == [0.5, 0.5, 0])
+    }
+
+    @Test func graphFilesBecome2DBlendSpacesThatPlay() throws {
+        let graph = try AssetJSON.decoder().decode(AnimationGraph.self, from: Data("""
+            {"parameters": [{"name": "x"}, {"name": "y"}],
+             "states": [{"name": "Strafe", "blend": {"parameter": "x", "parameterY": "y", "clips": [
+                {"clip": "AnimationGraphBlend2DTests.still", "position": 0, "y": 0},
+                {"clip": "AnimationGraphBlend2DTests.right", "position": 1, "y": 0},
+                {"clip": "AnimationGraphBlend2DTests.forward", "position": 0, "y": 1}]}}]}
+            """.utf8))
+        #expect(graph.states[0].blend?.is2D == true && AnimationGraphCheck.problems(graph).isEmpty)
+        #expect(try AssetJSON.decoder().decode(AnimationGraph.self, from: graph.fileData()) == graph)
+        guard case .blend2D(let x, let y, let entries) = graph.stateMachine.states[0].motion else {
+            Issue.record("not a 2D blend space")
+            return
+        }
+        #expect(x == "x" && y == "y" && entries.map(\.y) == [0, 0, 1])
+        #expect(graph.stateMachine.states[0].motion.clips.count == 3)
+
+        func hold(_ to: Vec3) -> AnimationClip {
+            AnimationClip(name: "hold", channels: [AnimationChannel(target: 0, path: .translation,
+                                                                    sampler: AnimationSampler(times: [0, 1], values: [to.x, to.y, to.z, to.x, to.y, to.z]))])
+        }
+        let clips = ["AnimationGraphBlend2DTests.still": hold(.zero), "AnimationGraphBlend2DTests.right": hold(Vec3(1, 0, 0)),
+                     "AnimationGraphBlend2DTests.forward": hold(Vec3(0, 0, 1))]
+        var animator = Animator(targets: [.invalid], restPose: [Transform()], stateMachine: graph.stateMachine, parameters: graph.parameterDefaults)
+        animator.setFloat("x", 1)
+        var pose = animator.update(dt: 0.1) { clips[$0.key] }
+        #expect(length(pose.transforms[0].position - Vec3(1, 0, 0)) < 1e-4)
+        animator.setFloat("x", 0.5)
+        animator.setFloat("y", 0.5)
+        pose = animator.update(dt: 0.1) { clips[$0.key] }
+        // Gradient bands: at the diagonal's middle all three clips weigh the same.
+        #expect(length(pose.transforms[0].position - Vec3(1, 0, 1) / 3) < 1e-4, "\(pose.transforms[0].position)")
+
+        var renamed = graph
+        renamed.renameParameter("y", to: "forward")
+        #expect(renamed.states[0].blend?.parameterY == "forward")
+        var clash = graph
+        clash.states[0].blend?.clips[2].position = 1
+        clash.states[0].blend?.clips[2].y = 0
+        clash.states[0].blend?.parameterY = "missing"
+        let problems = AnimationGraphCheck.problems(clash)
+        #expect(problems.contains("state 'Strafe''s blend space has two clips at the same point"))
+        #expect(problems.contains { $0.contains("'missing', which doesn't exist") })
+    }
+}
+
+@Suite struct AnimationGraphLayerMaskTests {
+    /// Root › spine › arm, plus a leg under the root.
+    @MainActor private func rig() -> (World, Entity, [Entity]) {
+        let world = World()
+        let root = world.spawn(Transform(), Name("Root"))
+        let spine = world.spawn(Transform(position: Vec3(0, 1, 0)), Name("mixamorig:Spine"))
+        let arm = world.spawn(Transform(position: Vec3(0.3, 0, 0)), Name("Arm"))
+        let leg = world.spawn(Transform(position: Vec3(0.1, -1, 0)), Name("Leg"))
+        world.setParent(spine, to: root)
+        world.setParent(arm, to: spine)
+        world.setParent(leg, to: root)
+        return (world, root, world.animationRig(of: root).targets)
+    }
+
+    /// Every target moved to x = `x` (y and z 0) for the whole clip.
+    private func everywhere(_ x: Float) -> AnimationClip {
+        AnimationClip(name: "all", channels: (0..<4).map {
+            AnimationChannel(target: $0, path: .translation, sampler: AnimationSampler(times: [0, 1], values: [x, 0, 0, x, 0, 0]))
+        })
+    }
+
+    @Test @MainActor func masksLimitLayersToBoneSubtrees() {
+        let (world, root, targets) = rig()
+        #expect(targets.count == 4)
+        let skeleton = world.animationSkeleton(targets: targets)
+        #expect(Animator.maskTargets(["spine"], in: skeleton) == [1, 2], "normalized name, with its subtree")
+        #expect(Animator.maskTargets(["Leg", "Nope"], in: skeleton) == [3])
+
+        let rest = world.animationRig(of: root).restPose
+        let clips = ["AnimationGraphLayerMaskTests.base": everywhere(0), "AnimationGraphLayerMaskTests.wave": everywhere(2)]
+        var animator = Animator(targets: targets, restPose: rest, clip: AnimationClipHandle("AnimationGraphLayerMaskTests.base"))
+        animator.layers = [AdditiveAnimationLayer(clip: AnimationClipHandle("AnimationGraphLayerMaskTests.wave"), weight: 0.5,
+                                                  blend: .override, mask: ["Spine"])]
+        // Unresolved masks touch nothing.
+        #expect(animator.needsLayerMasks)
+        var pose = animator.update(dt: 0.1) { clips[$0.key] }
+        #expect(pose.transforms.map(\.position.x) == [0, 0, 0, 0])
+        animator = animator.withLayerMasks(in: world)
+        #expect(!animator.needsLayerMasks && animator.layers[0].maskTargets == [1, 2])
+        pose = animator.update(dt: 0.1) { clips[$0.key] }
+        #expect(pose.transforms.map(\.position.x) == [0, 1, 1, 0], "override at half weight on the spine's subtree only")
+
+        // Additive, masked: the wave's offset from its reference (none: it holds still) adds nothing...
+        animator.layers[0].blend = nil
+        animator.layers[0].weight = 1
+        pose = animator.update(dt: 0.1) { clips[$0.key] }
+        #expect(pose.transforms.map(\.position.x) == [0, 0, 0, 0])
+        // ...an additive clip that moves does, on the mask only.
+        let move = AnimationClip(name: "move", channels: (0..<4).map {
+            AnimationChannel(target: $0, path: .translation, sampler: AnimationSampler(times: [0, 1], values: [0, 0, 0, 1, 0, 0]))
+        })
+        animator.layers[0] = AdditiveAnimationLayer(clip: AnimationClipHandle("move"), time: 0.5, mask: ["Leg"])
+        animator = animator.withLayerMasks(in: world)
+        pose = animator.update(dt: 0) { $0.key == "move" ? move : clips[$0.key] }
+        #expect(pose.transforms.map(\.position.x) == [0, 0, 0, 0.5])
+    }
+
+    @Test func graphLayersCarryBlendAndMask() throws {
+        let graph = try AssetJSON.decoder().decode(AnimationGraph.self, from: Data("""
+            {"layers": [{"name": "Wave", "clip": "wave", "blend": "override", "mask": ["Spine"]}, {"name": "Breathe", "clip": "b"}]}
+            """.utf8))
+        #expect(graph.layers[0].isOverride && graph.layers[0].mask == ["Spine"] && graph.layers[1].blend == nil)
+        let encoded = String(decoding: try graph.fileData(), as: UTF8.self)
+        #expect(!encoded.contains("null"))
+        #expect(try AssetJSON.decoder().decode(AnimationGraph.self, from: graph.fileData()) == graph)
+        let layers = graph.additiveLayers
+        #expect(layers[0].blend == .override && layers[0].mask == ["Spine"] && layers[0].maskTargets == nil)
+        #expect(layers[1].blend == nil && layers[1].mask == nil)
+    }
+}
+
+@Suite struct AnimationGraphSubMachineTests {
+    /// Idle ⇄ Combat (a sub-machine: Ready → Slash → Ready, Slash exits to Idle when unarmed).
+    private func graph() throws -> AnimationGraph {
+        try AssetJSON.decoder().decode(AnimationGraph.self, from: Data("""
+            {"parameters": [{"name": "armed", "type": "bool"}, {"name": "attack", "type": "trigger"}],
+             "states": [{"name": "Idle", "clip": "idle"},
+                        {"name": "Combat", "machine": {"initialState": "Ready",
+                            "states": [{"name": "Slash", "clip": "slash", "loops": false}, {"name": "Ready", "clip": "ready"}],
+                            "transitions": [{"from": "Ready", "to": "Slash", "conditions": [{"parameter": "attack", "test": "triggered"}], "duration": 0},
+                                            {"from": "Slash", "to": "Ready", "exitTime": 1, "duration": 0},
+                                            {"to": "Idle", "conditions": [{"parameter": "armed", "test": "isFalse"}], "duration": 0}]}}],
+             "transitions": [{"from": "Idle", "to": "Combat", "conditions": [{"parameter": "armed", "test": "isTrue"}], "duration": 0}]}
+            """.utf8))
+    }
+
+    @Test func flattensToPathNamedLeaves() throws {
+        let graph = try graph()
+        #expect(AnimationGraphCheck.problems(graph).isEmpty)
+        #expect(try AssetJSON.decoder().decode(AnimationGraph.self, from: graph.fileData()) == graph)
+        #expect(graph.clipKeys == ["idle", "slash", "ready"] && graph.machinePaths == [["Combat"]])
+        let flat = graph.flattened()
+        #expect(flat.states.map(\.name) == ["Idle", "Combat/Slash", "Combat/Ready"] && flat.initialState == "Idle")
+        #expect(flat.transitions.map { "\($0.from ?? "*")>\($0.to)" } == [
+            "Idle>Combat/Ready",                                 // into the machine: its initial state
+            "Combat/Ready>Combat/Slash", "Combat/Slash>Combat/Ready",
+            "Combat/Slash>Idle", "Combat/Ready>Idle",           // the machine's Any State: each state inside
+        ])
+
+        // Levels read and write back.
+        var level = try #require(graph.level(at: ["Combat"]))
+        #expect(level.states.map(\.name) == ["Slash", "Ready"] && level.parameters == graph.parameters)
+        level.states.append(AnimationGraphState(name: "Block", clip: "block"))
+        level.parameters.append(AnimationGraphParameter(name: "x"))
+        let written = try #require(graph.replacingLevel(at: ["Combat"], with: level))
+        #expect(written.state(atPath: ["Combat", "Block"])?.clip == "block" && written.parameter(named: "x") != nil)
+        #expect(graph.level(at: ["Idle"]) == nil && graph.replacingLevel(at: ["Nope"], with: level) == nil)
+
+        var renamed = graph
+        renamed.renameParameter("armed", to: "hasWeapon")
+        #expect(renamed.level(at: ["Combat"])?.transitions[2].conditions[0].parameter == "hasWeapon")
+    }
+
+    @Test func checksLookInsideMachines() throws {
+        var graph = try graph()
+        var level = try #require(graph.level(at: ["Combat"]))
+        level.transitions.append(AnimationGraphTransition(from: "Ready", to: "Nowhere", exitTime: 1))
+        level.initialState = "Gone"
+        graph = try #require(graph.replacingLevel(at: ["Combat"], with: level))
+        let problems = AnimationGraphCheck.problems(graph)
+        #expect(problems.contains("the initial state 'Gone' in 'Combat' doesn't exist"))
+        #expect(problems.contains("transition 4 in 'Combat' (Ready → Nowhere) goes to a state that doesn't exist"))
+    }
+
+    @Test func animatorPlaysThroughTheSubMachine() throws {
+        let graph = try graph()
+        func hold(_ x: Float) -> AnimationClip {
+            AnimationClip(name: "c", channels: [AnimationChannel(target: 0, path: .translation, sampler: AnimationSampler(times: [0, 1], values: [x, 0, 0, x, 0, 0]))])
+        }
+        let clips = ["idle": hold(0), "ready": hold(1), "slash": hold(2)]
+        var animator = Animator(targets: [.invalid], restPose: [Transform()], stateMachine: graph.stateMachine, parameters: graph.parameterDefaults)
+        _ = animator.update(dt: 0.1) { clips[$0.key] }
+        #expect(animator.currentState == "Idle")
+        animator.setBool("armed", true)
+        _ = animator.update(dt: 0.1) { clips[$0.key] }
+        #expect(animator.currentState == "Combat/Ready")
+        animator.setTrigger("attack")
+        let pose = animator.update(dt: 0.1) { clips[$0.key] }
+        #expect(animator.currentState == "Combat/Slash")
+        _ = pose
+        _ = animator.update(dt: 1.1) { clips[$0.key] }
+        #expect(animator.currentState == "Combat/Ready", "exit time back inside the machine")
+        animator.setBool("armed", false)
+        _ = animator.update(dt: 0.1) { clips[$0.key] }
+        #expect(animator.currentState == "Idle", "the machine's Any State transition leaves it")
+    }
+}

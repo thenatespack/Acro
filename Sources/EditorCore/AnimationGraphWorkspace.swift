@@ -24,6 +24,8 @@ public final class AnimationGraphWorkspace {
     /// The preview model's root.
     public private(set) var previewRoot: Entity?
     public let library = AnimationLibrary()
+    /// The preview animator's clips, retargeted onto the model when the graph says so.
+    let clipCache = AnimatorClipCache()
     public var device: RenderDevice?
     public var quality = RenderQuality.high
 
@@ -66,6 +68,10 @@ public final class AnimationGraphWorkspace {
             self.form = form
             form.liveValue = { [unowned self] name in animator?.parameters[name] }
             form.onSetLive = { [unowned self] name, value in setParameter(name, value) }
+            form.previewPlayback = { [unowned self] in
+                guard let animator, let state = animator.currentState else { return nil }
+                return (state, animator.normalizedTime - animator.normalizedTime.rounded(.down))
+            }
             form.onAssign = { [unowned self] in
                 session.run(AnimGraphAssignCommand.self, .init(asset: AssetReference(id)))
             }
@@ -119,7 +125,9 @@ public final class AnimationGraphWorkspace {
         guard var animator, let assets = session.assets else { return }
         library.assets = assets
         library.resolveAssetClips(animator.clipHandles)
-        let pose = animator.update(dt: dt) { [library] in library.clip($0) }
+        animator = animator.withLayerMasks(in: world)
+        let clips = clipCache.clips(for: previewRoot ?? .invalid, animator, in: world, library: library)
+        let pose = animator.update(dt: dt) { clips[$0] }
         for i in 0..<min(pose.count, animator.targets.count) where pose.animated[i] {
             world.modify(Transform.self, for: animator.targets[i]) { $0 = pose.transforms[i] }
         }
@@ -131,6 +139,43 @@ public final class AnimationGraphWorkspace {
         if let previewRoot { world.despawn(previewRoot) }
         previewRoot = nil
         animator = nil
+        clipCache.removeAll()
+    }
+
+    /// The preview model's world-space box: its meshes' bounds, or its nodes' positions when it
+    /// has no meshes the editor knows the size of. Nil without a model.
+    public func modelBounds() -> Bounds? {
+        guard let previewRoot, world.isAlive(previewRoot) else { return nil }
+        var lo = Vec3(repeating: .infinity), hi = Vec3(repeating: -.infinity)
+        var nodes: [Vec3] = []
+        func visit(_ entity: Entity) {
+            let matrix = world.get(GlobalTransform.self, for: entity)?.matrix ?? world.worldMatrix(of: entity)
+            nodes.append(Vec3(matrix.c3.x, matrix.c3.y, matrix.c3.z))
+            if let renderer = world.get(MeshRenderer.self, for: entity) {
+                let local = renderer.mesh.assetReference.flatMap { session.assets?.mesh($0)?.bounds } ?? MeshGeometry.builtin(renderer.mesh)?.bounds
+                if let local {
+                    let b = local.transformed(by: matrix)
+                    lo = pointwiseMin(lo, b.center - b.halfExtent)
+                    hi = pointwiseMax(hi, b.center + b.halfExtent)
+                }
+            }
+            for child in world.children(of: entity) { visit(child) }
+        }
+        visit(previewRoot)
+        if lo.x > hi.x {
+            for p in nodes {
+                lo = pointwiseMin(lo, p)
+                hi = pointwiseMax(hi, p)
+            }
+        }
+        guard lo.x <= hi.x else { return nil }
+        return Bounds(center: (lo + hi) / 2, halfExtent: pointwiseMax((hi - lo) / 2, Vec3(repeating: 0.1)))
+    }
+
+    /// Fits the preview camera to the model (done when the model appears; the toolbar's Frame).
+    public func frameModel() {
+        guard let bounds = modelBounds() else { return }
+        viewport.frame(bounds)
     }
 
     /// Respawns the model when it changed and gives the animator the current graph.
@@ -144,6 +189,7 @@ public final class AnimationGraphWorkspace {
                 previewRoot = root
                 world.propagateTransforms()
                 animator = Animator(graph: graph, reference: nil, rigOf: root, in: world)
+                frameModel()
             }
         } else {
             animator?.apply(graph)
@@ -162,6 +208,9 @@ public final class AnimationGraphWorkspace {
         let restartButton = Button("Restart", name: "animGraphRestart") { [unowned self] in restart() }
         restartButton.tooltip = "Play the graph again from its initial state, parameters at their defaults"
         bar.addChild(restartButton)
+        let frameButton = Button("Frame", name: "animGraphFrame") { [unowned self] in frameModel() }
+        frameButton.tooltip = "Fit the preview camera to the model"
+        bar.addChild(frameButton)
         pauseToggle.onChange = { [unowned self] on in isPaused = on }
         pauseToggle.tooltip = "Freeze the preview"
         bar.addChild(pauseToggle)
@@ -226,7 +275,7 @@ public final class AnimationGraphWorkspace {
             viewport.update(input) { [unowned self] view in toolContext(view: view) }
         }
         if !isPaused { step(dt) }
-        form?.canvas.activeState = animator?.currentState
+        form?.canvas.activeState = form?.levelState(ofPlaying: animator?.currentState)
         if let t = animator?.normalizedTime { form?.canvas.activeProgress = t - t.rounded(.down) }
     }
 

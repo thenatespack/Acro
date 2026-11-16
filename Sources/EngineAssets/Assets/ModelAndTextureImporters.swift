@@ -183,8 +183,9 @@ enum CompressedTextureCache {
 ///   `PrefabSkin`, so instances get a `Skin` and animate;
 /// - `animation/<name>` per animation (`animation/Animation <index>` when unnamed): an `AnimationClip`
 ///   whose channel targets are the prefab's node numbers (depth first, as `PrefabSkin`), so an
-///   `Animator` bound to an instance (`World.animationRig(of:)`) plays it. Channels on nodes
-///   outside the scene are dropped.
+///   `Animator` bound to an instance (`World.animationRig(of:)`) plays it, and records that node
+///   tree as its `skeleton` so it can be retargeted to other rigs. Channels on nodes outside the
+///   scene are dropped.
 ///
 /// External `.bin` buffers are read relative to the model's folder and recorded as
 /// dependencies (`ImportContext.readDependency`): editing one reimports the model.
@@ -209,16 +210,21 @@ public struct GLTFImporter: AssetImporter {
         public var compression: TextureCompression = .none
         /// Encoder effort when compressing.
         public var compressionQuality: TextureCompressionQuality = .normal
+        /// Events added to the file's clips, by clip sub-asset id (`"animation/Walk"` →
+        /// footsteps): glTF has no events, so they live here (the Animation Graph Builder edits them).
+        public var clipEvents: [SubAssetID: [AnimationEvent]] = [:]
 
         public init(smoothNormals: Bool = false, materialRemap: [SubAssetID: AssetReference] = [:],
-                    compression: TextureCompression = .none, compressionQuality: TextureCompressionQuality = .normal) {
+                    compression: TextureCompression = .none, compressionQuality: TextureCompressionQuality = .normal,
+                    clipEvents: [SubAssetID: [AnimationEvent]] = [:]) {
             self.smoothNormals = smoothNormals
             self.materialRemap = materialRemap
             self.compression = compression
             self.compressionQuality = compressionQuality
+            self.clipEvents = clipEvents
         }
 
-        private enum CodingKeys: String, CodingKey { case smoothNormals, materialRemap, compression, compressionQuality }
+        private enum CodingKeys: String, CodingKey { case smoothNormals, materialRemap, compression, compressionQuality, clipEvents }
 
         public init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -226,6 +232,7 @@ public struct GLTFImporter: AssetImporter {
             materialRemap = try c.decodeIfPresent([SubAssetID: AssetReference].self, forKey: .materialRemap) ?? [:]
             compression = try c.decodeIfPresent(TextureCompression.self, forKey: .compression) ?? .none
             compressionQuality = try c.decodeIfPresent(TextureCompressionQuality.self, forKey: .compressionQuality) ?? .normal
+            clipEvents = try c.decodeIfPresent([SubAssetID: [AnimationEvent]].self, forKey: .clipEvents) ?? [:]
         }
 
         /// An empty remap is left out, so sidecars (and cached imports) from before it existed
@@ -236,6 +243,7 @@ public struct GLTFImporter: AssetImporter {
             if !materialRemap.isEmpty { try c.encode(materialRemap, forKey: .materialRemap) }
             try c.encode(compression, forKey: .compression)
             try c.encode(compressionQuality, forKey: .compressionQuality)
+            if !clipEvents.isEmpty { try c.encode(clipEvents, forKey: .clipEvents) }
         }
     }
 
@@ -246,7 +254,8 @@ public struct GLTFImporter: AssetImporter {
     /// 2: PBR materials (every texture slot, metallic-roughness, emissive, alpha mask) and tangents.
     /// 3: skins (joint influences in the mesh cache, `PrefabSkin` on the prefab's nodes).
     /// 4: animation clips (`animation/<name>` sub-assets).
-    public var version: Int { 4 }
+    /// 5: clips record the model's skeleton (`AnimationClip.skeleton`), for retargeting.
+    public var version: Int { 5 }
     public var defaultSettings: Settings { Settings() }
 
     public func importAsset(_ context: inout ImportContext, settings: Settings) throws -> ImportedAsset {
@@ -390,8 +399,10 @@ public struct GLTFImporter: AssetImporter {
         asset.main = prefab
 
         // Clips, retargeted from glTF node indices to the prefab's node numbers.
+        let skeleton = AnimationSkeleton(prefab: PrefabAsset(roots: [root]))
         for (i, clip) in model.animations.enumerated() {
             var retargeted = clip
+            retargeted.skeleton = skeleton
             retargeted.channels = clip.channels.compactMap { channel in
                 guard let number = nodeNumbers[channel.target] else { return nil }
                 var channel = channel
@@ -402,6 +413,9 @@ public struct GLTFImporter: AssetImporter {
                 context.warn("animation '\(clip.name)': \(clip.channels.count - retargeted.channels.count) channel(s) animate nodes outside the scene and were dropped")
             }
             let id = namer.id(kind: "animation", name: clip.name, index: i)
+            if let events = settings.clipEvents[id] {
+                retargeted.events = (retargeted.events + events).sorted { $0.time < $1.time }
+            }
             asset.add(id, name: clip.name, .animation(retargeted))
         }
         return asset

@@ -173,6 +173,8 @@ private func twoClipGLTF() -> Data {
         workspace.update(input: nil, dt: 0.1)
         #expect(workspace.previewRoot != nil && workspace.animator?.currentState == "Idle")
         #expect(workspace.form?.canvas.activeState == "Idle")
+        // The camera framed the model (one node at the origin, no mesh: its position).
+        #expect(workspace.modelBounds()?.center == Vec3(0, 0, 0) && workspace.viewport.camera.pivot == Vec3(0, 0, 0))
 
         workspace.setParameter("speed", .float(1))
         workspace.update(input: nil, dt: 0.1)
@@ -198,5 +200,173 @@ private func twoClipGLTF() -> Data {
         #expect(session.assets?.animationGraph(of: id)?.transitions.count == 2)
         #expect(form.graph.transitions.count == 2, "the form rereads the file after undo")
         _ = model
+    }
+
+    @Test func retargetOptionsAndBoneMatching() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        _ = try project(session, folder)
+        // Another model whose "Body" sits under a "Root": node 0 is Root there, not Body.
+        let assets = try #require(session.assets)
+        try Data(#"{"asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"name": "Root", "children": [1]}, {"name": "Body", "translation": [0, 1, 0]}]}"#.utf8)
+            .write(to: assets.project.url(forAssetPath: "Models/rig.gltf"))
+        assets.refresh()
+
+        let bones = try call(session, "animGraph.bones", ["model": "Models/rig.gltf", "clip": "Models/hero.gltf#animation/Walk"])
+        #expect(bones["matched"] as? [String: String] == ["Body": "Body"])
+        #expect(bones["unmatchedModelBones"] as? [String] == ["Root"] && bones["needsRetarget"] as? Bool == true)
+        #expect(bones["modelBones"] as? [String] == ["Root", "Body"] && bones["clipBones"] as? [String] == ["Body"])
+
+        try call(session, "animGraph.new", ["name": "Rig", "preview": "Models/rig.gltf"])
+        try call(session, "animGraph.edit", ["path": "Rig.animgraph", "retarget": ["boneMap": ["Body": "Root"], "translation": "none"]])
+        var graph = try #require(try call(session, "animGraph.get", ["path": "Rig.animgraph"])["graph"] as? [String: Any])
+        let retarget = try #require(graph["retarget"] as? [String: Any])
+        #expect(retarget["boneMap"] as? [String: String] == ["Body": "Root"] && retarget["translation"] as? String == "none")
+        // The graph's options apply: the map wins over the matching name.
+        let mapped = try call(session, "animGraph.bones", ["path": "Rig.animgraph", "clip": "Models/hero.gltf#animation/Walk"])
+        #expect(mapped["matched"] as? [String: String] == ["Root": "Body"])
+        try call(session, "animGraph.edit", ["path": "Rig.animgraph", "removeRetarget": true])
+        graph = try #require(try call(session, "animGraph.get", ["path": "Rig.animgraph"])["graph"] as? [String: Any])
+        #expect(graph["retarget"] == nil)
+        session.performUndo()
+        let id = try #require(assets.id(forPath: "Rig.animgraph"))
+        #expect(session.assets?.animationGraph(of: id)?.retarget != nil)
+        // The tab lays out its Retarget section with the bone map.
+        let form = try #require(AnimationGraphView(session: session, asset: id))
+        #expect(form.graph.retarget?.boneMap == ["Body": "Root"])
+        #expect(throws: (any Error).self) { try call(session, "animGraph.bones", ["clip": "Models/hero.gltf#animation/Walk"]) }  // no model
+    }
+
+    @Test func twoDimensionalBlendSpaceThroughToolsAndTab() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        let model = try project(session, folder)
+        try call(session, "animGraph.new", ["name": "Strafe", "preview": "Models/hero.gltf"])
+        let result = try call(session, "animGraph.edit", ["path": "Strafe.animgraph",
+            "parameters": [["name": "moveX", "type": "float"], ["name": "moveY", "type": "float"]],
+            "addStates": [["name": "Strafe", "blend": ["parameter": "moveX", "parameterY": "moveY", "clips": [
+                ["clip": "Models/hero.gltf#animation/Idle", "position": 0, "y": 0],
+                ["clip": "Models/hero.gltf#animation/Walk", "position": 0, "y": 1]]]]]])
+        #expect((result["warnings"] as? [String])?.isEmpty == true)
+        let assets = try #require(session.assets)
+        let id = try #require(assets.id(forPath: "Strafe.animgraph"))
+        let blend = try #require(assets.animationGraph(of: id)?.state(named: "Strafe")?.blend)
+        #expect(blend.parameterY == "moveY" && blend.clips.map(\.y) == [0, 1])
+        #expect(blend.clips[1].clip == "asset:\(model)#animation/Walk", "paths become references")
+
+        // The tab shows a Y parameter, per-clip y fields and the plot; dragging the plot sets both live values.
+        let form = try #require(AnimationGraphView(session: session, asset: id))
+        var live: [String: AnimationParameter] = [:]
+        form.onSetLive = { live[$0] = $1 }
+        form.select(.state("Strafe"))
+        #expect(form.view.descendant(named: "animGraphBlendParamY") != nil)
+        #expect(form.view.descendant(named: "animGraphBlendPositionY") != nil)
+        let plot = try #require(form.view.descendant(named: "animGraphBlend2D") as? BlendSpace2DPlot)
+        #expect(plot.points.map(\.position) == [Vec2(0, 0), Vec2(0, 1)])
+        plot.onPick?(Vec2(0.25, 0.75))
+        #expect(live["moveX"] == .float(0.25) && live["moveY"] == .float(0.75))
+    }
+
+    @Test func overrideLayersWithBoneMasks() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        _ = try project(session, folder)
+        try call(session, "animGraph.new", ["name": "Layers", "preview": "Models/hero.gltf"])
+        let result = try call(session, "animGraph.edit", ["path": "Layers.animgraph", "addLayers": [
+            ["name": "Wave", "clip": "Models/hero.gltf#animation/Walk", "blend": "override", "mask": ["Body"]],
+            ["name": "Lost", "clip": "Models/hero.gltf#animation/Idle", "mask": ["Tail"]]]])
+        let warnings = try #require(result["warnings"] as? [String])
+        #expect(warnings == ["layer 'Lost' masks bone 'Tail', which the preview model doesn't have"])
+        let id = try #require(session.assets?.id(forPath: "Layers.animgraph"))
+        let layers = try #require(session.assets?.animationGraph(of: id)?.layers)
+        #expect(layers[0].isOverride && layers[0].mask == ["Body"] && layers[1].blend == nil)
+        try call(session, "animGraph.edit", ["path": "Layers.animgraph", "updateLayers": ["Lost": ["mask": ["Body"], "blend": "override"]]])
+        #expect(session.assets?.animationGraph(of: id)?.layers[1].isOverride == true)
+
+        // The tab's layer editor shows the blend mode, the mask and a bone picker from the preview model.
+        let form = try #require(AnimationGraphView(session: session, asset: id))
+        let name = try #require(form.view.descendant(named: "animGraphLayerName") as? Button)
+        name.action?()
+        #expect(form.view.descendant(named: "animGraphLayerBlend") != nil)
+        #expect((form.view.descendant(named: "animGraphLayerMaskBone") as? Label)?.text == "Mask: Body")
+        #expect(form.view.descendant(named: "animGraphLayerMaskPick") != nil)
+    }
+
+    @Test func subStateMachinesThroughToolsAndTab() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        _ = try project(session, folder)
+        try call(session, "animGraph.new", ["name": "Nested", "preview": "Models/hero.gltf"])
+        let added = try call(session, "animGraph.edit", ["path": "Nested.animgraph",
+            "parameters": [["name": "armed", "type": "bool"]],
+            "addStates": [["name": "Combat", "machine": ["states": [["name": "Ready", "clip": "Models/hero.gltf#animation/Walk"]]]]],
+            "addTransitions": [["from": "Idle", "to": "Combat", "conditions": [["parameter": "armed", "test": "isTrue"]]]]])
+        #expect(added["machines"] as? [String] == ["Combat"])
+        // Inside the machine: a state, and a way out to the top level's Idle.
+        let inside = try call(session, "animGraph.edit", ["path": "Nested.animgraph", "level": "Combat",
+            "addStates": [["name": "Guard", "clip": "Models/hero.gltf#animation/Idle"]],
+            "addTransitions": [["from": "Ready", "to": "Guard", "exitTime": 1], ["to": "Idle", "conditions": [["parameter": "armed", "test": "isFalse"]]]]])
+        #expect(inside["level"] as? String == "Combat" && inside["states"] as? [String] == ["Ready", "Guard"])
+        #expect(inside["transitions"] as? [String] == ["0: Ready -> Guard", "1: * -> Idle"])
+        #expect((inside["warnings"] as? [String])?.isEmpty == true)
+        #expect(throws: (any Error).self) { try call(session, "animGraph.edit", ["path": "Nested.animgraph", "level": "Idle", "initialState": "Idle"]) }
+        let id = try #require(session.assets?.id(forPath: "Nested.animgraph"))
+        let graph = try #require(session.assets?.animationGraph(of: id))
+        #expect(graph.state(atPath: ["Combat", "Guard"])?.clip?.hasPrefix("asset:") == true, "clip paths inside machines become references")
+        #expect(graph.stateMachine.states.map(\.name).contains("Combat/Guard"))
+
+        // The tab: open the machine, edit inside it, and go back up.
+        let form = try #require(AnimationGraphView(session: session, asset: id))
+        form.enter("Combat")
+        #expect(form.path == ["Combat"] && form.graph.states.map(\.name) == ["Ready", "Guard"])
+        #expect(form.canvas.outerStates.contains("Idle") && form.view.descendant(named: "animGraphLevelUp") != nil)
+        #expect(form.levelState(ofPlaying: "Combat/Guard") == "Guard" && form.levelState(ofPlaying: "Idle") == nil)
+        form.addState()
+        form.refresh()
+        #expect(session.assets?.animationGraph(of: id)?.level(at: ["Combat"])?.states.count == 3)
+        #expect(session.assets?.animationGraph(of: id)?.states.count == 3, "the top level is untouched")
+        form.goUp()
+        #expect(form.path.isEmpty && form.selection == .state("Combat"))
+        #expect(form.levelState(ofPlaying: "Combat/Guard") == "Combat")
+        #expect(form.view.descendant(named: "animGraphOpenMachine") != nil)
+    }
+
+    @Test func clipEventsThroughToolsUndoAndTab() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        let model = try project(session, folder)
+        let walk = "Models/hero.gltf#animation/Walk"
+        let empty = try call(session, "animGraph.clipEvents", ["clip": walk])
+        #expect((empty["events"] as? [Any])?.isEmpty == true && empty["editable"] as? Bool == true && empty["duration"] as? Double == 1)
+
+        let set = try call(session, "animGraph.setClipEvents", ["clip": walk, "events": [["time": 0.75, "name": "stepR"], ["time": 0.25, "name": "stepL"], ["time": 9, "name": "late"]]])
+        let events = try #require(set["events"] as? [[String: Any]])
+        #expect(events.map { $0["name"] as? String } == ["stepL", "stepR", "late"])
+        #expect(events.last?["time"] as? Double == 1, "clamped to the clip")
+        let assets = try #require(session.assets)
+        let reference = AssetReference(model, subAsset: "animation/Walk")
+        #expect(assets.animationClip(reference)?.events.map(\.name) == ["stepL", "stepR", "late"])
+        #expect(assets.settings(of: model, as: GLTFImporter.Settings.self)?.clipEvents["animation/Walk"]?.count == 3, "kept in the model's settings")
+        #expect(throws: (any Error).self) { try call(session, "animGraph.setClipEvents", ["clip": walk, "events": [["time": 0, "name": " "]]]) }
+        session.performUndo()
+        #expect(assets.animationClip(reference)?.events.isEmpty == true)
+        session.performRedo()
+        #expect(assets.animationClip(reference)?.events.count == 3)
+
+        // The tab lists the selected state's clip events and adds one.
+        try call(session, "animGraph.new", ["name": "Events", "preview": "Models/hero.gltf"])
+        let id = try #require(assets.id(forPath: "Events.animgraph"))
+        let form = try #require(AnimationGraphView(session: session, asset: id))
+        let move = try #require(form.graph.states.first { $0.clip == reference.description })
+        form.select(.state(move.name))
+        #expect(form.view.descendant(named: "animGraphEventName") != nil)
+        let add = try #require(form.view.descendant(named: "animGraphEventAdd") as? Button)
+        add.action?()
+        #expect(assets.animationClip(reference)?.events.map(\.name) == ["event", "stepL", "stepR", "late"])
     }
 }

@@ -12,18 +12,27 @@ public enum EditorAnimationGraphCommands {
         AnimGraphEditCommand.self,
         AnimGraphAssignCommand.self,
         AnimGraphOpenCommand.self,
+        AnimGraphBonesCommand.self,
+        AnimGraphClipEventsCommand.self,
+        AnimGraphSetClipEventsCommand.self,
     ]
 
     /// What the tool docs say about the file format, shared by the tools.
     static let formatDoc = """
         An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the \
-        builder previews on, an asset reference or path), `parameters` [{name, type float|bool|trigger, default}], `states` \
-        [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space), speed, \
+        builder previews on, an asset reference or path), `retarget` {boneMap {source bone: target bone}, matchNames \
+        (default true), rotation world|local|copy, translation root|none|all, rootScale, sampleRate} (plays clips made for another \
+        skeleton by matching bones by name; see animGraph.bones), `parameters` [{name, type float|bool|trigger, default}], `states` \
+        [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space; add \
+        parameterY (a second float) and give each clip a `y` for a 2D one, e.g. moveX / moveY for strafing), speed, \
         speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` \
         [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, \
         value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] \
-        (checked in order, the first that applies fires), `layers` (additive) [{name, clip, weight, speed, referenceTime}], \
-        `initialState`. Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths \
+        (checked in order, the first that applies fires), `layers` [{name, clip, weight, speed, referenceTime, blend additive|override \
+        (override replaces the bones the clip animates), mask [bone names: the layer only touches their subtrees]}], \
+        `initialState`. A state with `machine` {states, transitions, initialState} instead of a clip is a sub-state machine: \
+        entering it enters its initial state, its own transitions leave from any state inside, and transitions inside may go to \
+        states outside it by name (edit inside with animGraph.edit `level`). Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths \
         are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes.
         """
 }
@@ -68,10 +77,19 @@ extension EditorSession {
 
     /// `graph`'s problems, including clips that name nothing in the project.
     public func animationGraphProblems(_ graph: AnimationGraph) -> [String] {
-        AnimationGraphCheck.problems(graph, clipExists: { [weak self] key in
+        var problems = AnimationGraphCheck.problems(graph, clipExists: { [weak self] key in
             guard let reference = AssetReference(key) else { return true }  // a key registered in code
             return self?.assets?.animationClip(reference) != nil
         })
+        // Mask bones the preview model doesn't have.
+        if let skeleton = graph.preview.flatMap(AssetReference.init).flatMap({ assets?.animationSkeleton(of: $0) }) {
+            for layer in graph.layers {
+                for bone in layer.mask ?? [] where Animator.maskTargets([bone], in: skeleton).isEmpty {
+                    problems.append("layer '\(layer.name)' masks bone '\(bone)', which the preview model doesn't have")
+                }
+            }
+        }
+        return problems
     }
 
     /// The clips a graph can use: the preview model's own first, then every other imported clip.
@@ -96,14 +114,21 @@ extension EditorSession {
         guard let assets else { return graph }
         var graph = graph
         graph.preview = graph.preview.map { assets.normalizedAssetKey($0) }
-        for s in graph.states.indices {
-            graph.states[s].clip = graph.states[s].clip.map { assets.normalizedAssetKey($0) }
-            if graph.states[s].blend != nil {
-                for c in graph.states[s].blend!.clips.indices {
-                    graph.states[s].blend!.clips[c].clip = assets.normalizedAssetKey(graph.states[s].blend!.clips[c].clip)
+        func normalize(_ states: inout [AnimationGraphState]) {
+            for s in states.indices {
+                states[s].clip = states[s].clip.map { assets.normalizedAssetKey($0) }
+                if states[s].blend != nil {
+                    for c in states[s].blend!.clips.indices {
+                        states[s].blend!.clips[c].clip = assets.normalizedAssetKey(states[s].blend!.clips[c].clip)
+                    }
+                }
+                if var machine = states[s].machine {
+                    normalize(&machine.states)
+                    states[s].machine = machine
                 }
             }
         }
+        normalize(&graph.states)
         for l in graph.layers.indices { graph.layers[l].clip = assets.normalizedAssetKey(graph.layers[l].clip) }
         return graph
     }
@@ -168,16 +193,24 @@ public struct AnimGraphResult: Codable, Equatable, Sendable {
     public var initialState: String?
     /// Problems: unknown states or parameters, wrong parameter types, missing clips…
     public var warnings: [String]
+    /// Sub-state machines, as paths for `level` ("Combat", "Combat/Ranged").
+    public var machines: [String]?
+    /// The level `states`, `transitions` and `initialState` describe (nil: the top).
+    public var level: String?
 }
 
 extension AnimGraphResult {
-    @MainActor init(_ id: AssetID, _ graph: AnimationGraph, in session: EditorSession) {
+    @MainActor init(_ id: AssetID, _ graph: AnimationGraph, level path: [String] = [], in session: EditorSession) {
         let record = session.assets?.record(id)
-        self.init(asset: id, path: session.assets?.path(of: id) ?? "", states: graph.states.map(\.name),
-                  transitions: graph.transitions.enumerated().map { "\($0.offset): \($0.element.from ?? "*") -> \($0.element.to)" },
+        let shown = graph.level(at: path) ?? graph
+        let machines = graph.machinePaths.map { $0.joined(separator: AnimationGraph.levelSeparator) }
+        self.init(asset: id, path: session.assets?.path(of: id) ?? "", states: shown.states.map(\.name),
+                  transitions: shown.transitions.enumerated().map { "\($0.offset): \($0.element.from ?? "*") -> \($0.element.to)" },
                   parameters: graph.parameters.map { "\($0.name) (\($0.type.rawValue))" }, layers: graph.layers.map(\.name),
-                  initialState: graph.initialState ?? graph.states.first?.name,
-                  warnings: session.animationGraphProblems(graph) + (record?.importError.map { ["import failed: \($0)"] } ?? []))
+                  initialState: shown.initialState ?? shown.states.first?.name,
+                  warnings: session.animationGraphProblems(graph) + (record?.importError.map { ["import failed: \($0)"] } ?? []),
+                  machines: machines.isEmpty ? nil : machines,
+                  level: path.isEmpty ? nil : path.joined(separator: AnimationGraph.levelSeparator))
     }
 }
 
@@ -312,19 +345,26 @@ public enum AnimGraphEditCommand: EditorCommand {
         public var addTransitions: [AnimationGraphTransition]?
         /// Changes to transitions: index (as a string) → the fields to change, e.g. {"0": {"duration": 0.1}}.
         public var updateTransitions: [String: JSONValue]?
-        /// Additive layers to add.
+        /// Layers to add (additive unless `blend` is "override"; `mask` limits them to bone subtrees).
         public var addLayers: [AnimationGraphLayer]?
         /// Changes to layers: name → fields.
         public var updateLayers: [String: JSONValue]?
         public var initialState: String?
         /// The preview model (asset reference or path).
         public var preview: String?
+        /// Retarget options to set (replacing the old ones): clips made for another skeleton play by bone name.
+        public var retarget: AnimationRetargetOptions?
+        /// True turns retargeting off (clips play by node index).
+        public var removeRetarget: Bool?
+        /// The sub-state machine whose states, transitions and initial state the edits address, as a path of
+        /// state names ("Combat", "Combat/Ranged"); default the top level.
+        public var level: String?
         public init(asset: AssetReference? = nil, path: String? = nil, removeTransitions: [Int]? = nil, removeStates: [String]? = nil,
                     removeParameters: [String]? = nil, removeLayers: [String]? = nil, parameters: [AnimationGraphParameter]? = nil,
                     addStates: [AnimationGraphState]? = nil, updateStates: [String: JSONValue]? = nil,
                     addTransitions: [AnimationGraphTransition]? = nil, updateTransitions: [String: JSONValue]? = nil,
                     addLayers: [AnimationGraphLayer]? = nil, updateLayers: [String: JSONValue]? = nil, initialState: String? = nil,
-                    preview: String? = nil) {
+                    preview: String? = nil, retarget: AnimationRetargetOptions? = nil, removeRetarget: Bool? = nil, level: String? = nil) {
             self.asset = asset
             self.path = path
             self.removeTransitions = removeTransitions
@@ -340,20 +380,30 @@ public enum AnimGraphEditCommand: EditorCommand {
             self.updateLayers = updateLayers
             self.initialState = initialState
             self.preview = preview
+            self.retarget = retarget
+            self.removeRetarget = removeRetarget
+            self.level = level
         }
     }
 
     public static let id: CommandID = "animGraph.edit"
     public static let title = "Edit Animation Graph"
-    public static let doc = "Changes part of an .animgraph file in one undoable step, in this order: removeTransitions (indices), removeStates, removeParameters, removeLayers, parameters (add or replace by name), addStates, updateStates (name → fields; \"name\" renames everywhere), addTransitions, updateTransitions (index → fields), addLayers, updateLayers, initialState, preview. Clip paths become asset references. Returns the states, numbered transitions, parameters and problems. " + EditorAnimationGraphCommands.formatDoc
+    public static let doc = "Changes part of an .animgraph file in one undoable step, in this order: removeTransitions (indices), removeStates, removeParameters, removeLayers, parameters (add or replace by name), addStates, updateStates (name → fields; \"name\" renames everywhere), addTransitions, updateTransitions (index → fields), addLayers, updateLayers, initialState, preview, retarget / removeRetarget. With `level` (a sub-state machine's path, e.g. \"Combat\"), the state and transition edits and initialState apply inside that machine, and its transitions may also go to states of enclosing levels (by name). Clip paths become asset references. Returns the states, numbered transitions, parameters and problems. " + EditorAnimationGraphCommands.formatDoc
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> AnimGraphResult {
         let (id, original) = try session.resolveAnimationGraph(arguments, title)
-        let graph = session.normalizedAnimationGraph(try edited(original, with: arguments))
+        let path = (arguments.level ?? "").split(separator: Character(AnimationGraph.levelSeparator)).map(String.init)
+        guard let level = original.level(at: path) else {
+            throw CommandError.failed("\(title): no sub-state machine '\(arguments.level ?? "")' (machines: \(original.machinePaths.map { $0.joined(separator: "/") }.joined(separator: ", ")))")
+        }
+        let outer = (0..<path.count).flatMap { original.level(at: Array(path.prefix($0)))?.states.map(\.name) ?? [] }
+        let changed = try edited(level, with: arguments, outerStates: outer)
+        guard let whole = original.replacingLevel(at: path, with: changed) else { throw CommandError.failed("\(title): the level vanished") }
+        let graph = session.normalizedAnimationGraph(whole)
         _ = try session.commands.require(session.applyAnimationGraph(graph, to: id, label: title), title)
-        return AnimGraphResult(id, graph, in: session)
+        return AnimGraphResult(id, graph, level: path, in: session)
     }
 
     /// `value` with the JSON object `changes` merged over its fields.
@@ -373,7 +423,8 @@ public enum AnimGraphEditCommand: EditorCommand {
     }
 
     /// `graph` with the edits of `arguments` applied (pure, for tests and the UI).
-    public static func edited(_ graph: AnimationGraph, with arguments: Arguments) throws -> AnimationGraph {
+    /// `outerStates` are the enclosing levels' states, which transitions inside a sub-state machine may go to.
+    public static func edited(_ graph: AnimationGraph, with arguments: Arguments, outerStates: [String] = []) throws -> AnimationGraph {
         var graph = graph
         if let indices = arguments.removeTransitions, !indices.isEmpty {
             let bad = indices.filter { !graph.transitions.indices.contains($0) }
@@ -418,7 +469,9 @@ public enum AnimGraphEditCommand: EditorCommand {
         }
         for transition in arguments.addTransitions ?? [] {
             if let from = transition.from, graph.state(named: from) == nil { throw CommandError.failed("No state named \(from) (transition from)") }
-            guard graph.state(named: transition.to) != nil else { throw CommandError.failed("No state named \(transition.to) (transition to)") }
+            guard graph.state(named: transition.to) != nil || outerStates.contains(transition.to) else {
+                throw CommandError.failed("No state named \(transition.to) (transition to)")
+            }
             graph.transitions.append(transition)
         }
         for (key, changes) in (arguments.updateTransitions ?? [:]).sorted(by: { $0.key < $1.key }) {
@@ -438,6 +491,8 @@ public enum AnimGraphEditCommand: EditorCommand {
             graph.initialState = initial
         }
         if let preview = arguments.preview { graph.preview = preview.isEmpty ? nil : preview }
+        if arguments.removeRetarget == true { graph.retarget = nil }
+        if let retarget = arguments.retarget { graph.retarget = retarget }
         return graph
     }
 }
@@ -486,5 +541,76 @@ public enum AnimGraphAssignCommand: EditorCommand {
             _ = try session.commands.check(session.perform(try AddComponentCommand(entity, animator, in: world, label: title)), title)
         }
         return Result(entity: entityID, graph: reference, targets: animator.targets.count, warnings: session.animationGraphProblems(graph))
+    }
+}
+
+public enum AnimGraphBonesCommand: EditorCommand {
+    public struct Arguments: Codable, Equatable, Sendable, AnimGraphTarget {
+        /// The .animgraph file whose preview model and retarget options to use (optional).
+        public var asset: AssetReference?
+        public var path: String?
+        /// The model the clip plays on (a glTF file, prefab or .character; asset reference or path). Default: the graph's preview.
+        public var model: String?
+        /// The clip to check (asset reference or path, e.g. "Models/walk.glb#animation/Walk").
+        public var clip: String
+        /// Options to try instead of the graph's (or the defaults).
+        public var retarget: AnimationRetargetOptions?
+        public init(asset: AssetReference? = nil, path: String? = nil, model: String? = nil, clip: String,
+                    retarget: AnimationRetargetOptions? = nil) {
+            self.asset = asset
+            self.path = path
+            self.model = model
+            self.clip = clip
+            self.retarget = retarget
+        }
+    }
+
+    public struct Result: Codable, Equatable, Sendable {
+        /// Model bone → the clip's bone driving it.
+        public var matched: [String: String]
+        /// Model bones nothing in the clip drives (they keep their rest pose).
+        public var unmatchedModelBones: [String]
+        /// Animated clip bones that drive nothing on the model.
+        public var unmatchedClipBones: [String]
+        /// Whether the clip has to be retargeted to play on the model (the node layouts differ, or a bone map renames).
+        public var needsRetarget: Bool
+        public var modelBones: [String]
+        public var clipBones: [String]
+    }
+
+    public static let id: CommandID = "animGraph.bones"
+    public static let title = "Match Animation Bones"
+    public static let doc = "Shows how a clip's bones pair with a model's when retargeted by name: matched pairs, model bones left at rest, and animated clip bones that drive nothing, under the graph's `retarget` options (or `retarget` given here). Use it to write a `boneMap` before setting `retarget` with animGraph.edit. `model` (a glTF file, prefab or .character) defaults to the graph's preview."
+    public static let isReadOnly = true
+    public static let isIdempotent = true
+    public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
+    public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
+    public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
+        guard let assets = session.assets else { throw CommandError.failed(noProjectReason) }
+        var graph: AnimationGraph?
+        if arguments.asset != nil || arguments.path != nil { graph = try session.resolveAnimationGraph(arguments, title).1 }
+        guard let modelKey = arguments.model.map({ assets.normalizedAssetKey($0) }) ?? graph?.preview else {
+            throw CommandError.failed("\(title): pass `model`, or a graph with a preview model")
+        }
+        guard let modelReference = AssetReference(modelKey), let target = assets.animationSkeleton(of: modelReference) else {
+            throw CommandError.failed("\(title): '\(arguments.model ?? modelKey)' isn't a model with a node tree or a .character")
+        }
+        guard let clipReference = AssetReference(assets.normalizedAssetKey(arguments.clip)),
+              let clip = assets.animationClip(clipReference) else {
+            throw CommandError.failed("\(title): no clip '\(arguments.clip)'")
+        }
+        guard let source = clip.skeleton else {
+            throw CommandError.failed("\(title): '\(arguments.clip)' doesn't record its skeleton (reimport its model)")
+        }
+        let options = arguments.retarget ?? graph?.retarget ?? AnimationRetargetOptions()
+        let map = AnimationRetargetMap(source: source, target: target, options: options)
+        var matched: [String: String] = [:]
+        for (t, s) in map.sourceOfTarget.enumerated() { if let s { matched[target.bones[t].name] = source.bones[s].name } }
+        let animated = Set(clip.channels.map(\.target))
+        let used = Set(map.sourceOfTarget.compactMap { $0 })
+        return Result(matched: matched, unmatchedModelBones: map.unmatchedTargets,
+                      unmatchedClipBones: source.bones.indices.filter { animated.contains($0) && !used.contains($0) }.map { source.bones[$0].name },
+                      needsRetarget: AnimatorClipCache.needsRetarget(source: source, target: target, options: options),
+                      modelBones: target.names, clipBones: source.names)
     }
 }
