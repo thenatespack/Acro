@@ -497,7 +497,7 @@ public struct GameExporter: Sendable {
             try Data(infoPlist.utf8).write(to: contents.appendingPathComponent("Info.plist"))
         } else {
             resources = app
-            executableURL = app.appendingPathComponent(options.name)
+            executableURL = app.appendingPathComponent(options.name + executableSuffix)
             try fm.createDirectory(at: app, withIntermediateDirectories: true)
         }
         try fm.copyItem(at: built.executable, to: executableURL)
@@ -549,6 +549,19 @@ public struct GameExporter: Sendable {
         var seconds: Double
     }
 
+    /// The executable file extension for the export's platform (".exe" on Windows).
+    var executableSuffix: String { options.cook.target.platform == .windows ? ".exe" : "" }
+
+    /// The last line of `output` that is an absolute path: `/...` or, on Windows, `C:\...` or `\\server\...`
+    /// (`swift build --show-bin-path` can print warnings before it).
+    static func lastAbsolutePath(in output: String) -> String? {
+        output.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.last { line in
+            if line.hasPrefix("/") || line.hasPrefix("\\\\") { return true }
+            let chars = Array(line.prefix(3))
+            return chars.count == 3 && chars[0].isLetter && chars[1] == ":" && (chars[2] == "\\" || chars[2] == "/")
+        }
+    }
+
     /// Builds the player with this machine's toolchain.
     func buildNatively(progress: (@Sendable (String) -> Void)?) throws -> BuiltPlayer {
         progress?("Building \(options.gameTarget) with Engine (\(options.configuration.rawValue), \(options.architecture.rawValue)) "
@@ -557,11 +570,11 @@ public struct GameExporter: Sendable {
         guard build.succeeded else { throw GameExportError.buildFailed(build.output) }
         progress?(String(format: "Built in %.1f s", build.seconds))
         let binPath = GameModuleBuilder.run(buildEnvironment + ["swift", "build"] + buildFlags + ["--show-bin-path"], in: playerPackage)
-        let shown = binPath.output.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.last { $0.hasPrefix("/") }
+        let shown = Self.lastAbsolutePath(in: binPath.output)
         let shownBin = binPath.succeeded ? shown.map { URL(fileURLWithPath: $0, isDirectory: true) } : nil
         let bin = (shownBin ?? playerPackage.appendingPathComponent(".build/\(options.configuration.rawValue)", isDirectory: true))
             .resolvingSymlinksInPath()
-        let executable = bin.appendingPathComponent(playerTarget)
+        let executable = bin.appendingPathComponent(playerTarget + executableSuffix)
         guard FileManager.default.fileExists(atPath: executable.path) else { throw GameExportError.missingProduct(executable.path) }
         let bundles = ((try? FileManager.default.contentsOfDirectory(atPath: bin.path)) ?? [])
             .filter { $0.hasSuffix(".bundle") || $0.hasSuffix(".resources") }.sorted().map { bin.appendingPathComponent($0) }

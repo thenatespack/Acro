@@ -193,6 +193,18 @@ private let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathCompon
         #endif
     }
 
+    /// `--show-bin-path` output on Windows: drive-letter paths count, warnings before them don't.
+    @Test func binPathParsingHandlesWindowsPaths() {
+        let windows = #"""
+        warning: unable to create symbolic link at C:\Users\me\Game\.build\release: encountered an I/O error (code: 512)
+        C:\Users\me\Game\.build\x86_64-unknown-windows-msvc\release
+        """#
+        #expect(GameExporter.lastAbsolutePath(in: windows) == #"C:\Users\me\Game\.build\x86_64-unknown-windows-msvc\release"#)
+        #expect(GameExporter.lastAbsolutePath(in: "warning: x\r\n/tmp/Game/.build/release\r\n") == "/tmp/Game/.build/release")
+        #expect(GameExporter.lastAbsolutePath(in: #"\\server\share\.build\release"#) == #"\\server\share\.build\release"#)
+        #expect(GameExporter.lastAbsolutePath(in: "warning: no path here") == nil)
+    }
+
     /// What the Export dialog offers: this machine's platform, both architectures on macOS.
     @Test func buildablePlatformsAndArchitectures() {
         #expect(EditorGameExport.unbuildableReason(platform: .current, architecture: .current) == nil)
