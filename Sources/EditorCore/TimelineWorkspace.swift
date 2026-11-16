@@ -425,6 +425,9 @@ public final class TimelineWorkspace {
         guard let asset, let assets = session.assets else { return }
         guard assets.record(asset) != nil else { return close() }
         builder?.refresh()
+        // The dialogue box fits a narrow preview (it would spill over the sidebar).
+        let boxWidth = viewportWidget.frame.width > 0 ? min(480, max(160, viewportWidget.frame.width - 24)) : 480
+        if dialogueBox.style.width != boxWidth { dialogueBox.style.width = boxWidth }
         let revision = assets.revision(of: asset)
         if revision != shownRevision {
             if shownRevision >= 0 { builder?.reload() }
