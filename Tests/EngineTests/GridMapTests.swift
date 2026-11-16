@@ -373,4 +373,74 @@ private func approx(_ a: Vec3, _ b: Vec3, _ tolerance: Float = 1e-4) -> Bool {
         #expect(!FileManager.default.fileExists(atPath: entry.path))
     }
 
+    @MainActor @Test func prefabVariantsAndBuiltInMeshesAsPieces() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        let root = "00000000000000000000000000000a00", box = "00000000000000000000000000000a01"
+        let gone = "00000000000000000000000000000a02", extra = "00000000000000000000000000000a03"
+        let base = """
+            {"format": "Acro.Scene", "version": 2, "entities": [
+              {"id": 0, "uid": "\(root)", "components": {"Name": {"value": "Base"}}},
+              {"id": 1, "parent": 0, "uid": "\(box)", "components": {"Name": {"value": "Box"}, "MeshRenderer": {"mesh": "cube"}}},
+              {"id": 2, "parent": 0, "uid": "\(gone)", "components": {"Name": {"value": "Gone"}, "MeshRenderer": {"mesh": "sphere"}}}
+            ]}
+            """
+        let baseID = try database.createPrefab(Data(base.utf8), at: "Pieces/Base.prefab")
+        let added = """
+            {"format": "Acro.Scene", "version": 2, "entities": [
+              {"id": 0, "uid": "\(extra)", "components": {"Name": {"value": "Extra"}, "MeshRenderer": {"mesh": "cylinder"}}}
+            ]}
+            """
+        let addedValue = try JSONDecoder().decode(JSONValue.self, from: Data(added.utf8))
+        try database.createPrefabVariant(of: AssetReference(baseID), overrides: [
+            PrefabOverride(kind: .field, entity: box, component: "Transform", path: "position", value: .array([.int(0), .int(2), .int(0)])),
+            PrefabOverride(kind: .removedEntity, entity: gone),
+            PrefabOverride(kind: .addedEntity, entity: root, path: extra, value: addedValue),
+        ], at: "Pieces/Heavy.prefab")
+
+        var map = GridMap(pieces: [GridPiece(name: "Base", asset: "Pieces/Base.prefab", collider: .mesh),
+                                   GridPiece(name: "Heavy", asset: "Pieces/Heavy.prefab", collider: .mesh)])
+        map.paint("Base", at: [GridCoord(0, 0, 0)])
+        map.paint("Heavy", at: [GridCoord(1, 0, 0)])
+        let id = try database.createGridMap(GridMap(), at: "Levels/variants.gridmap")
+        let warnings = try database.writeGridMap(map, to: id)
+        #expect(warnings.isEmpty, "\(warnings)")
+
+        // Built-in primitives become meshes of the map.
+        let cube = AssetReference(id, subAsset: "mesh/builtin cube")
+        let imported = try #require(database.asset(id))
+        #expect(imported.object("mesh/builtin cube", kind: .mesh) != nil)
+        #expect(imported.object("mesh/builtin sphere", kind: .mesh) != nil)
+
+        let chunk = try #require(database.prefab(AssetReference(id))?.roots.first?.children.first?.children.first)
+        func placed(_ name: String) -> PrefabNode? { chunk.children.first { $0.name.hasPrefix(name + " ") } }
+        func find(_ name: String, in node: PrefabNode) -> PrefabNode? {
+            node.name == name ? node : node.children.lazy.compactMap { find(name, in: $0) }.first
+        }
+        let basePiece = try #require(placed("Base"))
+        #expect(find("Box", in: basePiece)?.mesh == cube && find("Gone", in: basePiece) != nil)
+
+        // The variant: the base with its box moved up, "Gone" removed and "Extra" added.
+        let heavy = try #require(placed("Heavy"))
+        let movedBox = try #require(find("Box", in: heavy))
+        #expect(movedBox.mesh == cube && movedBox.transform.position == Vec3(0, 2, 0))
+        #expect(find("Gone", in: heavy) == nil)
+        #expect(find("Extra", in: heavy)?.mesh == AssetReference(id, subAsset: "mesh/builtin cylinder"))
+
+        // Their triangles collide: the raised cube reaches y = 2.5.
+        guard case .triangleMesh(let vertices, _)? = chunk.collider else { Issue.record("no collider"); return }
+        #expect(vertices.map(\.y).max() == 2.5)
+
+        // The map follows the variant's base.
+        let before = database.revision(of: id)
+        try Data(base.replacingOccurrences(of: "\"cube\"", with: "\"cone\"").utf8)
+            .write(to: project.url(forAssetPath: "Pieces/Base.prefab"), options: .atomic)
+        database.refresh()
+        #expect(database.revision(of: id) != before)
+        let heavyAfter = database.prefab(AssetReference(id))?.roots.first?.children.first?.children.first?.children
+            .first { $0.name.hasPrefix("Heavy ") }
+        #expect(heavyAfter.flatMap { find("Box", in: $0) }?.mesh == AssetReference(id, subAsset: "mesh/builtin cone"))
+    }
+
 }

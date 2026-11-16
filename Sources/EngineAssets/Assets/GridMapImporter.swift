@@ -15,7 +15,9 @@ import EngineScene
 /// or mesh references. The importer runs the piece file's own importer to learn its node tree
 /// and triangles (recording the file as a dependency, so the map reimports when a piece
 /// changes). Mirrored pieces get mirrored copies of their meshes as sub-assets
-/// ("mesh/<piece> mirrored").
+/// ("mesh/<piece> mirrored"). Built-in primitives used by `.prefab` pieces ("cube"...) become
+/// meshes of the map ("mesh/builtin <key>"); prefab variants are resolved by
+/// GridMapPieceVariants.swift.
 public struct GridMapImporter: AssetImporter {
     public init() {}
 
@@ -80,6 +82,7 @@ public struct GridMapImporter: AssetImporter {
         }
         warnings += builder.warnings
         asset = builder.asset
+        for (id, name, geometry) in loader.builtinMeshes { asset.add(id, name: name, .mesh(geometry)) }
 
         var floors: [Int: [PrefabNode]] = [:]
         for key in nodes.keys.sorted() {
@@ -130,11 +133,13 @@ public struct GridMapImporter: AssetImporter {
                 return nil
             }
             if let prefab = imported.object(nil, kind: .prefab), case .prefab(let p) = prefab.value {
-                if let scene = p.scene {
-                    roots = PieceLoader.sceneNodes(scene)
-                } else if p.variant != nil {
-                    warnings.append("piece '\(piece.name)': prefab variants can't be pieces yet; use the base prefab")
-                    return nil
+                if p.scene != nil || p.variant != nil {
+                    // A scene file, or a variant resolved to one (its base plus its overrides).
+                    guard let scene = loader.sceneData(of: p) else {
+                        warnings.append("piece '\(piece.name)': the variant '\(value)' can't be resolved (its base prefab is missing or unreadable)")
+                        return nil
+                    }
+                    roots = PieceLoader.sceneNodes(scene, builtin: loader.builtinMesh)
                 } else {
                     roots = p.roots
                 }
@@ -239,7 +244,7 @@ public struct GridMapImporter: AssetImporter {
         }
 
         func geometry(_ mesh: AssetReference) -> MeshGeometry? {
-            if mesh.asset == assetID, let sub = mesh.subAsset { return localGeometry[sub] }
+            if mesh.asset == assetID, let sub = mesh.subAsset, let local = localGeometry[sub] { return local }
             return loader.geometry(mesh)
         }
 
@@ -306,6 +311,8 @@ final class PieceLoader {
     private let scratch: URL
     /// Piece imports kept across reimports (nil outside an asset database).
     let cache: GridMapPieceCache?
+    /// Built-in primitives ("cube"...) used by prefab pieces, as meshes of the map itself.
+    private(set) var builtinMeshes: [(id: SubAssetID, name: String, geometry: MeshGeometry)] = []
 
     init(_ context: ImportContext) {
         self.context = context
@@ -372,6 +379,9 @@ final class PieceLoader {
 
     /// The triangles a mesh reference names (nil if unreadable).
     func geometry(_ reference: AssetReference) -> MeshGeometry? {
+        if reference.asset == context.assetID {
+            return builtinMeshes.first { $0.id == reference.subAsset }?.geometry
+        }
         guard let imported = imported(reference.asset), let object = imported.object(reference.subAsset, kind: .mesh),
               case .mesh(let geometry) = object.value else { return nil }
         return geometry
@@ -388,9 +398,21 @@ final class PieceLoader {
         return nil
     }
 
-    /// A `.prefab` scene file's entities as nodes: names, transforms and mesh renderers that
-    /// reference assets (other components are left out).
-    static func sceneNodes(_ data: Data) -> [PrefabNode] {
+    /// A reference to the built-in primitive `key` ("cube", "sphere"...) as a mesh of the map
+    /// (made once per key); nil for keys that aren't built-in primitives.
+    func builtinMesh(_ key: String) -> AssetReference? {
+        let id = "mesh/builtin \(key)"
+        if !builtinMeshes.contains(where: { $0.id == id }) {
+            guard let geometry = MeshGeometry.builtin(MeshHandle(key)) else { return nil }
+            builtinMeshes.append((id, key, geometry))
+        }
+        return AssetReference(context.assetID, subAsset: id)
+    }
+
+    /// A `.prefab` scene file's entities as nodes: names, transforms and mesh renderers (other
+    /// components are left out). Renderers name an asset's mesh, or a built-in primitive that
+    /// `builtin` turns into a reference (dropped without it).
+    static func sceneNodes(_ data: Data, builtin: (String) -> AssetReference? = { _ in nil }) -> [PrefabNode] {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let entities = root["entities"] as? [[String: Any]] else { return [] }
         func floats(_ value: Any?) -> [Float]? { (value as? [Any])?.compactMap { ($0 as? NSNumber)?.floatValue } }
@@ -409,7 +431,7 @@ final class PieceLoader {
             }
             var node = PrefabNode(name: name, transform: transform)
             if let renderer = components["MeshRenderer"] as? [String: Any], (renderer["isVisible"] as? Bool) != false,
-               let mesh = (renderer["mesh"] as? String).flatMap({ AssetReference($0) }) {
+               let key = renderer["mesh"] as? String, let mesh = AssetReference(key) ?? builtin(key) {
                 node.mesh = mesh
                 node.material = (renderer["material"] as? String).flatMap { AssetReference($0) }
             }
