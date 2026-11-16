@@ -12,6 +12,11 @@
 ///
 /// `lowQualityMaterial` replaces the renderer's material when the renderer's quality is `.low`
 /// (a terrain's baked albedo instead of its per-pixel layer blend).
+///
+/// Models made of several entities (mesh build plants, MeshBuildLOD.swift) switch as one: each
+/// part measures from the same `sphere` around the whole model, a level's mesh may be empty
+/// (`MeshHandle("")`: the entity draws nothing at that level, as when its parts are merged into
+/// another entity's mesh) and `materials` can give a level a material of its own (an impostor's).
 import EngineCore
 import EngineScene
 
@@ -21,7 +26,9 @@ public struct MeshLOD: Component, Codable, Equatable, Sendable {
         ["meshes": FieldHints(tooltip: "Level 1, 2, … meshes (level 0 is the MeshRenderer's mesh)"),
          "distances": FieldHints(tooltip: "Meters from the camera where each level takes over (ascending)"),
          "hysteresis": FieldHints(range: 0...0.5, step: 0.01, tooltip: "Fraction past a threshold before the level changes"),
-         "lowQualityMaterial": FieldHints(tooltip: "Drawn instead of the MeshRenderer's material on low quality")]
+         "lowQualityMaterial": FieldHints(tooltip: "Drawn instead of the MeshRenderer's material on low quality"),
+         "materials": FieldHints(tooltip: "Level 1, 2, … materials (empty: the MeshRenderer's)"),
+         "sphere": FieldHints(tooltip: "Measure from this sphere (xyz center in the entity's space, w radius) instead of the mesh")]
     }
 
     /// Meshes of levels 1, 2, … (level 0 is the `MeshRenderer`'s own).
@@ -32,12 +39,20 @@ public struct MeshLOD: Component, Codable, Equatable, Sendable {
     public var hysteresis: Float
     /// Drawn instead of the `MeshRenderer`'s material when the renderer's quality is low (nil: never).
     public var lowQualityMaterial: MaterialHandle?
+    /// The material each of `meshes` draws with (an empty key, or no entry, keeps the renderer's).
+    public var materials: [MaterialHandle]
+    /// Distances are measured to this sphere (xyz: center in the entity's space, w: radius,
+    /// scaled by the entity's largest scale) instead of the level-0 mesh's bounds; nil: the bounds.
+    public var sphere: Vec4?
 
-    public init(meshes: [MeshHandle] = [], distances: [Float] = [], hysteresis: Float = 0.1, lowQualityMaterial: MaterialHandle? = nil) {
+    public init(meshes: [MeshHandle] = [], distances: [Float] = [], hysteresis: Float = 0.1, lowQualityMaterial: MaterialHandle? = nil,
+                materials: [MaterialHandle] = [], sphere: Vec4? = nil) {
         self.meshes = meshes
         self.distances = distances
         self.hysteresis = hysteresis
         self.lowQualityMaterial = lowQualityMaterial
+        self.materials = materials
+        self.sphere = sphere
     }
 
     /// Every field is optional.
@@ -46,7 +61,22 @@ public struct MeshLOD: Component, Codable, Equatable, Sendable {
         self.init(meshes: try c.decodeIfPresent([MeshHandle].self, forKey: .meshes) ?? [],
                   distances: try c.decodeIfPresent([Float].self, forKey: .distances) ?? [],
                   hysteresis: try c.decodeIfPresent(Float.self, forKey: .hysteresis) ?? 0.1,
-                  lowQualityMaterial: try c.decodeIfPresent(MaterialHandle.self, forKey: .lowQualityMaterial))
+                  lowQualityMaterial: try c.decodeIfPresent(MaterialHandle.self, forKey: .lowQualityMaterial),
+                  materials: try c.decodeIfPresent([MaterialHandle].self, forKey: .materials) ?? [],
+                  sphere: try c.decodeIfPresent(Vec4.self, forKey: .sphere))
+    }
+
+    private enum CodingKeys: String, CodingKey { case meshes, distances, hysteresis, lowQualityMaterial, materials, sphere }
+
+    /// `materials` and `sphere` are written only when set.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(meshes, forKey: .meshes)
+        try c.encode(distances, forKey: .distances)
+        try c.encode(hysteresis, forKey: .hysteresis)
+        try c.encodeIfPresent(lowQualityMaterial, forKey: .lowQualityMaterial)
+        if !materials.isEmpty { try c.encode(materials, forKey: .materials) }
+        try c.encodeIfPresent(sphere, forKey: .sphere)
     }
 
     /// The levels there are besides level 0.
@@ -72,6 +102,21 @@ public struct MeshLOD: Component, Codable, Equatable, Sendable {
     /// The mesh of `level` (0: `base`, the renderer's).
     public func mesh(level: Int, base: MeshHandle) -> MeshHandle {
         level > 0 && level <= levelCount ? meshes[level - 1] : base
+    }
+
+    /// The material of `level` instead of the renderer's, nil to keep the renderer's.
+    public func material(level: Int) -> MaterialHandle? {
+        guard level > 0, level <= materials.count, level <= levelCount, !materials[level - 1].key.isEmpty else { return nil }
+        return materials[level - 1]
+    }
+
+    /// Meters from `point` to the surface of `sphere` (xyz: center in the space of `model`, w:
+    /// radius, scaled by the model's largest scale); 0 inside.
+    public static func distance(from point: Vec3, toSphere sphere: Vec4, model: Mat4) -> Float {
+        let c = model * Vec4(sphere.x, sphere.y, sphere.z, 1)
+        let scale = max(length(Vec3(model.c0.x, model.c0.y, model.c0.z)), length(Vec3(model.c1.x, model.c1.y, model.c1.z)),
+                        length(Vec3(model.c2.x, model.c2.y, model.c2.z)))
+        return max(length(point - Vec3(c.x, c.y, c.z)) - sphere.w * scale, 0)
     }
 
     /// Meters from `point` to the nearest point of `bounds` (0 inside).

@@ -175,8 +175,13 @@ public struct MeshBuildResult: Codable, Equatable, Sendable {
     public var entities: [EntityID]?
     /// The parts `mirror` and `repeat` add, by name (nil: none).
     public var copies: [String]?
-    /// Triangles in the imported model (all its meshes): keep game models light (a tree well under 15k).
+    /// Triangles in the imported model at full detail: keep game models light (a tree well under 15k).
     public var triangles: Int?
+    /// Plants (builds with foliage, or `lod` true): triangles at each detail level, full detail
+    /// first, then levels 1, 2 and the impostor (MeshBuildLOD.swift); nil without levels.
+    public var lodTriangles: [Int]?
+    /// Plants: the camera distances in meters where levels 1, 2 and the impostor take over.
+    public var lodDistances: [Float]?
 }
 
 extension MeshBuildResult {
@@ -193,8 +198,14 @@ extension MeshBuildResult {
         self.copies = copies.isEmpty ? nil : copies
         if let record, let assets = session.assets {
             let meshes = record.objects.filter { $0.kind == .mesh }
-            let total = meshes.reduce(0) { $0 + (assets.mesh(AssetReference(id, subAsset: $1.id))?.indices.count ?? 0) / 3 }
-            triangles = meshes.isEmpty ? nil : total
+            if let model = assets.prefab(prefab), case let levels = MeshBuildResult.levelTriangles(model, assets: assets), !levels.triangles.isEmpty {
+                triangles = levels.triangles.first
+                lodTriangles = levels.triangles.count > 1 ? levels.triangles : nil
+                lodDistances = levels.distances
+            } else {
+                let total = meshes.reduce(0) { $0 + (assets.mesh(AssetReference(id, subAsset: $1.id))?.indices.count ?? 0) / 3 }
+                triangles = meshes.isEmpty ? nil : total
+            }
         }
     }
 }

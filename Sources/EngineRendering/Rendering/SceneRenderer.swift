@@ -147,6 +147,13 @@ public final class SceneRenderer {
     private var graphPrograms: [String: MaterialGraphProgram] = [:]
     /// Seconds material graphs see as their time: the gathered world's `time.elapsed`.
     public private(set) var graphTime: Float = 0
+    /// The clock wind sways by (SceneRenderer+Wind.swift); nil: `graphTime`. Set it to show wind
+    /// in a world whose time doesn't advance (the editor's Mesh Builder tab).
+    public var windClock: Float?
+    /// This frame's wind and clock, from the gathered world.
+    var windState = WindState()
+    /// Depth pipelines for swaying casters, created on first use.
+    var windDepthPipelines: [WindDepthKey: RenderPipeline] = [:]
     /// The shadow atlas: every cascade, spot-light map and point-light face of the frame in
     /// one depth texture (`ShadowAtlasLayout`). Recreated when the layout's size changes.
     public private(set) var shadowMap: GPUTexture
@@ -366,12 +373,14 @@ public final class SceneRenderer {
         var skinned: Bool = false
         /// A material graph's shader variant (`MaterialGraphProgram.key`).
         var graph: String? = nil
+        /// The swaying vertex shader (mesh_wind.vert, `Material.sways`).
+        var wind: Bool = false
     }
 
     /// The pipeline variant a batch of `material` draws with, in the transparent pass when `blending`.
     static func pipelineKey(for material: Material, blending: Bool, reversedZ: Bool) -> PipelineKey {
         PipelineKey(blending: blending, doubleSided: material.doubleSided, reversedZ: reversedZ, alphaTested: material.alphaTested,
-                    graph: material.graph?.key)
+                    graph: material.graph?.key, wind: material.sways)
     }
 
     /// Also draws `engine.debugDraw` in the screen pass.
@@ -454,7 +463,8 @@ public final class SceneRenderer {
     public func registerMaterial(_ material: Material, key: String) throws -> MaterialHandle {
         let entry = (material, try device.makeSampler(material.sampler))
         let graphBuffer = try material.graph.map { try device.makeBuffer($0.values, usage: .storage) }
-        let id = prep.materials.register(MaterialTraits(blends: material.blends, alphaTested: material.masksDepth), key: key)
+        let id = prep.materials.register(MaterialTraits(blends: material.blends, alphaTested: material.masksDepth || material.sways),
+                                         key: key)
         if id == materials.count { materials.append(entry) } else { materials[id] = entry }
         graphBuffers[id] = graphBuffer
         if let program = material.graph { graphPrograms[program.key] = program }
@@ -625,6 +635,8 @@ public final class SceneRenderer {
     /// `viewpoint` is where `MeshLOD` levels are measured from (default: the camera `prepare` uses).
     func gather(_ world: World, viewpoint: Vec3? = nil) {
         graphTime = Float(world.time.elapsed.truncatingRemainder(dividingBy: 3600))
+        windState.advance(to: windClock.map { $0.truncatingRemainder(dividingBy: 3600) } ?? graphTime,
+                          wind: RenderPrep.findEnvironment(in: world).wind)
         syncAssets()
         syncLineMeshes(world)
         if world.existingStore(MeshLOD.self) != nil {
@@ -888,6 +900,8 @@ public final class SceneRenderer {
         var alphaTested = false
         var skinned = false
         var graph: String?
+        /// Sways in the wind (mesh_shadow_wind.vert).
+        var wind = false
     }
 
     /// The push constants of mesh_graph_depth.frag (its `MaterialGraphPush`: mesh_surface.glsl's
@@ -907,8 +921,9 @@ public final class SceneRenderer {
         var current = DepthChoice()
         for batch in batches {
             let material = batch.material >= 0 ? materials[batch.material].material : nil
-            let choice = DepthChoice(alphaTested: material != nil, skinned: batch.skin >= 0,
-                                     graph: material?.masksDepth == true ? material?.graph?.key : nil)
+            let choice = DepthChoice(alphaTested: material?.masksDepth == true, skinned: batch.skin >= 0,
+                                     graph: material?.masksDepth == true ? material?.graph?.key : nil,
+                                     wind: material?.sways == true && batch.skin < 0)
             if choice != current {
                 guard let pipeline = depthPipeline(variant, choice) else { continue }
                 pass.setPipeline(pipeline)
@@ -928,6 +943,7 @@ public final class SceneRenderer {
     }
 
     private func depthPipeline(_ variant: DepthVariant, _ choice: DepthChoice) -> RenderPipeline? {
+        if choice.wind { return windDepthPipeline(variant, alphaTested: choice.alphaTested) }
         guard let graph = choice.graph else { return depthPipeline(variant, alphaTested: choice.alphaTested, skinned: choice.skinned) }
         return graphDepthPipeline(GraphDepthKey(variant: variant, skinned: choice.skinned, graph: graph))
     }
@@ -1004,7 +1020,8 @@ public final class SceneRenderer {
         // Depth-only batches have no material, alpha-tested ones keep theirs (as for shadows).
         let batches = list.opaque.map { batch -> RenderBatch in
             var batch = batch
-            if !materials[batch.material].material.masksDepth { batch.material = -1 }
+            let material = materials[batch.material].material
+            if !material.masksDepth && !material.sways { batch.material = -1 }
             return batch
         }
         frame.depthPass(into: target, clearDepth: reversedZ ? 0 : 1) { pass in
@@ -1090,6 +1107,8 @@ public final class SceneRenderer {
         }
         if skin >= 0 {
             bindSkin(skin, material: index, in: pass)
+        } else if material.sways, let wind = material.wind {
+            bindWind(MaterialUniforms(material, reflected: reflected), wind: wind, in: pass)
         } else {
             pass.setUniformData(MaterialUniforms(material, reflected: reflected), index: 2, stage: .fragment)
         }
@@ -1177,6 +1196,10 @@ public final class SceneRenderer {
             }
         }
         var shader = key.skinned ? skinnedShaders[key.alphaTested]! : key.alphaTested ? maskShader! : shader
+        if key.wind && !key.skinned {
+            guard let windShader = windShader(alphaTested: key.alphaTested) else { return nil }
+            shader = windShader
+        }
         if let graph = key.graph {
             // The material graph's fragment stage (MaterialGraphCompiler) after the usual vertex stage.
             guard let program = graphPrograms[graph] else { return nil }

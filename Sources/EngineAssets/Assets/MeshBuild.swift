@@ -534,20 +534,33 @@ public struct MeshBuild: Codable, Equatable, Sendable {
     public var animations: [MeshBuildAnimation]
     /// Baked ambient occlusion: parts darken where they meet (MeshBuildAO.swift). nil is on.
     public var ao: Bool?
+    /// Detail levels and an impostor (MeshBuildLOD.swift). nil: on for builds with foliage.
+    public var lod: Bool?
+    /// Meters where levels 1, 2 and the impostor take over (nil: from the model's size).
+    public var lodDistances: [Float]?
+    /// How much a plant sways in the scene's wind (1 by default for builds with foliage, 0: still).
+    public var wind: Float?
 
-    public init(parts: [MeshBuildPart] = [], animations: [MeshBuildAnimation] = [], ao: Bool? = nil) {
+    public init(parts: [MeshBuildPart] = [], animations: [MeshBuildAnimation] = [], ao: Bool? = nil, lod: Bool? = nil,
+                lodDistances: [Float]? = nil, wind: Float? = nil) {
         self.parts = parts
         self.animations = animations
         self.ao = ao
+        self.lod = lod
+        self.lodDistances = lodDistances
+        self.wind = wind
     }
 
-    private enum CodingKeys: String, CodingKey { case parts, animations, ao }
+    private enum CodingKeys: String, CodingKey { case parts, animations, ao, lod, lodDistances, wind }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(parts: try c.decodeIfPresent([MeshBuildPart].self, forKey: .parts) ?? [],
                   animations: try c.decodeIfPresent([MeshBuildAnimation].self, forKey: .animations) ?? [],
-                  ao: (try? c.decodeIfPresent(Bool.self, forKey: .ao)) ?? nil)
+                  ao: (try? c.decodeIfPresent(Bool.self, forKey: .ao)) ?? nil,
+                  lod: (try? c.decodeIfPresent(Bool.self, forKey: .lod)) ?? nil,
+                  lodDistances: (try? c.decodeIfPresent([Float].self, forKey: .lodDistances)) ?? nil,
+                  wind: (try? c.decodeIfPresent(Float.self, forKey: .wind)) ?? nil)
     }
 
     /// A one-part starting point: a light gray unit cube resting on the ground.
@@ -827,9 +840,9 @@ public struct MeshBuildImporter: AssetImporter {
 
     public var name: String { "meshbuild" }
     public var fileExtensions: [String] { ["meshbuild"] }
-    public var version: Int { 8 }  // 2: mirror and repeat, 3: sculpt, 4: sweep, loft and deform, 5: looks and baked occlusion,
+    public var version: Int { 9 }  // 2: mirror and repeat, 3: sculpt, 4: sweep, loft and deform, 5: looks and baked occlusion,
                                    // 6: sculpt children's looks, sweeps / lofts / deformers in sculpts, 7: edge wear,
-                                   // 8: foliage, ribbons, leaf looks, noise budget
+                                   // 8: foliage, ribbons, leaf looks, noise budget, 9: plant wind, detail levels, impostors
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         let file: MeshBuild
@@ -875,6 +888,10 @@ public struct MeshBuildImporter: AssetImporter {
         }
         Self.finishSurfaces(build, &geometries, occlusion: file.ao ?? true, firstIndex: firstIndex)
         Self.finishEdgeWear(build, &geometries)
+        for warning in file.plantFieldWarnings { context.warn(warning) }
+        // Plants sway and get detail levels (MeshBuildLOD.swift).
+        let plant = MeshBuildPlant(build: build, file: file, geometries: geometries, firstIndex: firstIndex)
+        var partMaterials = [MaterialAsset?](repeating: nil, count: build.parts.count)
         var lookTextures = LookTextureRefs()
         var leafTextures = LeafTextureRefs()  // MeshBuildImporter+Foliage.swift
 
@@ -895,6 +912,8 @@ public struct MeshBuildImporter: AssetImporter {
                     if let leaf = part.resolvedLeafLook {
                         material = Self.leafMaterial(for: part, texture: texture, leaf: leafTextures.references(leaf, &asset, &namer, &context))
                     }
+                    material.wind = plant.wind(forPart: i, part)
+                    partMaterials[i] = material
                     asset.add(materialID, name: part.name, .material(material))
                     node.material = context.reference(materialID)
                 }
@@ -905,6 +924,9 @@ public struct MeshBuildImporter: AssetImporter {
             }
             nodes.append(node)
         }
+
+        Self.addDetailLevels(file: file, build: build, plant: plant, geometries: geometries, materials: partMaterials, nodes: &nodes,
+                             asset: &asset, namer: &namer, context: &context)
 
         // The tree: a part hangs from the first part with its `parent` name, unless that would
         // make a loop or the parent is missing (then from the root).

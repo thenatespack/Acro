@@ -376,12 +376,15 @@ public struct SceneEnvironment: Component, Codable, Equatable, Sendable {
     public var imageBasedLighting: Bool
     /// The look of `.procedural`.
     public var proceduralSky: ProceduralSky
+    /// The breeze that sways materials with wind (mesh build plants; see Wind.swift).
+    public var wind: Wind
 
     public init(skyColor: Vec3 = Vec3(0.55, 0.65, 0.85), groundColor: Vec3 = Vec3(0.12, 0.1, 0.09),
                 ambientIntensity: Float = 0.3, fogColor: Vec3 = Vec3(0.62, 0.7, 0.82), fogDensity: Float = 0,
                 sky: SkyMode = .color, environmentMap: TextureHandle? = nil, environmentIntensity: Float = 1,
                 environmentRotation: Float = 0, imageBasedLighting: Bool = true, proceduralSky: ProceduralSky = ProceduralSky(),
-                fogHeightFalloff: Float = 0, fogBaseHeight: Float = 0, volumetricFog: VolumetricFog = VolumetricFog()) {
+                fogHeightFalloff: Float = 0, fogBaseHeight: Float = 0, volumetricFog: VolumetricFog = VolumetricFog(),
+                wind: Wind = Wind()) {
         self.skyColor = skyColor
         self.groundColor = groundColor
         self.ambientIntensity = ambientIntensity
@@ -396,6 +399,7 @@ public struct SceneEnvironment: Component, Codable, Equatable, Sendable {
         self.fogHeightFalloff = fogHeightFalloff
         self.fogBaseHeight = fogBaseHeight
         self.volumetricFog = volumetricFog
+        self.wind = wind
     }
 
     /// Missing fields (scene files written before skies existed) take their defaults.
@@ -416,7 +420,8 @@ public struct SceneEnvironment: Component, Codable, Equatable, Sendable {
             proceduralSky: try c.decodeIfPresent(ProceduralSky.self, forKey: .proceduralSky) ?? d.proceduralSky,
             fogHeightFalloff: try c.decodeIfPresent(Float.self, forKey: .fogHeightFalloff) ?? d.fogHeightFalloff,
             fogBaseHeight: try c.decodeIfPresent(Float.self, forKey: .fogBaseHeight) ?? d.fogBaseHeight,
-            volumetricFog: try c.decodeIfPresent(VolumetricFog.self, forKey: .volumetricFog) ?? d.volumetricFog)
+            volumetricFog: try c.decodeIfPresent(VolumetricFog.self, forKey: .volumetricFog) ?? d.volumetricFog,
+            wind: try c.decodeIfPresent(Wind.self, forKey: .wind) ?? d.wind)
     }
 }
 

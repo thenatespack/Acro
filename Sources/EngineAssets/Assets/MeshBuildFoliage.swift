@@ -65,7 +65,16 @@ extension MeshBuildPart {
         times radii) or `profile` + `open`:true (an open curve, e.g. a V-fold) is a double-sided surface with no \
         caps: grass blades, leaves on stems, fronds, straps, cloth strips, sail sections. A leaf look on a ribbon or a \
         plane maps one sprig along it (base at the path's start): a fern ribbon is a frond. Frond: {"shape":"sweep",\
-        "path":[[0,0,0],[0.1,0.35,0],[0.35,0.55,0]],"ribbon":0.22,"radii":[0.6,1,0.5],"look":"fern"}.
+        "path":[[0,0,0],[0.1,0.35,0],[0.35,0.55,0]],"ribbon":0.22,"radii":[0.6,1,0.5],"look":"fern"}. \
+        Game-ready plants (builds with foliage or leaf looks): they sway in the scene's wind (SceneEnvironment.wind: \
+        direction, strength, gustiness; set it with component.setField "SceneEnvironment.wind.strength"): the whole plant \
+        bends from its base at y=0 and leaves flutter; pots, rocks and other non-sweep parts stay still; file-level \
+        "wind" scales it (0 = still). Imports also make detail levels: level 1 half the cards (larger) and sweeps with \
+        fewer segments, level 2 a quarter, then an impostor (3 crossed quads with baked pictures of the plant, 6 \
+        triangles); parts with equal materials merge at far levels; all parts switch together at 8/16/32x the plant's \
+        radius. "lod": false turns them off, "lodDistances": [m1, m2, m3] sets the distances. Results give \
+        `lodTriangles` (full, 1, 2, impostor) and `lodDistances`. Many placed copies draw instanced (one draw per part \
+        and level for the whole forest). meshBuild.preview shows full detail in still air.
         """
 
     /// The most triangles one foliage part makes.
