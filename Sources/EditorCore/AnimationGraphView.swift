@@ -380,6 +380,8 @@ public final class AnimationGraphView {
     /// Live parameter values for the preview (not saved).
     public var liveValue: (String) -> AnimationParameter? = { _ in nil }
     public var onSetLive: ((String, AnimationParameter) -> Void)?
+    /// The state the preview plays (a flattened name) and how far through its cycle (0...1).
+    public var previewPlayback: () -> (state: String, phase: Float)? = { nil }
     /// Assigns the graph to the scene selection.
     public var onAssign: (() -> Void)?
 
@@ -390,6 +392,8 @@ public final class AnimationGraphView {
     private var liveControls: [(name: String, refresh: () -> Void)] = []
     private static var selections: [AssetID: AnimGraphSelection] = [:]
     private static var paths: [AssetID: [String]] = [:]
+    /// The clip whose events the state editor shows, when the state plays several.
+    private var eventsClip: String?
 
     public init?(session: EditorSession, asset: AssetID) {
         guard session.isAnimationGraphFile(asset), let graph = session.assets?.animationGraph(of: asset) else { return nil }
@@ -1003,6 +1007,7 @@ public final class AnimationGraphView {
         } else {
             view.addChild(clipDropdown(state.clip, name: "animGraphClip") { [unowned self] key in editState("Set Clip") { $0.clip = key } })
         }
+        if state.machine == nil { addEventsSection(state) }
         view.addChild(Label("Transitions from \(state.name)", role: .secondary))
         for (i, t) in graph.transitions.enumerated() where t.from == state.name {
             let go = Button("→ \(t.to)  ·  \(t.conditions.count) condition\(t.conditions.count == 1 ? "" : "s")", name: "animGraphGoTransition") {
@@ -1031,6 +1036,81 @@ public final class AnimationGraphView {
         plot.tooltip = "Clips at their points (bigger: more weight now); drag to try values on the preview"
         liveControls.append((x, { [unowned plot] in plot.value = Vec2(live(x), live(y)) }))
         view.addChild(plot)
+    }
+
+    /// The events of the selected state's clip (one of them, for a blend space), editable when
+    /// the clip comes from a glTF file (`EditorSession.setClipEvents`).
+    private func addEventsSection(_ state: AnimationGraphState) {
+        var clips: [String] = []
+        for key in state.clips where !key.isEmpty && !clips.contains(key) { clips.append(key) }
+        guard !clips.isEmpty else { return }
+        let key = eventsClip.flatMap { clips.contains($0) ? $0 : nil } ?? clips[0]
+        view.addChild(Label("Clip Events", role: .secondary))
+        if clips.count > 1 {
+            let pick = Dropdown(options: clips.map { session.clipDisplayName($0) }, selectedIndex: clips.firstIndex(of: key) ?? 0,
+                                name: "animGraphEventsClip") { [unowned self] index in
+                eventsClip = clips[index]
+                layout()
+            }
+            pick.tooltip = "Which of the state's clips to show events of"
+            view.addChild(pick)
+        }
+        guard let events = session.clipEvents(key) else {
+            view.addChild(note("The clip isn't imported yet."))
+            return
+        }
+        let editable = session.editableClip(key) != nil
+        let duration = session.assets.flatMap { AssetReference(key).flatMap($0.animationClip) }?.duration ?? 0
+        func write(_ events: [AnimationEvent], _ label: String) {
+            session.setClipEvents(events, of: key, label: label)
+            layout()
+        }
+        if events.isEmpty { view.addChild(note(editable ? "No events. Add one to fire it as the clip plays past its time." : "No events.")) }
+        for (k, event) in events.enumerated() {
+            let time = NumberField(value: Double(event.time), step: 0.01, name: "animGraphEventTime")
+            time.preferredWidth = 64
+            time.tooltip = "Seconds from the clip's start (it lasts \(String(format: "%.2f", duration)) s)"
+            time.isEnabled = editable
+            time.onEditEnded = { _, end in
+                var edited = events
+                edited[k].time = min(max(Float(end), 0), duration)
+                write(edited, "Move Clip Event")
+            }
+            let name = TextField(text: event.name, placeholder: "event name", name: "animGraphEventName")
+            name.isEnabled = editable
+            name.style.shrink = 1
+            name.onEndEditing = { text in
+                let trimmed = text.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty, trimmed != event.name else { return }
+                var edited = events
+                edited[k].name = trimmed
+                write(edited, "Rename Clip Event")
+            }
+            let remove = Button("✕", name: "animGraphEventRemove") {
+                var edited = events
+                edited.remove(at: k)
+                write(edited, "Remove Clip Event")
+            }
+            remove.isEnabled = editable
+            view.addChild(HStack(spacing: 4, [time, name, remove]))
+        }
+        guard editable else {
+            view.addChild(note("Only clips imported from glTF files have editable events."))
+            return
+        }
+        let add = Button("Add Event", name: "animGraphEventAdd") { [unowned self] in
+            // At the preview's time when it plays this state, else at the start.
+            var time: Float = 0
+            if let playing = previewPlayback(), levelState(ofPlaying: playing.state) == state.name, path.count + 1 == playing.state.components(separatedBy: "/").count {
+                time = playing.phase * duration
+            }
+            var name = "event", n = 2
+            while events.contains(where: { $0.name == name }) { name = "event\(n)"; n += 1 }
+            write(events + [AnimationEvent(time: time, name: name)], "Add Clip Event")
+        }
+        add.command = AnimGraphSetClipEventsCommand.id.rawValue
+        add.tooltip = "Add an event at the preview's current time in this state (game code and scripts receive it as the clip passes it)"
+        view.addChild(HStack(spacing: 6, [add, Spacer()]))
     }
 
     private func addNewTransitionRow(from: String?) {

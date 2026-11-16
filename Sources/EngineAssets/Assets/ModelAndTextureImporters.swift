@@ -210,16 +210,21 @@ public struct GLTFImporter: AssetImporter {
         public var compression: TextureCompression = .none
         /// Encoder effort when compressing.
         public var compressionQuality: TextureCompressionQuality = .normal
+        /// Events added to the file's clips, by clip sub-asset id (`"animation/Walk"` →
+        /// footsteps): glTF has no events, so they live here (the Animation Graph Builder edits them).
+        public var clipEvents: [SubAssetID: [AnimationEvent]] = [:]
 
         public init(smoothNormals: Bool = false, materialRemap: [SubAssetID: AssetReference] = [:],
-                    compression: TextureCompression = .none, compressionQuality: TextureCompressionQuality = .normal) {
+                    compression: TextureCompression = .none, compressionQuality: TextureCompressionQuality = .normal,
+                    clipEvents: [SubAssetID: [AnimationEvent]] = [:]) {
             self.smoothNormals = smoothNormals
             self.materialRemap = materialRemap
             self.compression = compression
             self.compressionQuality = compressionQuality
+            self.clipEvents = clipEvents
         }
 
-        private enum CodingKeys: String, CodingKey { case smoothNormals, materialRemap, compression, compressionQuality }
+        private enum CodingKeys: String, CodingKey { case smoothNormals, materialRemap, compression, compressionQuality, clipEvents }
 
         public init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -227,6 +232,7 @@ public struct GLTFImporter: AssetImporter {
             materialRemap = try c.decodeIfPresent([SubAssetID: AssetReference].self, forKey: .materialRemap) ?? [:]
             compression = try c.decodeIfPresent(TextureCompression.self, forKey: .compression) ?? .none
             compressionQuality = try c.decodeIfPresent(TextureCompressionQuality.self, forKey: .compressionQuality) ?? .normal
+            clipEvents = try c.decodeIfPresent([SubAssetID: [AnimationEvent]].self, forKey: .clipEvents) ?? [:]
         }
 
         /// An empty remap is left out, so sidecars (and cached imports) from before it existed
@@ -237,6 +243,7 @@ public struct GLTFImporter: AssetImporter {
             if !materialRemap.isEmpty { try c.encode(materialRemap, forKey: .materialRemap) }
             try c.encode(compression, forKey: .compression)
             try c.encode(compressionQuality, forKey: .compressionQuality)
+            if !clipEvents.isEmpty { try c.encode(clipEvents, forKey: .clipEvents) }
         }
     }
 
@@ -406,6 +413,9 @@ public struct GLTFImporter: AssetImporter {
                 context.warn("animation '\(clip.name)': \(clip.channels.count - retargeted.channels.count) channel(s) animate nodes outside the scene and were dropped")
             }
             let id = namer.id(kind: "animation", name: clip.name, index: i)
+            if let events = settings.clipEvents[id] {
+                retargeted.events = (retargeted.events + events).sorted { $0.time < $1.time }
+            }
             asset.add(id, name: clip.name, .animation(retargeted))
         }
         return asset

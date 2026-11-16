@@ -332,4 +332,39 @@ private func twoClipGLTF() -> Data {
         #expect(form.levelState(ofPlaying: "Combat/Guard") == "Combat")
         #expect(form.view.descendant(named: "animGraphOpenMachine") != nil)
     }
+
+    @Test func clipEventsThroughToolsUndoAndTab() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        let model = try project(session, folder)
+        let walk = "Models/hero.gltf#animation/Walk"
+        let empty = try call(session, "animGraph.clipEvents", ["clip": walk])
+        #expect((empty["events"] as? [Any])?.isEmpty == true && empty["editable"] as? Bool == true && empty["duration"] as? Double == 1)
+
+        let set = try call(session, "animGraph.setClipEvents", ["clip": walk, "events": [["time": 0.75, "name": "stepR"], ["time": 0.25, "name": "stepL"], ["time": 9, "name": "late"]]])
+        let events = try #require(set["events"] as? [[String: Any]])
+        #expect(events.map { $0["name"] as? String } == ["stepL", "stepR", "late"])
+        #expect(events.last?["time"] as? Double == 1, "clamped to the clip")
+        let assets = try #require(session.assets)
+        let reference = AssetReference(model, subAsset: "animation/Walk")
+        #expect(assets.animationClip(reference)?.events.map(\.name) == ["stepL", "stepR", "late"])
+        #expect(assets.settings(of: model, as: GLTFImporter.Settings.self)?.clipEvents["animation/Walk"]?.count == 3, "kept in the model's settings")
+        #expect(throws: (any Error).self) { try call(session, "animGraph.setClipEvents", ["clip": walk, "events": [["time": 0, "name": " "]]]) }
+        session.performUndo()
+        #expect(assets.animationClip(reference)?.events.isEmpty == true)
+        session.performRedo()
+        #expect(assets.animationClip(reference)?.events.count == 3)
+
+        // The tab lists the selected state's clip events and adds one.
+        try call(session, "animGraph.new", ["name": "Events", "preview": "Models/hero.gltf"])
+        let id = try #require(assets.id(forPath: "Events.animgraph"))
+        let form = try #require(AnimationGraphView(session: session, asset: id))
+        let move = try #require(form.graph.states.first { $0.clip == reference.description })
+        form.select(.state(move.name))
+        #expect(form.view.descendant(named: "animGraphEventName") != nil)
+        let add = try #require(form.view.descendant(named: "animGraphEventAdd") as? Button)
+        add.action?()
+        #expect(assets.animationClip(reference)?.events.map(\.name) == ["event", "stepL", "stepR", "late"])
+    }
 }

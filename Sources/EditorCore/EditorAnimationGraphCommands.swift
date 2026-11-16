@@ -13,6 +13,8 @@ public enum EditorAnimationGraphCommands {
         AnimGraphAssignCommand.self,
         AnimGraphOpenCommand.self,
         AnimGraphBonesCommand.self,
+        AnimGraphClipEventsCommand.self,
+        AnimGraphSetClipEventsCommand.self,
     ]
 
     /// What the tool docs say about the file format, shared by the tools.

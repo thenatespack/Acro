@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 246 tools.
+named by its id (see README › Use the editor › AI control). 248 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -14,7 +14,7 @@ optional arguments.
 |---|---|
 | `activity` | [`activity.clear`](#activityclear), [`activity.list`](#activitylist), [`activity.revert`](#activityrevert) |
 | `ai` | [`ai.settings`](#aisettings) |
-| `animGraph` | [`animGraph.assign`](#animgraphassign), [`animGraph.bones`](#animgraphbones), [`animGraph.edit`](#animgraphedit), [`animGraph.get`](#animgraphget), [`animGraph.new`](#animgraphnew), [`animGraph.open`](#animgraphopen), [`animGraph.set`](#animgraphset) |
+| `animGraph` | [`animGraph.assign`](#animgraphassign), [`animGraph.bones`](#animgraphbones), [`animGraph.clipEvents`](#animgraphclipevents), [`animGraph.edit`](#animgraphedit), [`animGraph.get`](#animgraphget), [`animGraph.new`](#animgraphnew), [`animGraph.open`](#animgraphopen), [`animGraph.set`](#animgraphset), [`animGraph.setClipEvents`](#animgraphsetclipevents) |
 | `asset` | [`asset.applySettings`](#assetapplysettings), [`asset.assign`](#assetassign), [`asset.delete`](#assetdelete), [`asset.extractMaterials`](#assetextractmaterials), [`asset.get`](#assetget), [`asset.import`](#assetimport), [`asset.instantiate`](#assetinstantiate), [`asset.list`](#assetlist), [`asset.move`](#assetmove), [`asset.newFolder`](#assetnewfolder), [`asset.newMaterial`](#assetnewmaterial), [`asset.newProceduralTexture`](#assetnewproceduraltexture), [`asset.reimport`](#assetreimport), [`asset.rename`](#assetrename), [`asset.select`](#assetselect), [`asset.setProceduralTexture`](#assetsetproceduraltexture), [`asset.waitForImports`](#assetwaitforimports) |
 | `behavior` | [`behavior.assign`](#behaviorassign), [`behavior.debug`](#behaviordebug), [`behavior.edit`](#behavioredit), [`behavior.get`](#behaviorget), [`behavior.new`](#behaviornew), [`behavior.open`](#behavioropen), [`behavior.set`](#behaviorset) |
 | `character` | [`character.bones`](#characterbones), [`character.edit`](#characteredit), [`character.get`](#characterget), [`character.new`](#characternew), [`character.open`](#characteropen), [`character.set`](#characterset) |
@@ -163,6 +163,23 @@ Result:
 - `unmatchedClipBones`: [string]
 - `unmatchedModelBones`: [string]
 
+### `animGraph.clipEvents`
+
+**Get Clip Events** · _read-only_, _idempotent_
+
+Lists an animation clip's events ({time (seconds), name}, by time) and its duration. Animators report events as their clip plays past them (FiredAnimationEvent, VisualScript animation events); `editable` says whether animGraph.setClipEvents can change them.
+
+Arguments:
+
+- `clip`: string
+
+Result:
+
+- `clip`: string
+- `duration`: number
+- `editable`: boolean
+- `events`: [{name: string, time: number}]
+
 ### `animGraph.edit`
 
 **Edit Animation Graph** · _undoable_
@@ -287,6 +304,24 @@ Result:
 - `states`: [string]
 - `transitions`: [string]
 - `warnings`: [string]
+
+### `animGraph.setClipEvents`
+
+**Set Clip Events** · _undoable_, _idempotent_
+
+Replaces the events of a clip imported from a glTF file ({time, name}; footsteps, hits, sounds). They are kept in the model's import settings, so they survive reimports and apply wherever the clip plays. Undoable. Times outside the clip are clamped to it. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `clip`: string
+- `events`: [{name: string, time: number}]
+
+Result:
+
+- `clip`: string
+- `duration`: number
+- `editable`: boolean
+- `events`: [{name: string, time: number}]
 
 ## asset
 

@@ -68,6 +68,10 @@ public final class AnimationGraphWorkspace {
             self.form = form
             form.liveValue = { [unowned self] name in animator?.parameters[name] }
             form.onSetLive = { [unowned self] name, value in setParameter(name, value) }
+            form.previewPlayback = { [unowned self] in
+                guard let animator, let state = animator.currentState else { return nil }
+                return (state, animator.normalizedTime - animator.normalizedTime.rounded(.down))
+            }
             form.onAssign = { [unowned self] in
                 session.run(AnimGraphAssignCommand.self, .init(asset: AssetReference(id)))
             }
