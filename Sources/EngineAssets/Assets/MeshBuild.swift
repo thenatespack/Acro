@@ -50,6 +50,12 @@ public enum MeshBuildShape: String, Codable, CaseIterable, Sendable {
     case wedge
     /// A square-based pyramid with its tip up.
     case pyramid
+    /// A round solid turned from `profile` (`[radius, height]` points in meters, bottom to top)
+    /// around Y, like a vase, bottle or chess piece. See `MeshBuildPart.shapesDoc`.
+    case lathe
+    /// A flat outline (`profile`, `[x, y]` points in meters) pushed out along Z by `size.z`
+    /// meters, like a sign, a letter or a blade. See `MeshBuildPart.shapesDoc`.
+    case extrude
 }
 
 /// One shape of a mesh build: geometry, placement in its parent and its look.
@@ -88,6 +94,14 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
     public var glowStrength: Float
     /// A material asset to use instead of the fields above.
     public var material: String
+    /// The radius of a `box`'s rounded edges or a `cylinder`'s rounded rims, meters (nil or 0:
+    /// sharp; clamped to half the smallest size). `segments` sets how smooth the rounding is.
+    public var bevel: Float?
+    /// The outline of a `lathe` (`[radius, height]`) or an `extrude` (`[x, y]`), meters. Unlike
+    /// the other shapes it isn't fitted to `size`: its coordinates are used as written (the
+    /// part's origin is the profile's origin), and `size` multiplies them, so leave `size` at
+    /// [1, 1, 1] to get exactly the profile (an extrude's depth is `size.z` meters).
+    public var profile: [Vec2]?
 
     public static var fieldHints: [String: FieldHints] {
         ["parent": FieldHints(tooltip: "The part this one is attached to (moves with it)"),
@@ -102,14 +116,16 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
          "textureScale": FieldHints(step: 0.1, tooltip: "Texture repeats (per meter with World UV)"),
          "worldUV": FieldHints(displayName: "World UV", tooltip: "Keep the texture's size in meters instead of stretching it"),
          "texture": FieldHints(tooltip: "A texture asset (image or .proctex)"),
-         "material": FieldHints(tooltip: "A material asset that replaces the look fields")]
+         "material": FieldHints(tooltip: "A material asset that replaces the look fields"),
+         // Edited by the Mesh Builder's own widgets, shown only for the shapes that use them.
+         "bevel": FieldHints(hidden: true), "profile": FieldHints(hidden: true)]
     }
 
     public init(name: String = "Part", shape: MeshBuildShape = .box, parent: String = "", position: Vec3 = .zero,
                 rotation: Vec3 = .zero, size: Vec3 = Vec3(1, 1, 1), segments: Int = 24, thickness: Float = 0.1,
                 color: Vec3 = Vec3(0.8, 0.8, 0.8), opacity: Float = 1, texture: String = "", textureScale: Vec2 = Vec2(1, 1),
                 worldUV: Bool = false, metallic: Float = 0, roughness: Float = 0.5, glow: Vec3 = .zero, glowStrength: Float = 1,
-                material: String = "") {
+                material: String = "", bevel: Float? = nil, profile: [Vec2]? = nil) {
         self.name = name
         self.shape = shape
         self.parent = parent
@@ -128,11 +144,13 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
         self.glow = glow
         self.glowStrength = glowStrength
         self.material = material
+        self.bevel = bevel
+        self.profile = profile
     }
 
     private enum CodingKeys: String, CodingKey {
         case name, shape, parent, position, rotation, size, segments, thickness, color, opacity, texture, textureScale, worldUV,
-             metallic, roughness, glow, glowStrength, material
+             metallic, roughness, glow, glowStrength, material, bevel, profile
     }
 
     /// Every key is optional.
@@ -156,7 +174,9 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
                   roughness: try c.decodeIfPresent(Float.self, forKey: .roughness) ?? d.roughness,
                   glow: try c.decodeIfPresent(Vec3.self, forKey: .glow) ?? d.glow,
                   glowStrength: try c.decodeIfPresent(Float.self, forKey: .glowStrength) ?? d.glowStrength,
-                  material: try c.decodeIfPresent(String.self, forKey: .material) ?? d.material)
+                  material: try c.decodeIfPresent(String.self, forKey: .material) ?? d.material,
+                  bevel: try c.decodeIfPresent(Float.self, forKey: .bevel),
+                  profile: try c.decodeIfPresent([Vec2].self, forKey: .profile))
     }
 
     /// The part's local transform (its size is in the mesh, not the scale).
@@ -436,12 +456,37 @@ extension MeshBuildPart {
     /// The part's mesh in its own space (nil for a `group`): the shape fitted to `size`, with
     /// world-projected UVs under `worldUV`.
     public func geometry() -> MeshGeometry? {
+        var warnings: [String] = []
+        return geometry(warnings: &warnings)
+    }
+
+    /// The part's mesh, adding a sentence to `warnings` for each problem with its fields (a
+    /// `lathe` or `extrude` whose profile can't be built is nil).
+    public func geometry(warnings: inout [String]) -> MeshGeometry? {
+        warnings += fieldWarnings
         let s = Vec3(abs(size.x), abs(size.y), abs(size.z))
         let segments = min(max(segments, 3), 128)
+        let bevel = bevel.map { $0.isFinite ? max($0, 0) : 0 } ?? 0
         var g: MeshGeometry
         switch shape {
         case .group: return nil
-        case .box: g = .cube(size: 1)
+        case .box:
+            guard bevel > 0 else { g = .cube(size: 1); break }
+            return finish(MeshGeometry.roundedBox(halfExtent: s / 2, radius: bevel, segments: segments))
+        case .cylinder where bevel > 0:
+            // Built at its real size so the rims stay round, then stretched to an oval like a capsule.
+            let r = min(s.x, s.z) / 2
+            g = MeshGeometry.roundedCylinder(radius: r, height: s.y, bevel: bevel, segments: segments)
+            g.scale(by: Vec3(r > 0 ? s.x / 2 / r : 1, 1, r > 0 ? s.z / 2 / r : 1))
+            return finish(g)
+        case .lathe:
+            guard var lathe = MeshGeometry.lathe(profile: profile ?? [], segments: segments, warnings: &warnings) else { return nil }
+            lathe.scale(by: s)
+            return finish(lathe)
+        case .extrude:
+            guard let extrude = MeshGeometry.extrude(profile: (profile ?? []).map { $0 * Vec2(s.x, s.y) }, depth: s.z,
+                                                     warnings: &warnings) else { return nil }
+            return finish(extrude)
         case .sphere: g = .sphere(radius: 0.5, segments: segments, rings: max(segments / 2, 2))
         case .hemisphere: g = MeshGeometry.hemisphere(segments: segments)
         case .cylinder: g = .cylinder(radius: 0.5, height: 1, segments: segments)
@@ -618,7 +663,10 @@ public struct MeshBuildImporter: AssetImporter {
         var nodes: [PrefabNode] = []
         for (i, part) in build.parts.enumerated() {
             var node = PrefabNode(name: part.name, transform: part.transform)
-            if let geometry = part.geometry(), !geometry.indices.isEmpty {
+            var shapeWarnings: [String] = []
+            let geometry = part.geometry(warnings: &shapeWarnings)
+            for warning in shapeWarnings { context.warn("part '\(part.name)': \(warning)") }
+            if let geometry, !geometry.indices.isEmpty {
                 let meshID = namer.id(kind: "mesh", name: part.name, index: i)
                 asset.add(meshID, name: part.name, .mesh(geometry))
                 node.mesh = context.reference(meshID)

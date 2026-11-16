@@ -15,7 +15,7 @@ public enum EditorMeshBuildCommands {
     /// What the tool docs say about the file format, shared by the tools.
     static let formatDoc = """
         A mesh build is a model made of shapes: `parts` (each: name, shape \
-        group|box|sphere|hemisphere|cylinder|cone|capsule|torus|tube|plane|wedge|pyramid, parent (another part's name; \
+        group|box|sphere|hemisphere|cylinder|cone|capsule|torus|tube|plane|wedge|pyramid|lathe|extrude, parent (another part's name; \
         children move with it), position [x,y,z] m in the parent's space, rotation [x,y,z] degrees, size [x,y,z] m (the box \
         the shape fills; cylinders/cones/capsules run along Y), segments, thickness (tube wall), color [r,g,b] 0-1 sRGB, \
         opacity, texture (path under Assets/ such as "Textures/brick.png" or a .proctex, or "asset:<id>"), textureScale \
@@ -27,7 +27,7 @@ public enum EditorMeshBuildCommands {
         linear|hermite|step, keys [{time, value [x,y,z]}]}; values are relative to the part's rest pose: position offset \
         in m, rotation degrees added, scale multiplier (1 = unchanged))). Every key is optional. A group part has no mesh: \
         use it as a pivot (hinge, turret) for animated children.
-        """
+        """ + " " + MeshBuildPart.shapesDoc
 }
 
 extension EditorSession {
@@ -192,6 +192,7 @@ enum MeshBuildCheck {
         if known.count != names.count { problems.append("some parts share a name; parenting and animation use the first") }
         for part in build.parts {
             if !part.parent.isEmpty && !known.contains(part.parent) { problems.append("part '\(part.name)' has a missing parent '\(part.parent)'") }
+            problems += part.shapeWarnings.map { "part '\(part.name)': \($0)" }
             for (value, kind) in [(part.texture, AssetKind.texture), (part.material, .material)] where !value.isEmpty {
                 if MeshBuildCheck.resolve(value, session: session) == nil { problems.append("part '\(part.name)': no \(kind.rawValue) asset '\(value)'") }
             }
