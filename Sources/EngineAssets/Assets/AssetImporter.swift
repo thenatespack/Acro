@@ -207,6 +207,7 @@ public struct AssetImporterRegistry: Sendable {
         registry.register(DataTableImporter())
         registry.register(TerrainImporter())
         registry.register(PixelSpriteImporter())
+        registry.register(TilemapImporter())
         return registry
     }
 

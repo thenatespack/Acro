@@ -429,6 +429,16 @@ public final class AssetInspectorView {
                 content.addChildren([HStack(spacing: 6, [open, Spacer()]),
                                      note("Pixel art, \(sprite?.width ?? 0) x \(sprite?.height ?? 0) px, \(sprite?.frames.count ?? 0) frames, \(sprite?.tags.count ?? 0) tags. Imported as an atlas texture; SpriteAssetLibrary gives a SpriteAtlas and one SpriteAnimator clip per tag.")])
             }
+            if session.isTilemapFile(id) {
+                let open = Button("Open in Tilemap Builder", role: .primary, name: "openTilemapBuilder") { [unowned self] in
+                    session.run(TilemapOpenCommand.self, .init(asset: AssetReference(id)))
+                }
+                open.command = TilemapOpenCommand.id.rawValue
+                open.tooltip = "Paint this map in the Tilemap Builder tab (or double-click it in the Assets panel)"
+                let map = session.assets?.tilemapContents(of: id)
+                content.addChildren([HStack(spacing: 6, [open, Spacer()]),
+                                     note("A \(map?.cols ?? 0) x \(map?.rowCount ?? 0) tilemap with \(map?.layers.count ?? 0) layers. Placed, it is layer meshes, merged Collider2D shapes and object points; game code reads it with assets.tilemap(path:).")])
+            }
             if session.isMaterialFile(id) {
                 addMaterialForm(AssetReference(id, subAsset: "material"))
             }

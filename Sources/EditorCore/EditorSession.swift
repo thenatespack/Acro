@@ -140,6 +140,9 @@ public final class EditorSession {
     /// The sprite open in the Pixel Sprite Builder tab (`sprite.open`), and how the app shows it.
     public var openPixelSprite: AssetID?
     public var onOpenPixelSprite: ((AssetID) -> Void)?
+    /// The tilemap open in the Tilemap Builder tab (`tilemap.open`), and how the app shows it.
+    public var openTilemap: AssetID?
+    public var onOpenTilemap: ((AssetID) -> Void)?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()

@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 172 tools.
+named by its id (see README › Use the editor › AI control). 180 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -43,6 +43,7 @@ optional arguments.
 | `stats` | [`stats.get`](#statsget) |
 | `table` | [`table.edit`](#tableedit), [`table.exportCsv`](#tableexportcsv), [`table.get`](#tableget), [`table.importCsv`](#tableimportcsv), [`table.new`](#tablenew), [`table.open`](#tableopen), [`table.query`](#tablequery), [`table.set`](#tableset) |
 | `terrain` | [`terrain.edit`](#terrainedit), [`terrain.get`](#terrainget), [`terrain.new`](#terrainnew), [`terrain.open`](#terrainopen), [`terrain.paint`](#terrainpaint), [`terrain.scatter`](#terrainscatter), [`terrain.sculpt`](#terrainsculpt), [`terrain.set`](#terrainset) |
+| `tilemap` | [`tilemap.edit`](#tilemapedit), [`tilemap.erase`](#tilemaperase), [`tilemap.fill`](#tilemapfill), [`tilemap.get`](#tilemapget), [`tilemap.new`](#tilemapnew), [`tilemap.open`](#tilemapopen), [`tilemap.paint`](#tilemappaint), [`tilemap.set`](#tilemapset) |
 | `tool` | [`tool.set`](#toolset), [`tool.snapping`](#toolsnapping) |
 | `transform` | [`transform.lookAt`](#transformlookat), [`transform.set`](#transformset) |
 | `ui` | [`ui.click`](#uiclick), [`ui.drag`](#uidrag), [`ui.find`](#uifind), [`ui.hover`](#uihover), [`ui.key`](#uikey), [`ui.scroll`](#uiscroll), [`ui.snapshot`](#uisnapshot), [`ui.type`](#uitype) |
@@ -2865,6 +2866,275 @@ Result:
 - `scatter`: [string]
 - `scatterCounts`: [integer]
 - `size`: number[2] — [x, y]
+- `warnings`: [string]
+
+## tilemap
+
+### `tilemap.edit`
+
+**Edit Tilemap** · _undoable_
+
+Changes a .tilemap file in one undoable step, in this order: size (anchorBottom keeps the bottom rows), tileSize, pixelsPerUnit, chunkSize, background, tilesetSource, filter, setTiles / removeTiles (per-tile collision, oneWay, tags, properties, animation), removeLayers, addLayers, updateLayers (name → fields; "name" renames), layerOrder, removeTerrains, addTerrains, updateTerrains, removeObjects, addObjects, updateObjects. Placed copies update. Cells are painted with tilemap.paint / fill / erase. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `addLayers?`: [{cells?: [[integer]], collision?: boolean, data?: [integer], name?: string, opacity?: number, order?: number, parallax?: number[2], visible?: boolean}]
+- `addObjects?`: [{name?: string, position?: number[2], properties?: object, size?: number[2], trigger?: boolean, type?: string}]
+- `addTerrains?`: [{edgesConnect?: boolean, fill?: integer, first?: integer, mode?: "edges" \| "blob", name?: string, tiles?: object}]
+- `anchorBottom?`: boolean
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `background?`: number[4] — [x, y, z, w] (colors: linear [r, g, b, a])
+- `chunkSize?`: integer
+- `filter?`: string
+- `layerOrder?`: [string]
+- `path?`: string
+- `pixelsPerUnit?`: number
+- `removeLayers?`: [string]
+- `removeObjects?`: [string]
+- `removeTerrains?`: [string]
+- `removeTiles?`: [integer]
+- `setTiles?`: [{animation?: object, collision?: string (7 cases), index?: integer, name?: string, oneWay?: boolean, points?: [number[2]], properties?: object, tags?: [string]}]
+- `size?`: [integer]
+- `tileSize?`: [integer]
+- `tilesetSource?`: string \| {image?: string, images?: [string], kind?: "image" \| "images", margin?: integer, spacing?: integer} — Where the tile pictures come from: an image path (a sprite sheet sliced by tileSize), or an object with a kind.
+- `updateLayers?`: object
+- `updateObjects?`: object
+- `updateTerrains?`: object
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `cellSize`: number[2] — [x, y]
+- `changed?`: integer
+- `colliders`: integer
+- `entities?`: [entity id]
+- `layers`: [string]
+- `objects`: [string]
+- `painted`: [integer]
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `size`: [integer]
+- `terrains`: [string]
+- `tileCount`: integer
+- `tileSize`: [integer]
+- `warnings`: [string]
+
+### `tilemap.erase`
+
+**Erase Tilemap** · _undoable_
+
+Clears `cells` [[x, y], …], a `rect` [x0, y0, x1, y1] or `all` of a layer in one undoable step. With `terrain`, the terrain cells around them are re-tiled so the new edges get border tiles. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `all?`: boolean
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `cells?`: [[integer]]
+- `layer?`: string
+- `path?`: string
+- `rect?`: [integer]
+- `terrain?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `cellSize`: number[2] — [x, y]
+- `changed?`: integer
+- `colliders`: integer
+- `entities?`: [entity id]
+- `layers`: [string]
+- `objects`: [string]
+- `painted`: [integer]
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `size`: [integer]
+- `terrains`: [string]
+- `tileCount`: integer
+- `tileSize`: [integer]
+- `warnings`: [string]
+
+### `tilemap.fill`
+
+**Fill Tilemap** · _undoable_
+
+Fills a `rect` [x0, y0, x1, y1] of a layer, or flood-fills from `at` [x, y] (the 4-connected cells holding the same tile), with one brush: `tile`, `tiles` (random) or `terrain` (auto-tiled). One undoable step. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `at?`: [integer]
+- `flipX?`: boolean
+- `flipY?`: boolean
+- `layer?`: string
+- `path?`: string
+- `rect?`: [integer]
+- `rotation?`: integer
+- `seed?`: integer
+- `terrain?`: string
+- `tile?`: integer
+- `tiles?`: [integer]
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `cellSize`: number[2] — [x, y]
+- `changed?`: integer
+- `colliders`: integer
+- `entities?`: [entity id]
+- `layers`: [string]
+- `objects`: [string]
+- `painted`: [integer]
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `size`: [integer]
+- `terrains`: [string]
+- `tileCount`: integer
+- `tileSize`: [integer]
+- `warnings`: [string]
+
+### `tilemap.get`
+
+**Get Tilemap** · _read-only_, _idempotent_
+
+Reads a .tilemap file: size, tile set (source and per-tile entries), layer settings, terrains, objects and a summary (painted cells per layer, merged colliders, problems). With `layer` it also returns that layer's cells (or the `rect` [x0, y0, x1, y1] of them) as rows of cell values, top row first.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `layer?`: string
+- `path?`: string
+- `rect?`: [integer]
+
+Result:
+
+- `background?`: number[4] — [x, y, z, w] (colors: linear [r, g, b, a])
+- `cells?`: [[integer]]
+- `chunkSize`: integer
+- `layers`: [{collision: boolean, name: string, opacity: number, order: number, painted: integer, parallax: number[2], visible: boolean}]
+- `objects`: [{name?: string, position?: number[2], properties?: object, size?: number[2], trigger?: boolean, type?: string}]
+- `origin?`: [integer]
+- `pixelsPerUnit`: number
+- `summary`: {asset: asset id, cellSize: number[2], changed?: integer, colliders: integer, entities?: [entity id], layers: [string], objects: [string], painted: [integer], path: string, prefab: asset id, size: [integer], terrains: [string], tileCount: integer, tileSize: [integer], warnings: [string]}
+- `terrains`: [{edgesConnect?: boolean, fill?: integer, first?: integer, mode?: "edges" \| "blob", name?: string, tiles?: object}]
+- `tileset`: {filter?: string, source?: string \| {image?: string, images?: [string], kind?: "image" \| "images", margin?: integer, spacing?: integer}, tiles?: [object]}
+
+### `tilemap.new`
+
+**New Tilemap**
+
+Writes a .tilemap file in `folder` (default: the Assets root) with empty layers, imported as a prefab of layer chunk meshes, merged Collider2D shapes and object points, optionally placed in the scene. Without `tileset` a 16 px starter tile set image is written next to it (tiles 0-15 the "Dirt" terrain by edge mask, 16 stone, 17 brick, 18 one-way platform, 19/20 ramps, 21 spikes, 22-25 animated water, 26-27 torch, 28 coin, 29 grass tuft, 30 back wall, 31 ladder). Then paint with tilemap.paint / tilemap.fill. A tilemap is a grid of `size` [columns, rows] cells of `tileSize` [w, h] pixels; `pixelsPerUnit` (0: the tile width, so a tile is 1 world unit) sets the world size. Cells are addressed [x, y] with x right and y DOWN from the top-left cell. `tileset`: `source` ({"kind": "image", "image": "Tiles/sheet.png", "margin", "spacing"} slices a sprite sheet into tiles in reading order, tile 0 first; {"kind": "images", "images": [...]} packs one image per tile), `filter` (nearest/linear), `tiles` (per-tile entries: index, name, collision none/full/top/bottom/slopeUp/slopeDown/polygon (+points 0-1, y up), oneWay, tags, properties, animation {frames, fps, mode loop/pingPong}). `layers` (name, cells (rows of cell values, top row first), order, parallax [x,y], opacity, visible, collision) draw in list order, first at the back. A cell value is -1 (empty) or a tile index + 65536 (flip x) + 131072 (flip y) + 262144 * quarter turns clockwise. `terrains` are auto-tiling sets (name, mode edges (mask N1 E2 S4 W8) or blob (8 neighbors), first (edges: tile first+mask), tiles {"mask": tile}, fill, edgesConnect). `objects` (name, type, position [x,y] world units from the bottom-left, size, trigger, properties) are points for game code. Every key is optional; paint with tilemap.paint / fill / erase rather than writing cells.
+
+Arguments:
+
+- `folder?`: string
+- `layers?`: [string]
+- `name?`: string
+- `pixelsPerUnit?`: number
+- `place?`: boolean
+- `position?`: number[3] — [x, y, z]
+- `size?`: [integer]
+- `tileSize?`: [integer]
+- `tileset?`: any — Any JSON value.
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `cellSize`: number[2] — [x, y]
+- `changed?`: integer
+- `colliders`: integer
+- `entities?`: [entity id]
+- `layers`: [string]
+- `objects`: [string]
+- `painted`: [integer]
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `size`: [integer]
+- `terrains`: [string]
+- `tileCount`: integer
+- `tileSize`: [integer]
+- `warnings`: [string]
+
+### `tilemap.open`
+
+**Open in Tilemap Builder** · _idempotent_
+
+Opens a .tilemap file in the editor's Tilemap Builder tab (the map drawn with its tile set, a tile palette, brushes and the layer, tile, terrain and object forms) and brings the tab to the front. view.screenshot {source: "panel", panel: "tilemapBuilder"} shows it.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `path`: string
+
+### `tilemap.paint`
+
+**Paint Tilemap** · _undoable_
+
+Paints cells of a layer in one undoable step with exactly one brush: `tile` (one tile, with flipX / flipY / rotation), `tiles` (random from a set) or `terrain` (auto-tiling: the cells become that terrain and every terrain cell around them picks the tile matching its neighbors). Cells are [x, y] with y down from the top-left; cells outside the map are skipped. Returns the summary with `changed`. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `cells`: [[integer]]
+- `flipX?`: boolean
+- `flipY?`: boolean
+- `layer?`: string
+- `path?`: string
+- `rotation?`: integer
+- `seed?`: integer
+- `terrain?`: string
+- `tile?`: integer
+- `tiles?`: [integer]
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `cellSize`: number[2] — [x, y]
+- `changed?`: integer
+- `colliders`: integer
+- `entities?`: [entity id]
+- `layers`: [string]
+- `objects`: [string]
+- `painted`: [integer]
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `size`: [integer]
+- `terrains`: [string]
+- `tileCount`: integer
+- `tileSize`: [integer]
+- `warnings`: [string]
+
+### `tilemap.set`
+
+**Set Tilemap** · _undoable_, _idempotent_
+
+Replaces a .tilemap file's whole contents and reimports it; placed copies update. Undoable. For settings, layers, tiles, terrains or objects tilemap.edit is shorter; paint cells with tilemap.paint / fill / erase. A tilemap is a grid of `size` [columns, rows] cells of `tileSize` [w, h] pixels; `pixelsPerUnit` (0: the tile width, so a tile is 1 world unit) sets the world size. Cells are addressed [x, y] with x right and y DOWN from the top-left cell. `tileset`: `source` ({"kind": "image", "image": "Tiles/sheet.png", "margin", "spacing"} slices a sprite sheet into tiles in reading order, tile 0 first; {"kind": "images", "images": [...]} packs one image per tile), `filter` (nearest/linear), `tiles` (per-tile entries: index, name, collision none/full/top/bottom/slopeUp/slopeDown/polygon (+points 0-1, y up), oneWay, tags, properties, animation {frames, fps, mode loop/pingPong}). `layers` (name, cells (rows of cell values, top row first), order, parallax [x,y], opacity, visible, collision) draw in list order, first at the back. A cell value is -1 (empty) or a tile index + 65536 (flip x) + 131072 (flip y) + 262144 * quarter turns clockwise. `terrains` are auto-tiling sets (name, mode edges (mask N1 E2 S4 W8) or blob (8 neighbors), first (edges: tile first+mask), tiles {"mask": tile}, fill, edgesConnect). `objects` (name, type, position [x,y] world units from the bottom-left, size, trigger, properties) are points for game code. Every key is optional; paint with tilemap.paint / fill / erase rather than writing cells. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+- `tilemap`: {background?: number[4], chunkSize?: integer, layers?: [object], objects?: [object], pixelsPerUnit?: number, size?: [integer], terrains?: [object], tileSize?: [integer], tileset?: {filter?: string, source?: string \| object, tiles?: [object]}}
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `cellSize`: number[2] — [x, y]
+- `changed?`: integer
+- `colliders`: integer
+- `entities?`: [entity id]
+- `layers`: [string]
+- `objects`: [string]
+- `painted`: [integer]
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `size`: [integer]
+- `terrains`: [string]
+- `tileCount`: integer
+- `tileSize`: [integer]
 - `warnings`: [string]
 
 ## tool

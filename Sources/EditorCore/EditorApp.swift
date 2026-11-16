@@ -140,6 +140,8 @@ public final class EditorApp: Game, EditorHost {
     public private(set) var terrainWorkspace: TerrainBuilderWorkspace!
     /// The Pixel Sprite Builder tab (PixelSpriteWorkspace.swift).
     public private(set) var spriteWorkspace: PixelSpriteWorkspace!
+    /// The Tilemap Builder tab (TilemapWorkspace.swift).
+    public private(set) var tilemapWorkspace: TilemapWorkspace!
     private(set) var statusBar: StatusBar!
     /// The Assets panel (browser) and its thumbnails.
     public private(set) var assetBrowser: AssetBrowserPanel!
@@ -511,6 +513,14 @@ public final class EditorApp: Game, EditorHost {
             }
             dock.focusPanel(EditorLayout.spriteBuilder)
         }
+        session.onOpenTilemap = { [unowned self] id in
+            guard tilemapWorkspace.open(id) else { return }
+            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.tilemapBuilder, EditorLayout.viewport) {
+                dock.dock(EditorLayout.tilemapBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
+                                                                                                : .edge(.bottom))
+            }
+            dock.focusPanel(EditorLayout.tilemapBuilder)
+        }
         session.onOpenScript = { [unowned self] path in
             let url = URL(fileURLWithPath: path)
             scriptEditor.openScript(at: url)
@@ -644,6 +654,8 @@ public final class EditorApp: Game, EditorHost {
         terrainWorkspace.device = engine?.device
         if let quality = engine?.quality { terrainWorkspace.quality = quality }
         spriteWorkspace = PixelSpriteWorkspace(session: session)
+        tilemapWorkspace = TilemapWorkspace(session: session)
+        tilemapWorkspace.device = engine?.device
         files.onOpen = { [unowned self] file in openFile(file) }
         files.onNewScene = { [unowned self] name in newScene(named: name) }
 
@@ -677,6 +689,7 @@ public final class EditorApp: Game, EditorHost {
         terrainPanel.passesPointerThrough = true
         dock.addPanel(terrainPanel)
         dock.addPanel(DockPanel(id: EditorLayout.spriteBuilder, title: "Pixel Sprite Builder", content: spriteWorkspace.view, minSize: Vec2(320, 200)))
+        dock.addPanel(DockPanel(id: EditorLayout.tilemapBuilder, title: "Tilemap Builder", content: tilemapWorkspace.view, minSize: Vec2(320, 200)))
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
         for (id, icon) in EditorIcons.panelIconNames { dock.panel(id)?.icon = EditorIcons.named(icon) }
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
@@ -1083,6 +1096,7 @@ public final class EditorApp: Game, EditorHost {
             tableWorkspace.update()
             terrainWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
             spriteWorkspace.update(dt: dt)
+            tilemapWorkspace.update(dt: dt)
         }
         session.tick(dt: Double(dt))
 
