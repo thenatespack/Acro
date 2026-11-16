@@ -290,4 +290,34 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(throws: (any Error).self) { try call(session, "sprite.importSheet", ["file": png.path, "frameWidth": 8, "frameHeight": 8]) }
         #expect(throws: (any Error).self) { try call(session, "sprite.importSheet", ["frameWidth": 2]) }
     }
+
+    @Test func tagFrameEventsFromToolsAndTheTab() throws {
+        let (session, folder) = try makeProject()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let created = try call(session, "sprite.new", ["name": "Ev", "width": 2, "height": 2, "frames": 3])
+        let id = try #require((created["asset"] as? String).flatMap { AssetID($0) })
+        let edited = try call(session, "sprite.edit", ["path": "Ev.sprite", "addTags": [["name": "walk", "from": 0, "to": 2]],
+                                                       "addEvents": [["tag": "walk", "frame": 2, "name": "land"], ["tag": "walk", "frame": 1, "name": "step"]]])
+        #expect((edited["clips"] as? [[String: Any]])?.first?["events"] as? [String] == ["step@1", "land@2"])
+        #expect(throws: (any Error).self) { try call(session, "sprite.edit", ["path": "Ev.sprite", "addEvents": [["tag": "walk", "frame": 5, "name": "x"]]]) }
+        #expect(throws: (any Error).self) { try call(session, "sprite.edit", ["path": "Ev.sprite", "addEvents": [["tag": "nope", "frame": 0, "name": "x"]]]) }
+        try call(session, "sprite.edit", ["path": "Ev.sprite", "removeEvents": [["tag": "walk", "name": "land"]]])
+        #expect(session.assets?.pixelSprite(of: id)?.tags[0].events == [PixelSprite.FrameEvent(frame: 1, name: "step")])
+
+        // The tab lists the selected tag's events and adds one on the current frame.
+        let workspace = PixelSpriteWorkspace(session: session)
+        #expect(workspace.open(id))
+        let builder = try #require(workspace.builder)
+        builder.selectTag(0)
+        builder.selectFrame(2)
+        workspace.update(dt: 0.016)
+        let field = try #require(builder.view.descendant(named: "spriteEventNewName") as? TextField)
+        let submit = try #require(field.onSubmit)
+        submit("land")
+        workspace.update(dt: 0.016)
+        #expect(session.assets?.pixelSprite(of: id)?.tags[0].events.map(\.name) == ["step", "land"])
+        #expect(builder.view.descendant(named: "spriteRemoveEvent1") != nil)
+        #expect(session.performUndo())
+        #expect(session.assets?.pixelSprite(of: id)?.tags[0].events.count == 1)
+    }
 }

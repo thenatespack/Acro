@@ -196,6 +196,7 @@ extension PixelSprite {
         for t in tags.indices {
             if tags[t].from >= at { tags[t].from += count }
             if tags[t].to >= at { tags[t].to += count }
+            for e in tags[t].events.indices where tags[t].events[e].frame >= at { tags[t].events[e].frame += count }
         }
     }
 
@@ -212,15 +213,17 @@ extension PixelSprite {
         }
         frames = keep.map { frames[$0] }
         for l in layers.indices { layers[l].cels = keep.map { layers[l].cels[$0] } }
-        // A tag keeps the frames it still covers.
+        // A tag keeps the frames it still covers, and the events on them.
+        let newIndex = Dictionary(uniqueKeysWithValues: keep.enumerated().map { ($0.element, $0.offset) })
         tags = tags.compactMap { tag in
             let kept = keep.enumerated().filter { $0.element >= tag.from && $0.element <= tag.to }.map(\.offset)
             guard let first = kept.first, let last = kept.last else { return nil }
-            return Tag(tag.name, from: first, to: last, mode: tag.mode)
+            let events = tag.events.compactMap { e in newIndex[e.frame].map { FrameEvent(frame: $0, name: e.name) } }
+            return Tag(tag.name, from: first, to: last, mode: tag.mode, events: events)
         }
     }
 
-    /// Moves frame `from` to position `to` (tags keep their frame numbers).
+    /// Moves frame `from` to position `to` (tags and their events keep their frame numbers).
     public mutating func moveFrame(_ from: Int, to: Int) {
         guard frames.indices.contains(from), frames.indices.contains(to), from != to else { return }
         frames.insert(frames.remove(at: from), at: to)

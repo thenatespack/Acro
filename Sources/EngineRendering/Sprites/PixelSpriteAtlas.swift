@@ -40,7 +40,10 @@ extension SpriteLoopMode {
 extension SpriteClip {
     /// One clip per tag of the sheet (frame indices into the sheet's atlas), ready for `SpriteAnimator`.
     public static func clips(from sheet: SpriteSheet) -> [SpriteClip] {
-        sheet.clips.map { SpriteClip($0.name, frames: $0.frames, fps: $0.fps, mode: SpriteLoopMode($0.mode)) }
+        sheet.clips.map {
+            SpriteClip($0.name, frames: $0.frames, fps: $0.fps, mode: SpriteLoopMode($0.mode),
+                       events: $0.events.map { SpriteClipEvent(step: $0.step, name: $0.name) })
+        }
     }
 }
 

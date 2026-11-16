@@ -19,8 +19,8 @@ public enum EditorPixelSpriteCommands {
     static let formatDoc = """
         A .sprite file is pixel art (every key optional): width and height (1-256, default 16), palette (hex colors, up \
         to 62), layers (bottom first: name, visible, opacity 0-1, cels: one list of row strings per frame), frames \
-        ({duration} in ms), tags ({name, from, to, mode loop|once|pingPong}: inclusive frame ranges, one animation clip \
-        each), pivot ([x, y] 0-1 from the bottom-left, default [0.5, 0]) and pixelsPerUnit (default 16). In a row string \
+        ({duration} in ms), tags ({name, from, to, mode loop|once|pingPong, events [{frame, name}]}: inclusive frame ranges, one animation clip \
+        each, firing its events when it reaches those frames), pivot ([x, y] 0-1 from the bottom-left, default [0.5, 0]) and pixelsPerUnit (default 16). In a row string \
         each character is one pixel: "." is transparent and 0-9, a-z, A-Z are palette entries 0-61 ("0" is the first \
         color, "a" the 11th). It imports as a texture (sub-asset "texture"): the frames in a grid, frame i in cell i, so \
         indices stay stable for SpriteAnimator clips and tile sets. Palette presets: pico8, db16, db32, gameboy, grayscale.
@@ -200,6 +200,8 @@ public struct PixelSpriteResult: Codable, Equatable, Sendable {
         public var frames: [Int]
         public var fps: Float
         public var mode: String
+        /// Events as "name@step" (step: position in `frames`).
+        public var events: [String]?
     }
 
     public var asset: AssetID
@@ -246,7 +248,10 @@ extension PixelSpriteResult {
                   width: sprite.width, height: sprite.height, palette: sprite.palette.map(\.description),
                   layers: sprite.layers.map { LayerInfo(name: $0.name, visible: $0.visible, opacity: $0.opacity) },
                   frames: sprite.frames.map(\.duration), tags: sprite.tags,
-                  clips: sprite.clips().map { ClipInfo(name: $0.name, frames: $0.frames, fps: $0.fps, mode: $0.mode.rawValue) },
+                  clips: sprite.clips().map { clip in
+                      ClipInfo(name: clip.name, frames: clip.frames, fps: clip.fps, mode: clip.mode.rawValue,
+                               events: clip.events.isEmpty ? nil : clip.events.map { "\($0.name)@\($0.step)" })
+                  },
                   atlasColumns: PixelSprite.sheetColumns(frameCount: sprite.frames.count),
                   sprite: full ? sprite : nil, previewFrame: frame, preview: frame.map { sprite.compositeRows(frame: $0) },
                   warnings: Array(Set(sprite.problems() + warnings)).sorted() + (record?.importError.map { ["import failed: \($0)"] } ?? []))
@@ -372,6 +377,18 @@ public enum PixelSpriteEditCommand: EditorCommand {
         }
     }
 
+    /// A frame event on a tag.
+    public struct TagEvent: Codable, Equatable, Sendable {
+        public var tag: String
+        public var frame: Int?
+        public var name: String?
+        public init(tag: String, frame: Int? = nil, name: String? = nil) {
+            self.tag = tag
+            self.frame = frame
+            self.name = name
+        }
+    }
+
     /// Copies pixels from one cel to another (copy / paste between cels).
     public struct CelCopy: Codable, Equatable, Sendable {
         public var fromFrame: Int
@@ -434,6 +451,10 @@ public enum PixelSpriteEditCommand: EditorCommand {
         /// Add tags (replacing ones with the same name).
         public var addTags: [PixelSprite.Tag]?
         public var removeTags: [String]?
+        /// Add frame events to tags: [{tag, frame, name}] (`frame` is the sprite frame, inside the tag).
+        public var addEvents: [TagEvent]?
+        /// Remove frame events: [{tag, frame, name}] (a missing `frame` or `name` matches any).
+        public var removeEvents: [TagEvent]?
         public var pivot: Vec2?
         public var pixelsPerUnit: Float?
         public init(asset: AssetReference? = nil, path: String? = nil, palette: JSONValue? = nil, addColors: [String]? = nil,
@@ -441,8 +462,10 @@ public enum PixelSpriteEditCommand: EditorCommand {
                     updateLayers: [LayerUpdate]? = nil, addFrames: Int? = nil, insertAt: Int? = nil, copyFrame: Int? = nil,
                     removeFrames: [Int]? = nil, duration: Int? = nil, durations: [Int]? = nil, tags: [PixelSprite.Tag]? = nil,
                     addTags: [PixelSprite.Tag]? = nil, removeTags: [String]? = nil, pivot: Vec2? = nil, pixelsPerUnit: Float? = nil,
-                    copyCels: [CelCopy]? = nil) {
+                    copyCels: [CelCopy]? = nil, addEvents: [TagEvent]? = nil, removeEvents: [TagEvent]? = nil) {
             self.copyCels = copyCels
+            self.addEvents = addEvents
+            self.removeEvents = removeEvents
             self.asset = asset
             self.path = path
             self.palette = palette
@@ -468,7 +491,7 @@ public enum PixelSpriteEditCommand: EditorCommand {
 
     public static let id: CommandID = "sprite.edit"
     public static let title = "Edit Sprite"
-    public static let doc = "Changes a .sprite file's structure in one undoable step, in this order: `palette` / `addColors`, canvas `width` / `height`, layers (`addLayers`, `removeLayers`, `updateLayers` [{name, rename, visible, opacity}]), frames (`addFrames` blank or copies of `copyFrame` at `insertAt`, `removeFrames`), timing (`duration` for all, `durations` per frame, ms), `copyCels` ([{fromFrame, fromLayer, toFrame, toLayer, rect [x, y, w, h], x, y, merged, replace}]: copy / paste pixels between cels; default the whole cel to the same place, transparent pixels don't cover unless `replace`), tags (`tags` replaces all, `addTags`, `removeTags`; a tag {name, from, to, mode loop|once|pingPong} becomes a SpriteAnimator clip), then `pivot` and `pixelsPerUnit`. Returns the summary and warnings."
+    public static let doc = "Changes a .sprite file's structure in one undoable step, in this order: `palette` / `addColors`, canvas `width` / `height`, layers (`addLayers`, `removeLayers`, `updateLayers` [{name, rename, visible, opacity}]), frames (`addFrames` blank or copies of `copyFrame` at `insertAt`, `removeFrames`), timing (`duration` for all, `durations` per frame, ms), `copyCels` ([{fromFrame, fromLayer, toFrame, toLayer, rect [x, y, w, h], x, y, merged, replace}]: copy / paste pixels between cels; default the whole cel to the same place, transparent pixels don't cover unless `replace`), tags (`tags` replaces all, `addTags`, `removeTags`; a tag {name, from, to, mode loop|once|pingPong, events [{frame, name}]} becomes a SpriteAnimator clip whose events fire when it reaches those frames), frame events (`addEvents` / `removeEvents` [{tag, frame, name}]), then `pivot` and `pixelsPerUnit`. Returns the summary and warnings."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
@@ -540,6 +563,23 @@ public enum PixelSpriteEditCommand: EditorCommand {
             if let i = sprite.tags.firstIndex(where: { $0.name == tag.name }) { sprite.tags[i] = tag } else { sprite.tags.append(tag) }
         }
         if let remove = arguments.removeTags { sprite.tags.removeAll { remove.contains($0.name) } }
+        for event in arguments.addEvents ?? [] {
+            guard let t = sprite.tags.firstIndex(where: { $0.name == event.tag }) else {
+                throw CommandError.failed("addEvents: no tag '\(event.tag)'; tags: \(sprite.tags.map(\.name).joined(separator: ", "))")
+            }
+            let tag = sprite.tags[t]
+            guard let frame = event.frame, let name = event.name, !name.isEmpty else { throw CommandError.failed("addEvents: give `frame` and `name`") }
+            guard frame >= tag.from, frame <= tag.to else {
+                throw CommandError.failed("addEvents: frame \(frame) is outside tag '\(tag.name)' (frames \(tag.from)...\(tag.to))")
+            }
+            let new = PixelSprite.FrameEvent(frame: frame, name: name)
+            if !tag.events.contains(new) { sprite.tags[t].events.append(new) }
+            sprite.tags[t].events.sort { $0.frame < $1.frame }
+        }
+        for event in arguments.removeEvents ?? [] {
+            guard let t = sprite.tags.firstIndex(where: { $0.name == event.tag }) else { throw CommandError.failed("removeEvents: no tag '\(event.tag)'") }
+            sprite.tags[t].events.removeAll { (event.frame == nil || $0.frame == event.frame) && (event.name == nil || $0.name == event.name) }
+        }
         if let pivot = arguments.pivot { sprite.pivot = pivot }
         if let ppu = arguments.pixelsPerUnit {
             guard ppu > 0 else { throw CommandError.failed("pixelsPerUnit must be positive") }

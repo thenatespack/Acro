@@ -57,11 +57,8 @@ public final class PixelSpriteBuilderView {
             selectLayer(index)
         }
         tagList.onSelect = { [unowned self] row in
-            guard let row, row != selectedTag, self.sprite.tags.indices.contains(row) else { return }
-            selectedTag = row
-            remember()
-            needsLayout = true
-            onChanged?()
+            guard let row, row != selectedTag else { return }
+            selectTag(row)
         }
         palette.onSelect = { [unowned self] value in selectColor(value) }
         layout()
@@ -110,6 +107,15 @@ public final class PixelSpriteBuilderView {
 
     public func selectLayer(_ index: Int) {
         layer = min(max(index, 0), sprite.layers.count - 1)
+        remember()
+        needsLayout = true
+        onChanged?()
+    }
+
+    /// Shows tag `index` (its range, mode and frame events) below the tag list.
+    public func selectTag(_ index: Int) {
+        guard sprite.tags.indices.contains(index) else { return }
+        selectedTag = index
         remember()
         needsLayout = true
         onChanged?()
@@ -552,7 +558,7 @@ public final class PixelSpriteBuilderView {
 
     private func addTags() {
         view.addChild(Label("Tags (animation clips)", role: .secondary))
-        tagList.items = sprite.tags.map { "\($0.name)  \($0.from)-\($0.to)  \($0.mode.rawValue)" }
+        tagList.items = sprite.tags.map { "\($0.name)  \($0.from)-\($0.to)  \($0.mode.rawValue)" + ($0.events.isEmpty ? "" : "  \($0.events.count) event\($0.events.count == 1 ? "" : "s")") }
         if let selectedTag { tagList.selectRow(selectedTag, reveal: true) }
         view.addChild(tagList)
         let add = button("Add Tag", "spriteAddTag", tooltip: "Tag this frame as a new clip (edit its range below)") { [unowned self] in
@@ -594,6 +600,43 @@ public final class PixelSpriteBuilderView {
         let mode = Dropdown(options: modes.map(\.rawValue), selectedIndex: modes.firstIndex(of: tag.mode) ?? 0, name: "spriteTagMode")
         mode.onChange = { [unowned self] i in edit("Tag Mode") { $0.tags[t].mode = modes[i] } }
         let row = HStack(spacing: 4, [name, from, to, mode])
+        row.wraps = true
+        view.addChild(row)
+        addTagEvents(t)
+    }
+
+    /// The selected tag's frame events: one row each (go to the frame, remove), then a name field
+    /// and a button adding an event on the current frame.
+    private func addTagEvents(_ t: Int) {
+        let tag = sprite.tags[t]
+        for (e, event) in tag.events.enumerated() {
+            let go = button("Frame \(event.frame)", "spriteEventFrame\(e)", tooltip: "Show this frame") { [unowned self] in selectFrame(event.frame) }
+            let label = Label(event.name, name: "spriteEventName\(e)")
+            let remove = button("Remove", "spriteRemoveEvent\(e)", tooltip: "Delete this event") { [unowned self] in
+                edit("Remove Frame Event") { $0.tags[t].events.removeAll { $0 == event } }
+            }
+            view.addChild(HStack(spacing: 4, [go, label, Spacer(), remove]))
+        }
+        let inRange = frame >= tag.from && frame <= tag.to
+        let field = TextField(text: "", placeholder: "Event name", name: "spriteEventNewName")
+        field.preferredWidth = 90
+        let addEvent: (String) -> Void = { [unowned self] text in
+            let text = text.trimmingCharacters(in: .whitespaces)
+            guard !text.isEmpty, frame >= sprite.tags[t].from, frame <= sprite.tags[t].to else { return }
+            let event = PixelSprite.FrameEvent(frame: frame, name: text)
+            guard !sprite.tags[t].events.contains(event) else { return }
+            edit("Add Frame Event") {
+                $0.tags[t].events.append(event)
+                $0.tags[t].events.sort { $0.frame < $1.frame }
+            }
+        }
+        field.onSubmit = addEvent
+        field.isEnabled = inRange
+        let add = button("Add Event", "spriteAddEvent",
+                         tooltip: inRange ? "Fire this event when the clip reaches frame \(frame) (SpriteAnimator.events)"
+                                          : "Go to a frame inside the tag to add an event on it") { [unowned self] in addEvent(field.text) }
+        add.isEnabled = inRange
+        let row = HStack(spacing: 4, name: "spriteEventRow", [field, add, Spacer()])
         row.wraps = true
         view.addChild(row)
     }

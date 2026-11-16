@@ -77,6 +77,18 @@ public struct PixelSprite: Codable, Equatable, Sendable {
         case loop, once, pingPong
     }
 
+    /// A named event on a frame of a tag: the clip fires it (`SpriteAnimator.events`) each time it
+    /// reaches that frame. `frame` is the sprite's frame index (inside the tag's range).
+    public struct FrameEvent: Codable, Equatable, Hashable, Sendable {
+        public var frame: Int
+        public var name: String
+
+        public init(frame: Int, name: String) {
+            self.frame = frame
+            self.name = name
+        }
+    }
+
     /// A named range of frames, played as one animation clip.
     public struct Tag: Codable, Equatable, Sendable {
         public var name: String
@@ -84,15 +96,18 @@ public struct PixelSprite: Codable, Equatable, Sendable {
         public var from: Int
         public var to: Int
         public var mode: TagMode
+        /// Events fired when the clip reaches a frame (footsteps, hit frames, sounds).
+        public var events: [FrameEvent]
 
-        public init(_ name: String, from: Int, to: Int, mode: TagMode = .loop) {
+        public init(_ name: String, from: Int, to: Int, mode: TagMode = .loop, events: [FrameEvent] = []) {
             self.name = name
             self.from = from
             self.to = to
             self.mode = mode
+            self.events = events
         }
 
-        private enum CodingKeys: String, CodingKey { case name, from, to, mode }
+        private enum CodingKeys: String, CodingKey { case name, from, to, mode, events }
 
         public init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -100,6 +115,16 @@ public struct PixelSprite: Codable, Equatable, Sendable {
             from = try c.decodeIfPresent(Int.self, forKey: .from) ?? 0
             to = try c.decodeIfPresent(Int.self, forKey: .to) ?? from
             mode = try c.decodeIfPresent(TagMode.self, forKey: .mode) ?? .loop
+            events = try c.decodeIfPresent([FrameEvent].self, forKey: .events) ?? []
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(name, forKey: .name)
+            try c.encode(from, forKey: .from)
+            try c.encode(to, forKey: .to)
+            try c.encode(mode, forKey: .mode)
+            if !events.isEmpty { try c.encode(events, forKey: .events) }
         }
     }
 
@@ -341,6 +366,12 @@ public struct PixelSprite: Codable, Equatable, Sendable {
             if !tagNames.insert(tag.name).inserted { out.append("two tags are named '\(tag.name)'") }
             if tag.from < 0 || tag.to >= frames.count || tag.from > tag.to {
                 out.append("tag '\(tag.name)' covers frames \(tag.from)...\(tag.to) but the sprite has frames 0...\(frames.count - 1)")
+            }
+            for event in tag.events {
+                if event.name.isEmpty { out.append("tag '\(tag.name)' has an event without a name") }
+                if event.frame < tag.from || event.frame > tag.to {
+                    out.append("tag '\(tag.name)' event '\(event.name)' is on frame \(event.frame), outside the tag's frames \(tag.from)...\(tag.to) (it never fires)")
+                }
             }
         }
         return out

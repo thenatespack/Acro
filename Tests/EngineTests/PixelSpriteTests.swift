@@ -171,6 +171,39 @@ private func rgba(_ image: Image, _ x: Int, _ y: Int) -> [UInt8] {
         #expect(String(decoding: encoded, as: UTF8.self) == "[1,2,3,4]")
     }
 
+    @Test func tagFrameEventsFireThroughTheAnimator() throws {
+        var s = PixelSprite(width: 1, height: 1, frameCount: 4)
+        s.frames[1].duration = 200
+        s.tags = [PixelSprite.Tag("walk", from: 0, to: 2, events: [PixelSprite.FrameEvent(frame: 1, name: "step"),
+                                                                    PixelSprite.FrameEvent(frame: 2, name: "land"),
+                                                                    PixelSprite.FrameEvent(frame: 3, name: "outside")])]
+        #expect(s.problems().contains { $0.contains("'outside'") })
+        let clip = try #require(s.clips().first)
+        #expect(clip.frames == [0, 1, 1, 2])
+        #expect(clip.events == [.init(step: 1, name: "step"), .init(step: 3, name: "land")], "first step of a repeated frame; outside dropped")
+
+        // In the file: events only on tags that have them.
+        let json = String(decoding: try JSONEncoder().encode(PixelSprite.Tag("idle", from: 0, to: 0)), as: UTF8.self)
+        #expect(!json.contains("events"))
+        let decoded = try JSONDecoder().decode(PixelSprite.self, from: s.fileData())
+        #expect(decoded.tags[0].events.count == 3)
+
+        // The animator fires them once per pass, in order.
+        var animator = SpriteAnimator(clips: SpriteClip.clips(from: s.sheet()))
+        var fired: [String] = []
+        for _ in 0..<40 { animator.advance(dt: 0.01); fired += animator.events }
+        #expect(fired == ["step", "land"])
+        animator.advance(dt: 0.12)
+        #expect(animator.events == ["step"], "loops back to frame 1")
+
+        // Frame edits keep the events on their frames.
+        s.insertFrames(1, at: 0)
+        #expect(s.tags[0].events.map(\.frame) == [2, 3, 4])
+        s.removeFrames([2])
+        #expect(s.tags[0].events.map(\.frame) == [2, 3])
+        #expect(s.tags[0].events.map(\.name) == ["land", "outside"])
+    }
+
     @Test func importsASheetBySlicingAndQuantizing() throws {
         // A 2 x 2 grid of 3 x 2 cells with a 1-pixel margin and spacing: red, green, blue, empty.
         let colors: [[UInt8]] = [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]]
