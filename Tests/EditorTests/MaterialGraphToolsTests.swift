@@ -234,4 +234,44 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(session.performUndo())
         #expect(session.assets?.materialFile(of: id)?.graph?.output["emissive"] == .string("c.rgb"))
     }
+
+    /// The Selected preview shape shows every mesh of the selection (children included) at its
+    /// scene scale and arrangement, centered, with the camera fitted; without a selection it
+    /// falls back to the sphere and the default camera.
+    @Test func selectedPreviewShowsTheWholeSelectionAtScale() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
+        let created = try call(session, "materialGraph.new", ["name": "Sel", "preset": "stone"])
+        let id = try #require((created["asset"] as? String).flatMap { AssetID($0) })
+        let world = session.world
+        let a = world.spawn(Transform(position: Vec3(10, 0, 0), scale: Vec3(4, 4, 4)), Name("Big"), MeshRenderer(mesh: .cube))
+        let b = world.spawn(Transform(position: Vec3(20, 0, 0)), Name("Group"))
+        let child = world.spawn(Transform(position: Vec3(0, 2, 0)), Name("Child"), MeshRenderer(mesh: .sphere))
+        world.setParent(child, to: b)
+        world.propagateTransforms()
+        session.selection.set([try #require(world.ensureID(of: a)), try #require(world.ensureID(of: b))])
+
+        let workspace = MaterialBuilderWorkspace(session: session)
+        #expect(workspace.open(id))
+        workspace.setPreview(shape: .selected)
+        workspace.update(input: nil, dt: 1.0 / 60)
+        #expect(workspace.selectionParts.count == 2)
+        let meshes = workspace.selectionParts.compactMap { workspace.world.get(MeshRenderer.self, for: $0) }
+        #expect(Set(meshes.map(\.mesh.key)) == ["cube", "sphere"])
+        #expect(meshes.allSatisfy { $0.material.key == workspace.materialKey })
+        // Bounds x 8...20.5 (the cube 4 wide at 10, the sphere 1 wide at 20), y -2...2.5: centered there.
+        let globals = workspace.selectionParts.compactMap { workspace.world.get(GlobalTransform.self, for: $0)?.matrix }
+        let cube = try #require(globals.first { abs($0.c0.x - 4) < 1e-4 })
+        #expect(abs(cube.c3.x - (10 - 14.25)) < 1e-3 && abs(cube.c3.y - (0 - 0.25)) < 1e-3)
+        #expect(workspace.viewport.camera.distance > 10)
+        // Nothing selected: the sphere again.
+        session.selection.clear()
+        workspace.update(input: nil, dt: 1.0 / 60)
+        #expect(workspace.selectionParts.isEmpty && workspace.viewport.camera.distance == 3.2)
+        var previewMeshes: [String] = []
+        workspace.world.query(MeshRenderer.self) { _, renderer in previewMeshes.append(renderer.mesh.key) }
+        #expect(previewMeshes == ["sphere"])
+    }
 }

@@ -2,8 +2,8 @@ import Engine
 import Foundation
 
 // The Material Builder tab: a workspace for one `.material` file's node graph, tabbed with the
-// Scene view. The top left previews the material on a sphere, cube, plane or the selected
-// model's mesh, with a light and background picker (orbit with right-drag, Shift pans, the
+// Scene view. The top left previews the material on a sphere, cube, plane or the scene's
+// selection (all its meshes, at their scale and arrangement), with a light and background picker (orbit with right-drag, Shift pans, the
 // wheel zooms; Animate runs the graph's time). Below it, the graph canvas shows the nodes and
 // their links: click a node to edit it, drag it to move it, drag from a node's output port
 // (the dot right of its title) to an input row to link them, and drag a linked input's port
@@ -316,6 +316,11 @@ public final class MaterialBuilderWorkspace {
     private let animateToggle = Checkbox("Animate", isOn: true, kind: .toggleSwitch, name: "materialAnimate")
     private var preview: Entity
     private var lightEntity: Entity
+    /// The Selected shape: one child of `preview` per mesh of the scene's selection, and what
+    /// they were built from (rebuilt, and the camera refit, when it changes).
+    private(set) var selectionParts: [Entity] = []
+    private var shownSelection: [SelectionPart]?
+    private var meshBoundsCache: [String: Bounds] = [:]
     private var shownRevision = -1
     private var pendingEdit: (MaterialAsset, String)?
     private let undoStack: UndoStack
@@ -392,7 +397,7 @@ public final class MaterialBuilderWorkspace {
         title.style.shrink = 1
         bar.addChild(title)
         bar.addChild(Spacer())
-        shapePicker.tooltip = "What the preview shows the material on (Selected: the mesh of the entity selected in the scene)"
+        shapePicker.tooltip = "What the preview shows the material on (Selected: every mesh of the scene's selection, at its scale and arrangement)"
         shapePicker.onChange = { [unowned self] i in setPreview(shape: PreviewShape.allCases[i]) }
         lightPicker.tooltip = "Preview lighting"
         lightPicker.onChange = { [unowned self] i in setPreview(light: PreviewLight.allCases[i]) }
@@ -752,22 +757,30 @@ public final class MaterialBuilderWorkspace {
         var mesh = MeshHandle.sphere
         var scale = Vec3(1.6, 1.6, 1.6)
         var rotation = Quat.identity
+        let material = materialKey.map { MaterialHandle($0) } ?? .default
+        let parts = shape == .selected ? selectedParts() : []
         switch shape {
         case .sphere: break
         case .cube: scale = Vec3(1.2, 1.2, 1.2)
         case .plane:
             scale = Vec3(2, 1, 2)
             rotation = Quat(angle: .pi / 2, axis: Vec3(1, 0, 0))
-        case .selected:
-            if let found = selectedMesh() {
-                mesh = found.mesh
-                scale = found.scale
+        case .selected: break
+        }
+        if parts.isEmpty {
+            if shownSelection != nil { showSelection(nil) }
+            world.add(Transform(rotation: rotation, scale: scale), to: preview)
+            world.add(MeshRenderer(mesh: mesh, material: material), to: preview)
+        } else {
+            if shownSelection != parts { showSelection(parts) }
+            world.remove(MeshRenderer.self, from: preview)
+            for part in selectionParts where world.get(MeshRenderer.self, for: part)?.material != material {
+                if var renderer = world.get(MeshRenderer.self, for: part) {
+                    renderer.material = material
+                    world.add(renderer, to: part)
+                }
             }
         }
-        world.add(Transform(rotation: rotation, scale: scale), to: preview)
-        var renderer = MeshRenderer(mesh: mesh)
-        if let materialKey { renderer.material = MaterialHandle(materialKey) }
-        world.add(renderer, to: preview)
         let (intensity, angles, ambient): (Float, Vec3, Float) = switch light {
         case .studio: (2.5, Vec3(-40, 35, 0), 0.6)
         case .sun: (4, Vec3(-70, 20, 0), 0.35)
@@ -785,17 +798,72 @@ public final class MaterialBuilderWorkspace {
         }
     }
 
-    /// The first mesh at or below the scene's selected entity.
-    private func selectedMesh() -> (mesh: MeshHandle, scale: Vec3)? {
+    /// A mesh of the scene's selection, where it is in the scene.
+    struct SelectionPart: Equatable {
+        var mesh: MeshHandle
+        var matrix: Mat4
+    }
+
+    /// Every mesh at or below the scene's selected entities, with its world matrix (each once).
+    func selectedParts() -> [SelectionPart] {
         let sceneWorld = session.world
-        guard let id = session.selection.primary, let root = sceneWorld.entity(for: id) else { return nil }
-        var queue = [root]
+        var parts: [SelectionPart] = []
+        var seen = Set<Entity>()
+        var queue = session.selection.entities(in: sceneWorld)
         while !queue.isEmpty {
             let entity = queue.removeFirst()
-            if let renderer = sceneWorld.get(MeshRenderer.self, for: entity) { return (renderer.mesh, Vec3(1, 1, 1)) }
+            guard seen.insert(entity).inserted else { continue }
+            if let renderer = sceneWorld.get(MeshRenderer.self, for: entity), renderer.isVisible {
+                let matrix = sceneWorld.get(GlobalTransform.self, for: entity)?.matrix
+                    ?? sceneWorld.get(Transform.self, for: entity)?.matrix ?? .identity
+                parts.append(SelectionPart(mesh: renderer.mesh, matrix: matrix))
+            }
             queue.append(contentsOf: sceneWorld.children(of: entity))
         }
-        return nil
+        return parts
+    }
+
+    /// Rebuilds the Selected shape's meshes (nil: none), centered on the origin at their scene
+    /// scale and arrangement, and fits the camera to them (back to the default without them).
+    private func showSelection(_ parts: [SelectionPart]?) {
+        for part in selectionParts { world.despawn(part) }
+        selectionParts = []
+        shownSelection = parts
+        guard let parts else {
+            viewport.camera.pivot = .zero
+            viewport.camera.distance = 3.2
+            return
+        }
+        var lo = Vec3(repeating: .infinity), hi = Vec3(repeating: -.infinity)
+        for part in parts {
+            let bounds = (meshBounds(part.mesh) ?? Bounds(center: .zero, halfExtent: Vec3(repeating: 0.5))).transformed(by: part.matrix)
+            lo = lo.replacing(with: bounds.center - bounds.halfExtent, where: bounds.center - bounds.halfExtent .< lo)
+            hi = hi.replacing(with: bounds.center + bounds.halfExtent, where: bounds.center + bounds.halfExtent .> hi)
+        }
+        let center = (lo + hi) / 2
+        let half = (hi - lo) / 2
+        let radius = max((half * half).sum().squareRoot(), 0.01)
+        world.add(Transform(position: -center), to: preview)
+        for part in parts {
+            let entity = world.spawn(Name("Selected Part"), MeshRenderer(mesh: part.mesh))
+            world.add(Transform(matrix: part.matrix), to: entity)
+            world.setParent(entity, to: preview)
+            selectionParts.append(entity)
+        }
+        // Fit the box, seen from any side around Y and from a little above, into the view.
+        let t = tanf(viewport.camera.fovY / 2)
+        let aspect = viewport.rect.width > 0 && viewport.rect.height > 0 ? viewport.rect.width / viewport.rect.height : 16 / 9
+        let across = max(half.x, half.z, 0.01), up = max(half.y, across * 0.4)
+        viewport.camera.pivot = .zero
+        viewport.camera.distance = max(up / t, across / (t * aspect)) * 1.15 + across * 0.5
+        viewport.camera.far = max(1000, viewport.camera.distance + radius * 4)
+    }
+
+    private func meshBounds(_ handle: MeshHandle) -> Bounds? {
+        if let cached = meshBoundsCache[handle.key] { return cached }
+        let bounds = if let reference = handle.assetReference { session.assets?.mesh(reference)?.bounds } else { MeshGeometry.builtin(handle)?.bounds }
+        if let bounds { meshBoundsCache[handle.key] = bounds }
+        return bounds
     }
 
     var clearColor: Vec4 {
