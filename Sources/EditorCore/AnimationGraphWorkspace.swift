@@ -142,6 +142,42 @@ public final class AnimationGraphWorkspace {
         clipCache.removeAll()
     }
 
+    /// The preview model's world-space box: its meshes' bounds, or its nodes' positions when it
+    /// has no meshes the editor knows the size of. Nil without a model.
+    public func modelBounds() -> Bounds? {
+        guard let previewRoot, world.isAlive(previewRoot) else { return nil }
+        var lo = Vec3(repeating: .infinity), hi = Vec3(repeating: -.infinity)
+        var nodes: [Vec3] = []
+        func visit(_ entity: Entity) {
+            let matrix = world.get(GlobalTransform.self, for: entity)?.matrix ?? world.worldMatrix(of: entity)
+            nodes.append(Vec3(matrix.c3.x, matrix.c3.y, matrix.c3.z))
+            if let renderer = world.get(MeshRenderer.self, for: entity) {
+                let local = renderer.mesh.assetReference.flatMap { session.assets?.mesh($0)?.bounds } ?? MeshGeometry.builtin(renderer.mesh)?.bounds
+                if let local {
+                    let b = local.transformed(by: matrix)
+                    lo = pointwiseMin(lo, b.center - b.halfExtent)
+                    hi = pointwiseMax(hi, b.center + b.halfExtent)
+                }
+            }
+            for child in world.children(of: entity) { visit(child) }
+        }
+        visit(previewRoot)
+        if lo.x > hi.x {
+            for p in nodes {
+                lo = pointwiseMin(lo, p)
+                hi = pointwiseMax(hi, p)
+            }
+        }
+        guard lo.x <= hi.x else { return nil }
+        return Bounds(center: (lo + hi) / 2, halfExtent: pointwiseMax((hi - lo) / 2, Vec3(repeating: 0.1)))
+    }
+
+    /// Fits the preview camera to the model (done when the model appears; the toolbar's Frame).
+    public func frameModel() {
+        guard let bounds = modelBounds() else { return }
+        viewport.frame(bounds)
+    }
+
     /// Respawns the model when it changed and gives the animator the current graph.
     private func reloadPreview(_ graph: AnimationGraph) {
         guard let assets = session.assets else { return }
@@ -153,6 +189,7 @@ public final class AnimationGraphWorkspace {
                 previewRoot = root
                 world.propagateTransforms()
                 animator = Animator(graph: graph, reference: nil, rigOf: root, in: world)
+                frameModel()
             }
         } else {
             animator?.apply(graph)
@@ -171,6 +208,9 @@ public final class AnimationGraphWorkspace {
         let restartButton = Button("Restart", name: "animGraphRestart") { [unowned self] in restart() }
         restartButton.tooltip = "Play the graph again from its initial state, parameters at their defaults"
         bar.addChild(restartButton)
+        let frameButton = Button("Frame", name: "animGraphFrame") { [unowned self] in frameModel() }
+        frameButton.tooltip = "Fit the preview camera to the model"
+        bar.addChild(frameButton)
         pauseToggle.onChange = { [unowned self] on in isPaused = on }
         pauseToggle.tooltip = "Freeze the preview"
         bar.addChild(pauseToggle)

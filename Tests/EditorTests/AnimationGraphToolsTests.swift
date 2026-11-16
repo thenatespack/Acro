@@ -173,6 +173,8 @@ private func twoClipGLTF() -> Data {
         workspace.update(input: nil, dt: 0.1)
         #expect(workspace.previewRoot != nil && workspace.animator?.currentState == "Idle")
         #expect(workspace.form?.canvas.activeState == "Idle")
+        // The camera framed the model (one node at the origin, no mesh: its position).
+        #expect(workspace.modelBounds()?.center == Vec3(0, 0, 0) && workspace.viewport.camera.pivot == Vec3(0, 0, 0))
 
         workspace.setParameter("speed", .float(1))
         workspace.update(input: nil, dt: 0.1)
