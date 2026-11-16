@@ -440,6 +440,26 @@ private final class Rig {
         #expect(!world.systemNames(in: .update).contains("vscript.update"))
     }
 
+    @Test func backgroundImportsGetTheFullChecks() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("VisualScriptTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let project = try Project.create(at: url, name: "VisualScriptBackground")
+        let database = AssetDatabase(project: project)
+        var warnings: [String] = []
+        database.onChange = { warnings += $0.warnings }
+        let graph = VisualScriptGraph(nodes: [node("start", "event.start"), node("x", "nope"), node("log", "debug.log")],
+                                      links: [link("start.out", "log.in")])
+        let file = project.url(forAssetPath: "Scripts/bad.vscript")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try graph.fileData().write(to: file)
+        _ = database.refreshAsync()
+        #expect(database.waitForAll(timeout: 30))
+        #expect(warnings.contains { $0.contains("unknown node type 'nope'") }, "\(warnings)")
+        // The importer alone (any thread) only checks the structure.
+        let issues = VisualScriptValidator.structuralIssues(graph)
+        #expect(!issues.contains { $0.message.contains("unknown node type") })
+    }
+
     @Test func engineNodesUseProjectAssets() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("VisualScriptTests-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: url) }

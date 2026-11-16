@@ -66,6 +66,14 @@ public protocol AssetImporter: Sendable {
     func importAsset(_ context: inout ImportContext, settings: Settings) throws -> ImportedAsset
 }
 
+/// An importer with checks that need the main actor (registries of main-actor types, such as
+/// visual script node types). `importAsset` runs on any thread and does what it can there; the
+/// database calls `mainActorWarnings` on the main actor after each fresh import of one of its
+/// assets (background or not) and adds them to the import's warnings.
+public protocol AssetImporterMainActorChecks: Sendable {
+    @MainActor func mainActorWarnings(for id: AssetID, in database: AssetDatabase) -> [String]
+}
+
 /// Settings for importers that have none.
 public struct NoImportSettings: Codable, Equatable, Sendable {
     public init() {}
@@ -254,8 +262,15 @@ public struct AnyAssetImporter: Sendable {
     public let defaultSettings: JSONValue
     private let run: @Sendable (inout ImportContext, JSONValue?) throws -> ImportedAsset
     private let normalize: @Sendable (JSONValue?) -> JSONValue
+    /// The importer's `AssetImporterMainActorChecks`, if it has them.
+    let mainActorChecks: (@MainActor @Sendable (AssetID, AssetDatabase) -> [String])?
 
     public init<I: AssetImporter>(_ importer: I) {
+        if let checks = importer as? any AssetImporterMainActorChecks {
+            mainActorChecks = { id, database in checks.mainActorWarnings(for: id, in: database) }
+        } else {
+            mainActorChecks = nil
+        }
         name = importer.name
         fileExtensions = importer.fileExtensions
         version = importer.version

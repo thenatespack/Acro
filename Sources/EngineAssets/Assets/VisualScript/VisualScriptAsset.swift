@@ -57,7 +57,11 @@ public struct VisualScript: Component, Equatable, Sendable {
 /// warnings (unknown node types, bad wires, type mismatches, unconnected required inputs,
 /// unreachable nodes). A graph has no objects: `VisualScriptRuntime` reads the file again
 /// whenever it is reimported, so edits apply while a game runs. A cooked game keeps the file as it is.
-public struct VisualScriptImporter: AssetImporter {
+///
+/// Node types live on the main actor, so the import itself (any thread) checks the structure
+/// and the database adds the checks that need node types on the main actor after the import
+/// (`AssetImporterMainActorChecks`): background imports get the same warnings as others.
+public struct VisualScriptImporter: AssetImporter, AssetImporterMainActorChecks {
     public init() {}
 
     public var name: String { "vscript" }
@@ -69,11 +73,15 @@ public struct VisualScriptImporter: AssetImporter {
         do { graph = try VisualScriptGraph.decode(context.data()) } catch {
             throw AssetError.unreadable("not a visual script: \(error)")
         }
-        // Node types live on the main actor; a background import checks the structure only.
-        let issues = Thread.isMainThread ? MainActor.assumeIsolated { VisualScriptValidator.validate(graph) }
-                                         : VisualScriptValidator.structuralIssues(graph)
-        for issue in issues where issue.severity != .info { context.warn(issue.description) }
+        for issue in VisualScriptValidator.structuralIssues(graph) where issue.severity != .info { context.warn(issue.description) }
         return ImportedAsset()
+    }
+
+    /// The checks that need node types (`VisualScriptValidator.nodeIssues`), after the import.
+    @MainActor
+    public func mainActorWarnings(for id: AssetID, in database: AssetDatabase) -> [String] {
+        guard let data = try? database.fileData(of: id), let graph = try? VisualScriptGraph.decode(data) else { return [] }
+        return VisualScriptValidator.nodeIssues(graph).filter { $0.severity != .info }.map(\.description)
     }
 }
 

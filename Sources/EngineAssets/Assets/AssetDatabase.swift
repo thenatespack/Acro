@@ -463,6 +463,9 @@ public final class AssetDatabase {
         guard var record = records[id] else { return }
         report.warnings += result.warnings.map { "\(record.path): \($0)" }
         let importer = importers.importer(named: result.importer)
+        if !result.fromCache, case .success = result.outcome, let checks = importer?.mainActorChecks {
+            report.warnings += checks(id, self).map { "\(record.path): \($0)" }
+        }
         var entry = LibraryIndex.Entry(
             path: record.path, importer: result.importer, importerVersion: importer?.version ?? 0,
             sourceHash: result.sourceHash, size: record.size, modified: record.modified,

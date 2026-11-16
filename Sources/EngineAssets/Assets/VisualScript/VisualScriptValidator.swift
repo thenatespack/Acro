@@ -43,7 +43,13 @@ public enum VisualScriptValidator {
     /// Every problem with `graph`.
     @MainActor
     public static func validate(_ graph: VisualScriptGraph) -> [VisualScriptIssue] {
-        var issues = structuralIssues(graph)
+        structuralIssues(graph) + nodeIssues(graph)
+    }
+
+    /// The problems `structuralIssues` doesn't find: those needing node types (main actor).
+    @MainActor
+    public static func nodeIssues(_ graph: VisualScriptGraph) -> [VisualScriptIssue] {
+        var issues: [VisualScriptIssue] = []
         var names = Set<String>()
         for variable in graph.variables {
             if variable.name.isEmpty { issues.append(VisualScriptIssue(.error, "a variable has no name")) }
