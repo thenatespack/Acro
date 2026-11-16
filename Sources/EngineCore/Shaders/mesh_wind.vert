@@ -44,8 +44,8 @@ void main() {
     vec3 a = model0.xyz, b = model1.xyz, c = model2.xyz;
     vec3 swayed = windSwayed(inPosition, model, wind.clock.x);
     vec3 previousSwayed = windSwayed(inPosition, previousModel, wind.clock.y);
-    vec4 world = model * vec4(swayed, 1.0);
-    vec4 previousWorld = previousModel * vec4(previousSwayed, 1.0);
+    precise vec4 world = model * vec4(swayed, 1.0);
+    precise vec4 previousWorld = previousModel * vec4(previousSwayed, 1.0);
 
     // Normals by the cofactor matrix, as in mesh.vert (the sway doesn't turn them).
     mat3 cofactor = mat3(cross(b, c), cross(c, a), cross(a, b));

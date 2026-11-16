@@ -32,29 +32,31 @@ layout(set = 2, binding = 2, std140) uniform WindData {
 // The object-space offset of object-space `p` at `time`, for a plant whose model matrix has the
 // 3x3 part `basis` and whose base is at `base` in world space.
 vec3 windOffset(vec3 p, mat3 basis, vec3 base, float time) {
-    float h = max(dot(wind.axis.xyz, p - wind.plant.xyz), 0.0);
-    float strength = wind.global.z;
-    vec2 dir = wind.global.xy;
-    float phase = dot(base.xz, dir) * 0.35 + dot(base.xz, vec2(0.83, -0.57)) * 1.7;
-    float g = 0.5 + 0.5 * sin(time * 0.61 + phase) * sin(time * 0.23 + phase * 0.7);
-    float gust = 1.0 + wind.global.w * (g * 1.6 - 0.6);
-    float sway = 0.75 + 0.25 * sin(time * 1.7 + phase * 1.3);
-    float bend = strength * gust * sway * 0.06 * h * h * wind.axis.w;
+    precise float h = max(dot(wind.axis.xyz, p - wind.plant.xyz), 0.0);
+    precise float strength = wind.global.z;
+    precise vec2 dir = wind.global.xy;
+    precise float phase = dot(base.xz, dir) * 0.35 + dot(base.xz, vec2(0.83, -0.57)) * 1.7;
+    precise float g = 0.5 + 0.5 * sin(time * 0.61 + phase) * sin(time * 0.23 + phase * 0.7);
+    precise float gust = 1.0 + wind.global.w * (g * 1.6 - 0.6);
+    precise float sway = 0.75 + 0.25 * sin(time * 1.7 + phase * 1.3);
+    precise float bend = strength * gust * sway * 0.06 * h * h * wind.axis.w;
     // The world direction in object space (the basis's transpose undoes its rotation).
-    vec3 along = transpose(basis) * vec3(dir.x, 0.0, dir.y);
-    float n2 = dot(along, along);
+    precise vec3 along = transpose(basis) * vec3(dir.x, 0.0, dir.y);
+    precise float n2 = dot(along, along);
     along = n2 > 1e-12 ? along * inversesqrt(n2) : vec3(0.0);
-    vec3 offset = along * bend - wind.axis.xyz * (0.5 * bend * bend / max(h, 1e-3));
-    float n = dot(p, vec3(3.1, 2.3, 2.7));
-    float wave = sin(time * 7.3 + n + phase) + 0.5 * sin(time * 11.1 + n * 1.7 + phase * 2.1);
-    float flutter = wind.plant.w * strength * (0.6 + 0.4 * gust) * clamp(h * 3.0, 0.0, 1.0) * 0.02 * wave;
-    return offset + vec3(sin(n * 1.3 + 1.0), cos(n * 0.9), sin(n * 1.7 + 2.0)) * flutter;
+    precise vec3 offset = along * bend - wind.axis.xyz * (0.5 * bend * bend / max(h, 1e-3));
+    precise float n = dot(p, vec3(3.1, 2.3, 2.7));
+    precise float wave = sin(time * 7.3 + n + phase) + 0.5 * sin(time * 11.1 + n * 1.7 + phase * 2.1);
+    precise float flutter = wind.plant.w * strength * (0.6 + 0.4 * gust) * clamp(h * 3.0, 0.0, 1.0) * 0.02 * wave;
+    precise vec3 total = offset + vec3(sin(n * 1.3 + 1.0), cos(n * 0.9), sin(n * 1.7 + 2.0)) * flutter;
+    return total;
 }
 
 // Any mesh vertex shader sways by including this file and replacing its object-space position
 // with windSwayed(position, model, wind.clock.x) (and, for motion vectors, the previous position
 // with windSwayed(position, previousModel, wind.clock.y)) before multiplying by the model matrix.
 vec3 windSwayed(vec3 p, mat4 model, float time) {
-    vec3 base = (model * vec4(wind.plant.xyz, 1.0)).xyz;
-    return p + windOffset(p, mat3(model[0].xyz, model[1].xyz, model[2].xyz), base, time);
+    precise vec3 base = (model * vec4(wind.plant.xyz, 1.0)).xyz;
+    precise vec3 swayed = p + windOffset(p, mat3(model[0].xyz, model[1].xyz, model[2].xyz), base, time);
+    return swayed;
 }

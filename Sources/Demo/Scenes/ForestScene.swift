@@ -10,7 +10,7 @@ import Foundation
 /// is registered up front, so the first frame draws everything (deterministic screenshots).
 /// Environment: `FOREST_LOD=0` imports it without detail levels (the before picture),
 /// `FOREST_WIND=0` stills the air, `FOREST_TREES=n` places n trees, `FOREST_SINGLE=d` shows one
-/// tree from d meters (detail level screenshots).
+/// tree from d meters (detail level screenshots), `FOREST_PARTS=1` prints each part's triangles per level.
 final class ForestScene: DemoScene {
     static let name = "forest"
     static let summary = "200 mesh build trees: instanced parts, detail levels with impostors, wind"
