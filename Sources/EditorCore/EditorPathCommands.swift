@@ -545,7 +545,7 @@ public enum PathSampleCommand: EditorCommand {
 
     public static let id: CommandID = "path.sample"
     public static let title = "Sample Path"
-    public static let doc = "Returns points along a .path's centerline (on its terrain when it follows one), in the path's space: position, forward (direction of travel), right and up (after banking), and the distance in meters. Use it to place things along a road or river (add the placed path entity's position)."
+    public static let doc = "Returns points along a .path's centerline (on its terrain when it follows one), in the path's space: position, forward (direction of travel), right and up (after banking), and the distance in meters. Use it to place things along a road or river (add the placed path entity's position). To move an entity along the path at run time, give it a PathFollower component (path: \"asset:<id>\", speed, mode once | loop | pingPong, orient, placedAt: the placed path entity's name)."
     public static let isReadOnly = true
     public static let isIdempotent = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }

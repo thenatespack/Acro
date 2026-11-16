@@ -46,6 +46,7 @@ public final class ScenePlayback {
     public private(set) var physics2D: PhysicsWorld2D?
     private var spatialAudio: SpatialAudioHandle?
     private var timelines: TimelinePlayerSystem?
+    private var pathFollowers: PathFollowerSystem?
     private var systemsAdded = false
     /// The scene's visual scripts (`VisualScript` components), while systems run.
     public private(set) var visualScripts: VisualScriptRuntime?
@@ -119,6 +120,7 @@ public final class ScenePlayback {
         world.addBehaviorTrees(name: Self.behaviorSystem, assets: assets, physics: { [weak self] in self?.physics })
         world.addDialogueSystem(assets: assets).presenter = dialoguePresenter
         timelines = world.addTimelinePlayers(assets: assets)
+        pathFollowers = world.addPathFollowers(assets: assets)
         for warning in module.addSystems(to: world, context: context) { log(warning) }
         visualScripts = world.addVisualScripts(context: context, assets: assets, physics: { [weak self] in self?.physics },
                                                physics2D: { [weak self] in self?.physics2D })
@@ -143,6 +145,8 @@ public final class ScenePlayback {
         world.removeDialogueSystem()
         timelines?.remove()
         timelines = nil
+        pathFollowers?.remove()
+        pathFollowers = nil
         world.removeVisualScripts(visualScripts)
         visualScripts = nil
         module.removeSystems(from: world)

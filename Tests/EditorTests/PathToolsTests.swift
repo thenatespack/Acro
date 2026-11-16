@@ -174,4 +174,63 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         view.reload()
         #expect(view.build == PathBuild.preset(.wall))
     }
+
+    @Test func clickingTheGroundAddsAPointAndTheCurveInsertsOne() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
+        let id = try #require(session.createPathBuildAsset(in: "", name: "P", build: .preset(.wall)))
+        let workspace = PathBuilderWorkspace(session: session)
+        #expect(workspace.open(id))
+        let view = try #require(workspace.builder)
+        workspace.update(input: nil, dt: 0)
+
+        let camera = EditorCamera(pivot: Vec3(0, 0, 0), yaw: 0, pitch: 1.2, distance: 70)
+        let size = Vec2(400, 300)
+        let context = ViewportToolContext(world: workspace.world, selection: workspace.selection, undo: UndoStack(world: workspace.world),
+                                          view: camera.sceneView(aspect: size.x / size.y, clearColor: .zero),
+                                          viewportRect: UIRect(x: 0, y: 0, width: size.x, height: size.y),
+                                          pixelScale: 1, toolMode: .move, isPlaying: false, meshBounds: { _ in nil })
+        let tool = workspace.pointTool
+        func click(_ world: Vec3, _ modifiers: KeyModifiers = []) throws -> Bool {
+            let at = try #require(context.project(world))
+            return tool.handlePointer(ViewportPointerEvent(position: at, viewportSize: size, phase: .pressed, button: .left, modifiers: modifiers),
+                                      context: context)
+        }
+
+        // Off unless toggled on or Ctrl is held.
+        #expect(try !click(Vec3(0, 0, 20)))
+        #expect(view.build.points.count == 4)
+
+        // On the curve (the wall is straight between points): a point inserted there.
+        #expect(try click(Vec3(-13.5, 0, -3), .control))
+        view.refresh()
+        #expect(view.build.points.count == 5 && view.selectedPoint == 1)
+        #expect(length(view.build.points[1].position - Vec3(-13.5, 0, -3)) < 0.5)
+
+        // On the ground: a point at the end, where the click hit the ground plane.
+        workspace.update(input: nil, dt: 0)
+        tool.isOn = true
+        #expect(try click(Vec3(0, 0, 20)))
+        view.refresh()
+        #expect(view.build.points.count == 6 && view.selectedPoint == 5)
+        #expect(length(view.build.points[5].position - Vec3(0, 0, 20)) < 0.05)
+
+        // With the first point selected, a new point goes before it.
+        view.selectPoint(0)
+        workspace.update(input: nil, dt: 0)
+        #expect(try click(Vec3(-30, 0, 10)))
+        view.refresh()
+        #expect(view.build.points.count == 7 && view.selectedPoint == 0)
+        #expect(length(view.build.points[0].position - Vec3(-30, 0, 10)) < 0.05)
+
+        // A click on a handle is left to the gizmo.
+        workspace.update(input: nil, dt: 0)
+        #expect(try !click(view.build.points[3].position))
+
+        #expect(session.performUndo() && session.performUndo() && session.performUndo())
+        view.reload()
+        #expect(view.build == PathBuild.preset(.wall))
+    }
 }

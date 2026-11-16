@@ -140,12 +140,10 @@ public struct PathBuildImporter: AssetImporter {
             context.warn("terrain: no terrain file '\(settings.asset)'")
             return nil
         }
-        guard var terrain = try? AssetJSON.decoder().decode(Terrain.self, from: data) else {
+        guard let terrain = PathBuild.decodeTerrain(data) else {
             context.warn("terrain: '\(settings.asset)' isn't a readable terrain")
             return nil
         }
-        terrain.resolution = terrain.res
-        terrain.normalizeData()
         return terrain
     }
 

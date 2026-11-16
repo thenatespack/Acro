@@ -92,6 +92,7 @@ public enum EditorComponentCatalog {
         register(BehaviorTreeRunner.self) { BehaviorTreeRunner() }
         register(DialoguePlayer.self) { DialoguePlayer() }
         register(TimelinePlayer.self) { TimelinePlayer() }
+        register(PathFollower.self) { PathFollower() }
         register(Animator.self) { Animator(targets: [], restPose: [], stateMachine: AnimationStateMachine(states: [])) }
         ComponentRegistry.register(VisualScript.self)
         register(VisualScript.self) { VisualScript() }

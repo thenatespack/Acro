@@ -2381,7 +2381,7 @@ Result:
 
 **Sample Path** · _read-only_, _idempotent_
 
-Returns points along a .path's centerline (on its terrain when it follows one), in the path's space: position, forward (direction of travel), right and up (after banking), and the distance in meters. Use it to place things along a road or river (add the placed path entity's position).
+Returns points along a .path's centerline (on its terrain when it follows one), in the path's space: position, forward (direction of travel), right and up (after banking), and the distance in meters. Use it to place things along a road or river (add the placed path entity's position). To move an entity along the path at run time, give it a PathFollower component (path: "asset:<id>", speed, mode once | loop | pingPong, orient, placedAt: the placed path entity's name).
 
 Arguments:
 

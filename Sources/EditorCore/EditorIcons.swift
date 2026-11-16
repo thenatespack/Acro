@@ -56,6 +56,7 @@ public enum EditorIcons {
         DialoguePlayer.componentName: "file-text",
         VisualScript.componentName: "network",
         TimelinePlayer.componentName: "clapperboard",
+        PathFollower.componentName: "route",
         "Pulse": "gauge",
     ]
 

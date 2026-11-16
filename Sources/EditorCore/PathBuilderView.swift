@@ -485,6 +485,28 @@ public final class PathBuilderView {
         apply(edited, label: "Add Point")
     }
 
+    /// A new point at `position` (a click on the ground): before the first point when the first is
+    /// selected (an open path grows from that end), else after the last. One undo step.
+    public func addPoint(at position: Vec3) {
+        var edited = build
+        let atStart = selectedPoint == 0 && edited.points.count > 1 && !edited.wraps
+        let neighbor = atStart ? edited.points.first : edited.points.last
+        let point = PathPoint(position, bank: neighbor?.bank ?? 0, width: neighbor?.width ?? 1)
+        if atStart { edited.points.insert(point, at: 0) } else { edited.points.append(point) }
+        selectedPoint = atStart ? 0 : edited.points.count - 1
+        remember()
+        apply(edited, label: "Add Point")
+    }
+
+    /// A new point on the curve at parameter `u` (a click on the curve). One undo step.
+    public func insertPoint(atU u: Float) {
+        var edited = build
+        guard let index = edited.insertPoint(atU: u) else { return }
+        selectedPoint = index
+        remember()
+        apply(edited, label: "Insert Point")
+    }
+
     /// A new point on the curve halfway between the selected point and the next (or the previous, at the end).
     func insertPoint() {
         guard let i = selectedPoint, build.points.count >= 2, build.points.indices.contains(i) else { return }

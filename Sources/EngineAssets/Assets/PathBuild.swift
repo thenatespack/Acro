@@ -499,7 +499,16 @@ public struct PathBuild: Codable, Equatable, Sendable {
     public var controlPositions: [Vec3] { points.map(\.position) }
 
     var segmentCount: Int { CatmullRom.segmentCount(points.count, closed: closed) }
-    var wraps: Bool { closed && points.count > 2 }
+    /// Closed with enough points to loop (the last sample repeats the first).
+    public var wraps: Bool { closed && points.count > 2 }
+
+    /// A `.terrain` file's contents, ready for `heightAt` (nil when unreadable).
+    public static func decodeTerrain(_ data: Data) -> Terrain? {
+        guard var terrain = try? AssetJSON.decoder().decode(Terrain.self, from: data) else { return nil }
+        terrain.resolution = terrain.res
+        terrain.normalizeData()
+        return terrain
+    }
 
     /// The curve at parameter `u` (control point i at u = i), before terrain following.
     public func curvePosition(at u: Float) -> Vec3 {
@@ -513,6 +522,22 @@ public struct PathBuild: Codable, Equatable, Sendable {
             return p[i % p.count] + (p[(i + 1) % p.count] - p[i % p.count]) * t
         }
         return CatmullRom.position(at: u, points: p, closed: closed)
+    }
+
+    /// Inserts a control point on the curve at parameter `u` (inside the span from point ⌊u⌋ to
+    /// the next), with bank and width blended from its neighbors. Returns its index, or nil when
+    /// `u` is on (or too near) an existing point or outside the curve.
+    @discardableResult
+    public mutating func insertPoint(atU u: Float) -> Int? {
+        let segments = segmentCount
+        guard segments > 0, u > 0, u < Float(segments) else { return nil }
+        let i = min(Int(u), segments - 1)
+        let t = u - Float(i)
+        guard t > 0.01, t < 0.99 else { return nil }
+        let a = points[i % points.count], b = points[(i + 1) % points.count]
+        let point = PathPoint(curvePosition(at: u), bank: a.bank + (b.bank - a.bank) * t, width: a.width + (b.width - a.width) * t)
+        points.insert(point, at: i + 1)
+        return i + 1
     }
 
     /// Bank (degrees, before auto bank) and width at parameter `u`, linear between control points.

@@ -194,3 +194,152 @@ private func straight(_ length: Float = 20) -> PathBuild {
         #expect(abs(moved.children[2].children[0].transform.position.y - 8.6) < 0.01)
     }
 }
+
+@Suite struct PathBuildInsertTests {
+    @Test func insertingOnTheCurveKeepsItsShape() {
+        var build = PathBuild(points: [PathPoint(Vec3(0, 0, 0), bank: 0, width: 1), PathPoint(Vec3(10, 0, 0), bank: 10, width: 3),
+                                       PathPoint(Vec3(10, 0, 10))])
+        let before = build.curvePosition(at: 0.5)
+        #expect(build.insertPoint(atU: 0.5) == 1)
+        #expect(build.points.count == 4 && build.points[1].position == before)
+        #expect(build.points[1].bank == 5 && build.points[1].width == 2)
+        #expect(build.insertPoint(atU: 1.005) == nil, "too near a point")
+        #expect(build.insertPoint(atU: 3.5) == nil, "past the end")
+        build.closed = true
+        #expect(build.insertPoint(atU: 3.5) == 4, "a closed path's last span wraps to the first point")
+    }
+}
+
+// MARK: PathFollower
+
+@MainActor private func run(_ world: World, _ seconds: Double, dt: Double = 0.1) {
+    var left = seconds
+    while left > 1e-9 {
+        let d = min(dt, left)
+        world.update(dt: d)
+        left -= d
+    }
+}
+
+@MainActor
+@Suite struct PathBuildFollowerTests {
+    @Test func followsAtSpeedAndOrientsAlongThePath() throws {
+        let world = World()
+        let system = try #require(world.addPathFollowers(source: .fixed(["road": straight()])))
+        #expect(world.addPathFollowers(source: .fixed([:])) == nil, "installed once")
+        let car = world.spawn(Transform(), Name("PathBuildFollowerCar"),
+                              PathFollower(path: "road", speed: 4, mode: .once, offset: Vec3(1, 0, 0)))
+        world.update(dt: 0)
+        var f = try #require(world.get(PathFollower.self, for: car))
+        #expect(f.state == .playing && abs(f.length - 20) < 0.01)
+        run(world, 2)
+        f = try #require(world.get(PathFollower.self, for: car))
+        #expect(abs(f.distance - 8) < 0.05)
+        let t = try #require(world.get(Transform.self, for: car))
+        #expect(length(t.position - Vec3(1, 0, -8)) < 0.05, "8 m along -Z, 1 m to the right")
+        #expect(length(t.rotation * Vec3(0, 0, -1) - Vec3(0, 0, -1)) < 1e-3, "faces along the path")
+
+        var events: [PathFollowerEvent.Kind] = []
+        system.onEvent = { _, e in events.append(e.kind) }
+        run(world, 4)
+        f = try #require(world.get(PathFollower.self, for: car))
+        #expect(f.state == .finished && f.distance == 20 && events == [.reachedEnd, .finished])
+        system.remove()
+    }
+
+    @Test func loopsPingPongsAndTakesRequests() throws {
+        let world = World()
+        world.addPathFollowers(source: .fixed(["road": straight(10)]))
+        let loop = world.spawn(Transform(), PathFollower(path: "road", speed: 4, mode: .loop))
+        let bounce = world.spawn(Transform(), PathFollower(path: "road", speed: 4, mode: .pingPong, startOffset: 2))
+        let back = world.spawn(Transform(), PathFollower(path: "road", speed: 2, mode: .once, orient: .full, reverse: true))
+        let idle = world.spawn(Transform(), PathFollower(path: "road", playOnStart: false))
+        world.update(dt: 0)
+        #expect(world.get(PathFollower.self, for: bounce)?.distance == 2)
+        #expect(world.get(PathFollower.self, for: back)?.distance == 10)
+        run(world, 3)  // 12 m
+        #expect(abs((world.get(PathFollower.self, for: loop)?.distance ?? 0) - 2) < 0.05, "wrapped round")
+        let b = try #require(world.get(PathFollower.self, for: bounce))
+        #expect(abs(b.distance - 6) < 0.05 && b.direction == -1, "2 + 12 = 14: 8 out, turned, 4 back")
+        #expect(abs((world.get(PathFollower.self, for: back)?.distance ?? 0) - 4) < 0.05)
+        let r = try #require(world.get(Transform.self, for: back)).rotation
+        #expect(length(r * Vec3(0, 0, -1) - Vec3(0, 0, 1)) < 1e-3, "reversing faces the way it travels")
+        #expect(world.get(PathFollower.self, for: idle)?.state == .stopped)
+        #expect(world.get(Transform.self, for: idle)?.position == Vec3(0, 0, 0), "a stopped follower sits at its start")
+
+        world.modify(PathFollower.self, for: idle) { $0.seek(to: 5) }
+        world.update(dt: 0.1)
+        #expect(world.get(PathFollower.self, for: idle)?.state == .paused)
+        #expect(length((world.get(Transform.self, for: idle)?.position ?? .zero) - Vec3(0, 0, -5)) < 0.01)
+        world.modify(PathFollower.self, for: idle) { $0.resume() }
+        run(world, 0.5)
+        #expect(abs((world.get(PathFollower.self, for: idle)?.distance ?? 0) - 7.5) < 0.05)
+        world.modify(PathFollower.self, for: idle) { $0.stop() }
+        world.update(dt: 0.1)
+        #expect(world.get(PathFollower.self, for: idle)?.distance == 0 && world.get(PathFollower.self, for: idle)?.state == .stopped)
+    }
+
+    @Test func placedAtMovesThePathWithItsEntity() throws {
+        let world = World()
+        world.addPathFollowers(source: .fixed(["road": straight()]))
+        _ = world.spawn(Transform(position: Vec3(100, 5, 0), rotation: Quat(angle: .pi / 2, axis: Vec3(0, 1, 0))), Name("PathBuildFollowerRoad"))
+        let rider = world.spawn(Transform(), PathFollower(path: "road", speed: 10, placedAt: "PathBuildFollowerRoad"))
+        run(world, 1)
+        let p = try #require(world.get(Transform.self, for: rider)).position
+        // 10 m along -Z, turned 90° about Y (-Z becomes -X), then moved.
+        #expect(length(p - Vec3(90, 5, 0)) < 0.05)
+    }
+
+    @Test func codesItsSettingsOnly() throws {
+        let f = PathFollower(path: "Roads/a.path", speed: 3, mode: .pingPong, orient: .full, startOffset: 2, offset: Vec3(1, 2, 3),
+                             placedAt: "Road", playOnStart: false, reverse: true)
+        #expect(try AssetJSON.decoder().decode(PathFollower.self, from: JSONEncoder().encode(f)) == f)
+        #expect(try AssetJSON.decoder().decode(PathFollower.self, from: Data("{}".utf8)) == PathFollower())
+    }
+
+    @Test func loadsFromTheDatabaseOnTheTerrainAndRunsInScenePlayback() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        _ = try database.createTerrain(flatTerrain(height: 4), at: "Maps/flat.terrain")
+        var build = straight()
+        build.terrain = PathTerrain(asset: "Maps/flat.terrain", height: 0)
+        _ = try database.createPathBuild(build, at: "Paths/road.path")
+        ComponentRegistry.register(PathFollower.self)
+        let scene = World()
+        _ = scene.spawn(Transform(), Name("PathBuildFollowerBus"), PathFollower(path: "Paths/road.path", speed: 5))
+        let data = try scene.save()
+        let playback = ScenePlayback(module: GameModule(), context: GameContext(input: Input()), assets: { database }, log: { _ in }) { _ in data }
+        try playback.load("Main.scene")
+        for _ in 0..<10 { playback.world.update(dt: 0.1) }
+        var bus: Entity?
+        playback.world.query(PathFollower.self) { e, _ in bus = e }
+        let p = try #require(bus.flatMap { playback.world.get(Transform.self, for: $0) }).position
+        #expect(length(p - Vec3(0, 4, -5)) < 0.1, "5 m along, on the 4 m ground")
+    }
+
+    @Test func cookedGamesFollowPathsOnTheirTerrain() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        _ = try database.createTerrain(flatTerrain(height: 4), at: "Maps/flat.terrain")
+        var build = straight()
+        build.terrain = PathTerrain(asset: "Maps/flat.terrain", height: 0)
+        let road = try database.createPathBuild(build, at: "Paths/road.path")
+        let scene = World()
+        _ = scene.spawn(Transform(), Name("PathBuildFollowerCooked"), PathFollower(path: AssetReference(road).description, speed: 5))
+        let sceneURL = project.url(forAssetPath: "Scenes/Main.scene")
+        try FileManager.default.createDirectory(at: sceneURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try scene.save().write(to: sceneURL)
+        database.scan()
+        let report = try AssetCooker.plan(database: database, options: CookOptions(scenes: ["Scenes/Main.scene"]))
+            .run(to: project.root.appendingPathComponent("out"))
+        let assets = AssetDatabase(mounting: try AssetPack(url: URL(fileURLWithPath: report.packPath)))
+        let world = World()
+        world.addPathFollowers(assets: { assets })
+        let bus = world.spawn(Transform(), PathFollower(path: AssetReference(road).description, speed: 5))
+        for _ in 0..<10 { world.update(dt: 0.1) }
+        let p = try #require(world.get(Transform.self, for: bus)).position
+        #expect(length(p - Vec3(0, 4, -5)) < 0.1, "the pack has the path's source and its terrain")
+    }
+}

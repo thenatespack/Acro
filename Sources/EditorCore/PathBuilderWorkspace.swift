@@ -17,6 +17,79 @@ import Foundation
 // reimports, and the workspace rebuilds its copy (also after edits from MCP, other panels, or the
 // followed terrain changing).
 
+/// Adds points by clicking: on the curve inserts one there, on the ground (the followed terrain,
+/// or the level of the nearest point) adds one at the end. Active with the toolbar's Add Points
+/// toggle or while Ctrl is held; clicks on a handle still select it.
+@MainActor
+final class PathPointViewportTool: ViewportTool {
+    /// The toolbar toggle.
+    var isOn = false
+    /// The curve's samples, the control handles and the ground, in the view's world space.
+    var samples: () -> [PathSample] = { [] }
+    var handles: () -> [Vec3] = { [] }
+    var ground: (ViewportRay) -> Vec3? = { _ in nil }
+    var onAdd: (Vec3) -> Void = { _ in }
+    var onInsert: (Float) -> Void = { _ in }
+    /// What a click would do where the pointer is (drawn as a marker).
+    private(set) var hover: (position: Vec3, onCurve: Bool)?
+    /// Screen distance (points) within which a click hits the curve or a handle.
+    static let reach: Float = 9
+
+    func isActive(_ modifiers: KeyModifiers) -> Bool { isOn || modifiers.contains(.control) }
+
+    /// The click's target at `position` (viewport points): the curve's parameter `u` and spot when
+    /// the curve is within reach, else the ground; nil on a handle or nothing.
+    func target(at position: Vec2, context: ViewportToolContext) -> (position: Vec3, u: Float?)? {
+        func near(_ a: Vec2, _ b: Vec2) -> Float { hypotf(a.x - b.x, a.y - b.y) }
+        if handles().contains(where: { context.project($0).map { near($0, position) <= Self.reach } ?? false }) { return nil }
+        let s = samples()
+        var best: (distance: Float, position: Vec3, u: Float)?
+        if s.count > 1 {
+            var previous = context.project(s[0].position)
+            for i in 1..<s.count {
+                let current = context.project(s[i].position)
+                defer { previous = current }
+                guard let a = previous, let b = current else { continue }
+                let abx = b.x - a.x, aby = b.y - a.y, l2 = abx * abx + aby * aby
+                let along = (position.x - a.x) * abx + (position.y - a.y) * aby
+                let f: Float = l2 > 1e-6 ? min(max(along / l2, 0), 1) : 0
+                let d = near(Vec2(a.x + abx * f, a.y + aby * f), position)
+                if d <= Self.reach, d < (best?.distance ?? .infinity) {
+                    best = (d, s[i - 1].position + (s[i].position - s[i - 1].position) * f, s[i - 1].u + (s[i].u - s[i - 1].u) * f)
+                }
+            }
+        }
+        if let best { return (best.position, best.u) }
+        return ground(context.ray(at: position)).map { ($0, nil) }
+    }
+
+    func handlePointer(_ event: ViewportPointerEvent, context: ViewportToolContext) -> Bool {
+        guard isActive(event.modifiers), !event.modifiers.contains(.alt) else {
+            hover = nil
+            return false
+        }
+        switch event.phase {
+        case .moved:
+            hover = target(at: event.position, context: context).map { ($0.position, $0.u != nil) }
+            return false
+        case .pressed:
+            guard event.button == .left, let hit = target(at: event.position, context: context) else { return false }
+            if let u = hit.u { onInsert(u) } else { onAdd(hit.position) }
+            hover = nil
+            return true
+        case .dragged, .released:
+            return event.button == .left
+        }
+    }
+
+    func draw(into debugDraw: DebugDraw, context: ViewportToolContext) {
+        guard let hover else { return }
+        let color = hover.onCurve ? Vec4(1, 0.55, 0.2, 1) : Vec4(0.45, 1, 0.55, 1)
+        let size = max(length(context.view.eye - hover.position) * 0.015, 0.05)
+        debugDraw.sphere(center: hover.position, radius: size, color: color, style: DebugDraw.Style(width: 2, depth: .onTop))
+    }
+}
+
 @MainActor
 public final class PathBuilderWorkspace {
     public let session: EditorSession
@@ -48,6 +121,11 @@ public final class PathBuilderWorkspace {
     private var syncedPoint: Int?
     private var needsFraming = false
     private var curve: [Vec3] = []
+    /// The centerline samples shown (for clicking on the curve).
+    private var shownSamples: [PathSample] = []
+    /// Click the ground to add points, the curve to insert one (with the Add Points toggle or Ctrl).
+    let pointTool = PathPointViewportTool()
+    let addPointsToggle = Checkbox("Add Points", kind: .toggleSwitch, name: "pathBuilderAddPoints")
 
     private var renderer: SceneRenderer?
     private var target: RenderTarget?
@@ -70,6 +148,11 @@ public final class PathBuilderWorkspace {
         view = VStack(spacing: 0, name: "pathBuilderWorkspace")
         layOutChrome()
         showEmpty()
+        pointTool.samples = { [unowned self] in shownSamples }
+        pointTool.handles = { [unowned self] in handles.compactMap { world.get(Transform.self, for: $0)?.position } }
+        pointTool.ground = { [unowned self] ray in groundHit(ray) }
+        pointTool.onAdd = { [unowned self] position in builder?.addPoint(at: position) }
+        pointTool.onInsert = { [unowned self] u in builder?.insertPoint(atU: u) }
     }
 
     // MARK: Opening
@@ -108,6 +191,7 @@ public final class PathBuilderWorkspace {
         terrainRoot = nil
         handles = []
         curve = []
+        shownSamples = []
     }
 
     // MARK: Chrome
@@ -117,6 +201,10 @@ public final class PathBuilderWorkspace {
         title.style.shrink = 1
         bar.addChild(title)
         bar.addChild(Spacer())
+        addPointsToggle.tooltip = "Click the ground to add a point at the end (before the first when it's selected), "
+            + "or the curve to insert one there. Hold Ctrl to do this without the toggle."
+        addPointsToggle.onChange = { [unowned self] on in pointTool.isOn = on }
+        bar.addChild(addPointsToggle)
         let frame = Button("Frame", name: "pathBuilderFrame") { [unowned self] in framePath() }
         frame.tooltip = "Fit the whole path in the view"
         bar.addChild(frame)
@@ -165,7 +253,7 @@ public final class PathBuilderWorkspace {
             rebuild()
         }
 
-        viewport.tools = transformTool.map { [$0] } ?? []
+        viewport.tools = [pointTool] + (transformTool.map { [$0] } ?? [])
         viewport.rect = viewportWidget.isEffectivelyVisible ? viewportWidget.frame : .zero
         if var input, viewportWidget.isEffectivelyVisible {
             // Right-drag orbits here (no fly mode in a builder view).
@@ -220,9 +308,12 @@ public final class PathBuilderWorkspace {
             gizmos.polyline(handlePositions, closed: closed, color: Vec4(0.6, 0.75, 1, 0.45), style: DebugDraw.Style(width: 1, depth: .onTop))
         }
         transformTool?.draw(into: toolDraw, context: toolContext(view: view))
+        pointTool.draw(into: toolDraw, context: toolContext(view: view))
         viewportWidget.texture = target?.texture
         viewportWidget.placeholder = target == nil ? "The Path Builder needs the GPU to draw" : nil
-        viewportWidget.caption = "Click a point · drag the gizmo · right-drag orbits · Shift pans · wheel zooms"
+        viewportWidget.caption = pointTool.isOn
+            ? "Click the ground to add a point · the curve to insert one · right-drag orbits · wheel zooms"
+            : "Click a point · drag the gizmo · Ctrl+click adds a point · right-drag orbits · Shift pans · wheel zooms"
     }
 
     /// Renders the view; call in `renderOffscreen`.
@@ -263,6 +354,7 @@ public final class PathBuilderWorkspace {
 
         let samples = build.samples(on: ground?.terrain)
         curve = samples.map(\.position)
+        shownSamples = samples
         let length = samples.last?.distance ?? 20
         let radius = min(max(length * 0.012, 0.25), 2)
         for (i, point) in build.points.enumerated() {
@@ -314,6 +406,24 @@ public final class PathBuilderWorkspace {
         }
         guard !moves.isEmpty else { return }
         builder.movePoints(moves, label: moves.count == 1 ? "Move Point" : "Move Points")
+    }
+
+    /// Where `ray` meets the ground: the followed terrain (placed at `terrain.offset`), else the
+    /// level of the selected point (or the last one).
+    func groundHit(_ ray: ViewportRay) -> Vec3? {
+        guard let build = builder?.build else { return nil }
+        if let ground = session.followedTerrain(of: build) {
+            let offset = build.terrain.offset
+            let local = ViewportRay(origin: ray.origin - offset, direction: ray.direction)
+            guard let hit = TerrainBrushViewportTool.intersect(local, with: ground.terrain) else { return nil }
+            return Vec3(hit.x + offset.x, build.groundHeight(ground.terrain, x: hit.x + offset.x, z: hit.z + offset.z), hit.z + offset.z)
+        }
+        let level = (builder?.selectedPoint).flatMap { build.points.indices.contains($0) ? build.points[$0].position.y : nil }
+            ?? build.points.last?.position.y ?? 0
+        guard abs(ray.direction.y) > 1e-5 else { return nil }
+        let t = (level - ray.origin.y) / ray.direction.y
+        guard t > 0 else { return nil }
+        return ray.point(at: t)
     }
 
     /// Fits the camera to the path.
