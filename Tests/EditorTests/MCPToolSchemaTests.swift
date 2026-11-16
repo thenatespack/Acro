@@ -28,7 +28,7 @@ import Testing
 }
 
 /// An editor MCP server with an initialized in-memory client.
-@MainActor private struct Client {
+@MainActor private final class Client {
     let session = makeSession()
     let mcp: EditorMCP
     let connection: MCPMemoryConnection
@@ -41,7 +41,10 @@ import Testing
         _ = call("initialize", ["protocolVersion": "2025-06-18", "capabilities": [:]])
     }
 
-    /// Sends a request, pumps, and returns its result (notifications stay in `connection.output`).
+    /// Notifications that arrived with a reply (see `call`).
+    var notifications: [JSON] = []
+
+    /// Sends a request, pumps, and returns its result (notifications sent alongside go to `notifications`).
     @discardableResult
     func call(_ method: String, _ params: JSON? = nil) -> JSON {
         var message: JSON = ["jsonrpc": "2.0", "id": .string(UUID().uuidString), "method": .string(method)]
@@ -49,7 +52,10 @@ import Testing
         connection.send(message)
         mcp.pump()
         let id = message["id"]
-        let reply = connection.output.take().first { $0["id"] == id } ?? nil
+        let output = connection.output.take()
+        // Notifications sent in the same pump (a throttled resource check can land there) are kept.
+        notifications += output.filter { $0["id"] == nil }
+        let reply = output.first { $0["id"] == id } ?? nil
         return reply["result"] ?? reply["error"] ?? nil
     }
 
@@ -264,11 +270,19 @@ private enum GreetCommand: EditorCommand {
         Thread.sleep(forTimeInterval: 0.25)
         client.mcp.pump()
         _ = client.connection.output.take()
+        client.notifications = []
         client.tool("entity.create", ["template": "cube"])
-        Thread.sleep(forTimeInterval: 0.25)
-        client.mcp.pump()
-        #expect(client.connection.output.take().contains(["jsonrpc": "2.0", "method": "notifications/resources/updated",
-                                                         "params": ["uri": "editor://scene"]]))
+        // Checks are throttled (5 a second), so the update may come with the tool's reply (when the
+        // call takes longer than the throttle) or a later pump: look at both, for up to 3 s.
+        let update: JSON = ["jsonrpc": "2.0", "method": "notifications/resources/updated", "params": ["uri": "editor://scene"]]
+        var received = client.notifications.contains(update)
+        let deadline = Date().addingTimeInterval(3)
+        while !received && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+            client.mcp.pump()
+            received = client.connection.output.take().contains(update)
+        }
+        #expect(received)
     }
 }
 
