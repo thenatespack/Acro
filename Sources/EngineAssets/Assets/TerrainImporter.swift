@@ -133,7 +133,7 @@ public struct TerrainImporter: AssetImporter {
     }
 
     /// The pieces `rule.asset` names: a mesh reference (one piece), or every part of a `.meshbuild`.
-    private static func prop(_ rule: TerrainScatter, _ context: inout ImportContext) -> [PropPart]? {
+    static func prop(_ rule: TerrainScatter, _ context: inout ImportContext) -> [PropPart]? {
         let value = rule.asset.trimmingCharacters(in: .whitespaces)
         guard !value.isEmpty else {
             context.warn("scatter '\(rule.name)' has no asset")

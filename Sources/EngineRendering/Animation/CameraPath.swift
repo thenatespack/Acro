@@ -138,29 +138,11 @@ public struct CameraPath: Component, Equatable, Sendable {
         return Vec3(m.c3.x, m.c3.y, m.c3.z)
     }
 
-    private static func catmullRom(_ p0: Vec3, _ p1: Vec3, _ p2: Vec3, _ p3: Vec3, _ t: Float) -> Vec3 {
-        let t2 = t * t, t3 = t2 * t
-        let a = p1 * 2
-        let b = (p2 - p0) * t
-        let c = (p0 * 2 - p1 * 5 + p2 * 4 - p3) * t2
-        let d = (p1 * 3 - p0 - p2 * 3 + p3) * t3
-        return (a + b + c + d) * 0.5
-    }
-
-    private static func segmentCount(_ n: Int, closed: Bool) -> Int { n < 2 ? 0 : (closed && n > 2 ? n : n - 1) }
+    private static func segmentCount(_ n: Int, closed: Bool) -> Int { CatmullRom.segmentCount(n, closed: closed) }
 
     /// The spline at parameter `u` in 0...segments (one unit per segment).
     public func position(at u: Float, controlPoints p: [Vec3]) -> Vec3 {
-        let n = p.count
-        guard n > 0 else { return .zero }
-        let segments = Self.segmentCount(n, closed: closed)
-        guard segments > 0 else { return p[0] }
-        let wraps = closed && n > 2
-        let clamped = min(max(u, 0), Float(segments))
-        let i = min(Int(clamped.rounded(.down)), segments - 1)
-        let t = clamped - Float(i)
-        func point(_ k: Int) -> Vec3 { wraps ? p[((k % n) + n) % n] : p[min(max(k, 0), n - 1)] }
-        return Self.catmullRom(point(i - 1), point(i), point(i + 1), point(i + 2), t)
+        CatmullRom.position(at: u, points: p, closed: closed)
     }
 
     /// Samples of the path for drawing, `perSegment` per segment plus the end.

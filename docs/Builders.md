@@ -15,6 +15,7 @@ Builder tools let people and AI agents author game content inside the Acro edito
 | [Terrain Builder](#terrain-builder) | `.terrain` | Sculpted, painted heightmap terrain with scattered props |
 | [Sound Builder](#sound-builder) | `.sfx` | Synthesized sound effects |
 | [Data Table Builder](#data-table-builder) | `.table` | Typed spreadsheets for game data |
+| [Path Builder](#path-builder) | `.path` | Roads, rails, rivers, fences, cables and walls along splines |
 
 Planned builders are tracked in [Tools.md](../Tools.md).
 
@@ -76,3 +77,14 @@ let loot = enemies?.row("goblin")?.reference("drops")   // row column
 
 Cooked games ship the file as written; include tables game code loads by path with the cooker's `--include`. MCP clients use `table.new`, `table.edit`, `table.query`, `table.get`, `table.set`, `table.importCsv`, `table.exportCsv` and `table.open`; see [MCPTools.md](MCPTools.md).
 
+## Path Builder
+
+Path assets (`.path`, JSON under `Assets/`) are splines that generate geometry along them: roads, rails, rivers, fences, cables and walls. The curve is the Catmull-Rom spline `CameraPath` uses, through control points (each `[x, y, z]`, or `{position, bank, width}`), open or `closed`, `smooth` or straight between points, sampled every `spacing` meters. Along it, **profiles** are cross-sections swept into meshes (`flat` strip, `box`, `tube`, or a `custom` outline of `[right, up]` points, each with an `offset` from the centerline, a look, an optional triangle-mesh collider, and `sag` so cables hang between their supports like a `LineRenderer`), and **pieces** are repeated every `spacing` meters (a built-in shape, a `.meshbuild` or a mesh; offset, `mirror` to the other side, `upright` or tilted with the path, optional box colliders). Banking rolls the frame per point (`bank`, degrees; positive lowers the right side) plus `autoBank` in tight turns; a per-point `width` widens or narrows the profiles. The importer makes one mesh per profile and a prefab of those plus the pieces (equal pieces draw as one instanced batch); placed copies update when the file changes.
+
+**Terrain following:** set `terrain.asset` to a `.terrain` file and every sample and piece sits on its surface plus `terrain.height` (point heights are ignored), so a road hugs the hills between its control points. `terrain.offset` is the terrain's origin in the path's space (zero when both are placed at the same spot). The terrain is an import dependency: sculpting it reimports the path onto the new ground. `Terrain.heightAt(x:z:)` is the height-sampling API used.
+
+In the editor, use **New Path** in the asset browser, then double-click the file (or use **Open in Path Builder** in the inspector) to open the **Path Builder** tab next to the Scene view. It shows the path over the terrain it follows, the curve as a line and a handle per control point (the first is green): click a handle and drag it with the Move gizmo; the move is written when you let go. The sidebar has the kind presets (road, rail, river, fence, cable, wall, custom: they replace the profiles and pieces and keep the points), the curve settings, the point list with Add / Insert / Delete and the selected point's position, bank and width, the profile and piece lists with their property grids, the terrain following settings, and the length, sample and piece counts and problems. Every change is one undo step.
+
+Editor MCP clients use `path.new {kind, points, terrain, place}`, `path.edit {points, addPoints, insertPoints, updatePoints, removePoints, profile, profileName, addProfiles, updateProfiles, removeProfiles, addPieces, updatePieces, removePieces, kind, terrain, …}`, `path.set`, `path.get`, `path.sample {count | distances}` (positions and frames along the centerline, on the terrain, to place things beside a road) and `path.open`. Code with the project's files at hand (editor tools, tests) can read a path with `assets.pathBuild(of:)` and walk it with `samples(on:)` / `PathBuild.sample(_:atDistance:)`; cooked games get the generated meshes, not the `.path` source. See [MCPTools.md](MCPTools.md).
+
+Not yet: carving or flattening the terrain under a road, junctions between paths, a component that moves objects along a path at runtime, and adding points by clicking on the ground in the tab (use Add / Insert, then drag).
