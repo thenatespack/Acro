@@ -256,4 +256,43 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(session.performUndo())
         #expect(session.assets?.uiBuild(of: id)?.widget("slider") == before)
     }
+
+    @Test func colorsArePickedWithSwatches() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = try project(folder)
+        let id = try #require(session.createUIBuildAsset(in: "", name: "hud"))
+        let workspace = UIBuilderWorkspace(session: session)
+        workspace.open(id)
+        workspace.select("score")
+        workspace.update()
+
+        // A widget color: the swatch writes hex, the menu picks a theme color or none.
+        let swatch = try #require(workspace.view.descendant(named: "uiBuilderField.background") as? ColorSwatch)
+        swatch.onEditEnded?(.clear, UIColor(1, 0, 0, 0.5))
+        workspace.update()
+        #expect(session.assets?.uiBuild(of: id)?.widget("score")?.background == "#FF000080")
+        let menu = try #require(workspace.view.descendant(named: "uiBuilderField.background.name") as? Dropdown)
+        #expect(menu.selectedIndex == 1 && menu.options[1] == "#FF000080", "custom shows the hex")
+        menu.onChange?(try #require(menu.options.firstIndex(of: "accent")))
+        workspace.update()
+        #expect(session.assets?.uiBuild(of: id)?.widget("score")?.background == "accent")
+        let menu2 = try #require(workspace.view.descendant(named: "uiBuilderField.background.name") as? Dropdown)
+        menu2.onChange?(0)
+        workspace.update()
+        #expect(session.assets?.uiBuild(of: id)?.widget("score")?.background == "")
+
+        // Theme colors: a swatch per name, with Reset once changed.
+        workspace.select(nil)
+        workspace.update()
+        let accent = try #require(workspace.view.descendant(named: "uiBuilderField.color.accent") as? ColorSwatch)
+        #expect(workspace.view.descendant(named: "uiBuilderField.color.accent.reset") == nil)
+        accent.onEditEnded?(accent.color, UIColor(0, 1, 0, 1))
+        workspace.update()
+        #expect(session.assets?.uiBuild(of: id)?.colors["accent"] == "#00FF00")
+        let reset = try #require(workspace.view.descendant(named: "uiBuilderField.color.accent.reset") as? Button)
+        reset.action?()
+        workspace.update()
+        #expect(session.assets?.uiBuild(of: id)?.colors["accent"] == nil)
+    }
 }

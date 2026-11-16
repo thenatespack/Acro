@@ -393,7 +393,7 @@ private let hud = """
         view.hide { hidden += 1 }
         #expect(view.isHidden && !view.isShown && hidden == 1 && !view.isAnimating)
         view.show()
-        #expect(!view.isHidden && view.opacity == 1)
+        #expect(!view.isHidden && view.screen.opacity == 1)
 
         let context = laidOut(view, size: Vec2(800, 600))
         defer { withExtendedLifetime(context) {} }
@@ -401,16 +401,16 @@ private let hud = """
         #expect(!view.isHidden && view.isAnimating && hidden == 1)
         #expect(view.hitTest(try #require(view.widget("go")).frame.center) == nil, "clicks pass through while hiding")
         view.advance(by: 0.1)
-        #expect(abs(view.opacity - 0.5) < 0.01 && abs(view.visualOffset.y - 25) < 0.01)
+        #expect(abs(view.screen.opacity - 0.5) < 0.01 && abs(view.screen.visualOffset.y - 25) < 0.01)
         view.advance(by: 0.15)
-        #expect(view.isHidden && hidden == 2 && view.opacity == 1 && view.visualOffset == .zero && !view.isAnimating)
+        #expect(view.isHidden && hidden == 2 && view.screen.opacity == 1 && view.screen.visualOffset == .zero && !view.isAnimating)
 
         view.show()
-        #expect(!view.isHidden && view.opacity == 0 && view.isAnimating)
+        #expect(!view.isHidden && view.screen.opacity < 0.01 && view.isAnimating)
         view.advance(by: 0.05)
-        #expect(abs(view.opacity - 0.25) < 0.01)
+        #expect(abs(view.screen.opacity - 0.25) < 0.01)
         view.advance(by: 1)
-        #expect(view.opacity == 1 && !view.isAnimating)
+        #expect(view.screen.opacity == 1 && !view.isAnimating)
         #expect(view.hitTest(try #require(view.widget("go")).frame.center) != nil)
 
         // Showing again mid-hide cancels the hide (its completion never runs).

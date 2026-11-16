@@ -252,7 +252,12 @@ public final class UIBuilderWorkspace {
         widget.id = build.uniqueID(type.rawValue)
         widget.parent = parent
         let id = widget.id
-        apply("Add \(type.rawValue.capitalized)", select: id) { try $0 = $0.applying(UIBuildEdit(addWidgets: [widget])) }
+        apply("Add \(Self.title(of: type))", select: id) { try $0 = $0.applying(UIBuildEdit(addWidgets: [widget])) }
+    }
+
+    /// A widget type's name for buttons and headings ("Text Field").
+    static func title(of type: UIBuildWidgetType) -> String {
+        type == .textField ? "Text Field" : type.rawValue.capitalized
     }
 
     /// A new widget of `type` with settings that show something.
@@ -400,7 +405,7 @@ public final class UIBuilderWorkspace {
         let adds = HStack(spacing: 4, name: "uiBuilderAdd")
         adds.wraps = true
         for type in UIBuildWidgetType.allCases {
-            let button = Button(type.rawValue.capitalized, name: "uiBuilderAdd.\(type.rawValue)") { [unowned self] in addWidget(type) }
+            let button = Button(Self.title(of: type), name: "uiBuilderAdd.\(type.rawValue)") { [unowned self] in addWidget(type) }
             button.command = UIEditCommand.id.rawValue
             button.tooltip = "Add a \(type.rawValue) into the selected container (or beside the selected widget)"
             adds.addChild(button)
@@ -494,6 +499,40 @@ public final class UIBuilderWorkspace {
         row(caption, field)
     }
 
+    /// The swatch's color of a `.ui` color ("" shows clear).
+    static func swatchColor(_ text: String, theme: UITheme) -> UIColor { theme.uiBuildColor(text) ?? UIColor(0.35, 0.35, 0.38, 1) }
+
+    /// A color: a swatch that opens a color picker (writes "#RRGGBB[AA]") and a menu of the
+    /// layout theme's color names, "(none)" and "custom" (the hex in the swatch). One pick is one undo step.
+    private func colorRow(_ caption: String, _ text: String, name: String, noneTitle: String = "(none)",
+                          _ set: @escaping (String) -> Void) {
+        let theme = build.makeTheme()
+        let swatch = ColorSwatch(color: Self.swatchColor(text, theme: theme), name: "uiBuilderField.\(name)")
+        swatch.onEditEnded = { _, end in set(DataTableValues.hex(Vec4(end.r, end.g, end.b, end.a))) }
+        let isHex = UIBuild.hexColor(text) != nil
+        let options = [""] + ["custom"] + UIBuild.themeColorNames + (isHex || text.isEmpty || UIBuild.themeColorNames.contains(text) ? [] : [text])
+        let selected = text.isEmpty ? 0 : isHex ? 1 : options.firstIndex(of: text) ?? 0
+        let menu = Dropdown(options: options.map { $0.isEmpty ? noneTitle : $0 == "custom" && isHex ? text : $0 }, selectedIndex: selected,
+                            name: "uiBuilderField.\(name).name")
+        menu.tooltip = "A theme color (it follows the layout's theme), a custom color, or none"
+        menu.onChange = { index in
+            let choice = options[index]
+            if choice == "custom" {
+                let c = theme.uiBuildColor(text) ?? .white
+                set(DataTableValues.hex(Vec4(c.r, c.g, c.b, c.a)))
+            } else if choice != text {
+                set(choice)
+            }
+        }
+        swatch.showsHexCode = false
+        swatch.tooltip = text.isEmpty ? "Pick a color" : "\(text): pick a color"
+        swatch.style.width = 32
+        swatch.style.grow = 0
+        menu.style.grow = 1
+        let editor = HStack(spacing: 4, [swatch, menu])
+        row(caption, editor)
+    }
+
     private func numberRow(_ caption: String, _ value: Float, name: String, isInteger: Bool = false, range: ClosedRange<Double>? = nil,
                            step: Double = 1, _ set: @escaping (Double) -> Void) {
         let field = NumberField(value: Double(value), isInteger: isInteger, range: range, step: step, name: "uiBuilderField.\(name)")
@@ -547,7 +586,7 @@ public final class UIBuilderWorkspace {
     private func addWidgetForm(_ w: UIBuildWidget) {
         let id = w.id
         func field(_ key: String, _ value: JSONValue) { setField(id, key, value) }
-        sidebar.addChild(Label("\(w.type.rawValue.capitalized) \(w.id)", role: .secondary))
+        sidebar.addChild(Label("\(Self.title(of: w.type)) \(w.id)", role: .secondary))
         textRow("Id", w.id, name: "id", tooltip: "Unique; game code finds the widget and its events by it") { text in
             let new = text.trimmingCharacters(in: .whitespaces)
             if !new.isEmpty { field("id", .string(new)) }
@@ -645,12 +684,11 @@ public final class UIBuilderWorkspace {
         if w.type != .spacer {
             let colorCaption = w.type == .bar ? "Fill" : w.type == .image ? "Tint" : "Color"
             if w.type != .panel && w.type != .vstack && w.type != .hstack {
-                textRow(colorCaption, w.color, placeholder: "#FFFFFF or accent", name: "color") { field("color", .string($0)) }
+                colorRow(colorCaption, w.color, name: "color", noneTitle: "(default)") { field("color", .string($0)) }
             }
-            textRow(w.type == .bar ? "Track" : "Background", w.background, placeholder: "#00000080 or panel", name: "background") {
-                field("background", .string($0))
-            }
-            textRow("Border", w.borderColor, placeholder: "none", name: "borderColor") { field("borderColor", .string($0)) }
+            colorRow(w.type == .bar ? "Track" : "Background", w.background, name: "background",
+                     noneTitle: w.type == .bar || w.type == .button || w.type.isInput ? "(default)" : "(none)") { field("background", .string($0)) }
+            colorRow("Border", w.borderColor, name: "borderColor") { field("borderColor", .string($0)) }
             numberRow("Corners", w.cornerRadius, name: "cornerRadius", range: 0...500) { field("cornerRadius", .double($0)) }
             numberRow("Opacity", w.opacity, name: "opacity", range: 0...1, step: 0.01) { field("opacity", .double($0)) }
         }
@@ -747,10 +785,22 @@ public final class UIBuilderWorkspace {
         sidebar.addChild(Label("Theme colors", role: .secondary))
         let theme = build.makeTheme()
         for name in UIBuild.themeColorNames {
-            let current = theme.uiBuildColor(name).map { DataTableValues.hex(Vec4($0.r, $0.g, $0.b, $0.a)) } ?? ""
-            textRow(name, build.colors[name] ?? "", placeholder: current, name: "color.\(name)") { [unowned self] text in
-                editLayout("Set \(name) Color", UIBuildEdit(colors: [name: text.trimmingCharacters(in: .whitespaces)]))
+            // The swatch shows the color in use (the override, else the base theme's); Reset drops the override.
+            let swatch = ColorSwatch(color: theme.uiBuildColor(name) ?? .clear, name: "uiBuilderField.color.\(name)")
+            swatch.tooltip = build.colors[name].map { "\(name): \($0) (changed from the \(build.theme) theme)" } ?? "\(name): the \(build.theme) theme's"
+            swatch.onEditEnded = { [unowned self] _, end in
+                editLayout("Set \(name) Color", UIBuildEdit(colors: [name: DataTableValues.hex(Vec4(end.r, end.g, end.b, end.a))]))
             }
+            swatch.style.grow = 1
+            var parts: [Widget] = [swatch]
+            if build.colors[name] != nil {
+                let reset = Button("Reset", name: "uiBuilderField.color.\(name).reset") { [unowned self] in
+                    editLayout("Reset \(name) Color", UIBuildEdit(colors: [name: ""]))
+                }
+                reset.tooltip = "Use the \(build.theme) theme's \(name) again"
+                parts.append(reset)
+            }
+            row(name, HStack(spacing: 4, parts))
         }
     }
 

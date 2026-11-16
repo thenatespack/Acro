@@ -63,7 +63,9 @@ public final class UIBuildView: Widget {
     public private(set) var layoutScale: Float = 1
 
     private var handlers: [String: [() -> Void]] = [:]
-    private let screen = UIBuildPanel(name: "uiBuildScreen")
+    /// Holds the layout's widgets; the layout's show / hide transitions move and fade it (not the
+    /// view, whose own opacity can't change while it paints, where the clock steps).
+    let screen = UIBuildPanel(name: "uiBuildScreen")
     private var entries: [(spec: UIBuildWidget, widget: Widget)] = []
     private var byID: [String: Widget] = [:]
     private var idsByWidget: [ObjectIdentifier: String] = [:]
@@ -254,10 +256,10 @@ public final class UIBuildView: Widget {
         lastTime = nil
         if animated, wasHidden || wasHiding, let t = build.show, t.animates, context != nil {
             viewFade = Fade(transition: t, showing: true)
-            applyPose(self, base: 1, t, shown: 0)
+            applyPose(screen, base: 1, t, shown: 0)
             setNeedsDisplay()
         } else {
-            applyPose(self, base: 1, nil, shown: 1)
+            applyPose(screen, base: 1, nil, shown: 1)
         }
     }
 
@@ -274,7 +276,7 @@ public final class UIBuildView: Widget {
         }
         viewFade = nil
         isHidden = true
-        applyPose(self, base: 1, nil, shown: 1)
+        applyPose(screen, base: 1, nil, shown: 1)
         completion?()
     }
 
@@ -329,11 +331,11 @@ public final class UIBuildView: Widget {
             if fade.isDone {
                 viewFade = nil
                 if !fade.showing { isHidden = true }
-                applyPose(self, base: 1, nil, shown: 1)
+                applyPose(screen, base: 1, nil, shown: 1)
                 fade.completion?()
             } else {
                 viewFade = fade
-                applyPose(self, base: 1, fade.transition, shown: fade.shown)
+                applyPose(screen, base: 1, fade.transition, shown: fade.shown)
             }
         }
         for (id, var fade) in widgetFades {
