@@ -784,7 +784,8 @@ public struct MeshBuildImporter: AssetImporter {
 
     public var name: String { "meshbuild" }
     public var fileExtensions: [String] { ["meshbuild"] }
-    public var version: Int { 5 }  // 2: mirror and repeat, 3: sculpt, 4: sweep, loft and deform, 5: looks and baked occlusion
+    public var version: Int { 6 }  // 2: mirror and repeat, 3: sculpt, 4: sweep, loft and deform, 5: looks and baked occlusion,
+                                   // 6: sculpt children's looks, sweeps / lofts / deformers in sculpts
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         let file: MeshBuild
@@ -796,8 +797,10 @@ public struct MeshBuildImporter: AssetImporter {
         for warning in expansion.warnings { context.warn(warning) }
         // A sculpt's subtree is meshed into it (MeshBuildSculpt.swift): those parts stay nodes (pivots) without meshes.
         let sculpting = expansion.build.gatheringSculpts(sources: expansion.sources)
-        let build = sculpting.build
-        for warning in build.sculptContextWarnings(sculpting) { context.warn(warning) }
+        for warning in sculpting.build.sculptContextWarnings(sculpting) { context.warn(warning) }
+        // A sculpt with several looks draws a mesh per look on parts of their own, appended (MeshBuildSculptLooks.swift).
+        let pieces = sculpting.splittingLooks()
+        let build = pieces.build
         let stem = ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension
         var asset = ImportedAsset()
         var namer = SubAssetNamer()
@@ -821,7 +824,7 @@ public struct MeshBuildImporter: AssetImporter {
         // Every part's mesh first: looks and baked occlusion (MeshBuildImporter+Looks.swift) need them all.
         var geometries: [MeshGeometry?] = build.parts.enumerated().map { i, part in
             var shapeWarnings: [String] = []
-            let geometry = sculpting.sculpted.contains(i) ? nil : part.geometry(warnings: &shapeWarnings)
+            let geometry = pieces.geometry(i, warnings: &shapeWarnings)
             if sculpting.sculpted.contains(i), i < file.parts.count { shapeWarnings += part.fieldWarnings }
             for warning in shapeWarnings { context.warn("part '\(part.name)': \(warning)") }
             return geometry

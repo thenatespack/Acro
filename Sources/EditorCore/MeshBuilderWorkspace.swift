@@ -11,7 +11,8 @@ import Foundation
 // - Orbit with right-drag (or middle-drag, or Alt + left-drag), pan with Shift, zoom with the wheel.
 // - Animate plays the model's autoplay animations live; turning it off puts the parts back.
 // - A sculpt's children have no mesh of their own (they are part of the sculpt's surface): a
-//   selected one shows its shape as a wireframe ghost.
+//   selected one shows its shape as a wireframe ghost. A sculpt whose children have several looks
+//   draws a mesh per look on nodes under it; clicking one selects the sculpt.
 //
 // The file is the truth: every edit is written as one undo step of the editor (Ctrl+Z), the model
 // reimports, and the workspace rebuilds its copy (also after edits from MCP or other panels).
@@ -277,6 +278,13 @@ public final class MeshBuilderWorkspace {
         while let entity = stack.popLast() {
             if let name = world.get(Name.self, for: entity)?.value, partEntities[name] == nil { partEntities[name] = entity }
             stack += world.children(of: entity)
+        }
+        // A sculpt with several looks draws them on nodes of its own: clicking one picks the sculpt.
+        let partNames = Set(expansion?.build.parts.map(\.name) ?? [])
+        for (name, entity) in partEntities where !partNames.contains(name) && world.get(MeshRenderer.self, for: entity) != nil {
+            if let parent = world.parent(of: entity), let sculpt = world.get(Name.self, for: parent)?.value, partNames.contains(sculpt) {
+                copySources[name] = copySources[sculpt] ?? sculpt
+            }
         }
         world.propagateTransforms()
         selection.set(syncedPart.flatMap { partEntities[$0] }.flatMap { world.ensureID(of: $0) }.map { [$0] } ?? [])

@@ -683,7 +683,7 @@ public final class MeshBuilderView {
             }
             view.addChild(HStack(spacing: 4, row))
             view.addChild(note("Its children melt into one surface, in list order: each adds, subtracts or intersects, smoothed by its Smooth. "
-                               + "The sculpt's color and material cover it all; size multiplies the mesh."))
+                               + "The sculpt's look covers the children that set none; a child with its own color or look keeps it. Size multiplies the mesh."))
             var warnings: [String] = []
             if let gathered = build.gatheringSculpts().build.parts.first(where: { $0.name == name }) { _ = gathered.geometry(warnings: &warnings) }
             if !warnings.isEmpty { view.addChild(note("⚠ " + warnings.joined(separator: " "))) }
@@ -709,7 +709,7 @@ public final class MeshBuilderView {
         }
         smooth.style.grow = 1
         view.addChild(HStack(spacing: 6, [rowLabel("Smooth"), smooth]))
-        view.addChild(note("Part of \(sculpt)'s surface (outlined in the view when selected); it isn't drawn on its own and can't be animated on its own."))
+        view.addChild(note("Part of \(sculpt)'s surface (outlined in the view when selected); it isn't drawn on its own (its color and look, if set, paint the surface it makes) and can't be animated on its own."))
     }
 
     func duplicateSelected() {

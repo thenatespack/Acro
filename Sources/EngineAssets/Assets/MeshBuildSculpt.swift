@@ -20,20 +20,23 @@ import EngineScene
 //   their parent as usual). Groups are pivots; a nested sculpt is a pivot too (with a warning);
 //   a plane has no inside and is left out (with a warning). Every other shape works: box (with
 //   `bevel`), sphere (an ellipsoid when its size isn't even), hemisphere, cylinder (with `bevel`),
-//   cone, capsule, torus, tube, wedge, pyramid, lathe and extrude.
+//   cone, capsule, torus, tube, wedge, pyramid, lathe and extrude have exact formulas; sweeps,
+//   lofts and any shape with `deform` use the distance to their (deformed) mesh
+//   (MeshBuildMeshSDF.swift).
 // - Mirror / repeat copies of children join the sculpt (`MeshBuild.gatheringSculpts`), right after
 //   the part they copy, so a hole cut after mirrored legs cuts both.
 // - The sculpt's own `size` multiplies the mesh (leave it [1, 1, 1]); `resolution` is cells along
 //   the longest side of the shape (8...128, default 64); `noise` {amount, scale, seed} roughens the
 //   surface (added and subtracted shapes alike; intersects trim it cleanly, so intersecting a big
-//   box that stands on y = 0 gives a rough rock a flat base). Its look (color, texture, material…) is the whole mesh's: the renderer has no vertex
-//   colors, so children's colors are not used. UVs are box-projected in meters (as `worldUV`).
+//   box that stands on y = 0 gives a rough rock a flat base). Its look (color, texture, material…)
+//   is the default; children that set look fields of their own get meshes of their own
+//   (MeshBuildSculptLooks.swift). UVs are box-projected in meters (as `worldUV`).
 // - Meshing: the distance field is sampled on a grid (coarse blocks far from the surface are
 //   skipped), then dual contouring places one vertex per surface cell where the crossing planes
 //   meet, so carved boxes keep crisp edges; normals come from the field's gradient and are split
 //   where faces meet at more than 40°. Results are cached by their inputs.
-// - A sculpt is one mesh: animation tracks on its children warn and do nothing visible; animate
-//   the sculpt part itself.
+// - A sculpt is one surface (one mesh per look): animation tracks on its children warn and do
+//   nothing visible; animate the sculpt part itself.
 
 /// How a sculpt child combines with the shape made by the children before it.
 public enum MeshBuildBlend: String, Codable, CaseIterable, Sendable {
@@ -103,15 +106,21 @@ extension MeshBuildPart {
         "intersect" keeps only the overlap; smooth (m, default 0) melts it into what came before over that distance \
         (0.05-0.2 for organic joins, small values just round a cut's edge). Children keep their position/rotation/size \
         in the sculpt's space; every solid shape works (box with bevel, sphere/ellipsoid, hemisphere, cylinder, cone, \
-        capsule, torus, tube, wedge, pyramid, lathe, extrude; groups are pivots; planes are skipped); mirror/repeat \
-        children join too. Sculpt fields: resolution (cells along the longest side, 8-128, default 64: more = finer \
-        detail, slower), noise {amount m, scale m, seed} roughens the surface for rock/bark/weathered stone \
-        (intersects trim cleanly: intersect a big box standing on y=0, as the last child, for a flat base), size multiplies the mesh (keep \
-        [1,1,1]). The sculpt's color/texture/material cover the whole mesh (children's colors are ignored: use another \
-        part for another color); UVs are world-projected in meters. A sculpt is one mesh: animate the sculpt part, not \
-        its children. Example: {"name":"Stone","shape":"sculpt","position":[0,0.4,0]}, {"name":"Block","shape":"box",\
-        "parent":"Stone","size":[1,0.8,0.6],"bevel":0.05}, {"name":"Hole","shape":"cylinder","parent":"Stone",\
-        "rotation":[90,0,0],"size":[0.3,1,0.3],"blend":"subtract","smooth":0.03}.
+        capsule, torus, tube, wedge, pyramid, lathe, extrude, sweep, loft, and any shape with deform, e.g. a swept \
+        spout and handle melted onto a lathe pot; groups are pivots; planes are skipped); mirror/repeat children join \
+        too. Sculpt fields: resolution (cells along the longest side, 8-128, default 64: more = finer detail, slower; \
+        a sweep or rim needs about 3+ cells across), noise {amount m, scale m, seed} roughens the surface for \
+        rock/bark/weathered stone (intersects trim cleanly: intersect a big box standing on y=0, as the last child, \
+        for a flat base), size multiplies the mesh (keep [1,1,1]). Looks: the sculpt's color/look/material/roughness… \
+        are the default; a child that sets any look field (color, look, wear, roughness, metallic, glow, texture, \
+        material…) is drawn with its own look fields (e.g. linen cushions on a green fabric chair, a cream knob on a \
+        blue teapot): each point of the surface takes the look of the added child it lies on (in a smooth join, the \
+        nearer one), and the color changes cleanly along the surface where they meet. A subtracted child with its own \
+        look paints the cut it makes; without one, the cut takes the look of the child it cuts into. UVs are \
+        world-projected in meters. A sculpt is one mesh per look: animate the sculpt part, not its children. Example: \
+        {"name":"Stone","shape":"sculpt","position":[0,0.4,0]}, {"name":"Block","shape":"box","parent":"Stone",\
+        "size":[1,0.8,0.6],"bevel":0.05}, {"name":"Hole","shape":"cylinder","parent":"Stone","rotation":[90,0,0],\
+        "size":[0.3,1,0.3],"blend":"subtract","smooth":0.03,"color":[0.1,0.1,0.1]}.
         """
 
     /// Cells along a sculpt's longest side when `resolution` is unset, and the allowed range.
@@ -142,26 +151,46 @@ extension MeshBuildPart {
     /// The sculpt's mesh from its `sculptChildren` (nil, with a warning, when they make no shape),
     /// scaled by `size`. Cached by its inputs.
     func sculptGeometry(warnings: inout [String]) -> MeshGeometry? {
-        let key = sculptCacheKey
-        if let cached = MeshBuildSculptCache.shared.value(for: key) {
-            warnings += cached.warnings
-            return cached.geometry
-        }
-        var produced: [String] = []
-        let geometry = MeshBuildSculptor(sculpt: self, warnings: &produced)?.mesh(warnings: &produced)
-        MeshBuildSculptCache.shared.store(key, (geometry, produced))
-        warnings += produced
-        return geometry
+        sculptMesh(warnings: &warnings)?.geometry
     }
 
-    private var sculptCacheKey: String {
-        "\(sculptResolution)|\(String(describing: noise))|\(size)|\(sculptChildren.map { "\($0.position)\($0.rotation.vector)\($0.part.sculptPrimitiveKey)" })"
+    /// The sculpt's mesh with each triangle's look group (MeshBuildSculptLooks.swift). Cached by its inputs.
+    func sculptMesh(warnings: inout [String]) -> MeshBuildSculptMesh? {
+        let groups = sculptLookGroups()
+        let key = sculptCacheKey(groups: groups.childGroups)
+        if let cached = MeshBuildSculptCache.shared.value(for: key) {
+            warnings += cached.warnings
+            return cached.mesh
+        }
+        var produced: [String] = []
+        let mesh = MeshBuildSculptor(sculpt: self, groups: groups.childGroups, warnings: &produced)?.mesh(warnings: &produced)
+        MeshBuildSculptCache.shared.store(key, (mesh, produced))
+        warnings += produced
+        return mesh
+    }
+
+    private func sculptCacheKey(groups: [Int]) -> String {
+        "\(sculptResolution)|\(String(describing: noise))|\(size)|\(groups)|"
+            + "\(sculptChildren.map { "\($0.position)\($0.rotation.vector)\($0.part.sculptPrimitiveKey)" })"
     }
 
     /// The fields that shape a part used as a sculpt primitive.
     var sculptPrimitiveKey: String {
         "\(name)|\(shape.rawValue)|\(size)|\(segments)|\(thickness)|\(String(describing: bevel))|\(String(describing: profile))|"
-            + "\(reflection)|\(String(describing: blend))|\(String(describing: smooth))"
+            + "\(reflection)|\(String(describing: blend))|\(String(describing: smooth))|"
+            + (needsMeshField ? "\(String(describing: path))|\(String(describing: radius))|\(String(describing: radii))|"
+                + "\(String(describing: closed))|\(String(describing: straight))|\(String(describing: sections))|"
+                + "\(String(describing: axis))|\(String(describing: deform))|\(String(describing: subdivide))" : "")
+    }
+
+    /// Whether the part, as a sculpt child, is a field of its mesh (MeshBuildMeshSDF.swift): sweeps,
+    /// lofts and deformed shapes have no exact formula.
+    var needsMeshField: Bool {
+        switch shape {
+        case .group, .sculpt, .plane: false
+        case .sweep, .loft: true
+        default: !(deform ?? []).isEmpty
+        }
     }
 }
 
@@ -281,10 +310,10 @@ final class MeshBuildSculptCache: @unchecked Sendable {
     static let capacity = 24
 
     private let lock = NSLock()
-    private var entries: [String: (geometry: MeshGeometry?, warnings: [String])] = [:]
+    private var entries: [String: (mesh: MeshBuildSculptMesh?, warnings: [String])] = [:]
     private var order: [String] = []
 
-    func value(for key: String) -> (geometry: MeshGeometry?, warnings: [String])? {
+    func value(for key: String) -> (mesh: MeshBuildSculptMesh?, warnings: [String])? {
         lock.lock()
         defer { lock.unlock() }
         guard let value = entries[key] else { return nil }
@@ -293,7 +322,7 @@ final class MeshBuildSculptCache: @unchecked Sendable {
         return value
     }
 
-    func store(_ key: String, _ value: (geometry: MeshGeometry?, warnings: [String])) {
+    func store(_ key: String, _ value: (mesh: MeshBuildSculptMesh?, warnings: [String])) {
         lock.lock()
         defer { lock.unlock() }
         if entries[key] == nil { order.append(key) }
@@ -332,9 +361,11 @@ struct SculptPrimitive: Sendable {
         case prism(polygon: [Vec2], halfDepth: Float)
         /// A convex solid: the most positive of `dot(n, p) - w` over its planes.
         case convex(planes: [Vec4])
+        /// A closed triangle mesh (sweeps, lofts, deformed shapes; MeshBuildMeshSDF.swift).
+        case mesh(MeshDistanceField)
     }
 
-    private enum Tag: UInt8, Sendable { case box, ellipsoid, sphere, dome, cylinder, capsule, torus, tube, revolve, prism, convex }
+    private enum Tag: UInt8, Sendable { case box, ellipsoid, sphere, dome, cylinder, capsule, torus, tube, revolve, prism, convex, mesh }
 
     private let tag: Tag
     // Sculpt space to the primitive's: p = M (q - t), M = diag(reflection) · rotation⁻¹, row major.
@@ -346,6 +377,8 @@ struct SculptPrimitive: Sendable {
     private let sx, sz: Float
     /// Polygon corners (x, y pairs) or planes (nx, ny, nz, w).
     private let numbers: [Float]
+    /// A mesh's distance field.
+    private let meshField: MeshDistanceField?
 
     let blend: MeshBuildBlend
     let smooth: Float
@@ -367,6 +400,7 @@ struct SculptPrimitive: Sendable {
         (tx, ty, tz) = (position.x, position.y, position.z)
         var a: Float = 0, b: Float = 0, c: Float = 0, d: Float = 0, sx: Float = 1, sz: Float = 1
         var numbers: [Float] = []
+        var meshField: MeshDistanceField?
         switch kind {
         case .box(let half, let radius):
             tag = .box
@@ -400,8 +434,12 @@ struct SculptPrimitive: Sendable {
         case .convex(let planes):
             tag = .convex
             numbers = planes.flatMap { [$0.x, $0.y, $0.z, $0.w] }
+        case .mesh(let field):
+            tag = .mesh
+            meshField = field
         }
         (self.a, self.b, self.c, self.d, self.sx, self.sz, self.numbers) = (a, b, c, d, sx, sz, numbers)
+        self.meshField = meshField
         self.blend = blend
         self.smooth = smooth
         self.lo = lo
@@ -414,7 +452,19 @@ struct SculptPrimitive: Sendable {
         let gx = max(max(lo.x - boxHi.x, boxLo.x - hi.x), 0)
         let gy = max(max(lo.y - boxHi.y, boxLo.y - hi.y), 0)
         let gz = max(max(lo.z - boxHi.z, boxLo.z - hi.z), 0)
-        return (gx * gx + gy * gy + gz * gz).squareRoot() * tightness
+        let outside = (gx * gx + gy * gy + gz * gz).squareRoot() * tightness
+        guard let meshField else { return outside }
+        // A mesh (a curving tube) fills little of its box: ask its hierarchy, with the box in the mesh's space.
+        var localLo = Vec3(repeating: .infinity), localHi = Vec3(repeating: -.infinity)
+        for corner in 0..<8 {
+            let qx = corner & 1 == 0 ? boxLo.x : boxHi.x, qy = corner & 2 == 0 ? boxLo.y : boxHi.y
+            let qz = corner & 4 == 0 ? boxLo.z : boxHi.z
+            let dx = qx - tx, dy = qy - ty, dz = qz - tz
+            let p = Vec3(m00 * dx + m01 * dy + m02 * dz, m10 * dx + m11 * dy + m12 * dz, m20 * dx + m21 * dy + m22 * dz)
+            localLo = pointwiseMin(localLo, p)
+            localHi = pointwiseMax(localHi, p)
+        }
+        return max(outside, meshField.lowerBound(boxLo: localLo, boxHi: localHi))
     }
 
     func distance(_ q: Vec3) -> Float { distance(q.x, q.y, q.z) }
@@ -469,6 +519,8 @@ struct SculptPrimitive: Sendable {
                 i += 4
             }
             return result
+        case .mesh:
+            return meshField!.distance(x, y, z)
         }
     }
 
@@ -511,6 +563,11 @@ struct MeshBuildSculptor {
     static let block = 4
 
     let primitives: [SculptPrimitive]
+    /// Each primitive's look group, or -1 when it never owns surface (a subtract or intersect
+    /// without a look of its own). See MeshBuildSculptLooks.swift.
+    let groups: [Int32]
+    /// How many look groups there are (1: one look, no ownership to work out).
+    let groupCount: Int
     let resolution: Int
     let noise: MeshBuildNoise?
     let scale: Vec3
@@ -518,14 +575,21 @@ struct MeshBuildSculptor {
     let lo: Vec3
     let hi: Vec3
 
-    /// Nil (with a warning) when the children make no shape.
-    init?(sculpt: MeshBuildPart, warnings: inout [String]) {
+    /// Nil (with a warning) when the children make no shape. `groups` is each child's look group
+    /// (`MeshBuildPart.sculptLookGroups`; empty: one look).
+    init?(sculpt: MeshBuildPart, groups childGroups: [Int] = [], warnings: inout [String]) {
         var primitives: [SculptPrimitive] = []
-        for child in sculpt.sculptChildren {
+        var groups: [Int32] = []
+        for (i, child) in sculpt.sculptChildren.enumerated() {
             var childWarnings: [String] = []
-            if let primitive = Self.primitive(child, warnings: &childWarnings) { primitives.append(primitive) }
+            if let primitive = Self.primitive(child, warnings: &childWarnings) {
+                primitives.append(primitive)
+                groups.append(i < childGroups.count ? Int32(childGroups[i]) : primitive.blend == .add ? 0 : -1)
+            }
             warnings += childWarnings.map { "sculpt child '\(child.part.name)': \($0)" }
         }
+        self.groups = groups
+        groupCount = Int(groups.max() ?? 0) + 1
         resolution = sculpt.sculptResolution
         if let noise = sculpt.noise, noise.amount.isFinite, noise.scale.isFinite, noise.scale > 0, noise.amount != 0 {
             self.noise = noise
@@ -572,8 +636,22 @@ struct MeshBuildSculptor {
         case .plane:
             warnings.append("a plane has no inside, so it can't be part of a sculpt; it is left out (use a thin box)")
             return nil
+        case _ where part.needsMeshField:
+            // Sweeps, lofts and deformed shapes: the field of their mesh (deformed, reflected), a
+            // little finer around than drawn so the melted surface stays round.
+            var dense = part
+            dense.segments = max(part.segments, 32)
+            var meshWarnings: [String] = []
+            let g = dense.geometry(warnings: &meshWarnings)
+            warnings += meshWarnings.filter { !part.fieldWarnings.contains($0) }
+            guard let g else { return nil }
+            guard let field = MeshDistanceField(g) else {
+                warnings.append("its mesh has no area; it is left out")
+                return nil
+            }
+            kind = .mesh(field)
+            bounds = g.bounds
         case .sweep, .loft:
-            warnings.append("a \(part.shape.rawValue) can't be part of a sculpt yet; it is left out (use capsules, cylinders or lathes, or keep it outside the sculpt)")
             return nil
         case .box:
             kind = .box(half: h, radius: min(bevel, min(h.x, min(h.y, h.z))))
@@ -631,23 +709,24 @@ struct MeshBuildSculptor {
             kind = .prism(polygon: points, halfDepth: h.z)
             bounds = g.bounds
         }
-        // The primitive's box in the sculpt's space.
+        // The primitive's box in the sculpt's space. A mesh is already reflected.
+        let reflection = part.needsMeshField ? Vec3(1, 1, 1) : part.reflection
         var lo = Vec3(repeating: .infinity), hi = Vec3(repeating: -.infinity)
         for corner in 0..<8 {
             let sign = Vec3(corner & 1 == 0 ? -1 : 1, corner & 2 == 0 ? -1 : 1, corner & 4 == 0 ? -1 : 1)
-            let local = (bounds.center + bounds.halfExtent * sign) * part.reflection
+            let local = (bounds.center + bounds.halfExtent * sign) * reflection
             let p = child.position + child.rotation * local
             lo = pointwiseMin(lo, p)
             hi = pointwiseMax(hi, p)
         }
         let smooth = part.smooth.map { $0.isFinite ? max($0, 0) : 0 } ?? 0
         let tightness: Float = switch kind {
-        case .box, .prism: 1
+        case .box, .prism, .mesh: 1
         case .ellipsoid(let r), .dome(let r, _): min(r.x, min(r.y, r.z)) / max(r.x, max(r.y, r.z))
         case .convex: 0.25
         default: min(squash.x, squash.y)
         }
-        return SculptPrimitive(kind: kind, position: child.position, rotation: child.rotation, reflection: part.reflection,
+        return SculptPrimitive(kind: kind, position: child.position, rotation: child.rotation, reflection: reflection,
                                blend: part.blend ?? .add, smooth: smooth, lo: lo, hi: hi, tightness: max(tightness, 0.05))
     }
 
@@ -747,7 +826,7 @@ struct MeshBuildSculptor {
     // MARK: Meshing
 
     /// Samples the field and dual-contours it.
-    func mesh(warnings: inout [String]) -> MeshGeometry? {
+    func mesh(warnings: inout [String]) -> MeshBuildSculptMesh? {
         let extent = hi - lo
         let cell = max(max(extent.x, max(extent.y, extent.z)) / Float(resolution), 1e-5)
         let origin = lo - Vec3(repeating: cell * 2)
@@ -755,7 +834,21 @@ struct MeshBuildSculptor {
         let n = SIMD3<Int>(Int((extent.x / cell).rounded(.up)) + 5, Int((extent.y / cell).rounded(.up)) + 5,
                            Int((extent.z / cell).rounded(.up)) + 5)
         let (values, active) = sample(origin: origin, cell: cell, n: n)
-        return contour(values, active: active, origin: origin, cell: cell, n: n, warnings: &warnings)
+        guard var surface = contour(values, active: active, origin: origin, cell: cell, n: n, warnings: &warnings) else { return nil }
+        // Several looks: each triangle's owner, triangles cut along the boundaries (MeshBuildSculptLooks.swift).
+        let owners = groupCount > 1 ? splitByOwner(&surface, active: active, origin: origin, cell: cell) : []
+        guard let geometry = assemble(positions: surface.positions, normals: surface.normals, triangles: surface.triangles,
+                                      groups: owners) else { return nil }
+        return MeshBuildSculptMesh(geometry: geometry, triangleGroups: owners.isEmpty ? [] : owners.map { UInt16($0) },
+                                   groupCount: groupCount)
+    }
+
+    /// A contoured surface before its final vertices: positions and field normals in the
+    /// sculpt's space, triangles indexing them.
+    struct Surface {
+        var positions: [Vec3]
+        var normals: [Vec3]
+        var triangles: [SIMD3<Int32>]
     }
 
     /// The primitives that can change the field near the surface in each coarse block.
@@ -846,7 +939,7 @@ struct MeshBuildSculptor {
 
     /// Dual contouring on the sampled grid: a vertex per cell the surface crosses (where the
     /// crossing points' tangent planes best meet, kept inside the cell), a quad per crossed edge.
-    func contour(_ values: [Float], active: ActiveLists, origin: Vec3, cell: Float, n: SIMD3<Int>, warnings: inout [String]) -> MeshGeometry? {
+    func contour(_ values: [Float], active: ActiveLists, origin: Vec3, cell: Float, n: SIMD3<Int>, warnings: inout [String]) -> Surface? {
         let nx = n.x, ny = n.y, nz = n.z
         let cx = nx - 1, cy = ny - 1
         let steps = [1, nx, nx * ny]
@@ -988,7 +1081,7 @@ struct MeshBuildSculptor {
                 triangles.append(SIMD3(q[1], q[2], q[3]))
             }
         }
-        return assemble(positions: positions, normals: normals, triangles: triangles)
+        return Surface(positions: positions, normals: normals, triangles: triangles)
     }
 
     /// The point minimizing the squared distances to the planes (`points`, `normals`), measured
@@ -1049,8 +1142,9 @@ struct MeshBuildSculptor {
     }
 
 
-    /// The final mesh: scaled by the sculpt's size, normals split at sharp creases, box-projected UVs.
-    func assemble(positions rawPositions: [Vec3], normals rawNormals: [Vec3], triangles: [SIMD3<Int32>]) -> MeshGeometry? {
+    /// The final mesh: scaled by the sculpt's size, normals split at sharp creases, box-projected
+    /// UVs, and vertices split where the triangles' look `groups` (one per triangle, or empty) change.
+    func assemble(positions rawPositions: [Vec3], normals rawNormals: [Vec3], triangles: [SIMD3<Int32>], groups: [Int32] = []) -> MeshGeometry? {
         guard !triangles.isEmpty else { return nil }
         let inverseScale = Vec3(scale.x > 0 ? 1 / scale.x : 0, scale.y > 0 ? 1 / scale.y : 0, scale.z > 0 ? 1 / scale.z : 0)
         let positions = rawPositions.map { $0 * scale }
@@ -1122,7 +1216,8 @@ struct MeshBuildSculptor {
             let face = a.x >= a.y && a.x >= a.z ? (f.x > 0 ? 0 : 1) : a.y >= a.z ? (f.y > 0 ? 2 : 3) : (f.z > 0 ? 4 : 5)
             for k in 0..<3 {
                 let v = Int(t[k]), c = ti * 3 + k
-                let key = (v * 64 + min(Int(cornerGroup[c]), 63)) * 6 + face
+                let owner = groups.isEmpty ? 0 : Int(groups[ti])
+                let key = ((v * 64 + min(Int(cornerGroup[c]), 63)) * 6 + face) * groupCount + owner
                 if let existing = made[key] {
                     geometry.indices.append(existing)
                     continue

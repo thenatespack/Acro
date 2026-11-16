@@ -13,7 +13,7 @@ public struct MeshBuildExample: Codable, Equatable, Sendable {
 }
 
 public enum MeshBuildExamples {
-    public static var all: [MeshBuildExample] { [streetLamp, cart, turret, crate, bench, armchair, stoneArch, sailboat, gnarledTree, deskLamp] }
+    public static var all: [MeshBuildExample] { [streetLamp, cart, turret, crate, bench, armchair, stoneArch, teapot, sailboat, gnarledTree, deskLamp] }
 
     /// Dark green-black paint for street furniture.
     static let lampPaint = Vec3(0.09, 0.13, 0.11)
@@ -139,29 +139,37 @@ extension MeshBuildPart {
 }
 
 extension MeshBuildExamples {
-    /// An upholstered armchair: a sculpt frame whose back and rolled arms melt into the base, a
-    /// second sculpt for the puffy cushions (another color) and turned wooden legs.
+    /// An upholstered armchair: one sculpt whose back and rolled arms melt into the base, with
+    /// puffy cushions in another fabric (children with a look of their own), on turned wooden legs.
     public static var armchair: MeshBuildExample {
-        let fabric = Vec3(0.27, 0.33, 0.27), linen = Vec3(0.62, 0.58, 0.48)
-        return MeshBuildExample(name: "Armchair", about: "0.9 m wide, seat 0.47 m high, front at -Z. Two sculpts: Frame (base, back tilted 8° back, arms and rolled arm tops mirrored on x) melts its parts together with small smooth radii (0.02-0.04 m; larger radii on faces that line up bulge at the seam), and Cushions (a bevelled box plus a flattened sphere smoothed in for a puffy top, front and back) is a separate sculpt because a sculpt has one color. The tapered legs are lathes mirrored on x and z, touching the frame's underside at y=0.1.", build: MeshBuild(parts: [
-            MeshBuildPart(name: "Frame", shape: .sculpt, position: Vec3(0, 0.1, 0), color: fabric, roughness: 0.9),
-            MeshBuildPart(name: "Base", parent: "Frame", position: Vec3(0, 0.125, 0), size: Vec3(0.8, 0.25, 0.78), bevel: 0.05),
-            MeshBuildPart(name: "Back", parent: "Frame", position: Vec3(0, 0.42, 0.32), rotation: Vec3(-8, 0, 0), size: Vec3(0.84, 0.82, 0.16),
+        let fabric = Vec3(0.24, 0.31, 0.25), linen = Vec3(0.66, 0.61, 0.5)
+        /// A cushion child: it sets its own look (linen-colored fabric), so it is drawn with a mesh and material of its own.
+        func cushion(_ part: MeshBuildPart) -> MeshBuildPart {
+            var p = part
+            p.color = linen
+            p.look = "fabric"
+            p.lookScale = 0.3
+            return p
+        }
+        return MeshBuildExample(name: "Armchair", about: "0.9 m wide, seat 0.47 m high, front at -Z. One sculpt: the frame (base, back tilted 8° back, arms and rolled arm tops mirrored on x) melts together with small smooth radii (0.02-0.04 m; larger radii on faces that line up bulge at the seam) and has the sculpt's own look (green fabric with a little wear); the cushions (a bevelled box plus a flattened sphere smoothed in for a puffy top, front and back) are children that set their own look (linen-colored fabric), so the sculpt draws a mesh per look and the color changes where the surfaces meet. The tapered legs are wooden lathes mirrored on x and z, touching the frame's underside at y=0.1.", build: MeshBuild(parts: [
+            MeshBuildPart(name: "Armchair", shape: .sculpt, position: Vec3(0, 0.1, 0), color: fabric, look: "fabric", wear: 0.3)
+                .sculpting(resolution: 96),
+            MeshBuildPart(name: "Base", parent: "Armchair", position: Vec3(0, 0.125, 0), size: Vec3(0.8, 0.25, 0.78), bevel: 0.05),
+            MeshBuildPart(name: "Back", parent: "Armchair", position: Vec3(0, 0.42, 0.32), rotation: Vec3(-8, 0, 0), size: Vec3(0.84, 0.82, 0.16),
                           bevel: 0.07).sculpting(smooth: 0.04),
-            MeshBuildPart(name: "Left Arm", parent: "Frame", position: Vec3(-0.35, 0.27, -0.01), size: Vec3(0.15, 0.52, 0.8), bevel: 0.06,
+            MeshBuildPart(name: "Left Arm", parent: "Armchair", position: Vec3(-0.35, 0.27, -0.01), size: Vec3(0.15, 0.52, 0.8), bevel: 0.06,
                           mirror: [.x]).sculpting(smooth: 0.02),
-            MeshBuildPart(name: "Left Roll", shape: .capsule, parent: "Frame", position: Vec3(-0.355, 0.54, -0.02), rotation: Vec3(90, 0, 0),
+            MeshBuildPart(name: "Left Roll", shape: .capsule, parent: "Armchair", position: Vec3(-0.355, 0.54, -0.02), rotation: Vec3(90, 0, 0),
                           size: Vec3(0.18, 0.8, 0.15), mirror: [.x]).sculpting(smooth: 0.03),
-            MeshBuildPart(name: "Cushions", shape: .sculpt, position: Vec3(0, 0.35, 0), color: linen, roughness: 0.95),
-            MeshBuildPart(name: "Seat", parent: "Cushions", position: Vec3(0, 0.06, -0.06), size: Vec3(0.53, 0.12, 0.64), bevel: 0.05),
-            MeshBuildPart(name: "Puff", shape: .sphere, parent: "Cushions", position: Vec3(0, 0.08, -0.06), size: Vec3(0.48, 0.1, 0.58))
-                .sculpting(smooth: 0.04),
-            MeshBuildPart(name: "Back Cushion", parent: "Cushions", position: Vec3(0, 0.34, 0.2), rotation: Vec3(-10, 0, 0),
-                          size: Vec3(0.53, 0.46, 0.14), bevel: 0.06),
-            MeshBuildPart(name: "Back Puff", shape: .sphere, parent: "Cushions", position: Vec3(0, 0.34, 0.19), rotation: Vec3(-10, 0, 0),
-                          size: Vec3(0.46, 0.4, 0.15)).sculpting(smooth: 0.04),
-            MeshBuildPart(name: "Front Left Leg", shape: .lathe, position: Vec3(-0.35, 0, -0.32), color: Vec3(0.28, 0.17, 0.09), roughness: 0.5,
-                          profile: [Vec2(0, 0), Vec2(0.018, 0), Vec2(0.028, 0.1), Vec2(0, 0.1)], mirror: [.x, .z]),
+            cushion(MeshBuildPart(name: "Seat", parent: "Armchair", position: Vec3(0, 0.31, -0.06), size: Vec3(0.53, 0.12, 0.64), bevel: 0.05)),
+            cushion(MeshBuildPart(name: "Puff", shape: .sphere, parent: "Armchair", position: Vec3(0, 0.33, -0.06), size: Vec3(0.46, 0.1, 0.58))
+                .sculpting(smooth: 0.03)),
+            cushion(MeshBuildPart(name: "Back Cushion", parent: "Armchair", position: Vec3(0, 0.59, 0.2), rotation: Vec3(-10, 0, 0),
+                                  size: Vec3(0.53, 0.46, 0.14), bevel: 0.06)),
+            cushion(MeshBuildPart(name: "Back Puff", shape: .sphere, parent: "Armchair", position: Vec3(0, 0.59, 0.19), rotation: Vec3(-10, 0, 0),
+                                  size: Vec3(0.44, 0.4, 0.15)).sculpting(smooth: 0.03)),
+            MeshBuildPart(name: "Front Left Leg", shape: .lathe, position: Vec3(-0.35, 0, -0.32), color: Vec3(0.28, 0.17, 0.09),
+                          profile: [Vec2(0, 0), Vec2(0.018, 0), Vec2(0.028, 0.1), Vec2(0, 0.1)], mirror: [.x, .z], look: "wood"),
         ]))
     }
 
@@ -337,7 +345,7 @@ public enum MeshBuildExamplesCommand: EditorCommand {
 
     public static let id: CommandID = "meshBuild.examples"
     public static let title = "Mesh Build Examples"
-    public static let doc = "Returns small, correct mesh builds to learn from or start with (pass one's `build` to meshBuild.new; keys at their defaults are left out): a street lamp (a parent chain, glow), a wooden cart (wheels turned onto an axle, a spin animation), a turret (a group pivot swinging its children), a weathered crate (looks, wear, mirrored corner caps), a park bench (mirror and repeat, wood and painted iron), two sculpts: an armchair (parts melted together with smooth, puffy cushions) and a stone arch (carved with subtracts, roughened with noise), and three built from curves: a sailboat (lofted hull, bent mast, billowing sails, swept rigging), a gnarled tree (tapered sweeps, noise bark and foliage) and a desk lamp (lathes, swept arms, helical springs, a cable). Each stands on y=0, faces -Z and gives no warnings. `name` picks one."
+    public static let doc = "Returns small, correct mesh builds to learn from or start with (pass one's `build` to meshBuild.new; keys at their defaults are left out): a street lamp (a parent chain, glow), a wooden cart (wheels turned onto an axle, a spin animation), a turret (a group pivot swinging its children), a weathered crate (looks, wear, mirrored corner caps), a park bench (mirror and repeat, wood and painted iron), three sculpts: an armchair (parts melted together with smooth, cushions in a second fabric as children with their own look), a stone arch (carved with subtracts, roughened with noise) and a ceramic teapot (swept spout and handle melted onto a lathe body, a knob in another glaze), and three built from curves: a sailboat (lofted hull, bent mast, billowing sails, swept rigging), a gnarled tree (tapered sweeps, noise bark and foliage) and a desk lamp (lathes, swept arms, helical springs, a cable). Each stands on y=0, faces -Z and gives no warnings. `name` picks one."
     public static let isReadOnly = true
     public static let isIdempotent = true
     public static func unavailableReason(in session: EditorSession) -> String? { nil }
