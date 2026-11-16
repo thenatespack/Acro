@@ -5,7 +5,7 @@
 // spawn range get a new particle, then every live particle is integrated (gravity, drag,
 // turbulence, attraction), collides (ground plane, up to four analytic planes / spheres /
 // boxes, the scene's depth buffer) and ages; expired ones die. Each workgroup writes how many
-// of its slots are alive, died and collided this step, for particle_compact.comp and
+// of its slots are alive, died, collided and were born this step, for particle_compact.comp and
 // particle_events.comp; with RECORD_EVENTS each slot also gets its event flags.
 
 #include "particles.glsl"
@@ -14,15 +14,15 @@ layout(local_size_x = 256) in;
 
 layout(set = 2, binding = 2, std140) uniform Params { EmitterParams emitter; };
 layout(set = 2, binding = 24, std430) buffer Particles { Particle particles[]; };
-// [0..3]: draw arguments, then per workgroup: live counts, deaths this step, collisions this step.
+// [0..3]: draw arguments, then per workgroup: live counts, deaths, collisions and births this step.
 layout(set = 2, binding = 25, std430) buffer State { uint state[]; };
-// Per slot: bit 0 died this step, bit 1 collided this step (only with RECORD_EVENTS).
+// Per slot: bit 0 died, bit 1 collided, bit 2 born this step (only with RECORD_EVENTS).
 layout(set = 2, binding = 27, std430) writeonly buffer Events { uint eventFlags[]; };
 // The scene's depth (COLLIDE_DEPTH), from a depth prepass (SceneRenderer).
 layout(set = 2, binding = 9) uniform texture2D sceneDepth;
 layout(set = 2, binding = 17) uniform sampler depthSampler;
 
-shared uint groupAlive, groupDied, groupCollided;
+shared uint groupAlive, groupDied, groupCollided, groupBorn;
 
 #include "particle_spawn.glsl"
 
@@ -120,6 +120,7 @@ void main() {
         groupAlive = 0u;
         groupDied = 0u;
         groupCollided = 0u;
+        groupBorn = 0u;
     }
     barrier();
 
@@ -129,7 +130,8 @@ void main() {
         // Slots in this step's spawn range (a ring, wrapping at the capacity) get new particles,
         // spread over the step so a fast emitter doesn't leave bands.
         uint offset = (slot + capacity - emitter.spawn.x) % capacity;
-        if (offset < emitter.spawn.y) {
+        bool born = offset < emitter.spawn.y;
+        if (born) {
             p = spawnParticle(emitter.spawn.z + offset);
             dt *= (float(emitter.spawn.y - offset) - 0.5) / float(emitter.spawn.y);
         }
@@ -168,10 +170,11 @@ void main() {
             p.velocity = vec4(velocity, alive ? p.velocity.w : 0.0);
         }
         particles[slot] = p;
-        if ((emitter.collision.x & RECORD_EVENTS) != 0u) eventFlags[slot] = (died ? 1u : 0u) | (collided ? 2u : 0u);
+        if ((emitter.collision.x & RECORD_EVENTS) != 0u) eventFlags[slot] = (died ? 1u : 0u) | (collided ? 2u : 0u) | (born ? 4u : 0u);
         if (p.velocity.w > 0.0) atomicAdd(groupAlive, 1u);
         if (died) atomicAdd(groupDied, 1u);
         if (collided) atomicAdd(groupCollided, 1u);
+        if (born) atomicAdd(groupBorn, 1u);
     }
 
     barrier();
@@ -180,5 +183,6 @@ void main() {
         state[4u + gl_WorkGroupID.x] = groupAlive;
         state[4u + groups + gl_WorkGroupID.x] = groupDied;
         state[4u + 2u * groups + gl_WorkGroupID.x] = groupCollided;
+        state[4u + 3u * groups + gl_WorkGroupID.x] = groupBorn;
     }
 }

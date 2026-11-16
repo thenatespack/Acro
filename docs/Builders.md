@@ -43,7 +43,19 @@ Editor MCP clients can create and edit these assets with `meshBuild.new`, `meshB
 
 VFX Builder assets (`.vfx`, JSON under `Assets/`) describe visual effects as stacks of the engine's GPU particle emitters: fire is flames plus embers plus smoke, an explosion is a flash, a fireball, smoke and sparks. Each emitter has its own placement, particle settings and a `delay` (timing offset in seconds), and the importer produces a prefab with one `ParticleEmitter` child per emitter, so an effect is placed or spawned like any model. Presets: fire, smoke, sparks, explosion, magic hit, rain, snow, dust, portal.
 
-In the editor, use **New VFX** in the asset browser, then double-click the file (or use **Open in VFX Builder** in the inspector) to open the **VFX Builder** tab next to the Scene view. It previews the effect looping in a viewport of its own over a ground plane and background color (right-drag orbits, the wheel zooms), with Restart, Loop and Pause controls. The sidebar has the preset picker, the emitter list (add, duplicate, delete) and a property grid for the selected emitter and the effect's duration, background and ground. Every change is saved to the file as one undo step and placed copies update.
+**Textures.** An emitter's `texture` names an image, a `.proctex` or a `.sprite` (a path under `Assets/` or `"asset:<id>"`); its RGBA multiplies the particle color, and an empty texture draws a soft disc. An image or `.proctex` is a flipbook of `atlasColumns` × `atlasRows` cells, row by row from the top left; a `.sprite`'s frames (every frame, or those of the tag `spriteTag`) are baked by the importer into a texture of the effect, so its grid comes from the sprite. `frameCount` limits the cells used, `frameRate` loops them at that many frames per second (0 plays them once over each particle's life), and `randomStartFrame` and `frameBlending` vary and smooth the playback. A texture that can't be found is an import warning and the emitter draws discs.
+
+**Sub-emitters.** `subEmitters` links an emitter to up to two others of the same effect: `{"trigger": "birth" | "death" | "collision", "emitter": "Pops", "count": 6, "inheritVelocity": 0.3}`. Each of its particles spawns `count` (1-1024) of the target's particles where it's born, dies or hits the ground, on the GPU. The target then only emits that way: its own rate, bursts, delay and position don't run (its shape and cone are centered on each event), and it can't have links of its own. `killOnCollision` ends a particle's life on a ground hit, for splashes. Renaming an emitter keeps the links to it; deleting one removes them.
+
+```json
+{"emitters": [
+  {"name": "Rockets", "rate": 2, "speed": [8, 10], "gravity": [0, -4, 0], "lifetime": [1.2, 1.4],
+   "subEmitters": [{"trigger": "death", "emitter": "Burst", "count": 120}]},
+  {"name": "Burst", "rate": 0, "shape": "sphere", "speed": [2, 4], "texture": "Sprites/star.sprite", "spriteTag": "twinkle"}
+]}
+```
+
+In the editor, use **New VFX** in the asset browser, then double-click the file (or use **Open in VFX Builder** in the inspector) to open the **VFX Builder** tab next to the Scene view. It previews the effect looping in a viewport of its own over a ground plane and background color (right-drag orbits, the wheel zooms), with Restart, Loop and Pause controls. The sidebar has the preset picker, the emitter list (add, duplicate, delete; each row shows its texture, its links and whether it's a sub-emitter) and a property grid for the selected emitter and the effect's duration, background and ground. The texture field lists the project's images, `.proctex` and `.sprite` files, the sprite tag field that sprite's tags, and a link's emitter field the effect's other emitters. Every change is saved to the file as one undo step and placed copies update.
 
 Editor MCP clients can use `vfx.new {preset}`, `vfx.edit {addEmitters, updateEmitters, removeEmitters}`, `vfx.set`, `vfx.get` and `vfx.open`. See [MCPTools.md](MCPTools.md).
 

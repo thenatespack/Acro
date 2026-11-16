@@ -1,7 +1,7 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 
-// Sub-emitters, step 1: gathers a parent emitter's events of one kind this step (deaths or
+// Sub-emitters, step 1: gathers a parent emitter's events of one kind this step (births, deaths or
 // collisions, flagged per slot by particle_simulate.comp) into an event list, in slot order
 // (a stable compaction like particle_compact.comp, so the result never depends on thread
 // timing), and sets up the child emitter's spawns: `count` particles per event into its ring
@@ -13,7 +13,7 @@
 layout(local_size_x = 256) in;
 
 layout(push_constant) uniform Push {
-    uvec4 parent;  // x capacity, y workgroups, z event mask (1 death, 2 collision), w offset of the per-workgroup counts in `state`
+    uvec4 parent;  // x capacity, y workgroups, z event mask (1 death, 2 collision, 4 birth), w offset of the per-workgroup counts in `state`
     uvec4 child;   // x most events kept, y particles per event, z child capacity
 } push;
 layout(set = 2, binding = 24, std430) readonly buffer Particles { Particle particles[]; };
