@@ -11,8 +11,8 @@ import EngineScene
 /// named after the file with a node per visible layer (its chunks as children, layers spaced
 /// 0.01 units apart in z by draw order), a `Collision` node with one static `Collider2D` per
 /// merged shape, and an `Objects` node with a named node per object point (areas with `trigger`
-/// get a trigger box). Animated tiles show the painted frame in the prefab; `TilemapSpriteDrawer`
-/// plays them.
+/// get a trigger box). A `.sprite` tile set lays out its frames as tiles and its tags become tile
+/// animations. Animated tiles show the painted frame in the prefab; `TilemapSpriteDrawer` plays them.
 public struct TilemapImporter: AssetImporter {
     public init() {}
 
@@ -27,7 +27,10 @@ public struct TilemapImporter: AssetImporter {
         }
         let stem = ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension
         var warnings: [String] = []
-        let built = map.buildTileset(load: { path in Self.image(path, &context) }, warnings: &warnings)
+        var sprite: PixelSprite?
+        let built = map.buildTileset(load: { path in Self.image(path, &context) },
+                                     loadSprite: { path in sprite = Self.sprite(path, &context); return sprite }, warnings: &warnings)
+        if let sprite { map = map.addingAnimations(Tilemap.spriteTagAnimations(sprite)) }
         warnings += map.validate(tileCount: built.layout.count)
         map.normalize()
         for warning in warnings { context.warn(warning) }
@@ -93,6 +96,14 @@ public struct TilemapImporter: AssetImporter {
     private static func relative(_ path: String, from assetPath: String) -> String {
         let depth = assetPath.split(separator: "/").count - 1
         return String(repeating: "../", count: depth) + path
+    }
+
+    /// A `.sprite` tile set, decoded (and recorded as a dependency, so editing it reimports the map).
+    private static func sprite(_ value: String, _ context: inout ImportContext) -> PixelSprite? {
+        let path = normalized(value)
+        guard context.assetsByPath[path] != nil,
+              let data = try? context.readDependency(relativePath: relative(path, from: context.assetPath)) else { return nil }
+        return try? AssetJSON.decoder().decode(PixelSprite.self, from: data)
     }
 
     /// An image of the tile set, decoded (and recorded as a dependency, so editing it reimports the map).
@@ -187,6 +198,7 @@ extension AssetDatabase {
         if let cached = tilemapCache[key]?[id], cached.revision == revision { return cached.map }
         var map = tilemapContents(of: id)
         map?.normalize()
+        if let sprite = map.flatMap({ tilesetSprite(of: $0) }) { map = map?.addingAnimations(Tilemap.spriteTagAnimations(sprite)) }
         tilemapCache[key, default: [:]][id] = (revision, map)
         return map
     }
@@ -200,6 +212,12 @@ extension AssetDatabase {
     public func tileset(of id: AssetID) -> (image: Image, layout: TilesetLayout)? {
         guard let map = tilemap(id), let texture = texture(AssetReference(id, subAsset: "texture/tileset")),
               case .rgba8(let image) = texture.pixels else { return nil }
-        return (image, map.tilesetLayout(imageWidth: image.width, imageHeight: image.height))
+        return (image, map.tilesetLayout(imageWidth: image.width, imageHeight: image.height, tileCount: tilesetSprite(of: map)?.frames.count))
+    }
+
+    /// The Pixel Sprite a map's tile set comes from (nil unless its source is a readable `.sprite`).
+    public func tilesetSprite(of map: Tilemap) -> PixelSprite? {
+        guard case .sprite(let path) = map.tileset.source, let id = id(forPath: TilemapImporter.normalized(path)) else { return nil }
+        return pixelSprite(of: id)
     }
 }

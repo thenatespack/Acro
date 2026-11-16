@@ -124,8 +124,8 @@ extension Tilemap {
 
 extension World {
     /// Spawns one static `Collider2D` entity per collision shape of `map`, with the map's
-    /// bottom-left corner at `origin`. 2D physics reads each collider entity's own `Transform`
-    /// (parents are ignored), so use this when the map isn't placed at the world origin.
+    /// bottom-left corner at `origin` (roots; parent them to move them with something). For a map
+    /// without a placed prefab, whose `Collision` node does the same.
     @MainActor @discardableResult
     public func spawnTilemapColliders(_ map: Tilemap, at origin: Vec2 = .zero) -> [Entity] {
         map.collisionShapes().map { shape in

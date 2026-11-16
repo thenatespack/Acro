@@ -173,7 +173,7 @@ public final class TilemapCanvas: Widget {
                         for x in x0...x1 {
                             let c = map.cell(layer: li, x: x, y: y)
                             guard !c.isEmpty else { continue }
-                            let frame = map.tileset.tile(c.tile)?.animation?.frame(at: workspace.time) ?? c.tile
+                            let frame = workspace.animation(ofTile: c.tile, in: map)?.frame(at: workspace.time) ?? c.tile
                             drawTile(list, frame: frame, cell: c, at: Vec2(origin.x + Float(x) * tw, origin.y + Float(y) * th),
                                      size: Vec2(tw, th), alpha: alpha)
                         }
@@ -327,6 +327,8 @@ public final class TilemapWorkspace {
     public private(set) var texture: GPUTexture?
     public private(set) var sampler: GPUSampler?
     public private(set) var layout: TilesetLayout?
+    /// Tile animations from a `.sprite` tile set's tags (tiles with their own animation keep it).
+    public private(set) var tagAnimations: [Int: TilemapAnimation] = [:]
     /// The rectangle tool's drag, as cells (x0, y0, x1, y1).
     public private(set) var rectPreview: (Int, Int, Int, Int)?
 
@@ -508,6 +510,7 @@ public final class TilemapWorkspace {
         let revision = assets.revision(of: asset)
         guard revision != textureRevision else { return }
         textureRevision = revision
+        tagAnimations = map.flatMap { assets.tilesetSprite(of: $0) }.map(Tilemap.spriteTagAnimations) ?? [:]
         guard let tileset = assets.tileset(of: asset) else {
             layout = nil
             texture = nil
@@ -522,6 +525,11 @@ public final class TilemapWorkspace {
             session.log.error("Tilemap Builder: the tile set can't be shown: \(error)")
             texture = nil
         }
+    }
+
+    /// The animation tile `tile` plays: its own entry's, else its sprite tag's.
+    public func animation(ofTile tile: Int, in map: Tilemap) -> TilemapAnimation? {
+        map.tileset.tile(tile)?.animation ?? tagAnimations[tile]
     }
 
     // MARK: Edits

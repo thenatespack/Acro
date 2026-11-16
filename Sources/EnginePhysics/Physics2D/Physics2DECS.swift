@@ -18,6 +18,13 @@ import EngineScene
 // `Transform` back before the next fixed step (first in `.fixedUpdate`, so game systems and
 // the sync see exact values); a `Transform` the game changed meanwhile is kept and applied.
 // The simulation never reads the interpolated poses.
+// Parents: a collider under a parent with a `Transform` (a placed tilemap's colliders, a hitbox
+// on a moving character) is simulated at its world pose, from its own and its ancestors'
+// `Transform`s computed at sync time (not the last frame's `GlobalTransform`); moving a parent
+// moves it like editing its own `Transform` would. Dynamic bodies write back a local `Transform`
+// that puts them at the simulated world pose. Entities without such a parent use their
+// `Transform` as is, exactly as before. Only position and the rotation about z count; scale
+// doesn't change shapes.
 // The sync walks components in the world's storage order and bodies in slot order, so it is
 // as deterministic as the world itself.
 
@@ -94,6 +101,33 @@ extension PhysicsWorld2D {
         return transform
     }
 
+    /// The world pose of an entity whose local `Transform` is `local` under a transform parent
+    /// with world matrix `parent` (nil: a root, whose pose is its `Transform`'s).
+    static func pose(of local: Transform, parent: Mat4?) -> Pose2D {
+        guard let parent else { return pose(of: local) }
+        return pose(of: Transform(matrix: parent * local.matrix))
+    }
+
+    /// The local `Transform` (keeping `base`'s z and scale in the world) that puts an entity
+    /// under a parent with world matrix `parent` at the world pose `pose`.
+    static func transform(for pose: Pose2D, base: Transform, parent: Mat4?) -> Transform {
+        guard let parent else { return transform(for: pose, base: base) }
+        let world = transform(for: pose, base: Transform(matrix: parent * base.matrix))
+        var local = Transform(matrix: parent.inverse * world.matrix)
+        local.scale = base.scale
+        return local
+    }
+
+    /// The world matrix of `entity`'s transform parent (its hierarchy parent, when that has a
+    /// `Transform`), nil for a root. `cache` holds matrices already worked out this sync.
+    static func parentMatrix(of entity: Entity, in world: World, cache: inout [Entity: Mat4]) -> Mat4? {
+        guard let parent = world.parent(of: entity), world.has(Transform.self, for: parent) else { return nil }
+        if let m = cache[parent] { return m }
+        let m = world.worldMatrix(of: parent)
+        cache[parent] = m
+        return m
+    }
+
     /// ECS -> physics (step 1 above). `addPhysics2D` calls this; call it yourself for a custom loop.
     public func syncFromWorld(_ world: World, dt: Float) {
         var colliders: [(Entity, Collider2D)] = []
@@ -106,10 +140,12 @@ extension PhysicsWorld2D {
             if !world.isAlive(e) || !planned.contains(e) || bodyForEntity[e] != i { removeBody(at: i) }
         }
 
+        var parentCache: [Entity: Mat4] = [:]
         for (e, collider) in colliders {
             let transform = world.get(Transform.self, for: e) ?? Transform()
             let rigidBody = world.get(RigidBody2D.self, for: e)
-            let pose = Self.pose(of: transform)
+            let parent = Self.parentMatrix(of: e, in: world, cache: &parentCache)
+            let pose = Self.pose(of: transform, parent: parent)
             let motion = rigidBody?.motion ?? .static
             let offset = Pose2D(position: collider.offset, angle: collider.rotation)
             guard let i = bodyForEntity[e], bodies[i].isAlive, bodies[i].entity == e else {
@@ -122,7 +158,7 @@ extension PhysicsWorld2D {
                     startsAsleep: rb.startsAsleep, fixedRotation: rb.fixedRotation, entity: e))
                 let index = Int(id.index)
                 bodyForEntity[e] = index
-                bodies[index].sync = BodySync2D(transform: transform, rigidBody: rigidBody, collider: collider)
+                bodies[index].sync = BodySync2D(transform: transform, rigidBody: rigidBody, collider: collider, parent: parent)
                 continue
             }
             if collider != bodies[i].sync.collider {
@@ -147,9 +183,10 @@ extension PhysicsWorld2D {
                 }
                 bodies[i].sync.rigidBody = rb
             }
-            if transform != bodies[i].sync.transform {
+            if transform != bodies[i].sync.transform || parent != bodies[i].sync.parent {
                 if motion == .kinematic { moveKinematic(at: i, to: pose, dt: dt) } else { setPose(at: i, pose) }
                 bodies[i].sync.transform = transform
+                bodies[i].sync.parent = parent
             }
         }
 
@@ -201,7 +238,7 @@ extension PhysicsWorld2D {
                 bodies[i].sync.rigidBody = rb
             }
             guard let current = world.get(Transform.self, for: e) else { continue }
-            let transform = Self.transform(for: body.pose, base: current)
+            let transform = Self.transform(for: body.pose, base: current, parent: body.sync.parent)
             if transform != current { world.add(transform, to: e) }
             bodies[i].sync.transform = transform
         }
@@ -226,7 +263,7 @@ extension PhysicsWorld2D {
                 bodies[i].smoothed = nil
                 continue
             }
-            let shown = Self.transform(for: interpolated(i, alpha), base: base)
+            let shown = Self.transform(for: interpolated(i, alpha), base: base, parent: bodies[i].sync.parent)
             if shown != current { world.add(shown, to: e) }
             bodies[i].smoothed = shown == base ? nil : shown
         }

@@ -461,25 +461,40 @@ public final class TilemapBuilderView {
         switch map.tileset.source {
         case .image(let path, _, _): source = path.isEmpty ? "no image" : path
         case .images(let paths): source = "\(paths.count) images"
+        case .sprite(let path): source = path.isEmpty ? "no sprite" : "\(path) (tile i = frame i)"
         case .unsupported(let kind, _): source = "\(kind) (not supported)"
         }
         let images = imagePaths()
         if !images.isEmpty {
             var current = 0
-            if case .image(let path, _, _) = map.tileset.source, let i = images.firstIndex(of: path) { current = i + 1 }
-            let picker = Dropdown(options: ["Tile set image…"] + images, selectedIndex: current, name: "tilemapTilesetImage") { [unowned self] i in
+            switch map.tileset.source {
+            case .image(let path, _, _), .sprite(let path): current = images.firstIndex(of: path).map { $0 + 1 } ?? 0
+            default: break
+            }
+            let picker = Dropdown(options: ["Tile set image or sprite…"] + images, selectedIndex: current, name: "tilemapTilesetImage") { [unowned self] i in
                 guard i > 0, var m = workspace.current else { return }
-                m.tileset.source = .image(path: images[i - 1])
+                let path = images[i - 1]
+                m.tileset.source = TilesetSource(path: path)
+                // A sprite's frames are the tiles: take its frame size.
+                if case .sprite = m.tileset.source, let assets = session.assets, let id = assets.id(forPath: path),
+                   let sprite = assets.pixelSprite(of: id), sprite.width > 0, sprite.height > 0 {
+                    m.tileWidth = sprite.width
+                    m.tileHeight = sprite.height
+                }
                 workspace.apply(m, label: "Change Tile Set")
             }
-            picker.tooltip = "Slice another image into \(map.tileW) x \(map.tileH) tiles"
+            picker.tooltip = "Slice another image into \(map.tileW) x \(map.tileH) tiles, or use a Pixel Sprite's frames as tiles (its tags animate them)"
             view.addChild(picker)
         }
-        view.addChild(note("Tile set: \(source), \(workspace.layout?.count ?? 0) tiles of \(map.tileW) x \(map.tileH) px. One tile is \(String(format: "%g", map.cellSize.x)) world units wide."))
+        var text = "Tile set: \(source), \(workspace.layout?.count ?? 0) tiles of \(map.tileW) x \(map.tileH) px. One tile is \(String(format: "%g", map.cellSize.x)) world units wide."
+        if !workspace.tagAnimations.isEmpty {
+            text += " Sprite tags animate tile\(workspace.tagAnimations.count == 1 ? "" : "s") \(workspace.tagAnimations.keys.sorted().map(String.init).joined(separator: ", "))."
+        }
+        view.addChild(note(text))
     }
 
     private func imagePaths() -> [String] {
-        let extensions = ["png", "jpg", "jpeg", "tga", "bmp"]
+        let extensions = ["png", "jpg", "jpeg", "tga", "bmp", "sprite"]
         return (session.assets?.allRecords ?? []).map(\.path).filter { path in extensions.contains { path.lowercased().hasSuffix("." + $0) } }
     }
 }

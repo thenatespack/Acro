@@ -63,11 +63,11 @@ private func blank(_ columns: Int = 8, _ rows: Int = 6, layers: [String] = ["Gro
             {"size": [2, 2], "tileset": {"source": "a.png"}, "layers": [{"name": "L", "data": [0, 1, -1, 3]}]}
             """.utf8))
         #expect(flat.layers[0].data == [0, 1, -1, 3] && flat.tileset.source == .image(path: "a.png"))
-        let future = try AssetJSON.decoder().decode(Tilemap.self, from: Data(#"{"tileset": {"source": {"kind": "sprite", "sprite": "a.sprite"}}}"#.utf8))
-        #expect(future.tileset.source.kind == "sprite")
+        let future = try AssetJSON.decoder().decode(Tilemap.self, from: Data(#"{"tileset": {"source": {"kind": "aseprite", "file": "a.aseprite"}}}"#.utf8))
+        #expect(future.tileset.source.kind == "aseprite")
         var warnings: [String] = []
         _ = future.buildTileset(load: { _ in nil }, warnings: &warnings)
-        #expect(warnings.contains { $0.contains("'sprite'") })
+        #expect(warnings.contains { $0.contains("'aseprite'") })
         let reencoded = try AssetJSON.decoder().decode(Tilemap.self, from: future.fileData())
         #expect(reencoded.tileset.source == future.tileset.source, "unknown sources are kept as written")
     }
@@ -285,5 +285,138 @@ private func blank(_ columns: Int = 8, _ rows: Int = 6, layers: [String] = ["Gro
         let clip = animation.clip
         for t in stride(from: Float(0), to: 4, by: 0.25) { #expect(animation.frame(at: t) == clip.frame(at: t)) }
         #expect(TilemapAnimation(frames: [1, 2], fps: 10).frame(at: 0.15) == 2)
+    }
+
+    /// A 3-frame 8 x 8 sprite, frame f filled with palette color f + 1, frames 1-2 tagged "Flicker".
+    private func flickerSprite() -> PixelSprite {
+        var sprite = PixelSprite(width: 8, height: 8, frameCount: 3, tags: [PixelSprite.Tag("Flicker", from: 1, to: 2, mode: .pingPong)])
+        for f in 0..<3 { sprite.layers[0].cels[f] = [UInt8](repeating: UInt8(f + 1), count: 64) }
+        sprite.frames[1].duration = 200
+        sprite.frames[2].duration = 200
+        return sprite
+    }
+
+    @MainActor @Test func spriteTilesetUsesFramesAndTags() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        let spriteID = try database.createPixelSprite(flickerSprite(), at: "Tiles/tiles.sprite")
+
+        var map = Tilemap(tileWidth: 8, tileHeight: 8, columns: 4, rows: 2,
+                          tileset: TilemapTileset(source: TilesetSource(path: "Tiles/tiles.sprite")), layers: [TilemapLayer(name: "L")])
+        #expect(map.tileset.source == .sprite(path: "Tiles/tiles.sprite"))
+        map.normalize()
+        map.paint(layer: 0, cells: [(0, 0), (1, 0)], TileCell(tile: 1))
+        map.setCell(layer: 0, x: 2, y: 0, TileCell(tile: 0))
+        let text = String(decoding: try map.fileData(), as: UTF8.self)
+        #expect(text.contains("\"sprite\""))
+        #expect(try AssetJSON.decoder().decode(Tilemap.self, from: map.fileData()).tileset.source == map.tileset.source)
+
+        let id = try database.createTilemap(map, at: "Levels/sprite.tilemap")
+        let record = try #require(database.record(id))
+        #expect(record.importError == nil)
+        let tileset = try #require(database.tileset(of: id))
+        // 3 frames in a 2 x 2 grid of 10 px cells (8 px plus a pixel of edge on each side); the last cell is empty.
+        #expect(tileset.layout.count == 3 && tileset.layout.columns == 2)
+        #expect(tileset.image.width == 20 && tileset.image.height == 20)
+        let color = try #require(flickerSprite().color(of: 2))   // frame 1 is filled with value 2
+        let p = (1 * 20 + 11) * 4   // frame 1 (cell 1 of row 0), top-left pixel
+        #expect(Array(tileset.image.pixels[p..<p + 4]) == [color.r, color.g, color.b, color.a], "\(Array(tileset.image.pixels[p..<p + 4])) \(color)")
+        // The tag animates the tile of its first frame, at the frames' 200 ms (5 fps).
+        let runtime = try #require(database.tilemap(id))
+        let animation = try #require(runtime.tileset.tile(1)?.animation)
+        #expect(animation.frames == [1, 2] && animation.fps == 5 && animation.mode == "pingPong")
+        #expect(runtime.tileset.tile(0)?.animation == nil)
+
+        // A tile's own animation wins over the tag.
+        let own = TilemapAnimation(frames: [1, 0], fps: 3)
+        #expect(map.addingAnimations([1: animation]).tileset.tile(1)?.animation == animation)
+        var withOwn = map
+        withOwn.tileset.setTile(TilemapTile(index: 1, animation: own))
+        #expect(withOwn.addingAnimations([1: animation]).tileset.tile(1)?.animation == own)
+
+        // Editing the sprite reimports the map (a dependency).
+        let revision = database.revision(of: id)
+        var sprite = flickerSprite()
+        sprite.tags = []
+        try database.writePixelSprite(sprite, to: spriteID)
+        _ = database.asset(id)
+        #expect(database.revision(of: id) > revision)
+        #expect(database.tilemap(id)?.tileset.tile(1)?.animation == nil)
+
+        // A missing sprite warns.
+        var missing = map
+        missing.tileset.source = .sprite(path: "Tiles/none.sprite")
+        var warnings: [String] = []
+        _ = missing.buildTileset(load: { _ in nil }, warnings: &warnings)
+        #expect(warnings.contains { $0.contains("'Tiles/none.sprite'") })
+    }
+
+    @MainActor @Test func cookedGamesReadTheTilemapAndItsSpriteTags() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        try database.createPixelSprite(flickerSprite(), at: "Tiles/tiles.sprite")
+        var map = Tilemap(tileWidth: 8, tileHeight: 8, columns: 4, rows: 2,
+                          tileset: TilemapTileset(source: .sprite(path: "Tiles/tiles.sprite")), layers: [TilemapLayer(name: "L")])
+        map.normalize()
+        map.paint(layer: 0, cells: [(0, 1), (1, 1)], TileCell(tile: 0))
+        map.objects = [TilemapObject(name: "Spawn", type: "spawn", position: Vec2(1, 1))]
+        let id = try database.createTilemap(map, at: "Levels/one.tilemap")
+        let scene = project.url(forAssetPath: "Scenes/Main.scene")
+        try FileManager.default.createDirectory(at: scene.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try World().save().write(to: scene)
+        database.scan()
+
+        let report = try AssetCooker.plan(database: database, options: CookOptions(scenes: ["Scenes/Main.scene"], include: ["Levels/one.tilemap"]))
+            .run(to: project.root.appendingPathComponent("out"))
+        let assets = AssetDatabase(mounting: try AssetPack(url: URL(fileURLWithPath: report.packPath)))
+        let cooked = try #require(assets.tilemap(path: "Assets/Levels/one.tilemap"))
+        #expect(cooked.object(named: "Spawn")?.type == "spawn")
+        #expect(cooked.tileset.tile(1)?.animation?.frames == [1, 2], "the sprite ships too, for its tags")
+        #expect(assets.prefab(AssetReference(id)) != nil)
+    }
+
+    /// 2D physics simulates parented colliders at their world pose (a placed tilemap prefab's colliders).
+    @MainActor @Test func parentedCollidersUseTheirWorldPose() throws {
+        let world = World()
+        let physics = PhysicsWorld2D()
+        world.addPhysics2D(physics)
+        // A level placed at x 10: its floor is a child at local (0, -0.5).
+        let level = world.spawn(Transform(position: Vec3(10, 0, 0)), Name("Level"))
+        let floor = world.spawn(Transform(position: Vec3(0, -0.5, 0)), Collider2D(.box(halfExtents: Vec2(3, 0.5))))
+        world.setParent(floor, to: level)
+        // A root box above the placed floor and a box parented under a rig at x 5.
+        let box = world.spawn(Transform(position: Vec3(10, 3, 0)), Collider2D(.box(halfExtents: Vec2(0.5, 0.5))), RigidBody2D())
+        let rig = world.spawn(Transform(position: Vec3(5, 0, 0)))
+        let child = world.spawn(Transform(position: Vec3(6, 4, 1)), Collider2D(.box(halfExtents: Vec2(0.5, 0.5))), RigidBody2D())
+        world.setParent(child, to: rig)
+        for _ in 0..<120 { world.update(dt: 1.0 / 60) }
+
+        let floorBody = try #require(physics.body(for: floor))
+        let floorPose = try #require(physics.pose(of: floorBody))
+        #expect(floorPose.position == Vec2(10, -0.5))
+        let t = try #require(world.get(Transform.self, for: box))
+        #expect(abs(t.position.y - 0.5) < 0.06 && abs(t.position.x - 10) < 0.05)
+        // The parented body lands at world (11, 0.5) and writes back a local Transform (z kept).
+        let c = try #require(world.get(Transform.self, for: child))
+        #expect(abs(c.position.y - 0.5) < 0.06 && abs(c.position.x - 6) < 0.05 && c.position.z == 1)
+
+        // Moving the parent moves its colliders.
+        world.modify(Transform.self, for: level) { $0.position = Vec3(20, 0, 0) }
+        world.update(dt: 1.0 / 60)
+        #expect(physics.pose(of: floorBody)?.position == Vec2(20, -0.5))
+
+        // A placed tilemap prefab's colliders follow the prefab root.
+        var map = blank(4, 2)
+        map.paint(layer: 0, cells: map.rectCells(0, 1, 3, 1), TileCell(tile: 16))
+        let placed = world.spawnTilemapColliders(map, at: .zero)
+        try #require(placed.count == 1)
+        let root = world.spawn(Transform(position: Vec3(0, 100, 0)))
+        for e in placed { world.setParent(e, to: root) }
+        world.update(dt: 1.0 / 60)
+        let stripBody = try #require(physics.body(for: placed[0]))
+        let strip = try #require(physics.pose(of: stripBody))
+        #expect(strip.position.y > 100 && strip.position.y < 102)
     }
 }

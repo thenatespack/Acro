@@ -21,9 +21,11 @@ public enum EditorTilemapCommands {
         A tilemap is a grid of `size` [columns, rows] cells of `tileSize` [w, h] pixels; `pixelsPerUnit` (0: the tile width, so \
         a tile is 1 world unit) sets the world size. Cells are addressed [x, y] with x right and y DOWN from the top-left cell. \
         `tileset`: `source` ({"kind": "image", "image": "Tiles/sheet.png", "margin", "spacing"} slices a sprite sheet into tiles \
-        in reading order, tile 0 first; {"kind": "images", "images": [...]} packs one image per tile), `filter` (nearest/linear), \
+        in reading order, tile 0 first; {"kind": "images", "images": [...]} packs one image per tile; {"kind": "sprite", "sprite": \
+        "Tiles/tiles.sprite"} (or a path ending .sprite) uses a Pixel Sprite's frames, tile i = frame i, and plays each of its tags \
+        on the tag's first tile unless that tile has its own animation), `filter` (nearest/linear), \
         `tiles` (per-tile entries: index, name, collision none/full/top/bottom/slopeUp/slopeDown/polygon (+points 0-1, y up), \
-        oneWay, tags, properties, animation {frames, fps, mode loop/pingPong}). `layers` (name, cells (rows of cell values, top \
+        oneWay, tags, properties, animation {frames, fps, mode loop/pingPong/once}). `layers` (name, cells (rows of cell values, top \
         row first), order, parallax [x,y], opacity, visible, collision) draw in list order, first at the back. A cell value is -1 \
         (empty) or a tile index + 65536 (flip x) + 131072 (flip y) + 262144 * quarter turns clockwise. `terrains` are auto-tiling \
         sets (name, mode edges (mask N1 E2 S4 W8) or blob (8 neighbors), first (edges: tile first+mask), tiles {"mask": tile}, \
@@ -35,16 +37,17 @@ public enum EditorTilemapCommands {
 extension TilesetSource: JSONSchemaProviding {
     public static var jsonSchema: JSON {
         [
-            "description": "Where the tile pictures come from: an image path (a sprite sheet sliced by tileSize), or an object with a kind.",
+            "description": "Where the tile pictures come from: an image path (a sprite sheet sliced by tileSize), a .sprite path (tile i = frame i), or an object with a kind.",
             "oneOf": [
                 ["type": "string"],
                 [
                     "type": "object",
                     "properties": [
-                        "kind": ["type": "string", "enum": ["image", "images"]],
+                        "kind": ["type": "string", "enum": ["image", "images", "sprite"]],
                         "image": ["type": "string", "description": "kind image: the sheet, a path under Assets/"],
                         "margin": ["type": "integer"], "spacing": ["type": "integer"],
                         "images": ["type": "array", "items": ["type": "string"], "description": "kind images: one image per tile"],
+                        "sprite": ["type": "string", "description": "kind sprite: a Pixel Sprite (.sprite) under Assets/; its tags animate tiles"],
                     ],
                 ],
             ],
@@ -205,7 +208,7 @@ enum TilemapCheck {
     static func problems(_ map: Tilemap, tileCount: Int?, in session: EditorSession) -> [String] {
         var problems: [String] = []
         for path in map.tileset.source.paths where session.assets?.id(forPath: TilemapImporter.normalized(path)) == nil {
-            problems.append("tile set: no image asset '\(path)'")
+            problems.append("tile set: no \(map.tileset.source.kind == "sprite" ? "sprite" : "image") asset '\(path)'")
         }
         if case .unsupported(let kind, _) = map.tileset.source { problems.append("tile set: the source kind '\(kind)' isn't supported") }
         return problems + map.validate(tileCount: map.tileset.source.paths.isEmpty || problems.isEmpty ? tileCount : nil)
@@ -274,11 +277,11 @@ public enum TilemapNewCommand: EditorCommand {
         public var folder: String?
         /// Default "New Tilemap" (the file gets ".tilemap").
         public var name: String?
-        /// [width, height] in pixels (default [16, 16]).
+        /// [width, height] in pixels (default [16, 16], or a `.sprite` tile set's frame size).
         public var tileSize: [Int]?
         /// [columns, rows] (default [40, 22]).
         public var size: [Int]?
-        /// An image path (a sprite sheet sliced by tileSize) or a tileset object. Default: a starter tile set (dirt with
+        /// An image path (a sprite sheet sliced by tileSize), a `.sprite` path (tile i = frame i) or a tileset object. Default: a starter tile set (dirt with
         /// grass edges as the "Dirt" terrain, stone, brick, platform, ramps, spikes, water, torch, coin, ladder) written next to the map.
         public var tileset: JSONValue?
         /// Layer names, back to front (default ["Background", "Ground", "Foreground"]; only "Ground" collides).
@@ -308,7 +311,13 @@ public enum TilemapNewCommand: EditorCommand {
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> TilemapResult {
-        let tile = arguments.tileSize ?? [16, 16]
+        // A .sprite tile set's frames set the tile size unless it's given.
+        var spriteTile: [Int]?
+        if arguments.tileSize == nil, case .string(let path)? = arguments.tileset, case .sprite = TilesetSource(path: path),
+           let id = session.assets?.id(forPath: TilemapImporter.normalized(path)), let sprite = session.assets?.pixelSprite(of: id) {
+            spriteTile = [sprite.width, sprite.height]
+        }
+        let tile = arguments.tileSize ?? spriteTile ?? [16, 16]
         let size = arguments.size ?? [40, 22]
         guard tile.count == 2, tile.allSatisfy({ $0 >= 1 && $0 <= 1024 }) else { throw CommandError.failed("\(title): tileSize is [width, height], 1...1024 pixels") }
         guard size.count == 2, size.allSatisfy({ $0 >= 1 && $0 <= Tilemap.maxSide }) else {
@@ -318,7 +327,7 @@ public enum TilemapNewCommand: EditorCommand {
         var map = Tilemap(tileWidth: tile[0], tileHeight: tile[1], columns: size[0], rows: size[1], pixelsPerUnit: max(arguments.pixelsPerUnit ?? 0, 0))
         switch arguments.tileset {
         case .string(let path)?:
-            map.tileset = TilemapTileset(source: .image(path: path))
+            map.tileset = TilemapTileset(source: TilesetSource(path: path))
         case .object?:
             do { map.tileset = try JSONDecoder().decode(TilemapTileset.self, from: JSONEncoder().encode(arguments.tileset)) } catch {
                 throw CommandError.failed("\(title): tileset: \(error)")
@@ -463,7 +472,7 @@ public enum TilemapEditCommand: EditorCommand {
         public var chunkSize: Int?
         /// sRGB [r, g, b, a] behind the map in the editor.
         public var background: Vec4?
-        /// A new tile set source (an image path, or {"kind": "images", "images": [...]}).
+        /// A new tile set source (an image or `.sprite` path, or {"kind": "images", "images": [...]}).
         public var tilesetSource: TilesetSource?
         /// "nearest" or "linear".
         public var filter: String?

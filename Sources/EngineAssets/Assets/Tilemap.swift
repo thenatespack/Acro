@@ -118,7 +118,7 @@ public enum TileCollision: String, Codable, CaseIterable, Sendable {
 public struct TilemapAnimation: Codable, Equatable, Sendable {
     public var frames: [Int]
     public var fps: Float
-    /// "loop" or "pingPong" (as `SpriteLoopMode`).
+    /// "loop", "pingPong" or "once" (holds the last frame), as `SpriteLoopMode`.
     public var mode: String
 
     public init(frames: [Int] = [], fps: Float = 8, mode: String = "loop") {
@@ -142,6 +142,7 @@ public struct TilemapAnimation: Codable, Equatable, Sendable {
         let n = frames.count
         guard n > 1, fps > 0 else { return frames[0] }
         let tick = Int((max(time, 0) * fps).rounded(.down))
+        if mode == "once" { return frames[min(tick, n - 1)] }
         if mode == "pingPong" {
             let cycle = 2 * n - 2
             let p = tick % cycle
@@ -211,25 +212,37 @@ public struct TilemapTile: Codable, Equatable, Sendable {
 /// Where a tile set's pictures come from. Encoded as an object with a `kind`:
 /// `{"kind": "image", "image": "Tiles/tiles.png", "margin": 0, "spacing": 0}` slices one image
 /// (a sprite sheet) into `tileSize` cells in reading order; `{"kind": "images", "images": [...]}`
-/// packs separate images (one tile each, in order) into an atlas. A plain string is an image path.
+/// packs separate images (one tile each, in order) into an atlas; `{"kind": "sprite", "sprite":
+/// "Tiles/tiles.sprite"}` uses a Pixel Sprite's frames (tile i is frame i) and plays its tags as
+/// tile animations (`Tilemap.spriteTagAnimations(_:)`). A plain string is an image path, or a
+/// sprite when it ends in `.sprite`.
 ///
-/// More kinds can be added here (a Pixel Sprite Builder `.sprite`, say); a kind this build
-/// doesn't know is kept as `unsupported` and imports with a warning.
+/// A kind this build doesn't know is kept as `unsupported` and imports with a warning.
 public enum TilesetSource: Equatable, Sendable, Codable {
     case image(path: String, margin: Int = 0, spacing: Int = 0)
     case images([String])
+    /// A Pixel Sprite Builder `.sprite`: frame i is tile i.
+    case sprite(path: String)
     case unsupported(kind: String, value: JSONValue)
 
-    private enum CodingKeys: String, CodingKey { case kind, image, margin, spacing, images }
+    private enum CodingKeys: String, CodingKey { case kind, image, margin, spacing, images, sprite }
+
+    /// The source for one asset path: a `.sprite` file, else an image sliced into tiles.
+    public init(path: String) {
+        self = path.lowercased().hasSuffix(".sprite") ? .sprite(path: path) : .image(path: path)
+    }
 
     public init(from decoder: any Decoder) throws {
         if let path = try? decoder.singleValueContainer().decode(String.self) {
-            self = .image(path: path)
+            self = TilesetSource(path: path)
             return
         }
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        let kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? (c.contains(.images) ? "images" : "image")
+        let kind = try c.decodeIfPresent(String.self, forKey: .kind)
+            ?? (c.contains(.images) ? "images" : c.contains(.sprite) ? "sprite" : "image")
         switch kind {
+        case "sprite":
+            self = .sprite(path: try c.decodeIfPresent(String.self, forKey: .sprite) ?? "")
         case "image":
             self = .image(path: try c.decodeIfPresent(String.self, forKey: .image) ?? "",
                           margin: max(try c.decodeIfPresent(Int.self, forKey: .margin) ?? 0, 0),
@@ -253,6 +266,10 @@ public enum TilesetSource: Equatable, Sendable, Codable {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode("images", forKey: .kind)
             try c.encode(paths, forKey: .images)
+        case .sprite(let path):
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode("sprite", forKey: .kind)
+            try c.encode(path, forKey: .sprite)
         case .unsupported(_, let value):
             try value.encode(to: encoder)
         }
@@ -263,6 +280,7 @@ public enum TilesetSource: Equatable, Sendable, Codable {
         switch self {
         case .image: "image"
         case .images: "images"
+        case .sprite: "sprite"
         case .unsupported(let kind, _): kind
         }
     }
@@ -272,6 +290,7 @@ public enum TilesetSource: Equatable, Sendable, Codable {
         switch self {
         case .image(let path, _, _): path.isEmpty ? [] : [path]
         case .images(let paths): paths
+        case .sprite(let path): path.isEmpty ? [] : [path]
         case .unsupported: []
         }
     }
@@ -911,12 +930,17 @@ public struct TilesetLayout: Equatable, Sendable {
 
 extension Tilemap {
     /// The layout of the tile set texture of `width` x `height` pixels this map's source produces.
-    public func tilesetLayout(imageWidth width: Int, imageHeight height: Int) -> TilesetLayout {
+    /// `tileCount` caps the number of tiles (a sprite's frame count: its grid's last row may be part empty).
+    public func tilesetLayout(imageWidth width: Int, imageHeight height: Int, tileCount: Int? = nil) -> TilesetLayout {
         switch tileset.source {
+        case .sprite:
+            // Frames in tileSize cells, each padded by one pixel repeating its edge (see `spriteTileset`).
+            return TilesetLayout(imageWidth: width, imageHeight: height, tileWidth: tileW, tileHeight: tileH, margin: 1, spacing: 2,
+                                 count: tileCount)
         case .image(_, let margin, let spacing):
             return TilesetLayout(imageWidth: width, imageHeight: height, tileWidth: tileW, tileHeight: tileH, margin: margin, spacing: spacing)
         case .images(let paths):
-            return TilesetLayout(imageWidth: width, imageHeight: height, tileWidth: tileW, tileHeight: tileH, count: paths.count)
+            return TilesetLayout(imageWidth: width, imageHeight: height, tileWidth: tileW, tileHeight: tileH, count: tileCount ?? paths.count)
         case .unsupported:
             return TilesetLayout(imageWidth: width, imageHeight: height, tileWidth: tileW, tileHeight: tileH, count: 0)
         }
@@ -924,7 +948,9 @@ extension Tilemap {
 
     /// The tile set texture and its layout. `load` returns the image at an asset path (nil if it can't).
     /// Problems (missing images, tiles of another size, an unsupported source) go to `warnings`.
-    public func buildTileset(load: (String) -> Image?, warnings: inout [String]) -> (image: Image, layout: TilesetLayout) {
+    /// `loadSprite` reads a `.sprite` source.
+    public func buildTileset(load: (String) -> Image?, loadSprite: (String) -> PixelSprite? = { _ in nil },
+                             warnings: inout [String]) -> (image: Image, layout: TilesetLayout) {
         let tw = tileW, th = tileH
         func placeholder() -> (Image, TilesetLayout) {
             let image = Image(width: tw, height: th, pixels: [UInt8](repeating: 255, count: tw * th * 4))
@@ -970,10 +996,76 @@ extension Tilemap {
             }
             return (Image(width: width, height: height, pixels: pixels),
                     TilesetLayout(imageWidth: width, imageHeight: height, tileWidth: tw, tileHeight: th, count: paths.count))
+        case .sprite(let path):
+            guard !path.isEmpty else {
+                warnings.append("the tile set has no sprite")
+                return placeholder()
+            }
+            guard let sprite = loadSprite(path), !sprite.frames.isEmpty else {
+                warnings.append("tile set: can't read the sprite '\(path)'")
+                return placeholder()
+            }
+            if sprite.width != tw || sprite.height != th {
+                warnings.append("tile set: '\(path)' frames are \(sprite.width) x \(sprite.height), not \(tw) x \(th); cropped or padded")
+            }
+            return spriteTileset(sprite)
         case .unsupported(let kind, _):
             warnings.append("tile set: the source kind '\(kind)' isn't supported by this engine version")
             return placeholder()
         }
+    }
+
+    /// A sprite's frames as a tile set texture: frame i in grid cell i (`PixelSprite.sheetColumns`
+    /// per row), each cropped or padded to the map's tile size from its top-left and surrounded by
+    /// one pixel repeating its edge, so filtering never bleeds into a neighbor.
+    public func spriteTileset(_ sprite: PixelSprite) -> (image: Image, layout: TilesetLayout) {
+        let tw = tileW, th = tileH
+        let count = sprite.frames.count
+        let columns = PixelSprite.sheetColumns(frameCount: count)
+        let rows = max((count + columns - 1) / columns, 1)
+        let cellW = tw + 2, cellH = th + 2
+        let width = columns * cellW, height = rows * cellH
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        for f in 0..<count {
+            let frame = sprite.image(frame: f)
+            let left = (f % columns) * cellW + 1, top = (f / columns) * cellH + 1
+            for dy in -1...th {
+                let sy = min(max(dy, 0), th - 1)
+                guard sy < frame.height else { continue }
+                for dx in -1...tw {
+                    let sx = min(max(dx, 0), tw - 1)
+                    guard sx < frame.width else { continue }
+                    let s = (sy * frame.width + sx) * 4, d = ((top + dy) * width + left + dx) * 4
+                    for k in 0..<4 { pixels[d + k] = frame.pixels[s + k] }
+                }
+            }
+        }
+        return (Image(width: width, height: height, pixels: pixels), tilesetLayout(imageWidth: width, imageHeight: height, tileCount: count))
+    }
+
+    /// Tile animations from a sprite's tags: each tag plays on the tile of its first frame, at the
+    /// tag's per-frame timing (as `PixelSprite.clips()` steps it). One-frame tags and untagged
+    /// sprites give none.
+    public static func spriteTagAnimations(_ sprite: PixelSprite) -> [Int: TilemapAnimation] {
+        guard !sprite.tags.isEmpty, !sprite.frames.isEmpty else { return [:] }
+        var out: [Int: TilemapAnimation] = [:]
+        for clip in sprite.clips() where Set(clip.frames).count > 1 {
+            guard let first = clip.frames.first, out[first] == nil else { continue }
+            out[first] = TilemapAnimation(frames: clip.frames, fps: clip.fps, mode: clip.mode.rawValue)
+        }
+        return out
+    }
+
+    /// The map with `animations` given to tiles that have no animation of their own (the file's
+    /// entries win). How a `.sprite` tile set's tag animations reach game code and the importer.
+    public func addingAnimations(_ animations: [Int: TilemapAnimation]) -> Tilemap {
+        var map = self
+        for (index, animation) in animations.sorted(by: { $0.key < $1.key }) where map.tileset.tile(index)?.animation == nil {
+            var tile = map.tileset.tile(index) ?? TilemapTile(index: index)
+            tile.animation = animation
+            map.tileset.setTile(tile)
+        }
+        return map
     }
 
     /// Problems found without reading images: unknown tiles, bad layers and terrains, duplicate names.
