@@ -135,6 +135,10 @@ public enum CookError: Error, Equatable, CustomStringConvertible {
 }
 
 public enum AssetCooker {
+    /// Importers whose source files ship unchanged: audio is streamed, and builder files that
+    /// game code reads as written at run time (data tables, behavior trees, UI layouts…).
+    public static let shippedAsWritten: Set<String> = ["audio", "table", "behavior", "ui"]
+
     /// Opens the project at `url`, scans it and cooks it to `output` (a folder). Blocks.
     @MainActor
     public static func cook(projectAt url: URL, options: CookOptions, to output: URL,
@@ -356,13 +360,8 @@ public struct CookPlan: Sendable {
     private func cook(_ source: Source) throws -> Cooked {
         var entry = AssetPackManifest.Asset(id: source.id, path: source.path, importer: source.importer?.name, settings: nil,
                                             main: nil, objects: [], files: [:], data: nil)
-        // Audio and files without an importer ship as they are.
-        guard let importer = source.importer, importer.name != "audio", importer.name != "table", importer.name != "behavior" else {
-            let data = try Data(contentsOf: source.sourceURL)
-            if let importer = source.importer { entry.settings = importer.effectiveSettings(source.settings) }
-            return Cooked(entry: entry, files: [:], data: data, origin: .file, references: [], warnings: [])
-        }
-        guard let importer = source.importer, importer.name != "audio", importer.name != "table", importer.name != "ui" else {
+        // Audio, files read as written at run time, and files without an importer ship as they are.
+        guard let importer = source.importer, !AssetCooker.shippedAsWritten.contains(importer.name) else {
             let data = try Data(contentsOf: source.sourceURL)
             if let importer = source.importer { entry.settings = importer.effectiveSettings(source.settings) }
             return Cooked(entry: entry, files: [:], data: data, origin: .file, references: [], warnings: [])
