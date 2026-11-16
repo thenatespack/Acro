@@ -110,10 +110,7 @@ extension Animator {
     public var clipHandles: [AnimationClipHandle] {
         var handles: [AnimationClipHandle] = []
         for state in stateMachine.states {
-            switch state.motion {
-            case .clip(let clip): handles.append(clip)
-            case .blend1D(_, let entries): handles += entries.map(\.clip)
-            }
+            handles += state.motion.clips
         }
         return handles + layers.map(\.clip)
     }
@@ -147,7 +144,11 @@ extension AnimationGraph {
     public var stateMachine: AnimationStateMachine {
         let states = states.map { state -> AnimationState in
             let motion: AnimationMotion
-            if let blend = state.blend {
+            if let blend = state.blend, let y = blend.parameterY {
+                motion = .blend2D(x: blend.parameter, y: y, entries: blend.clips.map {
+                    BlendSpace2DEntry(clip: AnimationClipHandle($0.clip), x: $0.position, y: $0.y ?? 0)
+                })
+            } else if let blend = state.blend {
                 motion = .blend1D(parameter: blend.parameter,
                                   entries: blend.clips.map { BlendSpaceEntry(clip: AnimationClipHandle($0.clip), position: $0.position) })
             } else {

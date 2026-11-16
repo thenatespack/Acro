@@ -13,6 +13,9 @@ import EngineScene
 //     {"name": "Locomotion", "position": [0, 0],
 //      "blend": {"parameter": "speed", "clips": [{"clip": "asset:<id>#animation/Idle", "position": 0},
 //                                                {"clip": "asset:<id>#animation/Run", "position": 3}]}},
+//     {"name": "Strafe", "position": [0, 160], "blend": {"parameter": "moveX", "parameterY": "moveY", "clips": [
+//         {"clip": "asset:<id>#animation/Idle", "position": 0, "y": 0}, {"clip": "asset:<id>#animation/Forward", "position": 0, "y": 1},
+//         {"clip": "asset:<id>#animation/Left", "position": -1, "y": 0}, {"clip": "asset:<id>#animation/Right", "position": 1, "y": 0}]}},
 //     {"name": "Jump", "clip": "asset:<id>#animation/Jump", "loops": false, "position": [240, 0]}
 //   ],
 //   "transitions": [
@@ -72,40 +75,51 @@ public struct AnimationGraphParameter: Codable, Equatable, Sendable {
     }
 }
 
-/// A clip at a position along a blend space's parameter.
+/// A clip at a position along a blend space's parameter (at (`position`, `y`) in a 2D one).
 public struct AnimationGraphBlendClip: Codable, Equatable, Sendable {
     public var clip: String
     public var position: Float
+    /// The position along `parameterY` in a 2D blend space (nil reads as 0).
+    public var y: Float?
 
-    public init(clip: String, position: Float) {
+    public init(clip: String, position: Float, y: Float? = nil) {
         self.clip = clip
         self.position = position
+        self.y = y
     }
 
-    private enum CodingKeys: String, CodingKey { case clip, position }
+    private enum CodingKeys: String, CodingKey { case clip, position, y }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         clip = try c.decodeIfPresent(String.self, forKey: .clip) ?? ""
         position = try c.decodeIfPresent(Float.self, forKey: .position) ?? 0
+        y = try c.decodeIfPresent(Float.self, forKey: .y)
     }
 }
 
-/// A 1D blend space: clips mixed by a float parameter (`AnimationMotion.blend1D`).
+/// A blend space: clips mixed by a float parameter (`AnimationMotion.blend1D`), or by two
+/// when `parameterY` is set (`AnimationMotion.blend2D`: each clip sits at (`position`, `y`)).
 public struct AnimationGraphBlend: Codable, Equatable, Sendable {
     public var parameter: String
+    /// The second float parameter of a 2D blend space; nil for a 1D one.
+    public var parameterY: String?
     public var clips: [AnimationGraphBlendClip]
 
-    public init(parameter: String, clips: [AnimationGraphBlendClip] = []) {
+    public init(parameter: String, parameterY: String? = nil, clips: [AnimationGraphBlendClip] = []) {
         self.parameter = parameter
+        self.parameterY = parameterY
         self.clips = clips
     }
 
-    private enum CodingKeys: String, CodingKey { case parameter, clips }
+    public var is2D: Bool { parameterY != nil }
+
+    private enum CodingKeys: String, CodingKey { case parameter, parameterY, clips }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         parameter = try c.decodeIfPresent(String.self, forKey: .parameter) ?? ""
+        parameterY = try c.decodeIfPresent(String.self, forKey: .parameterY)
         clips = try c.decodeIfPresent([AnimationGraphBlendClip].self, forKey: .clips) ?? []
     }
 }
@@ -356,6 +370,7 @@ public struct AnimationGraph: Codable, Equatable, Sendable {
         for s in states.indices {
             if states[s].speedParameter == old { states[s].speedParameter = new }
             if states[s].blend?.parameter == old { states[s].blend?.parameter = new }
+            if states[s].blend?.parameterY == old { states[s].blend?.parameterY = new }
         }
         for t in transitions.indices {
             for c in transitions[t].conditions.indices where transitions[t].conditions[c].parameter == old {
@@ -415,6 +430,13 @@ public enum AnimationGraphCheck {
             let what = "state '\(state.name)'"
             if let blend = state.blend {
                 checkParameter(blend.parameter, .float, "\(what)'s blend space")
+                if let y = blend.parameterY {
+                    checkParameter(y, .float, "\(what)'s blend space (y)")
+                    var seen = Set<[Float]>()
+                    if blend.clips.contains(where: { !seen.insert([$0.position, $0.y ?? 0]).inserted }) {
+                        problems.append("\(what)'s blend space has two clips at the same point")
+                    }
+                }
                 if blend.clips.isEmpty { problems.append("\(what)'s blend space has no clips") }
                 if blend.clips.contains(where: { $0.clip.isEmpty }) { problems.append("\(what)'s blend space has an entry without a clip") }
             } else if state.clip?.isEmpty ?? true {

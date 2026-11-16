@@ -21,7 +21,8 @@ public enum EditorAnimationGraphCommands {
         builder previews on, an asset reference or path), `retarget` {boneMap {source bone: target bone}, matchNames \
         (default true), rotation world|local|copy, translation root|none|all, rootScale, sampleRate} (plays clips made for another \
         skeleton by matching bones by name; see animGraph.bones), `parameters` [{name, type float|bool|trigger, default}], `states` \
-        [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space), speed, \
+        [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space; add \
+        parameterY (a second float) and give each clip a `y` for a 2D one, e.g. moveX / moveY for strafing), speed, \
         speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` \
         [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, \
         value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] \

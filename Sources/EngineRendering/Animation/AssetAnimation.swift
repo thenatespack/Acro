@@ -26,10 +26,7 @@ public enum SkeletalAnimation {
     public static func clipHandles(of animator: Animator) -> [AnimationClipHandle] {
         var handles: [AnimationClipHandle] = []
         for state in animator.stateMachine.states {
-            switch state.motion {
-            case .clip(let clip): handles.append(clip)
-            case .blend1D(_, let entries): handles += entries.map(\.clip)
-            }
+            handles += state.motion.clips
         }
         return handles + animator.layers.map(\.clip)
     }

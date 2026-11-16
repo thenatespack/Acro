@@ -28,6 +28,9 @@ public enum AnimationMotion: Codable, Equatable, Sendable {
     /// step: they share one normalized time, which advances at the weighted average of their
     /// rates, so a walk and a run blend without their feet drifting apart.
     case blend1D(parameter: String, entries: [BlendSpaceEntry])
+    /// A 2D blend space: clips at points on the plane of float parameters `x` and `y`, mixed
+    /// by `blendWeights2D` and played in step like a 1D blend space (BlendSpace2D.swift).
+    case blend2D(x: String, y: String, entries: [BlendSpace2DEntry])
 
     /// Each entry's weight for `value` (entries in any order; equal positions share).
     public static func blendWeights(positions: [Float], value: Float) -> [Float] {
@@ -349,6 +352,9 @@ public struct Animator: Component, Equatable, Sendable {
             return [(clip, 1)]
         case .blend1D(let parameter, let entries):
             let weights = AnimationMotion.blendWeights(positions: entries.map(\.position), value: float(parameter) ?? 0)
+            return zip(entries, weights).map { ($0.clip, $1) }
+        case .blend2D(let x, let y, let entries):
+            let weights = AnimationMotion.blendWeights2D(points: entries.map { Vec2($0.x, $0.y) }, value: Vec2(float(x) ?? 0, float(y) ?? 0))
             return zip(entries, weights).map { ($0.clip, $1) }
         }
     }

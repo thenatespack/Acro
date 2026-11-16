@@ -235,4 +235,35 @@ private func twoClipGLTF() -> Data {
         #expect(form.graph.retarget?.boneMap == ["Body": "Root"])
         #expect(throws: (any Error).self) { try call(session, "animGraph.bones", ["clip": "Models/hero.gltf#animation/Walk"]) }  // no model
     }
+
+    @Test func twoDimensionalBlendSpaceThroughToolsAndTab() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        let model = try project(session, folder)
+        try call(session, "animGraph.new", ["name": "Strafe", "preview": "Models/hero.gltf"])
+        let result = try call(session, "animGraph.edit", ["path": "Strafe.animgraph",
+            "parameters": [["name": "moveX", "type": "float"], ["name": "moveY", "type": "float"]],
+            "addStates": [["name": "Strafe", "blend": ["parameter": "moveX", "parameterY": "moveY", "clips": [
+                ["clip": "Models/hero.gltf#animation/Idle", "position": 0, "y": 0],
+                ["clip": "Models/hero.gltf#animation/Walk", "position": 0, "y": 1]]]]]])
+        #expect((result["warnings"] as? [String])?.isEmpty == true)
+        let assets = try #require(session.assets)
+        let id = try #require(assets.id(forPath: "Strafe.animgraph"))
+        let blend = try #require(assets.animationGraph(of: id)?.state(named: "Strafe")?.blend)
+        #expect(blend.parameterY == "moveY" && blend.clips.map(\.y) == [0, 1])
+        #expect(blend.clips[1].clip == "asset:\(model)#animation/Walk", "paths become references")
+
+        // The tab shows a Y parameter, per-clip y fields and the plot; dragging the plot sets both live values.
+        let form = try #require(AnimationGraphView(session: session, asset: id))
+        var live: [String: AnimationParameter] = [:]
+        form.onSetLive = { live[$0] = $1 }
+        form.select(.state("Strafe"))
+        #expect(form.view.descendant(named: "animGraphBlendParamY") != nil)
+        #expect(form.view.descendant(named: "animGraphBlendPositionY") != nil)
+        let plot = try #require(form.view.descendant(named: "animGraphBlend2D") as? BlendSpace2DPlot)
+        #expect(plot.points.map(\.position) == [Vec2(0, 0), Vec2(0, 1)])
+        plot.onPick?(Vec2(0.25, 0.75))
+        #expect(live["moveX"] == .float(0.25) && live["moveY"] == .float(0.75))
+    }
 }

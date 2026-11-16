@@ -162,3 +162,69 @@ private func locomotion() -> AnimationGraph {
         #expect(broken == ["state 'A' has no clip"])
     }
 }
+
+@Suite struct AnimationGraphBlend2DTests {
+    @Test func gradientBandWeights() {
+        let cross = [Vec2(0, 0), Vec2(0, 1), Vec2(-1, 0), Vec2(1, 0), Vec2(0, -1)]
+        func weights(_ v: Vec2) -> [Float] { AnimationMotion.blendWeights2D(points: cross, value: v) }
+        #expect(weights(Vec2(0, 0)) == [1, 0, 0, 0, 0])
+        #expect(weights(Vec2(1, 0)) == [0, 0, 0, 1, 0])
+        let half = weights(Vec2(0, 0.5))
+        #expect(abs(half[0] - 0.5) < 1e-5 && abs(half[1] - 0.5) < 1e-5 && half[2...].allSatisfy { $0 == 0 })
+        // Between forward and right: forward, right and the center share; the sum is 1.
+        let diagonal = weights(Vec2(0.5, 0.5))
+        #expect(abs(diagonal.reduce(0, +) - 1) < 1e-5 && diagonal[1] > 0 && diagonal[3] > 0 && diagonal[2] == 0 && diagonal[4] == 0)
+        #expect(abs(diagonal[1] - diagonal[3]) < 1e-5, "symmetric")
+        // Far outside: the nearest point takes it all.
+        #expect(weights(Vec2(5, 0)) == [0, 0, 0, 1, 0])
+        #expect(AnimationMotion.blendWeights2D(points: [Vec2(3, 3)], value: .zero) == [1])
+        #expect(AnimationMotion.blendWeights2D(points: [], value: .zero).isEmpty)
+        let shared = AnimationMotion.blendWeights2D(points: [Vec2(0, 0), Vec2(0, 0), Vec2(1, 0)], value: Vec2(0, 0))
+        #expect(shared == [0.5, 0.5, 0])
+    }
+
+    @Test func graphFilesBecome2DBlendSpacesThatPlay() throws {
+        let graph = try AssetJSON.decoder().decode(AnimationGraph.self, from: Data("""
+            {"parameters": [{"name": "x"}, {"name": "y"}],
+             "states": [{"name": "Strafe", "blend": {"parameter": "x", "parameterY": "y", "clips": [
+                {"clip": "AnimationGraphBlend2DTests.still", "position": 0, "y": 0},
+                {"clip": "AnimationGraphBlend2DTests.right", "position": 1, "y": 0},
+                {"clip": "AnimationGraphBlend2DTests.forward", "position": 0, "y": 1}]}}]}
+            """.utf8))
+        #expect(graph.states[0].blend?.is2D == true && AnimationGraphCheck.problems(graph).isEmpty)
+        #expect(try AssetJSON.decoder().decode(AnimationGraph.self, from: graph.fileData()) == graph)
+        guard case .blend2D(let x, let y, let entries) = graph.stateMachine.states[0].motion else {
+            Issue.record("not a 2D blend space")
+            return
+        }
+        #expect(x == "x" && y == "y" && entries.map(\.y) == [0, 0, 1])
+        #expect(graph.stateMachine.states[0].motion.clips.count == 3)
+
+        func hold(_ to: Vec3) -> AnimationClip {
+            AnimationClip(name: "hold", channels: [AnimationChannel(target: 0, path: .translation,
+                                                                    sampler: AnimationSampler(times: [0, 1], values: [to.x, to.y, to.z, to.x, to.y, to.z]))])
+        }
+        let clips = ["AnimationGraphBlend2DTests.still": hold(.zero), "AnimationGraphBlend2DTests.right": hold(Vec3(1, 0, 0)),
+                     "AnimationGraphBlend2DTests.forward": hold(Vec3(0, 0, 1))]
+        var animator = Animator(targets: [.invalid], restPose: [Transform()], stateMachine: graph.stateMachine, parameters: graph.parameterDefaults)
+        animator.setFloat("x", 1)
+        var pose = animator.update(dt: 0.1) { clips[$0.key] }
+        #expect(length(pose.transforms[0].position - Vec3(1, 0, 0)) < 1e-4)
+        animator.setFloat("x", 0.5)
+        animator.setFloat("y", 0.5)
+        pose = animator.update(dt: 0.1) { clips[$0.key] }
+        // Gradient bands: at the diagonal's middle all three clips weigh the same.
+        #expect(length(pose.transforms[0].position - Vec3(1, 0, 1) / 3) < 1e-4, "\(pose.transforms[0].position)")
+
+        var renamed = graph
+        renamed.renameParameter("y", to: "forward")
+        #expect(renamed.states[0].blend?.parameterY == "forward")
+        var clash = graph
+        clash.states[0].blend?.clips[2].position = 1
+        clash.states[0].blend?.clips[2].y = 0
+        clash.states[0].blend?.parameterY = "missing"
+        let problems = AnimationGraphCheck.problems(clash)
+        #expect(problems.contains("state 'Strafe''s blend space has two clips at the same point"))
+        #expect(problems.contains { $0.contains("'missing', which doesn't exist") })
+    }
+}

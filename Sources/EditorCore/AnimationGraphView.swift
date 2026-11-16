@@ -173,7 +173,8 @@ public final class AnimGraphCanvas: Widget {
             list.drawText(state.name, at: Vec2(box.x + 10, box.y + 6), size: 13, color: theme.textColor)
             let detail: String
             if let blend = state.blend {
-                detail = "Blend · \(blend.parameter.isEmpty ? "?" : blend.parameter) · \(blend.clips.count) clips"
+                let parameters = [blend.parameter] + (blend.parameterY.map { [$0] } ?? [])
+                detail = "Blend\(blend.is2D ? " 2D" : "") · \(parameters.map { $0.isEmpty ? "?" : $0 }.joined(separator: ", ")) · \(blend.clips.count) clips"
             } else {
                 detail = clipName(state.clip ?? "")
             }
@@ -784,20 +785,32 @@ public final class AnimationGraphView {
             }
             apply(edited, label: "Edit State")
         }
-        let motion = Dropdown(options: ["One clip", "1D blend space"], selectedIndex: state.blend == nil ? 0 : 1, name: "animGraphMotion") {
+        let motionIndex = state.blend == nil ? 0 : state.blend!.is2D ? 2 : 1
+        let motion = Dropdown(options: ["One clip", "1D blend space", "2D blend space"], selectedIndex: motionIndex, name: "animGraphMotion") {
             [unowned self] index in
             editState("Change Motion") { s in
-                if index == 1, s.blend == nil {
-                    let floatParam = graph.parameters.first { $0.type == .float }?.name ?? ""
-                    s.blend = AnimationGraphBlend(parameter: floatParam, clips: s.clip.map { [AnimationGraphBlendClip(clip: $0, position: 0)] } ?? [])
-                    s.clip = nil
-                } else if index == 0, let blend = s.blend {
+                let floats = graph.parameters.filter { $0.type == .float }.map(\.name)
+                if index == 0, let blend = s.blend {
                     s.clip = blend.clips.first?.clip
                     s.blend = nil
+                    return
+                }
+                guard index > 0 else { return }
+                if s.blend == nil {
+                    s.blend = AnimationGraphBlend(parameter: floats.first ?? "", clips: s.clip.map { [AnimationGraphBlendClip(clip: $0, position: 0)] } ?? [])
+                    s.clip = nil
+                }
+                if index == 2, s.blend?.parameterY == nil {
+                    let x = s.blend?.parameter
+                    s.blend?.parameterY = floats.first { $0 != x } ?? floats.first ?? ""
+                    for k in s.blend!.clips.indices where s.blend!.clips[k].y == nil { s.blend!.clips[k].y = 0 }
+                } else if index == 1, s.blend?.parameterY != nil {
+                    s.blend?.parameterY = nil
+                    for k in s.blend!.clips.indices { s.blend!.clips[k].y = nil }
                 }
             }
         }
-        motion.tooltip = "Play one clip, or mix clips by a float parameter"
+        motion.tooltip = "Play one clip, or mix clips by one float parameter (1D) or two (2D, e.g. strafe direction)"
         view.addChild(HStack(spacing: 6, [Label("Motion"), Spacer(), motion]))
         if let blend = state.blend {
             let floats = graph.parameters.filter { $0.type == .float }.map(\.name)
@@ -808,7 +821,17 @@ public final class AnimationGraphView {
                 editState("Set Blend Parameter") { $0.blend?.parameter = floats[index] }
             }
             parameter.isEnabled = !floats.isEmpty
-            view.addChild(HStack(spacing: 6, [Label("Parameter"), Spacer(), parameter]))
+            view.addChild(HStack(spacing: 6, [Label(blend.is2D ? "Parameter X" : "Parameter"), Spacer(), parameter]))
+            if let parameterY = blend.parameterY {
+                let y = Dropdown(options: options, selectedIndex: floats.firstIndex(of: parameterY) ?? 0, name: "animGraphBlendParamY") {
+                    [unowned self] index in
+                    guard floats.indices.contains(index) else { return }
+                    editState("Set Blend Parameter") { $0.blend?.parameterY = floats[index] }
+                }
+                y.isEnabled = !floats.isEmpty
+                view.addChild(HStack(spacing: 6, [Label("Parameter Y"), Spacer(), y]))
+                addBlend2DPlot(blend, x: blend.parameter, y: parameterY)
+            }
             for (k, entry) in blend.clips.enumerated() {
                 let clip = clipDropdown(entry.clip, name: "animGraphBlendClip") { [unowned self] key in
                     editState("Set Blend Clip") { $0.blend?.clips[k].clip = key }
@@ -821,13 +844,23 @@ public final class AnimationGraphView {
                 let remove = Button("✕", name: "animGraphBlendRemove") { [unowned self] in
                     editState("Remove Blend Clip") { _ = $0.blend?.clips.remove(at: k) }
                 }
-                view.addChild(HStack(spacing: 4, [clip, position, remove]))
+                if blend.is2D {
+                    position.tooltip = "Where this clip sits along parameter X"
+                    let y = NumberField(value: Double(entry.y ?? 0), step: 0.05, name: "animGraphBlendPositionY")
+                    y.preferredWidth = 56
+                    y.tooltip = "Where this clip sits along parameter Y"
+                    y.onEditEnded = { [unowned self] _, end in editState("Move Blend Clip") { $0.blend?.clips[k].y = Float(end) } }
+                    view.addChild(HStack(spacing: 4, [clip, position, y, remove]))
+                } else {
+                    view.addChild(HStack(spacing: 4, [clip, position, remove]))
+                }
             }
             let addClip = Button("Add Clip", name: "animGraphBlendAdd") { [unowned self] in
                 editState("Add Blend Clip") { s in
                     let next = (s.blend?.clips.map(\.position).max() ?? -1) + 1
                     let key = session.animationClipChoices(for: graph).first ?? ""
-                    s.blend?.clips.append(AnimationGraphBlendClip(clip: key, position: next))
+                    let is2D = s.blend?.is2D == true
+                    s.blend?.clips.append(AnimationGraphBlendClip(clip: key, position: next, y: is2D ? 0 : nil))
                 }
             }
             view.addChild(HStack(spacing: 6, [addClip, Spacer()]))
@@ -842,6 +875,26 @@ public final class AnimationGraphView {
             view.addChild(HStack(spacing: 6, [go, Spacer()]))
         }
         addNewTransitionRow(from: state.name)
+    }
+
+    /// The 2D blend space's points, with the live value as a cross that dragging moves.
+    private func addBlend2DPlot(_ blend: AnimationGraphBlend, x: String, y: String) {
+        let plot = BlendSpace2DPlot()
+        plot.points = blend.clips.map { BlendSpace2DPlot.Point(label: session.clipDisplayName($0.clip).components(separatedBy: " › ").last ?? $0.clip,
+                                                               position: Vec2($0.position, $0.y ?? 0)) }
+        plot.axisNames = (x, y)
+        func live(_ name: String) -> Float {
+            if case .float(let v)? = liveValue(name) { return v }
+            return graph.parameter(named: name)?.defaultValue ?? 0
+        }
+        plot.value = Vec2(live(x), live(y))
+        plot.onPick = { [unowned self] p in
+            onSetLive?(x, .float(p.x))
+            onSetLive?(y, .float(p.y))
+        }
+        plot.tooltip = "Clips at their points (bigger: more weight now); drag to try values on the preview"
+        liveControls.append((x, { [unowned plot] in plot.value = Vec2(live(x), live(y)) }))
+        view.addChild(plot)
     }
 
     private func addNewTransitionRow(from: String?) {
