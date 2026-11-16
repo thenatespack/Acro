@@ -129,6 +129,25 @@ noise-deformed foliage, is about 100k from its own subdivision) and imports 3-4x
 Merged (importer version 8): edge wear on dense meshes (sculpt pieces) only searches the band plus
 the longest triangle edge and runs on all cores (the Armchair import went from 885 s to 8 s in a
 debug build); foliage and ribbons inside a sculpt are left out with a warning.
+Object-space edge wear (importer version 9): the chip noise is 3D value noise (two octaves, as
+before) of the fragment's position in the mesh's own space, so a chip on a box edge wraps around it
+as one and corners chip as one; chips stay on the model when it moves, turns or is scaled.
+`EdgeWear.noiseFrequency` is now cycles per meter (1 / (1.5 x band width), the same chip size as
+before) instead of per UV unit; `EdgeWear.chipNoise(at:)` mirrors the shader for tests. Shared
+rendering changes: mesh.vert and mesh_skinned.vert write a new varying `vObjectPos` (location 4,
+the free slot between vColor and vParams; the vertex position before the model transform, bind
+pose when skinned), and mesh_surface.glsl reads it only in the non-material-graph variants
+(mesh.frag, mesh_mask.frag), inside the existing `uvRow1.w > 0.5` edge-wear branch, so material
+graph and terrain shaders compile to the same SPIR-V/MSL as before. Demo scenes (pbr, gltf,
+reflections, sky, textures, facades, skinning) render byte-identical before/after on Metal and
+Vulkan.
+Object-space edge wear gaps: repeat copies of a part share one mesh, so they show identical chips
+(mirror copies show mirrored ones); the noise is axis-aligned value noise, so on an axis-aligned
+face the chips are slices through a cubic lattice (not visible as a grid at chip scale, but not as
+varied as gradient or cellular chips); a sculpt with several looks chips continuously across the
+look meshes (same space), but two separate parts touching don't share an edge band (as before);
+grime, scratches and the paint chips inside a face are still in the look textures (box projected
+per face).
 Plants (importer version 8): shape `foliage` scatters leaf cards (alpha-cutout quads) over the
 ellipsoid of its `size` (78% on the shell facing out, tilted and rolled at random, the rest inside;
 kept inside the size box) or `on` named parts (along the outer `along` [from, to] of sweeps,
@@ -189,8 +208,7 @@ instead of fanning out by screen position. Demo scenes (pbr, gltf, reflections, 
 facades, skinning) render byte-identical before/after on Metal and Vulkan.
 Looks gaps: no triplanar blending, so box projection shows a seam where projections meet on
 curved non-round shapes (bevels, extrude sides) and spheres pinch slightly at the cap boundary;
-edge-wear noise is in texture space, so chips don't line up across a box edge (each face has its
-own projection); edge strength is per part, so where two parts meet nothing wears (only each
+edge strength is per part, so where two parts meet nothing wears (only each
 part's own edges); concave edges and creases get no wear-specific treatment beyond AO; very
 non-uniform entity scale skews the edge band a little (the coordinate is a ratio of tangent
 components); edge wear needs a look (plain-colored parts with `wear` get none) and isn't on parts

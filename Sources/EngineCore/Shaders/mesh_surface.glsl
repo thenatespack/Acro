@@ -125,6 +125,9 @@ layout(location = 5) in vec4 vParams;
 layout(location = 6) in vec4 vCurrentClip;
 layout(location = 7) in vec4 vPreviousClip;
 layout(location = 8) in vec4 vTangent;
+#ifndef MATERIAL_GRAPH
+layout(location = 4) in vec3 vObjectPos;  // the vertex position before the model transform (edge wear's noise)
+#endif
 
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec2 outMotion;  // see `PipelineDescriptor.writesMotionVectors`
@@ -261,26 +264,31 @@ vec2 environmentBRDF(float NoV, float roughness) {
 const float EDGE_MIN = -24.0;
 const float EDGE_MAX = 1.5;
 
-float edgeHash(vec2 cell) {
-    uvec2 q = uvec2(ivec2(cell) + ivec2(65536));
-    uint h = (q.x * 1597334677u) ^ (q.y * 3812015801u);
+// Value noise in the object's own space (vObjectPos), so chips wrap around an edge as one and
+// stay on the model as it moves. Must match `EdgeWear.noise` (Material.swift).
+float edgeHash(vec3 cell) {
+    uvec3 q = uvec3(ivec3(cell));
+    uint h = (q.x * 1597334677u) ^ (q.y * 3812015801u) ^ (q.z * 2798796415u);
     h *= 1597334677u;
     h ^= h >> 16;
     return float(h & 0xFFFFu) / 65535.0;
 }
 
 // Smooth value noise in 0...1.
-float edgeNoise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = p - i;
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    return mix(mix(edgeHash(i), edgeHash(i + vec2(1.0, 0.0)), u.x),
-               mix(edgeHash(i + vec2(0.0, 1.0)), edgeHash(i + vec2(1.0, 1.0)), u.x), u.y);
+float edgeNoise(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = p - i;
+    vec3 u = f * f * (3.0 - 2.0 * f);
+    vec2 o = vec2(1.0, 0.0);
+    float z0 = mix(mix(edgeHash(i), edgeHash(i + o.xyy), u.x), mix(edgeHash(i + o.yxy), edgeHash(i + o.xxy), u.x), u.y);
+    float z1 = mix(mix(edgeHash(i + o.yyx), edgeHash(i + o.xyx), u.x), mix(edgeHash(i + o.yxx), edgeHash(i + o.xxx), u.x), u.y);
+    return mix(z0, z1, u.z);
 }
 
-// How worn this fragment is (0...1), from the edge coordinate, noise at `uv` x the material's
-// frequency and its crispness; `edge` gets the worn surface (rgb albedo factor, roughness, metallic).
-float edgeWearMask(vec2 uv, out vec3 edgeColor, out vec2 edgeSurface) {
+// How worn this fragment is (0...1), from the edge coordinate, noise at the object-space position
+// x the material's frequency (cycles per meter) and its crispness; `edgeColor` / `edgeSurface` get
+// the worn surface (albedo factor; roughness, metallic).
+float edgeWearMask(out vec3 edgeColor, out vec2 edgeSurface) {
     vec4 c = vec4(material.uvRow0.w, material.uvRow1.w, 0.0, 0.0);
     // Three bytes per float, low first (all exact integers).
     vec3 hi = floor(c.xyy / 65536.0);
@@ -298,8 +306,8 @@ float edgeWearMask(vec2 uv, out vec3 edgeColor, out vec2 edgeSurface) {
     float across = length(vTangent.xyz - gn * along);
     float e = EDGE_MIN + along / max(across, 1e-6) * (EDGE_MAX - EDGE_MIN);
     if (e < -2.0) return 0.0;
-    vec2 p = uv * frequency;
-    float n = edgeNoise(p) * 0.65 + edgeNoise(p * 2.7 + vec2(17.3, 5.1)) * 0.35;
+    vec3 p = vObjectPos * frequency;
+    float n = edgeNoise(p) * 0.65 + edgeNoise(p * 2.7 + vec3(17.3, 5.1, 9.7)) * 0.35;
     float width = mix(0.45, 0.05, crisp);
     float t = e - 0.45 + (n - 0.5) * mix(0.8, 2.2, crisp);
     return smoothstep(-width, width, t);
@@ -402,7 +410,7 @@ void main() {
     vec2 edgeSurface = vec2(0.0);
     if (material.uvRow1.w > 0.5) {
         vec3 edgeColor;
-        edgeWear = edgeWearMask(uv, edgeColor, edgeSurface);
+        edgeWear = edgeWearMask(edgeColor, edgeSurface);
         // The worn surface keeps half the texture's detail (fresh material is more even).
         albedo = mix(albedo, vColor.rgb * edgeColor * mix(vec3(1.0), texel.rgb * 2.0, 0.5), edgeWear);
     }

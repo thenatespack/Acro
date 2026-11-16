@@ -169,6 +169,32 @@ private func unpack(_ packed: (Float, Float)) -> (color: Vec3, roughness: Float,
         }
     }
 
+    @Test func chipNoiseWrapsAroundABoxEdge() throws {
+        // A 0.4 m painted box at wear 1: band 2 cm, chips about 3 cm across.
+        let width = MeshBuildEdgeWear.bandWidth(size: Vec3(repeating: 0.4), wear: 1, look: .paintedMetal)
+        let wear = try #require(MeshBuildLook.paintedMetal.edgeWear(average: Vec3(repeating: 0.5), width: width))
+        #expect(abs(wear.noiseFrequency * width * 1.5 - 1) < 1e-4, "cycles per meter: chips about 1.5 band widths across")
+        // Points on the +X face and the +Y face, `d` meters from their shared edge (x = y = 0.2):
+        // object-space noise has one value on the edge, so the two faces agree as d shrinks
+        // (texture-space noise, each face with its own projection, didn't).
+        var values: [Float] = []
+        for z in stride(from: Float(-0.2), through: 0.2, by: 0.005) {
+            for d: Float in [0.004, 0.001, 0.0001] {
+                // The noise changes by at most about 120 per meter here (33 cycles per meter).
+                let side = wear.chipNoise(at: Vec3(0.2, 0.2 - d, z)), top = wear.chipNoise(at: Vec3(0.2 - d, 0.2, z))
+                #expect(abs(side - top) < d * 200, "z \(z), \(d) m from the edge: \(side) vs \(top)")
+            }
+            values.append(wear.chipNoise(at: Vec3(0.2, 0.2, z)))
+        }
+        // ...and it still varies along the edge, about once per chip.
+        #expect(values.max()! - values.min()! > 0.3)
+        // Corners: the three faces meeting there agree too.
+        let corner = Vec3(repeating: 0.2), e: Float = 1e-4
+        let faces = [wear.chipNoise(at: corner - Vec3(0, e, e)), wear.chipNoise(at: corner - Vec3(e, 0, e)), wear.chipNoise(at: corner - Vec3(e, e, 0))]
+        #expect(faces.max()! - faces.min()! < 0.05)
+        #expect((0..<64).allSatisfy { EdgeWear.noise(Vec3(Float($0) * 0.37, -1.3, 2.9)).isFinite })
+    }
+
     @Test func materialCarriesEdgeWearToTheUniformsAndFiles() throws {
         var asset = MaterialAsset()
         #expect(asset.material(textures: { _ in nil }).edgeWear == nil)

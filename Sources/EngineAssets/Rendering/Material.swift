@@ -164,7 +164,9 @@ public struct Material {
 /// using the tangent (it projects the tangent onto the surface), so it changes nothing else, and
 /// since e is linear in the distance to the edge it interpolates exactly across a flat triangle:
 /// a box face split into a few triangles still gets a sharp band along its edges. The shader
-/// (mesh_surface.glsl) adds noise in texture space for an irregular, chipped boundary.
+/// (mesh_surface.glsl) adds noise for an irregular, chipped boundary, in the mesh's own space
+/// (the vertex position before the model transform, `noise`), so a chip wraps around an edge as
+/// one and stays on the model as it moves, turns or scales.
 ///
 /// The parameters reach the shader in the two unused w components of the material's UV rows
 /// (`MaterialUniforms.uvRow0.w` / `uvRow1.w`) as 24-bit integers (`packed`); 0 means none.
@@ -174,7 +176,7 @@ public struct EdgeWear: Equatable, Sendable, Codable {
     public var color: Vec3
     public var roughness: Float
     public var metallic: Float
-    /// Cycles per UV unit of the noise that breaks up the band (4...~5000).
+    /// Cycles per meter (of the mesh's own space) of the noise that breaks up the band (4...~5000).
     public var noiseFrequency: Float
     /// 0: a soft rubbed edge, 1: crisp chips.
     public var crisp: Float
@@ -210,10 +212,37 @@ public struct EdgeWear: Equatable, Sendable, Codable {
         return decode(along / max(length(tangent - n * along), 1e-6))
     }
 
-    /// The noise frequency's 5-bit code: 4 x 2^(code / 3) cycles per UV unit.
+    /// The noise frequency's 5-bit code: 4 x 2^(code / 3) cycles per meter.
     static func frequencyCode(_ f: Float) -> Int {
         guard f.isFinite, f > 4 else { return 0 }
         return min(Int((3 * log2f(f / 4)).rounded()), 31)
+    }
+
+    /// mesh_surface.glsl's `edgeHash`: a value in 0...1 for an integer lattice cell.
+    static func hash(_ x: Int32, _ y: Int32, _ z: Int32) -> Float {
+        var h = (UInt32(bitPattern: x) &* 1597334677) ^ (UInt32(bitPattern: y) &* 3812015801) ^ (UInt32(bitPattern: z) &* 2798796415)
+        h = h &* 1597334677
+        h ^= h >> 16
+        return Float(h & 0xFFFF) / 65535
+    }
+
+    /// mesh_surface.glsl's `edgeNoise`: smooth value noise in 0...1 at `p` (object-space position x frequency).
+    static func noise(_ p: Vec3) -> Float {
+        let i = Vec3(p.x.rounded(.down), p.y.rounded(.down), p.z.rounded(.down))
+        let f = p - i
+        let u = f * f * (Vec3(repeating: 3) - 2 * f)
+        let x = Int32(i.x), y = Int32(i.y), z = Int32(i.z)
+        func mix(_ a: Float, _ b: Float, _ t: Float) -> Float { a + (b - a) * t }
+        func layer(_ z: Int32) -> Float {
+            mix(mix(hash(x, y, z), hash(x + 1, y, z), u.x), mix(hash(x, y + 1, z), hash(x + 1, y + 1, z), u.x), u.y)
+        }
+        return mix(layer(z), layer(z + 1), u.z)
+    }
+
+    /// mesh_surface.glsl's two-octave chip noise at object-space position `position` (meters).
+    public func chipNoise(at position: Vec3) -> Float {
+        let p = position * noiseFrequency
+        return Self.noise(p) * 0.65 + Self.noise(p * 2.7 + Vec3(17.3, 5.1, 9.7)) * 0.35
     }
 
     /// The parameters as the shader reads them: (rgb bytes of color / 2; roughness, metallic and

@@ -22,6 +22,8 @@ import EngineScene
 //    face cut into a few large triangles still gets a sharp band along its edges.
 // 3. e rides in the tangent's component along the normal (`EdgeWear.encode`), which the shader
 //    projects away before using the tangent; its material's `EdgeWear` turns it on.
+// 4. The shader breaks the band up with noise in the part mesh's own space (meters, before the
+//    model transform), so chips wrap around edges and corners as one and move with the model.
 //
 // The band width grows with the part (5% of its middle dimension, 4 mm to 3 cm, at most a third
 // of its thinnest) and with wear (half at wear 0, full at 1).
@@ -266,9 +268,8 @@ extension MeshBuildLook {
     }
 
     /// How this look's convex edges wear (nil: they don't), with `average` its average color
-    /// (linear; the part's color when it has one), for band `width` meters at `scale` meters per
-    /// texture tile.
-    func edgeWear(average: Vec3, width: Float, scale: Float) -> EdgeWear? {
+    /// (linear; the part's color when it has one), for band `width` meters.
+    func edgeWear(average: Vec3, width: Float) -> EdgeWear? {
         func lin(_ r: Float, _ g: Float, _ b: Float) -> Vec3 {
             Vec3(MeshBuildLookSampler.lin(r), MeshBuildLookSampler.lin(g), MeshBuildLookSampler.lin(b))
         }
@@ -276,8 +277,8 @@ extension MeshBuildLook {
             let gray = dot(average, Vec3(0.2126, 0.7152, 0.0722))
             return (average + (Vec3(repeating: gray) - average) * desaturate) * k
         }
-        // Chips about one and a half band widths across.
-        let frequency = scale / max(width * 1.5, 1e-4)
+        // Chips about one and a half band widths across (cycles per meter of the part's own space).
+        let frequency = 1 / max(width * 1.5, 1e-4)
         switch self {
         case .paintedMetal:
             return EdgeWear(color: lin(0.62, 0.62, 0.64), roughness: 0.3, metallic: 1, noiseFrequency: frequency, crisp: 1)

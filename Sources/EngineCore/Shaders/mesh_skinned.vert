@@ -37,6 +37,7 @@ layout(location = 5) out vec4 vParams;
 layout(location = 6) out vec4 vCurrentClip;   // unjittered, for motion vectors
 layout(location = 7) out vec4 vPreviousClip;
 layout(location = 8) out vec4 vTangent;       // world-space tangent, w: bitangent sign (mirroring included)
+layout(location = 4) out vec3 vObjectPos;     // the position before the model transform (the bind pose), for edge wear
 
 void main() {
     // precise: see skinning.glsl (positions and motion vectors must match between backends).
@@ -63,4 +64,5 @@ void main() {
     vCurrentClip = currentClip;
     vPreviousClip = previousClip;
     vTangent = vec4(mat3(a, b, c) * inTangent.xyz, inTangent.w * handedness);
+    vObjectPos = inPosition;
 }

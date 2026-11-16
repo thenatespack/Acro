@@ -1,7 +1,7 @@
 // Generated from mesh_skinned.vert by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
-// spirv-fnv1a64: 8f86dc001f8619ec
-// glsl-fnv1a64: 9bb4c7141c72b369
+// spirv-fnv1a64: acd4e7dc470d319a
+// glsl-fnv1a64: d5e47112554e85b0
 
 #pragma clang diagnostic ignored "-Wmissing-prototypes"
 
@@ -87,6 +87,7 @@ struct vertex_main_out
     float3 m_349 [[user(locn1)]];
     float2 m_358 [[user(locn2)]];
     float4 m_362 [[user(locn3)]];
+    float3 m_412 [[user(locn4)]];
     float4 m_365 [[user(locn5)]];
     float4 m_378 [[user(locn6)]];
     float4 m_380 [[user(locn7)]];
@@ -117,35 +118,35 @@ struct vertex_main_in
 vertex vertex_main_out vertex_main(vertex_main_in in [[stage_in]], constant _49& _51 [[buffer(2)]], constant _324& _326 [[buffer(15)]])
 {
     vertex_main_out out = {};
-    float4 _566;
-    float4 _567;
     float4 _568;
+    float4 _569;
+    float4 _570;
+    _570 = float4(0.0);
+    _569 = float4(0.0);
     _568 = float4(0.0);
-    _567 = float4(0.0);
-    _566 = float4(0.0);
-    for (int _565 = 0; _565 < 4; )
+    for (int _567 = 0; _567 < 4; )
     {
-        int _428 = int(in.m_35[_565]) * 3;
-        _568 = spvFAdd(_568, _51._m1[_428 + 2] * in.m_57[_565]);
-        _567 = spvFAdd(_567, _51._m1[_428 + 1] * in.m_57[_565]);
-        _566 = spvFAdd(_566, _51._m1[_428] * in.m_57[_565]);
-        _565++;
+        int _430 = int(in.m_35[_567]) * 3;
+        _570 = spvFAdd(_570, _51._m1[_430 + 2] * in.m_57[_567]);
+        _569 = spvFAdd(_569, _51._m1[_430 + 1] * in.m_57[_567]);
+        _568 = spvFAdd(_568, _51._m1[_430] * in.m_57[_567]);
+        _567++;
         continue;
     }
-    float4x4 _223 = spvFMulMatrixMatrix(float4x4(in.m_193, in.m_195, in.m_197, in.m_199), transpose(float4x4(_566, _567, _568, float4(0.0, 0.0, 0.0, 1.0))));
-    float4 _570;
-    float4 _571;
+    float4x4 _223 = spvFMulMatrixMatrix(float4x4(in.m_193, in.m_195, in.m_197, in.m_199), transpose(float4x4(_568, _569, _570, float4(0.0, 0.0, 0.0, 1.0))));
     float4 _572;
+    float4 _573;
+    float4 _574;
+    _574 = float4(0.0);
+    _573 = float4(0.0);
     _572 = float4(0.0);
-    _571 = float4(0.0);
-    _570 = float4(0.0);
-    for (int _569 = 0; _569 < 4; )
+    for (int _571 = 0; _571 < 4; )
     {
-        int _503 = int(in.m_35[_569]) * 3;
-        _572 = spvFAdd(_572, _51._m2[_503 + 2] * in.m_57[_569]);
-        _571 = spvFAdd(_571, _51._m2[_503 + 1] * in.m_57[_569]);
-        _570 = spvFAdd(_570, _51._m2[_503] * in.m_57[_569]);
-        _569++;
+        int _505 = int(in.m_35[_571]) * 3;
+        _574 = spvFAdd(_574, _51._m2[_505 + 2] * in.m_57[_571]);
+        _573 = spvFAdd(_573, _51._m2[_505 + 1] * in.m_57[_571]);
+        _572 = spvFAdd(_572, _51._m2[_505] * in.m_57[_571]);
+        _571++;
         continue;
     }
     float4 _265 = float4(in.m_260, 1.0);
@@ -166,8 +167,9 @@ vertex vertex_main_out vertex_main(vertex_main_in in [[stage_in]], constant _49&
     out.m_362 = in.m_363;
     out.m_365 = in.m_366;
     out.m_378 = spvFMulMatrixVector(_326._m2, _266);
-    out.m_380 = spvFMulMatrixVector(_326._m3, spvFMulMatrixVector(spvFMulMatrixMatrix(float4x4(in.m_225, in.m_227, in.m_229, in.m_231), transpose(float4x4(_570, _571, _572, float4(0.0, 0.0, 0.0, 1.0)))), _265));
+    out.m_380 = spvFMulMatrixVector(_326._m3, spvFMulMatrixVector(spvFMulMatrixMatrix(float4x4(in.m_225, in.m_227, in.m_229, in.m_231), transpose(float4x4(_572, _573, _574, float4(0.0, 0.0, 0.0, 1.0)))), _265));
     out.m_382 = float4(float3x3(float3(_278.xyz), float3(_282.xyz), float3(_286.xyz)) * in.m_399.xyz, in.m_399.w * _322);
+    out.m_412 = in.m_260;
     out.gl_Position.y = -(out.gl_Position.y);    // Invert Y-axis for Metal
     return out;
 }
