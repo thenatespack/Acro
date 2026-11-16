@@ -299,3 +299,80 @@ private func locomotion() -> AnimationGraph {
         #expect(layers[1].blend == nil && layers[1].mask == nil)
     }
 }
+
+@Suite struct AnimationGraphSubMachineTests {
+    /// Idle ⇄ Combat (a sub-machine: Ready → Slash → Ready, Slash exits to Idle when unarmed).
+    private func graph() throws -> AnimationGraph {
+        try AssetJSON.decoder().decode(AnimationGraph.self, from: Data("""
+            {"parameters": [{"name": "armed", "type": "bool"}, {"name": "attack", "type": "trigger"}],
+             "states": [{"name": "Idle", "clip": "idle"},
+                        {"name": "Combat", "machine": {"initialState": "Ready",
+                            "states": [{"name": "Slash", "clip": "slash", "loops": false}, {"name": "Ready", "clip": "ready"}],
+                            "transitions": [{"from": "Ready", "to": "Slash", "conditions": [{"parameter": "attack", "test": "triggered"}], "duration": 0},
+                                            {"from": "Slash", "to": "Ready", "exitTime": 1, "duration": 0},
+                                            {"to": "Idle", "conditions": [{"parameter": "armed", "test": "isFalse"}], "duration": 0}]}}],
+             "transitions": [{"from": "Idle", "to": "Combat", "conditions": [{"parameter": "armed", "test": "isTrue"}], "duration": 0}]}
+            """.utf8))
+    }
+
+    @Test func flattensToPathNamedLeaves() throws {
+        let graph = try graph()
+        #expect(AnimationGraphCheck.problems(graph).isEmpty)
+        #expect(try AssetJSON.decoder().decode(AnimationGraph.self, from: graph.fileData()) == graph)
+        #expect(graph.clipKeys == ["idle", "slash", "ready"] && graph.machinePaths == [["Combat"]])
+        let flat = graph.flattened()
+        #expect(flat.states.map(\.name) == ["Idle", "Combat/Slash", "Combat/Ready"] && flat.initialState == "Idle")
+        #expect(flat.transitions.map { "\($0.from ?? "*")>\($0.to)" } == [
+            "Idle>Combat/Ready",                                 // into the machine: its initial state
+            "Combat/Ready>Combat/Slash", "Combat/Slash>Combat/Ready",
+            "Combat/Slash>Idle", "Combat/Ready>Idle",           // the machine's Any State: each state inside
+        ])
+
+        // Levels read and write back.
+        var level = try #require(graph.level(at: ["Combat"]))
+        #expect(level.states.map(\.name) == ["Slash", "Ready"] && level.parameters == graph.parameters)
+        level.states.append(AnimationGraphState(name: "Block", clip: "block"))
+        level.parameters.append(AnimationGraphParameter(name: "x"))
+        let written = try #require(graph.replacingLevel(at: ["Combat"], with: level))
+        #expect(written.state(atPath: ["Combat", "Block"])?.clip == "block" && written.parameter(named: "x") != nil)
+        #expect(graph.level(at: ["Idle"]) == nil && graph.replacingLevel(at: ["Nope"], with: level) == nil)
+
+        var renamed = graph
+        renamed.renameParameter("armed", to: "hasWeapon")
+        #expect(renamed.level(at: ["Combat"])?.transitions[2].conditions[0].parameter == "hasWeapon")
+    }
+
+    @Test func checksLookInsideMachines() throws {
+        var graph = try graph()
+        var level = try #require(graph.level(at: ["Combat"]))
+        level.transitions.append(AnimationGraphTransition(from: "Ready", to: "Nowhere", exitTime: 1))
+        level.initialState = "Gone"
+        graph = try #require(graph.replacingLevel(at: ["Combat"], with: level))
+        let problems = AnimationGraphCheck.problems(graph)
+        #expect(problems.contains("the initial state 'Gone' in 'Combat' doesn't exist"))
+        #expect(problems.contains("transition 4 in 'Combat' (Ready → Nowhere) goes to a state that doesn't exist"))
+    }
+
+    @Test func animatorPlaysThroughTheSubMachine() throws {
+        let graph = try graph()
+        func hold(_ x: Float) -> AnimationClip {
+            AnimationClip(name: "c", channels: [AnimationChannel(target: 0, path: .translation, sampler: AnimationSampler(times: [0, 1], values: [x, 0, 0, x, 0, 0]))])
+        }
+        let clips = ["idle": hold(0), "ready": hold(1), "slash": hold(2)]
+        var animator = Animator(targets: [.invalid], restPose: [Transform()], stateMachine: graph.stateMachine, parameters: graph.parameterDefaults)
+        _ = animator.update(dt: 0.1) { clips[$0.key] }
+        #expect(animator.currentState == "Idle")
+        animator.setBool("armed", true)
+        _ = animator.update(dt: 0.1) { clips[$0.key] }
+        #expect(animator.currentState == "Combat/Ready")
+        animator.setTrigger("attack")
+        let pose = animator.update(dt: 0.1) { clips[$0.key] }
+        #expect(animator.currentState == "Combat/Slash")
+        _ = pose
+        _ = animator.update(dt: 1.1) { clips[$0.key] }
+        #expect(animator.currentState == "Combat/Ready", "exit time back inside the machine")
+        animator.setBool("armed", false)
+        _ = animator.update(dt: 0.1) { clips[$0.key] }
+        #expect(animator.currentState == "Idle", "the machine's Any State transition leaves it")
+    }
+}

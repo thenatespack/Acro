@@ -231,7 +231,7 @@ public final class AnimationGraphWorkspace {
             viewport.update(input) { [unowned self] view in toolContext(view: view) }
         }
         if !isPaused { step(dt) }
-        form?.canvas.activeState = animator?.currentState
+        form?.canvas.activeState = form?.levelState(ofPlaying: animator?.currentState)
         if let t = animator?.normalizedTime { form?.canvas.activeProgress = t - t.rounded(.down) }
     }
 

@@ -292,4 +292,44 @@ private func twoClipGLTF() -> Data {
         #expect((form.view.descendant(named: "animGraphLayerMaskBone") as? Label)?.text == "Mask: Body")
         #expect(form.view.descendant(named: "animGraphLayerMaskPick") != nil)
     }
+
+    @Test func subStateMachinesThroughToolsAndTab() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        _ = try project(session, folder)
+        try call(session, "animGraph.new", ["name": "Nested", "preview": "Models/hero.gltf"])
+        let added = try call(session, "animGraph.edit", ["path": "Nested.animgraph",
+            "parameters": [["name": "armed", "type": "bool"]],
+            "addStates": [["name": "Combat", "machine": ["states": [["name": "Ready", "clip": "Models/hero.gltf#animation/Walk"]]]]],
+            "addTransitions": [["from": "Idle", "to": "Combat", "conditions": [["parameter": "armed", "test": "isTrue"]]]]])
+        #expect(added["machines"] as? [String] == ["Combat"])
+        // Inside the machine: a state, and a way out to the top level's Idle.
+        let inside = try call(session, "animGraph.edit", ["path": "Nested.animgraph", "level": "Combat",
+            "addStates": [["name": "Guard", "clip": "Models/hero.gltf#animation/Idle"]],
+            "addTransitions": [["from": "Ready", "to": "Guard", "exitTime": 1], ["to": "Idle", "conditions": [["parameter": "armed", "test": "isFalse"]]]]])
+        #expect(inside["level"] as? String == "Combat" && inside["states"] as? [String] == ["Ready", "Guard"])
+        #expect(inside["transitions"] as? [String] == ["0: Ready -> Guard", "1: * -> Idle"])
+        #expect((inside["warnings"] as? [String])?.isEmpty == true)
+        #expect(throws: (any Error).self) { try call(session, "animGraph.edit", ["path": "Nested.animgraph", "level": "Idle", "initialState": "Idle"]) }
+        let id = try #require(session.assets?.id(forPath: "Nested.animgraph"))
+        let graph = try #require(session.assets?.animationGraph(of: id))
+        #expect(graph.state(atPath: ["Combat", "Guard"])?.clip?.hasPrefix("asset:") == true, "clip paths inside machines become references")
+        #expect(graph.stateMachine.states.map(\.name).contains("Combat/Guard"))
+
+        // The tab: open the machine, edit inside it, and go back up.
+        let form = try #require(AnimationGraphView(session: session, asset: id))
+        form.enter("Combat")
+        #expect(form.path == ["Combat"] && form.graph.states.map(\.name) == ["Ready", "Guard"])
+        #expect(form.canvas.outerStates.contains("Idle") && form.view.descendant(named: "animGraphLevelUp") != nil)
+        #expect(form.levelState(ofPlaying: "Combat/Guard") == "Guard" && form.levelState(ofPlaying: "Idle") == nil)
+        form.addState()
+        form.refresh()
+        #expect(session.assets?.animationGraph(of: id)?.level(at: ["Combat"])?.states.count == 3)
+        #expect(session.assets?.animationGraph(of: id)?.states.count == 3, "the top level is untouched")
+        form.goUp()
+        #expect(form.path.isEmpty && form.selection == .state("Combat"))
+        #expect(form.levelState(ofPlaying: "Combat/Guard") == "Combat")
+        #expect(form.view.descendant(named: "animGraphOpenMachine") != nil)
+    }
 }

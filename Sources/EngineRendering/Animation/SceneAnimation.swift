@@ -142,7 +142,9 @@ extension Animator {
 extension AnimationGraph {
     /// The `Animator` state machine: states with their clips or blend spaces, transitions
     /// (`from` nil: any state), the initial state.
+    /// Sub-state machines are flattened first (`flattened()`: states named by path, "Combat/Slash").
     public var stateMachine: AnimationStateMachine {
+        if hasMachines { return flattened().stateMachine }
         let states = states.map { state -> AnimationState in
             let motion: AnimationMotion
             if let blend = state.blend, let y = blend.parameterY {

@@ -37,6 +37,10 @@ public final class AnimGraphCanvas: Widget {
     /// A transition was drawn from a state (nil: Any State) to a state.
     public var onConnect: ((String?, String) -> Void)?
     public var onDelete: (() -> Void)?
+    /// A state node was double-clicked (opens a sub-state machine).
+    public var onOpen: ((String) -> Void)?
+    /// States of the enclosing levels, when the canvas shows a sub-state machine.
+    public var outerStates: [String] = [] { didSet { setNeedsDisplay() } }
 
     static let nodeSize = Vec2(156, 46)
     static let anyStateName = "\u{1}any"
@@ -97,13 +101,25 @@ public final class AnimGraphCanvas: Widget {
 
     /// The two ends of a transition's arrow, offset sideways when the opposite one exists too.
     private func segment(_ transition: AnimationGraphTransition) -> (Vec2, Vec2)? {
-        guard graph.state(named: transition.to) != nil, transition.from.map({ graph.state(named: $0) != nil }) ?? true else { return nil }
+        guard transition.from.map({ graph.state(named: $0) != nil }) ?? true else { return nil }
+        if graph.state(named: transition.to) == nil {
+            // Out of a sub-state machine (to a state of an enclosing level): a stub down from the node.
+            guard isLeaving(transition) else { return nil }
+            let r = rect(of: transition.from)
+            let a = Vec2(r.x + r.width - 18, r.y + r.height)
+            return (a, a + Vec2(0, 34))
+        }
         let a = center(rect(of: transition.from)), b = center(rect(of: transition.to))
         let d = b - a
         let len = length(d)
         guard len > 1 else { return nil }
         let side = Vec2(-d.y, d.x) / len * 7
         return (a + side, b + side)
+    }
+
+    /// Whether `transition` goes to a state outside this level (only inside a sub-state machine).
+    func isLeaving(_ transition: AnimationGraphTransition) -> Bool {
+        outerStates.contains(transition.to) && graph.state(named: transition.to) == nil
     }
 
     func transition(at point: Vec2) -> Int? {
@@ -147,6 +163,7 @@ public final class AnimGraphCanvas: Widget {
             let tip = mid + dir * 6
             list.drawLine(from: tip, to: tip - dir * 10 + side * 6, width: 2, color: color)
             list.drawLine(from: tip, to: tip - dir * 10 - side * 6, width: 2, color: color)
+            if isLeaving(t) { list.drawText("↑ " + t.to, at: b + Vec2(-10, 3), size: 11, color: color) }
         }
         if case .connect(let from, let to)? = drag {
             list.drawLine(from: port(of: from), to: to, width: 2, color: theme.accent)
@@ -167,12 +184,18 @@ public final class AnimGraphCanvas: Widget {
             let selected = selection == .state(state.name)
             let border = selected ? theme.accent : active ? UIColor(0.35, 0.8, 0.5, 1) : UIColor(0.32, 0.36, 0.46, 1)
             list.strokeRect(box, color: border, width: selected || active ? 2 : 1, radii: UICornerRadii(6))
+            if state.machine != nil {
+                list.strokeRect(UIRect(x: box.x + 3, y: box.y + 3, width: box.width - 6, height: box.height - 6), color: border.withAlpha(0.6),
+                                width: 1, radii: UICornerRadii(4))
+            }
             if state.name == initial {
                 list.fillRect(UIRect(x: box.x, y: box.y + 6, width: 4, height: box.height - 12), color: UIColor(0.95, 0.7, 0.25, 1))
             }
             list.drawText(state.name, at: Vec2(box.x + 10, box.y + 6), size: 13, color: theme.textColor)
             let detail: String
-            if let blend = state.blend {
+            if let machine = state.machine {
+                detail = "Sub-machine · \(machine.states.count) states"
+            } else if let blend = state.blend {
                 let parameters = [blend.parameter] + (blend.parameterY.map { [$0] } ?? [])
                 detail = "Blend\(blend.is2D ? " 2D" : "") · \(parameters.map { $0.isEmpty ? "?" : $0 }.joined(separator: ", ")) · \(blend.clips.count) clips"
             } else {
@@ -212,6 +235,10 @@ public final class AnimGraphCanvas: Widget {
                 return true
             }
             if let hit = node(at: p) {
+                if e.clickCount == 2, let name = hit, graph.state(named: name)?.machine != nil {
+                    onOpen?(name)
+                    return true
+                }
                 select(hit.map { .state($0) } ?? .anyState)
                 drag = .node(hit, grab: p - origin - position(of: hit), moved: false)
             } else if let t = transition(at: p) {
@@ -337,7 +364,13 @@ public final class AnimationGraphView {
     public let session: EditorSession
     public let asset: AssetID
     public let view: VStack
+    /// The level the canvas and form show and edit: the whole graph, or a sub-state machine's
+    /// (`AnimationGraph.level(at:)`) with the graph-wide settings.
     public private(set) var graph: AnimationGraph
+    /// The file's whole graph.
+    public private(set) var fileGraph: AnimationGraph
+    /// The sub-state machine shown (state names from the root); empty for the top level.
+    public private(set) var path: [String] = []
     public private(set) var selection: AnimGraphSelection = .none
     /// The selected parameter (its name and default grid).
     public private(set) var selectedParameter: String?
@@ -356,12 +389,15 @@ public final class AnimationGraphView {
     private var pending: (graph: AnimationGraph, label: String)?
     private var liveControls: [(name: String, refresh: () -> Void)] = []
     private static var selections: [AssetID: AnimGraphSelection] = [:]
+    private static var paths: [AssetID: [String]] = [:]
 
     public init?(session: EditorSession, asset: AssetID) {
         guard session.isAnimationGraphFile(asset), let graph = session.assets?.animationGraph(of: asset) else { return nil }
         self.session = session
         self.asset = asset
-        self.graph = graph
+        fileGraph = graph
+        path = Self.paths[asset] ?? []
+        if let level = graph.level(at: path) { self.graph = level } else { self.graph = graph; path = [] }
         view = VStack(spacing: 6, name: "animGraphForm")
         selection = Self.selections[asset] ?? .none
         canvas.clipName = { [unowned session] in session.clipDisplayName($0) }
@@ -369,6 +405,7 @@ public final class AnimationGraphView {
         canvas.onMove = { [unowned self] name, p in moveNode(name, to: p) }
         canvas.onConnect = { [unowned self] from, to in connect(from: from, to: to) }
         canvas.onDelete = { [unowned self] in deleteSelected() }
+        canvas.onOpen = { [unowned self] name in enter(name) }
         sanitizeSelection()
         layout()
     }
@@ -388,9 +425,60 @@ public final class AnimationGraphView {
     /// Rereads the file (after an undo or an edit from elsewhere) and lays the form out again.
     public func reload() {
         guard pending == nil, let graph = session.assets?.animationGraph(of: asset) else { return }
-        self.graph = graph
+        setFileGraph(graph)
         sanitizeSelection()
         layout()
+    }
+
+    /// Takes the file's graph and shows the current level of it (the nearest one that still exists).
+    private func setFileGraph(_ whole: AnimationGraph) {
+        fileGraph = whole
+        while !path.isEmpty, whole.level(at: path) == nil { path.removeLast() }
+        Self.paths[asset] = path
+        graph = whole.level(at: path) ?? whole
+    }
+
+    /// Shows the sub-state machine `name` of the current level.
+    public func enter(_ name: String) {
+        guard let level = fileGraph.level(at: path + [name]) else { return }
+        path.append(name)
+        Self.paths[asset] = path
+        graph = level
+        selection = .none
+        Self.selections[asset] = selection
+        sanitizeSelection()
+        layout()
+    }
+
+    /// Shows the level `depth` steps from the top (0: the whole graph).
+    public func goUp(to depth: Int? = nil) {
+        guard !path.isEmpty else { return }
+        let left = path.last!
+        path = Array(path.prefix(depth ?? path.count - 1))
+        Self.paths[asset] = path
+        graph = fileGraph.level(at: path) ?? fileGraph
+        selection = graph.state(named: left) != nil ? .state(left) : .none
+        Self.selections[asset] = selection
+        sanitizeSelection()
+        layout()
+    }
+
+    /// States of the levels enclosing the current one (innermost first), which its transitions may go to.
+    var outerStateNames: [String] {
+        var names: [String] = []
+        for depth in stride(from: path.count - 1, through: 0, by: -1) {
+            for name in fileGraph.level(at: Array(path.prefix(depth)))?.states.map(\.name) ?? [] where !names.contains(name) {
+                names.append(name)
+            }
+        }
+        return names.filter { graph.state(named: $0) == nil }
+    }
+
+    /// The node of the current level a playing state (a flattened name, "Combat/Slash") is in.
+    public func levelState(ofPlaying name: String?) -> String? {
+        guard let parts = name?.components(separatedBy: AnimationGraph.levelSeparator), parts.count > path.count,
+              Array(parts.prefix(path.count)) == path else { return nil }
+        return parts[path.count]
     }
 
     private func sanitizeSelection() {
@@ -402,6 +490,7 @@ public final class AnimationGraphView {
         if let p = selectedParameter, graph.parameter(named: p) == nil { selectedParameter = nil }
         if let l = selectedLayer, !graph.layers.contains(where: { $0.name == l }) { selectedLayer = nil }
         canvas.graph = graph
+        canvas.outerStates = outerStateNames
         canvas.selection = selection
     }
 
@@ -412,8 +501,9 @@ public final class AnimationGraphView {
     }
 
     private func commit(_ edited: AnimationGraph, label: String) {
-        guard session.applyAnimationGraph(edited, to: asset, label: label) != nil else { return }
-        graph = session.assets?.animationGraph(of: asset) ?? edited
+        let whole = fileGraph.replacingLevel(at: path, with: edited) ?? edited
+        guard session.applyAnimationGraph(whole, to: asset, label: label) != nil else { return }
+        setFileGraph(session.assets?.animationGraph(of: asset) ?? whole)
         sanitizeSelection()
         layout()
     }
@@ -500,6 +590,7 @@ public final class AnimationGraphView {
         assign.command = AnimGraphAssignCommand.id.rawValue
         assign.tooltip = "Give the entity selected in the scene (a placed model's root) an Animator playing this graph"
         view.addChild(HStack(spacing: 6, [assign, Spacer()]))
+        addLevelBar()
 
         addPreviewSection()
         addRetargetSection()
@@ -508,7 +599,7 @@ public final class AnimationGraphView {
         addSelectionSection()
         view.addChild(Separator())
         addLayersSection()
-        let problems = session.animationGraphProblems(graph)
+        let problems = session.animationGraphProblems(fileGraph)
         if !problems.isEmpty {
             view.addChild(Separator())
             view.addChild(Label("Problems", role: .secondary))
@@ -518,6 +609,27 @@ public final class AnimationGraphView {
                 view.addChild(label)
             }
         }
+    }
+
+    /// Where the canvas is: the top level or a sub-state machine, with a way back up.
+    private func addLevelBar() {
+        guard !path.isEmpty else { return }
+        let row = HStack(spacing: 4, name: "animGraphLevel")
+        let top = Button("Graph", name: "animGraphLevelTop") { [unowned self] in goUp(to: 0) }
+        top.tooltip = "Back to the top level"
+        row.addChild(top)
+        for (depth, name) in path.enumerated() {
+            row.addChild(Label("›", role: .secondary))
+            let step = Button(name, name: "animGraphLevelStep") { [unowned self] in goUp(to: depth + 1) }
+            step.isEnabled = depth + 1 < path.count
+            row.addChild(step)
+        }
+        row.addChild(Spacer())
+        let up = Button("Up", name: "animGraphLevelUp") { [unowned self] in goUp() }
+        up.tooltip = "Leave this sub-state machine"
+        row.addChild(up)
+        view.addChild(row)
+        view.addChild(note("Inside a sub-state machine: transitions may go to its states or to states outside it (by name); Any State here means any state inside. Parameters and layers belong to the whole graph."))
     }
 
     private func note(_ text: String) -> Label {
@@ -785,11 +897,29 @@ public final class AnimationGraphView {
             }
             apply(edited, label: "Edit State")
         }
-        let motionIndex = state.blend == nil ? 0 : state.blend!.is2D ? 2 : 1
-        let motion = Dropdown(options: ["One clip", "1D blend space", "2D blend space"], selectedIndex: motionIndex, name: "animGraphMotion") {
+        let motionIndex = state.machine != nil ? 3 : state.blend == nil ? 0 : state.blend!.is2D ? 2 : 1
+        let motion = Dropdown(options: ["One clip", "1D blend space", "2D blend space", "Sub-state machine"], selectedIndex: motionIndex,
+                              name: "animGraphMotion") {
             [unowned self] index in
             editState("Change Motion") { s in
                 let floats = graph.parameters.filter { $0.type == .float }.map(\.name)
+                if index == 3 {
+                    guard s.machine == nil else { return }
+                    // The state's motion becomes the machine's first state.
+                    var inner = s
+                    inner.name = "Start"
+                    inner.position = .zero
+                    s.machine = AnimationGraphMachine(states: [inner], initialState: inner.name)
+                    s.clip = nil
+                    s.blend = nil
+                    return
+                }
+                if let machine = s.machine {
+                    // Back to a clip: the machine's first clip.
+                    s.machine = nil
+                    s.clip = machine.states.flatMap(\.clips).first
+                    if index == 0 { return }
+                }
                 if index == 0, let blend = s.blend {
                     s.clip = blend.clips.first?.clip
                     s.blend = nil
@@ -810,9 +940,15 @@ public final class AnimationGraphView {
                 }
             }
         }
-        motion.tooltip = "Play one clip, or mix clips by one float parameter (1D) or two (2D, e.g. strafe direction)"
+        motion.tooltip = "Play one clip, mix clips by one float parameter (1D) or two (2D, e.g. strafe direction), or nest a state machine"
         view.addChild(HStack(spacing: 6, [Label("Motion"), Spacer(), motion]))
-        if let blend = state.blend {
+        if let machine = state.machine {
+            let open = Button("Open Sub-Machine", role: .primary, name: "animGraphOpenMachine") { [unowned self] in enter(state.name) }
+            open.tooltip = "Edit the states inside (or double-click the node)"
+            view.addChild(HStack(spacing: 6, [open, Spacer()]))
+            let entry = machine.initialState ?? machine.states.first?.name ?? "none"
+            view.addChild(note("\(machine.states.count) state\(machine.states.count == 1 ? "" : "s") inside, entered at \(entry). This state's transitions leave from any of them."))
+        } else if let blend = state.blend {
             let floats = graph.parameters.filter { $0.type == .float }.map(\.name)
             let options = floats.isEmpty ? ["(add a float parameter)"] : floats
             let parameter = Dropdown(options: options, selectedIndex: floats.firstIndex(of: blend.parameter) ?? 0, name: "animGraphBlendParam") {
@@ -898,10 +1034,11 @@ public final class AnimationGraphView {
     }
 
     private func addNewTransitionRow(from: String?) {
-        let targets = graph.states.map(\.name).filter { $0 != from || from == nil }
+        let targets = graph.states.map(\.name).filter { $0 != from || from == nil } + outerStateNames
         guard !targets.isEmpty else { return }
         var target = 0
-        let to = Dropdown(options: targets, selectedIndex: 0, name: "animGraphNewTransitionTarget") { index in target = index }
+        let labels = targets.map { graph.state(named: $0) == nil ? "↑ " + $0 : $0 }
+        let to = Dropdown(options: labels, selectedIndex: 0, name: "animGraphNewTransitionTarget") { index in target = index }
         let add = Button("Add Transition", name: "animGraphAddTransition") { [unowned self] in
             if targets.indices.contains(target) { connect(from: from, to: targets[target]) }
         }

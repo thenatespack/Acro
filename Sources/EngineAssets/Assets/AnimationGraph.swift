@@ -125,11 +125,15 @@ public struct AnimationGraphBlend: Codable, Equatable, Sendable {
     }
 }
 
-/// A state: one clip, or a blend space when `blend` is set.
+/// A state: one clip, a blend space when `blend` is set, or a sub-state machine when `machine`
+/// is set (AnimationGraphMachines.swift).
 public struct AnimationGraphState: Codable, Equatable, Sendable {
     public var name: String
     public var clip: String?
     public var blend: AnimationGraphBlend?
+    /// A nested state machine: entering the state enters its initial state; the state's own
+    /// transitions leave from any state inside it.
+    public var machine: AnimationGraphMachine?
     public var speed: Float
     /// Multiplies `speed` by this float parameter.
     public var speedParameter: String?
@@ -138,31 +142,36 @@ public struct AnimationGraphState: Codable, Equatable, Sendable {
     public var position: Vec2
 
     public init(name: String, clip: String? = nil, blend: AnimationGraphBlend? = nil, speed: Float = 1, speedParameter: String? = nil,
-                loops: Bool = true, position: Vec2 = .zero) {
+                loops: Bool = true, position: Vec2 = .zero, machine: AnimationGraphMachine? = nil) {
         self.name = name
         self.clip = clip
         self.blend = blend
+        self.machine = machine
         self.speed = speed
         self.speedParameter = speedParameter
         self.loops = loops
         self.position = position
     }
 
-    private enum CodingKeys: String, CodingKey { case name, clip, blend, speed, speedParameter, loops, position }
+    private enum CodingKeys: String, CodingKey { case name, clip, blend, machine, speed, speedParameter, loops, position }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? "State"
         clip = try c.decodeIfPresent(String.self, forKey: .clip)
         blend = try c.decodeIfPresent(AnimationGraphBlend.self, forKey: .blend)
+        machine = try c.decodeIfPresent(AnimationGraphMachine.self, forKey: .machine)
         speed = try c.decodeIfPresent(Float.self, forKey: .speed) ?? 1
         speedParameter = try c.decodeIfPresent(String.self, forKey: .speedParameter)
         loops = try c.decodeIfPresent(Bool.self, forKey: .loops) ?? true
         position = try c.decodeIfPresent(Vec2.self, forKey: .position) ?? .zero
     }
 
-    /// Every clip it plays.
-    public var clips: [String] { blend.map { $0.clips.map(\.clip) } ?? clip.map { [$0] } ?? [] }
+    /// Every clip it plays (a sub-state machine's states' too).
+    public var clips: [String] {
+        if let machine { return machine.states.flatMap(\.clips) }
+        return blend.map { $0.clips.map(\.clip) } ?? clip.map { [$0] } ?? []
+    }
 }
 
 /// The test of an `AnimationGraphCondition`.
@@ -385,10 +394,18 @@ public struct AnimationGraph: Codable, Equatable, Sendable {
     public mutating func renameParameter(_ old: String, to new: String) {
         guard let i = parameters.firstIndex(where: { $0.name == old }) else { return }
         parameters[i].name = new
+        Self.renameParameter(old, to: new, states: &states, transitions: &transitions)
+    }
+
+    static func renameParameter(_ old: String, to new: String, states: inout [AnimationGraphState], transitions: inout [AnimationGraphTransition]) {
         for s in states.indices {
             if states[s].speedParameter == old { states[s].speedParameter = new }
             if states[s].blend?.parameter == old { states[s].blend?.parameter = new }
             if states[s].blend?.parameterY == old { states[s].blend?.parameterY = new }
+            if var machine = states[s].machine {
+                renameParameter(old, to: new, states: &machine.states, transitions: &machine.transitions)
+                states[s].machine = machine
+            }
         }
         for t in transitions.indices {
             for c in transitions[t].conditions.indices where transitions[t].conditions[c].parameter == old {
@@ -428,11 +445,6 @@ public enum AnimationGraphCheck {
     public static func problems(_ graph: AnimationGraph, clipExists: ((String) -> Bool)? = nil) -> [String] {
         var problems: [String] = []
         if graph.states.isEmpty { problems.append("the graph has no states") }
-        var names = Set<String>()
-        for state in graph.states {
-            if state.name.isEmpty { problems.append("a state has no name") }
-            if !names.insert(state.name).inserted { problems.append("two states are named '\(state.name)'") }
-        }
         var parameterNames = Set<String>()
         for parameter in graph.parameters where !parameterNames.insert(parameter.name).inserted {
             problems.append("two parameters are named '\(parameter.name)'")
@@ -444,38 +456,58 @@ public enum AnimationGraphCheck {
             }
             if parameter.type != type { problems.append("\(what) needs a \(type.rawValue) parameter, but '\(name)' is a \(parameter.type.rawValue)") }
         }
-        for state in graph.states {
-            let what = "state '\(state.name)'"
-            if let blend = state.blend {
-                checkParameter(blend.parameter, .float, "\(what)'s blend space")
-                if let y = blend.parameterY {
-                    checkParameter(y, .float, "\(what)'s blend space (y)")
-                    var seen = Set<[Float]>()
-                    if blend.clips.contains(where: { !seen.insert([$0.position, $0.y ?? 0]).inserted }) {
-                        problems.append("\(what)'s blend space has two clips at the same point")
+        /// One level: the root (`path` empty) or a sub-state machine; `outer` are the enclosing
+        /// levels' states, innermost first (transitions may go to them).
+        func checkLevel(_ states: [AnimationGraphState], _ transitions: [AnimationGraphTransition], initial: String?, path: [String],
+                        outer: [[AnimationGraphState]]) {
+            let place = path.isEmpty ? "" : " in '\(path.joined(separator: "/"))'"
+            var names = Set<String>()
+            for state in states {
+                if state.name.isEmpty { problems.append("a state\(place) has no name") }
+                if state.name.contains("/") { problems.append("state '\(state.name)'\(place) has a '/' in its name") }
+                if !names.insert(state.name).inserted { problems.append("two states\(place) are named '\(state.name)'") }
+            }
+            for state in states {
+                let what = "state '\((path + [state.name]).joined(separator: "/"))'"
+                if let machine = state.machine {
+                    if machine.states.isEmpty { problems.append("\(what)'s sub-state machine has no states") }
+                    checkLevel(machine.states, machine.transitions, initial: machine.initialState, path: path + [state.name], outer: [states] + outer)
+                } else if let blend = state.blend {
+                    checkParameter(blend.parameter, .float, "\(what)'s blend space")
+                    if let y = blend.parameterY {
+                        checkParameter(y, .float, "\(what)'s blend space (y)")
+                        var seen = Set<[Float]>()
+                        if blend.clips.contains(where: { !seen.insert([$0.position, $0.y ?? 0]).inserted }) {
+                            problems.append("\(what)'s blend space has two clips at the same point")
+                        }
                     }
+                    if blend.clips.isEmpty { problems.append("\(what)'s blend space has no clips") }
+                    if blend.clips.contains(where: { $0.clip.isEmpty }) { problems.append("\(what)'s blend space has an entry without a clip") }
+                } else if state.clip?.isEmpty ?? true {
+                    problems.append("\(what) has no clip")
                 }
-                if blend.clips.isEmpty { problems.append("\(what)'s blend space has no clips") }
-                if blend.clips.contains(where: { $0.clip.isEmpty }) { problems.append("\(what)'s blend space has an entry without a clip") }
-            } else if state.clip?.isEmpty ?? true {
-                problems.append("\(what) has no clip")
+                if let parameter = state.speedParameter { checkParameter(parameter, .float, "\(what)'s speed") }
             }
-            if let parameter = state.speedParameter { checkParameter(parameter, .float, "\(what)'s speed") }
-        }
-        if let initial = graph.initialState, graph.state(named: initial) == nil {
-            problems.append("the initial state '\(initial)' doesn't exist")
-        }
-        for (i, transition) in graph.transitions.enumerated() {
-            let what = "transition \(i + 1) (\(transition.from ?? "any state") → \(transition.to))"
-            if let from = transition.from, graph.state(named: from) == nil { problems.append("\(what) starts from a state that doesn't exist") }
-            if graph.state(named: transition.to) == nil { problems.append("\(what) goes to a state that doesn't exist") }
-            if transition.conditions.isEmpty && transition.exitTime == nil {
-                problems.append("\(what) has no conditions and no exit time, so it never fires")
+            if let initial, !states.contains(where: { $0.name == initial }) {
+                problems.append("the initial state '\(initial)'\(place) doesn't exist")
             }
-            for condition in transition.conditions {
-                checkParameter(condition.parameter, condition.test.parameterType, "\(what)'s \(condition.test.rawValue) condition")
+            for (i, transition) in transitions.enumerated() {
+                let what = "transition \(i + 1)\(place) (\(transition.from ?? "any state") → \(transition.to))"
+                if let from = transition.from, !states.contains(where: { $0.name == from }) {
+                    problems.append("\(what) starts from a state that doesn't exist")
+                }
+                if !([states] + outer).contains(where: { level in level.contains { $0.name == transition.to } }) {
+                    problems.append("\(what) goes to a state that doesn't exist")
+                }
+                if transition.conditions.isEmpty && transition.exitTime == nil {
+                    problems.append("\(what) has no conditions and no exit time, so it never fires")
+                }
+                for condition in transition.conditions {
+                    checkParameter(condition.parameter, condition.test.parameterType, "\(what)'s \(condition.test.rawValue) condition")
+                }
             }
         }
+        checkLevel(graph.states, graph.transitions, initial: graph.initialState, path: [], outer: [])
         for layer in graph.layers where layer.clip.isEmpty { problems.append("layer '\(layer.name)' has no clip") }
         if let clipExists {
             for key in graph.clipKeys where !clipExists(key) { problems.append("clip '\(key)' doesn't exist") }

@@ -28,7 +28,9 @@ public enum EditorAnimationGraphCommands {
         value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] \
         (checked in order, the first that applies fires), `layers` [{name, clip, weight, speed, referenceTime, blend additive|override \
         (override replaces the bones the clip animates), mask [bone names: the layer only touches their subtrees]}], \
-        `initialState`. Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths \
+        `initialState`. A state with `machine` {states, transitions, initialState} instead of a clip is a sub-state machine: \
+        entering it enters its initial state, its own transitions leave from any state inside, and transitions inside may go to \
+        states outside it by name (edit inside with animGraph.edit `level`). Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths \
         are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes.
         """
 }
@@ -110,14 +112,21 @@ extension EditorSession {
         guard let assets else { return graph }
         var graph = graph
         graph.preview = graph.preview.map { assets.normalizedAssetKey($0) }
-        for s in graph.states.indices {
-            graph.states[s].clip = graph.states[s].clip.map { assets.normalizedAssetKey($0) }
-            if graph.states[s].blend != nil {
-                for c in graph.states[s].blend!.clips.indices {
-                    graph.states[s].blend!.clips[c].clip = assets.normalizedAssetKey(graph.states[s].blend!.clips[c].clip)
+        func normalize(_ states: inout [AnimationGraphState]) {
+            for s in states.indices {
+                states[s].clip = states[s].clip.map { assets.normalizedAssetKey($0) }
+                if states[s].blend != nil {
+                    for c in states[s].blend!.clips.indices {
+                        states[s].blend!.clips[c].clip = assets.normalizedAssetKey(states[s].blend!.clips[c].clip)
+                    }
+                }
+                if var machine = states[s].machine {
+                    normalize(&machine.states)
+                    states[s].machine = machine
                 }
             }
         }
+        normalize(&graph.states)
         for l in graph.layers.indices { graph.layers[l].clip = assets.normalizedAssetKey(graph.layers[l].clip) }
         return graph
     }
@@ -182,16 +191,24 @@ public struct AnimGraphResult: Codable, Equatable, Sendable {
     public var initialState: String?
     /// Problems: unknown states or parameters, wrong parameter types, missing clips…
     public var warnings: [String]
+    /// Sub-state machines, as paths for `level` ("Combat", "Combat/Ranged").
+    public var machines: [String]?
+    /// The level `states`, `transitions` and `initialState` describe (nil: the top).
+    public var level: String?
 }
 
 extension AnimGraphResult {
-    @MainActor init(_ id: AssetID, _ graph: AnimationGraph, in session: EditorSession) {
+    @MainActor init(_ id: AssetID, _ graph: AnimationGraph, level path: [String] = [], in session: EditorSession) {
         let record = session.assets?.record(id)
-        self.init(asset: id, path: session.assets?.path(of: id) ?? "", states: graph.states.map(\.name),
-                  transitions: graph.transitions.enumerated().map { "\($0.offset): \($0.element.from ?? "*") -> \($0.element.to)" },
+        let shown = graph.level(at: path) ?? graph
+        let machines = graph.machinePaths.map { $0.joined(separator: AnimationGraph.levelSeparator) }
+        self.init(asset: id, path: session.assets?.path(of: id) ?? "", states: shown.states.map(\.name),
+                  transitions: shown.transitions.enumerated().map { "\($0.offset): \($0.element.from ?? "*") -> \($0.element.to)" },
                   parameters: graph.parameters.map { "\($0.name) (\($0.type.rawValue))" }, layers: graph.layers.map(\.name),
-                  initialState: graph.initialState ?? graph.states.first?.name,
-                  warnings: session.animationGraphProblems(graph) + (record?.importError.map { ["import failed: \($0)"] } ?? []))
+                  initialState: shown.initialState ?? shown.states.first?.name,
+                  warnings: session.animationGraphProblems(graph) + (record?.importError.map { ["import failed: \($0)"] } ?? []),
+                  machines: machines.isEmpty ? nil : machines,
+                  level: path.isEmpty ? nil : path.joined(separator: AnimationGraph.levelSeparator))
     }
 }
 
@@ -337,12 +354,15 @@ public enum AnimGraphEditCommand: EditorCommand {
         public var retarget: AnimationRetargetOptions?
         /// True turns retargeting off (clips play by node index).
         public var removeRetarget: Bool?
+        /// The sub-state machine whose states, transitions and initial state the edits address, as a path of
+        /// state names ("Combat", "Combat/Ranged"); default the top level.
+        public var level: String?
         public init(asset: AssetReference? = nil, path: String? = nil, removeTransitions: [Int]? = nil, removeStates: [String]? = nil,
                     removeParameters: [String]? = nil, removeLayers: [String]? = nil, parameters: [AnimationGraphParameter]? = nil,
                     addStates: [AnimationGraphState]? = nil, updateStates: [String: JSONValue]? = nil,
                     addTransitions: [AnimationGraphTransition]? = nil, updateTransitions: [String: JSONValue]? = nil,
                     addLayers: [AnimationGraphLayer]? = nil, updateLayers: [String: JSONValue]? = nil, initialState: String? = nil,
-                    preview: String? = nil, retarget: AnimationRetargetOptions? = nil, removeRetarget: Bool? = nil) {
+                    preview: String? = nil, retarget: AnimationRetargetOptions? = nil, removeRetarget: Bool? = nil, level: String? = nil) {
             self.asset = asset
             self.path = path
             self.removeTransitions = removeTransitions
@@ -360,20 +380,28 @@ public enum AnimGraphEditCommand: EditorCommand {
             self.preview = preview
             self.retarget = retarget
             self.removeRetarget = removeRetarget
+            self.level = level
         }
     }
 
     public static let id: CommandID = "animGraph.edit"
     public static let title = "Edit Animation Graph"
-    public static let doc = "Changes part of an .animgraph file in one undoable step, in this order: removeTransitions (indices), removeStates, removeParameters, removeLayers, parameters (add or replace by name), addStates, updateStates (name → fields; \"name\" renames everywhere), addTransitions, updateTransitions (index → fields), addLayers, updateLayers, initialState, preview, retarget / removeRetarget. Clip paths become asset references. Returns the states, numbered transitions, parameters and problems. " + EditorAnimationGraphCommands.formatDoc
+    public static let doc = "Changes part of an .animgraph file in one undoable step, in this order: removeTransitions (indices), removeStates, removeParameters, removeLayers, parameters (add or replace by name), addStates, updateStates (name → fields; \"name\" renames everywhere), addTransitions, updateTransitions (index → fields), addLayers, updateLayers, initialState, preview, retarget / removeRetarget. With `level` (a sub-state machine's path, e.g. \"Combat\"), the state and transition edits and initialState apply inside that machine, and its transitions may also go to states of enclosing levels (by name). Clip paths become asset references. Returns the states, numbered transitions, parameters and problems. " + EditorAnimationGraphCommands.formatDoc
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> AnimGraphResult {
         let (id, original) = try session.resolveAnimationGraph(arguments, title)
-        let graph = session.normalizedAnimationGraph(try edited(original, with: arguments))
+        let path = (arguments.level ?? "").split(separator: Character(AnimationGraph.levelSeparator)).map(String.init)
+        guard let level = original.level(at: path) else {
+            throw CommandError.failed("\(title): no sub-state machine '\(arguments.level ?? "")' (machines: \(original.machinePaths.map { $0.joined(separator: "/") }.joined(separator: ", ")))")
+        }
+        let outer = (0..<path.count).flatMap { original.level(at: Array(path.prefix($0)))?.states.map(\.name) ?? [] }
+        let changed = try edited(level, with: arguments, outerStates: outer)
+        guard let whole = original.replacingLevel(at: path, with: changed) else { throw CommandError.failed("\(title): the level vanished") }
+        let graph = session.normalizedAnimationGraph(whole)
         _ = try session.commands.require(session.applyAnimationGraph(graph, to: id, label: title), title)
-        return AnimGraphResult(id, graph, in: session)
+        return AnimGraphResult(id, graph, level: path, in: session)
     }
 
     /// `value` with the JSON object `changes` merged over its fields.
@@ -393,7 +421,8 @@ public enum AnimGraphEditCommand: EditorCommand {
     }
 
     /// `graph` with the edits of `arguments` applied (pure, for tests and the UI).
-    public static func edited(_ graph: AnimationGraph, with arguments: Arguments) throws -> AnimationGraph {
+    /// `outerStates` are the enclosing levels' states, which transitions inside a sub-state machine may go to.
+    public static func edited(_ graph: AnimationGraph, with arguments: Arguments, outerStates: [String] = []) throws -> AnimationGraph {
         var graph = graph
         if let indices = arguments.removeTransitions, !indices.isEmpty {
             let bad = indices.filter { !graph.transitions.indices.contains($0) }
@@ -438,7 +467,9 @@ public enum AnimGraphEditCommand: EditorCommand {
         }
         for transition in arguments.addTransitions ?? [] {
             if let from = transition.from, graph.state(named: from) == nil { throw CommandError.failed("No state named \(from) (transition from)") }
-            guard graph.state(named: transition.to) != nil else { throw CommandError.failed("No state named \(transition.to) (transition to)") }
+            guard graph.state(named: transition.to) != nil || outerStates.contains(transition.to) else {
+                throw CommandError.failed("No state named \(transition.to) (transition to)")
+            }
             graph.transitions.append(transition)
         }
         for (key, changes) in (arguments.updateTransitions ?? [:]).sorted(by: { $0.key < $1.key }) {

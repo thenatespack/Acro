@@ -167,15 +167,16 @@ Result:
 
 **Edit Animation Graph** · _undoable_
 
-Changes part of an .animgraph file in one undoable step, in this order: removeTransitions (indices), removeStates, removeParameters, removeLayers, parameters (add or replace by name), addStates, updateStates (name → fields; "name" renames everywhere), addTransitions, updateTransitions (index → fields), addLayers, updateLayers, initialState, preview, retarget / removeRetarget. Clip paths become asset references. Returns the states, numbered transitions, parameters and problems. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `retarget` {boneMap {source bone: target bone}, matchNames (default true), rotation world|local|copy, translation root|none|all, rootScale, sampleRate} (plays clips made for another skeleton by matching bones by name; see animGraph.bones), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space; add parameterY (a second float) and give each clip a `y` for a 2D one, e.g. moveX / moveY for strafing), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` [{name, clip, weight, speed, referenceTime, blend additive|override (override replaces the bones the clip animates), mask [bone names: the layer only touches their subtrees]}], `initialState`. Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes. Undoable (one step; edit.undo reverts it).
+Changes part of an .animgraph file in one undoable step, in this order: removeTransitions (indices), removeStates, removeParameters, removeLayers, parameters (add or replace by name), addStates, updateStates (name → fields; "name" renames everywhere), addTransitions, updateTransitions (index → fields), addLayers, updateLayers, initialState, preview, retarget / removeRetarget. With `level` (a sub-state machine's path, e.g. "Combat"), the state and transition edits and initialState apply inside that machine, and its transitions may also go to states of enclosing levels (by name). Clip paths become asset references. Returns the states, numbered transitions, parameters and problems. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `retarget` {boneMap {source bone: target bone}, matchNames (default true), rotation world|local|copy, translation root|none|all, rootScale, sampleRate} (plays clips made for another skeleton by matching bones by name; see animGraph.bones), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space; add parameterY (a second float) and give each clip a `y` for a 2D one, e.g. moveX / moveY for strafing), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` [{name, clip, weight, speed, referenceTime, blend additive|override (override replaces the bones the clip animates), mask [bone names: the layer only touches their subtrees]}], `initialState`. A state with `machine` {states, transitions, initialState} instead of a clip is a sub-state machine: entering it enters its initial state, its own transitions leave from any state inside, and transitions inside may go to states outside it by name (edit inside with animGraph.edit `level`). Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
 - `addLayers?`: [{blend?: "additive" \| "override", clip?: string, mask?: [string], name?: string, referenceTime?: number, speed?: number, weight?: number}]
-- `addStates?`: [{blend?: object, clip?: string, loops?: boolean, name?: string, position?: number[2], speed?: number, speedParameter?: string}]
+- `addStates?`: [{blend?: object, clip?: string, loops?: boolean, machine?: object, name?: string, position?: number[2], speed?: number, speedParameter?: string}]
 - `addTransitions?`: [{canTransitionToSelf?: boolean, conditions?: [object], duration?: number, exitTime?: number, from?: string, to?: string}]
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `initialState?`: string
+- `level?`: string
 - `parameters?`: [{default?: boolean, name?: string, type?: "float" \| "bool" \| "trigger"}]
 - `path?`: string
 - `preview?`: string
@@ -194,6 +195,8 @@ Result:
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `initialState?`: string
 - `layers`: [string]
+- `level?`: string
+- `machines?`: [string]
 - `parameters`: [string]
 - `path`: string
 - `states`: [string]
@@ -223,7 +226,7 @@ Result:
 
 **New Animation Graph**
 
-Writes an .animgraph file in `folder` (default: the Assets root) and imports it: `graph` contents, or a starter (Idle, plus Move on a `speed` parameter when the `preview` model has two clips or more, using its clips). Returns the states, transitions, parameters and warnings. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `retarget` {boneMap {source bone: target bone}, matchNames (default true), rotation world|local|copy, translation root|none|all, rootScale, sampleRate} (plays clips made for another skeleton by matching bones by name; see animGraph.bones), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space; add parameterY (a second float) and give each clip a `y` for a 2D one, e.g. moveX / moveY for strafing), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` [{name, clip, weight, speed, referenceTime, blend additive|override (override replaces the bones the clip animates), mask [bone names: the layer only touches their subtrees]}], `initialState`. Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes.
+Writes an .animgraph file in `folder` (default: the Assets root) and imports it: `graph` contents, or a starter (Idle, plus Move on a `speed` parameter when the `preview` model has two clips or more, using its clips). Returns the states, transitions, parameters and warnings. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `retarget` {boneMap {source bone: target bone}, matchNames (default true), rotation world|local|copy, translation root|none|all, rootScale, sampleRate} (plays clips made for another skeleton by matching bones by name; see animGraph.bones), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space; add parameterY (a second float) and give each clip a `y` for a 2D one, e.g. moveX / moveY for strafing), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` [{name, clip, weight, speed, referenceTime, blend additive|override (override replaces the bones the clip animates), mask [bone names: the layer only touches their subtrees]}], `initialState`. A state with `machine` {states, transitions, initialState} instead of a clip is a sub-state machine: entering it enters its initial state, its own transitions leave from any state inside, and transitions inside may go to states outside it by name (edit inside with animGraph.edit `level`). Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes.
 
 Arguments:
 
@@ -237,6 +240,8 @@ Result:
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `initialState?`: string
 - `layers`: [string]
+- `level?`: string
+- `machines?`: [string]
 - `parameters`: [string]
 - `path`: string
 - `states`: [string]
@@ -275,6 +280,8 @@ Result:
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `initialState?`: string
 - `layers`: [string]
+- `level?`: string
+- `machines?`: [string]
 - `parameters`: [string]
 - `path`: string
 - `states`: [string]
