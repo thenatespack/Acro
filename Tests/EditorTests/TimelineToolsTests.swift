@@ -91,7 +91,7 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(session.assets?.timeline(of: id)?.tracks.count == 3)
         #expect(throws: (any Error).self) { try call(session, "timeline.edit", ["asset": id.description, "removeTracks": ["nope"]]) }
         #expect(throws: (any Error).self) {
-            try call(session, "timeline.edit", ["asset": id.description, "addTracks": [["id": "x", "kind": "dialogue"]]])
+            try call(session, "timeline.edit", ["asset": id.description, "addTracks": [["id": "x", "kind": "subtitles"]]])
         }
         #expect(throws: (any Error).self) {
             try call(session, "timeline.edit", ["asset": id.description, "removeKeys": [["track": "camera", "time": 99]]])
@@ -184,6 +184,35 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(!workspace.isPlaying && workspace.playhead == 4)
         workspace.close()
         #expect(workspace.asset == nil)
+    }
+
+    @Test func previewPlaysConversations() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
+        let assets = try #require(session.assets)
+        _ = try assets.createDialogue(try DialogueAsset.decode(Data("""
+            {"start": "a", "nodes": [{"id": "a", "type": "line", "text": "Hi there."}]}
+            """.utf8)), at: "Talk/hi.dialogue")
+        session.world.spawn(Transform(), Name("TimelineToolsTests NPC"), DialoguePlayer(dialogue: "Talk/hi.dialogue", autoStart: true))
+        let id = try #require(session.createTimelineAsset(in: "", name: "Talk", timeline: Timeline(duration: 2, tracks: [
+            TimelineTrack(id: "talk", kind: .dialogue, target: "TimelineToolsTests NPC", keys: [TimelineKey(time: 0.5, wait: true)])])))
+        let workspace = TimelineWorkspace(session: session)
+        workspace.open(id)
+        workspace.update(input: nil, dt: 1.0 / 60)
+        #expect(workspace.dialogueBox.runner == nil, "the scene's autoStart conversation doesn't start in the preview")
+        workspace.setLooping(false)
+        workspace.setPlaying(true)
+        for _ in 0..<10 { workspace.update(input: nil, dt: 0.1) }
+        #expect(workspace.dialogueBox.runner?.isActive == true, "the dialogue key shows in the preview's box")
+        #expect(abs(workspace.playhead - 0.5) < 0.01, "held by wait")
+        workspace.dialogueBox.runner?.advance()
+        for _ in 0..<5 { workspace.update(input: nil, dt: 0.1) }
+        #expect(workspace.playhead > 0.6, "carries on after the conversation")
+        workspace.scrub(to: 0)
+        workspace.update(input: nil, dt: 1.0 / 60)
+        workspace.close()
     }
 
     @Test func stripMapsTimeAndHitsKeys() {

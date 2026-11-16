@@ -7,9 +7,10 @@ import Foundation
 //
 // The preview plays in a copy of the scene (refreshed when the scene changes and the preview
 // isn't playing) through the engine's own `TimelinePlayer` system, so what you see is what the
-// game does: camera moves and cuts, transforms, effects and the screen fade. Seen through the
-// timeline's camera (Camera View) or a free orbit camera. Animation clips and sounds play only
-// in play mode. The file is the truth: every edit is one undo step and the preview follows it.
+// game does: camera moves and cuts, transforms, animation clips, sounds (while playing),
+// effects, the screen fade and conversations (in a dialogue box over the preview: click it to
+// continue). Seen through the timeline's camera (Camera View) or a free orbit camera. The file is
+// the truth: every edit is one undo step and the preview follows it.
 
 /// Draws a timeline's tracks as rows of key markers under a time ruler with the playhead.
 /// Click or drag in the ruler or a row to scrub, click a key to select it, drag it to move it
@@ -166,6 +167,7 @@ public final class TimelineStripView: Widget {
         case .particles: UIColor(1, 0.5, 0.3, 1)
         case .fade: UIColor(0.75, 0.75, 0.8, 1)
         case .event: UIColor(1, 0.9, 0.4, 1)
+        case .dialogue: UIColor(0.4, 0.85, 0.85, 1)
         case nil: UIColor(0.5, 0.5, 0.5, 1)
         }
     }
@@ -207,6 +209,10 @@ public final class TimelineWorkspace {
 
     let viewportWidget = ViewportWidget(name: "timelineViewport", label: "Timeline viewport")
     private let fadeOverlay = TimelineFadeOverlay()
+    /// Shows the preview's conversations (dialogue tracks).
+    let dialogueBox = DialogueBox(name: "timelineDialogueBox")
+    /// The preview's sound, installed only while it plays.
+    private var audio: SpatialAudioHandle?
     private let title = Label("Timeline", role: .heading, name: "timelineTitle")
     private let sidebar = VStack(spacing: 6, padding: EdgeInsets(top: 8, left: 10, bottom: 8, right: 10), name: "timelineSidebar")
     private let playButton = Button("Play", name: "timelinePlay")
@@ -257,6 +263,8 @@ public final class TimelineWorkspace {
         asset = nil
         builder = nil
         director = nil
+        silence()
+        world.dialogues?.presenter = nil
         world = World()
         showEmpty()
     }
@@ -332,7 +340,10 @@ public final class TimelineWorkspace {
         strip.padding = EdgeInsets(top: 4, left: 6, bottom: 6, right: 6)
 
         let stage = Widget(name: "timelineStage")
-        stage.addChildren([viewportWidget, fadeOverlay])
+        dialogueBox.style.position = .absolute(UIAnchor.bottom.anchors(offset: Vec2(0, 12)))
+        dialogueBox.style.width = 480
+        dialogueBox.continueHint = "Click to continue"
+        stage.addChildren([viewportWidget, fadeOverlay, dialogueBox])
         stage.style.grow = 1
         stage.style.shrink = 1
         let stripScroll = ScrollView(strip, name: "timelineStripScroll")
@@ -375,6 +386,16 @@ public final class TimelineWorkspace {
             session.log.error("Timeline: copying the scene into the preview failed: \(error)")
         }
         copy.propagateTransforms()
+        // The game's systems the timeline drives: animation clips, conversations (sound is added while playing).
+        if copy.count(of: SpriteAnimator.self) > 0 { copy.addSpriteAnimationSystem(name: "timelinePreview.spriteAnimation") }
+        copy.addSceneAnimationSystem(assets: { [weak session] in session?.assets }, name: "timelinePreview.animation")
+        silence()
+        world.dialogues?.presenter = nil
+        // Only the timeline's conversations: the scene's autoStart ones would cover the preview.
+        var talkers: [Entity] = []
+        copy.query(DialoguePlayer.self) { e, d in if d.autoStart { talkers.append(e) } }
+        for e in talkers { copy.modify(DialoguePlayer.self, for: e) { $0.autoStart = false } }
+        copy.addDialogueSystem(assets: { [weak session] in session?.assets }).presenter = dialogueBox
         copy.addTimelinePlayers(assets: { [weak session] in session?.assets })
         director = copy.spawn(Name("Timeline Preview"),
                               TimelinePlayer(timeline: AssetReference(asset).description, playOnStart: false, loop: isLooping))
@@ -404,6 +425,9 @@ public final class TimelineWorkspace {
         guard let asset, let assets = session.assets else { return }
         guard assets.record(asset) != nil else { return close() }
         builder?.refresh()
+        // The dialogue box fits a narrow preview (it would spill over the sidebar).
+        let boxWidth = viewportWidget.frame.width > 0 ? min(480, max(160, viewportWidget.frame.width - 24)) : 480
+        if dialogueBox.style.width != boxWidth { dialogueBox.style.width = boxWidth }
         let revision = assets.revision(of: asset)
         if revision != shownRevision {
             if shownRevision >= 0 { builder?.reload() }
@@ -426,6 +450,12 @@ public final class TimelineWorkspace {
             input.move = .zero
             viewport.update(input) { [unowned self] view in toolContext(view: view) }
         }
+        // Sound only while playing: a paused preview is silent (the scene's own emitters too).
+        if isPlaying, audio == nil, let device = session.audioProvider?() {
+            audio = world.addSpatialAudio(device, assets: { [weak session] in session?.assets })
+        } else if !isPlaying {
+            silence()
+        }
         world.update(dt: isPlaying ? Double(dt) : 0)
         if let director, let player = world.get(TimelinePlayer.self, for: director) {
             if isPlaying {
@@ -436,6 +466,12 @@ public final class TimelineWorkspace {
         }
         builder?.playhead = playhead
         syncStrip()
+    }
+
+    /// Stops the preview's sound.
+    private func silence() {
+        audio?.remove()
+        audio = nil
     }
 
     /// The camera the timeline drives in the preview (its camera track's target, else the active camera).

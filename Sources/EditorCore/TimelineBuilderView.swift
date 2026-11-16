@@ -12,17 +12,20 @@ struct TimelineSettingsComponent: Component {
     static var fieldHints: [String: FieldHints] {
         ["duration": FieldHints(range: 0.1...3600, step: 0.1, tooltip: "Seconds the timeline lasts"),
          "loop": FieldHints(tooltip: "Start over at the end"),
-         "skippable": FieldHints(tooltip: "Whether TimelinePlayer.skip() may end it early")]
+         "skippable": FieldHints(tooltip: "Whether TimelinePlayer.skip() may end it early"),
+         "holdFade": FieldHints(tooltip: "Keep the last screen fade on screen when the timeline finishes (off: it clears)")]
     }
 
     var duration: Float
     var loop: Bool
     var skippable: Bool
+    var holdFade: Bool
 
     init(_ timeline: Timeline) {
         duration = timeline.duration
         loop = timeline.loop
         skippable = timeline.skippable
+        holdFade = timeline.holdFade
     }
 }
 
@@ -71,7 +74,10 @@ struct TimelineKeyComponent: Component {
          "amount": FieldHints(range: 0...1, step: 0.01, tooltip: "0 clear, 1 solid color"),
          "color": FieldHints(color: true),
          "name": FieldHints(tooltip: "The event's name"),
-         "value": FieldHints(tooltip: "The event's payload")]
+         "value": FieldHints(tooltip: "The event's payload"),
+         "dialogue": FieldHints(tooltip: "A .dialogue file to play (empty: the target's DialoguePlayer)"),
+         "node": FieldHints(tooltip: "The dialogue node to start at (empty: the DialoguePlayer's start node or the dialogue's start)"),
+         "wait": FieldHints(tooltip: "Hold the timeline here until the conversation ends")]
     }
 
     var key: TimelineKey
@@ -230,6 +236,7 @@ public final class TimelineBuilderView {
             edited.duration = max(s.duration, 0.1)
             edited.loop = s.loop
             edited.skippable = s.skippable
+            edited.holdFade = s.holdFade
             apply(edited, label: "Edit Timeline", track: selectedTrack, key: selectedKey)
         }
         view.addChild(grid)
@@ -267,6 +274,7 @@ public final class TimelineBuilderView {
         case .camera: "(active camera)"
         case .audio: "(unpositioned)"
         case .particles: "(world origin)"
+        case .dialogue: "(the player's entity, or the key's file)"
         default: "(the player's entity)"
         }
     }
@@ -338,6 +346,7 @@ public final class TimelineBuilderView {
         case .particles: "Spawns the effect at the target when reached, for its duration."
         case .fade: "Fades the screen toward the color by amount."
         case .event: "Game code sees the event in TimelinePlayer.events and world.timelineEvents()."
+        case .dialogue: "Starts the target's DialoguePlayer conversation (or the key's .dialogue file) at the node; Wait holds the timeline until it ends. The preview shows it: click the box to continue."
         case nil: "This track's kind is unknown to this engine version; it is kept but skipped."
         }
     }
@@ -446,8 +455,8 @@ public final class TimelineBuilderView {
     static func fallback(_ field: String) -> JSONValue? {
         switch field {
         case "easing": .string(Easing.sineInOut.rawValue)
-        case "lookAtEntity", "clip", "effect", "name", "value": .string("")
-        case "cut", "loop", "followPath": .bool(true)
+        case "lookAtEntity", "clip", "effect", "name", "value", "dialogue", "node": .string("")
+        case "cut", "loop", "followPath", "wait": .bool(true)
         case "path": .array([])
         case "position", "rotation", "lookAt", "color": .array([.double(0), .double(0), .double(0)])
         case "scale": .array([.double(1), .double(1), .double(1)])
@@ -518,6 +527,17 @@ public final class TimelineBuilderView {
         case .event:
             if wants("name") { key.name = track.map { "event\($0.keys.count + 1)" } ?? "event" }
             if fields != nil, wants("value") { key.value = "" }
+        case .dialogue:
+            let last = track?.keys.last
+            if fields == nil {
+                key.wait = true
+                if let file = last?.dialogue { key.dialogue = file }
+                if let node = last?.node { key.node = node }
+            } else {
+                if wants("dialogue") { key.dialogue = last?.dialogue ?? "" }
+                if wants("node") { key.node = last?.node ?? "" }
+                if wants("wait") { key.wait = true }
+            }
         case nil:
             break
         }

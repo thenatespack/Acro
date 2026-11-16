@@ -280,6 +280,24 @@ private struct TestProject {
         #expect(CookPlan.references(in: Data(text.utf8)) == [a, b])
     }
 
+    @Test func timelinesShipWhatTheyNameByPath() throws {
+        let project = try TestProject()
+        let timeline = Timeline(duration: 2, tracks: [
+            TimelineTrack(id: "sfx", kind: .audio, keys: [TimelineKey(time: 0, clip: "Audio/beep.wav")]),
+            TimelineTrack(id: "fx", kind: .particles, keys: [TimelineKey(time: 1, effect: "Assets/Textures/unused.png")]),
+            TimelineTrack(id: "e", kind: .event, keys: [TimelineKey(time: 1, name: "Audio", value: "beep.wav")])])
+        let id = try project.database.createTimeline(timeline, at: "Cutscenes/Intro.timeline")
+        let report = try project.cook(CookOptions(scenes: ["Scenes/Main.scene"], include: ["Cutscenes/Intro.timeline"]))
+        let pack = try AssetPack(url: URL(fileURLWithPath: report.packPath))
+        #expect(pack.contains(id))
+        #expect(pack.contains(project.sound), "a sound named by its path under Assets/")
+        #expect(pack.contains(project.unused), "a path with an Assets/ prefix")
+        let paths = ["Audio/beep.wav": project.sound, "Textures/unused.png": project.unused]
+        let text = #"{"a": ["Audio/beep.wav", {"b": "Assets/Textures/unused.png"}], "c": "Audio", "d": 3, "e": "asset:x.wav"}"#
+        #expect(CookPlan.pathReferences(in: Data(text.utf8), assetsByPath: paths) == [project.sound, project.unused])
+        #expect(CookPlan.pathReferences(in: Data("not json".utf8), assetsByPath: paths).isEmpty)
+    }
+
     @Test func shippingTextureSettings() {
         let importer = AnyAssetImporter(TextureImporter())
         func shipped(_ compression: TextureCompression, _ family: TextureFamily, _ mode: TextureCookMode = .compress) -> String? {

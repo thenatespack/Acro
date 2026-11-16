@@ -14,7 +14,7 @@ public enum TimelinePlaybackState: String, Codable, CaseIterable, Sendable {
     case playing
     /// Frozen at `time`, still posing the scene.
     case paused
-    /// Reached the end (or was skipped); the last pose holds.
+    /// Reached the end (or was skipped); the last pose holds (the screen fade clears unless the timeline has `holdFade`).
     case finished
 }
 
@@ -84,6 +84,10 @@ public struct TimelinePlayer: Component, Equatable, Sendable {
     var firedThrough: Float?
     var request: Request?
     var spawned: [Spawn] = []
+    /// Entities whose conversations this run started (stopped by `stop()`, `skip()` and seeking).
+    var dialogues: [Entity] = []
+    /// The entity whose conversation a `wait` dialogue key is holding the timeline for.
+    var waitingOn: Entity?
 
     enum Request: Equatable, Sendable {
         case play(from: Float?)
@@ -93,8 +97,10 @@ public struct TimelinePlayer: Component, Equatable, Sendable {
 
     struct Spawn: Equatable, Sendable {
         var entity: Entity
-        /// World clock time to despawn at (nil: when its sound ends).
+        /// World clock time to despawn at (nil: when its sound ends, or its conversation for `dialogue`).
         var until: Double?
+        /// A `DialoguePlayer` the timeline made for a key's `dialogue` file.
+        var dialogue = false
     }
 
     public init(timeline: String = "", playOnStart: Bool = true, speed: Float = 1, loop: Bool = false) {
@@ -105,17 +111,21 @@ public struct TimelinePlayer: Component, Equatable, Sendable {
     }
 
     public var isPlaying: Bool { state == .playing }
+    /// True while a dialogue key with `wait` holds the timeline until its conversation ends.
+    public var isWaitingForDialogue: Bool { waitingOn != nil }
 
     /// Plays from `time` seconds (nil: from the start when stopped or finished, else carries on).
+    /// Starting over (a time, or from stopped / finished) ends the sounds, effects and
+    /// conversations the last run started.
     public mutating func play(from time: Float? = nil) { request = .play(from: time) }
     public mutating func pause() { request = .pause }
     public mutating func resume() { request = .resume }
-    /// Stops, despawns the sounds and effects it started and clears its screen fade.
+    /// Stops, despawns the sounds and effects it started, stops its conversations and clears its screen fade.
     public mutating func stop() { request = .stop }
     /// Jumps to the end (see the type's notes). Ignored when the timeline isn't skippable.
     public mutating func skip() { request = .skip }
     /// Moves the playhead without firing the keys in between (a stopped or finished player
-    /// pauses there, posing the scene: scrubbing).
+    /// pauses there, posing the scene: scrubbing). Sounds, effects and conversations the timeline started stop.
     public mutating func seek(to time: Float) { request = .seek(time) }
 
     private enum CodingKeys: String, CodingKey { case timeline, playOnStart, speed, loop }
@@ -279,11 +289,27 @@ public enum TimelineEvaluator {
         return pose
     }
 
+    /// `pose` (world space) in the space of `entity`'s parent, so a parented camera lands where
+    /// the keys say. Unchanged for a root.
+    public static func localized(_ pose: TimelineCameraPose, for entity: Entity, in world: World) -> TimelineCameraPose {
+        guard let parent = world.parent(of: entity) else { return pose }
+        let parentWorld = world.worldMatrix(of: parent)
+        var local = pose
+        if let p = pose.position {
+            let q = parentWorld.inverse * Vec4(p.x, p.y, p.z, 1)
+            if q.x.isFinite, q.y.isFinite, q.z.isFinite { local.position = Vec3(q.x, q.y, q.z) }
+        }
+        if let r = pose.rotation { local.rotation = (Transform(matrix: parentWorld).rotation.inverse * r).normalized }
+        return local
+    }
+
     /// Poses every continuous track (camera, transform, fade) of `timeline` at `time`. `owner`
     /// is the default target of transform tracks and holds the `ScreenFade` of fade tracks (no
-    /// fade without one). `resolve` finds targets (default `find`).
+    /// fade without one; `fades` false leaves the fade alone). `resolve` finds targets (default
+    /// `find`). Camera keys are world space: a camera with a parent gets them converted into its
+    /// parent's space (`localized`).
     public static func pose(_ timeline: Timeline, at time: Float, in world: World, owner: Entity?,
-                            resolve: ((String) -> Entity?)? = nil) {
+                            resolve: ((String) -> Entity?)? = nil, fades: Bool = true) {
         let resolve = resolve ?? { find($0, in: world) }
         var fade: (color: Vec3, amount: Float)?
         var hasFadeTrack = false
@@ -292,7 +318,7 @@ public enum TimelineEvaluator {
             case .camera:
                 let entity = track.target.isEmpty ? RenderPrep.findCamera(in: world)?.entity : resolve(track.target)
                 guard let entity, world.has(Transform.self, for: entity) else { continue }
-                let pose = cameraPose(track, at: time, in: world, resolve: resolve)
+                let pose = localized(cameraPose(track, at: time, in: world, resolve: resolve), for: entity, in: world)
                 world.modify(Transform.self, for: entity) { t in
                     if let p = pose.position { t.position = p }
                     if let r = pose.rotation { t.rotation = r }
@@ -315,7 +341,7 @@ public enum TimelineEvaluator {
                 continue
             }
         }
-        if let owner, hasFadeTrack {
+        if let owner, hasFadeTrack, fades {
             world.add(ScreenFade(color: fade?.color ?? Vec3(0, 0, 0), amount: fade?.amount ?? 0), to: owner)
         }
     }
@@ -385,6 +411,10 @@ public final class TimelinePlayerSystem {
             p.request = nil
             switch request {
             case .play(let from):
+                if from != nil || p.state == .stopped || p.state == .finished {
+                    stopDialogues(&p)
+                    despawnAll(&p)
+                }
                 if let from {
                     p.time = min(max(from, 0), timeline?.duration ?? from)
                     p.firedThrough = p.time > 0 ? p.time : nil
@@ -401,9 +431,12 @@ public final class TimelinePlayerSystem {
                 p.state = .stopped
                 p.time = 0
                 p.firedThrough = nil
+                stopDialogues(&p)
                 despawnAll(&p)
                 world.remove(ScreenFade.self, from: entity)
             case .seek(let t):
+                stopDialogues(&p)
+                despawnAll(&p)
                 p.time = min(max(t, 0), timeline?.duration ?? t)
                 p.firedThrough = p.time > 0 ? p.time : nil
                 if p.state == .stopped || p.state == .finished { p.state = .paused }
@@ -413,36 +446,45 @@ public final class TimelinePlayerSystem {
                 }
             }
         }
-        // Effects and sounds that ran their course.
+        // Effects, sounds and conversations that ran their course.
         p.spawned.removeAll { spawn in
             guard world.isAlive(spawn.entity) else { return true }
-            let done = spawn.until.map { now >= $0 } ?? (world.get(AudioEmitter.self, for: spawn.entity)?.isPlaying == false)
+            let done = spawn.dialogue ? world.dialogues?.runner(for: spawn.entity)?.isActive != true
+                : spawn.until.map { now >= $0 } ?? (world.get(AudioEmitter.self, for: spawn.entity)?.isPlaying == false)
             if done { world.despawn(spawn.entity) }
             return done
         }
         guard let timeline else { return }
-        if p.state == .playing {
+        if p.state == .playing, let waiting = p.waitingOn {
+            // A `wait` dialogue key holds the playhead until its conversation ends.
+            if !world.isAlive(waiting) || world.dialogues?.runner(for: waiting)?.isActive != true { p.waitingOn = nil }
+        }
+        if p.state == .playing, p.waitingOn == nil {
             let duration = timeline.duration
             var t = p.time + world.time.delta * max(p.speed, 0)
             if t >= duration {
-                fire(timeline, from: p.firedThrough, to: duration, into: &p, entity: entity, resolve: resolve, now: now)
-                if timeline.loop || p.loop {
+                if let held = fire(timeline, from: p.firedThrough, to: duration, into: &p, entity: entity, resolve: resolve, now: now) {
+                    t = held
+                } else if timeline.loop || p.loop {
                     t = duration > 0 ? t.truncatingRemainder(dividingBy: duration) : 0
                     p.firedThrough = nil
-                    fire(timeline, from: nil, to: t, into: &p, entity: entity, resolve: resolve, now: now)
+                    if let held = fire(timeline, from: nil, to: t, into: &p, entity: entity, resolve: resolve, now: now) { t = held }
                 } else {
                     t = duration
                     p.state = .finished
                     p.didFinish = true
                 }
-            } else {
-                fire(timeline, from: p.firedThrough, to: t, into: &p, entity: entity, resolve: resolve, now: now)
+            } else if let held = fire(timeline, from: p.firedThrough, to: t, into: &p, entity: entity, resolve: resolve, now: now) {
+                t = held
             }
             p.time = t
             p.firedThrough = t
         }
         if p.state != .stopped {
-            TimelineEvaluator.pose(timeline, at: p.time, in: world, owner: entity, resolve: resolve)
+            // A finished timeline clears its fade unless the file says to hold it.
+            let clearsFade = p.state == .finished && !timeline.holdFade
+            if clearsFade { world.remove(ScreenFade.self, from: entity) }
+            TimelineEvaluator.pose(timeline, at: p.time, in: world, owner: entity, resolve: resolve, fades: !clearsFade)
         }
     }
 
@@ -464,6 +506,7 @@ public final class TimelinePlayerSystem {
         for (t, k) in lastAnimation.sorted(by: { $0.key < $1.key }) {
             playAnimation(timeline.tracks[t], timeline.tracks[t].keys[k], owner: entity, resolve: resolve)
         }
+        stopDialogues(&p)
         despawnAll(&p)
         p.time = timeline.duration
         p.firedThrough = timeline.duration
@@ -471,16 +514,30 @@ public final class TimelinePlayerSystem {
         p.didFinish = true
     }
 
+    /// Ends the conversations this run started and releases a `wait`.
+    private func stopDialogues(_ p: inout TimelinePlayer) {
+        if let director = world.dialogues {
+            for e in p.dialogues where world.isAlive(e) && director.runner(for: e)?.isActive == true { director.stop(e) }
+        }
+        p.dialogues.removeAll()
+        p.waitingOn = nil
+    }
+
     private func despawnAll(_ p: inout TimelinePlayer) {
         for spawn in p.spawned where world.isAlive(spawn.entity) { world.despawn(spawn.entity) }
         p.spawned.removeAll()
     }
 
+    /// Fires the discrete keys passed from `from` to `to`. A dialogue key with `wait` whose
+    /// conversation started holds playback there: keys after its time don't fire and its time is returned.
+    @discardableResult
     private func fire(_ timeline: Timeline, from: Float?, to: Float, into p: inout TimelinePlayer, entity: Entity,
-                      resolve: (String) -> Entity?, now: Double) {
+                      resolve: (String) -> Entity?, now: Double) -> Float? {
+        var held: Float?
         for (t, k) in timeline.firedKeys(from: from, to: to) {
             let track = timeline.tracks[t]
             let key = track.keys[k]
+            if let held, key.time > held { break }
             switch track.trackKind {
             case .event:
                 p.events.append(TimelineFiredEvent(name: key.name ?? "", value: key.value ?? "", time: key.time, track: track.id))
@@ -490,10 +547,46 @@ public final class TimelinePlayerSystem {
                 if let spawn = playSound(track, key, resolve: resolve, now: now) { p.spawned.append(spawn) }
             case .particles:
                 if let spawn = spawnEffect(track, key, resolve: resolve, now: now) { p.spawned.append(spawn) }
+            case .dialogue:
+                guard let started = startDialogue(track, key, owner: entity, resolve: resolve) else { break }
+                if started.spawned { p.spawned.append(TimelinePlayer.Spawn(entity: started.entity, until: nil, dialogue: true)) }
+                if !p.dialogues.contains(started.entity) { p.dialogues.append(started.entity) }
+                if key.wait == true {
+                    p.waitingOn = started.entity
+                    held = key.time
+                }
             default:
                 break
             }
         }
+        return held
+    }
+
+    /// Starts the key's conversation: a `DialoguePlayer` made for its `dialogue` file, else the
+    /// target's (or its first descendant's; no target: the player's entity). nil when there is no
+    /// dialogue system (`World.addDialogueSystem`), nothing to play, or the conversation ended at once.
+    private func startDialogue(_ track: TimelineTrack, _ key: TimelineKey, owner: Entity,
+                               resolve: (String) -> Entity?) -> (entity: Entity, spawned: Bool)? {
+        guard let director = world.dialogues else { return nil }
+        let node = key.node.flatMap { $0.isEmpty ? nil : $0 }
+        if let file = key.dialogue, !file.isEmpty {
+            let e = world.spawn(Name("Timeline Dialogue"), DialoguePlayer(dialogue: file, startNode: node ?? ""))
+            guard director.start(e, at: node)?.isActive == true else {
+                world.despawn(e)
+                return nil
+            }
+            return (e, true)
+        }
+        guard let root = track.target.isEmpty ? owner : resolve(track.target) else { return nil }
+        var queue = [root]
+        while !queue.isEmpty {
+            let e = queue.removeFirst()
+            if world.has(DialoguePlayer.self, for: e) {
+                return director.start(e, at: node)?.isActive == true ? (e, false) : nil
+            }
+            queue += world.children(of: e)
+        }
+        return nil
     }
 
     /// Plays the key's clip on the target's `Animator` (or `SpriteAnimator`), or the first descendant's that has one.
