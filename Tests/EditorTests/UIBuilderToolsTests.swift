@@ -171,4 +171,128 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         workspace.close()
         #expect(workspace.asset == nil)
     }
+    @Test func placeAddsALayoutPlayerThatShowsWhilePlaying() throws {
+        EditorComponentCatalog.registerBuiltins()
+        #expect(EditorComponentCatalog.addableNames.contains(UILayoutPlayer.componentName))
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = try project(folder)
+        let root = Widget(name: "UIBuilderToolsTests.gameView")
+        session.gameUIRoot = root
+        let created = try call(session, "uiLayout.new", ["name": "hud", "folder": "UI"])
+        let id = try #require((created["asset"] as? String).flatMap { AssetID($0) })
+
+        let placed = try call(session, "uiLayout.place", ["path": "UI/hud.ui", "order": 3, "focus": true])
+        let entities = try #require(placed["entities"] as? [Any])
+        #expect(entities.count == 1)
+        var players: [(Entity, UILayoutPlayer)] = []
+        session.world.query(UILayoutPlayer.self) { entity, player in players.append((entity, player)) }
+        #expect(players.count == 1)
+        #expect(players.first?.1 == UILayoutPlayer(layout: AssetReference(id).description, order: 3, focus: true))
+        #expect(session.world.get(Name.self, for: players[0].0)?.value == "hud")
+
+        session.play()
+        session.tick(dt: 1.0 / 60)
+        let layer = try #require(session.world.gameUI)
+        #expect(layer.container.parent === root)
+        #expect(layer.views.count == 1 && session.world.uiLayout(for: players[0].0) != nil)
+        session.stop()
+        #expect(root.children.isEmpty, "stopping takes the layer down")
+
+        #expect(session.performUndo())
+        var left = 0
+        session.world.query(UILayoutPlayer.self) { _, _ in left += 1 }
+        #expect(left == 0)
+        #expect(throws: (any Error).self) { try call(session, "uiLayout.place", ["path": "UI/none.ui"]) }
+    }
+    @Test func inputsScalingAndTransitionsThroughToolsAndTab() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = try project(folder)
+        let id = try #require(session.createUIBuildAsset(in: "", name: "menu"))
+        let edited = try call(session, "uiLayout.edit", [
+            "asset": id.description, "scaleMode": "fit",
+            "show": ["kind": "slide", "from": "top", "duration": 0.3], "hide": ["kind": "fade"],
+            "addWidgets": [["id": "volume", "type": "slider", "bind": "volume", "max": 10, "step": 1, "event": "setVolume"],
+                           ["id": "mute", "type": "toggle", "text": "Mute", "show": ["kind": "scale"]],
+                           ["id": "name", "type": "textField", "placeholder": "Name"]],
+        ])
+        #expect((edited["events"] as? [String])?.contains("setVolume") == true)
+        let build = try #require(session.assets?.uiBuild(of: id))
+        #expect(build.scaleMode == .fit && build.show?.kind == .slide && build.show?.from == .top && build.hide?.kind == .fade)
+        #expect(build.widget("volume")?.type == .slider && build.widget("mute")?.show?.kind == .scale)
+        try call(session, "uiLayout.edit", ["asset": id.description, "show": ["kind": "none"], "navigation": ["name", "volume", "mute"],
+                                            "focus": "volume", "updateWidgets": ["mute": ["navDown": "name"]]])
+        let navigated = try #require(session.assets?.uiBuild(of: id))
+        #expect(navigated.show == nil && navigated.navigation == ["name", "volume", "mute"] && navigated.focus == "volume")
+        #expect(navigated.widget("mute")?.navDown == "name")
+
+        // The tab adds the new widget types and plays the layout's transitions in the preview.
+        let workspace = UIBuilderWorkspace(session: session)
+        workspace.open(id)
+        workspace.update()
+        for type in [UIBuildWidgetType.slider, .toggle, .textField] {
+            workspace.select(nil)
+            workspace.update()
+            workspace.addWidget(type)
+            workspace.update()
+        }
+        let types = session.assets?.uiBuild(of: id)?.widgets.map(\.type) ?? []
+        #expect(types.filter { $0 == .slider }.count == 2 && types.filter { $0 == .textField }.count == 2)
+        #expect(workspace.canvas.preview.widget("slider") is Slider)
+        workspace.playTransitions()
+        #expect(workspace.canvas.preview.isAnimating && !workspace.canvas.preview.isShown)
+        workspace.canvas.preview.advance(by: 1)
+        workspace.canvas.preview.advance(by: 1)
+        #expect(workspace.canvas.preview.isShown && !workspace.canvas.preview.isHidden)
+
+        // A first show transition on a widget sets its hide too, in one undo step.
+        workspace.select("mute")
+        workspace.update()
+        let before = session.assets?.uiBuild(of: id)?.widget("slider")
+        workspace.setField("slider", "show", try AssetJSON.value(UIBuildTransition(kind: .fade)))
+        workspace.update()
+        #expect(session.assets?.uiBuild(of: id)?.widget("slider")?.show?.kind == .fade)
+        #expect(session.performUndo())
+        #expect(session.assets?.uiBuild(of: id)?.widget("slider") == before)
+    }
+
+    @Test func colorsArePickedWithSwatches() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = try project(folder)
+        let id = try #require(session.createUIBuildAsset(in: "", name: "hud"))
+        let workspace = UIBuilderWorkspace(session: session)
+        workspace.open(id)
+        workspace.select("score")
+        workspace.update()
+
+        // A widget color: the swatch writes hex, the menu picks a theme color or none.
+        let swatch = try #require(workspace.view.descendant(named: "uiBuilderField.background") as? ColorSwatch)
+        swatch.onEditEnded?(.clear, UIColor(1, 0, 0, 0.5))
+        workspace.update()
+        #expect(session.assets?.uiBuild(of: id)?.widget("score")?.background == "#FF000080")
+        let menu = try #require(workspace.view.descendant(named: "uiBuilderField.background.name") as? Dropdown)
+        #expect(menu.selectedIndex == 1 && menu.options[1] == "#FF000080", "custom shows the hex")
+        menu.onChange?(try #require(menu.options.firstIndex(of: "accent")))
+        workspace.update()
+        #expect(session.assets?.uiBuild(of: id)?.widget("score")?.background == "accent")
+        let menu2 = try #require(workspace.view.descendant(named: "uiBuilderField.background.name") as? Dropdown)
+        menu2.onChange?(0)
+        workspace.update()
+        #expect(session.assets?.uiBuild(of: id)?.widget("score")?.background == "")
+
+        // Theme colors: a swatch per name, with Reset once changed.
+        workspace.select(nil)
+        workspace.update()
+        let accent = try #require(workspace.view.descendant(named: "uiBuilderField.color.accent") as? ColorSwatch)
+        #expect(workspace.view.descendant(named: "uiBuilderField.color.accent.reset") == nil)
+        accent.onEditEnded?(accent.color, UIColor(0, 1, 0, 1))
+        workspace.update()
+        #expect(session.assets?.uiBuild(of: id)?.colors["accent"] == "#00FF00")
+        let reset = try #require(workspace.view.descendant(named: "uiBuilderField.color.accent.reset") as? Button)
+        reset.action?()
+        workspace.update()
+        #expect(session.assets?.uiBuild(of: id)?.colors["accent"] == nil)
+    }
 }

@@ -140,7 +140,7 @@ public enum AssetCooker {
     public static let shippedAsWritten: Set<String> = ["audio", "table", "behavior", "ui", "timeline", "vscript"]
     /// Of those, the ones whose references are cooked along with them: `asset:<id>`s, and string
     /// values naming a file by its path under `Assets/` (see `pathReferences`).
-    public static let followsReferences: Set<String> = ["timeline", "vscript"]
+    public static let followsReferences: Set<String> = ["timeline", "vscript", "ui"]
     /// Imported assets that also ship their source, which games read at run time: sprite frames
     /// and tags, tilemaps (`assets.tilemap(path:)`), path curves (`PathFollower`) and the terrain
     /// heights paths follow.
@@ -379,7 +379,7 @@ public struct CookPlan: Sendable {
         guard let importer = source.importer, !AssetCooker.shippedAsWritten.contains(importer.name) else {
             let data = try Data(contentsOf: source.sourceURL)
             if let importer = source.importer { entry.settings = importer.effectiveSettings(source.settings) }
-            // Timelines and visual scripts ship the sounds, effects, prefabs and tables they name by "asset:<id>" or path.
+            // Timelines, visual scripts and UI layouts ship the sounds, effects, prefabs, tables and images they name by "asset:<id>" or path.
             let follows = source.importer.map { AssetCooker.followsReferences.contains($0.name) } ?? false
             let references = follows ? Self.unique(Self.references(in: data) + Self.pathReferences(in: data, assetsByPath: assetsByPath))
                 .filter { $0 != source.id } : []

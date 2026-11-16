@@ -59,6 +59,7 @@ public enum EditorIcons {
         VisualScript.componentName: "network",
         TimelinePlayer.componentName: "clapperboard",
         PathFollower.componentName: "route",
+        UILayoutPlayer.componentName: "layout-dashboard",
         "Pulse": "gauge",
     ]
 

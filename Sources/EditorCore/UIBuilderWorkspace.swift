@@ -134,8 +134,10 @@ public final class UIBuilderWorkspace {
         interact.onChange = { [unowned self] _ in dirty = true }
         status.style.shrink = 1
         let closeButton = Button("Close", name: "uiBuilderClose") { [unowned self] in self.close() }
+        let playButton = Button("Play", name: "uiBuilderPlayTransitions") { [unowned self] in playTransitions() }
+        playButton.tooltip = "Play the layout's hide transition, then its show transition, in the preview"
         let bar = HStack(spacing: 8, padding: EdgeInsets(top: 6, left: 10, bottom: 6, right: 10), name: "uiBuilderToolbar",
-                         [title, Spacer(), status, interact, sizePicker, closeButton])
+                         [title, Spacer(), status, playButton, interact, sizePicker, closeButton])
 
         tree.allowsDragAndDrop = true
         tree.style.height = 260
@@ -250,7 +252,12 @@ public final class UIBuilderWorkspace {
         widget.id = build.uniqueID(type.rawValue)
         widget.parent = parent
         let id = widget.id
-        apply("Add \(type.rawValue.capitalized)", select: id) { try $0 = $0.applying(UIBuildEdit(addWidgets: [widget])) }
+        apply("Add \(Self.title(of: type))", select: id) { try $0 = $0.applying(UIBuildEdit(addWidgets: [widget])) }
+    }
+
+    /// A widget type's name for buttons and headings ("Text Field").
+    static func title(of type: UIBuildWidgetType) -> String {
+        type == .textField ? "Text Field" : type.rawValue.capitalized
     }
 
     /// A new widget of `type` with settings that show something.
@@ -264,6 +271,9 @@ public final class UIBuilderWorkspace {
         case .button: UIBuildWidget(type: .button, text: "Button")
         case .bar: UIBuildWidget(type: .bar, width: 200, value: 0.6)
         case .spacer: UIBuildWidget(type: .spacer, grow: 1)
+        case .slider: UIBuildWidget(type: .slider, width: 200, value: 0.5)
+        case .toggle: UIBuildWidget(type: .toggle, text: "Toggle")
+        case .textField: UIBuildWidget(type: .textField, width: 200, placeholder: "Type here")
         }
     }
 
@@ -356,9 +366,17 @@ public final class UIBuilderWorkspace {
         apply("Move Widget", select: id) { try $0.update(id, fields: ["offset": .array([.double(Double(offset.x)), .double(Double(offset.y))])]) }
     }
 
+    /// Plays the layout's hide transition, then its show transition, in the preview.
+    public func playTransitions() {
+        let preview = canvas.preview
+        preview.hide { [weak preview] in preview?.show() }
+        canvas.setNeedsDisplay()
+    }
+
     func previewEvent(_ event: UIBuildEvent) {
         lastEvent = event
-        status.text = "Event: \(event.name)  (from \(event.widget))"
+        let value = event.value.map { " = " + UIBuild.display($0) } ?? ""
+        status.text = "Event: \(event.name)\(value)  (from \(event.widget))"
     }
 
     // MARK: Layout
@@ -387,7 +405,7 @@ public final class UIBuilderWorkspace {
         let adds = HStack(spacing: 4, name: "uiBuilderAdd")
         adds.wraps = true
         for type in UIBuildWidgetType.allCases {
-            let button = Button(type.rawValue.capitalized, name: "uiBuilderAdd.\(type.rawValue)") { [unowned self] in addWidget(type) }
+            let button = Button(Self.title(of: type), name: "uiBuilderAdd.\(type.rawValue)") { [unowned self] in addWidget(type) }
             button.command = UIEditCommand.id.rawValue
             button.tooltip = "Add a \(type.rawValue) into the selected container (or beside the selected widget)"
             adds.addChild(button)
@@ -440,6 +458,9 @@ public final class UIBuilderWorkspace {
         case .button: EditorIcons.named("mouse-pointer-ban")
         case .bar: EditorIcons.named("gauge")
         case .spacer: EditorIcons.named("square-dashed")
+        case .slider: EditorIcons.named("sliders-horizontal")
+        case .toggle: EditorIcons.named("circle-dot")
+        case .textField: EditorIcons.named("keyboard")
         }
     }
 
@@ -478,6 +499,40 @@ public final class UIBuilderWorkspace {
         row(caption, field)
     }
 
+    /// The swatch's color of a `.ui` color ("" shows clear).
+    static func swatchColor(_ text: String, theme: UITheme) -> UIColor { theme.uiBuildColor(text) ?? UIColor(0.35, 0.35, 0.38, 1) }
+
+    /// A color: a swatch that opens a color picker (writes "#RRGGBB[AA]") and a menu of the
+    /// layout theme's color names, "(none)" and "custom" (the hex in the swatch). One pick is one undo step.
+    private func colorRow(_ caption: String, _ text: String, name: String, noneTitle: String = "(none)",
+                          _ set: @escaping (String) -> Void) {
+        let theme = build.makeTheme()
+        let swatch = ColorSwatch(color: Self.swatchColor(text, theme: theme), name: "uiBuilderField.\(name)")
+        swatch.onEditEnded = { _, end in set(DataTableValues.hex(Vec4(end.r, end.g, end.b, end.a))) }
+        let isHex = UIBuild.hexColor(text) != nil
+        let options = [""] + ["custom"] + UIBuild.themeColorNames + (isHex || text.isEmpty || UIBuild.themeColorNames.contains(text) ? [] : [text])
+        let selected = text.isEmpty ? 0 : isHex ? 1 : options.firstIndex(of: text) ?? 0
+        let menu = Dropdown(options: options.map { $0.isEmpty ? noneTitle : $0 == "custom" && isHex ? text : $0 }, selectedIndex: selected,
+                            name: "uiBuilderField.\(name).name")
+        menu.tooltip = "A theme color (it follows the layout's theme), a custom color, or none"
+        menu.onChange = { index in
+            let choice = options[index]
+            if choice == "custom" {
+                let c = theme.uiBuildColor(text) ?? .white
+                set(DataTableValues.hex(Vec4(c.r, c.g, c.b, c.a)))
+            } else if choice != text {
+                set(choice)
+            }
+        }
+        swatch.showsHexCode = false
+        swatch.tooltip = text.isEmpty ? "Pick a color" : "\(text): pick a color"
+        swatch.style.width = 32
+        swatch.style.grow = 0
+        menu.style.grow = 1
+        let editor = HStack(spacing: 4, [swatch, menu])
+        row(caption, editor)
+    }
+
     private func numberRow(_ caption: String, _ value: Float, name: String, isInteger: Bool = false, range: ClosedRange<Double>? = nil,
                            step: Double = 1, _ set: @escaping (Double) -> Void) {
         let field = NumberField(value: Double(value), isInteger: isInteger, range: range, step: step, name: "uiBuilderField.\(name)")
@@ -499,10 +554,39 @@ public final class UIBuilderWorkspace {
         row(caption, box)
     }
 
+    /// A transition picker: its kind, then (when it has one) its time and a slide's side.
+    private func transitionRows(_ caption: String, _ transition: UIBuildTransition?, name: String, tooltip: String,
+                                _ set: @escaping (UIBuildTransition?) -> Void) {
+        let kinds = UIBuildTransitionKind.allCases
+        let picker = Dropdown(options: kinds.map(\.rawValue), selectedIndex: kinds.firstIndex(of: transition?.kind ?? .none) ?? 0,
+                              name: "uiBuilderField.\(name)")
+        picker.tooltip = tooltip
+        picker.onChange = { index in
+            guard kinds[index] != .none else { return set(nil) }
+            var t = transition ?? UIBuildTransition()
+            t.kind = kinds[index]
+            set(t)
+        }
+        row(caption, picker)
+        guard let transition else { return }
+        numberRow("\(caption) time", transition.duration, name: "\(name).duration", range: 0...30, step: 0.05) { seconds in
+            var t = transition
+            t.duration = Float(seconds)
+            set(t)
+        }
+        if transition.kind == .slide {
+            choiceRow("\(caption) from", transition.from, name: "\(name).from") { edge in
+                var t = transition
+                t.from = edge
+                set(t)
+            }
+        }
+    }
+
     private func addWidgetForm(_ w: UIBuildWidget) {
         let id = w.id
         func field(_ key: String, _ value: JSONValue) { setField(id, key, value) }
-        sidebar.addChild(Label("\(w.type.rawValue.capitalized) \(w.id)", role: .secondary))
+        sidebar.addChild(Label("\(Self.title(of: w.type)) \(w.id)", role: .secondary))
         textRow("Id", w.id, name: "id", tooltip: "Unique; game code finds the widget and its events by it") { text in
             let new = text.trimmingCharacters(in: .whitespaces)
             if !new.isEmpty { field("id", .string(new)) }
@@ -572,27 +656,81 @@ public final class UIBuilderWorkspace {
                 row("Image", picker)
             }
             choiceRow("Fit", w.fit, name: "fit") { field("fit", .string($0.rawValue)) }
+        case .slider:
+            numberRow("Value", w.value, name: "value", step: 0.01) { field("value", .double($0)) }
+            numberRow("Min", w.min, name: "min", step: 0.1) { field("min", .double($0)) }
+            numberRow("Max", w.max, name: "max", step: 0.1) { field("max", .double($0)) }
+            numberRow("Step", w.step, name: "step", range: 0...1_000_000, step: 0.01) { field("step", .double($0)) }
+        case .toggle:
+            textRow("Text", w.text, name: "text", tooltip: "{key} shows a value") { field("text", .string($0)) }
+            toggleRow("On", w.on, name: "on") { field("on", .bool($0)) }
+            choiceRow("Style", w.toggleStyle, name: "toggleStyle") { field("toggleStyle", .string($0.rawValue)) }
+            numberRow("Font size", w.fontSize, name: "fontSize", range: 0...400) { field("fontSize", .double($0)) }
+        case .textField:
+            textRow("Text", w.text, name: "text", tooltip: "The starting text") { field("text", .string($0)) }
+            textRow("Placeholder", w.placeholder, name: "placeholder", tooltip: "The hint shown while it is empty") { field("placeholder", .string($0)) }
+            numberRow("Max length", Float(w.maxLength), name: "maxLength", isInteger: true, range: 0...10_000) { field("maxLength", .int(Int64($0))) }
+            numberRow("Font size", w.fontSize, name: "fontSize", range: 0...400) { field("fontSize", .double($0)) }
         case .spacer:
             break
+        }
+        if w.type.isInput {
+            let when = w.type == .textField ? "on Enter" : "when the player changes it"
+            textRow("Event", w.event, placeholder: w.id, name: "event", tooltip: "Sent \(when), with the new value; game code listens with on(\"…\")") {
+                field("event", .string($0.trimmingCharacters(in: .whitespaces)))
+            }
         }
 
         if w.type != .spacer {
             let colorCaption = w.type == .bar ? "Fill" : w.type == .image ? "Tint" : "Color"
             if w.type != .panel && w.type != .vstack && w.type != .hstack {
-                textRow(colorCaption, w.color, placeholder: "#FFFFFF or accent", name: "color") { field("color", .string($0)) }
+                colorRow(colorCaption, w.color, name: "color", noneTitle: "(default)") { field("color", .string($0)) }
             }
-            textRow(w.type == .bar ? "Track" : "Background", w.background, placeholder: "#00000080 or panel", name: "background") {
-                field("background", .string($0))
-            }
-            textRow("Border", w.borderColor, placeholder: "none", name: "borderColor") { field("borderColor", .string($0)) }
+            colorRow(w.type == .bar ? "Track" : "Background", w.background, name: "background",
+                     noneTitle: w.type == .bar || w.type == .button || w.type.isInput ? "(default)" : "(none)") { field("background", .string($0)) }
+            colorRow("Border", w.borderColor, name: "borderColor") { field("borderColor", .string($0)) }
             numberRow("Corners", w.cornerRadius, name: "cornerRadius", range: 0...500) { field("cornerRadius", .double($0)) }
             numberRow("Opacity", w.opacity, name: "opacity", range: 0...1, step: 0.01) { field("opacity", .double($0)) }
         }
         toggleRow("Hidden", w.hidden, name: "hidden") { field("hidden", .bool($0)) }
 
+        sidebar.addChild(Label("Animation", role: .secondary))
+        func transitionValue(_ t: UIBuildTransition?) -> JSONValue { t.flatMap { try? AssetJSON.value($0) } ?? .null }
+        transitionRows("Show", w.show, name: "show", tooltip: "How it appears when it becomes visible (visibleWhen, hidden)") { [unowned self] t in
+            // A first show transition also becomes the hide one, the usual pairing.
+            var fields: [String: JSONValue] = ["show": transitionValue(t)]
+            if w.show == nil, w.hide == nil { fields["hide"] = transitionValue(t) }
+            apply("Set Show Transition", select: id) { try $0.update(id, fields: fields) }
+        }
+        transitionRows("Hide", w.hide, name: "hide", tooltip: "How it goes away") { t in field("hide", transitionValue(t)) }
+        if w.type == .bar || w.type == .label || w.type == .button {
+            numberRow("Tween", w.tween, name: "tween", range: 0...30, step: 0.05) { field("tween", .double($0)) }
+        }
+
+        if w.type.isFocusable {
+            sidebar.addChild(Label("Navigation", role: .secondary))
+            let targets = [""] + build.widgets.filter { $0.type.isFocusable && $0.id != id }.map(\.id)
+            for (caption, key, current) in [("Up", "navUp", w.navUp), ("Down", "navDown", w.navDown), ("Left", "navLeft", w.navLeft),
+                                            ("Right", "navRight", w.navRight)] {
+                let options = targets + (targets.contains(current) ? [] : [current])
+                let picker = Dropdown(options: options.map { $0.isEmpty ? "(auto)" : $0 }, selectedIndex: options.firstIndex(of: current) ?? 0,
+                                      name: "uiBuilderField.\(key)")
+                picker.tooltip = "Where \(caption) on the arrow keys / D-pad moves focus from this widget (auto: the navigation order, else the nearest widget that way)"
+                picker.onChange = { index in field(key, .string(options[index])) }
+                row(caption, picker)
+            }
+        }
+
         sidebar.addChild(Label("Bindings", role: .secondary))
-        if w.type == .bar || w.type == .label || w.type == .button || w.type == .image {
-            let what = w.type == .bar ? "fill (value / max)" : w.type == .image ? "image path" : "whole text (unless it has {…})"
+        if w.type == .bar || w.type == .label || w.type == .button || w.type == .image || w.type.isInput {
+            let what = switch w.type {
+            case .bar: "fill (value / max)"
+            case .image: "image path"
+            case .slider: "value (the player's changes write it back)"
+            case .toggle: "state (the player's changes write it back)"
+            case .textField: "text (the player's typing writes it back)"
+            default: "whole text (unless it has {…})"
+            }
             textRow("Bind", w.bind, placeholder: "value key", name: "bind", tooltip: "The value key that sets the \(what)") {
                 field("bind", .string($0.trimmingCharacters(in: .whitespaces)))
             }
@@ -620,13 +758,49 @@ public final class UIBuilderWorkspace {
         numberRow("Design H", build.size.y, name: "designHeight", range: 1...16384) { [unowned self] h in
             editLayout("Set Design Size", UIBuildEdit(size: Vec2(build.size.x, Float(h))))
         }
+        let modes = UIBuildScaleMode.allCases
+        let scalePicker = Dropdown(options: modes.map(\.rawValue), selectedIndex: modes.firstIndex(of: build.scaleMode) ?? 0,
+                                   name: "uiBuilderField.scaleMode")
+        scalePicker.tooltip = "How the whole layout scales with the screen from the design size: none keeps points; fit shows all of it; fill covers the screen; width / height follow one side"
+        scalePicker.onChange = { [unowned self] index in editLayout("Set Scale Mode", UIBuildEdit(scaleMode: modes[index])) }
+        row("Scale", scalePicker)
+        let none = UIBuildTransition(kind: .none)
+        transitionRows("Show", build.show, name: "layoutShow", tooltip: "How the whole layout appears when the game shows it") { [unowned self] t in
+            editLayout("Set Show Transition", UIBuildEdit(show: t ?? none, hide: build.show == nil && build.hide == nil ? t : nil))
+        }
+        let focusable = build.widgets.filter(\.type.isFocusable).map(\.id)
+        let focusOptions = [""] + focusable + (focusable.contains(build.focus) || build.focus.isEmpty ? [] : [build.focus])
+        let focusPicker = Dropdown(options: focusOptions.map { $0.isEmpty ? "(first)" : $0 }, selectedIndex: focusOptions.firstIndex(of: build.focus) ?? 0,
+                                   name: "uiBuilderField.focus")
+        focusPicker.tooltip = "The widget keyboard / gamepad focus starts at when the layout takes focus"
+        focusPicker.onChange = { [unowned self] index in editLayout("Set First Focus", UIBuildEdit(focus: focusOptions[index])) }
+        row("Focus first", focusPicker)
+        textRow("Nav order", build.navigation.joined(separator: ", "), placeholder: "nearest widget", name: "navigation",
+                tooltip: "Widget ids, comma separated: Down / Right step through them and Up / Left step back (wrapping)") { [unowned self] text in
+            editLayout("Set Navigation Order", UIBuildEdit(navigation: text.split(separator: ",").map(String.init)))
+        }
+        transitionRows("Hide", build.hide, name: "layoutHide", tooltip: "How the whole layout goes away when the game hides it") { [unowned self] t in
+            editLayout("Set Hide Transition", UIBuildEdit(hide: t ?? none))
+        }
         sidebar.addChild(Label("Theme colors", role: .secondary))
         let theme = build.makeTheme()
         for name in UIBuild.themeColorNames {
-            let current = theme.uiBuildColor(name).map { DataTableValues.hex(Vec4($0.r, $0.g, $0.b, $0.a)) } ?? ""
-            textRow(name, build.colors[name] ?? "", placeholder: current, name: "color.\(name)") { [unowned self] text in
-                editLayout("Set \(name) Color", UIBuildEdit(colors: [name: text.trimmingCharacters(in: .whitespaces)]))
+            // The swatch shows the color in use (the override, else the base theme's); Reset drops the override.
+            let swatch = ColorSwatch(color: theme.uiBuildColor(name) ?? .clear, name: "uiBuilderField.color.\(name)")
+            swatch.tooltip = build.colors[name].map { "\(name): \($0) (changed from the \(build.theme) theme)" } ?? "\(name): the \(build.theme) theme's"
+            swatch.onEditEnded = { [unowned self] _, end in
+                editLayout("Set \(name) Color", UIBuildEdit(colors: [name: DataTableValues.hex(Vec4(end.r, end.g, end.b, end.a))]))
             }
+            swatch.style.grow = 1
+            var parts: [Widget] = [swatch]
+            if build.colors[name] != nil {
+                let reset = Button("Reset", name: "uiBuilderField.color.\(name).reset") { [unowned self] in
+                    editLayout("Reset \(name) Color", UIBuildEdit(colors: [name: ""]))
+                }
+                reset.tooltip = "Use the \(build.theme) theme's \(name) again"
+                parts.append(reset)
+            }
+            row(name, HStack(spacing: 4, parts))
         }
     }
 
@@ -692,6 +866,8 @@ public final class UIBuildPreviewCanvas: Widget {
     public private(set) var previewScale: Float = 1
     private var drag: (id: String, start: Vec2, offset: Vec2, anchor: UIBuildAnchor)?
     private var forwarding = false
+    /// The editor's time at the last draw: the preview's context has no clock, so transitions and tweens step from it.
+    private var lastTime: Double?
 
     public override init(name: String = "") {
         super.init(name: name)
@@ -737,6 +913,10 @@ public final class UIBuildPreviewCanvas: Widget {
 
     public override func draw(_ list: UIDrawList, theme: UITheme) {
         list.fillRect(frame, color: theme.fieldBackground)
+        if let now = context?.time {
+            if let lastTime { preview.advance(by: now - lastTime) }
+            lastTime = preview.isAnimating ? now : nil
+        }
         placeScreen()
         list.withClip(screenRect) {
             list.fillRect(screenRect, fill: .linearGradient(start: UIColor(hex: 0x3c4a5e), end: UIColor(hex: 0x151a22)))
@@ -748,7 +928,7 @@ public final class UIBuildPreviewCanvas: Widget {
             }
         }
         list.strokeRect(screenRect, color: theme.panelBorder)
-        if previewContext.paintDirty || preview.build.widgets.contains(where: { $0.trail }) { setNeedsDisplay() }
+        if previewContext.paintDirty || preview.isAnimating || preview.build.widgets.contains(where: { $0.trail }) { setNeedsDisplay() }
     }
 
     public override func handleEvent(_ event: UIEvent) -> Bool {
@@ -775,7 +955,8 @@ public final class UIBuildPreviewCanvas: Widget {
                 return true
             }
             guard let drag else { return true }
-            let delta = (e.position - drag.start) / previewScale
+            // Panel points → the layout's design points (a scaled layout moves less per point).
+            let delta = (e.position - drag.start) / (previewScale * max(preview.layoutScale, 0.05))
             var offset = drag.offset
             switch drag.anchor {
             case .topRight, .right, .bottomRight: offset.x -= delta.x

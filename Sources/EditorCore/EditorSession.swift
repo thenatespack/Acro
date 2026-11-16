@@ -139,6 +139,10 @@ public final class EditorSession {
     public var onOpenDialogue: ((AssetID) -> Void)?
     /// Shows `DialoguePlayer` conversations while playing (the app's box over the Game view).
     public var dialoguePresenter: (any DialoguePresenter)?
+    /// Where `UILayoutPlayer` layouts show while playing (the app's layer over the Game view), and
+    /// how their images load. See `GameUILayer`.
+    public var gameUIRoot: Widget?
+    public var gameUIImages: ((String) -> GPUTexture?)?
     /// The terrain open in the Terrain Builder tab (`terrain.open`), and how the app shows it.
     public var openTerrain: AssetID?
     public var onOpenTerrain: ((AssetID) -> Void)?
@@ -762,6 +766,7 @@ public final class EditorSession {
         }
         world.addBehaviorTrees(name: Self.behaviorSystem, assets: { [weak self] in self?.assets }, physics: { [weak self] in self?.physics })
         world.addDialogueSystem(assets: { [weak self] in self?.assets }).presenter = dialoguePresenter
+        world.addGameUI(assets: { [weak self] in self?.assets }, in: gameUIRoot).images = gameUIImages
         timelinePlayers = world.addTimelinePlayers(assets: { [weak self] in self?.assets })
         pathFollowers = world.addPathFollowers(assets: { [weak self] in self?.assets })
         gameModule.addSystems()
@@ -797,6 +802,7 @@ public final class EditorSession {
         spatialAudio?.remove()
         spatialAudio = nil
         world.removeDialogueSystem()
+        world.removeGameUI()
         timelinePlayers?.remove()
         timelinePlayers = nil
         pathFollowers?.remove()

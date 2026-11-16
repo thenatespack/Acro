@@ -73,6 +73,8 @@ public final class ColorSwatch: Widget {
     public var onChange: ((UIColor) -> Void)?
     public var onEditEnded: ((_ start: UIColor, _ end: UIColor) -> Void)?
     public private(set) var popup: ColorPopup?
+    /// Draw the hex code on the swatch (off for a narrow swatch beside other controls).
+    public var showsHexCode = true { didSet { setNeedsDisplay() } }
     private var gestureStart: UIColor?
     private var cache = CachedTextLayout()
 
@@ -151,6 +153,7 @@ public final class ColorSwatch: Widget {
         list.fillRect(frame, color: color.withAlpha(enabled ? 1 : 0.5), radii: radii)
         list.strokeRect(frame, color: isOpen ? theme.accent : isHovered ? theme.controlBorder.mixed(with: .white, 0.25)
                         : theme.controlBorder, width: isOpen ? theme.borderWidth + 0.5 : theme.borderWidth, radii: radii)
+        guard showsHexCode else { return }
         // The hex code, dark or light for contrast.
         let luma = 0.299 * color.r + 0.587 * color.g + 0.114 * color.b
         let layout = cache.get(color.hexString, font: theme.font, size: theme.smallFontSize)

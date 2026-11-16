@@ -10,24 +10,33 @@ public enum EditorUIBuildCommands {
         UISetCommand.self,
         UIEditCommand.self,
         UIOpenCommand.self,
+        UIPlaceCommand.self,
     ]
 
     /// What the tool docs say about the file format, shared by the tools.
     static let formatDoc = """
         A .ui file is a game menu or HUD: `theme` (game|dark|light|highContrast), `colors` (theme color name → \
         "#RRGGBB[AA]"; names: \(UIBuild.themeColorNames.joined(separator: ", "))), `fontSize`, `safeArea` (points kept clear \
-        of the screen edges), `size` (design screen size [w, h]), `values` (sample values by key for the preview) and \
-        `widgets`, a flat list. Each widget: `id` (unique), `type` (panel|vstack|hstack|label|image|button|bar|spacer), \
+        of the screen edges), `size` (design screen size [w, h]), `scaleMode` (none|fit|fill|width|height: how \
+        the whole layout scales with the screen from `size`; default none), `values` (sample values by key for the preview) and \
+        `widgets`, a flat list. Each widget: `id` (unique), `type` (panel|vstack|hstack|label|image|button|bar|spacer|slider|toggle|textField), \
         `parent` (a container id; "" is the screen). The screen and panels place children by `anchor` (topLeft|top|topRight|left|\
         center|right|bottomLeft|bottom|bottomRight|fill) and `offset` [x, y] points in from the anchored edges; stacks line \
         them up (`spacing`, `align` auto|start|center|end|stretch, `justify` start|center|end|spaceBetween, children's `grow`). \
         Also: width/height (omit to fit content), padding, background/borderColor/color ("#hex" or a theme color name), \
         cornerRadius, opacity, hidden; label/button `text` with `{key}` placeholders, fontSize, textAlign, wrap, shadow; \
         image `image` (path under Assets/), fit fit|fill|stretch; bar value, max, kind progress|health, segments, trail; \
-        button primary, event (default: the id). `bind` ties a widget to a value key (bar fill = value / max; label/button \
-        text; image path) and `visibleWhen` shows it only while a key is truthy ("!key": falsy). Game code: \
-        let hud = UIBuildView(assets: assets, path: "UI/hud.ui"); ui.root.addChild(hud); hud.set("health", 64); \
-        hud.on("pause") { ... }.
+        button primary, event (default: the id); slider value, min, max, step; toggle text, on, toggleStyle checkbox|switch; \
+        textField text, placeholder, maxLength. Animation: the layout's and any widget's `show` / `hide` transitions \
+        ({kind: none|fade|slide|scale, duration, delay, easing, from: left|right|top|bottom, distance, scale}; a widget's \
+        play when visibleWhen / hidden change, the layout's when the game shows or hides it) and a bar's, label's or \
+        button's `tween` (seconds its numbers take to move to a new value). Gamepad / arrow-key focus: the layout's \
+        `navigation` (widget ids that Down / Right step through, Up / Left back, wrapping) and `focus` (focused first); \
+        a button's or input's navUp / navDown / navLeft / navRight override it. Sliders and toggles send their event when the player changes them, text \
+        fields on Enter, with the new value. `bind` ties a widget to a value key (bar fill = value / max; label/button \
+        text; image path; slider / toggle / text field value, written back as the player changes it) and `visibleWhen` \
+        shows it only while a key is truthy ("!key": falsy). In a game, a UILayoutPlayer component (uiLayout.place) shows \
+        a layout with no code; game code uses world.gameUI: set("health", 64), on("pause") { event, entity in ... }.
         """
 }
 
@@ -67,6 +76,25 @@ extension EditorSession {
         let command = UIBuildFileEditCommand(asset: id, old: old, new: build, in: assets, label: label)
         guard perform(command) else { return nil }
         return command.warnings.value
+    }
+
+    /// Adds an entity with a `UILayoutPlayer` that shows the layout `id` over the game while it
+    /// plays, as one undo step, and selects it. Returns its id.
+    @discardableResult
+    public func addUILayoutPlayer(for id: AssetID, name: String? = nil, order: Int = 0, focus: Bool = false, visible: Bool = true) -> EntityID? {
+        let stem = ((assets?.path(of: id) ?? "UI") as NSString).lastPathComponent
+        let title = name ?? (stem as NSString).deletingPathExtension
+        do {
+            // By id, so it survives renames and cooking follows it into built games.
+            let player = UILayoutPlayer(layout: AssetReference(id).description, visible: visible, order: order, focus: focus)
+            let command = try SpawnCommand(components: [Transform(), player], name: title, in: world, label: "Add UI Layout Player")
+            guard perform(command) else { return nil }
+            selection.set(command.rootIDs)
+            return command.rootIDs.first
+        } catch {
+            log.error("Add UI Layout Player failed: \(error)")
+            return nil
+        }
     }
 
     /// The layout named by `asset` / `path` and its contents.
@@ -261,10 +289,25 @@ public enum UIEditCommand: EditorCommand {
         public var safeArea: Float?
         /// The design screen size [w, h].
         public var size: Vec2?
+        /// How the whole layout scales with the screen from `size`: none|fit|fill|width|height.
+        public var scaleMode: UIBuildScaleMode?
+        /// The layout's show / hide transitions, e.g. {"kind": "slide", "from": "bottom", "duration": 0.3} (kind "none" removes one).
+        public var show: UIBuildTransition?
+        public var hide: UIBuildTransition?
+        /// Keyboard / gamepad focus order: widget ids Down / Right step through ([] clears it).
+        public var navigation: [String]?
+        /// The widget focused first ("" clears it).
+        public var focus: String?
         public init(asset: AssetReference? = nil, path: String? = nil, removeWidgets: [String]? = nil, addWidgets: [UIBuildWidget]? = nil,
                     updateWidgets: [String: JSONValue]? = nil, moveWidgets: [UIBuildMove]? = nil, bindings: [String: String]? = nil,
                     values: [String: JSONValue]? = nil, theme: String? = nil, colors: [String: String]? = nil, fontSize: Float? = nil,
-                    safeArea: Float? = nil, size: Vec2? = nil) {
+                    safeArea: Float? = nil, size: Vec2? = nil, scaleMode: UIBuildScaleMode? = nil, show: UIBuildTransition? = nil,
+                    hide: UIBuildTransition? = nil, navigation: [String]? = nil, focus: String? = nil) {
+            self.navigation = navigation
+            self.focus = focus
+            self.scaleMode = scaleMode
+            self.show = show
+            self.hide = hide
             self.asset = asset
             self.path = path
             self.removeWidgets = removeWidgets
@@ -282,13 +325,14 @@ public enum UIEditCommand: EditorCommand {
 
         var edit: UIBuildEdit {
             UIBuildEdit(removeWidgets: removeWidgets, addWidgets: addWidgets, updateWidgets: updateWidgets, moveWidgets: moveWidgets,
-                        bindings: bindings, values: values, theme: theme, colors: colors, fontSize: fontSize, safeArea: safeArea, size: size)
+                        bindings: bindings, values: values, theme: theme, colors: colors, fontSize: fontSize, safeArea: safeArea, size: size,
+                        scaleMode: scaleMode, show: show, hide: hide, navigation: navigation, focus: focus)
         }
     }
 
     public static let id: CommandID = "uiLayout.edit"
     public static let title = "Edit UI Layout"
-    public static let doc = "Changes part of a .ui file in one undoable step, in this order: removeWidgets, addWidgets, updateWidgets (id → fields; null resets; \"id\" renames), moveWidgets, bindings (widget id → value key), values (sample values), then theme / colors / fontSize / safeArea / size. Running games show the change. Returns widget ids, value keys, events and warnings."
+    public static let doc = "Changes part of a .ui file in one undoable step, in this order: removeWidgets, addWidgets, updateWidgets (id → fields; null resets; \"id\" renames), moveWidgets, bindings (widget id → value key), values (sample values), then theme / colors / fontSize / safeArea / size / scaleMode / show / hide / navigation / focus. Running games show the change. Returns widget ids, value keys, events and warnings."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
@@ -334,6 +378,43 @@ public enum UIOpenCommand: EditorCommand {
         session.uiPreviewRequest = UIPreviewRequest(size: arguments.previewSize, values: arguments.values, select: arguments.select)
         session.onOpenUIBuild?(id)
         return PathResult(path: session.assets?.path(of: id) ?? "")
+    }
+}
+
+public enum UIPlaceCommand: EditorCommand {
+    public struct Arguments: Codable, Equatable, Sendable {
+        public var asset: AssetReference?
+        public var path: String?
+        /// The entity's name (default: the file's name).
+        public var name: String?
+        /// Drawing order between layouts: higher draws on top (default 0).
+        public var order: Int?
+        /// Give the layout keyboard / gamepad focus when it shows (menus; default false).
+        public var focus: Bool?
+        /// Shown when play starts (default true).
+        public var visible: Bool?
+        public init(asset: AssetReference? = nil, path: String? = nil, name: String? = nil, order: Int? = nil, focus: Bool? = nil,
+                    visible: Bool? = nil) {
+            self.asset = asset
+            self.path = path
+            self.name = name
+            self.order = order
+            self.focus = focus
+            self.visible = visible
+        }
+    }
+
+    public static let id: CommandID = "uiLayout.place"
+    public static let title = "Add UI Layout to Scene"
+    public static let doc = "Adds an entity with a UILayoutPlayer to the open scene, so the .ui layout shows over the game while it plays (editor play mode, GameRunner, exported games) with no game code. Game code sets its values and handles its events through world.gameUI (set(key, value), on(event) { event, entity in }). Undoable; returns the new entity."
+    public static let isUndoable = true
+    public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
+    public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
+    public static func run(_ arguments: Arguments, in session: EditorSession) throws -> EntitiesResult {
+        let (id, _) = try session.resolveUIBuild(arguments.asset, path: arguments.path, title)
+        let entity = try session.commands.require(session.addUILayoutPlayer(for: id, name: arguments.name, order: arguments.order ?? 0,
+                                                                             focus: arguments.focus ?? false, visible: arguments.visible ?? true), title)
+        return EntitiesResult(entities: [entity])
     }
 }
 

@@ -142,7 +142,7 @@ private let hud = """
         #expect(throws: UIBuildError.self) { try build.applying(UIBuildEdit(addWidgets: [UIBuildWidget(type: .label, parent: "score")])) }
         #expect(throws: UIBuildError.self) { try build.applying(UIBuildEdit(updateWidgets: ["hp": .object(["colour": .string("#fff")])])) }
         #expect(throws: UIBuildError.self) { try build.applying(UIBuildEdit(updateWidgets: ["hp": .object(["id": .string("score")])])) }
-        #expect(throws: UIBuildError.self) { try build.applying(UIBuildEdit(updateWidgets: ["hp": .object(["type": .string("slider")])])) }
+        #expect(throws: UIBuildError.self) { try build.applying(UIBuildEdit(updateWidgets: ["hp": .object(["type": .string("dial")])])) }
         #expect(throws: UIBuildError.self) { try build.applying(UIBuildEdit(moveWidgets: [UIBuildMove(id: "status", parent: "status")])) }
         #expect(throws: UIBuildError.self) { try build.applying(UIBuildEdit(bindings: ["nobody": "x"])) }
     }
@@ -264,7 +264,7 @@ private let hud = """
         #expect((view.widget("hp") as? ProgressBar)?.value == 0.8, "values set by code survive a reload")
 
         // Garbage doesn't import.
-        try Data("{\"widgets\": [{\"type\": \"slider\"}]}".utf8).write(to: project.assetsURL.appendingPathComponent("bad.ui"))
+        try Data("{\"widgets\": [{\"type\": \"dial\"}]}".utf8).write(to: project.assetsURL.appendingPathComponent("bad.ui"))
         let report = database.refresh()
         #expect(report.errors.contains { $0.path == "bad.ui" })
     }
@@ -279,6 +279,297 @@ private let hud = """
         _ = laidOut(view, size: Vec2(400, 300))
         #expect(view.widget("p")?.frame == UIRect(x: 200 - 32.5, y: 150 - 22.5, width: 65, height: 45).snappedForTest)
         #expect(view.widget("f")?.frame == UIRect(x: 30, y: 40, width: 340, height: 220))
+    }
+
+    // MARK: Sliders, toggles and text fields
+
+    @MainActor @Test func inputsBindAndSendEvents() throws {
+        let build = try decode("""
+        {"size": [800, 600], "values": {"volume": 0.25, "muted": false, "name": "Ana"},
+         "widgets": [
+           {"id": "settings", "type": "vstack", "anchor": "center", "width": 300},
+           {"id": "vol", "type": "slider", "parent": "settings", "bind": "volume", "min": 0, "max": 1, "step": 0.25, "event": "volumeChanged"},
+           {"id": "volText", "type": "label", "parent": "settings", "text": "Volume {volume}"},
+           {"id": "mute", "type": "toggle", "parent": "settings", "text": "Mute", "bind": "muted", "toggleStyle": "switch"},
+           {"id": "name", "type": "textField", "parent": "settings", "bind": "name", "placeholder": "Your name", "maxLength": 5, "event": "rename"},
+           {"id": "loose", "type": "toggle", "parent": "settings", "text": "Loose", "on": true}
+         ]}
+        """)
+        #expect(build.validate().isEmpty)
+        #expect(build.events == ["loose", "mute", "rename", "volumeChanged"])
+        let reread = try AssetJSON.decoder().decode(UIBuild.self, from: build.fileData())
+        #expect(reread == build)
+        var bad = build
+        bad.widgets[1].max = 0
+        #expect(bad.validate().contains { $0.description == "vol: max must be above min" })
+
+        let view = UIBuildView(build)
+        let context = laidOut(view, size: Vec2(800, 600))
+        let slider = try #require(view.widget("vol") as? Slider)
+        let toggle = try #require(view.widget("mute") as? Checkbox)
+        let field = try #require(view.widget("name") as? TextField)
+        #expect(slider.value == 0.25 && slider.range == 0...1 && !toggle.isOn && toggle.kind == .toggleSwitch)
+        #expect(field.text == "Ana" && field.placeholder == "Your name" && field.maxLength == 5)
+        #expect((view.widget("loose") as? Checkbox)?.isOn == true, "unbound toggles start at on")
+
+        // Code sets the bound keys.
+        view.set("volume", 0.75)
+        view.set("muted", true)
+        view.set("name", "Bo")
+        #expect(slider.value == 0.75 && toggle.isOn && field.text == "Bo")
+
+        // The player changes them: the key follows, text reading it updates, the event carries the value.
+        var events: [UIBuildEvent] = []
+        view.onEvent = { events.append($0) }
+        #expect(view.change("vol", to: .double(0.4)))
+        #expect(slider.value == 0.5, "snapped to the step")
+        #expect(view.value("volume") == .double(0.5))
+        #expect((view.widget("volText") as? Label)?.text == "Volume 0.5")
+        #expect(events.last == UIBuildEvent(name: "volumeChanged", widget: "vol", value: .double(0.5), key: "volume"))
+        #expect(view.change("mute", to: .bool(false)))
+        #expect(events.last == UIBuildEvent(name: "mute", widget: "mute", value: .bool(false), key: "muted"))
+        #expect(view.change("name", to: .string("Cy")))
+        #expect(events.last == UIBuildEvent(name: "rename", widget: "name", value: .string("Cy"), key: "name"))
+        #expect(!view.change("vol", to: .string("loud")) && !view.change("volText", to: .bool(true)) && !view.press("vol"))
+
+        // A real click on the toggle.
+        context.pointerMoved(to: toggle.frame.center)
+        context.pointerButton(.left, down: true)
+        context.pointerButton(.left, down: false)
+        #expect(toggle.isOn && view.value("muted") == .bool(true))
+        #expect(events.last?.name == "mute" && events.last?.value == .bool(true))
+
+        // Typing updates the key at once; Enter sends the event.
+        context.focus(field)
+        let before = events.count
+        context.textEntered("Zed")
+        #expect(view.value("name") == .string("CyZed") && events.count == before)
+        context.textEntered("Long")
+        #expect(field.text == "CyZed", "maxLength")
+        context.keyPressed(KeyEvent(key: .enter))
+        #expect(events.last == UIBuildEvent(name: "rename", widget: "name", value: .string("CyZed"), key: "name"))
+    }
+
+
+    // MARK: Transitions and tweens
+
+    @Test func transitionsRoundTripAndPose() throws {
+        let build = try decode("""
+        {"show": {"kind": "slide", "from": "left", "distance": 100}, "hide": {"kind": "fade", "duration": 0.5},
+         "widgets": [{"id": "a", "type": "label", "show": {"kind": "scale"}, "tween": 0.3}]}
+        """)
+        #expect(build.show == UIBuildTransition(kind: .slide, from: .left, distance: 100))
+        #expect(build.hide == UIBuildTransition(kind: .fade, duration: 0.5))
+        #expect(build.widgets[0].show?.kind == .scale && build.widgets[0].hide == nil && build.widgets[0].tween == 0.3)
+        #expect(try AssetJSON.decoder().decode(UIBuild.self, from: build.fileData()) == build)
+        let text = try #require(String(data: build.fileData(), encoding: .utf8))
+        #expect(!text.contains("\"scale\" : 0.85"), "defaults aren't written")
+
+        let slide = try #require(build.show)
+        #expect(slide.pose(shown: 0).offset == Vec2(-100, 0) && slide.pose(shown: 0).opacity == 0)
+        #expect(slide.pose(shown: 1).offset == .zero && slide.pose(shown: 1).opacity == 1)
+        let scale = UIBuildTransition(kind: .scale, scale: 0.5)
+        #expect(scale.pose(shown: 0).scale == 0.5 && scale.pose(shown: 0.5).scale == 0.75)
+        #expect(!UIBuildTransition(kind: .none).animates && !UIBuildTransition(duration: 0).animates)
+
+        // Edits: kind none removes a layout transition.
+        let edited = try build.applying(UIBuildEdit(show: UIBuildTransition(kind: .none), hide: UIBuildTransition(kind: .scale)))
+        #expect(edited.show == nil && edited.hide?.kind == .scale)
+        var bad = build
+        bad.widgets[0].tween = -1
+        bad.hide?.duration = -1
+        #expect(bad.validate().map(\.description).contains("a: tween can't be negative"))
+        #expect(bad.validate().map(\.description).contains("hide: duration and delay can't be negative"))
+    }
+
+    @MainActor @Test func viewPlaysShowAndHideTransitions() throws {
+        var build = try decode(hud)
+        build.show = UIBuildTransition(kind: .fade, duration: 0.2, easing: .linear)
+        build.hide = UIBuildTransition(kind: .slide, duration: 0.2, easing: .linear, from: .bottom, distance: 50)
+        let view = UIBuildView(build)
+
+        // Outside a context, at once.
+        var hidden = 0
+        view.hide { hidden += 1 }
+        #expect(view.isHidden && !view.isShown && hidden == 1 && !view.isAnimating)
+        view.show()
+        #expect(!view.isHidden && view.screen.opacity == 1)
+
+        let context = laidOut(view, size: Vec2(800, 600))
+        defer { withExtendedLifetime(context) {} }
+        view.hide { hidden += 1 }
+        #expect(!view.isHidden && view.isAnimating && hidden == 1)
+        #expect(view.hitTest(try #require(view.widget("go")).frame.center) == nil, "clicks pass through while hiding")
+        view.advance(by: 0.1)
+        #expect(abs(view.screen.opacity - 0.5) < 0.01 && abs(view.screen.visualOffset.y - 25) < 0.01)
+        view.advance(by: 0.15)
+        #expect(view.isHidden && hidden == 2 && view.screen.opacity == 1 && view.screen.visualOffset == .zero && !view.isAnimating)
+
+        view.show()
+        #expect(!view.isHidden && view.screen.opacity < 0.01 && view.isAnimating)
+        view.advance(by: 0.05)
+        #expect(abs(view.screen.opacity - 0.25) < 0.01)
+        view.advance(by: 1)
+        #expect(view.screen.opacity == 1 && !view.isAnimating)
+        #expect(view.hitTest(try #require(view.widget("go")).frame.center) != nil)
+
+        // Showing again mid-hide cancels the hide (its completion never runs).
+        view.hide { hidden += 1 }
+        view.advance(by: 0.1)
+        view.show()
+        view.advance(by: 1)
+        #expect(!view.isHidden && hidden == 2)
+    }
+
+    @MainActor @Test func widgetsTransitionAndValuesTween() throws {
+        var build = try decode(hud)
+        let dead = try #require(build.index(of: "dead"))
+        build.widgets[dead].show = UIBuildTransition(kind: .scale, duration: 0.4, easing: .linear, scale: 0.5)
+        build.widgets[dead].hide = UIBuildTransition(kind: .fade, duration: 0.4, easing: .linear)
+        let hp = try #require(build.index(of: "hp"))
+        build.widgets[hp].tween = 1
+        let hpText = try #require(build.index(of: "hpText"))
+        build.widgets[hpText].tween = 1
+        let view = UIBuildView(build)
+        let context = laidOut(view, size: Vec2(800, 600))
+        defer { withExtendedLifetime(context) {} }
+        let label = try #require(view.widget("dead"))
+        let bar = try #require(view.widget("hp") as? ProgressBar)
+        #expect(!label.isHidden, "alive is unset: !alive is true")
+
+        view.set("alive", true)
+        #expect(!label.isHidden && view.isAnimating, "hiding: still drawn while it fades")
+        view.advance(by: 0.2)
+        #expect(abs(label.opacity - 0.5) < 0.01)
+        view.advance(by: 0.3)
+        #expect(label.isHidden && label.opacity == 1)
+
+        view.set("alive", false)
+        #expect(!label.isHidden && label.visualScale == 0.5)
+        view.advance(by: 0.2)
+        #expect(abs(label.visualScale - 0.75) < 0.01)
+        view.advance(by: 0.3)
+        #expect(label.visualScale == 1 && label.visualOffset == .zero)
+
+        // Numbers tween: the bar's fill and the label's {health} move to the new value.
+        #expect(bar.value == 0.5)
+        view.set("health", 100)
+        #expect(bar.value == 0.5 && (view.widget("hpText") as? Label)?.text == "HP 50 / 100")
+        #expect(view.value("health") == .int(100), "the value itself is set at once")
+        view.advance(by: 0.5)
+        #expect(bar.value > 0.5 && bar.value < 1)
+        let midway = try #require((view.widget("hpText") as? Label)?.text)
+        #expect(midway != "HP 50 / 100" && midway != "HP 100 / 100" && !midway.contains("."), "whole numbers stay whole: \(midway)")
+        view.advance(by: 0.6)
+        #expect(bar.value == 1 && (view.widget("hpText") as? Label)?.text == "HP 100 / 100" && !view.isAnimating)
+    }
+
+
+    // MARK: Gamepad navigation
+
+    @MainActor @Test func navigationOrderAndOverrides() throws {
+        let build = try decode("""
+        {"size": [800, 600], "navigation": ["quit", "play", "options"], "focus": "play",
+         "widgets": [
+           {"id": "menu", "type": "vstack", "anchor": "center"},
+           {"id": "play", "type": "button", "parent": "menu", "text": "Play"},
+           {"id": "options", "type": "button", "parent": "menu", "text": "Options", "visibleWhen": "hasOptions"},
+           {"id": "quit", "type": "button", "parent": "menu", "text": "Quit", "navLeft": "play"},
+           {"id": "title", "type": "label", "anchor": "top", "text": "Game"}
+         ]}
+        """)
+        #expect(build.validate().isEmpty)
+        #expect(try AssetJSON.decoder().decode(UIBuild.self, from: build.fileData()) == build)
+        var bad = build
+        bad.navigation.append("title")
+        bad.widgets[1].navUp = "nobody"
+        let problems = bad.validate().map(\.description)
+        #expect(problems.contains("navigation: 'title' is a label, which can't take focus"))
+        #expect(problems.contains("play: navUp: no widget 'nobody'"))
+
+        // Renames and removals follow.
+        var renamed = build
+        try renamed.update("quit", fields: ["id": .string("exit")])
+        #expect(renamed.navigation == ["exit", "play", "options"])
+        let removed = try build.applying(UIBuildEdit(removeWidgets: ["play"]))
+        #expect(removed.navigation == ["quit", "options"] && removed.focus == "" && removed.widget("quit")?.navLeft == "")
+
+        let view = UIBuildView(build)
+        let context = laidOut(view, size: Vec2(800, 600))
+        context.directionalNavigation = true
+        let play = try #require(view.widget("play")), quit = try #require(view.widget("quit"))
+        #expect(view.focusStartWidget())
+        #expect(context.focusedWidget === play, "the layout's focus widget")
+        // Order quit → play → (options hidden: skipped) → quit.
+        #expect(context.moveFocus(.down) && context.focusedWidget === quit)
+        #expect(context.moveFocus(.down) && context.focusedWidget === play)
+        #expect(context.moveFocus(.up) && context.focusedWidget === quit)
+        view.set("hasOptions", true)
+        let options = try #require(view.widget("options"))
+        #expect(context.moveFocus(.up) && context.focusedWidget === options, "shown again: back in the order")
+        // A widget's own link wins over the order.
+        context.focus(quit)
+        #expect(context.moveFocus(.left) && context.focusedWidget === play)
+    }
+
+
+    // MARK: Scaling with the screen
+
+    @Test func scaleModeFactors() throws {
+        let design = Vec2(800, 600)
+        #expect(UIBuildScaleMode.none.factor(screen: Vec2(1600, 900), design: design) == 1)
+        #expect(UIBuildScaleMode.fit.factor(screen: Vec2(1600, 900), design: design) == 1.5)
+        #expect(UIBuildScaleMode.fill.factor(screen: Vec2(1600, 900), design: design) == 2)
+        #expect(UIBuildScaleMode.width.factor(screen: Vec2(1600, 900), design: design) == 2)
+        #expect(UIBuildScaleMode.height.factor(screen: Vec2(1600, 900), design: design) == 1.5)
+        #expect(UIBuildScaleMode.fit.factor(screen: .zero, design: design) == 1)
+
+        let build = try decode(#"{"size": [800, 600], "scaleMode": "fit"}"#)
+        #expect(build.scaleMode == .fit)
+        let text = try #require(String(data: try decode("{}").fileData(), encoding: .utf8))
+        #expect(!text.contains("scaleMode"), "none is the default and isn't written")
+        #expect(try build.applying(UIBuildEdit(scaleMode: .height)).scaleMode == .height)
+    }
+
+    @MainActor @Test func viewScalesTheWholeLayout() throws {
+        let build = try decode("""
+        {"size": [800, 600], "safeArea": 10, "scaleMode": "fit",
+         "widgets": [
+           {"id": "box", "type": "panel", "anchor": "topLeft", "offset": [20, 30], "width": 100, "height": 50, "background": "panel"},
+           {"id": "go", "type": "button", "parent": "box", "anchor": "fill", "text": "Go"},
+           {"id": "title", "type": "label", "anchor": "top", "text": "Title", "fontSize": 20}
+         ]}
+        """)
+        let view = UIBuildView(build)
+        let context = laidOut(view, size: Vec2(800, 600))
+        #expect(view.layoutScale == 1)
+        let box = try #require(view.widget("box"))
+        #expect(box.frame == UIRect(x: 30, y: 40, width: 100, height: 50))
+        let small = try #require(view.widget("title")).measure(width: nil)
+
+        context.setViewport(size: Vec2(1600, 1500), scale: 1)
+        context.layoutIfNeeded()
+        #expect(view.layoutScale == 2)
+        let scaledBox = try #require(view.widget("box"))
+        #expect(scaledBox.frame == UIRect(x: 60, y: 80, width: 200, height: 100), "offsets, sizes and the safe area scale")
+        let big = try #require(view.widget("title")).measure(width: nil)
+        #expect(big.y > small.y * 1.8, "text scales too")
+
+        // Clicks land on the scaled widgets.
+        var pressed = 0
+        view.on("go") { pressed += 1 }
+        let go = try #require(view.widget("go"))
+        context.pointerMoved(to: go.frame.center)
+        context.pointerButton(.left, down: true)
+        context.pointerButton(.left, down: false)
+        #expect(pressed == 1)
+
+        // none keeps points.
+        var fixed = build
+        fixed.scaleMode = .none
+        view.load(fixed)
+        context.layoutIfNeeded()
+        #expect(view.layoutScale == 1 && view.widget("box")?.frame.width == 100)
     }
 }
 

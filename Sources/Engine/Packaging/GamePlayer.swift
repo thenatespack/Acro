@@ -104,7 +104,7 @@ public enum GamePlayer {
         ComponentRegistry.register(Transform.self, Name.self, Camera.self, DirectionalLight.self, PointLight.self, SpotLight.self,
                                    SceneEnvironment.self, PostProcessSettings.self, PlanarReflection.self, MeshRenderer.self, LineRenderer.self, MeshArray.self, Decal.self, Saveable.self,
                                    Sprite.self, SpriteAnimator.self, PrefabInstance.self, Spin.self, FieldAnimator.self, LightFlicker.self,
-                                   CameraPath.self, TimelinePlayer.self, PathFollower.self, Animator.self, TilemapMotion.self)
+                                   CameraPath.self, TimelinePlayer.self, PathFollower.self, Animator.self, TilemapMotion.self, UILayoutPlayer.self)
         PhysicsWorld.registerComponents()
         PhysicsWorld2D.registerComponents()
         AudioSystem.registerComponents()
@@ -201,6 +201,8 @@ final class PackSceneGame: Game {
     let scene: String?
     private var renderer: SceneRenderer!
     private(set) var playback: ScenePlayback!
+    /// The game's UI over the scene: `UILayoutPlayer` layouts (`world.gameUI`).
+    let ui = UIContext.gameUI()
 
     init(module: GameModule, assets: AssetDatabase, scene: String?) {
         self.module = module
@@ -219,6 +221,8 @@ final class PackSceneGame: Game {
         context.scenes = pack.manifest.scenes.map(\.path)
         playback = ScenePlayback(module: module, context: context, runtime: pack.manifest.runtime ?? ProjectRuntimeSettings(),
                                  audio: engine.audio, assets: { [assets] in assets }) { path in try pack.scene(path) }
+        playback.uiRoot = ui.root
+        playback.uiImages = UIBuildView.imageLoader(renderer: renderer, assets: assets)
         guard let start = scene ?? pack.manifest.startScene else {
             throw GamePlayerError.nothingToRun("\(pack.name) has no scenes")
         }
@@ -227,7 +231,16 @@ final class PackSceneGame: Game {
     }
 
     /// Runs before the world's update, so a scene asked for last frame loads between updates.
-    func update(engine: Engine, dt: Float) { playback.applyPendingScene() }
-    func renderOffscreen(engine: Engine, frame: Frame) { renderer.renderOffscreen(world: playback.world, engine: engine, frame: frame) }
+    func update(engine: Engine, dt: Float) {
+        playback.applyPendingScene()
+        ui.update(engine: engine, dt: dt)
+    }
+
+    /// After the world's update, so the UI shows this frame's values.
+    func renderOffscreen(engine: Engine, frame: Frame) {
+        renderer.renderOffscreen(world: playback.world, engine: engine, frame: frame)
+        ui.draw(into: engine.ui)
+    }
+
     func render(engine: Engine, pass: RenderPass) { renderer.draw(pass) }
 }
