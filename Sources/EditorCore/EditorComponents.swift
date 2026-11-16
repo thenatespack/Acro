@@ -90,6 +90,7 @@ public enum EditorComponentCatalog {
         register(CameraPath.self) { CameraPath() }
         register(BehaviorTreeRunner.self) { BehaviorTreeRunner() }
         register(DialoguePlayer.self) { DialoguePlayer() }
+        register(TimelinePlayer.self) { TimelinePlayer() }
     }
 
     /// Makes the component type registered as `name` addable, created by `make` (game modules,

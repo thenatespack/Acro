@@ -565,6 +565,7 @@ public final class AssetBrowserPanel {
             ("New Behavior Tree", BehaviorNewCommand.id, { [unowned self] in model.newBehaviorTree(); sync() }),
             ("New UI Layout", UINewCommand.id, { [unowned self] in model.newUILayout(); sync() }),
             ("New Dialogue", DialogueNewCommand.id, { [unowned self] in model.newDialogue(); sync() }),
+            ("New Timeline", TimelineNewCommand.id, { [unowned self] in model.newTimeline(); sync() }),
         ]
         if let entry {
             if case .folder = entry.item {

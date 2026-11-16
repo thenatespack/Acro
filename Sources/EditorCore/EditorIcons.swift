@@ -54,6 +54,7 @@ public enum EditorIcons {
         CameraPath.componentName: "orbit",
         BehaviorTreeRunner.componentName: "bot",
         DialoguePlayer.componentName: "file-text",
+        TimelinePlayer.componentName: "clapperboard",
         "Pulse": "gauge",
     ]
 
@@ -286,6 +287,7 @@ public enum EditorIcons {
         switch ext {
         case "gltf", "glb", "obj", "fbx", "meshbuild": return .model
         case "vfx": return .prefab
+        case "timeline": return .scene
         case "table": return .model
         case "tilemap": return .texture
         case "ui": return .data
@@ -366,6 +368,7 @@ public enum EditorIcons {
         EditorLayout.behaviorTree: "network",
         EditorLayout.uiBuilder: "layout-dashboard",
         EditorLayout.dialogueBuilder: "file-text",
+        EditorLayout.timeline: "clapperboard",
     ]
 
     /// Console lines by level.

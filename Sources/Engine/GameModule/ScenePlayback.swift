@@ -44,6 +44,7 @@ public final class ScenePlayback {
     public private(set) var physics: PhysicsWorld?
     public private(set) var physics2D: PhysicsWorld2D?
     private var spatialAudio: SpatialAudioHandle?
+    private var timelines: TimelinePlayerSystem?
     private var systemsAdded = false
 
     private static let spriteSystem = "scenePlayback.spriteAnimation"
@@ -112,6 +113,7 @@ public final class ScenePlayback {
         world.addBuiltinAnimationSystems()
         world.addBehaviorTrees(name: Self.behaviorSystem, assets: assets, physics: { [weak self] in self?.physics })
         world.addDialogueSystem(assets: assets).presenter = dialoguePresenter
+        timelines = world.addTimelinePlayers(assets: assets)
         for warning in module.addSystems(to: world, context: context) { log(warning) }
         systemsAdded = true
     }
@@ -131,6 +133,8 @@ public final class ScenePlayback {
         spatialAudio?.remove()
         spatialAudio = nil
         world.removeDialogueSystem()
+        timelines?.remove()
+        timelines = nil
         module.removeSystems(from: world)
         systemsAdded = false
     }

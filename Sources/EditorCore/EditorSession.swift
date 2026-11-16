@@ -163,6 +163,9 @@ public final class EditorSession {
     public var onOpenUIBuild: ((AssetID) -> Void)?
     /// Preview size, values and selection the last `uiLayout.open` asked for (the tab takes it).
     public var uiPreviewRequest: UIPreviewRequest?
+    /// The timeline open in the Timeline tab (`timeline.open`), and how the app shows it.
+    public var openTimeline: AssetID?
+    public var onOpenTimeline: ((AssetID) -> Void)?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()
@@ -237,6 +240,8 @@ public final class EditorSession {
     /// assets load from the project) until Stop.
     public var audioProvider: (() -> AudioSystem?)?
     private var spatialAudio: SpatialAudioHandle?
+    /// Plays `TimelinePlayer`s while playing.
+    private var timelinePlayers: TimelinePlayerSystem?
     /// The play session's physics, when the scene has colliders (see `addPlaySystems`).
     public private(set) var physics: PhysicsWorld?
     /// The play session's 2D physics, when the scene has `Collider2D`s.
@@ -732,6 +737,7 @@ public final class EditorSession {
         }
         world.addBehaviorTrees(name: Self.behaviorSystem, assets: { [weak self] in self?.assets }, physics: { [weak self] in self?.physics })
         world.addDialogueSystem(assets: { [weak self] in self?.assets }).presenter = dialoguePresenter
+        timelinePlayers = world.addTimelinePlayers(assets: { [weak self] in self?.assets })
         gameModule.addSystems()
     }
 
@@ -756,6 +762,8 @@ public final class EditorSession {
         spatialAudio?.remove()
         spatialAudio = nil
         world.removeDialogueSystem()
+        timelinePlayers?.remove()
+        timelinePlayers = nil
         tweens = nil
         gameModule.removeSystems()
     }
