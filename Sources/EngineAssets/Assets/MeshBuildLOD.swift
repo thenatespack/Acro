@@ -23,10 +23,11 @@ import EngineScene
 //
 // Detail levels (`MeshLOD`), generated at import:
 // - level 1: half the foliage cards (a fixed random half, so level 2's are among them), 1.3x
-//   larger about their stems, and sweeps / lofts rebuilt with half the segments around, without
-//   the occlusion tessellation or fine noise deformers (their occlusion is copied from the
-//   nearest full-detail vertex);
-// - level 2: a quarter of the cards, 1.75x larger, sweeps with a third of the segments;
+//   larger about their stems; every other part (but sculpts) rebuilt with half the segments and,
+//   along sweeps, rings twice as far apart, without the occlusion tessellation (and sweeps and
+//   lofts without fine noise deformers); their occlusion is copied from the nearest full-detail
+//   vertex;
+// - level 2: a quarter of the cards, 1.75x larger, a third of the segments, rings 3x as far apart;
 // - level 3: an impostor, three crossed vertical quads textured with the plant rendered from
 //   three directions (MeshBuildImpostor.swift), 6 triangles.
 // At levels 1 and up, parts with equal materials are merged into one mesh on the first of them
@@ -153,6 +154,8 @@ enum MeshBuildLOD {
     static let cardGrowth: [Float] = [1.3, 1.75]
     /// What levels 1 and 2 divide a sweep's or loft's segments by.
     static let segmentDivisors: [Float] = [2, 3]
+    /// What levels 1 and 2 multiply the angle between a sweep's rings by (fewer rings along it).
+    static let ringSteps: [Float] = [2, 3]
 
     /// `g`'s cards (quads of 4 vertices and 6 indices, in order, as foliage parts make them;
     /// `quadsPerCard` 2 for crossed tufts) thinned to `share` of them, each grown by `growth`
@@ -278,11 +281,16 @@ extension MeshBuildPart {
             let quads = look.isUpright && foliageTargets.isEmpty ? 2 : 1
             return MeshBuildLOD.thinnedCards(full, share: MeshBuildLOD.cardShares[k], growth: MeshBuildLOD.cardGrowth[k],
                                              quadsPerCard: quads, seed: foliageSeed)
-        case .sweep, .loft:
+        case .sculpt, .group:
+            return nil
+        default:
+            // Rebuilt with fewer segments (around round shapes and sweeps, and rings along sweeps) and
+            // without the occlusion tessellation; kept when that isn't lighter.
             var simpler = self
             simpler.segments = max(Int((Float(min(max(segments, 3), 128)) / MeshBuildLOD.segmentDivisors[k]).rounded()), 3)
-            // Fine noise is too small to see this far away; bends, twists and tapers keep the shape.
-            if let deform {
+            simpler.curveRingStep = MeshBuildLOD.ringSteps[k]
+            // A trunk's fine noise is too small to see this far away; bends, twists and tapers keep the shape.
+            if let deform, shape == .sweep || shape == .loft {
                 simpler.deform = deform.compactMap { d in
                     var d = d
                     d.noise = nil
@@ -296,8 +304,6 @@ extension MeshBuildPart {
             MeshBuildLOD.transferOcclusion(from: full, to: &g)
             if MeshBuildImporter.wearsEdges(self), let look = resolvedLook { MeshBuildEdgeWear.apply(to: &g, wear: wear ?? 0, look: look) }
             return g
-        default:
-            return nil
         }
     }
 }

@@ -115,6 +115,12 @@ final class ForestScene: DemoScene {
                 let key = node.lod?.mesh(level: level, base: MeshHandle(mesh)).key ?? MeshHandle(mesh).key
                 totals[level] += AssetReference(key).flatMap { database.mesh($0) }.map { $0.indices.count / 3 } ?? 0
             }
+            if ProcessInfo.processInfo.environment["FOREST_PARTS"] == "1" {
+                print("  \(node.name): " + (0...levels).map { level in
+                    let key = node.lod?.mesh(level: level, base: MeshHandle(mesh)).key ?? MeshHandle(mesh).key
+                    return "\(AssetReference(key).flatMap { database.mesh($0) }.map { $0.indices.count / 3 } ?? 0)"
+                }.joined(separator: " / "))
+            }
         }
         return totals
     }

@@ -165,7 +165,7 @@ extension MeshBuildPart {
             if isRibbon { return ribbonGeometry(segments: segments, warnings: &warnings) }  // MeshBuildRibbon.swift
             return MeshGeometry.sweep(path: path ?? [], radius: radius ?? MeshGeometry.defaultSweepRadius, radii: radii,
                                       profile: profile, closed: closed ?? false, smooth: !(straight ?? false), segments: segments,
-                                      warnings: &warnings)
+                                      ringStep: curveRingStep, warnings: &warnings)
         case .loft:
             return MeshGeometry.loft(sections: sections ?? [], axis: axis ?? .y, smooth: !(straight ?? false), segments: segments,
                                      warnings: &warnings)
@@ -255,7 +255,8 @@ extension MeshGeometry {
     /// A cross-section moved along `path` (see the notes at the top of this file). Nil (with a
     /// warning) for a path or section that can't make a tube.
     static func sweep(path raw: [Vec3], radius: Float, radii rawRadii: [Float]?, profile: [Vec2]?, closed wantsClosed: Bool,
-                      smooth: Bool, segments: Int, sharpAngle: Float = profileSharpAngle, warnings: inout [String]) -> MeshGeometry? {
+                      smooth: Bool, segments: Int, sharpAngle: Float = profileSharpAngle, ringStep: Float = 1,
+                      warnings: inout [String]) -> MeshGeometry? {
         // The path and its radii, cleaned together.
         if let rawRadii, rawRadii.count != raw.count {
             warnings.append("sweep radii has \(rawRadii.count) values for \(raw.count) path points; missing ones are 1, extras are ignored")
@@ -314,7 +315,8 @@ extension MeshGeometry {
         var perimeter: Float = 0
         for i in outline.indices { perimeter += len2(outline[(i + 1) % outline.count] - outline[i]) }
 
-        var samples = smooth ? smoothSamples(points, scales: scales, closed: closed) : cornerSamples(points, scales: scales, closed: closed)
+        var samples = smooth ? smoothSamples(points, scales: scales, closed: closed, ringStep: ringStep)
+            : cornerSamples(points, scales: scales, closed: closed)
         guard samples.count >= 2 else { return nil }
         frame(&samples, closed: closed)
 
@@ -385,7 +387,8 @@ extension MeshGeometry {
 
     /// Samples along a centripetal Catmull-Rom spline through `points`: more where it turns or
     /// the radius changes, one step for a straight span.
-    static func smoothSamples(_ points: [Vec3], scales: [Float], closed: Bool) -> [PathSample] {
+    /// `ringStep` multiplies the angle between rings (detail levels use fewer, MeshBuildLOD.swift).
+    static func smoothSamples(_ points: [Vec3], scales: [Float], closed: Bool, ringStep: Float = 1) -> [PathSample] {
         let n = points.count
         let spans = closed ? n : n - 1
         func point(_ i: Int) -> Vec3 {
@@ -418,8 +421,10 @@ extension MeshGeometry {
                 }
                 last = p
             }
-            var count = min(max(Int((turn * 180 / .pi / 6).rounded(.up)), 1), 32)
-            if abs(scale(span + 1) - scale(span)) > 1e-4 || abs(scale(span + 2) - scale(span - 1)) > 1e-4 { count = max(count, 6) }
+            var count = min(max(Int((turn * 180 / .pi / (6 * ringStep)).rounded(.up)), 1), 32)
+            if abs(scale(span + 1) - scale(span)) > 1e-4 || abs(scale(span + 2) - scale(span - 1)) > 1e-4 {
+                count = max(count, max(Int((6 / ringStep).rounded()), 2))
+            }
             return count
         }
         let total = steps.reduce(0, +)

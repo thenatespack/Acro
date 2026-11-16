@@ -50,3 +50,11 @@ vec3 windOffset(vec3 p, mat3 basis, vec3 base, float time) {
     float flutter = wind.plant.w * strength * (0.6 + 0.4 * gust) * clamp(h * 3.0, 0.0, 1.0) * 0.02 * wave;
     return offset + vec3(sin(n * 1.3 + 1.0), cos(n * 0.9), sin(n * 1.7 + 2.0)) * flutter;
 }
+
+// Any mesh vertex shader sways by including this file and replacing its object-space position
+// with windSwayed(position, model, wind.clock.x) (and, for motion vectors, the previous position
+// with windSwayed(position, previousModel, wind.clock.y)) before multiplying by the model matrix.
+vec3 windSwayed(vec3 p, mat4 model, float time) {
+    vec3 base = (model * vec4(wind.plant.xyz, 1.0)).xyz;
+    return p + windOffset(p, mat3(model[0].xyz, model[1].xyz, model[2].xyz), base, time);
+}

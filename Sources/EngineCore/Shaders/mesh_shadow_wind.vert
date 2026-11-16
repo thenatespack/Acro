@@ -23,9 +23,7 @@ layout(location = 0) out vec2 vUV;
 
 void main() {
     mat4 model = mat4(model0, model1, model2, model3);
-    vec3 base = (model * vec4(wind.plant.xyz, 1.0)).xyz;
-    vec3 swayed = inPosition + windOffset(inPosition, mat3(model0.xyz, model1.xyz, model2.xyz), base, wind.clock.x);
-    gl_Position = frame.lightViewProj * (model * vec4(swayed, 1.0));
+    gl_Position = frame.lightViewProj * (model * vec4(windSwayed(inPosition, model, wind.clock.x), 1.0));
     gl_Position.y = -gl_Position.y;  // clip space is y-up; see beginPass in VulkanRenderDevice
     vUV = inUV;
 }

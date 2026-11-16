@@ -191,6 +191,8 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
     public var foliageTargets: [MeshBuildFoliageTarget] = []
     /// Not in the file: problems with its `on` names, found with the targets.
     public var foliageContextWarnings: [String] = []
+    /// Not in the file: how much farther apart a sweep's rings are than usual (detail levels, MeshBuildLOD.swift).
+    var curveRingStep: Float = 1
 
     public static var fieldHints: [String: FieldHints] {
         ["parent": FieldHints(tooltip: "The part this one is attached to (moves with it)"),
@@ -840,9 +842,10 @@ public struct MeshBuildImporter: AssetImporter {
 
     public var name: String { "meshbuild" }
     public var fileExtensions: [String] { ["meshbuild"] }
-    public var version: Int { 9 }  // 2: mirror and repeat, 3: sculpt, 4: sweep, loft and deform, 5: looks and baked occlusion,
+    public var version: Int { 11 }  // 2: mirror and repeat, 3: sculpt, 4: sweep, loft and deform, 5: looks and baked occlusion,
                                    // 6: sculpt children's looks, sweeps / lofts / deformers in sculpts, 7: edge wear,
-                                   // 8: foliage, ribbons, leaf looks, noise budget, 9: plant wind, detail levels, impostors
+                                   // 8: foliage, ribbons, leaf looks, noise budget, 9: chips, 10: sculpt look blending,
+                                   // 11: plant wind, detail levels, impostors
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         let file: MeshBuild

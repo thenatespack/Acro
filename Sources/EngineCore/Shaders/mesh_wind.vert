@@ -42,11 +42,8 @@ void main() {
     mat4 model = mat4(model0, model1, model2, model3);
     mat4 previousModel = mat4(previous0, previous1, previous2, previous3);
     vec3 a = model0.xyz, b = model1.xyz, c = model2.xyz;
-    vec3 base = (model * vec4(wind.plant.xyz, 1.0)).xyz;
-    vec3 previousBase = (previousModel * vec4(wind.plant.xyz, 1.0)).xyz;
-    vec3 swayed = inPosition + windOffset(inPosition, mat3(a, b, c), base, wind.clock.x);
-    vec3 previousSwayed = inPosition + windOffset(inPosition, mat3(previous0.xyz, previous1.xyz, previous2.xyz), previousBase,
-                                                  wind.clock.y);
+    vec3 swayed = windSwayed(inPosition, model, wind.clock.x);
+    vec3 previousSwayed = windSwayed(inPosition, previousModel, wind.clock.y);
     vec4 world = model * vec4(swayed, 1.0);
     vec4 previousWorld = previousModel * vec4(previousSwayed, 1.0);
 
