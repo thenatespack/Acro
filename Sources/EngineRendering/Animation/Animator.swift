@@ -212,7 +212,8 @@ public struct Animator: Component, Equatable, Sendable {
         ["targets": FieldHints(readOnly: true, tooltip: "The entities the clips drive (bound from this entity's subtree when empty)"),
          "restPose": FieldHints(hidden: true), "playbacks": FieldHints(hidden: true), "events": FieldHints(hidden: true),
          "fadeDuration": FieldHints(hidden: true), "fadeElapsed": FieldHints(hidden: true),
-         "graph": FieldHints(tooltip: "An .animgraph asset: its states, transitions, parameters and layers replace this animator's (hot reloaded)")]
+         "graph": FieldHints(tooltip: "An .animgraph asset: its states, transitions, parameters and layers replace this animator's (hot reloaded)"),
+         "retarget": FieldHints(hidden: true)]
     }
 
     /// The entity each channel `target` index drives (for imported clips, by glTF node index;
@@ -231,6 +232,11 @@ public struct Animator: Component, Equatable, Sendable {
     /// (`World.addSceneAnimationSystem`) replaces `stateMachine` and `layers` with the graph's
     /// and adds its parameters, again whenever the file is reimported.
     public var graph: AssetReference?
+    /// Plays clips made for another skeleton by matching bones by name: the scene animation
+    /// system retargets each clip whose `skeleton` differs from this animator's targets (their
+    /// `Name`s) onto them (`AnimationClip.retargeted(to:options:)`). Nil plays clips as they
+    /// are, by target index. A graph's `retarget` replaces it.
+    public var retarget: AnimationRetargetOptions?
 
     /// The current state last, states fading out before it.
     public private(set) var playbacks: [AnimationPlayback] = []

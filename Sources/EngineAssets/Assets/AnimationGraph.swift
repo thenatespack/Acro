@@ -19,7 +19,8 @@ import EngineScene
 //     {"from": "Locomotion", "to": "Jump", "conditions": [{"parameter": "jump", "test": "triggered"}], "duration": 0.1},
 //     {"from": "Jump", "to": "Locomotion", "exitTime": 0.9}
 //   ],
-//   "layers": [{"name": "Breathe", "clip": "asset:<id>#animation/Breathe", "weight": 0.5}]
+//   "layers": [{"name": "Breathe", "clip": "asset:<id>#animation/Breathe", "weight": 0.5}],
+//   "retarget": {"boneMap": {"mixamorig:Spine1": "chest"}, "rotation": "world", "translation": "root"}
 // }
 // ```
 //
@@ -274,10 +275,13 @@ public struct AnimationGraph: Codable, Equatable, Sendable {
     public var initialState: String?
     /// Where the Any State node sits in the graph editor.
     public var anyStatePosition: Vec2
+    /// Retargets clips made for another skeleton onto the rig the graph plays on, matching bones
+    /// by name (`Animator.retarget`); nil plays clips by target index as they are.
+    public var retarget: AnimationRetargetOptions?
 
     public init(preview: String? = nil, parameters: [AnimationGraphParameter] = [], states: [AnimationGraphState] = [],
                 transitions: [AnimationGraphTransition] = [], layers: [AnimationGraphLayer] = [], initialState: String? = nil,
-                anyStatePosition: Vec2 = Vec2(0, -120)) {
+                anyStatePosition: Vec2 = Vec2(0, -120), retarget: AnimationRetargetOptions? = nil) {
         self.preview = preview
         self.parameters = parameters
         self.states = states
@@ -285,9 +289,10 @@ public struct AnimationGraph: Codable, Equatable, Sendable {
         self.layers = layers
         self.initialState = initialState
         self.anyStatePosition = anyStatePosition
+        self.retarget = retarget
     }
 
-    private enum CodingKeys: String, CodingKey { case preview, parameters, states, transitions, layers, initialState, anyStatePosition }
+    private enum CodingKeys: String, CodingKey { case preview, parameters, states, transitions, layers, initialState, anyStatePosition, retarget }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -298,6 +303,7 @@ public struct AnimationGraph: Codable, Equatable, Sendable {
         layers = try c.decodeIfPresent([AnimationGraphLayer].self, forKey: .layers) ?? []
         initialState = try c.decodeIfPresent(String.self, forKey: .initialState)
         anyStatePosition = try c.decodeIfPresent(Vec2.self, forKey: .anyStatePosition) ?? Vec2(0, -120)
+        retarget = try c.decodeIfPresent(AnimationRetargetOptions.self, forKey: .retarget)
     }
 
     public func fileData() throws -> Data { try AssetJSON.encode(self) }

@@ -55,6 +55,7 @@ extension World {
                                         stage: SystemStage = .update,
                                         onEvent: ((Entity, FiredAnimationEvent) -> Void)? = nil) -> AnimationLibrary {
         let library = AnimationLibrary()
+        let clipCache = AnimatorClipCache()
         var reported = Set<String>()
         var appliedGraphs: [Entity: (graph: AssetReference, revision: Int)] = [:]
         addSystem(name, stage: stage) { world in
@@ -89,13 +90,15 @@ extension World {
                 for key in library.resolveAssetClips(animator.clipHandles) where reported.insert(key).inserted {
                     EngineLog.warning("no animation clip '\(key)'", category: .animation)
                 }
-                let pose = animator.update(dt: dt) { library.clip($0) }
+                let clips = clipCache.clips(for: entity, animator, in: world, library: library)
+                let pose = animator.update(dt: dt) { clips[$0] }
                 for i in 0..<min(pose.count, animator.targets.count) where pose.animated[i] {
                     world.modify(Transform.self, for: animator.targets[i]) { $0 = pose.transforms[i] }
                 }
                 for event in animator.events { fired.append((entity, event)) }
                 world.modify(Animator.self, for: entity) { $0 = animator }
             }
+            clipCache.keepOnly(Set(driven.map { $0.0 }))
             if let onEvent { for (entity, event) in fired { onEvent(entity, event) } }
         }
         return library
@@ -120,9 +123,11 @@ extension Animator {
         graph != nil || clipHandles.contains { $0.key.hasPrefix(AssetReference.scheme) }
     }
 
-    /// Takes `graph`'s state machine, parameters and layers (`replaceGraph`).
+    /// Takes `graph`'s state machine, parameters and layers (`replaceGraph`), and its retarget
+    /// options.
     public mutating func apply(_ graph: AnimationGraph) {
         replaceGraph(graph.stateMachine, parameters: graph.parameterDefaults, layers: graph.additiveLayers)
+        retarget = graph.retarget
     }
 
     /// An animator playing `graph` on `root`'s subtree (`World.animationRig(of:)`), with
@@ -132,6 +137,7 @@ extension Animator {
         self.init(targets: rig.targets, restPose: rig.restPose, stateMachine: graph.stateMachine,
                   parameters: graph.parameterDefaults, layers: graph.additiveLayers)
         self.graph = reference
+        retarget = graph.retarget
     }
 }
 

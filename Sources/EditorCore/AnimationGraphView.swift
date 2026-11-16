@@ -501,6 +501,7 @@ public final class AnimationGraphView {
         view.addChild(HStack(spacing: 6, [assign, Spacer()]))
 
         addPreviewSection()
+        addRetargetSection()
         addParametersSection()
         view.addChild(Separator())
         addSelectionSection()
@@ -544,6 +545,80 @@ public final class AnimationGraphView {
         }
         picker.tooltip = "The model the graph is previewed on (a glTF file with clips, or any prefab)"
         view.addChild(picker)
+    }
+
+    /// The skeleton of the graph's first clip that records one, and that clip's animated bones.
+    private func clipSkeleton() -> (skeleton: AnimationSkeleton, animated: Set<Int>)? {
+        guard let assets = session.assets else { return nil }
+        for key in graph.clipKeys {
+            if let clip = AssetReference(key).flatMap({ assets.animationClip($0) }), let skeleton = clip.skeleton {
+                return (skeleton, Set(clip.channels.map(\.target)))
+            }
+        }
+        return nil
+    }
+
+    private func addRetargetSection() {
+        let on = graph.retarget != nil
+        let toggle = Checkbox("Retarget clips by bone name", isOn: on, kind: .toggleSwitch, name: "animGraphRetarget") { [unowned self] isOn in
+            var edited = graph
+            edited.retarget = isOn ? AnimationRetargetOptions() : nil
+            apply(edited, label: isOn ? "Retarget Clips" : "Stop Retargeting Clips")
+        }
+        toggle.tooltip = "Play clips made for another skeleton (another glTF file, a .character) by matching bones by name"
+        view.addChild(toggle)
+        guard let options = graph.retarget else { return }
+        func set(_ label: String, _ change: @escaping (inout AnimationRetargetOptions) -> Void) {
+            var edited = graph
+            var options = edited.retarget ?? AnimationRetargetOptions()
+            change(&options)
+            edited.retarget = options
+            apply(edited, label: label)
+        }
+        let rotations = AnimationRetargetOptions.Rotation.allCases, translations = AnimationRetargetOptions.Translation.allCases
+        let rotation = Dropdown(options: ["Rotation: model space", "Rotation: local", "Rotation: copy"],
+                                selectedIndex: rotations.firstIndex(of: options.rotation) ?? 0, name: "animGraphRetargetRotation") { index in
+            set("Set Retarget Rotation") { $0.rotation = rotations[index] }
+        }
+        rotation.tooltip = "Model space handles bones whose rest orientations differ (resampled); local keeps the keys; copy takes values as they are"
+        let translation = Dropdown(options: ["Move: none", "Move: root", "Move: all"],
+                                   selectedIndex: translations.firstIndex(of: options.translation) ?? 0, name: "animGraphRetargetTranslation") { index in
+            set("Set Retarget Translation") { $0.translation = translations[index] }
+        }
+        translation.tooltip = "Which bones keep their clip movement (scaled to the model's size); the others keep the model's bone lengths"
+        view.addChild(HStack(spacing: 6, [rotation, translation]))
+
+        let target = graph.preview.flatMap(AssetReference.init).flatMap { session.assets?.animationSkeleton(of: $0) }
+        let source = clipSkeleton()
+        if let target, let source {
+            let map = AnimationRetargetMap(source: source.skeleton, target: target, options: options)
+            let used = Set(map.sourceOfTarget.compactMap { $0 })
+            let loose = source.animated.filter { !used.contains($0) }.map { source.skeleton.bones[$0].name }.sorted()
+            var summary = "\(map.matchedCount) of \(target.count) model bones matched"
+            if !loose.isEmpty { summary += "; animated clip bones with no match: " + loose.prefix(8).joined(separator: ", ") + (loose.count > 8 ? "…" : "") }
+            view.addChild(note(summary))
+        } else {
+            view.addChild(note("Pick a preview model and a clip from an imported file to see which bones match."))
+        }
+        for (from, to) in options.boneMap.sorted(by: { $0.key < $1.key }) {
+            let remove = Button("✕", name: "animGraphBoneMapRemove") { set("Remove Bone Mapping") { $0.boneMap[from] = nil } }
+            remove.tooltip = "Remove this mapping"
+            view.addChild(HStack(spacing: 6, [Label("\(from) → \(to)", role: .caption, name: "animGraphBoneMap"), Spacer(), remove]))
+        }
+        if let target, let source {
+            let sourceNames = source.skeleton.names, targetNames = target.names
+            var pickedSource = 0, pickedTarget = 0
+            let from = Dropdown(options: sourceNames, selectedIndex: 0, name: "animGraphBoneMapFrom") { pickedSource = $0 }
+            from.tooltip = "A bone of the clip"
+            let to = Dropdown(options: targetNames, selectedIndex: 0, name: "animGraphBoneMapTo") { pickedTarget = $0 }
+            to.tooltip = "The model bone it drives"
+            let add = Button("Map", name: "animGraphBoneMapAdd") {
+                guard sourceNames.indices.contains(pickedSource), targetNames.indices.contains(pickedTarget) else { return }
+                set("Map Bone") { $0.boneMap[sourceNames[pickedSource]] = targetNames[pickedTarget] }
+            }
+            add.tooltip = "Drive the model bone with this clip bone, whatever their names"
+            view.addChild(HStack(spacing: 6, [from, to, add]))
+        }
     }
 
     private func addParametersSection() {

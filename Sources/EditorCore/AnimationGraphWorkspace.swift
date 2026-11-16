@@ -24,6 +24,8 @@ public final class AnimationGraphWorkspace {
     /// The preview model's root.
     public private(set) var previewRoot: Entity?
     public let library = AnimationLibrary()
+    /// The preview animator's clips, retargeted onto the model when the graph says so.
+    let clipCache = AnimatorClipCache()
     public var device: RenderDevice?
     public var quality = RenderQuality.high
 
@@ -119,7 +121,8 @@ public final class AnimationGraphWorkspace {
         guard var animator, let assets = session.assets else { return }
         library.assets = assets
         library.resolveAssetClips(animator.clipHandles)
-        let pose = animator.update(dt: dt) { [library] in library.clip($0) }
+        let clips = clipCache.clips(for: previewRoot ?? .invalid, animator, in: world, library: library)
+        let pose = animator.update(dt: dt) { clips[$0] }
         for i in 0..<min(pose.count, animator.targets.count) where pose.animated[i] {
             world.modify(Transform.self, for: animator.targets[i]) { $0 = pose.transforms[i] }
         }
@@ -131,6 +134,7 @@ public final class AnimationGraphWorkspace {
         if let previewRoot { world.despawn(previewRoot) }
         previewRoot = nil
         animator = nil
+        clipCache.removeAll()
     }
 
     /// Respawns the model when it changed and gives the animator the current graph.

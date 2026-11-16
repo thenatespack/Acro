@@ -183,8 +183,9 @@ enum CompressedTextureCache {
 ///   `PrefabSkin`, so instances get a `Skin` and animate;
 /// - `animation/<name>` per animation (`animation/Animation <index>` when unnamed): an `AnimationClip`
 ///   whose channel targets are the prefab's node numbers (depth first, as `PrefabSkin`), so an
-///   `Animator` bound to an instance (`World.animationRig(of:)`) plays it. Channels on nodes
-///   outside the scene are dropped.
+///   `Animator` bound to an instance (`World.animationRig(of:)`) plays it, and records that node
+///   tree as its `skeleton` so it can be retargeted to other rigs. Channels on nodes outside the
+///   scene are dropped.
 ///
 /// External `.bin` buffers are read relative to the model's folder and recorded as
 /// dependencies (`ImportContext.readDependency`): editing one reimports the model.
@@ -246,7 +247,8 @@ public struct GLTFImporter: AssetImporter {
     /// 2: PBR materials (every texture slot, metallic-roughness, emissive, alpha mask) and tangents.
     /// 3: skins (joint influences in the mesh cache, `PrefabSkin` on the prefab's nodes).
     /// 4: animation clips (`animation/<name>` sub-assets).
-    public var version: Int { 4 }
+    /// 5: clips record the model's skeleton (`AnimationClip.skeleton`), for retargeting.
+    public var version: Int { 5 }
     public var defaultSettings: Settings { Settings() }
 
     public func importAsset(_ context: inout ImportContext, settings: Settings) throws -> ImportedAsset {
@@ -390,8 +392,10 @@ public struct GLTFImporter: AssetImporter {
         asset.main = prefab
 
         // Clips, retargeted from glTF node indices to the prefab's node numbers.
+        let skeleton = AnimationSkeleton(prefab: PrefabAsset(roots: [root]))
         for (i, clip) in model.animations.enumerated() {
             var retargeted = clip
+            retargeted.skeleton = skeleton
             retargeted.channels = clip.channels.compactMap { channel in
                 guard let number = nodeNumbers[channel.target] else { return nil }
                 var channel = channel

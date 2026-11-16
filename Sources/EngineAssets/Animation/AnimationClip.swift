@@ -123,12 +123,17 @@ public struct AnimationClip: Codable, Equatable, Sendable {
     /// Seconds; the end of the longest channel by default.
     public var duration: Float
     public var events: [AnimationEvent]
+    /// The skeleton the channel targets index (imported glTF clips record their model's node
+    /// tree), so the clip can be retargeted to another (`retargeted(to:options:)`). Nil when unknown.
+    public var skeleton: AnimationSkeleton?
 
-    public init(name: String, channels: [AnimationChannel], duration: Float? = nil, events: [AnimationEvent] = []) {
+    public init(name: String, channels: [AnimationChannel], duration: Float? = nil, events: [AnimationEvent] = [],
+                skeleton: AnimationSkeleton? = nil) {
         self.name = name
         self.channels = channels
         self.duration = duration ?? channels.map(\.sampler.endTime).max() ?? 0
         self.events = events.sorted { $0.time < $1.time }
+        self.skeleton = skeleton
     }
 
     /// Writes the clip's values at `time` (seconds, not wrapped) into `pose`. Channels whose
@@ -175,8 +180,13 @@ public final class AnimationLibrary {
     @discardableResult
     public func register(_ clip: AnimationClip, key: String) -> AnimationClipHandle {
         clips[key] = clip
+        generation &+= 1
         return AnimationClipHandle(key)
     }
+
+    /// Counts changes to the registered clips (registering, loading or reloading one), so
+    /// caches built from them (retargeted copies) know when to rebuild.
+    public private(set) var generation = 0
 
     public func clip(_ handle: AnimationClipHandle) -> AnimationClip? { clips[handle.key] }
 
@@ -209,6 +219,7 @@ public final class AnimationLibrary {
                 continue
             }
             clips[handle.key] = assets.animationClip(reference)
+            generation &+= 1
             assetRevisions[handle.key] = assets.revision(of: reference.asset)
             if clips[handle.key] == nil { missing.append(handle.key) }
         }

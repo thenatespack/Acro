@@ -199,4 +199,40 @@ private func twoClipGLTF() -> Data {
         #expect(form.graph.transitions.count == 2, "the form rereads the file after undo")
         _ = model
     }
+
+    @Test func retargetOptionsAndBoneMatching() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        _ = try project(session, folder)
+        // Another model whose "Body" sits under a "Root": node 0 is Root there, not Body.
+        let assets = try #require(session.assets)
+        try Data(#"{"asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"name": "Root", "children": [1]}, {"name": "Body", "translation": [0, 1, 0]}]}"#.utf8)
+            .write(to: assets.project.url(forAssetPath: "Models/rig.gltf"))
+        assets.refresh()
+
+        let bones = try call(session, "animGraph.bones", ["model": "Models/rig.gltf", "clip": "Models/hero.gltf#animation/Walk"])
+        #expect(bones["matched"] as? [String: String] == ["Body": "Body"])
+        #expect(bones["unmatchedModelBones"] as? [String] == ["Root"] && bones["needsRetarget"] as? Bool == true)
+        #expect(bones["modelBones"] as? [String] == ["Root", "Body"] && bones["clipBones"] as? [String] == ["Body"])
+
+        try call(session, "animGraph.new", ["name": "Rig", "preview": "Models/rig.gltf"])
+        try call(session, "animGraph.edit", ["path": "Rig.animgraph", "retarget": ["boneMap": ["Body": "Root"], "translation": "none"]])
+        var graph = try #require(try call(session, "animGraph.get", ["path": "Rig.animgraph"])["graph"] as? [String: Any])
+        let retarget = try #require(graph["retarget"] as? [String: Any])
+        #expect(retarget["boneMap"] as? [String: String] == ["Body": "Root"] && retarget["translation"] as? String == "none")
+        // The graph's options apply: the map wins over the matching name.
+        let mapped = try call(session, "animGraph.bones", ["path": "Rig.animgraph", "clip": "Models/hero.gltf#animation/Walk"])
+        #expect(mapped["matched"] as? [String: String] == ["Root": "Body"])
+        try call(session, "animGraph.edit", ["path": "Rig.animgraph", "removeRetarget": true])
+        graph = try #require(try call(session, "animGraph.get", ["path": "Rig.animgraph"])["graph"] as? [String: Any])
+        #expect(graph["retarget"] == nil)
+        session.performUndo()
+        let id = try #require(assets.id(forPath: "Rig.animgraph"))
+        #expect(session.assets?.animationGraph(of: id)?.retarget != nil)
+        // The tab lays out its Retarget section with the bone map.
+        let form = try #require(AnimationGraphView(session: session, asset: id))
+        #expect(form.graph.retarget?.boneMap == ["Body": "Root"])
+        #expect(throws: (any Error).self) { try call(session, "animGraph.bones", ["clip": "Models/hero.gltf#animation/Walk"]) }  // no model
+    }
 }

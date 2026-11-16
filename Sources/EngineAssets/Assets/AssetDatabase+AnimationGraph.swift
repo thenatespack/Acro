@@ -46,4 +46,20 @@ extension AssetDatabase {
         guard let id = id(forPath: String(parts[0])) else { return key }
         return AssetReference(id, subAsset: parts.count > 1 && !parts[1].isEmpty ? String(parts[1]) : nil).description
     }
+
+    /// The skeleton clips address on a model: a `.character`'s bones (in bone order), or a
+    /// node-tree prefab's nodes depth first (an imported glTF model). Nil for other assets.
+    public func animationSkeleton(of reference: AssetReference) -> AnimationSkeleton? {
+        if let build = character(of: reference.asset) { return build.rig.animationSkeleton }
+        guard let prefab = prefab(AssetReference(reference.asset)), !prefab.roots.isEmpty else { return nil }
+        return AnimationSkeleton(prefab: prefab)
+    }
+
+    /// The clip `clip` names, retargeted onto `skeleton` (bones matched by name, see
+    /// `AnimationClip.retargeted(to:options:)`); nil when there is no such clip. A clip that
+    /// doesn't know its skeleton (made in code) comes back unchanged.
+    public func retargetedAnimationClip(_ clip: AssetReference, to skeleton: AnimationSkeleton,
+                                        options: AnimationRetargetOptions = AnimationRetargetOptions()) -> AnimationClip? {
+        animationClip(clip)?.retargeted(to: skeleton, options: options)
+    }
 }

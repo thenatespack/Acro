@@ -95,6 +95,9 @@ private func approxQuat(_ a: Quat, _ b: Quat, _ eps: Float = 1e-4) -> Bool {
         #expect(clip.duration == 1 && clip.channels.count == 3)
         // Two scene roots: a wrapper root is node 0, then Mesh 1, Root 2, Tip 3.
         #expect(clip.channels.map(\.target) == [2, 3, 3])
+        // The clip records that node tree, so it can be retargeted to other rigs.
+        #expect(Array(clip.skeleton?.names.suffix(2) ?? []) == ["Root", "Tip"] && clip.skeleton?.bones[3].parent == 2)
+        #expect(database.animationSkeleton(of: AssetReference(id)) == clip.skeleton)
         #expect(database.animationClip(AssetReference(id)) == clip, "a whole-file reference means the first clip")
         #expect(database.animationClip(AssetReference(id, subAsset: "animation/Nope")) == nil)
 

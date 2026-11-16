@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 245 tools.
+named by its id (see README › Use the editor › AI control). 246 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -14,7 +14,7 @@ optional arguments.
 |---|---|
 | `activity` | [`activity.clear`](#activityclear), [`activity.list`](#activitylist), [`activity.revert`](#activityrevert) |
 | `ai` | [`ai.settings`](#aisettings) |
-| `animGraph` | [`animGraph.assign`](#animgraphassign), [`animGraph.edit`](#animgraphedit), [`animGraph.get`](#animgraphget), [`animGraph.new`](#animgraphnew), [`animGraph.open`](#animgraphopen), [`animGraph.set`](#animgraphset) |
+| `animGraph` | [`animGraph.assign`](#animgraphassign), [`animGraph.bones`](#animgraphbones), [`animGraph.edit`](#animgraphedit), [`animGraph.get`](#animgraphget), [`animGraph.new`](#animgraphnew), [`animGraph.open`](#animgraphopen), [`animGraph.set`](#animgraphset) |
 | `asset` | [`asset.applySettings`](#assetapplysettings), [`asset.assign`](#assetassign), [`asset.delete`](#assetdelete), [`asset.extractMaterials`](#assetextractmaterials), [`asset.get`](#assetget), [`asset.import`](#assetimport), [`asset.instantiate`](#assetinstantiate), [`asset.list`](#assetlist), [`asset.move`](#assetmove), [`asset.newFolder`](#assetnewfolder), [`asset.newMaterial`](#assetnewmaterial), [`asset.newProceduralTexture`](#assetnewproceduraltexture), [`asset.reimport`](#assetreimport), [`asset.rename`](#assetrename), [`asset.select`](#assetselect), [`asset.setProceduralTexture`](#assetsetproceduraltexture), [`asset.waitForImports`](#assetwaitforimports) |
 | `behavior` | [`behavior.assign`](#behaviorassign), [`behavior.debug`](#behaviordebug), [`behavior.edit`](#behavioredit), [`behavior.get`](#behaviorget), [`behavior.new`](#behaviornew), [`behavior.open`](#behavioropen), [`behavior.set`](#behaviorset) |
 | `character` | [`character.bones`](#characterbones), [`character.edit`](#characteredit), [`character.get`](#characterget), [`character.new`](#characternew), [`character.open`](#characteropen), [`character.set`](#characterset) |
@@ -140,11 +140,34 @@ Result:
 - `targets`: integer
 - `warnings`: [string]
 
+### `animGraph.bones`
+
+**Match Animation Bones** · _read-only_, _idempotent_
+
+Shows how a clip's bones pair with a model's when retargeted by name: matched pairs, model bones left at rest, and animated clip bones that drive nothing, under the graph's `retarget` options (or `retarget` given here). Use it to write a `boneMap` before setting `retarget` with animGraph.edit. `model` (a glTF file, prefab or .character) defaults to the graph's preview.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `clip`: string
+- `model?`: string
+- `path?`: string
+- `retarget?`: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}
+
+Result:
+
+- `clipBones`: [string]
+- `matched`: object
+- `modelBones`: [string]
+- `needsRetarget`: boolean
+- `unmatchedClipBones`: [string]
+- `unmatchedModelBones`: [string]
+
 ### `animGraph.edit`
 
 **Edit Animation Graph** · _undoable_
 
-Changes part of an .animgraph file in one undoable step, in this order: removeTransitions (indices), removeStates, removeParameters, removeLayers, parameters (add or replace by name), addStates, updateStates (name → fields; "name" renames everywhere), addTransitions, updateTransitions (index → fields), addLayers, updateLayers, initialState, preview. Clip paths become asset references. Returns the states, numbered transitions, parameters and problems. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` (additive) [{name, clip, weight, speed, referenceTime}], `initialState`. Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes. Undoable (one step; edit.undo reverts it).
+Changes part of an .animgraph file in one undoable step, in this order: removeTransitions (indices), removeStates, removeParameters, removeLayers, parameters (add or replace by name), addStates, updateStates (name → fields; "name" renames everywhere), addTransitions, updateTransitions (index → fields), addLayers, updateLayers, initialState, preview, retarget / removeRetarget. Clip paths become asset references. Returns the states, numbered transitions, parameters and problems. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `retarget` {boneMap {source bone: target bone}, matchNames (default true), rotation world|local|copy, translation root|none|all, rootScale, sampleRate} (plays clips made for another skeleton by matching bones by name; see animGraph.bones), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` (additive) [{name, clip, weight, speed, referenceTime}], `initialState`. Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
@@ -158,8 +181,10 @@ Arguments:
 - `preview?`: string
 - `removeLayers?`: [string]
 - `removeParameters?`: [string]
+- `removeRetarget?`: boolean
 - `removeStates?`: [string]
 - `removeTransitions?`: [integer]
+- `retarget?`: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}
 - `updateLayers?`: object
 - `updateStates?`: object
 - `updateTransitions?`: object
@@ -190,7 +215,7 @@ Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `clips`: [string]
-- `graph`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, states?: [object], transitions?: [object]}
+- `graph`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
 - `path`: string
 - `warnings`: [string]
 
@@ -198,12 +223,12 @@ Result:
 
 **New Animation Graph**
 
-Writes an .animgraph file in `folder` (default: the Assets root) and imports it: `graph` contents, or a starter (Idle, plus Move on a `speed` parameter when the `preview` model has two clips or more, using its clips). Returns the states, transitions, parameters and warnings. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` (additive) [{name, clip, weight, speed, referenceTime}], `initialState`. Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes.
+Writes an .animgraph file in `folder` (default: the Assets root) and imports it: `graph` contents, or a starter (Idle, plus Move on a `speed` parameter when the `preview` model has two clips or more, using its clips). Returns the states, transitions, parameters and warnings. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `retarget` {boneMap {source bone: target bone}, matchNames (default true), rotation world|local|copy, translation root|none|all, rootScale, sampleRate} (plays clips made for another skeleton by matching bones by name; see animGraph.bones), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` (additive) [{name, clip, weight, speed, referenceTime}], `initialState`. Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes.
 
 Arguments:
 
 - `folder?`: string
-- `graph?`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, states?: [object], transitions?: [object]}
+- `graph?`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
 - `name?`: string
 - `preview?`: string
 
@@ -242,7 +267,7 @@ Replaces an .animgraph file's whole contents and reimports it; animators using i
 Arguments:
 
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
-- `graph`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, states?: [object], transitions?: [object]}
+- `graph`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
 - `path?`: string
 
 Result:
