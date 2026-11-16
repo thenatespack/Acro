@@ -41,6 +41,7 @@ struct TerrainSettings: Codable, Equatable {
     var heightRange: Float = 64
     var chunkCells = 32
     var lods = 1
+    var lodDistance: Float = 0
     var collider = true
     var colliderLod = 0
     var albedoSize = 0
@@ -52,13 +53,14 @@ struct TerrainSettings: Codable, Equatable {
         heightRange = t.heightRange
         chunkCells = t.chunkCells
         lods = t.lods
+        lodDistance = t.lodDistance
         collider = t.collider
         colliderLod = t.colliderLod
         albedoSize = t.albedoSize
         seed = t.seed
     }
 
-    private enum CodingKeys: String, CodingKey { case size, resolution, heightRange, chunkCells, lods, collider, colliderLod, albedoSize, seed }
+    private enum CodingKeys: String, CodingKey { case size, resolution, heightRange, chunkCells, lods, lodDistance, collider, colliderLod, albedoSize, seed }
 
     init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -68,6 +70,7 @@ struct TerrainSettings: Codable, Equatable {
         heightRange = try c.decodeIfPresent(Float.self, forKey: .heightRange) ?? d.heightRange
         chunkCells = try c.decodeIfPresent(Int.self, forKey: .chunkCells) ?? d.chunkCells
         lods = try c.decodeIfPresent(Int.self, forKey: .lods) ?? d.lods
+        lodDistance = try c.decodeIfPresent(Float.self, forKey: .lodDistance) ?? d.lodDistance
         collider = try c.decodeIfPresent(Bool.self, forKey: .collider) ?? d.collider
         colliderLod = try c.decodeIfPresent(Int.self, forKey: .colliderLod) ?? d.colliderLod
         albedoSize = try c.decodeIfPresent(Int.self, forKey: .albedoSize) ?? d.albedoSize
@@ -415,7 +418,7 @@ public final class TerrainBuilderView {
 
     private func commitSettings(_ s: TerrainSettings) {
         let arguments = TerrainEditCommand.Arguments(size: s.size, resolution: s.resolution, heightRange: s.heightRange, chunkCells: s.chunkCells,
-                                                     lods: s.lods, collider: s.collider, colliderLod: s.colliderLod, albedoSize: s.albedoSize,
+                                                     lods: s.lods, lodDistance: s.lodDistance, collider: s.collider, colliderLod: s.colliderLod, albedoSize: s.albedoSize,
                                                      seed: s.seed)
         do { apply(try TerrainEditCommand.edited(pending?.terrain ?? terrain, with: arguments), label: "Edit Terrain") } catch {
             session.log.error("Terrain: \(error)")

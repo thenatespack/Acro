@@ -19,7 +19,8 @@ public enum EditorTerrainCommands {
     static let formatDoc = """
         A terrain is a heightmap centered on its origin: `size` [x,z] meters, `resolution` height samples per side (3-1025), \
         `heightRange` (meters at full height; heights span 0 to heightRange), `chunkCells` (cells per chunk mesh), `lods` \
-        (extra detail meshes per chunk), `collider` (a triangle-mesh collider per chunk), `colliderLod`, `albedoSize`, `seed`, \
+        (detail levels per chunk, swapped by camera distance), `lodDistance` (meters where level 1 starts, doubling per level; 0: \
+        1.5 chunk widths), `collider` (a triangle-mesh collider per chunk), `colliderLod`, `albedoSize`, `seed`, \
         `layers` (each: name, color [r,g,b] 0-1 sRGB, texture (path under Assets/: an image or .proctex), tileSize meters per \
         repeat), `scatter` rules (each: name, asset (a .meshbuild path, or "asset:<id>#mesh/<name>"), material, density \
         (candidate spots per 100 m²), minSlope/maxSlope degrees, minHeight/maxHeight meters, minScale/maxScale, layer (only \
@@ -260,6 +261,7 @@ public enum TerrainGetCommand: EditorCommand {
         public var heightRange: Float
         public var chunkCells: Int
         public var lods: Int
+        public var lodDistance: Float
         public var collider: Bool
         public var colliderLod: Int
         public var albedoSize: Int
@@ -288,7 +290,7 @@ public enum TerrainGetCommand: EditorCommand {
             }
         }
         return Result(summary: TerrainResult(id, t, warnings: TerrainCheck.problems(t, in: session), in: session), size: t.size,
-                      resolution: t.res, heightRange: t.heightRange, chunkCells: t.chunkCells, lods: t.lods, collider: t.collider,
+                      resolution: t.res, heightRange: t.heightRange, chunkCells: t.chunkCells, lods: t.lods, lodDistance: t.lodDistance, collider: t.collider,
                       colliderLod: t.colliderLod, albedoSize: t.albedoSize, seed: t.seed, layers: t.layers, scatter: t.scatter, heights: grid)
     }
 }
@@ -335,6 +337,8 @@ public enum TerrainEditCommand: EditorCommand {
         public var heightRange: Float?
         public var chunkCells: Int?
         public var lods: Int?
+        /// Meters where detail level 1 starts (0: automatic).
+        public var lodDistance: Float?
         public var collider: Bool?
         public var colliderLod: Int?
         public var albedoSize: Int?
@@ -351,7 +355,7 @@ public enum TerrainEditCommand: EditorCommand {
         /// Rule name → fields to change.
         public var updateScatter: [String: JSONValue]?
         public init(asset: AssetReference? = nil, path: String? = nil, size: Vec2? = nil, resolution: Int? = nil, heightRange: Float? = nil,
-                    chunkCells: Int? = nil, lods: Int? = nil, collider: Bool? = nil, colliderLod: Int? = nil, albedoSize: Int? = nil,
+                    chunkCells: Int? = nil, lods: Int? = nil, lodDistance: Float? = nil, collider: Bool? = nil, colliderLod: Int? = nil, albedoSize: Int? = nil,
                     seed: Int? = nil, removeLayers: [String]? = nil, addLayers: [TerrainLayer]? = nil,
                     updateLayers: [String: JSONValue]? = nil, removeScatter: [String]? = nil, addScatter: [TerrainScatter]? = nil,
                     updateScatter: [String: JSONValue]? = nil) {
@@ -362,6 +366,7 @@ public enum TerrainEditCommand: EditorCommand {
             self.heightRange = heightRange
             self.chunkCells = chunkCells
             self.lods = lods
+            self.lodDistance = lodDistance
             self.collider = collider
             self.colliderLod = colliderLod
             self.albedoSize = albedoSize
@@ -411,6 +416,7 @@ public enum TerrainEditCommand: EditorCommand {
         }
         if let v = arguments.chunkCells { t.chunkCells = min(max(v, 2), 256) }
         if let v = arguments.lods { t.lods = min(max(v, 1), 4) }
+        if let v = arguments.lodDistance { t.lodDistance = v.isFinite ? min(max(v, 0), 100_000) : 0 }
         if let v = arguments.collider { t.collider = v }
         if let v = arguments.colliderLod { t.colliderLod = min(max(v, 0), 3) }
         if let v = arguments.albedoSize { t.albedoSize = min(max(v, 0), 2048) }

@@ -15,7 +15,7 @@ public struct TerrainImporter: AssetImporter {
 
     public var name: String { "terrain" }
     public var fileExtensions: [String] { ["terrain"] }
-    public var version: Int { 1 }
+    public var version: Int { 2 }
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         var terrain: Terrain
@@ -50,13 +50,19 @@ public struct TerrainImporter: AssetImporter {
             for cx in 0..<counts.x {
                 let label = "chunk \(cx)_\(cz)"
                 let meshID = namer.id(kind: "mesh", name: label, index: index)
-                asset.add(meshID, name: label, .mesh(terrain.chunkMesh(cx, cz)))
+                // With several levels every level hangs skirts, so neighbors at different levels don't crack.
+                let skirt = terrain.skirtDepth(cx, cz)
+                asset.add(meshID, name: label, .mesh(terrain.chunkMesh(cx, cz, skirt: skirt)))
+                var levels: [MeshHandle] = []
                 for lod in 1..<max(min(terrain.lods, 4), 1) {
                     let lodLabel = "\(label) lod\(lod)"
-                    asset.add(namer.id(kind: "mesh", name: lodLabel, index: index), name: lodLabel, .mesh(terrain.chunkMesh(cx, cz, lod: lod)))
+                    let lodID = namer.id(kind: "mesh", name: lodLabel, index: index)
+                    asset.add(lodID, name: lodLabel, .mesh(terrain.chunkMesh(cx, cz, lod: lod, skirt: skirt)))
+                    levels.append(MeshHandle(context.reference(lodID)))
                 }
+                let lod = levels.isEmpty ? nil : MeshLOD(meshes: levels, distances: terrain.lodDistances)
                 chunks.append(PrefabNode(name: label, mesh: context.reference(meshID), material: material,
-                                         collider: terrain.collider ? terrain.chunkCollider(cx, cz) : nil))
+                                         collider: terrain.collider ? terrain.chunkCollider(cx, cz) : nil, lod: lod))
                 index += 1
             }
         }

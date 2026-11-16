@@ -195,6 +195,9 @@ private func flat(_ resolution: Int = 33, size: Float = 32, height: Float = 0.25
         let root = try #require(prefab.roots.first)
         #expect(root.name == "hills" && root.children.map(\.name) == ["chunk 0_0", "chunk 1_0", "chunk 0_1", "chunk 1_1", "Scatter"])
         #expect(root.children[0].collider != nil && root.children[0].mesh != nil && root.children[0].material != nil)
+        let lod = try #require(root.children[0].lod, "two levels: the chunk swaps in its lod1 mesh")
+        #expect(lod.meshes.map(\.key) == [AssetReference(id, subAsset: "mesh/chunk 0_0 lod1").description])
+        #expect(lod.distances == terrain.lodDistances && lod.distances == [24], "1.5 chunk widths of 16 m")
         let scatter = try #require(root.children.last)
         #expect(scatter.children.map(\.name) == ["Rocks", "Cubes"], "the missing asset is skipped")
         let rocks = scatter.children[0].children
@@ -215,5 +218,132 @@ private func flat(_ resolution: Int = 33, size: Float = 32, height: Float = 0.25
         database.refreshAsync()
         database.waitForAll()
         #expect(database.revision(of: id) > revision)
+    }
+
+    // MARK: LOD
+
+    @Test func lodLevelsFollowDistanceWithHysteresis() {
+        let lod = MeshLOD(meshes: [MeshHandle("TerrainTests.l1"), MeshHandle("TerrainTests.l2")], distances: [10, 20], hysteresis: 0.1)
+        #expect(lod.level(distance: 5) == 0 && lod.level(distance: 10) == 1 && lod.level(distance: 25) == 2)
+        #expect(lod.level(distance: 10.5, current: 0) == 0, "not yet past 10 x 1.1")
+        #expect(lod.level(distance: 11.5, current: 0) == 1)
+        #expect(lod.level(distance: 9.5, current: 1) == 1, "not yet inside 10 x 0.9")
+        #expect(lod.level(distance: 8.5, current: 1) == 0)
+        #expect(lod.level(distance: 50, current: 0) == 2 && lod.level(distance: 1, current: 2) == 0, "jumps several levels")
+        #expect(lod.level(distance: .infinity) == 0)
+        #expect(MeshLOD(meshes: [MeshHandle("TerrainTests.l1")], distances: []).level(distance: 100) == 0, "no distance, no level")
+        let base = MeshHandle("TerrainTests.l0")
+        #expect(lod.mesh(level: 0, base: base) == base && lod.mesh(level: 2, base: base) == lod.meshes[1] && lod.mesh(level: 3, base: base) == base)
+        let box = Bounds(center: Vec3(0, 0, 0), halfExtent: Vec3(1, 1, 1))
+        #expect(MeshLOD.distance(from: Vec3(0.5, 0, 0), to: box) == 0 && abs(MeshLOD.distance(from: Vec3(4, 5, 1), to: box) - 5) < 1e-5)
+        let decoded = try? JSONDecoder().decode(MeshLOD.self, from: Data("{}".utf8))
+        #expect(decoded == MeshLOD())
+    }
+
+    @Test func lodDistancesDefaultToChunkWidthsAndDouble() {
+        var t = Terrain(size: Vec2(64, 64), resolution: 65, chunkCells: 16, lods: 3)
+        #expect(t.lodDistances == [24, 48])
+        t.lodDistance = 30
+        #expect(t.lodDistances == [30, 60])
+        t.lods = 1
+        #expect(t.lodDistances.isEmpty && t.skirtDepth(0, 0) == 0)
+        let data = try? JSONEncoder().encode(Terrain())
+        #expect(data.map { !String(decoding: $0, as: UTF8.self).contains("lodDistance") } == true, "0 isn't written")
+    }
+
+    /// Skirts hang from the borders shared with other chunks, deep enough to cover the gap between
+    /// a full-detail border and a coarse neighbor's straight edge along it.
+    @Test func skirtsCoverCracksBetweenLevels() {
+        var t = Terrain.generated(size: Vec2(32, 32), resolution: 33, seed: 9)
+        t.chunkCells = 8
+        t.lods = 3
+        let plain = t.chunkMesh(1, 1, lod: 1)
+        let depth = t.skirtDepth(1, 1)
+        #expect(depth > 0)
+        let skirted = t.chunkMesh(1, 1, lod: 1, skirt: depth)
+        // An inner chunk has four neighbors: four strips of 5 vertices (8 cells at every 2nd sample).
+        #expect(skirted.vertices.count == plain.vertices.count + 4 * 5)
+        #expect(skirted.indices.count == plain.indices.count + 4 * 4 * 12, "both faces of every strip quad")
+        #expect(skirted.vertices[plain.vertices.count].position.y == plain.vertices[0].position.y - depth)
+        // A corner chunk only hangs skirts toward its two neighbors.
+        #expect(t.chunkMesh(0, 0, lod: 1, skirt: depth).vertices.count == t.chunkMesh(0, 0, lod: 1).vertices.count + 2 * 5)
+        // Along the border with chunk (1, 0), the coarse edge's skirt bottom stays under the full-detail heights.
+        let range = t.chunkRange(1, 1)
+        for lod in 1..<3 {
+            let step = 1 << lod
+            for x in stride(from: range.x.lowerBound, to: range.x.upperBound, by: step) {
+                let z = range.z.lowerBound
+                let a = t.height(x: x, z: z), b = t.height(x: x + step, z: z)
+                for i in 0...step {
+                    let edge = a + (b - a) * Float(i) / Float(step)
+                    #expect(edge - depth < t.height(x: x + i, z: z) && t.height(x: x + i, z: z) - depth < edge)
+                }
+            }
+        }
+        // Tangents follow +x along the surface.
+        let v = t.chunkMesh(0, 0).vertices[10]
+        #expect(v.tangent.w == 1 && abs(dot(Vec3(v.tangent.x, v.tangent.y, v.tangent.z), v.normal)) < 1e-4 && v.tangent.x > 0)
+    }
+
+    /// The renderer draws a `MeshLOD`'s level by distance from the viewpoint, and its low-quality
+    /// material on low quality, the same on Metal and on Vulkan.
+    @MainActor @Test func lodSwapsMeshesWhenRenderedOnEveryBackend() throws {
+        // A small quad in the plane's corner: drawing it leaves the center empty.
+        var corner = MeshGeometry(vertices: [], indices: [0, 2, 1, 1, 2, 3])
+        for (x, z) in [(0.4, 0.4), (0.5, 0.4), (0.4, 0.5), (0.5, 0.5)] as [(Float, Float)] {
+            corner.vertices.append(MeshVertex(position: Vec3(x, 0, z), normal: Vec3(0, 1, 0)))
+        }
+        var results: [String: [String: [UInt8]]] = [:]
+        for quality in [RenderQuality.high, .low] {
+            try TestDevices.forEachBackend { device, frames in
+                let renderer = try SceneRenderer(device: device, quality: quality)
+                let target = try RenderTarget(device: device, width: 32, height: 32, multisampled: false)
+                _ = try renderer.registerMesh(corner, key: "TerrainTests.corner")
+                _ = try renderer.registerMaterial(Material(baseColor: Vec4(0, 0, 0, 1), roughness: 1, emissiveColor: Vec3(1, 0, 0)), key: "TerrainTests.red")
+                _ = try renderer.registerMaterial(Material(baseColor: Vec4(0, 0, 0, 1), roughness: 1, emissiveColor: Vec3(0, 1, 0)), key: "TerrainTests.green")
+                let view = SceneView(view: Mat4.lookAt(eye: Vec3(0, 0, 3), target: .zero),
+                                     projection: Mat4.perspective(fovY: 0.6, aspect: 1, near: 0.1, far: 10))
+                @MainActor func center(_ lod: MeshLOD) throws -> (pixel: [UInt8], level: Int?) {
+                    let world = World()
+                    let entity = world.spawn(Transform(rotation: Quat(angle: .pi / 2, axis: Vec3(1, 0, 0)), scale: Vec3(4, 1, 4)),
+                                             MeshRenderer(mesh: .plane, material: MaterialHandle("TerrainTests.red")), lod)
+                    world.propagateTransforms()
+                    var pixels: Image?
+                    try frames.run { frame in
+                        renderer.beginViews(world: world, frame: frame, shadowFocus: view)
+                        renderer.renderView(view, into: target, frame: frame)
+                        device.readBack(target.gpu) { pixels = $0 }
+                    }
+                    let image = try #require(pixels)
+                    let i = (16 * image.width + 16) * 4
+                    return (Array(image.pixels[i..<i + 4]), renderer.prep.lodLevel(of: entity))
+                }
+                let meshes = [MeshHandle("TerrainTests.corner")]
+                let near = try center(MeshLOD(meshes: meshes, distances: [100]))
+                let far = try center(MeshLOD(meshes: meshes, distances: [1]))
+                let unloaded = try center(MeshLOD(meshes: [MeshHandle("TerrainTests.missing")], distances: [1]))
+                let low = try center(MeshLOD(meshes: meshes, distances: [100], lowQualityMaterial: MaterialHandle("TerrainTests.green")))
+                #expect(near.level == 0 && far.level == 1 && unloaded.level == 0, "\(device.backend)")
+                results["\(device.backend) \(quality)"] = ["near": near.pixel, "far": far.pixel, "unloaded": unloaded.pixel, "low": low.pixel]
+            }
+        }
+        for (label, colors) in results {
+            let near = colors["near"]!, far = colors["far"]!, unloaded = colors["unloaded"]!, low = colors["low"]!
+            #expect(near[0] > 200 && near[1] < 30, "level 0 is the plane, \(label): \(colors)")
+            #expect(far[0] < 30, "level 1 is the corner quad, \(label): \(colors)")
+            #expect(unloaded == near, "a level that isn't loaded keeps level 0, \(label)")
+            if label.hasSuffix("low") {
+                #expect(low[1] > 200 && low[0] < 30, "the low-quality material, \(label): \(colors)")
+            } else {
+                #expect(low == near, "\(label)")
+            }
+        }
+        for quality in ["high", "low"] {
+            if let metal = results["metal \(quality)"], let vulkan = results["vulkan \(quality)"] {
+                for (name, color) in metal {
+                    #expect(zip(color, vulkan[name]!).allSatisfy { abs(Int($0) - Int($1)) <= 3 }, "\(name) \(quality): metal \(color) vulkan \(vulkan[name]!)")
+                }
+            }
+        }
     }
 }
