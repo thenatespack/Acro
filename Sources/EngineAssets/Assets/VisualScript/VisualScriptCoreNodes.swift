@@ -51,7 +51,7 @@ enum VSNode {
 @MainActor
 enum VisualScriptCoreNodes {
     static func all() -> [VSDef] {
-        events() + flow() + math() + vectors() + logic() + text() + collections() + variables() + functions() + misc()
+        events() + flow() + math() + vectors() + logic() + text() + collections() + variables() + functions() + misc() + VisualScriptReroute.definitions()
     }
 
     // MARK: Events
@@ -617,13 +617,14 @@ enum VisualScriptCoreNodes {
     static func functions() -> [VSDef] {
         [
             VSDef(id: "function.call", title: "Call Function", category: "Functions",
-                  doc: "Calls the graph's function `function` (config) with its inputs; its results come out as outputs.",
+                  doc: "Calls the graph's function `function` (config) with its inputs; its results come out as outputs. For a macro, the macro's nodes run in its place (its exec pins are the macro's).",
                   kind: .action, config: [VisualScriptConfigKey("function")],
                   signature: { context in
                       guard let function = context.node.configString("function").flatMap(context.graph.function) else {
                           return VisualScriptSignature(inputs: [.exec("in")], outputs: [.exec("out")])
                       }
                       let ins = function.inputs.map { VSPin($0.name, $0.type) }, outs = function.outputs.map { VSPin($0.name, $0.type) }
+                      if function.macro { return VisualScriptSignature(inputs: ins, outputs: outs) }
                       return function.pure ? VisualScriptSignature(inputs: ins, outputs: outs)
                                            : VisualScriptSignature(inputs: [.exec("in")] + ins, outputs: [.exec("out")] + outs)
                   },
@@ -634,6 +635,7 @@ enum VisualScriptCoreNodes {
                   run: { c in
                       let name = c.configString("function") ?? ""
                       guard let function = c.instance.program.graph.function(name) else { throw VisualScriptError("no function '\(name)'") }
+                      if function.macro { throw VisualScriptError("macro '\(name)' uses itself (macros can't be recursive)") }
                       let results = try c.call(function: name, try function.inputs.map { try c.input($0.name) })
                       for (parameter, value) in zip(function.outputs, results) { c.set(parameter.name, value) }
                       return .next
@@ -641,12 +643,14 @@ enum VisualScriptCoreNodes {
             VSDef(id: "function.entry", title: "Function Entry", category: "Functions",
                   doc: "Where a function starts; its outputs are the call's inputs.", kind: .pure,
                   signature: { context in
-                      VisualScriptSignature(outputs: [.exec("out")] + (context.function?.inputs ?? []).map { VSPin($0.name, $0.type) })
+                      let pins = (context.function?.inputs ?? []).map { VSPin($0.name, $0.type) }
+                      return VisualScriptSignature(outputs: context.function?.macro == true ? pins : [.exec("out")] + pins)
                   }, run: nil),
             VSDef(id: "function.return", title: "Return", category: "Functions",
                   doc: "Ends the function; its inputs are the call's results.", kind: .action,
                   signature: { context in
-                      VisualScriptSignature(inputs: [.exec("in")] + (context.function?.outputs ?? []).map { VSPin($0.name, $0.type) })
+                      let pins = (context.function?.outputs ?? []).map { VSPin($0.name, $0.type) }
+                      return VisualScriptSignature(inputs: context.function?.macro == true ? pins : [.exec("in")] + pins)
                   }, run: { c in
                       c.returnFromFunction(try (c.function?.outputs ?? []).map { try c.input($0.name) })
                       return .stop

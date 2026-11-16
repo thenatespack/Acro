@@ -10,10 +10,11 @@ import Foundation
 //   duplicate, F9 toggles a breakpoint, Space searches.
 // - The sidebar: which body to edit (event graph or a function), the node search, the selected
 //   node's settings and input values, the graph's variables and functions (with
-//   collapse-to-function and comment boxes), its problems, and in play mode the variable values
+//   collapse-to-function and groups: comment boxes whose title bar drags the nodes inside), its problems, and in play mode the variable values
 //   of an entity running it.
 // - While playing, nodes that ran in the last moments glow along their wires, output pins show
-//   their values, and a breakpoint pauses play after the frame it ran in.
+//   their values, and a breakpoint pauses play after the frame it ran in. Paused there, F10 / F11 /
+//   Shift+F11 / F5 (or the sidebar's buttons) step over / into / out of the recorded flow, or continue.
 //
 // The file is the truth: every change is written as one undo step of the editor, the graph
 // reimports and running games pick it up on their next frame. Edits from widget callbacks are
@@ -49,6 +50,10 @@ public final class VisualScriptWorkspace {
     private var newVariable = ""
     private var newFunction = ""
     private var lastPlaying = false
+    /// The node search is open (Space, a dropped wire, right-click): results show even with no text.
+    private var searching = false
+    /// The trace step the debug section and canvas show (`session.visualScriptStep`), and of which trace.
+    private var shownStep: (index: Int, hit: VisualScriptBreak)?
     private static var clipboard: (nodes: [VisualScriptNode], links: [VisualScriptLink])?
 
     public init(session: EditorSession) {
@@ -154,6 +159,7 @@ public final class VisualScriptWorkspace {
         }
         added = apply(edit, "Add Node")
         addFrom = nil
+        searching = false
         selection = Set(added)
         addPosition += Vec2(30, 30)
         return added.first
@@ -201,6 +207,27 @@ public final class VisualScriptWorkspace {
         apply(VisualScriptEdit(updateNodes: nodes.map { VisualScriptNodePatch(id: $0.id, breakpoint: on) }), on ? "Add Breakpoint" : "Remove Breakpoint")
     }
 
+    /// Moves group (comment box) `id` to `position` with the nodes inside it, as one undo step.
+    func moveGroup(_ id: String, to position: Vec2, nodes moves: [String: Vec2]) {
+        guard function == nil, var comment = graph.comments.first(where: { $0.id == id }) else { return }
+        comment.x = position.x.rounded()
+        comment.y = position.y.rounded()
+        apply(VisualScriptEdit(updateNodes: moves.sorted { $0.key < $1.key }.map { VisualScriptNodePatch(id: $0.key, x: $0.value.x.rounded(), y: $0.value.y.rounded()) },
+                               comments: [comment]), "Move Group")
+    }
+
+    /// Puts a reroute point on `link` at `position` (graph space): the wire then runs through it.
+    @discardableResult
+    func insertReroute(on link: VisualScriptLink, at position: Vec2) -> String? {
+        let id = function.flatMap { graph.function($0)?.uniqueNodeID("reroute") } ?? graph.uniqueNodeID("reroute")
+        let at = position - VisualScriptCanvas.rerouteSize / 2
+        let added = apply(VisualScriptEdit(addNodes: [VisualScriptNode(id: id, type: VisualScriptReroute.type, x: at.x.rounded(), y: at.y.rounded())],
+                                           disconnect: [link],
+                                           connect: [VisualScriptLink(from: link.from, to: "\(id).in"), VisualScriptLink(from: "\(id).out", to: link.to)]),
+                          "Add Reroute")
+        return added.first
+    }
+
     /// Moves the selected event graph nodes into a new function.
     public func collapseSelection(name: String? = nil) {
         guard function == nil else { session.log.error("Collapse to Function: only nodes of the event graph"); return }
@@ -223,6 +250,9 @@ public final class VisualScriptWorkspace {
         case .v where command: paste()
         case .d where command: copySelection(); paste()
         case .f9: toggleBreakpoint()
+        case .f10 where session.visualScriptStep != nil: session.stepVisualScript(.over)
+        case .f11 where session.visualScriptStep != nil: session.stepVisualScript(key.modifiers.contains(.shift) ? .out : .into)
+        case .f5 where session.visualScriptStep != nil: session.stepVisualScript(.continue)
         case .space:
             addFrom = nil
             addPosition = canvas.toGraph(Vec2(canvas.frame.x + canvas.frame.width / 2, canvas.frame.y + canvas.frame.height / 2))
@@ -233,6 +263,7 @@ public final class VisualScriptWorkspace {
     }
 
     private func focusSearch() {
+        searching = true
         searchHint.text = addFrom.map { "Wiring from \($0.pin) (\($0.type.rawValue)): pick a node" } ?? "Pick a node to add"
         refreshResults()
         view.context?.focus(searchField)
@@ -276,6 +307,8 @@ public final class VisualScriptWorkspace {
             focusSearch()
         }
         canvas.onKey = { [unowned self] key in handleKey(key) }
+        canvas.onInsertReroute = { [unowned self] link, position in insertReroute(on: link, at: position) }
+        canvas.onMoveGroup = { [unowned self] id, position, moves in moveGroup(id, to: position, nodes: moves) }
         searchField.onChange = { [unowned self] _ in refreshResults() }
         searchField.onSubmit = { [unowned self] _ in
             if let first = catalog().first { addNode(type: first.type, config: first.config ?? [:]) }
@@ -287,7 +320,7 @@ public final class VisualScriptWorkspace {
         body.style.shrink = 1
         view.addChildren([bar, Separator(), body])
         searchHint.wraps = true
-        sidebar.addChildren([searchField, searchHint, results, Separator(), details, debugHost])
+        sidebar.addChildren([searchField, searchHint, results, debugHost, Separator(), details])
     }
 
     private func showEmpty() {
@@ -328,17 +361,19 @@ public final class VisualScriptWorkspace {
         for (name, value) in node.inputs { literals[name] = Self.text(of: value) }
         var title = definition?.title ?? node.type
         if let variable = node.configString("variable") { title += " " + variable }
-        if let call = node.configString("function") { title = "Call " + call }
+        if let call = node.configString("function") { title = graph.function(call)?.macro == true ? call + " (macro)" : "Call " + call }
         if let component = node.configString("component") {
             title = (node.type == "component.set" ? "Set " : node.type == "component.get" ? "Get " : title + " ") + component
                 + (node.configString("field").map { "." + $0 } ?? "")
         }
         for key in ["key", "action", "name"] { if let value = node.configString(key) { title += " " + value } }
-        let size = VisualScriptCanvas.size(title: title, inputs: signature.inputs, outputs: signature.outputs, literals: literals, collapsed: node.collapsed)
+        let reroute = node.type == VisualScriptReroute.type
+        let size = reroute ? VisualScriptCanvas.rerouteSize
+            : VisualScriptCanvas.size(title: title, inputs: signature.inputs, outputs: signature.outputs, literals: literals, collapsed: node.collapsed)
         return VisualScriptCanvasNode(id: node.id, title: title, kind: definition?.kind ?? .action, known: definition != nil,
                                       position: Vec2(node.x, node.y), size: size, inputs: signature.inputs, outputs: signature.outputs,
                                       literals: literals, breakpoint: node.breakpoint, collapsed: node.collapsed, comment: node.comment,
-                                      doc: definition?.doc ?? "Unknown node type \(node.type)")
+                                      doc: definition?.doc ?? "Unknown node type \(node.type)", isReroute: reroute)
     }
 
     static func text(of value: JSONValue) -> String {
@@ -373,12 +408,23 @@ public final class VisualScriptWorkspace {
 
     private func refreshLive() {
         guard session.isPlaying, let runtime = session.visualScriptRuntime else {
-            if !canvas.activity.isEmpty || !canvas.values.isEmpty {
+            if !canvas.activity.isEmpty || !canvas.values.isEmpty || canvas.pausedAt != nil {
                 canvas.activity = [:]
                 canvas.values = [:]
+                canvas.pausedAt = nil
+                shownStep = nil
                 debugHost.removeAllChildren()
             }
             return
+        }
+        if let index = session.visualScriptStep, let trace = runtime.trace, trace.steps.indices.contains(index) {
+            showStep(index, of: trace)
+            return
+        }
+        if shownStep != nil {
+            shownStep = nil
+            canvas.pausedAt = nil
+            debugHost.removeAllChildren()
         }
         let instances = liveInstances()
         let now = session.world.time.elapsed
@@ -398,6 +444,74 @@ public final class VisualScriptWorkspace {
         canvas.values = values
         canvas.setNeedsDisplay()
         if session.playFrame % 15 == 0 || debugHost.children.isEmpty { rebuildDebug(instances) }
+    }
+
+    /// Whether a trace step is in this tab's graph.
+    private func isMine(_ step: VisualScriptTraceStep) -> Bool {
+        guard let asset, let assets = session.assets else { return false }
+        return assets.visualScriptID(for: step.graph) == asset
+    }
+
+    /// Paused at a breakpoint: the current step's node outlined (its function opened), the values
+    /// the flow had produced by then on the pins, and the step's details and controls in the sidebar.
+    private func showStep(_ index: Int, of trace: VisualScriptTrace) {
+        let step = trace.steps[index]
+        let changed = shownStep?.index != index || shownStep?.hit != trace.hit
+        if changed, isMine(step), step.function != function {
+            function = step.function
+            canvasDirty = true
+            sidebarDirty = true
+            refreshCanvas()
+        }
+        canvas.activity = [:]
+        canvas.pausedAt = isMine(step) && step.function == function ? step.node : nil
+        if changed, let node = canvas.pausedAt { canvas.reveal(node) }
+        var values: [String: String] = [:]
+        for earlier in trace.steps[...index] where earlier.graph == step.graph && earlier.entity == step.entity && earlier.function == function {
+            for (pin, value) in earlier.outputs { values["\(earlier.node).\(pin)"] = String(value.asString.prefix(24)) }
+        }
+        canvas.values = isMine(step) ? values : [:]
+        canvas.setNeedsDisplay()
+        guard changed || debugHost.children.isEmpty else { return }
+        shownStep = (index, trace.hit)
+        debugHost.removeAllChildren()
+        let place = (step.function.map { "function \($0), " } ?? "") + "node \(step.node)"
+        let header = Label("Paused at \(place) (step \(index + 1) of \(trace.steps.count)\(trace.truncated ? "+" : ""))", role: .secondary, name: "vscriptStepAt")
+        header.wraps = true
+        debugHost.addChild(header)
+        if !isMine(step) {
+            let other = Label("In \(session.assets.flatMap { a in a.visualScriptID(for: step.graph).flatMap(a.path) } ?? step.graph)", role: .caption)
+            other.wraps = true
+            debugHost.addChild(other)
+        }
+        debugHost.addChild(Label("Entity: \(session.displayName(of: step.entity))", role: .caption))
+        func button(_ title: String, _ action: VScriptStepAction, _ tip: String) -> Button {
+            let b = Button(title, name: "vscriptStep.\(action.rawValue)") { [unowned self] in session.stepVisualScript(action) }
+            b.command = VScriptStepCommand.id.rawValue
+            b.tooltip = tip
+            return b
+        }
+        let controls = HStack(spacing: 4, [button("Over", .over, "Step over (F10): the next node, skipping function calls"),
+                                           button("Into", .into, "Step into (F11): the next node, entering function calls"),
+                                           button("Out", .out, "Step out (Shift+F11): the next node in the caller"),
+                                           button("Continue", .continue, "Resume play (F5)")])
+        debugHost.addChild(controls)
+        if let error = step.error {
+            let label = Label("Error: \(error)", role: .caption)
+            label.wraps = true
+            debugHost.addChild(label)
+        }
+        for (title, values) in [("Inputs", step.inputs), ("Outputs", step.outputs), ("Variables", step.variables)] where !values.isEmpty {
+            debugHost.addChild(Label(title, role: .secondary))
+            for name in values.keys.sorted() {
+                let line = Label("\(name) = \(values[name]!.asString)", role: .caption)
+                line.wraps = true
+                debugHost.addChild(line)
+            }
+        }
+        let note = Label("Values as this node ran; the frame already finished, so the scene shows the end of it.", role: .caption)
+        note.wraps = true
+        debugHost.addChild(note)
     }
 
     private func rebuildDebug(_ instances: [VisualScriptInstance]) {
@@ -428,6 +542,11 @@ public final class VisualScriptWorkspace {
     private func refreshResults() {
         results.removeAllChildren()
         guard asset != nil else { return }
+        // The catalog shows while searching, so the node form and play controls stay in view otherwise.
+        guard searching || addFrom != nil || !searchField.text.trimmingCharacters(in: .whitespaces).isEmpty else {
+            searchHint.text = "Type to search nodes, or press Space / right-click the canvas."
+            return
+        }
         let entries = catalog()
         for entry in entries.prefix(30) {
             let button = Button(entry.title, name: "vscriptAdd.\(entry.type)") { [unowned self] in
@@ -460,6 +579,7 @@ public final class VisualScriptWorkspace {
         if selected.count == 1 { addNodeForm(selected[0]) } else if selected.count > 1 { addSelectionForm(selected) }
         addVariablesForm()
         addFunctionsForm()
+        addGroupsForm()
         addProblems()
     }
 
@@ -533,15 +653,48 @@ public final class VisualScriptWorkspace {
         details.addChild(Label("\(nodes.count) nodes selected", role: .heading))
         let collapse = Button("Collapse to Function", name: "vscriptCollapse") { [unowned self] in collapseSelection() }
         collapse.tooltip = "Move these nodes into a new function and call it from here"
-        let comment = Button("Comment Box", name: "vscriptCommentBox") { [unowned self] in
+        let comment = Button("Group", name: "vscriptCommentBox") { [unowned self] in
             let xs = nodes.map(\.x), ys = nodes.map(\.y)
-            let box = VisualScriptComment(text: "Comment", x: (xs.min() ?? 0) - 30, y: (ys.min() ?? 0) - 50,
+            let box = VisualScriptComment(text: "Group", x: (xs.min() ?? 0) - 30, y: (ys.min() ?? 0) - 50,
                                           width: (xs.max() ?? 0) - (xs.min() ?? 0) + 260, height: (ys.max() ?? 0) - (ys.min() ?? 0) + 200)
-            apply(VisualScriptEdit(comments: [box]), "Add Comment")
+            apply(VisualScriptEdit(comments: [box]), "Add Group")
         }
+        comment.tooltip = "Frame these nodes in a named box; drag its title bar to move them together"
+        comment.isEnabled = function == nil
         let delete = Button("Delete", name: "vscriptDeleteNodes") { [unowned self] in deleteSelection() }
         details.addChild(HStack(spacing: 6, [collapse, comment, delete]))
         details.addChild(Separator())
+    }
+
+    /// The event graph's groups (comment boxes): rename, select their nodes, remove (the nodes stay).
+    private func addGroupsForm() {
+        guard function == nil, !graph.comments.isEmpty else { return }
+        details.addChild(Label("Groups", role: .heading))
+        for comment in graph.comments {
+            let text = TextField(text: comment.text, placeholder: "Group name", name: "vscriptGroupText.\(comment.id)")
+            text.style.grow = 1
+            text.style.width = 0
+            text.command = VScriptEditCommand.id.rawValue
+            text.onSubmit = { [unowned self] value in
+                guard value != comment.text else { return }
+                var changed = comment
+                changed.text = value
+                apply(VisualScriptEdit(comments: [changed]), "Rename Group")
+            }
+            text.onEndEditing = text.onSubmit
+            let select = Button("Select", name: "vscriptGroupSelect.\(comment.id)") { [unowned self] in
+                selection = Set(canvas.nodes(in: comment))
+                sidebarDirty = true
+            }
+            select.tooltip = "Select the nodes inside"
+            select.command = VScriptEditCommand.id.rawValue
+            let remove = Button("×", name: "vscriptGroupRemove.\(comment.id)") { [unowned self] in
+                apply(VisualScriptEdit(removeComments: [comment.id]), "Remove Group")
+            }
+            remove.tooltip = "Remove the box (the nodes stay)"
+            remove.command = VScriptEditCommand.id.rawValue
+            details.addChild(HStack(spacing: 4, alignment: .center, [text, select, remove]))
+        }
     }
 
     private func addVariablesForm() {
@@ -557,6 +710,7 @@ public final class VisualScriptWorkspace {
             type.style.width = 80
             let value = TextField(text: variable.defaultValue.map(Self.text(of:)) ?? "", placeholder: "default", name: "vscriptVarDefault.\(variable.name)")
             value.style.grow = 1
+            value.style.width = 0
             value.onSubmit = { [unowned self] text in
                 var changed = variable
                 changed.defaultValue = variable.type == .string || variable.type == .asset ? .string(text) : Self.json(from: text)
@@ -573,8 +727,12 @@ public final class VisualScriptWorkspace {
                 apply(VisualScriptEdit(removeVariables: [variable.name]), "Remove Variable")
             }
             let name = Label(variable.name)
-            name.style.width = 70
-            details.addChild(HStack(spacing: 4, [name, type, value, get, set, remove]))
+            name.style.grow = 1
+            name.style.shrink = 1
+            name.style.width = 0
+            // Two rows: the sidebar is too narrow for name, type, value and three buttons on one.
+            details.addChild(HStack(spacing: 4, alignment: .center, [name, type, remove]))
+            details.addChild(HStack(spacing: 4, alignment: .center, [value, get, set]))
         }
         let field = TextField(text: newVariable, placeholder: "New variable name", name: "vscriptNewVariable")
         field.onChange = { [unowned self] text in newVariable = text }
@@ -594,7 +752,7 @@ public final class VisualScriptWorkspace {
     private func addFunctionsForm() {
         details.addChild(Label("Functions", role: .heading))
         for function in graph.functions {
-            let label = Label("\(function.name)(\(function.inputs.map(\.name).joined(separator: ", "))) → \(function.outputs.map(\.name).joined(separator: ", "))")
+            let label = Label((function.macro ? "macro " : "") + "\(function.name)(\(function.inputs.map(\.name).joined(separator: ", "))) → \(function.outputs.map(\.name).joined(separator: ", "))")
             label.style.grow = 1
             label.style.shrink = 1
             let edit = Button("Edit", name: "vscriptEditFunction.\(function.name)") { [unowned self] in
@@ -603,7 +761,7 @@ public final class VisualScriptWorkspace {
                 canvasDirty = true
                 sidebarDirty = true
             }
-            let call = Button("Call", name: "vscriptCallFunction.\(function.name)") { [unowned self] in
+            let call = Button(function.macro ? "Use" : "Call", name: "vscriptCallFunction.\(function.name)") { [unowned self] in
                 let previous = self.function
                 self.function = nil
                 addNode(type: "function.call", config: ["function": .string(function.name)])
@@ -618,21 +776,107 @@ public final class VisualScriptWorkspace {
         let field = TextField(text: newFunction, placeholder: "New function name", name: "vscriptNewFunction")
         field.onChange = { [unowned self] text in newFunction = text }
         field.style.grow = 1
-        let add = Button("Add", name: "vscriptAddFunction") { [unowned self] in
-            let name = newFunction.trimmingCharacters(in: .whitespaces)
-            guard !name.isEmpty, graph.function(name) == nil else { return }
-            newFunction = ""
-            let function = VisualScriptFunction(name: name, nodes: [VisualScriptNode(id: "entry", type: "function.entry"),
-                                                                    VisualScriptNode(id: "return", type: "function.return", x: 400)],
-                                                 links: [VisualScriptLink(from: "entry.out", to: "return.in")])
-            var edit = VisualScriptEdit(functions: [function])
-            edit.function = nil
-            if let result = try? graph.applying(edit) { commit(result.graph, "Add Function") }
+        field.style.width = 0
+        let add = Button("Add", name: "vscriptAddFunction") { [unowned self] in addFunction(macro: false) }
+        add.tooltip = "A function: one call frame per call, one flow in and out"
+        let addMacro = Button("Add Macro", name: "vscriptAddMacro") { [unowned self] in addFunction(macro: true) }
+        addMacro.tooltip = "A macro: its nodes are copied where it's used, so delays and gates work per use, with any number of exec pins"
+        details.addChild(HStack(spacing: 6, [field, add, addMacro]))
+        if let open = bodyFunction {
+            addPinsForm(open, outputs: false)
+            addPinsForm(open, outputs: true)
+        } else {
+            let note = Label("Edit a function to change its inputs and outputs.", role: .caption)
+            note.wraps = true
+            details.addChild(note)
         }
+    }
+
+    /// Adds a function (or macro) named by the sidebar's field: entry wired to return.
+    private func addFunction(macro: Bool) {
+        let name = newFunction.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, graph.function(name) == nil else { return }
+        newFunction = ""
+        let function = VisualScriptFunction(
+            name: name, inputs: macro ? [VisualScriptParameter(name: "in", type: .exec)] : [],
+            outputs: macro ? [VisualScriptParameter(name: "out", type: .exec)] : [],
+            nodes: [VisualScriptNode(id: "entry", type: "function.entry"), VisualScriptNode(id: "return", type: "function.return", x: 400)],
+            links: [macro ? VisualScriptLink(from: "entry.in", to: "return.out") : VisualScriptLink(from: "entry.out", to: "return.in")], macro: macro)
+        var edit = VisualScriptEdit(functions: [function])
+        edit.function = nil
+        if let result = try? graph.applying(edit) { commit(result.graph, macro ? "Add Macro" : "Add Function") }
+    }
+
+    /// The inputs (or outputs) of the function being edited: rename, retype, reorder, remove, add.
+    /// Wires on its entry, return and call nodes follow (`VisualScriptFunctionSignature`).
+    private func addPinsForm(_ function: VisualScriptFunction, outputs: Bool) {
+        let side = outputs ? "Outputs" : "Inputs"
+        details.addChild(Label("\(function.name): \(side)", role: .secondary))
+        let list = outputs ? function.outputs : function.inputs
+        let tag = outputs ? "Output" : "Input"
+        func commit(_ new: [VisualScriptParameter], renamed: [String: String] = [:], _ label: String) {
+            var signature = VisualScriptFunctionSignature(function: function.name)
+            if outputs {
+                signature.outputs = new
+                signature.renamedOutputs = renamed.isEmpty ? nil : renamed
+            } else {
+                signature.inputs = new
+                signature.renamedInputs = renamed.isEmpty ? nil : renamed
+            }
+            apply(VisualScriptEdit(signatures: [signature]), label)
+        }
+        let types = VisualScriptType.allCases.filter { $0 != .exec || function.macro }.map(\.rawValue)
+        for (i, parameter) in list.enumerated() {
+            let name = TextField(text: parameter.name, placeholder: "name", name: "vscriptFn\(tag)Name.\(parameter.name)")
+            name.style.grow = 1
+            name.style.width = 0
+            name.command = VScriptEditCommand.id.rawValue
+            name.onSubmit = { text in
+                let new = text.trimmingCharacters(in: .whitespaces)
+                guard !new.isEmpty, new != parameter.name else { return }
+                var changed = list
+                changed[i].name = new
+                commit(changed, renamed: [parameter.name: new], "Rename Function \(tag)")
+            }
+            name.onEndEditing = name.onSubmit
+            let type = Dropdown(options: types, selectedIndex: types.firstIndex(of: parameter.type.rawValue) ?? 0,
+                                name: "vscriptFn\(tag)Type.\(parameter.name)") { i2 in
+                var changed = list
+                changed[i].type = VisualScriptType(rawValue: types[i2]) ?? .float
+                commit(changed, "Change Function \(tag) Type")
+            }
+            type.style.width = 80
+            type.command = VScriptEditCommand.id.rawValue
+            let up = Button("↑", name: "vscriptFn\(tag)Up.\(parameter.name)") {
+                guard i > 0 else { return }
+                var changed = list
+                changed.swapAt(i, i - 1)
+                commit(changed, "Reorder Function \(tag)s")
+            }
+            up.isEnabled = i > 0
+            up.tooltip = "Move up (the order of the call node's pins)"
+            up.command = VScriptEditCommand.id.rawValue
+            let remove = Button("×", name: "vscriptFn\(tag)Remove.\(parameter.name)") {
+                var changed = list
+                changed.remove(at: i)
+                commit(changed, "Remove Function \(tag)")
+            }
+            remove.tooltip = "Remove (its wires go too)"
+            remove.command = VScriptEditCommand.id.rawValue
+            details.addChild(HStack(spacing: 4, alignment: .center, [name, type, up, remove]))
+        }
+        let field = TextField(text: "", placeholder: "New \(tag.lowercased()) name", name: "vscriptFnNew\(tag)")
+        field.style.grow = 1
+        field.command = VScriptEditCommand.id.rawValue
+        let addPin = { (text: String) in
+            let new = text.trimmingCharacters(in: .whitespaces)
+            guard !new.isEmpty, !list.contains(where: { $0.name == new }) else { return }
+            commit(list + [VisualScriptParameter(name: new, type: function.macro ? .exec : .float)], "Add Function \(tag)")
+        }
+        field.onSubmit = { text in addPin(text) }
+        let add = Button("Add", name: "vscriptFnAdd\(tag)") { [weak field] in addPin(field?.text ?? "") }
+        add.command = VScriptEditCommand.id.rawValue
         details.addChild(HStack(spacing: 6, [field, add]))
-        let note = Label("Edit a function's inputs and outputs with vscript.edit {functions}.", role: .caption)
-        note.wraps = true
-        details.addChild(note)
     }
 
     private func addProblems() {

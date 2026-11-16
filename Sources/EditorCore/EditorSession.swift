@@ -189,8 +189,12 @@ public final class EditorSession {
     /// The graph open in the Visual Script tab (`vscript.open`), and how the app shows it.
     public var openVisualScript: AssetID?
     public var onOpenVisualScript: ((AssetID) -> Void)?
+    /// Where visual scripts' `ui.show` puts layouts while playing (the app's Game view).
+    public var visualScriptUILayer: Widget?
     /// A visual script node with a breakpoint ran: play pauses after this frame.
     var visualScriptBreakPending = false
+    /// Paused at a visual script breakpoint: the step of the runtime's trace shown (`vscript.step`).
+    public internal(set) var visualScriptStep: Int?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()
@@ -286,6 +290,8 @@ public final class EditorSession {
         self.log = log
         EditorComponentCatalog.registerBuiltins()
         ImportSettingsForms.registerBuiltins()
+        // Builder nodes (animation graphs, dialogue, timelines…) known to tools and validation before play.
+        VisualScriptNodes.registerEngineNodes()
         document.world.addEditorSystems(input: gameInput)
         document.onReload = { [unowned self] in
             selection.prune(in: world)
@@ -682,10 +688,12 @@ public final class EditorSession {
         forwardedInput.removeAll()
         inputPlayer.apply(to: gameInput)
         gameInput.endEvents()
+        visualScriptStep = nil
         world.update(dt: dt)
         if visualScriptBreakPending {
             visualScriptBreakPending = false
             isPaused = true
+            visualScriptStep = visualScriptRuntime?.trace?.steps.isEmpty == false ? 0 : nil
             changed()
         }
         if let scene = gameModule.context.takePendingScene() { loadPlayScene(scene) }
@@ -775,12 +783,13 @@ public final class EditorSession {
         pathFollowers = world.addPathFollowers(assets: { [weak self] in self?.assets })
         gameModule.addSystems()
         let scripts = world.addVisualScripts(context: gameModule.context, assets: { [weak self] in self?.assets },
-                                             physics: { [weak self] in self?.physics }, physics2D: { [weak self] in self?.physics2D })
+                                             physics: { [weak self] in self?.physics }, physics2D: { [weak self] in self?.physics2D },
+                                             uiLayer: visualScriptUILayer)
         scripts.recordsActivity = true
         scripts.host.onBreakpoint = { [weak self] hit in
             guard let self, !visualScriptBreakPending else { return }
             visualScriptBreakPending = true
-            log.warning("Breakpoint: \(hit.graph) node \(hit.node) (paused after this frame)")
+            log.warning("Breakpoint: \(hit.graph) node \(hit.node) (paused after this frame; step with F10 / F11 in the Visual Script tab or vscript.step)")
         }
     }
 

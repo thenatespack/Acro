@@ -21,6 +21,7 @@ public enum ComponentRegistry {
         Transform.componentName: Transform.self,
         GlobalTransform.componentName: GlobalTransform.self,
         Name.componentName: Name.self,
+        Tags.componentName: Tags.self,
         Replicated.componentName: Replicated.self,
     ]
 

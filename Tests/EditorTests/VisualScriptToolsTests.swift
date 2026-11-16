@@ -134,6 +134,213 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         session.stop()
     }
 
+    @Test func stepThroughTheFlowAfterABreakpoint() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = try project(folder)
+        let id = try #require(session.create(.empty))
+        let created = try call(session, "vscript.new", ["name": "steps", "target": id.description])
+        let asset = "asset:" + (created["asset"] as! String)
+        let graph: [String: Any] = [
+            "variables": [["name": "n", "type": "int"], ["name": "ticks", "type": "int"]],
+            "nodes": [["id": "start", "type": "event.start"],
+                      ["id": "a", "type": "var.set", "config": ["variable": "n"], "inputs": ["value": 1], "breakpoint": true],
+                      ["id": "call", "type": "function.call", "config": ["function": "twice"], "inputs": ["x": 4]],
+                      ["id": "b", "type": "var.set", "config": ["variable": "n"]],
+                      ["id": "tick", "type": "event.update"],
+                      ["id": "count", "type": "var.set", "config": ["variable": "ticks"], "inputs": ["value": 7]]],
+            "links": [["from": "start.out", "to": "a.in"], ["from": "a.out", "to": "call.in"], ["from": "call.out", "to": "b.in"],
+                      ["from": "call.y", "to": "b.value"], ["from": "tick.out", "to": "count.in"]],
+            "functions": [["name": "twice", "inputs": [["name": "x", "type": "int"]], "outputs": [["name": "y", "type": "int"]],
+                           "nodes": [["id": "entry", "type": "function.entry"], ["id": "mul", "type": "math.multiply", "inputs": ["b": 2]],
+                                     ["id": "ret", "type": "function.return"]],
+                           "links": [["from": "entry.out", "to": "ret.in"], ["from": "entry.x", "to": "mul.a"], ["from": "mul.result", "to": "ret.y"]]]],
+        ]
+        try call(session, "vscript.set", ["asset": asset, "graph": graph])
+        let workspace = VisualScriptWorkspace(session: session)
+        #expect(workspace.open(try #require(AssetID(created["asset"] as! String))))
+        workspace.update()
+
+        #expect(throws: (any Error).self) { try call(session, "vscript.step", ["mode": "over"]) }
+        session.play()
+        session.tick(dt: 1.0 / 60)
+        #expect(session.isPaused)
+        var state = try call(session, "vscript.step")
+        #expect(state["atBreakpoint"] as? Bool == true && state["count"] as? Int == 4)
+        #expect((state["step"] as? [String: Any])?["node"] as? String == "a")
+        workspace.update()
+        #expect(workspace.canvas.pausedAt == "a")
+
+        state = try call(session, "vscript.step", ["mode": "into"])
+        #expect((state["step"] as? [String: Any])?["node"] as? String == "call")
+        #expect((state["step"] as? [String: Any])?["outputs"] as? [String: String] == ["y": "8"])
+        state = try call(session, "vscript.step", ["mode": "into"])
+        #expect((state["step"] as? [String: Any])?["function"] as? String == "twice")
+        workspace.update()
+        #expect(workspace.function == "twice" && workspace.canvas.pausedAt == "ret", "the tab opens the function")
+        state = try call(session, "vscript.step", ["mode": "out"])
+        #expect((state["step"] as? [String: Any])?["node"] as? String == "b")
+        workspace.update()
+        #expect(workspace.function == nil && workspace.canvas.pausedAt == "b")
+
+        // F10 past the end resumes; the next frame pauses at the update flow's first node.
+        #expect(workspace.handleKey(KeyEvent(key: .f10)))
+        #expect(!session.isPaused && session.visualScriptStep == nil)
+        session.tick(dt: 1.0 / 60)
+        #expect(session.isPaused)
+        state = try call(session, "vscript.step")
+        #expect((state["step"] as? [String: Any])?["node"] as? String == "count")
+        state = try call(session, "vscript.step", ["mode": "continue"])
+        #expect(state["paused"] as? Bool == false && state["atBreakpoint"] as? Bool == false)
+        session.tick(dt: 1.0 / 60)
+        #expect(!session.isPaused)
+        session.stop()
+    }
+
+    @Test func functionPinsAreEditedInTheTab() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = try project(folder)
+        let created = try call(session, "vscript.new", ["name": "pins"])
+        let asset = try #require(AssetID(created["asset"] as! String))
+        try call(session, "vscript.edit", ["asset": "asset:" + asset.description, "functions": [[
+            "name": "half", "inputs": [["name": "x", "type": "float"]],
+            "nodes": [["id": "entry", "type": "function.entry"], ["id": "ret", "type": "function.return"]],
+            "links": [["from": "entry.out", "to": "ret.in"]]]],
+            "addNodes": [["id": "call", "type": "function.call", "config": ["function": "half"], "inputs": ["x": 2]]]])
+        let workspace = VisualScriptWorkspace(session: session)
+        #expect(workspace.open(asset))
+        workspace.update()
+        func widget<W: Widget>(_ name: String, as type: W.Type = W.self) throws -> W {
+            try #require(workspace.view.descendant(named: name) as? W, "no \(name)")
+        }
+        #expect(workspace.view.descendant(named: "vscriptFnInputName.x") == nil, "pins show for the function being edited")
+        try widget("vscriptEditFunction.half", as: Button.self).action?()
+        workspace.update()
+        #expect(workspace.function == "half")
+
+        // Rename the input, add an output, change its type; each one undo step.
+        try widget("vscriptFnInputName.x", as: TextField.self).onSubmit?("value")
+        workspace.update()
+        workspace.update()
+        var graph = try #require(session.assets?.visualScript(of: asset))
+        #expect(graph.function("half")?.inputs.map(\.name) == ["value"])
+        #expect(graph.node("call")?.inputs == ["value": .int(2)], "the call's literal follows")
+        try widget("vscriptFnAddOutput", as: Button.self)
+        try widget("vscriptFnNewOutput", as: TextField.self).onSubmit?("y")
+        workspace.update()
+        workspace.update()
+        try widget("vscriptFnOutputType.y", as: Dropdown.self).onChange?(VisualScriptType.allCases.filter { $0 != .exec }.firstIndex(of: .int)!)
+        workspace.update()
+        workspace.update()
+        graph = try #require(session.assets?.visualScript(of: asset))
+        #expect(graph.function("half")?.outputs == [VisualScriptParameter(name: "y", type: .int)])
+        try widget("vscriptFnInputRemove.value", as: Button.self).action?()
+        workspace.update()
+        graph = try #require(session.assets?.visualScript(of: asset))
+        #expect(graph.function("half")?.inputs.isEmpty == true && graph.node("call")?.inputs.isEmpty == true)
+        try session.undo.undo()
+        workspace.update()
+        #expect(session.assets?.visualScript(of: asset)?.function("half")?.inputs.map(\.name) == ["value"])
+    }
+
+    @Test func rerouteOnAWire() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = try project(folder)
+        let created = try call(session, "vscript.new", ["name": "bend", "template": "spinner"])
+        let asset = try #require(AssetID(created["asset"] as! String))
+        let workspace = VisualScriptWorkspace(session: session)
+        #expect(workspace.open(asset))
+        workspace.update()
+        let wire = VisualScriptLink(from: "update.out", to: "rotate.in")
+        let id = try #require(workspace.insertReroute(on: wire, at: Vec2(200, -60)))
+        workspace.update()
+        let graph = try #require(session.assets?.visualScript(of: asset))
+        #expect(graph.node(id)?.type == "reroute")
+        #expect(graph.links.contains(VisualScriptLink(from: "update.out", to: "\(id).in")) && graph.links.contains(VisualScriptLink(from: "\(id).out", to: "rotate.in")))
+        #expect(!graph.links.contains(wire))
+        #expect(VisualScriptValidator.validate(graph).filter { $0.severity != .info }.isEmpty)
+        let node = try #require(workspace.canvas.nodes.first { $0.id == id })
+        #expect(node.isReroute && node.size == VisualScriptCanvas.rerouteSize && node.inputs.first?.type == .exec)
+        // Found under the pointer: the wire from the reroute to rotate.
+        let p = try #require(workspace.canvas.pinPosition(node: node, pin: "out", isOutput: true))
+        let q = try #require(workspace.canvas.pinPosition(node: workspace.canvas.nodes.first { $0.id == "rotate" }!, pin: "in", isOutput: false))
+        let mid = VisualScriptCanvas.wirePoints(workspace.canvas.toScreen(p), workspace.canvas.toScreen(q), zoom: workspace.canvas.zoom)[10]
+        #expect(workspace.canvas.link(at: mid) == VisualScriptLink(from: "\(id).out", to: "rotate.in"))
+    }
+
+    @Test func groupsMoveTheirNodes() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = try project(folder)
+        let created = try call(session, "vscript.new", ["name": "group", "template": "spinner"])
+        let asset = try #require(AssetID(created["asset"] as! String))
+        let workspace = VisualScriptWorkspace(session: session)
+        #expect(workspace.open(asset))
+        workspace.update()
+        // Group the speed and multiply nodes from the sidebar.
+        workspace.canvas.onSelect?(["speed", "mul"])
+        workspace.update()
+        try #require(workspace.view.descendant(named: "vscriptCommentBox") as? Button).action?()
+        workspace.update()
+        var graph = try #require(session.assets?.visualScript(of: asset))
+        let group = try #require(graph.comments.first)
+        #expect(group.text == "Group")
+        #expect(Set(workspace.canvas.nodes(in: group)) == ["speed", "mul"])
+
+        // Drag its title bar 100 right: the box and both nodes move, in one undo step.
+        let canvas = workspace.canvas
+        let start = canvas.toScreen(Vec2(group.x + 20, group.y + 8))
+        #expect(canvas.group(at: start)?.id == group.id)
+        _ = canvas.handleEvent(.pointerDown(PointerEvent(position: start)))
+        _ = canvas.handleEvent(.pointerDrag(PointerEvent(position: start + Vec2(100 * canvas.zoom, 0))))
+        _ = canvas.handleEvent(.pointerUp(PointerEvent(position: start + Vec2(100 * canvas.zoom, 0))))
+        workspace.update()
+        graph = try #require(session.assets?.visualScript(of: asset))
+        #expect(graph.comments.first?.x == group.x + 100)
+        #expect(graph.node("speed")?.x == 100 && graph.node("mul")?.x == 320, "the nodes inside moved (from 0 and 220)")
+        #expect(graph.node("update")?.x == 0, "outside nodes stay")
+        #expect(workspace.selection == ["speed", "mul"])
+
+        // Rename it, then remove it (the nodes stay).
+        try #require(workspace.view.descendant(named: "vscriptGroupText.\(group.id)") as? TextField).onSubmit?("Speed math")
+        workspace.update()
+        #expect(session.assets?.visualScript(of: asset)?.comments.first?.text == "Speed math")
+        try #require(workspace.view.descendant(named: "vscriptGroupRemove.\(group.id)") as? Button).action?()
+        workspace.update()
+        graph = try #require(session.assets?.visualScript(of: asset))
+        #expect(graph.comments.isEmpty && graph.node("speed") != nil)
+        try session.undo.undo()
+        try session.undo.undo()
+        try session.undo.undo()
+        workspace.update()
+        #expect(session.assets?.visualScript(of: asset)?.node("speed")?.x == 0)
+    }
+
+    @Test func addAMacroInTheTab() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = try project(folder)
+        let created = try call(session, "vscript.new", ["name": "macros"])
+        let asset = try #require(AssetID(created["asset"] as! String))
+        let workspace = VisualScriptWorkspace(session: session)
+        #expect(workspace.open(asset))
+        workspace.update()
+        try #require(workspace.view.descendant(named: "vscriptNewFunction") as? TextField).onChange?("twice")
+        try #require(workspace.view.descendant(named: "vscriptAddMacro") as? Button).action?()
+        workspace.update()
+        let graph = try #require(session.assets?.visualScript(of: asset))
+        let macro = try #require(graph.function("twice"))
+        #expect(macro.macro && macro.inputs == [VisualScriptParameter(name: "in", type: .exec)] && macro.outputs == [VisualScriptParameter(name: "out", type: .exec)])
+        #expect(VisualScriptValidator.validate(graph).filter { $0.severity == .error }.isEmpty)
+        // Use it in the event graph: the node's pins are the macro's.
+        try #require(workspace.view.descendant(named: "vscriptCallFunction.twice") as? Button).action?()
+        workspace.update()
+        let use = try #require(workspace.canvas.nodes.first { $0.title == "twice (macro)" })
+        #expect(use.inputs.map(\.name) == ["in"] && use.outputs.map(\.name) == ["out"])
+    }
+
     @Test func workspaceEditsAreUndoSteps() throws {
         let folder = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: folder) }

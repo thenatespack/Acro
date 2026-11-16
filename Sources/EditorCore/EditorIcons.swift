@@ -15,6 +15,7 @@ public enum EditorIcons {
         Transform.componentName: "move-3d",
         GlobalTransform.componentName: "move-3d",
         Name.componentName: "tag",
+        Tags.componentName: "tags",
         Camera.componentName: "video",
         DirectionalLight.componentName: "sun",
         PointLight.componentName: "lightbulb",
@@ -91,6 +92,8 @@ public enum EditorIcons {
     public static let editorIconSVG: [String: String] = [
         // A cable hanging between two posts.
         "cable": #"<path d="M3 4c3 16 15 16 18 0"/><path d="M3 2v4"/><path d="M21 2v4"/>"#,
+        // Two labels, one behind the other (Lucide's tags): the Tag component.
+        "tags": #"<path d="m15 5 6.3 6.3a2.4 2.4 0 0 1 0 3.4L17 19"/><path d="M9.586 5.586A2 2 0 0 0 8.172 5H3a1 1 0 0 0-1 1v5.172a2 2 0 0 0 .586 1.414L8.29 18.29a2.426 2.426 0 0 0 3.42 0l3.58-3.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="6.5" cy="9.5" r=".5" fill="currentColor"/>"#,
         prefabIconName: #"<path d="M12 2.5 15.5 6 12 9.5 8.5 6Z"/><path d="M6 8.5 9.5 12 6 15.5 2.5 12Z"/><path d="M18 8.5 21.5 12 18 15.5 14.5 12Z"/><path d="M12 14.5 15.5 18 12 21.5 8.5 18Z"/>"#,
         // A ball with its front equator and a meridian.
         "mesh-sphere": #"<circle cx="12" cy="12" r="10"/><path d="M2 12a10 3.5 0 0 0 20 0"/><path d="M12 2a3.5 10 0 0 0 0 20"/>"#,

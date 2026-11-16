@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 248 tools.
+named by its id (see README › Use the editor › AI control). 246 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -14,7 +14,7 @@ optional arguments.
 |---|---|
 | `activity` | [`activity.clear`](#activityclear), [`activity.list`](#activitylist), [`activity.revert`](#activityrevert) |
 | `ai` | [`ai.settings`](#aisettings) |
-| `animGraph` | [`animGraph.assign`](#animgraphassign), [`animGraph.bones`](#animgraphbones), [`animGraph.clipEvents`](#animgraphclipevents), [`animGraph.edit`](#animgraphedit), [`animGraph.get`](#animgraphget), [`animGraph.new`](#animgraphnew), [`animGraph.open`](#animgraphopen), [`animGraph.set`](#animgraphset), [`animGraph.setClipEvents`](#animgraphsetclipevents) |
+| `animGraph` | [`animGraph.assign`](#animgraphassign), [`animGraph.edit`](#animgraphedit), [`animGraph.get`](#animgraphget), [`animGraph.new`](#animgraphnew), [`animGraph.open`](#animgraphopen), [`animGraph.set`](#animgraphset) |
 | `asset` | [`asset.applySettings`](#assetapplysettings), [`asset.assign`](#assetassign), [`asset.delete`](#assetdelete), [`asset.extractMaterials`](#assetextractmaterials), [`asset.get`](#assetget), [`asset.import`](#assetimport), [`asset.instantiate`](#assetinstantiate), [`asset.list`](#assetlist), [`asset.move`](#assetmove), [`asset.newFolder`](#assetnewfolder), [`asset.newMaterial`](#assetnewmaterial), [`asset.newProceduralTexture`](#assetnewproceduraltexture), [`asset.reimport`](#assetreimport), [`asset.rename`](#assetrename), [`asset.select`](#assetselect), [`asset.setProceduralTexture`](#assetsetproceduraltexture), [`asset.waitForImports`](#assetwaitforimports) |
 | `behavior` | [`behavior.assign`](#behaviorassign), [`behavior.debug`](#behaviordebug), [`behavior.edit`](#behavioredit), [`behavior.get`](#behaviorget), [`behavior.new`](#behaviornew), [`behavior.open`](#behavioropen), [`behavior.set`](#behaviorset) |
 | `character` | [`character.bones`](#characterbones), [`character.edit`](#characteredit), [`character.get`](#characterget), [`character.new`](#characternew), [`character.open`](#characteropen), [`character.set`](#characterset) |
@@ -58,7 +58,7 @@ optional arguments.
 | `uiLayout` | [`uiLayout.edit`](#uilayoutedit), [`uiLayout.get`](#uilayoutget), [`uiLayout.new`](#uilayoutnew), [`uiLayout.open`](#uilayoutopen), [`uiLayout.set`](#uilayoutset) |
 | `vfx` | [`vfx.edit`](#vfxedit), [`vfx.get`](#vfxget), [`vfx.new`](#vfxnew), [`vfx.open`](#vfxopen), [`vfx.set`](#vfxset) |
 | `view` | [`view.appearance`](#viewappearance), [`view.frameSelection`](#viewframeselection), [`view.gameCamera`](#viewgamecamera), [`view.pick`](#viewpick), [`view.screenshot`](#viewscreenshot) |
-| `vscript` | [`vscript.attach`](#vscriptattach), [`vscript.edit`](#vscriptedit), [`vscript.get`](#vscriptget), [`vscript.new`](#vscriptnew), [`vscript.nodes`](#vscriptnodes), [`vscript.open`](#vscriptopen), [`vscript.set`](#vscriptset), [`vscript.validate`](#vscriptvalidate) |
+| `vscript` | [`vscript.attach`](#vscriptattach), [`vscript.edit`](#vscriptedit), [`vscript.get`](#vscriptget), [`vscript.new`](#vscriptnew), [`vscript.nodes`](#vscriptnodes), [`vscript.open`](#vscriptopen), [`vscript.set`](#vscriptset), [`vscript.step`](#vscriptstep), [`vscript.validate`](#vscriptvalidate) |
 
 ## activity
 
@@ -140,69 +140,26 @@ Result:
 - `targets`: integer
 - `warnings`: [string]
 
-### `animGraph.bones`
-
-**Match Animation Bones** · _read-only_, _idempotent_
-
-Shows how a clip's bones pair with a model's when retargeted by name: matched pairs, model bones left at rest, and animated clip bones that drive nothing, under the graph's `retarget` options (or `retarget` given here). Use it to write a `boneMap` before setting `retarget` with animGraph.edit. `model` (a glTF file, prefab or .character) defaults to the graph's preview.
-
-Arguments:
-
-- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
-- `clip`: string
-- `model?`: string
-- `path?`: string
-- `retarget?`: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}
-
-Result:
-
-- `clipBones`: [string]
-- `matched`: object
-- `modelBones`: [string]
-- `needsRetarget`: boolean
-- `unmatchedClipBones`: [string]
-- `unmatchedModelBones`: [string]
-
-### `animGraph.clipEvents`
-
-**Get Clip Events** · _read-only_, _idempotent_
-
-Lists an animation clip's events ({time (seconds), name}, by time) and its duration. Animators report events as their clip plays past them (FiredAnimationEvent, VisualScript animation events); `editable` says whether animGraph.setClipEvents can change them.
-
-Arguments:
-
-- `clip`: string
-
-Result:
-
-- `clip`: string
-- `duration`: number
-- `editable`: boolean
-- `events`: [{name: string, time: number}]
-
 ### `animGraph.edit`
 
 **Edit Animation Graph** · _undoable_
 
-Changes part of an .animgraph file in one undoable step, in this order: removeTransitions (indices), removeStates, removeParameters, removeLayers, parameters (add or replace by name), addStates, updateStates (name → fields; "name" renames everywhere), addTransitions, updateTransitions (index → fields), addLayers, updateLayers, initialState, preview, retarget / removeRetarget. With `level` (a sub-state machine's path, e.g. "Combat"), the state and transition edits and initialState apply inside that machine, and its transitions may also go to states of enclosing levels (by name). Clip paths become asset references. Returns the states, numbered transitions, parameters and problems. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `retarget` {boneMap {source bone: target bone}, matchNames (default true), rotation world|local|copy, translation root|none|all, rootScale, sampleRate} (plays clips made for another skeleton by matching bones by name; see animGraph.bones), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space; add parameterY (a second float) and give each clip a `y` for a 2D one, e.g. moveX / moveY for strafing), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` [{name, clip, weight, speed, referenceTime, blend additive|override (override replaces the bones the clip animates), mask [bone names: the layer only touches their subtrees]}], `initialState`. A state with `machine` {states, transitions, initialState} instead of a clip is a sub-state machine: entering it enters its initial state, its own transitions leave from any state inside, and transitions inside may go to states outside it by name (edit inside with animGraph.edit `level`). Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes. Undoable (one step; edit.undo reverts it).
+Changes part of an .animgraph file in one undoable step, in this order: removeTransitions (indices), removeStates, removeParameters, removeLayers, parameters (add or replace by name), addStates, updateStates (name → fields; "name" renames everywhere), addTransitions, updateTransitions (index → fields), addLayers, updateLayers, initialState, preview. Clip paths become asset references. Returns the states, numbered transitions, parameters and problems. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` (additive) [{name, clip, weight, speed, referenceTime}], `initialState`. Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
-- `addLayers?`: [{blend?: "additive" \| "override", clip?: string, mask?: [string], name?: string, referenceTime?: number, speed?: number, weight?: number}]
-- `addStates?`: [{blend?: object, clip?: string, loops?: boolean, machine?: object, name?: string, position?: number[2], speed?: number, speedParameter?: string}]
+- `addLayers?`: [{clip?: string, name?: string, referenceTime?: number, speed?: number, weight?: number}]
+- `addStates?`: [{blend?: object, clip?: string, loops?: boolean, name?: string, position?: number[2], speed?: number, speedParameter?: string}]
 - `addTransitions?`: [{canTransitionToSelf?: boolean, conditions?: [object], duration?: number, exitTime?: number, from?: string, to?: string}]
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `initialState?`: string
-- `level?`: string
 - `parameters?`: [{default?: boolean, name?: string, type?: "float" \| "bool" \| "trigger"}]
 - `path?`: string
 - `preview?`: string
 - `removeLayers?`: [string]
 - `removeParameters?`: [string]
-- `removeRetarget?`: boolean
 - `removeStates?`: [string]
 - `removeTransitions?`: [integer]
-- `retarget?`: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}
 - `updateLayers?`: object
 - `updateStates?`: object
 - `updateTransitions?`: object
@@ -212,8 +169,6 @@ Result:
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `initialState?`: string
 - `layers`: [string]
-- `level?`: string
-- `machines?`: [string]
 - `parameters`: [string]
 - `path`: string
 - `states`: [string]
@@ -235,7 +190,7 @@ Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `clips`: [string]
-- `graph`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
+- `graph`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, states?: [object], transitions?: [object]}
 - `path`: string
 - `warnings`: [string]
 
@@ -243,12 +198,12 @@ Result:
 
 **New Animation Graph**
 
-Writes an .animgraph file in `folder` (default: the Assets root) and imports it: `graph` contents, or a starter (Idle, plus Move on a `speed` parameter when the `preview` model has two clips or more, using its clips). Returns the states, transitions, parameters and warnings. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `retarget` {boneMap {source bone: target bone}, matchNames (default true), rotation world|local|copy, translation root|none|all, rootScale, sampleRate} (plays clips made for another skeleton by matching bones by name; see animGraph.bones), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space; add parameterY (a second float) and give each clip a `y` for a 2D one, e.g. moveX / moveY for strafing), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` [{name, clip, weight, speed, referenceTime, blend additive|override (override replaces the bones the clip animates), mask [bone names: the layer only touches their subtrees]}], `initialState`. A state with `machine` {states, transitions, initialState} instead of a clip is a sub-state machine: entering it enters its initial state, its own transitions leave from any state inside, and transitions inside may go to states outside it by name (edit inside with animGraph.edit `level`). Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes.
+Writes an .animgraph file in `folder` (default: the Assets root) and imports it: `graph` contents, or a starter (Idle, plus Move on a `speed` parameter when the `preview` model has two clips or more, using its clips). Returns the states, transitions, parameters and warnings. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` (additive) [{name, clip, weight, speed, referenceTime}], `initialState`. Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes.
 
 Arguments:
 
 - `folder?`: string
-- `graph?`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
+- `graph?`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, states?: [object], transitions?: [object]}
 - `name?`: string
 - `preview?`: string
 
@@ -257,8 +212,6 @@ Result:
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `initialState?`: string
 - `layers`: [string]
-- `level?`: string
-- `machines?`: [string]
 - `parameters`: [string]
 - `path`: string
 - `states`: [string]
@@ -289,7 +242,7 @@ Replaces an .animgraph file's whole contents and reimports it; animators using i
 Arguments:
 
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
-- `graph`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
+- `graph`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, states?: [object], transitions?: [object]}
 - `path?`: string
 
 Result:
@@ -297,31 +250,11 @@ Result:
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `initialState?`: string
 - `layers`: [string]
-- `level?`: string
-- `machines?`: [string]
 - `parameters`: [string]
 - `path`: string
 - `states`: [string]
 - `transitions`: [string]
 - `warnings`: [string]
-
-### `animGraph.setClipEvents`
-
-**Set Clip Events** · _undoable_, _idempotent_
-
-Replaces the events of a clip imported from a glTF file ({time, name}; footsteps, hits, sounds). They are kept in the model's import settings, so they survive reimports and apply wherever the clip plays. Undoable. Times outside the clip are clamped to it. Undoable (one step; edit.undo reverts it).
-
-Arguments:
-
-- `clip`: string
-- `events`: [{name: string, time: number}]
-
-Result:
-
-- `clip`: string
-- `duration`: number
-- `editable`: boolean
-- `events`: [{name: string, time: number}]
 
 ## asset
 
@@ -5072,7 +5005,7 @@ Result:
 
 **Edit Visual Script** · _undoable_
 
-Changes part of a .vscript graph in one undoable step, in this order: removeNodes, addNodes, updateNodes, disconnect, connect (in `function` when given), then variables, removeVariables, functions, removeFunctions, comments, removeComments, actions. New nodes without an id get one from their type (returned in `added`); nodes without x/y are placed right of the others. A link into a data input that has one replaces it. Returns node ids and problems (unconnected required inputs, type mismatches, unreachable nodes). A .vscript file is a node graph run by the VisualScript component in play mode and built games (no game module needed; edits apply while playing). `nodes`: {id, type, x, y, config {settings such as variable, component, field, key, name}, inputs {literal values for unconnected input pins}}. `links`: {"from": "node.pin", "to": "node.pin"}, always from an output pin to an input pin. Exec pins carry the flow (most nodes: input `in`, output `out`; branch: `true`/`false`; loops: `body`/`done`); event nodes (event.start, event.update, event.keyPressed, event.triggerEnter, event.custom…) start flows. Data pins are typed (bool, int, float, string, vec2, vec3, vec4, color, quat, entity, asset, array, map, any) and convert automatically where it makes sense; an unconnected entity input means the script's own entity. `variables`: {name, type, default, exposed}; `functions`: {name, inputs, outputs, nodes, links} called with function.call (config.function), starting at function.entry and ending at function.return. `actions`: input actions {"jump": ["key.space", "pad.south"]} for event.actionPressed. List node types and their pins with vscript.nodes {search}. Undoable (one step; edit.undo reverts it).
+Changes part of a .vscript graph in one undoable step, in this order: removeNodes, addNodes, updateNodes, disconnect, connect (in `function` when given), then variables, removeVariables, functions, signatures (a function's inputs and outputs, with renames: wires on its entry, return and call nodes follow, and those to removed pins go), removeFunctions, comments, removeComments, actions. New nodes without an id get one from their type (returned in `added`); nodes without x/y are placed right of the others. A link into a data input that has one replaces it. Returns node ids and problems (unconnected required inputs, type mismatches, unreachable nodes). A .vscript file is a node graph run by the VisualScript component in play mode and built games (no game module needed; edits apply while playing). `nodes`: {id, type, x, y, config {settings such as variable, component, field, key, name}, inputs {literal values for unconnected input pins}}. `links`: {"from": "node.pin", "to": "node.pin"}, always from an output pin to an input pin. Exec pins carry the flow (most nodes: input `in`, output `out`; branch: `true`/`false`; loops: `body`/`done`); event nodes (event.start, event.update, event.keyPressed, event.triggerEnter, event.custom…) start flows. Data pins are typed (bool, int, float, string, vec2, vec3, vec4, color, quat, entity, asset, array, map, any) and convert automatically where it makes sense; an unconnected entity input means the script's own entity. `variables`: {name, type, default, exposed}; `functions`: {name, inputs, outputs, nodes, links, macro?} called with function.call (config.function), starting at function.entry and ending at function.return (a `macro` is copied into each use instead, and its inputs and outputs may be exec pins). `reroute` nodes bend a wire. `actions`: input actions {"jump": ["key.space", "pad.south"]} for event.actionPressed. List node types and their pins with vscript.nodes {search}. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
@@ -5083,12 +5016,13 @@ Arguments:
 - `connect?`: [string[2]]
 - `disconnect?`: [string[2]]
 - `function?`: string
-- `functions?`: [{inputs?: [object], links?: [string[2]], name?: string, nodes?: [object], outputs?: [object], pure?: boolean}]
+- `functions?`: [{inputs?: [object], links?: [string[2]], macro?: boolean, name?: string, nodes?: [object], outputs?: [object], pure?: boolean}]
 - `path?`: string
 - `removeComments?`: [string]
 - `removeFunctions?`: [string]
 - `removeNodes?`: [string]
 - `removeVariables?`: [string]
+- `signatures?`: [{function: string, inputs?: [object], outputs?: [object], renamedInputs?: object, renamedOutputs?: object}]
 - `updateNodes?`: [{breakpoint?: boolean, collapsed?: boolean, comment?: string, config?: object, id: string, inputs?: object, type?: string, x?: number, y?: number}]
 - `variables?`: [{default?: any, exposed?: boolean, name?: string, tooltip?: string, type?: string (15 cases)}]
 
@@ -5125,7 +5059,7 @@ Result:
 
 **New Visual Script** · _undoable_
 
-Writes a .vscript graph in `folder` (default: the Assets root) from `template` (empty, spinner, mover, pickup, timer) and imports it; with `target` (an entity id) also puts a VisualScript component running it on that entity (undoable). Build it with vscript.edit (addNodes, connect, variables…), find nodes with vscript.nodes. A .vscript file is a node graph run by the VisualScript component in play mode and built games (no game module needed; edits apply while playing). `nodes`: {id, type, x, y, config {settings such as variable, component, field, key, name}, inputs {literal values for unconnected input pins}}. `links`: {"from": "node.pin", "to": "node.pin"}, always from an output pin to an input pin. Exec pins carry the flow (most nodes: input `in`, output `out`; branch: `true`/`false`; loops: `body`/`done`); event nodes (event.start, event.update, event.keyPressed, event.triggerEnter, event.custom…) start flows. Data pins are typed (bool, int, float, string, vec2, vec3, vec4, color, quat, entity, asset, array, map, any) and convert automatically where it makes sense; an unconnected entity input means the script's own entity. `variables`: {name, type, default, exposed}; `functions`: {name, inputs, outputs, nodes, links} called with function.call (config.function), starting at function.entry and ending at function.return. `actions`: input actions {"jump": ["key.space", "pad.south"]} for event.actionPressed. List node types and their pins with vscript.nodes {search}. Undoable (one step; edit.undo reverts it).
+Writes a .vscript graph in `folder` (default: the Assets root) from `template` (empty, spinner, mover, pickup, timer) and imports it; with `target` (an entity id) also puts a VisualScript component running it on that entity (undoable). Build it with vscript.edit (addNodes, connect, variables…), find nodes with vscript.nodes. A .vscript file is a node graph run by the VisualScript component in play mode and built games (no game module needed; edits apply while playing). `nodes`: {id, type, x, y, config {settings such as variable, component, field, key, name}, inputs {literal values for unconnected input pins}}. `links`: {"from": "node.pin", "to": "node.pin"}, always from an output pin to an input pin. Exec pins carry the flow (most nodes: input `in`, output `out`; branch: `true`/`false`; loops: `body`/`done`); event nodes (event.start, event.update, event.keyPressed, event.triggerEnter, event.custom…) start flows. Data pins are typed (bool, int, float, string, vec2, vec3, vec4, color, quat, entity, asset, array, map, any) and convert automatically where it makes sense; an unconnected entity input means the script's own entity. `variables`: {name, type, default, exposed}; `functions`: {name, inputs, outputs, nodes, links, macro?} called with function.call (config.function), starting at function.entry and ending at function.return (a `macro` is copied into each use instead, and its inputs and outputs may be exec pins). `reroute` nodes bend a wire. `actions`: input actions {"jump": ["key.space", "pad.south"]} for event.actionPressed. List node types and their pins with vscript.nodes {search}. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
@@ -5191,7 +5125,7 @@ Result:
 
 **Set Visual Script** · _undoable_, _idempotent_
 
-Replaces a .vscript file's whole graph and reimports it (a running game picks it up next frame, keeping variables). Undoable. For a few changes, vscript.edit is shorter. A .vscript file is a node graph run by the VisualScript component in play mode and built games (no game module needed; edits apply while playing). `nodes`: {id, type, x, y, config {settings such as variable, component, field, key, name}, inputs {literal values for unconnected input pins}}. `links`: {"from": "node.pin", "to": "node.pin"}, always from an output pin to an input pin. Exec pins carry the flow (most nodes: input `in`, output `out`; branch: `true`/`false`; loops: `body`/`done`); event nodes (event.start, event.update, event.keyPressed, event.triggerEnter, event.custom…) start flows. Data pins are typed (bool, int, float, string, vec2, vec3, vec4, color, quat, entity, asset, array, map, any) and convert automatically where it makes sense; an unconnected entity input means the script's own entity. `variables`: {name, type, default, exposed}; `functions`: {name, inputs, outputs, nodes, links} called with function.call (config.function), starting at function.entry and ending at function.return. `actions`: input actions {"jump": ["key.space", "pad.south"]} for event.actionPressed. List node types and their pins with vscript.nodes {search}. Undoable (one step; edit.undo reverts it).
+Replaces a .vscript file's whole graph and reimports it (a running game picks it up next frame, keeping variables). Undoable. For a few changes, vscript.edit is shorter. A .vscript file is a node graph run by the VisualScript component in play mode and built games (no game module needed; edits apply while playing). `nodes`: {id, type, x, y, config {settings such as variable, component, field, key, name}, inputs {literal values for unconnected input pins}}. `links`: {"from": "node.pin", "to": "node.pin"}, always from an output pin to an input pin. Exec pins carry the flow (most nodes: input `in`, output `out`; branch: `true`/`false`; loops: `body`/`done`); event nodes (event.start, event.update, event.keyPressed, event.triggerEnter, event.custom…) start flows. Data pins are typed (bool, int, float, string, vec2, vec3, vec4, color, quat, entity, asset, array, map, any) and convert automatically where it makes sense; an unconnected entity input means the script's own entity. `variables`: {name, type, default, exposed}; `functions`: {name, inputs, outputs, nodes, links, macro?} called with function.call (config.function), starting at function.entry and ending at function.return (a `macro` is copied into each use instead, and its inputs and outputs may be exec pins). `reroute` nodes bend a wire. `actions`: input actions {"jump": ["key.space", "pad.south"]} for event.actionPressed. List node types and their pins with vscript.nodes {search}. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
@@ -5209,6 +5143,26 @@ Result:
 - `path`: string
 - `variables`: [string]
 - `warnings`: [string]
+
+### `vscript.step`
+
+**Step Visual Script**
+
+While play is paused at a visual script breakpoint: `into` shows the next node of the flow (entering function calls), `over` the next one not inside a call made here, `out` the next one in the caller, `continue` resumes play. The flow from the breakpoint to the end of its event was recorded during the frame (scripts run inside the world's update and can't stop half way), so each step shows that node's inputs, outputs and the variables as it started; past the end, play resumes until the same entity's graph runs another node and pauses there. Without `mode`, reports the current step.
+
+Arguments:
+
+- `mode?`: "into" \| "over" \| "out" \| "continue"
+
+Result:
+
+- `atBreakpoint`: boolean
+- `count`: integer
+- `index?`: integer
+- `paused`: boolean
+- `playing`: boolean
+- `step?`: {depth: integer, entity?: entity id, error?: string, function?: string, graph: string, inputs: object, node: string, outputs: object, variables: object}
+- `truncated`: boolean
 
 ### `vscript.validate`
 

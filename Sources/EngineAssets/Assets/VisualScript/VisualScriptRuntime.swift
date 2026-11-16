@@ -50,6 +50,64 @@ public struct VisualScriptBreak: Equatable, Sendable {
     public var entity: Entity
 }
 
+/// One node run recorded after a breakpoint, for stepping through the flow while paused
+/// (`VisualScriptRuntime.trace`).
+public struct VisualScriptTraceStep: Equatable, Sendable {
+    /// The graph's key and the entity running it.
+    public var graph: String
+    public var entity: Entity
+    /// The function the node is in (nil: the event graph).
+    public var function: String?
+    public var node: String
+    /// Function calls deep (0: the event graph): step over skips deeper steps, step out goes shallower.
+    public var depth: Int
+    /// The graph's variables as the node started.
+    public var variables: [String: VisualScriptValue]
+    /// The values the node read and produced (data pins).
+    public var inputs: [String: VisualScriptValue] = [:]
+    public var outputs: [String: VisualScriptValue] = [:]
+    /// The error the node stopped with, if any.
+    public var error: String?
+}
+
+/// The flow after a breakpoint, node by node, to the end of the event that hit it.
+///
+/// Why a trace and not a suspended VM: flows run on the Swift call stack inside the world's
+/// synchronous update (node code calls `fire` for sequences, loops and branches; `function.call`
+/// and custom events nest whole flows; game modules' `scriptNode` closures are synchronous and
+/// public), and the systems after the scripts in the same frame (physics, animation, rendering)
+/// can't wait half way through `World.update`. Suspending mid-event would mean rewriting every
+/// node as a resumable state machine and splitting the world's frame. Instead the VM records
+/// every node of the breakpoint's flow (with its inputs, outputs and the variables), the editor
+/// pauses after the frame and steps through the record, and past its end the VM breaks on the
+/// next node it runs (`breakAtNextNode`), so stepping carries on across frames.
+public struct VisualScriptTrace: Equatable, Sendable {
+    public var hit: VisualScriptBreak
+    public var steps: [VisualScriptTraceStep]
+    /// More nodes ran than `VisualScriptRuntime.traceLimit`; the rest weren't recorded.
+    public var truncated = false
+
+    /// The step after `index` for a debugger command, or nil when the trace ends first.
+    /// `into`: the next node; `over`: the next not inside a function this one called; `out`:
+    /// the next in a caller.
+    public func next(after index: Int, _ mode: VisualScriptStepMode) -> Int? {
+        guard steps.indices.contains(index) else { return nil }
+        let depth = steps[index].depth
+        return steps.indices.dropFirst(index + 1).first { i in
+            switch mode {
+            case .into: true
+            case .over: steps[i].depth <= depth
+            case .out: steps[i].depth < depth
+            }
+        }
+    }
+}
+
+/// How to step from a paused node.
+public enum VisualScriptStepMode: String, Codable, Sendable, CaseIterable {
+    case into, over, out
+}
+
 /// A frame of node outputs and state: the event graph's (one per instance) or one function call's.
 @MainActor
 final class VSFrame {
@@ -317,6 +375,28 @@ public final class VisualScriptRuntime {
     public private(set) var errors: [String] = []
     /// The last breakpoint hit.
     public private(set) var lastBreak: VisualScriptBreak?
+    /// The flow after the first breakpoint of the last frame that hit one (see `VisualScriptTrace`).
+    public private(set) var trace: VisualScriptTrace?
+    /// Most steps a trace records.
+    public var traceLimit = 2000
+    /// `breakAtNextNode`: break at the next node run by this entity's graph (`.invalid`: any graph).
+    private var breakTarget: Entity?
+    private var recording = false
+    private var callDepth = 0
+    private var frameCount = 0
+    private var traceFrame = -1
+
+    /// Breaks at the next node any graph runs (or only `entity`'s), as if it had a breakpoint:
+    /// how stepping goes on past the end of a trace.
+    public func breakAtNextNode(of entity: Entity? = nil) {
+        breakTarget = entity ?? .invalid
+    }
+
+    /// Forgets the trace and a pending `breakAtNextNode` (the debugger resumed).
+    public func clearTrace() {
+        trace = nil
+        breakTarget = nil
+    }
     /// Seconds spent in each graph (by key) in the last frame.
     public private(set) var timings: [String: Double] = [:]
 
@@ -357,6 +437,17 @@ public final class VisualScriptRuntime {
 
     func detach() {
         if Self.byWorld[ObjectIdentifier(world)]?.runtime === self { Self.byWorld[ObjectIdentifier(world)] = nil }
+        let handlers = detachHandlers
+        detachHandlers.removeAll()
+        for handler in handlers { handler() }
+    }
+
+    private var detachHandlers: [@MainActor () -> Void] = []
+
+    /// Calls `handler` once when the runtime is removed (`World.removeVisualScripts`, `shutdown`):
+    /// higher modules undo what their nodes set up (layouts a graph showed…).
+    public func onDetach(_ handler: @escaping @MainActor () -> Void) {
+        detachHandlers.append(handler)
     }
 
     // MARK: Swift interop
@@ -483,6 +574,7 @@ public final class VisualScriptRuntime {
     /// The `.update` part of a frame: instances synced, input and physics events, custom event
     /// sources, timers, the update event, then latent actions.
     public func update() {
+        frameCount += 1
         timings.removeAll(keepingCapacity: true)
         syncInstances()
         let dt = world.time.delta
@@ -634,6 +726,7 @@ public final class VisualScriptRuntime {
         }
         if outermost {
             timings[instance.program.name, default: 0] += Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9
+            recording = false
         }
         if profiling { Profiler.end() }
     }
@@ -662,11 +755,19 @@ public final class VisualScriptRuntime {
             if steps > stepLimit { throw VSRunaway(node: node.id, message: "more than \(stepLimit) node runs in one event (endless loop?)") }
             guard let definition = node.definition, let run = definition.run, definition.kind == .action else { return }
             note(instance, frame, index)
-            if node.source.breakpoint {
+            let stepped = breakTarget.map { $0 == .invalid || $0 == instance.entity } ?? false
+            if node.source.breakpoint || stepped {
+                if stepped { breakTarget = nil }
                 let hit = VisualScriptBreak(graph: instance.key, node: node.id, entity: instance.entity)
                 lastBreak = hit
+                if traceFrame != frameCount || trace == nil {
+                    trace = VisualScriptTrace(hit: hit, steps: [])
+                    traceFrame = frameCount
+                    recording = true
+                }
                 host.onBreakpoint?(hit)
             }
+            let step = recording ? beginStep(instance, frame, index) : nil
             epoch += 1
             let context = VisualScriptNodeContext(runtime: self, instance: instance, frame: frame, node: index,
                                                   trigger: node.inputs.indices.contains(pin) ? node.inputs[pin].name : "in")
@@ -674,8 +775,10 @@ public final class VisualScriptRuntime {
             do {
                 flow = try run(context)
             } catch let error as VisualScriptError {
+                if let step { endStep(step, frame, index, error: error.message) }
                 throw VSNodeFailure(node: node.id, message: error.message)
             }
+            if let step { endStep(step, frame, index, error: nil) }
             switch flow {
             case .out(let name):
                 guard let p = node.outputIndex[name] else { return }
@@ -684,6 +787,39 @@ public final class VisualScriptRuntime {
                 current = nil
             }
         }
+    }
+
+    /// Records the start of a node run in the trace; returns its index.
+    private func beginStep(_ instance: VisualScriptInstance, _ frame: VSFrame, _ index: Int) -> Int? {
+        guard var trace, recording else { return nil }
+        guard trace.steps.count < traceLimit else {
+            trace.truncated = true
+            self.trace = trace
+            return nil
+        }
+        trace.steps.append(VisualScriptTraceStep(graph: instance.key, entity: instance.entity, function: frame.body.function?.name,
+                                                 node: frame.body.nodes[index].id, depth: callDepth, variables: instance.variables))
+        self.trace = trace
+        return trace.steps.count - 1
+    }
+
+    /// Fills in what a recorded node read and produced.
+    private func endStep(_ step: Int, _ frame: VSFrame, _ index: Int, error: String?) {
+        guard trace?.steps.indices.contains(step) == true else { return }
+        let node = frame.body.nodes[index]
+        var inputs: [String: VisualScriptValue] = [:]
+        for (p, pin) in node.inputs.enumerated() where pin.type != .exec {
+            if let (source, out) = node.dataSource[p] {
+                inputs[pin.name] = frame.outputs[source][out]
+            } else if let literal = node.literal[p] {
+                inputs[pin.name] = literal
+            }
+        }
+        var outputs: [String: VisualScriptValue] = [:]
+        for (p, pin) in node.outputs.enumerated() where pin.type != .exec { outputs[pin.name] = frame.outputs[index][p] }
+        trace?.steps[step].inputs = inputs
+        trace?.steps[step].outputs = outputs
+        trace?.steps[step].error = error
     }
 
     /// Makes pure nodes compute again on their next read (loops re-reading a condition).
@@ -733,7 +869,19 @@ public final class VisualScriptRuntime {
                 frame.outputs[entry][p] = (i < arguments.count ? arguments[i] : .zero(parameter.type)).converted(to: parameter.type)
             }
             if let p = node.outputIndex["out"], let next = node.next[p] {
+                callDepth += 1
+                defer { callDepth -= 1 }
                 try execute(instance, frame, next.node, next.pin)
+            }
+        }
+        // A flow that ended without reaching Return (or a Return no exec wire reaches) still
+        // returns what is wired into the Return node, read now.
+        if frame.results == nil, let ret = body.nodes.firstIndex(where: { $0.source.type == "function.return" }) {
+            epoch += 1
+            let node = body.nodes[ret]
+            frame.results = try function.outputs.map { parameter in
+                guard let pin = node.inputIndex[parameter.name] else { return .zero(parameter.type) }
+                return try pull(instance, frame, ret, pin)
             }
         }
         let results = frame.results ?? []

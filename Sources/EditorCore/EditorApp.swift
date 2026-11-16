@@ -765,6 +765,7 @@ public final class EditorApp: Game, EditorHost {
         dialogueWorkspace.images = { [unowned self] path in projectTexture(path, fullSize: false) }
         gameWidget.addChild(gameDialogue)
         session.dialoguePresenter = gameDialogue
+        session.visualScriptUILayer = gameWidget
         visualScriptWorkspace = VisualScriptWorkspace(session: session)
         meshWorkspace.device = engine?.device
         if let quality = engine?.quality { meshWorkspace.quality = quality }

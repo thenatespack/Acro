@@ -89,6 +89,33 @@ enum VisualScriptWorldNodes {
                 c.world.query(Name.self) { entity, n in if n.value == name { found.append(.entity(entity)) } }
                 c.set("entities", .array(found))
             },
+            VSNode.pure("world.findByTag", "Find by Tag", "World", "The first entity tagged `tag` (its Tag component lists it).",
+                        [VSPin("tag", .string)], [VSPin("entity", .entity), VSPin("found", .bool)]) { c in
+                let found = c.world.firstEntity(taggedWith: try c.string("tag"))
+                c.set("entity", .entity(found ?? .invalid))
+                c.set("found", .bool(found != nil))
+            },
+            VSNode.pure("world.findAllByTag", "Find All by Tag", "World", "Every entity tagged `tag`, as an array.",
+                        [VSPin("tag", .string)], [VSPin("entities", .array)]) { c in
+                c.set("entities", .array(c.world.entities(taggedWith: try c.string("tag")).map { .entity($0) }))
+            },
+            VSNode.pure("world.hasTag", "Has Tag", "World", "Whether `entity` is tagged `tag`.", [entity, VSPin("tag", .string)],
+                        [VSPin("result", .bool)]) { c in
+                c.set("result", .bool(c.world.hasTag(try c.string("tag"), try c.entity("entity"))))
+            },
+            VSNode.pure("world.getTags", "Get Tags", "World", "`entity`'s tags, as an array of text.", [entity], [VSPin("tags", .array)]) { c in
+                c.set("tags", .array((c.world.get(Tags.self, for: try c.entity("entity"))?.tags ?? []).map { .string($0) }))
+            },
+            VSNode.action("world.addTag", "Add Tag", "World", "Tags `entity` with `tag` (adding a Tag component if needed). Unconnected: this entity.",
+                          [entity, VSPin("tag", .string, required: true)]) { c in
+                c.world.addTag(try c.string("tag"), to: try c.liveEntity("entity"))
+                return .next
+            },
+            VSNode.action("world.removeTag", "Remove Tag", "World", "Removes `tag` from `entity` (and the Tag component once it is empty).",
+                          [entity, VSPin("tag", .string, required: true)]) { c in
+                c.world.removeTag(try c.string("tag"), from: try c.entity("entity"))
+                return .next
+            },
             VSNode.pure("world.isValid", "Is Valid", "World", "Whether `entity` exists.", [VSPin("entity", .entity)], [VSPin("valid", .bool)]) { c in
                 c.set("valid", .bool(c.world.isAlive(try c.entity("entity"))))
             },

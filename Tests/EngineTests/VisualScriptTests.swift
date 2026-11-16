@@ -440,6 +440,26 @@ private final class Rig {
         #expect(!world.systemNames(in: .update).contains("vscript.update"))
     }
 
+    @Test func backgroundImportsGetTheFullChecks() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("VisualScriptTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let project = try Project.create(at: url, name: "VisualScriptBackground")
+        let database = AssetDatabase(project: project)
+        var warnings: [String] = []
+        database.onChange = { warnings += $0.warnings }
+        let graph = VisualScriptGraph(nodes: [node("start", "event.start"), node("x", "nope"), node("log", "debug.log")],
+                                      links: [link("start.out", "log.in")])
+        let file = project.url(forAssetPath: "Scripts/bad.vscript")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try graph.fileData().write(to: file)
+        _ = database.refreshAsync()
+        #expect(database.waitForAll(timeout: 30))
+        #expect(warnings.contains { $0.contains("unknown node type 'nope'") }, "\(warnings)")
+        // The importer alone (any thread) only checks the structure.
+        let issues = VisualScriptValidator.structuralIssues(graph)
+        #expect(!issues.contains { $0.message.contains("unknown node type") })
+    }
+
     @Test func engineNodesUseProjectAssets() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("VisualScriptTests-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: url) }
@@ -478,6 +498,216 @@ private final class Rig {
         _ = effect
         for _ in 0..<6 { world.update(dt: 0.1) }
         #expect(puff.map(world.isAlive) == false)
+    }
+
+    @Test func breakpointsRecordTheFlowForStepping() throws {
+        let graph = try decode("""
+            {"variables": [{"name": "n", "type": "int"}, {"name": "ticks", "type": "int"}],
+             "nodes": [
+              {"id": "start", "type": "event.start"},
+              {"id": "a", "type": "var.set", "config": {"variable": "n"}, "inputs": {"value": 1}, "breakpoint": true},
+              {"id": "call", "type": "function.call", "config": {"function": "twice"}, "inputs": {"x": 4}},
+              {"id": "b", "type": "var.set", "config": {"variable": "n"}},
+              {"id": "tick", "type": "event.update"},
+              {"id": "count", "type": "var.set", "config": {"variable": "ticks"}, "inputs": {"value": 7}}
+             ],
+             "links": [{"from": "start.out", "to": "a.in"}, {"from": "a.out", "to": "call.in"}, {"from": "call.out", "to": "b.in"},
+                       {"from": "call.y", "to": "b.value"}, {"from": "tick.out", "to": "count.in"}],
+             "functions": [{"name": "twice", "inputs": [{"name": "x", "type": "int"}], "outputs": [{"name": "y", "type": "int"}],
+               "nodes": [{"id": "entry", "type": "function.entry"}, {"id": "mul", "type": "math.multiply", "inputs": {"b": 2}},
+                         {"id": "ret", "type": "function.return"}],
+               "links": [{"from": "entry.out", "to": "ret.in"}, {"from": "entry.x", "to": "mul.a"}, {"from": "mul.result", "to": "ret.y"}]}]}
+            """)
+        let rig = Rig(graph)
+        var hits: [String] = []
+        rig.host.onBreakpoint = { hits.append($0.node) }
+        rig.step()
+        #expect(rig.lines.isEmpty, "\(rig.lines)")
+        #expect(hits == ["a"])
+        let trace = try #require(rig.runtime.trace)
+        #expect(trace.steps.map(\.node) == ["a", "call", "ret", "b"])
+        #expect(trace.steps.map(\.depth) == [0, 0, 1, 0])
+        #expect(trace.steps[2].function == "twice")
+        #expect(trace.steps[0].variables["n"] == .int(0), "variables as the node started")
+        #expect(trace.steps[1].inputs["x"] == .int(4) && trace.steps[1].outputs["y"] == .int(8))
+        #expect(trace.steps[3].inputs["value"] == .int(8))
+        #expect(trace.next(after: 1, .into) == 2)
+        #expect(trace.next(after: 1, .over) == 3)
+        #expect(trace.next(after: 2, .out) == 3)
+        #expect(trace.next(after: 3, .into) == nil)
+
+        // Past the end: break at the next node this entity's graph runs (the update flow, next frame).
+        rig.runtime.breakAtNextNode(of: rig.entity)
+        rig.step()
+        #expect(hits == ["a", "count"])
+        #expect(rig.runtime.trace?.steps.map(\.node) == ["count"])
+        rig.step()
+        #expect(hits.count == 2, "only once")
+        rig.runtime.clearTrace()
+        #expect(rig.runtime.trace == nil)
+    }
+
+    @Test func functionSignaturesKeepWiresThroughRenames() throws {
+        let graph = try decode("""
+            {"variables": [{"name": "r", "type": "float"}],
+             "nodes": [
+              {"id": "start", "type": "event.start"},
+              {"id": "call", "type": "function.call", "config": {"function": "scale"}, "inputs": {"x": 3, "k": 5}},
+              {"id": "set", "type": "var.set", "config": {"variable": "r"}}
+             ],
+             "links": [{"from": "start.out", "to": "call.in"}, {"from": "call.out", "to": "set.in"}, {"from": "call.y", "to": "set.value"}],
+             "functions": [{"name": "scale", "inputs": [{"name": "x"}, {"name": "k"}], "outputs": [{"name": "y"}],
+               "nodes": [{"id": "entry", "type": "function.entry"}, {"id": "mul", "type": "math.multiply", "inputs": {"b": 2}},
+                         {"id": "ret", "type": "function.return"}],
+               "links": [{"from": "entry.out", "to": "ret.in"}, {"from": "entry.x", "to": "mul.a"}, {"from": "entry.k", "to": "mul.b"},
+                         {"from": "mul.result", "to": "ret.y"}]}]}
+            """)
+        // Rename x → value and y → result, drop k, add an int output.
+        let edited = try graph.applying(VisualScriptEdit(signatures: [VisualScriptFunctionSignature(
+            function: "scale", inputs: [VisualScriptParameter(name: "value")],
+            outputs: [VisualScriptParameter(name: "result"), VisualScriptParameter(name: "count", type: .int)],
+            renamedInputs: ["x": "value"], renamedOutputs: ["y": "result"])])).graph
+        let function = try #require(edited.function("scale"))
+        #expect(function.inputs.map(\.name) == ["value"] && function.outputs.map(\.name) == ["result", "count"])
+        #expect(Set(function.links) == [link("entry.out", "ret.in"), link("entry.value", "mul.a"), link("mul.result", "ret.result")])
+        #expect(edited.links.contains(link("call.result", "set.value")))
+        #expect(edited.node("call")?.inputs == ["value": .int(3)], "literals follow the rename; the removed pin's goes")
+        #expect(VisualScriptValidator.validate(edited).filter { $0.severity == .error }.isEmpty, "\(VisualScriptValidator.validate(edited))")
+        let rig = Rig(edited)
+        rig.step()
+        #expect(rig.variable("r") == .float(6))
+
+        #expect(throws: VisualScriptEditError.self) {
+            try graph.applying(VisualScriptEdit(signatures: [VisualScriptFunctionSignature(function: "scale", inputs: [
+                VisualScriptParameter(name: "a"), VisualScriptParameter(name: "a")])]))
+        }
+        #expect(throws: VisualScriptEditError.self) {
+            try graph.applying(VisualScriptEdit(signatures: [VisualScriptFunctionSignature(function: "scale", outputs: [VisualScriptParameter(name: "out")])]))
+        }
+    }
+
+    @Test func collapsingAFlowThatEndsInsideKeepsItsOutputs() throws {
+        // start → s1 (n = 4) ends the flow; dbl reads s1 and update stores dbl into m.
+        let graph = try decode("""
+            {"variables": [{"name": "n", "type": "int"}, {"name": "m", "type": "int"}],
+             "nodes": [
+              {"id": "start", "type": "event.start"},
+              {"id": "s1", "type": "var.set", "config": {"variable": "n"}, "inputs": {"value": 4}},
+              {"id": "dbl", "type": "math.multiply", "inputs": {"b": 2}},
+              {"id": "tick", "type": "event.update"},
+              {"id": "s2", "type": "var.set", "config": {"variable": "m"}}
+             ],
+             "links": [{"from": "start.out", "to": "s1.in"}, {"from": "s1.value", "to": "dbl.a"},
+                       {"from": "tick.out", "to": "s2.in"}, {"from": "dbl.result", "to": "s2.value"}]}
+            """)
+        let original = Rig(graph)
+        original.step()
+        #expect(original.variable("m") == .int(8))
+
+        let collapsed = try graph.collapsingToFunction(["s1", "dbl"], name: "setup")
+        let function = try #require(collapsed.function("setup"))
+        #expect(!function.pure && function.outputs.map(\.name) == ["result"])
+        #expect(!function.links.contains { $0.to == "return.in" }, "no exec wire leaves: the flow ends inside")
+        let issues = VisualScriptValidator.validate(collapsed).filter { $0.severity != .info }
+        #expect(issues.isEmpty, "\(issues)")
+        let rig = Rig(collapsed)
+        rig.step()
+        #expect(rig.lines.isEmpty, "\(rig.lines)")
+        #expect(rig.variable("n") == .int(4))
+        #expect(rig.variable("m") == .int(8), "the call's output is what reaches Return when the flow ends, not zero")
+    }
+
+    @Test func reroutesPassFlowsAndValues() throws {
+        // start → r1 → r2 → set (exec through two reroutes); 21 → rv → mul.a (data), several targets from one reroute.
+        let graph = try decode("""
+            {"variables": [{"name": "x", "type": "int"}, {"name": "y", "type": "int"}],
+             "nodes": [
+              {"id": "start", "type": "event.start"}, {"id": "r1", "type": "reroute"}, {"id": "r2", "type": "reroute"},
+              {"id": "lit", "type": "math.add", "inputs": {"a": 20, "b": 1}}, {"id": "rv", "type": "reroute"},
+              {"id": "mul", "type": "math.multiply", "inputs": {"b": 2}},
+              {"id": "set", "type": "var.set", "config": {"variable": "x"}},
+              {"id": "set2", "type": "var.set", "config": {"variable": "y"}}
+             ],
+             "links": [{"from": "start.out", "to": "r1.in"}, {"from": "r1.out", "to": "r2.in"}, {"from": "r2.out", "to": "set.in"},
+                       {"from": "set.out", "to": "set2.in"},
+                       {"from": "lit.result", "to": "rv.in"}, {"from": "rv.out", "to": "mul.a"}, {"from": "mul.result", "to": "set.value"},
+                       {"from": "rv.out", "to": "set2.value"}]}
+            """)
+        let execType = VisualScriptNodes.definition("reroute")?.signature(for: graph.node("r2")!, in: graph)
+        #expect(execType?.inputs.first?.type == .exec)
+        #expect(VisualScriptNodes.definition("reroute")?.signature(for: graph.node("rv")!, in: graph).outputs.first?.type
+                == VisualScriptNodes.definition("math.add")?.signature(for: graph.node("lit")!, in: graph).output("result")?.type, "the type of the wire in")
+        let issues = VisualScriptValidator.validate(graph).filter { $0.severity != .info }
+        #expect(issues.isEmpty, "\(issues)")
+        let rig = Rig(graph)
+        rig.step()
+        #expect(rig.lines.isEmpty, "\(rig.lines)")
+        #expect(rig.variable("x") == .int(42) && rig.variable("y") == .int(21))
+        #expect(!rig.runtime.instances.values.first!.program.nodeIDs.contains("r1"), "reroutes are compiled away")
+    }
+
+    @Test func macrosAreInlinedPerUse() throws {
+        // A macro "alternate": flow in → flip-flop → exec outputs a / b, plus a delay on a third path,
+        // and a data input `amount` passed through to a data output `twice`.
+        let graph = try decode("""
+            {"variables": [{"name": "a", "type": "int"}, {"name": "b", "type": "int"}, {"name": "late", "type": "int"},
+                           {"name": "t", "type": "int"}],
+             "nodes": [
+              {"id": "tick", "type": "event.update"}, {"id": "tick2", "type": "event.update"},
+              {"id": "m1", "type": "function.call", "config": {"function": "alternate"}, "inputs": {"amount": 5}},
+              {"id": "m2", "type": "function.call", "config": {"function": "alternate"}, "inputs": {"amount": 1}},
+              {"id": "geta", "type": "var.get", "config": {"variable": "a"}}, {"id": "inca", "type": "math.add", "inputs": {"b": 1}},
+              {"id": "seta", "type": "var.set", "config": {"variable": "a"}},
+              {"id": "getb", "type": "var.get", "config": {"variable": "b"}}, {"id": "incb", "type": "math.add", "inputs": {"b": 1}},
+              {"id": "setb", "type": "var.set", "config": {"variable": "b"}},
+              {"id": "setLate", "type": "var.set", "config": {"variable": "late"}, "inputs": {"value": 1}},
+              {"id": "sett", "type": "var.set", "config": {"variable": "t"}}
+             ],
+             "links": [{"from": "tick.out", "to": "m1.go"}, {"from": "m1.first", "to": "seta.in"}, {"from": "m1.second", "to": "setb.in"},
+                       {"from": "geta.value", "to": "inca.a"}, {"from": "inca.result", "to": "seta.value"},
+                       {"from": "getb.value", "to": "incb.a"}, {"from": "incb.result", "to": "setb.value"},
+                       {"from": "seta.out", "to": "sett.in"}, {"from": "m1.twice", "to": "sett.value"},
+                       {"from": "m2.later", "to": "setLate.in"}, {"from": "tick2.out", "to": "m2.go"}],
+             "functions": [{"name": "alternate", "macro": true,
+               "inputs": [{"name": "go", "type": "exec"}, {"name": "amount", "type": "int"}],
+               "outputs": [{"name": "first", "type": "exec"}, {"name": "second", "type": "exec"}, {"name": "later", "type": "exec"},
+                           {"name": "twice", "type": "int"}],
+               "nodes": [{"id": "entry", "type": "function.entry"}, {"id": "ff", "type": "flow.flipFlop"},
+                         {"id": "wait", "type": "flow.delay", "inputs": {"seconds": 0.05}}, {"id": "seq", "type": "flow.sequence"},
+                         {"id": "dbl", "type": "math.multiply", "inputs": {"b": 2}}, {"id": "ret", "type": "function.return"}],
+               "links": [{"from": "entry.go", "to": "seq.in"}, {"from": "seq.out0", "to": "ff.in"}, {"from": "seq.out1", "to": "wait.in"},
+                         {"from": "ff.a", "to": "ret.first"}, {"from": "ff.b", "to": "ret.second"}, {"from": "wait.out", "to": "ret.later"},
+                         {"from": "entry.amount", "to": "dbl.a"}, {"from": "dbl.result", "to": "ret.twice"}]}]}
+            """)
+        let issues = VisualScriptValidator.validate(graph).filter { $0.severity != .info }
+        #expect(issues.isEmpty, "\(issues)")
+        #expect(VisualScriptNodes.definition("function.call")?.signature(for: graph.node("m1")!, in: graph).inputs.map(\.name) == ["go", "amount"])
+        let rig = Rig(graph)
+        rig.step(1, dt: 0.02)
+        #expect(rig.lines.isEmpty, "\(rig.lines)")
+        #expect(rig.variable("late") == .int(0), "the delay waits")
+        rig.step(2, dt: 0.02)
+        #expect(rig.variable("a") == .int(2) && rig.variable("b") == .int(1), "the flip-flop alternates: a, b, a")
+        #expect(rig.variable("t") == .int(10), "data passes through the macro (5 × 2)")
+        #expect(rig.variable("late") == .int(1), "the delay inside the macro continued the flow")
+    }
+
+    @Test func pureFunctionCallsAreComputed() throws {
+        // Collapsing pure nodes makes a pure function; its call has no exec pins and is computed when read.
+        let graph = try decode("""
+            {"variables": [{"name": "r", "type": "int"}],
+             "nodes": [{"id": "start", "type": "event.start"}, {"id": "add", "type": "math.add", "inputs": {"a": 2, "b": 3}},
+                       {"id": "mul", "type": "math.multiply", "inputs": {"b": 4}}, {"id": "set", "type": "var.set", "config": {"variable": "r"}}],
+             "links": [{"from": "start.out", "to": "set.in"}, {"from": "add.result", "to": "mul.a"}, {"from": "mul.result", "to": "set.value"}]}
+            """)
+        let collapsed = try graph.collapsingToFunction(["add", "mul"], name: "math")
+        #expect(collapsed.function("math")?.pure == true)
+        let issues = VisualScriptValidator.validate(collapsed).filter { $0.severity != .info }
+        #expect(issues.isEmpty, "\(issues)")
+        let rig = Rig(collapsed)
+        rig.step()
+        #expect(rig.lines.isEmpty, "\(rig.lines)")
+        #expect(rig.variable("r") == .int(20))
     }
 
     @Test func componentDefaultsListExposedVariables() {
