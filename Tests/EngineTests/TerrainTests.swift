@@ -467,4 +467,120 @@ private func flat(_ resolution: Int = 33, size: Float = 32, height: Float = 0.25
             }
         }
     }
+
+    // MARK: Graph material layers
+
+    @Test func layerGraphsRepeatPerTileAndFollowTheMask() throws {
+        let graph = try JSONDecoder().decode(MaterialGraph.self, from: Data(#"""
+        {"nodes": [{"id": "n", "type": "noise", "scale": 4},
+                   {"id": "u", "type": "uv", "scale": [2, 2]},
+                   {"id": "s", "type": "scrollUV", "uv": "u"}],
+         "output": {"baseColor": "n", "emissive": "s.x", "opacity": 0.5}}
+        """#.utf8))
+        let terrain = flat(9, size: 8)
+        let mask = AssetReference(AssetID(high: 1, low: 2), subAsset: "texture/A mask")
+        let g = TerrainImporter.layerGraph(graph, terrain: terrain, tileSize: 2, mask: mask)
+        #expect(g.node("n")?["uv"] == .string("terrainUV"), "unlinked UVs read the terrain's repeats")
+        #expect(g.node("terrainUV")?["scale"] == .array([.double(4), .double(4)]) && g.node("terrainUV")?["offset"] == .array([.double(-2), .double(-2)]))
+        #expect(g.node("u")?.type == "math" && g.node("u")?["a"] == .string("uScaled") && g.node("uScaled")?["a"] == .string("terrainUV"))
+        #expect(g.node("s")?["uv"] == .string("u"), "linked UVs stay linked")
+        #expect(g.output["opacity"] == .string("terrainOpacity") && g.node("terrainOpacity")?["a"] == .double(0.5) || g.node("terrainOpacity")?["a"] == .int(0))
+        #expect(g.node("terrainMask")?["texture"] == .string(mask.description))
+        let compiled = MaterialGraphCompiler.compile(g)
+        #expect(compiled.warnings.isEmpty, "\(compiled.warnings)")
+        #expect(compiled.program?.textures == [mask])
+        // Overlays are lifted along the normal; only chunks with paint get one.
+        let lifted = TerrainImporter.overlayMesh(terrain, 0, 0, lod: 1)
+        #expect(abs(lifted.vertices[0].position.y - terrain.chunkMesh(0, 0, lod: 1).vertices[0].position.y - 0.04) < 1e-5)
+        var painted = terrain
+        painted.splatData[1][0] = 255
+        #expect(TerrainImporter.chunkHasWeight(painted, layer: 1, 0, 0) && !TerrainImporter.chunkHasWeight(painted, layer: 1, 0, 1))
+        #expect(painted.splatImage(firstLayer: 0, skipping: [0]).pixels[4 * 40] == 0, "a skipped layer is left out")
+    }
+
+    /// A graph material layer draws where it's painted, on Metal and on Vulkan, alike.
+    @MainActor @Test func graphLayerRendersOnEveryBackend() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        try FileManager.default.createDirectory(at: project.assetsURL.appendingPathComponent("Materials"), withIntermediateDirectories: true)
+        try Data(#"""
+        {"shading": "pbr", "graph": {"nodes": [{"id": "c", "type": "color", "value": [0, 1, 0, 1]}],
+                                     "output": {"baseColor": [0, 0, 0], "emissive": "c.rgb", "roughness": 1}}}
+        """#.utf8).write(to: project.assetsURL.appendingPathComponent("Materials/glow.material"))
+        database.refresh()
+        var terrain = flat(9, size: 8, height: 0)
+        terrain.collider = false
+        terrain.lods = 2
+        terrain.chunkCells = 4
+        terrain.layers = [TerrainLayer(name: "Red", color: Vec3(1, 0, 0)),
+                          TerrainLayer(name: "Glow", color: Vec3(0, 0, 1), material: "Materials/glow.material"),
+                          TerrainLayer(name: "Lost", material: "Materials/none.material")]
+        terrain.normalizeData()
+        // Rows 0-3: columns 5-8 glow, column 4 half and half; red elsewhere.
+        let glow: [UInt8] = (0..<81).map { i in i / 9 >= 4 ? 0 : i % 9 > 4 ? 255 : i % 9 == 4 ? 127 : 0 }
+        terrain.splatData = [glow.map { 255 - $0 }, glow, [UInt8](repeating: 0, count: 81)]
+        let id = try database.createTerrain(terrain, at: "Maps/glow.terrain")
+        database.waitForAll()
+        let record = try #require(database.record(id))
+        #expect(record.importError == nil)
+        let names = Set(record.objects.map(\.id))
+        #expect(names.isSuperset(of: ["material/Glow layer", "texture/Glow mask", "mesh/chunk 1_0 Glow", "mesh/chunk 1_0 Glow lod1"]))
+        #expect(names.contains("mesh/chunk 0_0 Glow"), "column 4 is shared with chunk 0_0")
+        #expect(!names.contains("material/Lost layer") && !names.contains("mesh/chunk 0_1 Glow") && !names.contains("mesh/chunk 1_1 Glow"),
+                "only painted chunks get an overlay")
+        let prefab = try #require(database.prefab(AssetReference(id)))
+        let chunk = try #require(prefab.roots[0].children.first { $0.name == "chunk 1_0" })
+        #expect(chunk.children.map(\.name) == ["Glow"] && chunk.children[0].lod?.meshes.count == 1)
+
+        let view = SceneView(view: Mat4.lookAt(eye: Vec3(0, 7, 4), target: .zero),
+                             projection: Mat4.perspective(fovY: 0.9, aspect: 1, near: 0.1, far: 30))
+        func pixel(_ p: Vec3) -> (Int, Int) {
+            let c = view.viewProjection * Vec4(p.x, p.y, p.z, 1)
+            return (Int((c.x / c.w * 0.5 + 0.5) * 32), Int((0.5 - c.y / c.w * 0.5) * 32))
+        }
+        let spots = ["red": pixel(Vec3(-2.5, 0, -2.5)), "glow": pixel(Vec3(2.5, 0, -2.5)), "edge": pixel(Vec3(0, 0, -2.5)),
+                     "south": pixel(Vec3(2.5, 0, 2.5))]
+        var results: [String: [String: [UInt8]]] = [:]
+        try TestDevices.forEachBackend { device, frames in
+            let renderer = try SceneRenderer(device: device, quality: .high)
+            renderer.assets = database
+            renderer.blocksOnAssetLoading = true
+            let target = try RenderTarget(device: device, width: 32, height: 32, multisampled: false)
+            let world = World()
+            _ = world.spawn(Transform(rotation: .lookRotation(forward: -normalize(Vec3(0.3, 1, 0.2)))), DirectionalLight(intensity: 0.5))
+            _ = world.instantiate(prefab)
+            world.propagateTransforms()
+            var pixels: Image?
+            for _ in 0..<2 {
+                try frames.run { frame in
+                    renderer.beginViews(world: world, frame: frame, shadowFocus: view)
+                    renderer.renderView(view, into: target, frame: frame)
+                    device.readBack(target.gpu) { pixels = $0 }
+                }
+            }
+            let image = try #require(pixels)
+            var colors: [String: [UInt8]] = [:]
+            for (name, (x, y)) in spots {
+                let i = (y * image.width + x) * 4
+                colors[name] = Array(image.pixels[i..<i + 3])
+            }
+            results["\(device.backend)"] = colors
+        }
+        #if ENGINE_VULKAN && canImport(Metal)
+        #expect(results.keys.contains("vulkan") && results.keys.contains("metal"), "both backends ran")
+        #endif
+        for (label, colors) in results {
+            let red = colors["red"]!, glow = colors["glow"]!, edge = colors["edge"]!
+            #expect(red[0] > 2 * Int(red[1]) + 10 && red[0] > 40, "\(label): \(colors)")
+            #expect(glow[1] > 200 && glow[0] < 60 && glow[2] < 60, "the graph's green, \(label): \(colors)")
+            #expect(edge[0] > 40 && edge[1] > 100, "half and half, \(label): \(colors)")
+            #expect(colors["south"]![0] > 40 && colors["south"]![1] < 60, "unpainted: red, \(label): \(colors)")
+        }
+        if let metal = results["metal"], let vulkan = results["vulkan"] {
+            for (name, color) in metal {
+                #expect(zip(color, vulkan[name]!).allSatisfy { abs(Int($0) - Int($1)) <= 3 }, "\(name): metal \(color) vulkan \(vulkan[name]!)")
+            }
+        }
+    }
 }

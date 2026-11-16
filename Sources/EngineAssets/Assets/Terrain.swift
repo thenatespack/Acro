@@ -51,23 +51,28 @@ public struct TerrainLayer: Codable, Equatable, Sendable {
     /// A tangent-space normal map (linear XYZ in RGB, +Y toward decreasing V), a path under
     /// `Assets/` like `texture`, tiled the same way. Used by per-pixel blending (not the baked albedo).
     public var normalMap: String
+    /// A `.material` file with a node graph (a path under `Assets/`) drawn where this layer is
+    /// painted instead of `texture` (see TerrainGraphLayers.swift); its UVs repeat every `tileSize`.
+    public var material: String
 
     public static var fieldHints: [String: FieldHints] {
         ["color": FieldHints(color: true), "texture": FieldHints(tooltip: "An image or .proctex under Assets/"),
          "tileSize": FieldHints(range: 0.1...1000, step: 0.1, tooltip: "Meters per texture repeat"),
-         "normalMap": FieldHints(tooltip: "A tangent-space normal map image or .proctex under Assets/")]
+         "normalMap": FieldHints(tooltip: "A tangent-space normal map image or .proctex under Assets/"),
+         "material": FieldHints(tooltip: "A graph .material under Assets/ drawn instead of the texture")]
     }
 
     public init(name: String = "Layer", color: Vec3 = Vec3(0.4, 0.4, 0.4), texture: String = "", tileSize: Float = 4,
-                normalMap: String = "") {
+                normalMap: String = "", material: String = "") {
         self.name = name
         self.color = color
         self.texture = texture
         self.tileSize = tileSize
         self.normalMap = normalMap
+        self.material = material
     }
 
-    private enum CodingKeys: String, CodingKey { case name, color, texture, tileSize, normalMap }
+    private enum CodingKeys: String, CodingKey { case name, color, texture, tileSize, normalMap, material }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -76,10 +81,11 @@ public struct TerrainLayer: Codable, Equatable, Sendable {
                   color: try c.decodeIfPresent(Vec3.self, forKey: .color) ?? d.color,
                   texture: try c.decodeIfPresent(String.self, forKey: .texture) ?? d.texture,
                   tileSize: try c.decodeIfPresent(Float.self, forKey: .tileSize) ?? d.tileSize,
-                  normalMap: try c.decodeIfPresent(String.self, forKey: .normalMap) ?? d.normalMap)
+                  normalMap: try c.decodeIfPresent(String.self, forKey: .normalMap) ?? d.normalMap,
+                  material: try c.decodeIfPresent(String.self, forKey: .material) ?? d.material)
     }
 
-    /// Writes `normalMap` only when set.
+    /// Writes `normalMap` and `material` only when set.
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(name, forKey: .name)
@@ -87,6 +93,7 @@ public struct TerrainLayer: Codable, Equatable, Sendable {
         try c.encode(texture, forKey: .texture)
         try c.encode(tileSize, forKey: .tileSize)
         if !normalMap.isEmpty { try c.encode(normalMap, forKey: .normalMap) }
+        if !material.isEmpty { try c.encode(material, forKey: .material) }
     }
 }
 
@@ -707,11 +714,11 @@ extension Terrain {
     /// textured layers repeating every `tileSize` meters. `images` are the layers' decoded
     /// textures (nil: use the layer's flat color), by layer index.
     /// The splat weights of layers `first..<first + 4` as an RGBA image with one texel per height
-    /// sample (row z, column x), for `TerrainSplat`'s shader.
-    public func splatImage(firstLayer first: Int) -> Image {
+    /// sample (row z, column x), for `TerrainSplat`'s shader; layers in `skipping` are left at 0.
+    public func splatImage(firstLayer first: Int, skipping: Set<Int> = []) -> Image {
         let n = res
         var pixels = [UInt8](repeating: 0, count: n * n * 4)
-        for c in 0..<4 where first + c < layers.count {
+        for c in 0..<4 where first + c < layers.count && !skipping.contains(first + c) {
             let layer = first + c
             for z in 0..<n {
                 for x in 0..<n { pixels[(z * n + x) * 4 + c] = UInt8(min(max(weight(layer: layer, x: x, z: z) * 255 + 0.5, 0), 255)) }

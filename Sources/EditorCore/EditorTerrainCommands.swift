@@ -22,7 +22,8 @@ public enum EditorTerrainCommands {
         (detail levels per chunk, swapped by camera distance), `lodDistance` (meters where level 1 starts, doubling per level; 0: \
         1.5 chunk widths), `collider` (a triangle-mesh collider per chunk), `colliderLod`, `albedoSize`, `seed`, \
         `layers` (each: name, color [r,g,b] 0-1 sRGB, texture (path under Assets/: an image or .proctex), tileSize meters per \
-        repeat, normalMap (an optional tangent-space normal map path, tiled like texture)); up to 8 layers blend per pixel on \
+        repeat, normalMap (an optional tangent-space normal map path, tiled like texture), material (an optional graph .material path \
+        drawn where the layer is painted, its UVs repeating every tileSize, instead of texture)); up to 8 layers blend per pixel on \
         the GPU (more are baked into one albedo, which low quality always draws), `scatter` rules (each: name, asset (a .meshbuild path, or "asset:<id>#mesh/<name>"), material, density \
         (candidate spots per 100 m²), minSlope/maxSlope degrees, minHeight/maxHeight meters, minScale/maxScale, layer (only \
         where this layer is painted), alignToNormal, seed, maxCount), and the data `heights` (base64 UInt16) and `splat` \
@@ -172,6 +173,9 @@ enum TerrainCheck {
         }
         for layer in terrain.layers where !layer.normalMap.isEmpty && MeshBuildCheck.resolve(layer.normalMap, session: session) == nil {
             problems.append("layer '\(layer.name)': no normal map asset '\(layer.normalMap)'")
+        }
+        for layer in terrain.layers where !layer.material.isEmpty && MeshBuildCheck.resolve(layer.material, session: session) == nil {
+            problems.append("layer '\(layer.name)': no material asset '\(layer.material)'")
         }
         for rule in terrain.scatter {
             if rule.asset.isEmpty {

@@ -17,7 +17,7 @@ public struct TerrainImporter: AssetImporter {
 
     public var name: String { "terrain" }
     public var fileExtensions: [String] { ["terrain"] }
-    public var version: Int { 3 }
+    public var version: Int { 4 }
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         var terrain: Terrain
@@ -49,6 +49,9 @@ public struct TerrainImporter: AssetImporter {
             context.warn("\(terrain.layers.count) layers: only \(TerrainSplat.maxLayers) blend per pixel, so the layers are baked into one texture")
         }
         let materialID = namer.id(kind: "material", name: "terrain", index: 0)
+        // Graph material layers draw over the ground (TerrainGraphLayers.swift), which leaves them out.
+        let graphLayers = Self.graphLayerMaterials(terrain, namer: &namer, asset: &asset, &context)
+        let skipped = Set(graphLayers.keys)
         var lowQuality: MaterialHandle?
         if perPixel {
             let layers = terrain.layers.isEmpty ? [TerrainLayer()] : terrain.layers
@@ -65,12 +68,12 @@ public struct TerrainImporter: AssetImporter {
                 normalID = id
             }
             let splatA = namer.id(kind: "texture", name: "splat 0", index: 3)
-            asset.add(splatA, name: "splat 0", .texture(TextureAsset(image: terrain.splatImage(firstLayer: 0), isSRGB: false,
+            asset.add(splatA, name: "splat 0", .texture(TextureAsset(image: terrain.splatImage(firstLayer: 0, skipping: skipped), isSRGB: false,
                                                                      generatesMipmaps: false)))
             var splatB: SubAssetID?
             if layers.count > 4 {
                 let id = namer.id(kind: "texture", name: "splat 1", index: 4)
-                asset.add(id, name: "splat 1", .texture(TextureAsset(image: terrain.splatImage(firstLayer: 4), isSRGB: false,
+                asset.add(id, name: "splat 1", .texture(TextureAsset(image: terrain.splatImage(firstLayer: 4, skipping: skipped), isSRGB: false,
                                                                      generatesMipmaps: false)))
                 splatB = id
             }
@@ -109,7 +112,22 @@ public struct TerrainImporter: AssetImporter {
                 }
                 let lod = levels.isEmpty && lowQuality == nil ? nil
                     : MeshLOD(meshes: levels, distances: levels.isEmpty ? [] : terrain.lodDistances, lowQualityMaterial: lowQuality)
-                chunks.append(PrefabNode(name: label, mesh: context.reference(meshID), material: material,
+                var overlays: [PrefabNode] = []
+                for (layer, overlayMaterial) in graphLayers.sorted(by: { $0.key < $1.key })
+                where Self.chunkHasWeight(terrain, layer: layer, cx, cz) {
+                    let name = terrain.layers[layer].name
+                    let overlayID = namer.id(kind: "mesh", name: "\(label) \(name)", index: index)
+                    asset.add(overlayID, name: "\(label) \(name)", .mesh(Self.overlayMesh(terrain, cx, cz, lod: 0)))
+                    var overlayLevels: [MeshHandle] = []
+                    for level in 1..<max(min(terrain.lods, 4), 1) {
+                        let levelID = namer.id(kind: "mesh", name: "\(label) \(name) lod\(level)", index: index)
+                        asset.add(levelID, name: "\(label) \(name) lod\(level)", .mesh(Self.overlayMesh(terrain, cx, cz, lod: level)))
+                        overlayLevels.append(MeshHandle(context.reference(levelID)))
+                    }
+                    overlays.append(PrefabNode(name: name, mesh: context.reference(overlayID), material: overlayMaterial,
+                                               lod: overlayLevels.isEmpty ? nil : MeshLOD(meshes: overlayLevels, distances: terrain.lodDistances)))
+                }
+                chunks.append(PrefabNode(name: label, mesh: context.reference(meshID), material: material, children: overlays,
                                          collider: terrain.collider ? terrain.chunkCollider(cx, cz) : nil, lod: lod))
                 index += 1
             }
