@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 245 tools.
+named by its id (see README › Use the editor › AI control). 246 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -46,7 +46,7 @@ optional arguments.
 | `selection` | [`selection.clear`](#selectionclear), [`selection.get`](#selectionget), [`selection.set`](#selectionset) |
 | `settings` | [`settings.get`](#settingsget), [`settings.setEditor`](#settingsseteditor), [`settings.setProject`](#settingssetproject) |
 | `sfx` | [`sfx.edit`](#sfxedit), [`sfx.get`](#sfxget), [`sfx.new`](#sfxnew), [`sfx.open`](#sfxopen), [`sfx.play`](#sfxplay), [`sfx.set`](#sfxset) |
-| `sprite` | [`sprite.draw`](#spritedraw), [`sprite.edit`](#spriteedit), [`sprite.get`](#spriteget), [`sprite.new`](#spritenew), [`sprite.open`](#spriteopen), [`sprite.set`](#spriteset) |
+| `sprite` | [`sprite.draw`](#spritedraw), [`sprite.edit`](#spriteedit), [`sprite.get`](#spriteget), [`sprite.importSheet`](#spriteimportsheet), [`sprite.new`](#spritenew), [`sprite.open`](#spriteopen), [`sprite.set`](#spriteset) |
 | `stats` | [`stats.get`](#statsget) |
 | `table` | [`table.edit`](#tableedit), [`table.exportCsv`](#tableexportcsv), [`table.get`](#tableget), [`table.importCsv`](#tableimportcsv), [`table.new`](#tablenew), [`table.open`](#tableopen), [`table.query`](#tablequery), [`table.set`](#tableset) |
 | `terrain` | [`terrain.edit`](#terrainedit), [`terrain.get`](#terrainget), [`terrain.new`](#terrainnew), [`terrain.open`](#terrainopen), [`terrain.paint`](#terrainpaint), [`terrain.scatter`](#terrainscatter), [`terrain.sculpt`](#terrainsculpt), [`terrain.set`](#terrainset) |
@@ -3370,7 +3370,7 @@ Result:
 
 **Draw Sprite** · _undoable_
 
-Draws on one cel (`frame`, `layer`) of a .sprite file in one undoable step: `pixels` (row strings stamped at `x`, `y`; "." keeps the pixel, or erases with `clear`) then `ops` ([{tool pencil|line|rect|fill|eraser, points [[x, y], …], color, filled}], optionally mirrored with `mirrorX` / `mirrorY`). A color is a palette index (0 = first), a row character ("3", "a", "." transparent) or a hex color (added to the palette if missing). Returns `preview`: the frame's visible pixels as rows. Rows: "." transparent, 0-9 a-z A-Z palette entries 0-61. Undoable (one step; edit.undo reverts it).
+Draws on one cel (`frame`, `layer`) of a .sprite file in one undoable step: `pixels` (row strings stamped at `x`, `y`; "." keeps the pixel, or erases with `clear`) then `ops` in order: drawing ({tool pencil|line|rect|fill|eraser, points [[x, y], …], color, filled}, optionally mirrored with `mirrorX` / `mirrorY`) and selections ({tool move, rect [x, y, w, h], to [x, y]} cuts and pastes; {tool copy, rect, to, fromFrame, fromLayer, merged} pastes pixels from this or another cel, `merged` takes the frame's visible pixels; {tool clear, rect} erases). Transparent pixels don't cover when pasted. A color is a palette index (0 = first), a row character ("3", "a", "." transparent) or a hex color (added to the palette if missing). Returns `preview`: the frame's visible pixels as rows. Rows: "." transparent, 0-9 a-z A-Z palette entries 0-61. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
@@ -3381,7 +3381,7 @@ Arguments:
 - `layer?`: any — Any JSON value.
 - `mirrorX?`: boolean
 - `mirrorY?`: boolean
-- `ops?`: [{color?: any, filled?: boolean, points: [integer[2]], tool: "pencil" \| "line" \| "rect" \| "fill" \| "eraser" \| "picker"}]
+- `ops?`: [{color?: any, filled?: boolean, fromFrame?: integer, fromLayer?: any, merged?: boolean, points?: [integer[2]], rect?: integer[4], to?: integer[2], tool: string (9 cases)}]
 - `path?`: string
 - `pixels?`: [string]
 - `x?`: integer
@@ -3391,16 +3391,17 @@ Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `atlasColumns`: integer
-- `clips`: [{fps: number, frames: [integer], mode: string, name: string}]
+- `clips`: [{events?: [string], fps: number, frames: [integer], mode: string, name: string}]
 - `frames`: [integer]
 - `height`: integer
-- `layers`: [{name: string, opacity: number, visible: boolean}]
+- `layers`: [{blend: string, name: string, opacity: number, visible: boolean}]
 - `palette`: [string]
 - `path`: string
 - `preview?`: [string]
 - `previewFrame?`: integer
+- `sheet?`: {colorsFound: integer, columns: integer, quantized: boolean, rows: integer}
 - `sprite?`: {frames?: [object], height?: integer, layers?: [object], palette?: [string], pivot?: number[2], pixelsPerUnit?: number, tags?: [object], width?: integer}
-- `tags`: [{from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
+- `tags`: [{events?: [object], from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
 - `texture`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `warnings`: [string]
 - `width`: integer
@@ -3409,15 +3410,17 @@ Result:
 
 **Edit Sprite** · _undoable_
 
-Changes a .sprite file's structure in one undoable step, in this order: `palette` / `addColors`, canvas `width` / `height`, layers (`addLayers`, `removeLayers`, `updateLayers` [{name, rename, visible, opacity}]), frames (`addFrames` blank or copies of `copyFrame` at `insertAt`, `removeFrames`), timing (`duration` for all, `durations` per frame, ms), tags (`tags` replaces all, `addTags`, `removeTags`; a tag {name, from, to, mode loop|once|pingPong} becomes a SpriteAnimator clip), then `pivot` and `pixelsPerUnit`. Returns the summary and warnings. Undoable (one step; edit.undo reverts it).
+Changes a .sprite file's structure in one undoable step, in this order: `palette` / `addColors`, canvas `width` / `height`, layers (`addLayers`, `removeLayers`, `updateLayers` [{name, rename, visible, opacity, blend normal|multiply|add|screen|overlay}]), frames (`addFrames` blank or copies of `copyFrame` at `insertAt`, `removeFrames`), timing (`duration` for all, `durations` per frame, ms), `copyCels` ([{fromFrame, fromLayer, toFrame, toLayer, rect [x, y, w, h], x, y, merged, replace}]: copy / paste pixels between cels; default the whole cel to the same place, transparent pixels don't cover unless `replace`), tags (`tags` replaces all, `addTags`, `removeTags`; a tag {name, from, to, mode loop|once|pingPong, events [{frame, name}]} becomes a SpriteAnimator clip whose events fire when it reaches those frames), frame events (`addEvents` / `removeEvents` [{tag, frame, name}]), then `pivot` and `pixelsPerUnit`. Returns the summary and warnings. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
 - `addColors?`: [string]
+- `addEvents?`: [{frame?: integer, name?: string, tag: string}]
 - `addFrames?`: integer
 - `addLayers?`: [string]
-- `addTags?`: [{from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
+- `addTags?`: [{events?: [object], from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `copyCels?`: [{fromFrame: integer, fromLayer?: any, merged?: boolean, rect?: integer[4], replace?: boolean, toFrame: integer, toLayer?: any, x?: integer, y?: integer}]
 - `copyFrame?`: integer
 - `duration?`: integer
 - `durations?`: [integer]
@@ -3427,27 +3430,29 @@ Arguments:
 - `path?`: string
 - `pivot?`: number[2] — [x, y]
 - `pixelsPerUnit?`: number
+- `removeEvents?`: [{frame?: integer, name?: string, tag: string}]
 - `removeFrames?`: [integer]
 - `removeLayers?`: [string]
 - `removeTags?`: [string]
-- `tags?`: [{from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
-- `updateLayers?`: [{name: string, opacity?: number, rename?: string, visible?: boolean}]
+- `tags?`: [{events?: [object], from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
+- `updateLayers?`: [{blend?: "normal" \| "multiply" \| "add" \| "screen" \| "overlay", name: string, opacity?: number, rename?: string, visible?: boolean}]
 - `width?`: integer
 
 Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `atlasColumns`: integer
-- `clips`: [{fps: number, frames: [integer], mode: string, name: string}]
+- `clips`: [{events?: [string], fps: number, frames: [integer], mode: string, name: string}]
 - `frames`: [integer]
 - `height`: integer
-- `layers`: [{name: string, opacity: number, visible: boolean}]
+- `layers`: [{blend: string, name: string, opacity: number, visible: boolean}]
 - `palette`: [string]
 - `path`: string
 - `preview?`: [string]
 - `previewFrame?`: integer
+- `sheet?`: {colorsFound: integer, columns: integer, quantized: boolean, rows: integer}
 - `sprite?`: {frames?: [object], height?: integer, layers?: [object], palette?: [string], pivot?: number[2], pixelsPerUnit?: number, tags?: [object], width?: integer}
-- `tags`: [{from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
+- `tags`: [{events?: [object], from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
 - `texture`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `warnings`: [string]
 - `width`: integer
@@ -3468,16 +3473,65 @@ Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `atlasColumns`: integer
-- `clips`: [{fps: number, frames: [integer], mode: string, name: string}]
+- `clips`: [{events?: [string], fps: number, frames: [integer], mode: string, name: string}]
 - `frames`: [integer]
 - `height`: integer
-- `layers`: [{name: string, opacity: number, visible: boolean}]
+- `layers`: [{blend: string, name: string, opacity: number, visible: boolean}]
 - `palette`: [string]
 - `path`: string
 - `preview?`: [string]
 - `previewFrame?`: integer
+- `sheet?`: {colorsFound: integer, columns: integer, quantized: boolean, rows: integer}
 - `sprite?`: {frames?: [object], height?: integer, layers?: [object], palette?: [string], pivot?: number[2], pixelsPerUnit?: number, tags?: [object], width?: integer}
-- `tags`: [{from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
+- `tags`: [{events?: [object], from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
+- `texture`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `warnings`: [string]
+- `width`: integer
+
+### `sprite.importSheet`
+
+**Import Sprite Sheet**
+
+Turns a sprite sheet image (`image` asset, `imagePath` under Assets/, or a `file` anywhere; PNG, JPEG or TGA) into a .sprite: cells of `frameWidth` x `frameHeight` (or the size that gives `columns` x `rows`), after `margin` around the sheet and `spacing` between cells, read left to right, top to bottom, become frames (at most `frames`; empty cells at the end are dropped). Pixels map to `palette` (a preset or hex colors, nearest color) or, by default, to the sheet's own colors, reduced to `maxColors` (default 62) by median cut. Pixels less opaque than `alphaThreshold` (default 128) become transparent. Every frame lasts `duration` ms (default 100); `tags`, `pivot` and `pixelsPerUnit` are set as given. Writes a new file (`folder`, `name`; default next to the image, named after it) or replaces the .sprite at `into` (undoable). Returns the sprite summary, `sheet` {columns, rows, colorsFound, quantized} and warnings.
+
+Arguments:
+
+- `alphaThreshold?`: integer
+- `columns?`: integer
+- `duration?`: integer
+- `file?`: string
+- `folder?`: string
+- `frameHeight?`: integer
+- `frameWidth?`: integer
+- `frames?`: integer
+- `image?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `imagePath?`: string
+- `into?`: string
+- `margin?`: integer
+- `maxColors?`: integer
+- `name?`: string
+- `palette?`: any — Any JSON value.
+- `pivot?`: number[2] — [x, y]
+- `pixelsPerUnit?`: number
+- `rows?`: integer
+- `spacing?`: integer
+- `tags?`: [{events?: [object], from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `atlasColumns`: integer
+- `clips`: [{events?: [string], fps: number, frames: [integer], mode: string, name: string}]
+- `frames`: [integer]
+- `height`: integer
+- `layers`: [{blend: string, name: string, opacity: number, visible: boolean}]
+- `palette`: [string]
+- `path`: string
+- `preview?`: [string]
+- `previewFrame?`: integer
+- `sheet?`: {colorsFound: integer, columns: integer, quantized: boolean, rows: integer}
+- `sprite?`: {frames?: [object], height?: integer, layers?: [object], palette?: [string], pivot?: number[2], pixelsPerUnit?: number, tags?: [object], width?: integer}
+- `tags`: [{events?: [object], from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
 - `texture`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `warnings`: [string]
 - `width`: integer
@@ -3486,7 +3540,7 @@ Result:
 
 **New Sprite**
 
-Writes a .sprite file in `folder` (default: the Assets root): a blank `width` x `height` canvas with `palette` and `frames` blank frames, or `sprite`. Draw on it with sprite.draw, add frames, layers and tags with sprite.edit. Returns the asset, its texture reference, layers, frames, clips and warnings. A .sprite file is pixel art (every key optional): width and height (1-256, default 16), palette (hex colors, up to 62), layers (bottom first: name, visible, opacity 0-1, cels: one list of row strings per frame), frames ({duration} in ms), tags ({name, from, to, mode loop|once|pingPong}: inclusive frame ranges, one animation clip each), pivot ([x, y] 0-1 from the bottom-left, default [0.5, 0]) and pixelsPerUnit (default 16). In a row string each character is one pixel: "." is transparent and 0-9, a-z, A-Z are palette entries 0-61 ("0" is the first color, "a" the 11th). It imports as a texture (sub-asset "texture"): the frames in a grid, frame i in cell i, so indices stay stable for SpriteAnimator clips and tile sets. Palette presets: pico8, db16, db32, gameboy, grayscale.
+Writes a .sprite file in `folder` (default: the Assets root): a blank `width` x `height` canvas with `palette` and `frames` blank frames, or `sprite`. Draw on it with sprite.draw, add frames, layers and tags with sprite.edit. Returns the asset, its texture reference, layers, frames, clips and warnings. A .sprite file is pixel art (every key optional): width and height (1-256, default 16), palette (hex colors, up to 62), layers (bottom first: name, visible, opacity 0-1, blend normal|multiply|add|screen|overlay, cels: one list of row strings per frame), frames ({duration} in ms), tags ({name, from, to, mode loop|once|pingPong, events [{frame, name}]}: inclusive frame ranges, one animation clip each, firing its events when it reaches those frames), pivot ([x, y] 0-1 from the bottom-left, default [0.5, 0]) and pixelsPerUnit (default 16). In a row string each character is one pixel: "." is transparent and 0-9, a-z, A-Z are palette entries 0-61 ("0" is the first color, "a" the 11th). It imports as a texture (sub-asset "texture"): the frames in a grid, frame i in cell i, so indices stay stable for SpriteAnimator clips and tile sets. Palette presets: pico8, db16, db32, gameboy, grayscale.
 
 Arguments:
 
@@ -3502,16 +3556,17 @@ Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `atlasColumns`: integer
-- `clips`: [{fps: number, frames: [integer], mode: string, name: string}]
+- `clips`: [{events?: [string], fps: number, frames: [integer], mode: string, name: string}]
 - `frames`: [integer]
 - `height`: integer
-- `layers`: [{name: string, opacity: number, visible: boolean}]
+- `layers`: [{blend: string, name: string, opacity: number, visible: boolean}]
 - `palette`: [string]
 - `path`: string
 - `preview?`: [string]
 - `previewFrame?`: integer
+- `sheet?`: {colorsFound: integer, columns: integer, quantized: boolean, rows: integer}
 - `sprite?`: {frames?: [object], height?: integer, layers?: [object], palette?: [string], pivot?: number[2], pixelsPerUnit?: number, tags?: [object], width?: integer}
-- `tags`: [{from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
+- `tags`: [{events?: [object], from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
 - `texture`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `warnings`: [string]
 - `width`: integer
@@ -3547,16 +3602,17 @@ Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `atlasColumns`: integer
-- `clips`: [{fps: number, frames: [integer], mode: string, name: string}]
+- `clips`: [{events?: [string], fps: number, frames: [integer], mode: string, name: string}]
 - `frames`: [integer]
 - `height`: integer
-- `layers`: [{name: string, opacity: number, visible: boolean}]
+- `layers`: [{blend: string, name: string, opacity: number, visible: boolean}]
 - `palette`: [string]
 - `path`: string
 - `preview?`: [string]
 - `previewFrame?`: integer
+- `sheet?`: {colorsFound: integer, columns: integer, quantized: boolean, rows: integer}
 - `sprite?`: {frames?: [object], height?: integer, layers?: [object], palette?: [string], pivot?: number[2], pixelsPerUnit?: number, tags?: [object], width?: integer}
-- `tags`: [{from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
+- `tags`: [{events?: [object], from?: integer, mode?: "loop" \| "once" \| "pingPong", name?: string, to?: integer}]
 - `texture`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `warnings`: [string]
 - `width`: integer

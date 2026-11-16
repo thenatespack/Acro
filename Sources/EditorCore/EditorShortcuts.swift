@@ -158,3 +158,10 @@ public func cursorShape(for cursor: UICursor) -> CursorShape {
     case .move: .pointingHand
     }
 }
+
+/// A widget that handles some keys itself while it has keyboard focus (a drawing canvas's tool
+/// keys, Delete, Esc): the editor's shortcuts skip the keys it claims.
+@MainActor
+public protocol EditorShortcutClaiming: AnyObject {
+    func claimsShortcut(_ event: KeyEvent) -> Bool
+}

@@ -61,13 +61,30 @@ public final class SpriteRenderer {
     private let defaultSampler: GPUSampler
     private var atlases: [String: SpriteAtlas] = [:]
 
-    public init(device: RenderDevice) throws {
+    /// Whether sprites are hidden behind what is already in the pass's depth buffer.
+    public enum DepthMode: Hashable, Sendable {
+        /// Drawn over everything (a 2D pass; the default).
+        case none
+        /// Tested against the scene's depth (not written), for sprites in a 3D view such as the
+        /// editor's Scene view. `reversedZ` must match the view's.
+        case tested(reversedZ: Bool)
+    }
+
+    public let depthMode: DepthMode
+
+    public init(device: RenderDevice, depth: DepthMode = .none) throws {
+        depthMode = depth
         let shader = try ShaderSource.load(named: "sprite", bundle: .engineResources)
         var pipelines: [SpriteBlend: RenderPipeline] = [:]
         for blend in [SpriteBlend.alpha, .opaque, .additive] {
             var descriptor = PipelineDescriptor(shader: shader, vertexLayout: SpriteVertex.layout)
             descriptor.cullMode = .none
-            descriptor.depthTest = false
+            if case .tested(let reversedZ) = depth {
+                descriptor.depthTest = true
+                descriptor.depthCompare = reversedZ ? .greaterEqual : .lessEqual
+            } else {
+                descriptor.depthTest = false
+            }
             descriptor.depthWrite = false
             descriptor.blendMode = blend.blendMode
             pipelines[blend] = try device.makePipeline(descriptor)

@@ -106,6 +106,8 @@ public final class EditorApp: Game, EditorHost {
     private let toolDraw = DebugDraw()
     private var toolDrawRenderer: DebugDrawRenderer!
     private var outline: SelectionOutlineRenderer!
+    /// Draws `Sprite` components in the Scene and Game views.
+    private var sceneSprites: SceneSpriteDrawer!
     /// Selection and gizmos in the viewport (set up with the renderer, which it picks against).
     public private(set) var transformTool: TransformTool!
     private var currentView: SceneView?
@@ -258,6 +260,7 @@ public final class EditorApp: Game, EditorHost {
         gameTarget = try RenderTarget(device: engine.device, width: 640, height: 360, label: "game view")
         outline = try SelectionOutlineRenderer(device: engine.device)
         toolDrawRenderer = try DebugDrawRenderer(device: engine.device)
+        sceneSprites = SceneSpriteDrawer(device: engine.device)
         transformTool = TransformTool(meshes: sceneRenderer)
         do {
             thumbnails = try AssetThumbnails(device: engine.device, quality: engine.quality)
@@ -1240,7 +1243,9 @@ public final class EditorApp: Game, EditorHost {
             // The launcher has its own keys; the editor's (save, play, delete…) don't apply to it.
             if !overlayBefore { for event in input.keyPresses { _ = launcher.handleShortcut(event) } }
         } else {
-            for command in shortcuts.actions(for: input.keyPresses, focus: focus) { invoke(command) }
+            let claimer = ui.focusedWidget as? EditorShortcutClaiming
+            let presses = claimer.map { c in input.keyPresses.filter { !c.claimsShortcut($0) } } ?? input.keyPresses
+            for command in shortcuts.actions(for: presses, focus: focus) { invoke(command) }
             updateViewport(engine: engine, dt: dt, keyboardFree: !focus.textEditing)
             meshWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
             vfxWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
@@ -1744,16 +1749,21 @@ public final class EditorApp: Game, EditorHost {
         materialWorkspace.render(frame: frame)
         if let game = gameCurrentView, gameSizer.width > 0, gameWidget.isEffectivelyVisible {
             sceneRenderer.beginViews(world: session.gameWorld, frame: frame, shadowFocus: game)
-            sceneRenderer.renderView(game, into: gameTarget, frame: frame, debugDraw: gameDraw)
+            sceneSprites.prepare(world: session.gameWorld, assets: session.assets, reversedZ: game.reversedZ)
+            sceneRenderer.renderView(game, into: gameTarget, frame: frame, debugDraw: gameDraw) { [unowned self] pass in
+                sceneSprites.render(into: pass, viewProjection: game.viewProjection, reversedZ: game.reversedZ)
+            }
         }
         guard let view = currentView, sizer.width > 0, viewportWidget.isEffectivelyVisible else { return }
         sceneRenderer.beginViews(world: session.world, frame: frame, shadowFocus: view)
         let world = session.world
         let debugView = DebugView(view: view.view, projection: view.projection,
                                   viewportSize: (target.width, target.height), reversedZ: view.reversedZ)
+        sceneSprites.prepare(world: world, assets: session.assets, reversedZ: view.reversedZ)
         outline.renderView(view, sceneRenderer: sceneRenderer, world: world, selection: session.selection.entities(in: world),
                            primary: session.selection.primaryEntity(in: world), into: target, pixelScale: ui.scale,
                            frame: frame, debugDraw: gizmos) { [unowned self] pass in
+            sceneSprites.render(into: pass, viewProjection: view.viewProjection, reversedZ: view.reversedZ)
             toolDrawRenderer.draw(toolDraw, in: pass, view: debugView)
         }
     }
@@ -1985,7 +1995,9 @@ extension EditorApp {
         if request.grid || request.gizmos { fillGizmos(draw, context: context, grid: request.grid, gizmos: request.gizmos) }
         let debugView = DebugView(view: view.view, projection: view.projection, viewportSize: (shot.width, shot.height),
                                   reversedZ: view.reversedZ)
+        sceneSprites.prepare(world: world, assets: session.assets, reversedZ: view.reversedZ)
         let overlay: (RenderPass) -> Void = { [unowned self] pass in
+            sceneSprites.render(into: pass, viewProjection: view.viewProjection, reversedZ: view.reversedZ)
             if request.gizmos && isViewport { toolDrawRenderer.draw(toolDraw, in: pass, view: debugView) }
         }
         if request.outline, let outliner = captureOutline ?? (try? SelectionOutlineRenderer(device: sceneRenderer.device,

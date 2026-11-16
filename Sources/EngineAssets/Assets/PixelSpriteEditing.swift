@@ -49,6 +49,8 @@ public enum PixelTool: String, Codable, CaseIterable, Sendable {
     case eraser
     /// Picks the color under the point (no edit).
     case picker
+    /// A rectangle selection to move, copy or paste (the editor's; no edit here).
+    case select
 }
 
 extension PixelSprite {
@@ -147,7 +149,7 @@ extension PixelSprite {
             plot(Self.rectPoints(first, points.last!, filled: filled), value: value, frame: frame, layer: layer, mirror: mirror)
         case .fill:
             for p in points { fill(at: p, value: value, frame: frame, layer: layer, mirror: mirror) }
-        case .picker:
+        case .picker, .select:
             break
         }
     }
@@ -194,6 +196,7 @@ extension PixelSprite {
         for t in tags.indices {
             if tags[t].from >= at { tags[t].from += count }
             if tags[t].to >= at { tags[t].to += count }
+            for e in tags[t].events.indices where tags[t].events[e].frame >= at { tags[t].events[e].frame += count }
         }
     }
 
@@ -210,15 +213,17 @@ extension PixelSprite {
         }
         frames = keep.map { frames[$0] }
         for l in layers.indices { layers[l].cels = keep.map { layers[l].cels[$0] } }
-        // A tag keeps the frames it still covers.
+        // A tag keeps the frames it still covers, and the events on them.
+        let newIndex = Dictionary(uniqueKeysWithValues: keep.enumerated().map { ($0.element, $0.offset) })
         tags = tags.compactMap { tag in
             let kept = keep.enumerated().filter { $0.element >= tag.from && $0.element <= tag.to }.map(\.offset)
             guard let first = kept.first, let last = kept.last else { return nil }
-            return Tag(tag.name, from: first, to: last, mode: tag.mode)
+            let events = tag.events.compactMap { e in newIndex[e.frame].map { FrameEvent(frame: $0, name: e.name) } }
+            return Tag(tag.name, from: first, to: last, mode: tag.mode, events: events)
         }
     }
 
-    /// Moves frame `from` to position `to` (tags keep their frame numbers).
+    /// Moves frame `from` to position `to` (tags and their events keep their frame numbers).
     public mutating func moveFrame(_ from: Int, to: Int) {
         guard frames.indices.contains(from), frames.indices.contains(to), from != to else { return }
         frames.insert(frames.remove(at: from), at: to)
@@ -313,5 +318,127 @@ extension PixelSprite {
             }
             layers[l].cels[frame] = out
         }
+    }
+}
+
+// MARK: - Selections and copy / paste
+
+/// A rectangle of pixels (top-left origin). Encodes as `[x, y, width, height]`.
+public struct PixelRect: Hashable, Sendable, Codable {
+    public var x: Int, y: Int, width: Int, height: Int
+
+    public init(x: Int, y: Int, width: Int, height: Int) {
+        (self.x, self.y, self.width, self.height) = (x, y, width, height)
+    }
+
+    /// The rectangle with corners `a` and `b` (both included).
+    public init(corners a: PixelPoint, _ b: PixelPoint) {
+        self.init(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x) + 1, height: abs(b.y - a.y) + 1)
+    }
+
+    public var isEmpty: Bool { width <= 0 || height <= 0 }
+    public var maxX: Int { x + width }
+    public var maxY: Int { y + height }
+
+    public func contains(_ p: PixelPoint) -> Bool { p.x >= x && p.y >= y && p.x < maxX && p.y < maxY }
+
+    /// The part of the rectangle inside a `width` x `height` canvas (empty when none is).
+    public func clamped(width w: Int, height h: Int) -> PixelRect {
+        let x0 = max(x, 0), y0 = max(y, 0), x1 = min(maxX, w), y1 = min(maxY, h)
+        return PixelRect(x: x0, y: y0, width: max(x1 - x0, 0), height: max(y1 - y0, 0))
+    }
+
+    public func offsetBy(_ dx: Int, _ dy: Int) -> PixelRect { PixelRect(x: x + dx, y: y + dy, width: width, height: height) }
+
+    public init(from decoder: any Decoder) throws {
+        var c = try decoder.unkeyedContainer()
+        x = try c.decode(Int.self)
+        y = try c.decode(Int.self)
+        width = try c.decode(Int.self)
+        height = try c.decode(Int.self)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.unkeyedContainer()
+        try c.encode(x)
+        try c.encode(y)
+        try c.encode(width)
+        try c.encode(height)
+    }
+}
+
+/// Pixels copied out of a cel: palette values (0 transparent), `width * height`, row by row.
+/// Pasting leaves the cel's pixels under transparent ones as they are.
+public struct PixelClip: Equatable, Sendable {
+    public var width: Int
+    public var height: Int
+    public var pixels: [UInt8]
+
+    public init(width: Int, height: Int, pixels: [UInt8]) {
+        self.width = max(width, 0)
+        self.height = max(height, 0)
+        self.pixels = pixels.count == self.width * self.height ? pixels : [UInt8](repeating: 0, count: self.width * self.height)
+    }
+
+    public var isEmpty: Bool { width == 0 || height == 0 }
+
+    /// The clip as row strings (`.` transparent).
+    public var rows: [String] {
+        (0..<height).map { y in String((0..<width).map { x in PixelSprite.character(for: pixels[y * width + x]) }) }
+    }
+}
+
+extension PixelSprite {
+    /// The pixels of one cel inside `rect` (cut to the canvas; nil for a missing frame or layer
+    /// or a rectangle outside the canvas).
+    public func copy(_ rect: PixelRect, frame: Int, layer: Int) -> PixelClip? {
+        guard layers.indices.contains(layer), frames.indices.contains(frame) else { return nil }
+        let r = rect.clamped(width: width, height: height)
+        guard !r.isEmpty else { return nil }
+        let cel = layers[layer].cels[frame]
+        var pixels: [UInt8] = []
+        pixels.reserveCapacity(r.width * r.height)
+        for y in r.y..<r.maxY { pixels += cel[(y * width + r.x)..<(y * width + r.maxX)] }
+        return PixelClip(width: r.width, height: r.height, pixels: pixels)
+    }
+
+    /// The visible pixels of `frame` (all visible layers, topmost wins) inside `rect`.
+    public func copyMerged(_ rect: PixelRect, frame: Int) -> PixelClip? {
+        guard frames.indices.contains(frame) else { return nil }
+        let r = rect.clamped(width: width, height: height)
+        guard !r.isEmpty else { return nil }
+        var pixels: [UInt8] = []
+        for y in r.y..<r.maxY { for x in r.x..<r.maxX { pixels.append(pick(frame: frame, x: x, y: y)) } }
+        return PixelClip(width: r.width, height: r.height, pixels: pixels)
+    }
+
+    /// Writes `clip` into a cel with its top-left at (`x`, `y`). Transparent clip pixels leave the
+    /// cel as it is, unless `opaque` (then they erase). Pixels off the canvas are cut.
+    public mutating func paste(_ clip: PixelClip, x: Int, y: Int, frame: Int, layer: Int, opaque: Bool = false) {
+        guard layers.indices.contains(layer), frames.indices.contains(frame) else { return }
+        for cy in 0..<clip.height {
+            for cx in 0..<clip.width {
+                let v = clip.pixels[cy * clip.width + cx]
+                guard v != 0 || opaque else { continue }
+                setPixel(frame: frame, layer: layer, x: x + cx, y: y + cy, value: v)
+            }
+        }
+    }
+
+    /// Makes the pixels of one cel inside `rect` transparent.
+    public mutating func clear(_ rect: PixelRect, frame: Int, layer: Int) {
+        guard layers.indices.contains(layer), frames.indices.contains(frame) else { return }
+        let r = rect.clamped(width: width, height: height)
+        guard !r.isEmpty else { return }
+        for y in r.y..<r.maxY { for x in r.x..<r.maxX { layers[layer].cels[frame][y * width + x] = 0 } }
+    }
+
+    /// Moves the pixels of one cel inside `rect` by (`dx`, `dy`): they are cut and pasted over
+    /// what is there (transparent ones don't cover). With `copy`, the originals stay.
+    public mutating func move(_ rect: PixelRect, dx: Int, dy: Int, frame: Int, layer: Int, copy: Bool = false) {
+        guard let clip = self.copy(rect, frame: frame, layer: layer) else { return }
+        let r = rect.clamped(width: width, height: height)
+        if !copy { clear(r, frame: frame, layer: layer) }
+        paste(clip, x: r.x + dx, y: r.y + dy, frame: frame, layer: layer)
     }
 }

@@ -57,11 +57,8 @@ public final class PixelSpriteBuilderView {
             selectLayer(index)
         }
         tagList.onSelect = { [unowned self] row in
-            guard let row, row != selectedTag, self.sprite.tags.indices.contains(row) else { return }
-            selectedTag = row
-            remember()
-            needsLayout = true
-            onChanged?()
+            guard let row, row != selectedTag else { return }
+            selectTag(row)
         }
         palette.onSelect = { [unowned self] value in selectColor(value) }
         layout()
@@ -92,6 +89,7 @@ public final class PixelSpriteBuilderView {
         layer = min(max(layer, 0), sprite.layers.count - 1)
         if Int(color) > sprite.palette.count { color = sprite.palette.isEmpty ? 0 : 1 }
         if let t = selectedTag, !sprite.tags.indices.contains(t) { selectedTag = sprite.tags.isEmpty ? nil : 0 }
+        if let r = selection?.clamped(width: sprite.width, height: sprite.height) { selection = r.isEmpty ? nil : r }
     }
 
     private func remember() {
@@ -114,6 +112,15 @@ public final class PixelSpriteBuilderView {
         onChanged?()
     }
 
+    /// Shows tag `index` (its range, mode and frame events) below the tag list.
+    public func selectTag(_ index: Int) {
+        guard sprite.tags.indices.contains(index) else { return }
+        selectedTag = index
+        remember()
+        needsLayout = true
+        onChanged?()
+    }
+
     public func selectColor(_ value: UInt8) {
         color = Int(value) <= sprite.palette.count ? value : 0
         remember()
@@ -129,6 +136,138 @@ public final class PixelSpriteBuilderView {
     /// The color picker: selects the topmost visible color at `point` in the current frame.
     public func pickColor(at point: PixelPoint) {
         selectColor(sprite.pick(frame: frame, x: point.x, y: point.y))
+    }
+
+    // MARK: Selection and clipboard
+
+    /// The selected rectangle of the canvas (always inside it), nil for none. It stays when the
+    /// frame or layer changes, so pixels can be copied in one cel and pasted in another.
+    public private(set) var selection: PixelRect?
+    /// Copied pixels, shared by every sprite tab (so they paste into other files too), with the
+    /// place they were copied from.
+    public private(set) static var clipboard: (clip: PixelClip, origin: PixelPoint)?
+
+    /// Selects `rect` (cut to the canvas; an empty rectangle deselects).
+    public func select(_ rect: PixelRect?) {
+        let r = rect?.clamped(width: sprite.width, height: sprite.height)
+        selection = r.flatMap { $0.isEmpty ? nil : $0 }
+        needsLayout = true
+        onChanged?()
+    }
+
+    public func selectAll() { select(PixelRect(x: 0, y: 0, width: sprite.width, height: sprite.height)) }
+    public func deselect() { select(nil) }
+
+    /// Copies the selected pixels of the current cel (or the whole cel without a selection).
+    @discardableResult
+    public func copySelection() -> Bool {
+        let rect = selection ?? PixelRect(x: 0, y: 0, width: sprite.width, height: sprite.height)
+        guard let clip = sprite.copy(rect, frame: frame, layer: layer) else { return false }
+        Self.clipboard = (clip, PixelPoint(rect.x, rect.y))
+        needsLayout = true
+        return true
+    }
+
+    /// Copies the selected pixels, then erases them.
+    public func cutSelection() {
+        guard copySelection() else { return }
+        deleteSelection(label: "Cut")
+    }
+
+    /// Erases the selected pixels of the current cel (the whole cel without a selection).
+    public func deleteSelection(label: String = "Delete Selection") {
+        let rect = selection ?? PixelRect(x: 0, y: 0, width: sprite.width, height: sprite.height)
+        let (f, l) = (frame, layer)
+        edit(label) { $0.clear(rect, frame: f, layer: l) }
+    }
+
+    /// Pastes the clipboard into the current cel: at the selection's top-left, else where it was
+    /// copied from. The pasted pixels become the selection (drag them to move them).
+    public func paste() {
+        guard let (clip, origin) = Self.clipboard else { return }
+        let at = selection.map { PixelPoint($0.x, $0.y) } ?? origin
+        let (f, l) = (frame, layer)
+        edit("Paste") { $0.paste(clip, x: at.x, y: at.y, frame: f, layer: l) }
+        select(PixelRect(x: at.x, y: at.y, width: clip.width, height: clip.height))
+    }
+
+    /// Moves the selected pixels of the current cel by (`dx`, `dy`) (with `copy`, a copy of them)
+    /// and the selection with them.
+    public func moveSelection(dx: Int, dy: Int, copy: Bool = false) {
+        guard let rect = selection, dx != 0 || dy != 0 else { return }
+        let (f, l) = (frame, layer)
+        edit(copy ? "Duplicate Selection" : "Move Selection") { $0.move(rect, dx: dx, dy: dy, frame: f, layer: l, copy: copy) }
+        // The selection follows the pixels, even partly off the canvas (cut to it).
+        select(rect.offsetBy(dx, dy))
+    }
+
+    // MARK: Keyboard
+
+    /// The single-key tool shortcuts.
+    public static let toolKeys: [Key: PixelTool] = [.b: .pencil, .l: .line, .u: .rect, .g: .fill, .e: .eraser, .i: .picker, .m: .select]
+
+    static func shortcutLabel(_ tool: PixelTool) -> String {
+        toolKeys.first { $0.value == tool }.map { String(describing: $0.key).uppercased() } ?? ""
+    }
+
+    /// Whether the canvas handles `event` itself (so the editor's shortcuts leave it alone).
+    public func claimsKey(_ event: KeyEvent) -> Bool {
+        let mods = event.modifiers
+        let shortcut = mods.contains(.command) || mods.contains(.control)
+        switch event.key {
+        case .delete, .backspace, .escape, .left, .right, .up, .down, .leftBracket, .rightBracket: return true
+        case .a, .c, .x, .v, .d: return shortcut && !mods.contains(.shift)
+        default: return !shortcut && !mods.contains(.alt) && (Self.toolKeys[event.key] != nil || event.key == .h || event.key == .j)
+        }
+    }
+
+    /// The canvas shortcuts: B pencil, L line, U rectangle (Shift+U toggles Filled), G fill,
+    /// E eraser, I color picker, M select; H / J mirror X / Y; [ and ] previous / next color;
+    /// Cmd/Ctrl+A select all, +C copy, +X cut, +V paste, +D or Esc deselect; Delete erases the
+    /// selection; arrows nudge the selection (Shift: 8 pixels), or step frames (Left / Right) and
+    /// layers (Up / Down) without one. Returns whether the key was used.
+    @discardableResult
+    public func handleKey(_ event: KeyEvent) -> Bool {
+        guard claimsKey(event) else { return false }
+        let mods = event.modifiers
+        let shortcut = mods.contains(.command) || mods.contains(.control)
+        let step = mods.contains(.shift) ? 8 : 1
+        switch event.key {
+        case .a where shortcut: selectAll()
+        case .c where shortcut: copySelection()
+        case .x where shortcut: cutSelection()
+        case .v where shortcut: paste()
+        case .d where shortcut: deselect()
+        case .escape: deselect()
+        case .delete, .backspace: deleteSelection()
+        case .left, .right, .up, .down:
+            let (dx, dy) = event.key == .left ? (-step, 0) : event.key == .right ? (step, 0) : event.key == .up ? (0, -step) : (0, step)
+            if selection != nil {
+                moveSelection(dx: dx, dy: dy)
+            } else if dx != 0 {
+                selectFrame((frame + (dx > 0 ? 1 : -1) + sprite.frames.count) % sprite.frames.count)
+            } else {
+                selectLayer(layer + (dy < 0 ? 1 : -1))
+            }
+        case .leftBracket, .rightBracket:
+            let count = sprite.palette.count + 1
+            selectColor(UInt8((Int(color) + (event.key == .rightBracket ? 1 : -1) + count) % count))
+        case .h:
+            if mirror.contains(.horizontal) { mirror.remove(.horizontal) } else { mirror.insert(.horizontal) }
+            needsLayout = true
+            onChanged?()
+        case .j:
+            if mirror.contains(.vertical) { mirror.remove(.vertical) } else { mirror.insert(.vertical) }
+            needsLayout = true
+            onChanged?()
+        case .u where mods.contains(.shift):
+            selectTool(.rect)
+            filled.toggle()
+        default:
+            guard let tool = Self.toolKeys[event.key], !event.isRepeat else { return true }
+            selectTool(tool)
+        }
+        return true
     }
 
     // MARK: Edits (one undo step each)
@@ -207,25 +346,40 @@ public final class PixelSpriteBuilderView {
         let tools = HStack(spacing: 4, name: "spriteTools")
         tools.wraps = true
         for t in PixelTool.allCases {
-            let b = button(Self.title(t), "spriteTool.\(t.rawValue)", primary: t == tool, tooltip: Self.tooltip(t)) { [unowned self] in selectTool(t) }
+            let b = button(Self.title(t), "spriteTool.\(t.rawValue)", primary: t == tool, tooltip: Self.tooltip(t) + " (\(Self.shortcutLabel(t)))") { [unowned self] in selectTool(t) }
             tools.addChild(b)
         }
         view.addChild(tools)
         let filledBox = Checkbox("Filled", isOn: filled, name: "spriteFilled") { [unowned self] on in filled = on }
-        filledBox.tooltip = "The rectangle tool fills the rectangle"
+        filledBox.tooltip = "The rectangle tool fills the rectangle (Shift+U)"
         let mirrorX = Checkbox("Mirror X", isOn: mirror.contains(.horizontal), name: "spriteMirrorX") { [unowned self] on in
             if on { mirror.insert(.horizontal) } else { mirror.remove(.horizontal) }
             onChanged?()
         }
-        mirrorX.tooltip = "Also draw mirrored left-right"
+        mirrorX.tooltip = "Also draw mirrored left-right (H)"
         let mirrorY = Checkbox("Mirror Y", isOn: mirror.contains(.vertical), name: "spriteMirrorY") { [unowned self] on in
             if on { mirror.insert(.vertical) } else { mirror.remove(.vertical) }
             onChanged?()
         }
-        mirrorY.tooltip = "Also draw mirrored top-bottom"
+        mirrorY.tooltip = "Also draw mirrored top-bottom (J)"
         let options = HStack(spacing: 8, [filledBox, mirrorX, mirrorY, Spacer()])
         options.wraps = true
         view.addChild(options)
+
+        let mod = EditorShortcuts().shortcutModifier == .command ? "Cmd" : "Ctrl"
+        let all = button("All", "spriteSelectAll", tooltip: "Select the whole canvas (\(mod)+A)") { [unowned self] in selectAll() }
+        let copy = button("Copy", "spriteCopy", tooltip: "Copy the selected pixels of this cel, or the whole cel (\(mod)+C)") { [unowned self] in copySelection() }
+        let cut = button("Cut", "spriteCut", tooltip: "Copy, then erase the selected pixels (\(mod)+X)") { [unowned self] in cutSelection() }
+        let paste = button("Paste", "spritePaste", tooltip: "Paste into this cel at the selection, or where the pixels came from (\(mod)+V)") { [unowned self] in self.paste() }
+        paste.isEnabled = Self.clipboard != nil
+        let delete = button("Delete", "spriteDeleteSelection", tooltip: "Erase the selected pixels of this cel (Delete)") { [unowned self] in deleteSelection() }
+        let none = button("Deselect", "spriteDeselect", tooltip: "Drop the selection (Esc or \(mod)+D)") { [unowned self] in deselect() }
+        none.isEnabled = selection != nil
+        let text = selection.map { "\($0.width) x \($0.height) at \($0.x), \($0.y)" } ?? "No selection"
+        let row = HStack(spacing: 4, name: "spriteSelectionRow", [all, copy, cut, paste, delete, none])
+        row.wraps = true
+        view.addChild(row)
+        view.addChild(Label(text, role: .caption, name: "spriteSelectionInfo"))
     }
 
     static func tooltip(_ tool: PixelTool) -> String {
@@ -236,6 +390,7 @@ public final class PixelSpriteBuilderView {
         case .fill: "Fill the area of one color on this layer"
         case .eraser: "Erase pixels"
         case .picker: "Pick the color under the pointer (or Alt+click with any tool)"
+        case .select: "Drag to select pixels; drag the selection to move it (Cmd/Ctrl+drag copies). Copy, cut and paste between frames and layers"
         }
     }
 
@@ -282,7 +437,7 @@ public final class PixelSpriteBuilderView {
 
     private func addLayers() {
         view.addChild(Label("Layers", role: .secondary))
-        layerList.items = sprite.layers.reversed().map { ($0.visible ? "" : "(hidden) ") + $0.name }
+        layerList.items = sprite.layers.reversed().map { ($0.visible ? "" : "(hidden) ") + $0.name + ($0.blend == .normal ? "" : "  (\($0.blend.rawValue))") }
         layerList.selectRow(sprite.layers.count - 1 - layer, reveal: true)
         view.addChild(layerList)
         let add = button("Add", "spriteAddLayer", tooltip: "Add an empty layer above the selected one") { [unowned self] in
@@ -332,7 +487,14 @@ public final class PixelSpriteBuilderView {
             let index = layer
             edit("Layer Opacity") { $0.layers[index].opacity = Float(min(max(end, 0), 1)) }
         }
-        let row = HStack(spacing: 6, [name, visible, opacity])
+        let modes = PixelSprite.BlendMode.allCases
+        let blend = Dropdown(options: modes.map(\.rawValue), selectedIndex: modes.firstIndex(of: current.blend) ?? 0, name: "spriteLayerBlend")
+        blend.tooltip = "How this layer mixes with the layers below: multiply darkens, add and screen brighten, overlay adds contrast"
+        blend.onChange = { [unowned self] i in
+            let index = layer
+            edit("Layer Blend Mode") { $0.layers[index].blend = modes[i] }
+        }
+        let row = HStack(spacing: 6, [name, visible, opacity, blend])
         row.wraps = true
         view.addChild(row)
     }
@@ -403,7 +565,7 @@ public final class PixelSpriteBuilderView {
 
     private func addTags() {
         view.addChild(Label("Tags (animation clips)", role: .secondary))
-        tagList.items = sprite.tags.map { "\($0.name)  \($0.from)-\($0.to)  \($0.mode.rawValue)" }
+        tagList.items = sprite.tags.map { "\($0.name)  \($0.from)-\($0.to)  \($0.mode.rawValue)" + ($0.events.isEmpty ? "" : "  \($0.events.count) event\($0.events.count == 1 ? "" : "s")") }
         if let selectedTag { tagList.selectRow(selectedTag, reveal: true) }
         view.addChild(tagList)
         let add = button("Add Tag", "spriteAddTag", tooltip: "Tag this frame as a new clip (edit its range below)") { [unowned self] in
@@ -445,6 +607,43 @@ public final class PixelSpriteBuilderView {
         let mode = Dropdown(options: modes.map(\.rawValue), selectedIndex: modes.firstIndex(of: tag.mode) ?? 0, name: "spriteTagMode")
         mode.onChange = { [unowned self] i in edit("Tag Mode") { $0.tags[t].mode = modes[i] } }
         let row = HStack(spacing: 4, [name, from, to, mode])
+        row.wraps = true
+        view.addChild(row)
+        addTagEvents(t)
+    }
+
+    /// The selected tag's frame events: one row each (go to the frame, remove), then a name field
+    /// and a button adding an event on the current frame.
+    private func addTagEvents(_ t: Int) {
+        let tag = sprite.tags[t]
+        for (e, event) in tag.events.enumerated() {
+            let go = button("Frame \(event.frame)", "spriteEventFrame\(e)", tooltip: "Show this frame") { [unowned self] in selectFrame(event.frame) }
+            let label = Label(event.name, name: "spriteEventName\(e)")
+            let remove = button("Remove", "spriteRemoveEvent\(e)", tooltip: "Delete this event") { [unowned self] in
+                edit("Remove Frame Event") { $0.tags[t].events.removeAll { $0 == event } }
+            }
+            view.addChild(HStack(spacing: 4, [go, label, Spacer(), remove]))
+        }
+        let inRange = frame >= tag.from && frame <= tag.to
+        let field = TextField(text: "", placeholder: "Event name", name: "spriteEventNewName")
+        field.preferredWidth = 90
+        let addEvent: (String) -> Void = { [unowned self] text in
+            let text = text.trimmingCharacters(in: .whitespaces)
+            guard !text.isEmpty, frame >= sprite.tags[t].from, frame <= sprite.tags[t].to else { return }
+            let event = PixelSprite.FrameEvent(frame: frame, name: text)
+            guard !sprite.tags[t].events.contains(event) else { return }
+            edit("Add Frame Event") {
+                $0.tags[t].events.append(event)
+                $0.tags[t].events.sort { $0.frame < $1.frame }
+            }
+        }
+        field.onSubmit = addEvent
+        field.isEnabled = inRange
+        let add = button("Add Event", "spriteAddEvent",
+                         tooltip: inRange ? "Fire this event when the clip reaches frame \(frame) (SpriteAnimator.events)"
+                                          : "Go to a frame inside the tag to add an event on it") { [unowned self] in addEvent(field.text) }
+        add.isEnabled = inRange
+        let row = HStack(spacing: 4, name: "spriteEventRow", [field, add, Spacer()])
         row.wraps = true
         view.addChild(row)
     }

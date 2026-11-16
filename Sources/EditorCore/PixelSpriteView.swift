@@ -59,9 +59,12 @@ func drawCheckerboard(_ rect: UIRect, cell: Float, into list: UIDrawList) {
 /// a pixel grid when zoomed in, mirror guides and the stroke being drawn.
 ///
 /// Left-drag draws with the builder's tool (Alt+click or the picker picks a color), right-drag
-/// erases; the stroke is handed to the builder on release. The wheel zooms, middle-drag pans.
+/// erases; the stroke is handed to the builder on release. With the select tool, left-drag
+/// selects a rectangle and dragging inside the selection moves its pixels (Cmd/Ctrl copies).
+/// The wheel zooms, middle-drag pans. Keys go to `PixelSpriteBuilderView.handleKey` once the
+/// canvas has been clicked (it takes keyboard focus).
 @MainActor
-public final class PixelCanvasView: Widget {
+public final class PixelCanvasView: Widget, EditorShortcutClaiming {
     public weak var builder: PixelSpriteBuilderView?
     /// Zoom on top of the fit-to-view scale (1 = fit).
     public var zoom: Float = 1 { didSet { setNeedsDisplay() } }
@@ -70,6 +73,12 @@ public final class PixelCanvasView: Widget {
     private var stroke: [PixelPoint] = []
     private var strokeTool: PixelTool?
     private var panStart: (pointer: Vec2, pan: Vec2)?
+    /// The first corner of a selection being dragged out.
+    private var marqueeStart: PixelPoint?
+    /// Where a drag moving the selection began, and whether it copies.
+    private var moveStart: (point: PixelPoint, copy: Bool)?
+    /// The selection shown while dragging (nil: the builder's).
+    private var dragSelection: PixelRect?
     private var preview: PixelSprite?
     private var imageCache: (key: Int, frame: Int, image: Image, previous: Image?, next: Image?)?
     private var cacheKey = 0
@@ -79,7 +88,11 @@ public final class PixelCanvasView: Widget {
         clipsContent = true
     }
 
+    public override var acceptsFocus: Bool { true }
+    public override var showsFocusRing: Bool { false }
     public override func measureContent(width: Float?) -> Vec2 { Vec2(320, 320) }
+
+    public func claimsShortcut(_ event: KeyEvent) -> Bool { builder?.claimsKey(event) ?? false }
 
     /// Forgets cached frame images (call after the sprite or the shown frame changes).
     public func invalidate() {
@@ -113,6 +126,7 @@ public final class PixelCanvasView: Widget {
         guard let builder else { return false }
         switch event {
         case .pointerDown(let e):
+            context?.focus(self)
             if e.button == .middle {
                 panStart = (e.position, pan)
                 return true
@@ -121,6 +135,15 @@ public final class PixelCanvasView: Widget {
             let tool: PixelTool = e.button == .right ? .eraser : (e.modifiers.contains(.alt) ? .picker : builder.tool)
             if tool == .picker {
                 builder.pickColor(at: p)
+                return true
+            }
+            if tool == .select {
+                if let selection = builder.selection, selection.contains(p) {
+                    moveStart = (p, e.modifiers.contains(.command) || e.modifiers.contains(.control))
+                } else {
+                    marqueeStart = p
+                }
+                dragSelection = nil
                 return true
             }
             strokeTool = tool
@@ -134,20 +157,52 @@ public final class PixelCanvasView: Widget {
             }
             let p = pixel(at: e.position)
             hover = p
+            if let start = marqueeStart {
+                dragSelection = PixelRect(corners: start, p).clamped(width: builder.sprite.width, height: builder.sprite.height)
+                setNeedsDisplay()
+                return true
+            }
+            if let move = moveStart, let selection = builder.selection {
+                let (dx, dy) = (p.x - move.point.x, p.y - move.point.y)
+                var copy = builder.sprite
+                copy.move(selection, dx: dx, dy: dy, frame: builder.frame, layer: builder.layer, copy: move.copy)
+                preview = copy
+                dragSelection = selection.offsetBy(dx, dy)
+                invalidate()
+                return true
+            }
             guard let tool = strokeTool else { return true }
             switch tool {
             case .pencil, .eraser:
                 if stroke.last != p { stroke.append(p) }
             case .line, .rect:
                 stroke = [stroke[0], p]
-            case .fill, .picker:
+            case .fill, .picker, .select:
                 break
             }
             updatePreview()
             return true
-        case .pointerUp:
+        case .pointerUp(let e):
             if panStart != nil {
                 panStart = nil
+                return true
+            }
+            if let start = marqueeStart {
+                // A click without a drag drops the selection.
+                let end = pixel(at: e.position)
+                builder.select(end == start ? nil : PixelRect(corners: start, end))
+                marqueeStart = nil
+                dragSelection = nil
+                setNeedsDisplay()
+                return true
+            }
+            if let move = moveStart {
+                let end = pixel(at: e.position)
+                moveStart = nil
+                dragSelection = nil
+                preview = nil
+                builder.moveSelection(dx: end.x - move.point.x, dy: end.y - move.point.y, copy: move.copy)
+                invalidate()
                 return true
             }
             if let tool = strokeTool, !stroke.isEmpty { builder.applyStroke(tool, points: stroke) }
@@ -166,6 +221,8 @@ public final class PixelCanvasView: Widget {
         case .scroll(let delta, _):
             zoom = min(max(zoom * powf(1.1, delta.y / 4), 0.25), 16)
             return true
+        case .key(let key):
+            return builder.handleKey(key)
         default:
             return false
         }
@@ -229,6 +286,14 @@ public final class PixelCanvasView: Widget {
             list.drawLine(from: Vec2(canvas.x, y), to: Vec2(canvas.maxX, y), width: 1, color: theme.accent.withAlpha(0.7))
         }
         list.strokeRect(canvas, color: UIColor(0, 0, 0, 0.6), width: 1)
+        if let selection = dragSelection ?? builder.selection, !selection.isEmpty {
+            // Black and white, so it reads over any color.
+            let r = UIRect(x: o.x + Float(selection.x) * s, y: o.y + Float(selection.y) * s,
+                           width: Float(selection.width) * s, height: Float(selection.height) * s)
+            list.strokeRect(r.inset(by: -1), color: UIColor(0, 0, 0, 0.9), width: 1)
+            list.strokeRect(r, color: UIColor(1, 1, 1, 0.95), width: 1)
+            list.fillRect(r, color: theme.accent.withAlpha(0.08))
+        }
         if let hover, hover.x >= 0, hover.y >= 0, hover.x < sprite.width, hover.y < sprite.height {
             list.strokeRect(UIRect(x: o.x + Float(hover.x) * s, y: o.y + Float(hover.y) * s, width: s, height: s),
                             color: UIColor(1, 1, 1, 0.85), width: 1)

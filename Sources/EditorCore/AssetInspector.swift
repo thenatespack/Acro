@@ -455,6 +455,9 @@ public final class AssetInspectorView {
                 content.addChildren([HStack(spacing: 6, [open, Spacer()]),
                                      note("A heightmap terrain, \(Int(size.x)) x \(Int(size.y)) m, split into chunks with colliders. The Terrain Builder has brushes, texture layers and scatter rules.")])
             }
+            if session.assets?.record(id)?.importer == TextureImporter().name {
+                content.addChild(pixelSpriteSheetImport(id))
+            }
             if session.isPixelSpriteFile(id) {
                 let open = Button("Open in Pixel Sprite Builder", role: .primary, name: "openSpriteBuilder") { [unowned self] in
                     session.run(PixelSpriteOpenCommand.self, .init(asset: AssetReference(id)))
@@ -619,6 +622,26 @@ public final class AssetInspectorView {
             list.addChild(label)
         }
         return list
+    }
+
+    /// Frame size fields and a button that turn a texture (a sprite sheet) into a .sprite next to it.
+    private func pixelSpriteSheetImport(_ id: AssetID) -> Widget {
+        let width = NumberField(value: 16, isInteger: true, range: 1...Double(PixelSprite.maxSize), step: 1, name: "sheetFrameWidth")
+        let height = NumberField(value: 16, isInteger: true, range: 1...Double(PixelSprite.maxSize), step: 1, name: "sheetFrameHeight")
+        width.prefix = "W"
+        height.prefix = "H"
+        width.tooltip = "Frame width in pixels"
+        height.tooltip = "Frame height in pixels"
+        let button = Button("Import as Pixel Sprite", name: "importSpriteSheet") { [unowned self] in
+            let arguments = PixelSpriteImportSheetCommand.Arguments(image: AssetReference(id), frameWidth: Int(width.value), frameHeight: Int(height.value))
+            if let result = session.run(PixelSpriteImportSheetCommand.self, arguments) {
+                session.run(PixelSpriteOpenCommand.self, .init(asset: AssetReference(result.asset)))
+            }
+        }
+        button.command = PixelSpriteImportSheetCommand.id.rawValue
+        button.tooltip = "Slice this sheet into frames of this size (left to right, top to bottom) and write a .sprite with its colors as the palette"
+        return VStack(spacing: 4, name: "spriteSheetImport", [HStack(spacing: 6, [width, height, button, Spacer()]),
+                                                              note("As a sprite sheet: cells of W x H become the frames of a .sprite.")])
     }
 
     private func note(_ text: String) -> Label {

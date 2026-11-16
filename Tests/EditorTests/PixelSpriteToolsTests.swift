@@ -154,4 +154,220 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(session.performUndo())
         #expect(session.assets?.pixelSprite(of: id)?.compositeRows(frame: 0)[0] == "......")
     }
+
+    @Test func selectionToolsMoveCopyAndClearBetweenCels() throws {
+        let (session, folder) = try makeProject()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let created = try call(session, "sprite.new", ["name": "Sel", "width": 4, "height": 3, "frames": 2])
+        try call(session, "sprite.draw", ["path": "Sel.sprite", "pixels": ["12..", "34.."]])
+
+        // move cuts and pastes; copy pastes from another cel; clear erases.
+        var drawn = try call(session, "sprite.draw", ["path": "Sel.sprite", "ops": [["tool": "move", "rect": [0, 0, 2, 2], "to": [2, 1]]]])
+        #expect(drawn["preview"] as? [String] == ["....", "..12", "..34"])
+        drawn = try call(session, "sprite.draw", ["path": "Sel.sprite", "frame": 1,
+                                                  "ops": [["tool": "copy", "rect": [2, 1, 2, 2], "fromFrame": 0, "to": [0, 0]],
+                                                          ["tool": "clear", "rect": [1, 0, 1, 9]]]])
+        #expect(drawn["preview"] as? [String] == ["1...", "3...", "...."])
+        #expect((drawn["warnings"] as? [String])?.contains { $0.contains("cut to the canvas") } == true)
+        #expect(throws: (any Error).self) { try call(session, "sprite.draw", ["path": "Sel.sprite", "ops": [["tool": "move", "rect": [0, 0, 1, 1]]]]) }
+        #expect(throws: (any Error).self) { try call(session, "sprite.draw", ["path": "Sel.sprite", "ops": [["tool": "clear"]]]) }
+        #expect(throws: (any Error).self) { try call(session, "sprite.draw", ["path": "Sel.sprite", "ops": [["tool": "clear", "rect": [9, 9, 1, 1]]]]) }
+
+        // sprite.edit copyCels: a new frame and layer as targets, merged and replacing.
+        try call(session, "sprite.edit", ["path": "Sel.sprite", "addFrames": 1, "addLayers": ["Top"],
+                                          "copyCels": [["fromFrame": 0, "toFrame": 2, "toLayer": "Top"],
+                                                       ["fromFrame": 1, "toFrame": 2, "rect": [0, 0, 1, 1], "x": 3, "y": 0]]])
+        let id = try #require((created["asset"] as? String).flatMap { AssetID($0) })
+        var sprite = try #require(session.assets?.pixelSprite(of: id))
+        #expect(sprite.compositeRows(frame: 2) == ["...1", "..12", "..34"])
+        try call(session, "sprite.edit", ["path": "Sel.sprite", "copyCels": [["fromFrame": 1, "toFrame": 2, "toLayer": "Top", "replace": true]]])
+        sprite = try #require(session.assets?.pixelSprite(of: id))
+        #expect(sprite.compositeRows(frame: 2) == ["1..1", "3...", "...."], "replace: the Top cel is now frame 1's")
+        #expect(throws: (any Error).self) { try call(session, "sprite.edit", ["path": "Sel.sprite", "copyCels": [["fromFrame": 0, "toFrame": 9]]]) }
+        #expect(session.performUndo())
+        #expect(session.assets?.pixelSprite(of: id)?.compositeRows(frame: 2) == ["...1", "..12", "..34"])
+    }
+
+    @Test func builderSelectsCopiesPastesAndTakesToolKeys() throws {
+        let (session, folder) = try makeProject()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        var start = PixelSprite(width: 6, height: 6, frameCount: 2)
+        start.stamp(rows: ["11", "22"], frame: 0, layer: 0)
+        let id = try #require(session.createPixelSpriteAsset(in: "", name: "S", sprite: start))
+        let workspace = PixelSpriteWorkspace(session: session)
+        #expect(workspace.open(id))
+        let builder = try #require(workspace.builder)
+        func rows(_ frame: Int) -> [String]? { session.assets?.pixelSprite(of: id)?.compositeRows(frame: frame) }
+
+        // Drag out a selection with the select tool, then drag it to move the pixels.
+        let canvas = workspace.canvas
+        canvas.layout(in: UIRect(x: 0, y: 0, width: 300, height: 300))
+        #expect(builder.handleKey(KeyEvent(key: .m)))
+        #expect(builder.tool == .select)
+        let s = canvas.pixelScale, o = canvas.origin
+        func at(_ x: Int, _ y: Int) -> Vec2 { Vec2(o.x + (Float(x) + 0.5) * s, o.y + (Float(y) + 0.5) * s) }
+        _ = canvas.handleEvent(.pointerDown(PointerEvent(position: at(0, 0))))
+        _ = canvas.handleEvent(.pointerDrag(PointerEvent(position: at(1, 1))))
+        _ = canvas.handleEvent(.pointerUp(PointerEvent(position: at(1, 1))))
+        #expect(builder.selection == PixelRect(x: 0, y: 0, width: 2, height: 2))
+        #expect(!builder.hasPendingEdit)
+        _ = canvas.handleEvent(.pointerDown(PointerEvent(position: at(1, 1))))
+        _ = canvas.handleEvent(.pointerDrag(PointerEvent(position: at(3, 2))))
+        _ = canvas.handleEvent(.pointerUp(PointerEvent(position: at(3, 2))))
+        workspace.update(dt: 0.016)
+        #expect(rows(0)?[1] == "..11..")
+        #expect(rows(0)?[2] == "..22..")
+        #expect(builder.selection == PixelRect(x: 2, y: 1, width: 2, height: 2))
+
+        // Copy, go to the next frame, paste in the same place; arrows nudge the pasted pixels.
+        let mod: KeyModifiers = EditorShortcuts().shortcutModifier == .command ? .command : .control
+        #expect(builder.claimsKey(KeyEvent(key: .c, modifiers: mod)))
+        #expect(!builder.claimsKey(KeyEvent(key: .s, modifiers: mod)), "save stays the editor's")
+        builder.handleKey(KeyEvent(key: .c, modifiers: mod))
+        builder.selectFrame(1)
+        builder.handleKey(KeyEvent(key: .v, modifiers: mod))
+        workspace.update(dt: 0.016)
+        #expect(rows(1)?[1] == "..11..")
+        builder.handleKey(KeyEvent(key: .right, modifiers: .shift))
+        workspace.update(dt: 0.016)
+        #expect(rows(1)?[1] == "......", "moved 8 pixels: off the canvas")
+        #expect(session.performUndo())
+        workspace.update(dt: 0.016)
+        #expect(rows(1)?[1] == "..11..")
+
+        // Delete erases the selection, Esc drops it; without a selection, arrows step frames.
+        builder.select(PixelRect(x: 2, y: 1, width: 1, height: 2))
+        builder.handleKey(KeyEvent(key: .delete))
+        workspace.update(dt: 0.016)
+        #expect(rows(1)?[1] == "...1..")
+        builder.handleKey(KeyEvent(key: .escape))
+        #expect(builder.selection == nil)
+        builder.handleKey(KeyEvent(key: .left))
+        #expect(builder.frame == 0)
+
+        // Tool keys and mirror toggles.
+        for (key, tool) in [(Key.b, PixelTool.pencil), (.l, .line), (.u, .rect), (.g, .fill), (.e, .eraser), (.i, .picker)] {
+            builder.handleKey(KeyEvent(key: key))
+            #expect(builder.tool == tool)
+        }
+        builder.handleKey(KeyEvent(key: .h))
+        #expect(builder.mirror.contains(.horizontal))
+        #expect(!builder.claimsKey(KeyEvent(key: .z, modifiers: mod)), "undo stays the editor's")
+    }
+
+    @Test func importSheetWritesASpriteOrReplacesOne() throws {
+        let (session, folder) = try makeProject()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        // A 4 x 1 strip of 2 x 1 frames: [red, clear], [clear, blue].
+        let png = folder.appendingPathComponent("walk.png")
+        try Image(width: 4, height: 1, pixels: [255, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255]).writePNG(to: png)
+
+        let result = try call(session, "sprite.importSheet", ["file": png.path, "frameWidth": 2, "frameHeight": 1, "duration": 80,
+                                                              "tags": [["name": "walk", "from": 0, "to": 1]]])
+        #expect(result["path"] as? String == "walk.sprite")
+        #expect(result["frames"] as? [Int] == [80, 80])
+        #expect((result["sheet"] as? [String: Any])?["columns"] as? Int == 2)
+        #expect((result["clips"] as? [[String: Any]])?.first?["name"] as? String == "walk")
+        let id = try #require((result["asset"] as? String).flatMap { AssetID($0) })
+        let sprite = try #require(session.assets?.pixelSprite(of: id))
+        #expect(sprite.palette.count == 2)
+        #expect(sprite.compositeRows(frame: 0)[0].first != ".")
+        #expect(sprite.compositeRows(frame: 1)[0].first == ".")
+
+        // columns / rows give the frame size; `into` replaces an existing sprite as one undo step.
+        try call(session, "sprite.new", ["name": "Target"])
+        let replaced = try call(session, "sprite.importSheet", ["file": png.path, "columns": 4, "rows": 1, "palette": "pico8", "into": "Target.sprite"])
+        #expect(replaced["width"] as? Int == 1)
+        #expect((replaced["frames"] as? [Int])?.count == 4)
+        #expect((replaced["sheet"] as? [String: Any])?["quantized"] as? Bool == true, "pure red and blue map to the nearest pico8 colors")
+        #expect((replaced["palette"] as? [String])?.count == 16)
+        #expect(session.performUndo())
+        let targetID = try #require(session.assets?.id(forPath: "Target.sprite"))
+        let target = try #require(session.assets?.pixelSprite(of: targetID))
+        #expect(target.width == 16)
+
+        #expect(throws: (any Error).self) { try call(session, "sprite.importSheet", ["file": png.path]) }
+        #expect(throws: (any Error).self) { try call(session, "sprite.importSheet", ["file": png.path, "frameWidth": 8, "frameHeight": 8]) }
+        #expect(throws: (any Error).self) { try call(session, "sprite.importSheet", ["frameWidth": 2]) }
+    }
+
+    @Test func tagFrameEventsFromToolsAndTheTab() throws {
+        let (session, folder) = try makeProject()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let created = try call(session, "sprite.new", ["name": "Ev", "width": 2, "height": 2, "frames": 3])
+        let id = try #require((created["asset"] as? String).flatMap { AssetID($0) })
+        let edited = try call(session, "sprite.edit", ["path": "Ev.sprite", "addTags": [["name": "walk", "from": 0, "to": 2]],
+                                                       "addEvents": [["tag": "walk", "frame": 2, "name": "land"], ["tag": "walk", "frame": 1, "name": "step"]]])
+        #expect((edited["clips"] as? [[String: Any]])?.first?["events"] as? [String] == ["step@1", "land@2"])
+        #expect(throws: (any Error).self) { try call(session, "sprite.edit", ["path": "Ev.sprite", "addEvents": [["tag": "walk", "frame": 5, "name": "x"]]]) }
+        #expect(throws: (any Error).self) { try call(session, "sprite.edit", ["path": "Ev.sprite", "addEvents": [["tag": "nope", "frame": 0, "name": "x"]]]) }
+        try call(session, "sprite.edit", ["path": "Ev.sprite", "removeEvents": [["tag": "walk", "name": "land"]]])
+        #expect(session.assets?.pixelSprite(of: id)?.tags[0].events == [PixelSprite.FrameEvent(frame: 1, name: "step")])
+
+        // The tab lists the selected tag's events and adds one on the current frame.
+        let workspace = PixelSpriteWorkspace(session: session)
+        #expect(workspace.open(id))
+        let builder = try #require(workspace.builder)
+        builder.selectTag(0)
+        builder.selectFrame(2)
+        workspace.update(dt: 0.016)
+        let field = try #require(builder.view.descendant(named: "spriteEventNewName") as? TextField)
+        let submit = try #require(field.onSubmit)
+        submit("land")
+        workspace.update(dt: 0.016)
+        #expect(session.assets?.pixelSprite(of: id)?.tags[0].events.map(\.name) == ["step", "land"])
+        #expect(builder.view.descendant(named: "spriteRemoveEvent1") != nil)
+        #expect(session.performUndo())
+        #expect(session.assets?.pixelSprite(of: id)?.tags[0].events.count == 1)
+    }
+
+    @Test func layerBlendModesFromToolsAndTheTab() throws {
+        let (session, folder) = try makeProject()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let created = try call(session, "sprite.new", ["name": "Blend", "width": 2, "height": 2])
+        let id = try #require((created["asset"] as? String).flatMap { AssetID($0) })
+        let edited = try call(session, "sprite.edit", ["path": "Blend.sprite", "addLayers": ["Light"],
+                                                       "updateLayers": [["name": "Light", "blend": "add"]]])
+        #expect((edited["layers"] as? [[String: Any]])?.last?["blend"] as? String == "add")
+        #expect(throws: (any Error).self) { try call(session, "sprite.edit", ["path": "Blend.sprite", "updateLayers": [["name": "Light", "blend": "burn"]]]) }
+
+        let workspace = PixelSpriteWorkspace(session: session)
+        #expect(workspace.open(id))
+        let builder = try #require(workspace.builder)
+        builder.selectLayer(1)
+        workspace.update(dt: 0.016)
+        let dropdown = try #require(builder.view.descendant(named: "spriteLayerBlend") as? Dropdown)
+        #expect(dropdown.selectedIndex == PixelSprite.BlendMode.allCases.firstIndex(of: .add))
+        dropdown.onChange?(PixelSprite.BlendMode.allCases.firstIndex(of: .multiply)!)
+        workspace.update(dt: 0.016)
+        #expect(session.assets?.pixelSprite(of: id)?.layers[1].blend == .multiply)
+    }
 }
+
+#if os(macOS)
+import QuartzCore
+
+@MainActor
+@Suite struct PixelSpriteSceneViewTests {
+    @Test func sceneViewQueuesSpriteComponentsFromSpriteAssets() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("PixelSpriteSceneViewTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
+        var sprite = PixelSprite(width: 4, height: 4, frameCount: 2)
+        sprite.stamp(rows: ["11", "11"], frame: 0, layer: 0)
+        try #require(session.createPixelSpriteAsset(in: "Sprites", name: "Hero", sprite: sprite))
+
+        let drawer = SceneSpriteDrawer(device: try MetalRenderDevice(layer: CAMetalLayer(), sampleCount: 1))
+        let world = World()
+        world.spawn(Transform(), Sprite(atlas: SpriteAtlasHandle("Sprites/Hero.sprite"), frame: 1))
+        world.spawn(Transform(), Sprite(atlas: SpriteAtlasHandle("not-a-sprite")))
+        world.spawn(Transform(), Sprite(atlas: SpriteAtlasHandle("Sprites/Hero.sprite"), visible: false))
+        world.propagateTransforms()
+        #expect(drawer.prepare(world: world, assets: session.assets, reversedZ: true) == 1, "unknown atlases and hidden sprites are skipped")
+        #expect(drawer.prepare(world: World(), assets: session.assets, reversedZ: true) == 0)
+        #expect(drawer.prepare(world: world, assets: nil, reversedZ: false) == 0, "no project: nothing to load")
+    }
+}
+#endif

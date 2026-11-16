@@ -77,6 +77,18 @@ public struct PixelSprite: Codable, Equatable, Sendable {
         case loop, once, pingPong
     }
 
+    /// A named event on a frame of a tag: the clip fires it (`SpriteAnimator.events`) each time it
+    /// reaches that frame. `frame` is the sprite's frame index (inside the tag's range).
+    public struct FrameEvent: Codable, Equatable, Hashable, Sendable {
+        public var frame: Int
+        public var name: String
+
+        public init(frame: Int, name: String) {
+            self.frame = frame
+            self.name = name
+        }
+    }
+
     /// A named range of frames, played as one animation clip.
     public struct Tag: Codable, Equatable, Sendable {
         public var name: String
@@ -84,15 +96,18 @@ public struct PixelSprite: Codable, Equatable, Sendable {
         public var from: Int
         public var to: Int
         public var mode: TagMode
+        /// Events fired when the clip reaches a frame (footsteps, hit frames, sounds).
+        public var events: [FrameEvent]
 
-        public init(_ name: String, from: Int, to: Int, mode: TagMode = .loop) {
+        public init(_ name: String, from: Int, to: Int, mode: TagMode = .loop, events: [FrameEvent] = []) {
             self.name = name
             self.from = from
             self.to = to
             self.mode = mode
+            self.events = events
         }
 
-        private enum CodingKeys: String, CodingKey { case name, from, to, mode }
+        private enum CodingKeys: String, CodingKey { case name, from, to, mode, events }
 
         public init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -100,6 +115,16 @@ public struct PixelSprite: Codable, Equatable, Sendable {
             from = try c.decodeIfPresent(Int.self, forKey: .from) ?? 0
             to = try c.decodeIfPresent(Int.self, forKey: .to) ?? from
             mode = try c.decodeIfPresent(TagMode.self, forKey: .mode) ?? .loop
+            events = try c.decodeIfPresent([FrameEvent].self, forKey: .events) ?? []
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(name, forKey: .name)
+            try c.encode(from, forKey: .from)
+            try c.encode(to, forKey: .to)
+            try c.encode(mode, forKey: .mode)
+            if !events.isEmpty { try c.encode(events, forKey: .events) }
         }
     }
 
@@ -117,18 +142,46 @@ public struct PixelSprite: Codable, Equatable, Sendable {
         }
     }
 
+    /// How a layer's colors combine with the layers below it (where those have pixels; over
+    /// transparent pixels every mode draws like `normal`).
+    public enum BlendMode: String, Codable, CaseIterable, Sendable {
+        /// The layer covers what is below.
+        case normal
+        /// Darkens: below x layer (shadows, tints).
+        case multiply
+        /// Brightens: below + layer, capped at white (glows, light).
+        case add
+        /// Brightens softly: 1 - (1 - below)(1 - layer).
+        case screen
+        /// Multiply on dark parts below, screen on light ones (contrast, shading).
+        case overlay
+
+        /// The blended channel for layer value `s` over `d` (0...1).
+        public func blend(_ s: Float, over d: Float) -> Float {
+            switch self {
+            case .normal: s
+            case .multiply: s * d
+            case .add: min(s + d, 1)
+            case .screen: s + d - s * d
+            case .overlay: d < 0.5 ? 2 * s * d : 1 - 2 * (1 - s) * (1 - d)
+            }
+        }
+    }
+
     public struct Layer: Equatable, Sendable {
         public var name: String
         public var visible: Bool
         /// 0...1.
         public var opacity: Float
+        public var blend: BlendMode
         /// One cel per frame: `width * height` values, 0 transparent, `n` palette entry `n - 1`.
         public var cels: [[UInt8]]
 
-        public init(name: String, visible: Bool = true, opacity: Float = 1, cels: [[UInt8]] = []) {
+        public init(name: String, visible: Bool = true, opacity: Float = 1, blend: BlendMode = .normal, cels: [[UInt8]] = []) {
             self.name = name
             self.visible = visible
             self.opacity = opacity
+            self.blend = blend
             self.cels = cels
         }
     }
@@ -189,6 +242,8 @@ public struct PixelSprite: Codable, Equatable, Sendable {
         var name: String?
         var visible: Bool?
         var opacity: Float?
+        /// Omitted for `normal`.
+        var blend: BlendMode?
         var cels: [[String]]?
     }
 
@@ -205,7 +260,7 @@ public struct PixelSprite: Codable, Equatable, Sendable {
         let (w, h) = (width, height)
         layers = files.enumerated().map { i, file in
             Layer(name: file.name ?? "Layer \(i + 1)", visible: file.visible ?? true, opacity: file.opacity ?? 1,
-                  cels: (file.cels ?? []).map { Self.decodeRows($0, width: w, height: h) })
+                  blend: file.blend ?? .normal, cels: (file.cels ?? []).map { Self.decodeRows($0, width: w, height: h) })
         }
         // A file with cels but no frame list gets a frame per cel.
         let celCount = layers.map(\.cels.count).max() ?? 0
@@ -226,7 +281,7 @@ public struct PixelSprite: Codable, Equatable, Sendable {
         try c.encode(pixelsPerUnit, forKey: .pixelsPerUnit)
         try c.encode(layers.map { layer in
             LayerFile(name: layer.name, visible: layer.visible, opacity: layer.opacity,
-                      cels: layer.cels.map { rows(of: $0) })
+                      blend: layer.blend == .normal ? nil : layer.blend, cels: layer.cels.map { rows(of: $0) })
         }, forKey: .layers)
     }
 
@@ -283,12 +338,13 @@ public struct PixelSprite: Codable, Equatable, Sendable {
         return 0
     }
 
-    /// `frame` as row strings of the topmost visible pixels (opacity ignored).
+    /// `frame` as row strings of the topmost visible pixels (opacity and blend modes ignored).
     public func compositeRows(frame: Int) -> [String] {
         (0..<height).map { y in String((0..<width).map { x in Self.character(for: pick(frame: frame, x: x, y: y)) }) }
     }
 
-    /// `frame` composited: visible layers bottom to top, each with its opacity (straight alpha).
+    /// `frame` composited: visible layers bottom to top, each with its opacity and blend mode
+    /// (straight alpha; a blend mode mixes with what is below in proportion to its coverage).
     /// `onlyLayer` draws that layer alone (ignoring its visibility).
     public func image(frame: Int, onlyLayer: Int? = nil) -> Image {
         var pixels = [Float](repeating: 0, count: pixelCount * 4)
@@ -306,8 +362,11 @@ public struct PixelSprite: Codable, Equatable, Sendable {
                     let da = pixels[o + 3]
                     let outA = sa + da * (1 - sa)
                     for (k, s) in [c.r, c.g, c.b].enumerated() {
-                        let sc = Float(s) / 255
-                        pixels[o + k] = (sc * sa + pixels[o + k] * da * (1 - sa)) / outA
+                        let dc = pixels[o + k]
+                        // W3C compositing: where there is something below, the source color is
+                        // the blend of the two.
+                        let sc = (1 - da) * (Float(s) / 255) + da * layer.blend.blend(Float(s) / 255, over: dc)
+                        pixels[o + k] = (sc * sa + dc * da * (1 - sa)) / outA
                     }
                     pixels[o + 3] = outA
                 }
@@ -341,6 +400,12 @@ public struct PixelSprite: Codable, Equatable, Sendable {
             if !tagNames.insert(tag.name).inserted { out.append("two tags are named '\(tag.name)'") }
             if tag.from < 0 || tag.to >= frames.count || tag.from > tag.to {
                 out.append("tag '\(tag.name)' covers frames \(tag.from)...\(tag.to) but the sprite has frames 0...\(frames.count - 1)")
+            }
+            for event in tag.events {
+                if event.name.isEmpty { out.append("tag '\(tag.name)' has an event without a name") }
+                if event.frame < tag.from || event.frame > tag.to {
+                    out.append("tag '\(tag.name)' event '\(event.name)' is on frame \(event.frame), outside the tag's frames \(tag.from)...\(tag.to) (it never fires)")
+                }
             }
         }
         return out

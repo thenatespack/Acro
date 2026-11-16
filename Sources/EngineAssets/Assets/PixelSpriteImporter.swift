@@ -29,6 +29,13 @@ public struct SpriteSheet: Sendable {
         public var frames: [Int]
         public var fps: Float
         public var mode: PixelSprite.TagMode
+        /// Events by position in `frames` (a tag event on a repeated frame fires on its first step).
+        public var events: [Event] = []
+
+        public struct Event: Sendable, Equatable {
+            public var step: Int
+            public var name: String
+        }
     }
 
     public var image: Image
@@ -88,26 +95,33 @@ extension PixelSprite {
     /// One clip per valid tag (ranges clamped to the frames; tags without a name are skipped).
     /// Without tags, one looping clip "default" of every frame.
     public func clips() -> [SpriteSheet.Clip] {
-        let ranges: [(String, ClosedRange<Int>, TagMode)] = tags.isEmpty
-            ? [("default", 0...(frames.count - 1), .loop)]
+        let ranges: [(String, ClosedRange<Int>, TagMode, [FrameEvent])] = tags.isEmpty
+            ? [("default", 0...(frames.count - 1), .loop, [])]
             : tags.compactMap { tag in
                 guard !tag.name.isEmpty else { return nil }
                 let from = min(max(tag.from, 0), frames.count - 1), to = min(max(tag.to, from), frames.count - 1)
-                return (tag.name, from...to, tag.mode)
+                return (tag.name, from...to, tag.mode, tag.events)
             }
         var seen = Set<String>()
-        return ranges.compactMap { name, range, mode in
+        return ranges.compactMap { name, range, mode, events in
             guard seen.insert(name).inserted else { return nil }
             let durations = range.map { max(frames[$0].duration, 1) }
             let step = durations.reduce(0) { Self.gcd($0, $1) }
             let repeats = durations.map { $0 / step }
             // Repeat frames to keep their timing, unless that would make a very long list.
+            var clip: SpriteSheet.Clip
             if repeats.reduce(0, +) <= 512 {
-                return SpriteSheet.Clip(name: name, frames: zip(range, repeats).flatMap { Array(repeating: $0, count: $1) },
+                clip = SpriteSheet.Clip(name: name, frames: zip(range, repeats).flatMap { Array(repeating: $0, count: $1) },
                                         fps: 1000 / Float(step), mode: mode)
+            } else {
+                let average = Float(durations.reduce(0, +)) / Float(durations.count)
+                clip = SpriteSheet.Clip(name: name, frames: Array(range), fps: 1000 / average, mode: mode)
             }
-            let average = Float(durations.reduce(0, +)) / Float(durations.count)
-            return SpriteSheet.Clip(name: name, frames: Array(range), fps: 1000 / average, mode: mode)
+            clip.events = events.compactMap { event in
+                guard !event.name.isEmpty, let step = clip.frames.firstIndex(of: event.frame) else { return nil }
+                return SpriteSheet.Clip.Event(step: step, name: event.name)
+            }
+            return clip
         }
     }
 
