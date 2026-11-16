@@ -154,6 +154,12 @@ private func makeProject() throws -> Project {
         #expect(animator.targets.count == rig.bones.count)
         #expect(animator.targets.map { world.get(Name.self, for: $0)?.value } == rig.bones.map(\.name))
         #expect(animator.restPose == rig.restPose)
+        // The prefab holds `Animator`'s own encoding of the importer's value (no hand-written copy).
+        var clipKeys: [String: String] = [:]
+        for name in CharacterClips.stockNames { clipKeys[name] = AssetReference(id, subAsset: "animation/\(name)").description }
+        var expected = CharacterImporter.animator(build: character, rig: rig, clipKeys: clipKeys)
+        expected.targets = animator.targets
+        #expect(animator == expected)
         #expect(animator.stateMachine.states.map(\.name) == CharacterClips.stockNames + ["locomotion"])
         #expect(animator.stateMachine.initialState == "idle")
         #expect(animator.stateMachine.transitions.contains { $0.to == "jump" && $0.conditions == [.triggered("jump")] })
@@ -202,6 +208,171 @@ private func makeProject() throws -> Project {
         let birdWorld = World()
         let birdRoot = try #require(birdWorld.instantiate(reloaded).first)
         #expect(birdWorld.get(Animator.self, for: birdRoot)?.targets.count == CharacterRig(template: .bird).bones.count)
+    }
+
+    @Test func externalClipEntriesRoundTripAndAreValidated() throws {
+        let file = try AssetJSON.decoder().decode(CharacterBuild.self, from: Data("""
+            {"clips": ["idle", "asset:0123456789abcdef0123456789abcdef#animation/Wave",
+                       {"name": "walk", "clip": "asset:0123456789abcdef0123456789abcdef#animation/Walk", "boneMap": {"Hips": "hips"}}]}
+            """.utf8))
+        #expect(file.clips == ["idle"])
+        #expect(file.externalClips.map(\.name) == ["Wave", "walk"] && file.externalClips[1].boneMap == ["Hips": "hips"])
+        #expect(file.clipNames == ["idle", "walk", "Wave"], "a same-named external clip takes the stock clip's place")
+        #expect(file.stockClipNames == ["idle"] && file.loops("walk") && file.loops("Wave"))
+        #expect(try AssetJSON.decoder().decode(CharacterBuild.self, from: file.fileData()) == file)
+        var bad = file
+        bad.externalClips += [CharacterExternalClip(name: "Wave", clip: "Models/wave.gltf"),
+                              CharacterExternalClip(name: "x", clip: "asset:0123456789abcdef0123456789abcdef#animation/X", boneMap: ["A": "tentacle"])]
+        let problems = bad.problems.joined(separator: "\n")
+        #expect(problems.contains("two clips are named 'Wave'") && problems.contains("isn't an animation reference"))
+        #expect(problems.contains("boneMap 'A' → no bone 'tentacle'"))
+    }
+
+    @Test func externalClipsFromGLTFAndCharactersPlayByBoneName() throws {
+        SkeletalAnimation.registerComponents()
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let url = project.url(forAssetPath: "Models/rig.gltf")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try animationClipImportGLTF().write(to: url)
+        let database = AssetDatabase(project: project)
+        database.refresh()
+        let gltf = try #require(database.id(forPath: "Models/rig.gltf"))
+        let other = try database.createCharacter(CharacterBuild(), at: "other.character")
+        let bend = AssetReference(gltf, subAsset: "animation/Bend").description
+        // glTF nodes Root (rotation) and Tip (translation, scale) mapped onto bones; a stock jump
+        // from another humanoid replaces this one's; a clip with no matching node is dropped.
+        let character = CharacterBuild(clips: ["idle", "walk"], externalClips: [
+            CharacterExternalClip(name: "bend", clip: bend, boneMap: ["Root": "head", "Tip": "hand.R"], loops: false),
+            CharacterExternalClip(name: "jump", clip: AssetReference(other, subAsset: "animation/jump").description),
+            CharacterExternalClip(name: "lost", clip: bend),
+        ])
+        let id = try database.createCharacter(CharacterBuild(), at: "hero.character")
+        let warnings = try database.writeCharacter(character, to: id).joined(separator: "\n")
+        let record = try #require(database.record(id))
+        #expect(record.importError == nil)
+        #expect(record.objects.filter { $0.kind == .animation }.map(\.id) == ["animation/idle", "animation/walk", "animation/bend", "animation/jump"])
+        #expect(warnings.contains("clip 'lost': none of the animated nodes"), "\(warnings)")
+
+        let rig = character.rig
+        let clip = try #require(database.animationClip(AssetReference(id, subAsset: "animation/bend")))
+        let head = rig.index(of: "head")!, hand = rig.index(of: "hand.R")!
+        #expect(clip.channels.map(\.target) == [head, hand] && clip.channels.map(\.path) == [.rotation, .scale])
+        let jump = try #require(database.animationClip(AssetReference(id, subAsset: "animation/jump")))
+        #expect(jump.channels.count == CharacterClips.clip("jump", rig: CharacterBuild().rig)!.channels.count)
+        #expect(jump.channels.contains { $0.path == .translation }, "the same skeleton keeps its root moves")
+        #expect(jump.events.map(\.name) == ["takeoff", "land"])
+
+        // The Animator has them as states, and the glTF rotation plays on the head.
+        let world = World()
+        let prefab = try #require(database.prefab(AssetReference(id)))
+        let root = try #require(world.instantiate(prefab).first)
+        let animator = try #require(world.get(Animator.self, for: root))
+        #expect(animator.stateMachine.states.map(\.name) == ["idle", "walk", "jump", "bend", "locomotion"])
+        #expect(animator.stateMachine.states.first { $0.name == "bend" }?.loops == false)
+        #expect(animator.stateMachine.transitions.contains { $0.to == "jump" })
+        world.propagateTransforms()
+        _ = world.addSceneAnimationSystem(assets: { database })
+        world.modify(Animator.self, for: root) { $0.play("bend", fade: 0) }
+        for _ in 0..<40 { world.update(dt: 1.0 / 30) }
+        let headRotation = try #require(world.get(Transform.self, for: animator.targets[head])).rotation
+        let expected = Quat(angle: .pi / 2, axis: Vec3(0, 1, 0))
+        #expect(abs(abs(headRotation.vector.y) - abs(expected.vector.y)) < 1e-3 && abs(abs(headRotation.vector.w) - abs(expected.vector.w)) < 1e-3)
+    }
+
+    @Test func partColorsRecolorSinglePartsOfAnAttachment() throws {
+        SkeletalAnimation.registerComponents()
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        try database.createMeshBuild(MeshBuild(parts: [
+            MeshBuildPart(name: "Grip", shape: .cylinder, size: Vec3(0.04, 0.2, 0.04)),
+            MeshBuildPart(name: "Blade", parent: "Grip", position: Vec3(0, 0.5, 0), size: Vec3(0.08, 0.8, 0.02)),
+        ]), at: "sword.meshbuild")
+        let sword = CharacterAttachment(name: "Sword", bone: "hand.R", asset: "sword.meshbuild", color: Vec3(0, 0, 1),
+                                        partColors: ["Blade": Vec3(1, 0, 0), "Hilt": Vec3(0, 1, 0)])
+        let round = try AssetJSON.decoder().decode(CharacterAttachment.self, from: AssetJSON.encode(sword))
+        #expect(round == sword)
+        #expect(!String(decoding: try AssetJSON.encode(CharacterAttachment()), as: UTF8.self).contains("partColors"))
+        let id = try database.createCharacter(CharacterBuild(), at: "hero.character")
+        let warnings = try database.writeCharacter(CharacterBuild(attachments: [sword]), to: id)
+        #expect(warnings.contains { $0.contains("partColors names no part 'Hilt'") }, "\(warnings)")
+        func baseColor(_ part: String) -> Vec4? {
+            guard case .material(let m)? = database.object(AssetReference(id, subAsset: "material/Sword \(part)"), kind: .material)?.value else { return nil }
+            return m.baseColor
+        }
+        let red = MeshBuildColor.linear(fromSRGB: Vec3(1, 0, 0)), blue = MeshBuildColor.linear(fromSRGB: Vec3(0, 0, 1))
+        #expect(baseColor("Blade").map { abs($0.x - red.x) < 1e-5 && $0.z < 1e-5 } == true)
+        #expect(baseColor("Grip").map { abs($0.z - blue.z) < 1e-5 && $0.x < 1e-5 } == true)
+    }
+
+    /// Built games: a placed character is cooked with its clips and plays from the mounted pack
+    /// through `ScenePlayback` (the exported player's path), with the project gone.
+    @Test func cookedCharacterPlaysFromAPackWithoutTheProject() throws {
+        SkeletalAnimation.registerComponents()
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        let id = try database.createCharacter(CharacterBuild(defaultClip: "walk"), at: "Characters/hero.character")
+        let prefab = try #require(database.prefab(AssetReference(id)))
+        let world = World()
+        _ = try world.instantiatePrefab(try prefab.template(prefabs: { database.prefab($0) }), reference: AssetReference(id))
+        let sceneURL = project.url(forAssetPath: "Scenes/Main.scene")
+        try FileManager.default.createDirectory(at: sceneURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try world.save().write(to: sceneURL)
+
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent("CharacterTests-pack-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: output) }
+        let report = try AssetCooker.cook(projectAt: project.root, options: CookOptions(scenes: ["Scenes/Main.scene"]), to: output)
+        try FileManager.default.removeItem(at: project.root)
+        let pack = try AssetPack(url: URL(fileURLWithPath: report.packPath))
+        let assets = AssetDatabase(mounting: pack)
+        #expect(assets.animationClip(AssetReference(id, subAsset: "animation/walk")) != nil)
+
+        let playback = ScenePlayback(module: GameModule(), context: GameContext(input: Input()), assets: { assets }, log: { _ in }) { path in
+            try pack.scene(path)
+        }
+        try playback.load("Scenes/Main.scene")
+        var root: Entity?
+        playback.world.query(Animator.self) { entity, _ in root = entity }
+        let animator = try #require(root.flatMap { playback.world.get(Animator.self, for: $0) })
+        let leg = animator.targets[CharacterRig(template: .humanoid).index(of: "upperLeg.L")!]
+        let rest = try #require(playback.world.get(Transform.self, for: leg)).rotation
+        for _ in 0..<10 { playback.world.update(dt: 1.0 / 30) }
+        #expect(playback.world.get(Animator.self, for: root!)?.currentState == "walk")
+        #expect(playback.world.get(Transform.self, for: leg)?.rotation.vector != rest.vector, "the walk plays from the pack")
+    }
+
+    /// GameRunner: a scene file inside a project plays its characters with the project's assets
+    /// (`ScenePlayback.projectAssets(containing:)`), from a fresh database as a new process would.
+    @Test func sceneFileInAProjectPlaysCharactersWithTheProjectsAssets() throws {
+        SkeletalAnimation.registerComponents()
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        let id = try database.createCharacter(CharacterBuild(defaultClip: "run"), at: "hero.character")
+        let prefab = try #require(database.prefab(AssetReference(id)))
+        let world = World()
+        _ = try world.instantiatePrefab(try prefab.template(prefabs: { database.prefab($0) }), reference: AssetReference(id))
+        let sceneURL = project.url(forAssetPath: "Scenes/Main.scene")
+        try FileManager.default.createDirectory(at: sceneURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try world.save().write(to: sceneURL)
+
+        #expect(ScenePlayback.projectAssets(containing: FileManager.default.temporaryDirectory.appendingPathComponent("loose.scene")) == nil)
+        let assets = try #require(ScenePlayback.projectAssets(containing: sceneURL))
+        #expect(assets.project.root.standardizedFileURL == project.root.standardizedFileURL)
+        let playback = ScenePlayback(module: GameModule(), context: GameContext(input: Input()), assets: { assets }, log: { _ in }) { path in
+            try Data(contentsOf: URL(fileURLWithPath: path))
+        }
+        try playback.load(sceneURL.path)
+        var root: Entity?
+        playback.world.query(Animator.self) { entity, _ in root = entity }
+        let animator = try #require(root.flatMap { playback.world.get(Animator.self, for: $0) })
+        let leg = animator.targets[CharacterRig(template: .humanoid).index(of: "upperLeg.L")!]
+        let rest = try #require(playback.world.get(Transform.self, for: leg)).rotation
+        for _ in 0..<10 { playback.world.update(dt: 1.0 / 30) }
+        #expect(playback.world.get(Animator.self, for: root!)?.currentState == "run")
+        #expect(playback.world.get(Transform.self, for: leg)?.rotation.vector != rest.vector)
     }
 
     @Test func importWarnsAboutMissingAssetsAndClips() throws {

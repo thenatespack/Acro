@@ -139,10 +139,96 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         session.world.modify(Animator.self, for: character) { $0.setFloat("speed", 1.2); $0.play("locomotion", fade: 0) }
         let leg = try #require(session.world.get(Animator.self, for: character)?.targets[CharacterRig(template: .quadruped).index(of: "frontUpper.L")!])
         let rest = try #require(session.world.get(Transform.self, for: leg)).rotation
-        session.world.addAssetAnimationSystem(assets: { [weak session] in session?.assets }, name: "CharacterToolsTests.animation")
+        session.world.addSceneAnimationSystem(assets: { [weak session] in session?.assets }, name: "CharacterToolsTests.animation")
         for _ in 0..<8 { session.world.update(dt: 1.0 / 30) }
         #expect(session.world.get(Transform.self, for: leg)?.rotation.vector != rest.vector)
-        session.world.removeAssetAnimationSystem(name: "CharacterToolsTests.animation")
+        session.world.removeSystem(named: "CharacterToolsTests.animation")
+    }
+
+    @Test func partColorsThroughUpdateAttachments() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
+        try call(session, "meshBuild.new", ["name": "Sword", "folder": "Models",
+                                            "build": ["parts": [["name": "Blade", "shape": "box", "size": [0.06, 0.8, 0.02]],
+                                                                ["name": "Grip", "shape": "box", "size": [0.04, 0.2, 0.04]]]]])
+        let hero = try call(session, "character.new", ["name": "Hero", "attachments": [["name": "Sword", "bone": "hand.R", "asset": "Models/Sword.meshbuild"]]])
+        let id = try #require((hero["asset"] as? String).flatMap { AssetID($0) })
+        let edited = try call(session, "character.edit", ["path": "Hero.character",
+                                                          "updateAttachments": ["Sword": ["partColors": ["Blade": [1, 0, 0], "Pommel": [0, 1, 0]]]]])
+        #expect(session.assets?.character(of: id)?.attachments.first?.partColors["Blade"] == Vec3(1, 0, 0))
+        #expect((edited["warnings"] as? [String])?.contains { $0.contains("partColors names no part 'Pommel'") } == true)
+        try call(session, "edit.undo")
+        #expect(session.assets?.character(of: id)?.attachments.first?.partColors.isEmpty == true)
+    }
+
+    @Test func addClipsFromOtherAssets() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
+        let source = try call(session, "character.new", ["name": "Source"])
+        let hero = try call(session, "character.new", ["name": "Hero"])
+        let sourceID = try #require(source["asset"] as? String)
+        let wave = "asset:\(sourceID)#animation/attack"
+        #expect(throws: CommandError.self) {
+            try call(session, "character.edit", ["path": "Hero.character", "addClips": [["name": "wave", "clip": wave, "boneMap": ["A": "tentacle"]]]])
+        }
+        #expect(throws: CommandError.self) { try call(session, "character.edit", ["path": "Hero.character", "addClips": [["name": "wave", "clip": "wave.gltf"]]]) }
+        let edited = try call(session, "character.edit", ["path": "Hero.character", "addClips": [["name": "wave", "clip": wave, "loops": true]],
+                                                          "defaultClip": "wave"])
+        #expect((edited["clips"] as? [String])?.last == "wave")
+        #expect((edited["warnings"] as? [String]) == [], "\(edited["warnings"] ?? "")")
+        let got = try call(session, "character.get", ["path": "Hero.character"])
+        let info = try #require((got["clips"] as? [[String: Any]])?.first { $0["name"] as? String == "wave" })
+        #expect(info["source"] as? String == wave && info["loops"] as? Bool == true && (info["duration"] as? Double ?? 0) > 0)
+        #expect(info["events"] as? [String] == ["hit"])
+        let id = try #require((hero["asset"] as? String).flatMap { AssetID($0) })
+        #expect(session.assets?.character(of: id)?.defaultClip == "wave")
+        // Missing sources are reported without importing.
+        let missing = try call(session, "character.edit", ["path": "Hero.character", "addClips": [["name": "gone", "clip": "asset:0123456789abcdef0123456789abcdef#animation/x"]]])
+        #expect((missing["warnings"] as? [String])?.contains { $0.contains("clip 'gone': no asset") } == true)
+        let removed = try call(session, "character.edit", ["path": "Hero.character", "removeClips": ["gone"]])
+        #expect((removed["clips"] as? [String])?.contains("gone") == false)
+    }
+
+    @Test func editModeAnimationShowsAPoseWithoutChangingTheScene() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
+        try call(session, "character.new", ["template": "humanoid", "place": true])
+        try call(session, "character.edit", ["path": "Humanoid.character", "defaultClip": "walk"])
+        _ = session.prefabs.sync(session.world, database: try #require(session.assets))
+        var root: Entity?
+        session.world.query(Animator.self) { entity, _ in root = entity }
+        let character = try #require(root)
+        let animatorBefore = try #require(session.world.get(Animator.self, for: character))
+        let leg = animatorBefore.targets[CharacterRig(template: .humanoid).index(of: "upperLeg.L")!]
+        let authored = try #require(session.world.get(Transform.self, for: leg))
+        let dirty = session.document.isDirty, undoDepth = session.undo.undoDepth
+
+        let on = try call(session, "view.animateInEditMode", ["on": true])
+        #expect(on["on"] as? Bool == true && on["animators"] as? Int == 1)
+        for _ in 0..<8 { session.tick(dt: 1.0 / 30) }
+        var posed: Transform?, posedGlobal: Mat4?
+        session.editAnimation.posing(session.world) {
+            posed = session.world.get(Transform.self, for: leg)
+            posedGlobal = session.world.get(GlobalTransform.self, for: leg)?.matrix
+        }
+        #expect(posed?.rotation.vector != authored.rotation.vector, "the walk shows while rendering")
+        #expect(posedGlobal != nil)
+        // Outside rendering the scene is as authored: transforms, the Animator, undo and dirty state.
+        #expect(session.world.get(Transform.self, for: leg) == authored)
+        #expect(session.world.get(Animator.self, for: character) == animatorBefore)
+        #expect(session.document.isDirty == dirty && session.undo.undoDepth == undoDepth)
+        #expect(session.world.get(GlobalTransform.self, for: leg)?.matrix != posedGlobal)
+
+        // Play mode doesn't use it; turning it off stops it.
+        let off = try call(session, "view.animateInEditMode", [:])
+        #expect(off["on"] as? Bool == false && session.editAnimation.count == 0)
+        session.editAnimation.posing(session.world) { #expect(session.world.get(Transform.self, for: leg) == authored) }
     }
 
     @Test func builderFormEditsAreOneUndoStepEach() throws {
@@ -186,5 +272,23 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(session.performUndo())  // attach
         view.reload()
         #expect(view.character == CharacterBuild())
+    }
+
+    /// The file's colors are sRGB; the grid's swatches show linear fields as sRGB, so the proxies convert.
+    @Test func formColorProxiesShowTheFilesSRGBColors() {
+        let srgb = Vec3(0.5, 0.35, 0.2)
+        var character = CharacterBuild()
+        character.colors[.body] = srgb
+        let proxy = CharacterColorsComponent(character)
+        let shown = UIColor(linearRGB: proxy[.body])
+        #expect(abs(shown.r - 0.5) < 1e-3 && abs(shown.g - 0.35) < 1e-3 && abs(shown.b - 0.2) < 1e-3)
+        let attachment = CharacterAttachment(name: "Sword", color: srgb, partColors: ["Blade": Vec3(1, 0, 0)])
+        var form = CharacterAttachmentComponent(attachment)
+        form.scale = 2
+        #expect(form.attachment(keeping: attachment).color == srgb, "an untouched color keeps its exact value")
+        #expect(form.attachment(keeping: attachment).partColors == attachment.partColors)
+        form.color = UIColor(0.25, 0.5, 0.75).linearRGB
+        let picked = form.attachment(keeping: attachment).color ?? .zero
+        #expect(abs(picked.x - 0.25) < 1e-3 && abs(picked.y - 0.5) < 1e-3 && abs(picked.z - 0.75) < 1e-3)
     }
 }

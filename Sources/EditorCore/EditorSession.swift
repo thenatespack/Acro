@@ -178,6 +178,9 @@ public final class EditorSession {
     public var onOpenCharacter: ((AssetID) -> Void)?
     /// The clip `character.open` asked the tab to play (nil: keep the current one).
     public var characterPreviewClip: String?
+    /// Characters and other asset-driven animators playing in the edit-mode Scene view
+    /// (`view.animateInEditMode`), without changing the scene.
+    public let editAnimation = EditModeAnimationPreview()
     /// The material open in the Material Builder tab (`materialGraph.open`), how the app shows
     /// it, and the preview settings that call asked for.
     public var openMaterialGraph: AssetID?
@@ -294,7 +297,7 @@ public final class EditorSession {
     }
 
     /// Advances the world one frame: its systems in play mode (dt times `timeScale`; nothing
-    /// while paused), only transforms while editing.
+    /// while paused), only transforms (and the `editAnimation` preview) while editing.
     public func tick(dt: Double) {
         gameModule.poll()
         gameExport.poll()
@@ -302,6 +305,7 @@ public final class EditorSession {
             advanceGame(dt: dt * timeScale)
         } else {
             world.propagateTransforms()
+            if !isPlaying { editAnimation.advance(world, assets: assets, dt: Float(dt)) }
         }
     }
 

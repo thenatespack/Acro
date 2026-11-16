@@ -1,7 +1,8 @@
 import Engine
 import Foundation
 
-/// The character builder tools: `character.new`, `.get`, `.set`, `.edit`, `.open`, `.bones`.
+/// The character builder tools: `character.new`, `.get`, `.set`, `.edit`, `.open`, `.bones`, and
+/// `view.animateInEditMode`.
 @MainActor
 public enum EditorCharacterCommands {
     public static let all: [any EditorCommand.Type] = [
@@ -11,6 +12,7 @@ public enum EditorCharacterCommands {
         CharacterEditCommand.self,
         CharacterOpenCommand.self,
         CharacterBonesCommand.self,
+        ViewAnimateInEditModeCommand.self,
     ]
 
     /// What the tool docs say about the file format, shared by the tools.
@@ -20,8 +22,10 @@ public enum EditorCharacterCommands {
         neck, tail), `colors` by region (skin, body, legs, accent, eyes; [r,g,b] 0-1 sRGB; a missing one is the template's \
         default), `attachments` (each: name, bone (see character.bones), asset (a .meshbuild path under Assets/), position \
         [x,y,z] meters and rotation [x,y,z] degrees in the bone's space (+Y up, +Z forward, +X the character's left), scale, \
-        optional color recoloring every part), `clips` (stock clips to include: idle, walk, run, jump, attack, die; all by \
-        default), `defaultClip` (the Animator's first state), `smooth` (blended skin weights at joints) and `segments` (6-32, \
+        optional color recoloring every part, optional partColors {part name: [r,g,b]} recoloring single mesh-build parts over color), `clips` (stock clips to include: idle, walk, run, jump, attack, die; all by \
+        default; an entry may instead be {name, clip: "asset:<id>#animation/<name>" (a glTF animation or another character's \
+        clip), boneMap: {sourceNode: bone}, loops}, played by bone-name match: rotations of nodes named like bones, no rest-pose \
+        correction; named like a stock clip it replaces it), `defaultClip` (the Animator's first state), `smooth` (blended skin weights at joints) and `segments` (6-32, \
         roundness). It imports as a skinned prefab with an Animator whose states are the clips plus `locomotion` (idle/walk/run \
         blended by the float parameter `speed` in m/s), with triggers `jump`, `attack`, `die`. Every key is optional.
         """
@@ -124,6 +128,8 @@ public struct CharacterClipInfo: Codable, Equatable, Sendable {
     public var duration: Float
     public var loops: Bool
     public var events: [String]
+    /// For a clip from another asset: its source ("asset:<id>#animation/<name>").
+    public var source: String?
 }
 
 /// What the tools return.
@@ -177,6 +183,24 @@ enum CharacterCheck {
             }
             if session.assets?.record(id)?.importer != MeshBuildImporter().name {
                 problems.append("attachment '\(a.name)': '\(a.asset)' isn't a .meshbuild")
+            } else if let build = session.assets?.meshBuild(of: id) {
+                let parts = Set(build.parts.map(\.name))
+                for part in a.partColors.keys.sorted() where !parts.contains(part) {
+                    problems.append("attachment '\(a.name)': partColors names no part '\(part)' (parts: \(build.parts.map(\.name).joined(separator: ", ")))")
+                }
+            }
+        }
+        for clip in character.externalClips {
+            guard let reference = clip.reference else { continue }  // CharacterBuild.problems says so
+            guard let record = session.assets?.record(reference.asset) else {
+                problems.append("clip '\(clip.name)': no asset '\(reference.asset)'")
+                continue
+            }
+            if !["gltf", "character"].contains(record.importer ?? "") {
+                problems.append("clip '\(clip.name)': '\(record.path)' isn't a glTF / GLB file or a .character")
+            } else if record.importer == "gltf", record.importError == nil, !record.objects.contains(where: { $0.id == reference.subAsset }) {
+                let names = record.objects.filter { $0.kind == .animation }.map(\.id)
+                problems.append("clip '\(clip.name)': '\(record.path)' has no '\(reference.subAsset ?? "")' (it has: \(names.isEmpty ? "no animations" : names.joined(separator: ", ")))")
             }
         }
         return problems
@@ -267,8 +291,14 @@ public enum CharacterGetCommand: EditorCommand {
         var colors: [String: Vec3] = [:]
         for region in CharacterRegion.allCases { colors[region.rawValue] = c.color(region) }
         let clips = c.clipNames.map { name -> CharacterClipInfo in
+            let reference = AssetReference(id, subAsset: "animation/\(name)")
+            if let external = c.externalClips.first(where: { $0.name == name }) {
+                let imported = session.assets?.animationClip(reference)
+                return CharacterClipInfo(name: name, clip: reference.description, duration: imported?.duration ?? 0, loops: c.loops(name),
+                                         events: imported?.events.map(\.name) ?? [], source: external.clip)
+            }
             let duration = CharacterClips.duration(name, template: c.template)
-            return CharacterClipInfo(name: name, clip: AssetReference(id, subAsset: "animation/\(name)").description, duration: duration,
+            return CharacterClipInfo(name: name, clip: reference.description, duration: duration,
                                      loops: CharacterClips.loops(name), events: CharacterClips.events(name, duration: duration).map(\.name))
         }
         return Result(summary: CharacterResult(id, c, warnings: CharacterCheck.problems(c, in: session), in: session), character: c,
@@ -327,13 +357,17 @@ public enum CharacterEditCommand: EditorCommand {
         public var updateAttachments: [String: JSONValue]?
         /// The stock clips to include.
         public var clips: [String]?
+        /// Clips from other assets to add (or replace, by name): {name, clip: "asset:<id>#animation/<name>", boneMap, loops}.
+        public var addClips: [CharacterExternalClip]?
+        /// Clips from other assets to remove, by name.
+        public var removeClips: [String]?
         public var defaultClip: String?
         public var smooth: Bool?
         public var segments: Int?
         public init(asset: AssetReference? = nil, path: String? = nil, template: CharacterTemplate? = nil, proportions: [String: Float]? = nil,
                     colors: [String: Vec3]? = nil, resetColors: [String]? = nil, detach: [String]? = nil, attach: [CharacterAttachment]? = nil,
-                    updateAttachments: [String: JSONValue]? = nil, clips: [String]? = nil, defaultClip: String? = nil, smooth: Bool? = nil,
-                    segments: Int? = nil) {
+                    updateAttachments: [String: JSONValue]? = nil, clips: [String]? = nil, addClips: [CharacterExternalClip]? = nil,
+                    removeClips: [String]? = nil, defaultClip: String? = nil, smooth: Bool? = nil, segments: Int? = nil) {
             self.asset = asset
             self.path = path
             self.template = template
@@ -344,6 +378,8 @@ public enum CharacterEditCommand: EditorCommand {
             self.attach = attach
             self.updateAttachments = updateAttachments
             self.clips = clips
+            self.addClips = addClips
+            self.removeClips = removeClips
             self.defaultClip = defaultClip
             self.smooth = smooth
             self.segments = segments
@@ -352,7 +388,7 @@ public enum CharacterEditCommand: EditorCommand {
 
     public static let id: CommandID = "character.edit"
     public static let title = "Edit Character"
-    public static let doc = "Changes a .character file in one undoable step, in this order: template, proportions (name → multiplier), colors (region → [r,g,b]), resetColors, detach, attach, updateAttachments (name → fields; \"name\" renames), clips, defaultClip, smooth, segments. Placed copies update. Bone names for attach come from character.bones or character.get."
+    public static let doc = "Changes a .character file in one undoable step, in this order: template, proportions (name → multiplier), colors (region → [r,g,b]), resetColors, detach, attach, updateAttachments (name → fields; \"name\" renames), clips (stock), removeClips, addClips (clips from glTF animations or other characters, played by bone-name match; boneMap maps source node names to bones), defaultClip, smooth, segments. Placed copies update. Bone names for attach come from character.bones or character.get."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
@@ -404,8 +440,32 @@ public enum CharacterEditCommand: EditorCommand {
             }
             c.clips = CharacterClips.stockNames.filter(clips.contains)
         }
+        if let names = arguments.removeClips {
+            let missing = names.filter { name in !c.externalClips.contains { $0.name == name } }
+            guard missing.isEmpty else { throw CommandError.failed("No clip from another asset named \(missing.joined(separator: ", "))") }
+            c.externalClips.removeAll { names.contains($0.name) }
+        }
+        for clip in arguments.addClips ?? [] {
+            guard clip.reference != nil else {
+                throw CommandError.failed("addClips '\(clip.name)': '\(clip.clip)' isn't an animation reference (asset:<id>#animation/<name>)")
+            }
+            guard !clip.name.trimmingCharacters(in: .whitespaces).isEmpty, clip.name != "locomotion" else {
+                throw CommandError.failed("addClips: '\(clip.name)' can't name a clip")
+            }
+            let bones = Set(c.rig.bones.map(\.name))
+            if let bad = clip.boneMap.values.sorted().first(where: { !bones.contains($0) }) {
+                throw CommandError.failed("addClips '\(clip.name)': no bone '\(bad)' in the \(c.template.rawValue) template (see character.bones)")
+            }
+            if let index = c.externalClips.firstIndex(where: { $0.name == clip.name }) {
+                c.externalClips[index] = clip
+            } else {
+                c.externalClips.append(clip)
+            }
+        }
         if let clip = arguments.defaultClip {
-            guard CharacterClips.stockNames.contains(clip) else { throw CommandError.failed("No stock clip \(clip)") }
+            guard c.clipNames.contains(clip) else {
+                throw CommandError.failed("No clip \(clip) (clips: \(c.clipNames.joined(separator: ", ")))")
+            }
             c.defaultClip = clip
         }
         if let smooth = arguments.smooth { c.smooth = smooth }
@@ -482,5 +542,34 @@ public enum CharacterBonesCommand: EditorCommand {
         let character = try CharacterEditCommand.edited(CharacterBuild(template: template), with: .init(proportions: arguments.proportions))
         return Result(template: template, bones: CharacterGetCommand.bones(character.rig), handBone: template.handBone,
                       clips: CharacterClips.stockNames)
+    }
+}
+
+public enum ViewAnimateInEditModeCommand: EditorCommand {
+    public struct Arguments: Codable, Equatable, Sendable {
+        /// On or off; omitted: toggles.
+        public var on: Bool?
+        public init(on: Bool? = nil) { self.on = on }
+    }
+
+    public struct Result: Codable, Equatable, Sendable {
+        public var on: Bool
+        /// Animators the preview plays (counted at the next frame after turning it on).
+        public var animators: Int
+    }
+
+    public static let id: CommandID = "view.animateInEditMode"
+    public static let title = "Animate in Scene View"
+    public static let doc = """
+        Turns on (or off, or toggles without `on`) animation in the edit-mode Scene view: characters, glTF models with \
+        asset clips and animation graphs play their Animator (from its initial state, e.g. a character's idle) while you \
+        edit, without entering play mode. Editor-only and never saved: the pose is shown, not written into the scene, so \
+        saving, undo and the inspector see the authored transforms. Returns whether it is on and how many animators play.
+        """
+    public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
+        let preview = session.editAnimation
+        preview.isEnabled = arguments.on ?? !preview.isEnabled
+        if preview.isEnabled && !session.isPlaying { preview.advance(session.world, assets: session.assets, dt: 0) }
+        return Result(on: preview.isEnabled, animators: preview.count)
     }
 }

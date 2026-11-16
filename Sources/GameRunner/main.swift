@@ -5,7 +5,8 @@ import Foundation
 // `swift run GameRunner SampleGame [scene.json]` builds the SampleGame target, links it into a
 // module (GameModuleBuilder) and runs it; a path to a .dylib / .so loads that instead. A
 // module with a `Game` (`makeGame`) runs it; otherwise the scene file is loaded and drawn by a
-// SceneRenderer with the module's systems running. `--server` runs it headless as a UDP server
+// SceneRenderer with the module's systems running (a scene inside a project gets the project's
+// assets: placed models, characters and their clips, animation graphs). `--server` runs it headless as a UDP server
 // and `--connect host:port` as a client of one (NetRun.swift). `--check` only loads it and
 // checks that it shares this process's Engine, then exits (no window: CI uses it).
 
@@ -156,10 +157,10 @@ if headless && connect == nil { fail("--headless goes with --connect (--server i
         try renderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(0.6, 0.6, 0.58, 1), checker: true, specular: 0.1),
                                       key: "checker")
         let start = sceneURL
-        if let projectURL = Self.projectFolder(containing: sceneURL) {
-            assets = try? AssetDatabase.open(projectAt: projectURL).0
-            renderer.assets = assets
-        }
+        // A scene inside a project gets the project's assets (prefab meshes, character clips, UI layouts…).
+        assets = ScenePlayback.projectAssets(containing: sceneURL)
+        renderer.assets = assets
+        if let assets { print("Assets: \(assets.project.name) (\(assets.allRecords.count) assets)") }
         playback = ScenePlayback(module: module, context: GameContext(input: engine.input), audio: engine.audio,
                                  assets: { [weak self] in self?.assets }) { path in
             try Data(contentsOf: SceneHost.resolve(path, from: start))
@@ -168,16 +169,6 @@ if headless && connect == nil { fail("--headless goes with --connect (--server i
         if let assets { playback.uiImages = UIBuildView.imageLoader(renderer: renderer, assets: assets) }
         try playback.load(sceneURL.path)
         engine.world = playback.world
-    }
-
-    /// The project folder (holding `Project.json`) at or above the scene's folder.
-    static func projectFolder(containing scene: URL) -> URL? {
-        var folder = scene.deletingLastPathComponent().standardizedFileURL
-        while folder.path != "/" && !folder.path.isEmpty {
-            if FileManager.default.fileExists(atPath: folder.appendingPathComponent(Project.fileName).path) { return folder }
-            folder = folder.deletingLastPathComponent()
-        }
-        return nil
     }
 
     /// Runs before the world's update, so a scene asked for last frame loads between updates.
@@ -202,6 +193,7 @@ MainActor.assumeIsolated {
         // Scenes name components by their registered names.
         for component in module.components { ComponentRegistry.register(component.type) }
         ComponentRegistry.register(Spin.self, FieldAnimator.self, LightFlicker.self, CameraPath.self, TimelinePlayer.self, TilemapMotion.self, PathFollower.self, UILayoutPlayer.self)
+        SkeletalAnimation.registerComponents()  // MeshRenderer, Skin, Animator: placed models and characters
         print("Loaded \(module.name): \(module.componentNames.joined(separator: ", "))")
         if check {
             // The module filled in this process's GameModule through Engine's API (on Windows,
