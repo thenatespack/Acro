@@ -51,6 +51,7 @@ public enum EditorIcons {
         KeyboardMover.componentName: "keyboard",
         FieldAnimator.componentName: "sliders-horizontal",
         LightFlicker.componentName: "gauge",
+        TilemapMotion.componentName: "layers",
         CameraPath.componentName: "orbit",
         BehaviorTreeRunner.componentName: "bot",
         DialoguePlayer.componentName: "file-text",

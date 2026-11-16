@@ -138,17 +138,22 @@ public struct TilemapAnimation: Codable, Equatable, Sendable {
 
     /// The frame shown at `time` seconds (the same stepping as `SpriteClip`).
     public func frame(at time: Float) -> Int? {
+        step(at: time).map { frames[$0] }
+    }
+
+    /// The index into `frames` shown at `time` seconds (nil without frames).
+    public func step(at time: Float) -> Int? {
         guard !frames.isEmpty else { return nil }
         let n = frames.count
-        guard n > 1, fps > 0 else { return frames[0] }
+        guard n > 1, fps > 0 else { return 0 }
         let tick = Int((max(time, 0) * fps).rounded(.down))
-        if mode == "once" { return frames[min(tick, n - 1)] }
+        if mode == "once" { return min(tick, n - 1) }
         if mode == "pingPong" {
             let cycle = 2 * n - 2
             let p = tick % cycle
-            return frames[p < n ? p : cycle - p]
+            return p < n ? p : cycle - p
         }
-        return frames[tick % n]
+        return tick % n
     }
 }
 

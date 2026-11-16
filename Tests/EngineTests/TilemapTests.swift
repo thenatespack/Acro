@@ -180,7 +180,7 @@ private func blank(_ columns: Int = 8, _ rows: Int = 6, layers: [String] = ["Gro
         let id = try database.createTilemap(map, at: "Levels/one.tilemap")
         let record = try #require(database.record(id))
         #expect(record.importer == "tilemap" && record.importError == nil)
-        #expect(record.objects.filter { $0.kind == .mesh }.count == 6, "3 chunks across on each layer (the water is in chunk 0)")
+        #expect(record.objects.filter { $0.kind == .mesh }.count == 6 + 4, "3 chunks across on each layer, plus the water's 4 frames")
         let tileset = try #require(database.tileset(of: id))
         #expect(tileset.layout.count == 32 && tileset.layout.columns == 8 && tileset.image.width == 128)
         let material = try #require(database.material(AssetReference(id, subAsset: "material/Back")))
@@ -195,14 +195,14 @@ private func blank(_ columns: Int = 8, _ rows: Int = 6, layers: [String] = ["Gro
         #expect(root.children[3].children[1].collider2D?.isTrigger == true && root.children[3].children[0].collider2D == nil)
 
         let mesh = try #require(database.mesh(AssetReference(id, subAsset: "mesh/Ground 0_0")))
-        #expect(mesh.vertices.count == (16 * 2 + 1) * 4, "one quad per painted cell of the chunk")
+        #expect(mesh.vertices.count == 16 * 2 * 4, "one quad per painted cell of the chunk (the animated water has its own)")
         let b = mesh.bounds
         #expect(b.center.x - b.halfExtent.x == 0 && b.center.x + b.halfExtent.x == 16 && b.center.y + b.halfExtent.y <= 6)
 
         let world = World()
         #expect(world.instantiate(prefab).count == 1)
         #expect(world.count(of: Collider2D.self) == 2)
-        #expect(world.count(of: MeshRenderer.self) == 6)
+        #expect(world.count(of: MeshRenderer.self) == 7, "6 chunks and the water")
 
         // Game code reads the map by path, following hot reload.
         let runtime = try #require(database.tilemap(path: "Assets/Levels/one.tilemap"))
@@ -418,5 +418,57 @@ private func blank(_ columns: Int = 8, _ rows: Int = 6, layers: [String] = ["Gro
         let stripBody = try #require(physics.body(for: placed[0]))
         let strip = try #require(physics.pose(of: stripBody))
         #expect(strip.position.y > 100 && strip.position.y < 102)
+    }
+
+    /// Placed prefabs play animated tiles and apply layer parallax (TilemapMotion).
+    @MainActor @Test func placedPrefabsAnimateTilesAndApplyParallax() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let tilesURL = project.url(forAssetPath: "Tiles/starter.png")
+        try FileManager.default.createDirectory(at: tilesURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try TilemapStarter.image().pngData().write(to: tilesURL)
+        let database = AssetDatabase(project: project)
+        database.refresh()
+
+        var map = blank(8, 4, layers: ["Sky", "Ground"])
+        map.layers[0].parallax = Vec2(0.5, 0.25)
+        map.paint(layer: 0, cells: map.rectCells(0, 0, 7, 1), TileCell(tile: 16))
+        map.paint(layer: 1, cells: [(1, 3), (2, 3)], TileCell(tile: 22))                 // water: frames 22-25 at 4 fps
+        map.paint(layer: 1, cells: [(4, 3)], TileCell(tile: 26, flipX: true))           // torch: 26, 27 at 6 fps
+        map.paint(layer: 1, cells: [(5, 3)], TileCell(tile: 16))
+        let id = try database.createTilemap(map, at: "Levels/moving.tilemap")
+        let prefab = try #require(database.prefab(AssetReference(id)))
+        let ground = try #require(prefab.roots.first?.children.first { $0.name == "Ground" })
+        #expect(ground.children.map(\.name) == ["chunk 0_0", "tile 22", "tile 26"])
+        let water = try #require(ground.children[1].tilemapMotion)
+        #expect(water.animation?.frames == [22, 23, 24, 25] && water.meshes.count == 4 && water.parallax == Vec2(1, 1))
+        #expect(ground.children[1].mesh.map { MeshHandle($0) } == water.meshes[0], "the painted frame shows before play")
+        let waterMesh = try #require(database.mesh(AssetReference(id, subAsset: "mesh/Ground tile 22 frame 23")))
+        #expect(waterMesh.vertices.count == 2 * 4, "both water cells")
+        let sky = try #require(prefab.roots.first?.children.first { $0.name == "Sky" })
+        #expect(sky.tilemapMotion?.parallax == Vec2(0.5, 0.25) && ground.tilemapMotion == nil)
+
+        // Placed at (100, 0), with a camera at (104, 2): the sky follows the camera by half (x) and three quarters (y)
+        // of its offset from the map's origin; the tiles step through their frames.
+        let world = World()
+        world.addBuiltinAnimationSystems()
+        let root = try #require(world.instantiate(prefab).first)
+        world.modify(Transform.self, for: root) { $0.position = Vec3(100, 0, 0) }
+        world.spawn(Transform(position: Vec3(104, 2, 10)), Camera())
+        func entity(_ name: String) -> Entity? {
+            var found: Entity?
+            world.query(Name.self) { e, n in if n.value == name { found = e } }
+            return found
+        }
+        let skyEntity = try #require(entity("Sky")), waterEntity = try #require(entity("tile 22"))
+        world.update(dt: 0.1)
+        let skyPosition = try #require(world.get(Transform.self, for: skyEntity)).position
+        #expect(abs(skyPosition.x - 2) < 1e-4 && abs(skyPosition.y - 1.5) < 1e-4 && skyPosition.z == sky.transform.position.z)
+        #expect(world.get(MeshRenderer.self, for: waterEntity)?.mesh == water.meshes[0])
+        world.update(dt: 0.2)   // 0.3 s at 4 fps: frame 1
+        #expect(world.get(MeshRenderer.self, for: waterEntity)?.mesh == water.meshes[1])
+        world.update(dt: 0.8)   // 1.1 s: frame 0 again (loops every second)
+        #expect(world.get(MeshRenderer.self, for: waterEntity)?.mesh == water.meshes[0])
+        #expect(try JSONDecoder().decode(TilemapMotion.self, from: JSONEncoder().encode(water)) == water)
     }
 }

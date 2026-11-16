@@ -520,13 +520,16 @@ public struct PrefabNode: Equatable, Sendable, Codable {
     public var collider: ColliderShape?
     /// A 2D collision shape (instantiating adds the `Collider2D`); tilemaps use it for their merged tile shapes.
     public var collider2D: Collider2D?
+    /// Layer parallax and tile animation (instantiating adds the `TilemapMotion`); tilemaps use it.
+    public var tilemapMotion: TilemapMotion?
     public var children: [PrefabNode]
 
     public init(name: String, transform: Transform = Transform(), mesh: AssetReference? = nil,
                 material: AssetReference? = nil, skin: PrefabSkin? = nil, animator: FieldAnimator? = nil,
                 children: [PrefabNode] = [], particles: ParticleEmitter? = nil, postFX: PostProcessSettings? = nil,
-                collider: ColliderShape? = nil, collider2D: Collider2D? = nil) {
+                collider: ColliderShape? = nil, collider2D: Collider2D? = nil, tilemapMotion: TilemapMotion? = nil) {
         self.collider2D = collider2D
+        self.tilemapMotion = tilemapMotion
         self.postFX = postFX
         self.collider = collider
         self.name = name
@@ -577,6 +580,7 @@ extension World {
             if let particles = node.particles { add(particles, to: entity) }
             if let shape = node.collider { add(Collider(shape), to: entity) }
             if let collider2D = node.collider2D { add(collider2D, to: entity) }
+            if let motion = node.tilemapMotion { add(motion, to: entity) }
             if let skin = node.skin { skinned.append((entity, skin)) }
             if let parent { setParent(entity, to: parent) }
             for child in node.children { _ = spawn(child, parent: entity) }
