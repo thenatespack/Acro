@@ -44,6 +44,7 @@ public final class ScenePlayback {
     private var systemsAdded = false
 
     private static let spriteSystem = "scenePlayback.spriteAnimation"
+    private static let behaviorSystem = "scenePlayback.behaviorTrees"
 
     public init(module: GameModule, context: GameContext, world: World = World(), runtime: ProjectRuntimeSettings = ProjectRuntimeSettings(),
                 audio: AudioSystem? = nil, assets: @escaping () -> AssetDatabase? = { nil },
@@ -106,6 +107,7 @@ public final class ScenePlayback {
         // Not gated on an emitter already in the scene: game code spawns them after this returns.
         if let audio { spatialAudio = world.addSpatialAudio(audio, assets: assets) }
         world.addBuiltinAnimationSystems()
+        world.addBehaviorTrees(name: Self.behaviorSystem, assets: assets, physics: { [weak self] in self?.physics })
         for warning in module.addSystems(to: world, context: context) { log(warning) }
         systemsAdded = true
     }
@@ -121,6 +123,7 @@ public final class ScenePlayback {
             physics2D = nil
         }
         world.removeSystem(named: Self.spriteSystem)
+        world.removeSystem(named: Self.behaviorSystem)
         spatialAudio?.remove()
         spatialAudio = nil
         module.removeSystems(from: world)

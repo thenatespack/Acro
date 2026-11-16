@@ -15,6 +15,7 @@ Builder tools let people and AI agents author game content inside the Acro edito
 | [Terrain Builder](#terrain-builder) | `.terrain` | Sculpted, painted heightmap terrain with scattered props |
 | [Sound Builder](#sound-builder) | `.sfx` | Synthesized sound effects |
 | [Data Table Builder](#data-table-builder) | `.table` | Typed spreadsheets for game data |
+| [Behavior Tree Builder](#behavior-tree-builder) | `.behavior` | NPC AI as node trees |
 
 Planned builders are tracked in [Tools.md](../Tools.md).
 
@@ -76,3 +77,29 @@ let loot = enemies?.row("goblin")?.reference("drops")   // row column
 
 Cooked games ship the file as written; include tables game code loads by path with the cooker's `--include`. MCP clients use `table.new`, `table.edit`, `table.query`, `table.get`, `table.set`, `table.importCsv`, `table.exportCsv` and `table.open`; see [MCPTools.md](MCPTools.md).
 
+## Behavior Tree Builder
+
+Behavior trees (`.behavior`, JSON under `Assets/`) describe NPC AI as nodes instead of hand-written code. `nodes` is a flat list of `{id, type, name?, children?, ...parameters}`; `root` names the root (by default the first node no other node lists as a child); `blackboard` holds starting shared values (numbers, booleans, text, `[x, y, z]` vectors, lists of points); `speed`, `turnSpeed` and `tickRate` (0 means every frame) apply to the whole tree.
+
+- **Composites:** `sequence` (resumes at the running child; set `memory: false` to re-check from the first child), `selector` (re-checks from the first child every tick, so a higher-priority branch interrupts a running one), `parallel` (`succeedOn` all/one, `failOn` one/all).
+- **Decorators** (one child): `invert`, `repeat` (`count`, 0 means forever; `untilFailure`), `cooldown` (`seconds`), `succeed`.
+- **Conditions:** `canSeeTarget` (range, field of view about -Z, and line of sight through physics colliders when the scene has physics), `withinRange`, `healthBelow` (a blackboard number, default key `health`), `checkBlackboard` (`key`, `op`, `value`).
+- **Actions:** `moveTo`, `patrol` (`points`, `relative`, `loop`, `wait`), `chase`, `flee`, `attack` (lowers the target's blackboard health by `damage` every `cooldown` seconds and records an `attack` event), `wait`, `playAnimation` (an `Animator` state or `SpriteAnimator` clip), `setBlackboard`, and `custom` for leaves registered by game code.
+
+Problems such as unknown types, missing children, nodes with two parents, cycles, unconnected nodes and wrong parameters are reported as import warnings. At runtime a broken node fails.
+
+An entity runs a tree with a **BehaviorTreeRunner** component: `tree` (the asset), `target` (the entity that target-based nodes aim at unless the blackboard's `target` names one by entity name), `speed` and per-entity blackboard values. In play mode and in built games, the behavior tree system ticks every runner and steers movement nodes on the XZ plane. A `CharacterController` gets its `moveVelocity`, a dynamic `RigidBody` gets its horizontal velocity, and anything else has its `Transform` moved. The live state is a `BehaviorTreeState` component (not saved), which holds the blackboard, each node's last status and this frame's events. Editing the file while playing switches running NPCs to the new tree and keeps their blackboard. There is no navigation mesh yet, so NPCs walk straight toward their goal.
+
+```swift
+BehaviorTreeLeaves.register("hasAmmo") { leaf in
+    (leaf[blackboard: "ammo"]?.number ?? 0) > 0 ? .success : .failure
+}
+world.setBlackboardValue(.entity(player), forKey: "target", of: guardEntity)
+for event in world.get(BehaviorTreeState.self, for: guardEntity)?.events ?? [] where event.name == "attack" { ... }
+```
+
+In the editor, use **New Behavior Tree** in the asset browser and double-click the file (or **Open in Behavior Tree Builder** in the inspector) to open the **Behavior Tree** tab. The tab shows the tree as an outline. Click a node to edit its id, label, type and parameters in the sidebar, move it among its siblings, make it the root or delete it. The sidebar also has controls to add nodes of any type, edit the blackboard and settings, and pick a preset (empty, patrol, guard, chaser, coward). Every change is one undo step. While playing, rows are tinted with what each node returned on the last tick: running is yellow, success is green and failure is red. The tint follows the selected entity if it runs the tree, otherwise the entity chosen in the toolbar picker.
+
+Editor MCP clients use `behavior.new {preset}`, `behavior.edit {addNodes, connect, disconnect, updateNodes, removeNodes, blackboard}`, `behavior.set`, `behavior.get`, `behavior.assign {entity, target}`, `behavior.debug` (the live running path and blackboard while playing) and `behavior.open`. See [MCPTools.md](MCPTools.md).
+
+Not yet: a node-graph canvas (the tab shows an outline) and navigation-mesh pathfinding. Movement assumes root entities.

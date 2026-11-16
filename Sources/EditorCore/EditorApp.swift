@@ -138,6 +138,8 @@ public final class EditorApp: Game, EditorHost {
     public private(set) var tableWorkspace: DataTableWorkspace!
     /// The Terrain Builder tab (TerrainBuilderWorkspace.swift).
     public private(set) var terrainWorkspace: TerrainBuilderWorkspace!
+    /// The Behavior Tree tab (BehaviorTreeWorkspace.swift).
+    public private(set) var behaviorWorkspace: BehaviorTreeWorkspace!
     private(set) var statusBar: StatusBar!
     /// The Assets panel (browser) and its thumbnails.
     public private(set) var assetBrowser: AssetBrowserPanel!
@@ -493,6 +495,15 @@ public final class EditorApp: Game, EditorHost {
             }
             dock.focusPanel(EditorLayout.dataTable)
         }
+        session.onOpenBehavior = { [unowned self] id in
+            guard behaviorWorkspace.open(id) else { return }
+            // The Behavior Tree tab opens where the Scene view is: tabbed with the viewport.
+            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.behaviorTree, EditorLayout.viewport) {
+                dock.dock(EditorLayout.behaviorTree, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
+                                                                                              : .edge(.bottom))
+            }
+            dock.focusPanel(EditorLayout.behaviorTree)
+        }
         session.onOpenTerrain = { [unowned self] id in
             guard terrainWorkspace.open(id) else { return }
             if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.terrainBuilder, EditorLayout.viewport) {
@@ -631,6 +642,7 @@ public final class EditorApp: Game, EditorHost {
         postFXWorkspace.device = engine?.device
         if let quality = engine?.quality { postFXWorkspace.quality = quality }
         terrainWorkspace = TerrainBuilderWorkspace(session: session)
+        behaviorWorkspace = BehaviorTreeWorkspace(session: session)
         terrainWorkspace.device = engine?.device
         if let quality = engine?.quality { terrainWorkspace.quality = quality }
         files.onOpen = { [unowned self] file in openFile(file) }
@@ -665,6 +677,7 @@ public final class EditorApp: Game, EditorHost {
         let terrainPanel = DockPanel(id: EditorLayout.terrainBuilder, title: "Terrain Builder", content: terrainWorkspace.view, minSize: Vec2(320, 200))
         terrainPanel.passesPointerThrough = true
         dock.addPanel(terrainPanel)
+        dock.addPanel(DockPanel(id: EditorLayout.behaviorTree, title: "Behavior Tree", content: behaviorWorkspace.view, minSize: Vec2(320, 200)))
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
         for (id, icon) in EditorIcons.panelIconNames { dock.panel(id)?.icon = EditorIcons.named(icon) }
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
@@ -1070,6 +1083,7 @@ public final class EditorApp: Game, EditorHost {
             postFXWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
             tableWorkspace.update()
             terrainWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
+            behaviorWorkspace.update()
         }
         session.tick(dt: Double(dt))
 
