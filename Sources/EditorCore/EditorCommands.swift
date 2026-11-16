@@ -39,7 +39,7 @@ public enum BuiltinCommands {
       + EditorProceduralTextureCommands.all + EditorMeshBuildCommands.all + EditorVFXCommands.all + EditorSettingsCommands.all
       + EditorSoundBuildCommands.all
       + EditorPostFXCommands.all
-      + EditorDataTableCommands.all
+      + EditorDataTableCommands.all + EditorVisualScriptCommands.all
       + EditorTerrainCommands.all
       + EditorPixelSpriteCommands.all
       + EditorTilemapCommands.all

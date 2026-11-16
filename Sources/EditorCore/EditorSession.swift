@@ -179,6 +179,11 @@ public final class EditorSession {
     public var openMaterialGraph: AssetID?
     public var onOpenMaterialGraph: ((AssetID) -> Void)?
     public var materialPreviewRequest: MaterialPreviewRequest?
+    /// The graph open in the Visual Script tab (`vscript.open`), and how the app shows it.
+    public var openVisualScript: AssetID?
+    public var onOpenVisualScript: ((AssetID) -> Void)?
+    /// A visual script node with a breakpoint ran: play pauses after this frame.
+    var visualScriptBreakPending = false
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()
@@ -669,6 +674,11 @@ public final class EditorSession {
         inputPlayer.apply(to: gameInput)
         gameInput.endEvents()
         world.update(dt: dt)
+        if visualScriptBreakPending {
+            visualScriptBreakPending = false
+            isPaused = true
+            changed()
+        }
         if let scene = gameModule.context.takePendingScene() { loadPlayScene(scene) }
         netPlay?.advance(dt: dt)
         tweens?.update(dt: Float(dt))
@@ -753,6 +763,14 @@ public final class EditorSession {
         world.addDialogueSystem(assets: { [weak self] in self?.assets }).presenter = dialoguePresenter
         timelinePlayers = world.addTimelinePlayers(assets: { [weak self] in self?.assets })
         gameModule.addSystems()
+        let scripts = world.addVisualScripts(context: gameModule.context, assets: { [weak self] in self?.assets },
+                                             physics: { [weak self] in self?.physics }, physics2D: { [weak self] in self?.physics2D })
+        scripts.recordsActivity = true
+        scripts.host.onBreakpoint = { [weak self] hit in
+            guard let self, !visualScriptBreakPending else { return }
+            visualScriptBreakPending = true
+            log.warning("Breakpoint: \(hit.graph) node \(hit.node) (paused after this frame)")
+        }
     }
 
     /// The world's fixed timestep before play applied the project's.
@@ -780,6 +798,8 @@ public final class EditorSession {
         timelinePlayers?.remove()
         timelinePlayers = nil
         tweens = nil
+        world.removeVisualScripts()
+        visualScriptBreakPending = false
         gameModule.removeSystems()
     }
 

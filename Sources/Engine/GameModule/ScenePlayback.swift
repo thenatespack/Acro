@@ -47,6 +47,8 @@ public final class ScenePlayback {
     private var spatialAudio: SpatialAudioHandle?
     private var timelines: TimelinePlayerSystem?
     private var systemsAdded = false
+    /// The scene's visual scripts (`VisualScript` components), while systems run.
+    public private(set) var visualScripts: VisualScriptRuntime?
 
     private static let spriteSystem = "scenePlayback.spriteAnimation"
     private static let behaviorSystem = "scenePlayback.behaviorTrees"
@@ -118,6 +120,8 @@ public final class ScenePlayback {
         world.addDialogueSystem(assets: assets).presenter = dialoguePresenter
         timelines = world.addTimelinePlayers(assets: assets)
         for warning in module.addSystems(to: world, context: context) { log(warning) }
+        visualScripts = world.addVisualScripts(context: context, assets: assets, physics: { [weak self] in self?.physics },
+                                               physics2D: { [weak self] in self?.physics2D })
         systemsAdded = true
     }
 
@@ -139,6 +143,8 @@ public final class ScenePlayback {
         world.removeDialogueSystem()
         timelines?.remove()
         timelines = nil
+        world.removeVisualScripts(visualScripts)
+        visualScripts = nil
         module.removeSystems(from: world)
         systemsAdded = false
     }

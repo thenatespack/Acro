@@ -298,6 +298,7 @@ public enum EditorIcons {
         case "tilemap": return .texture
         case "ui": return .data
         case "dialogue": return .text
+        case "vscript": return .text
         case "gltf", "glb", "obj", "fbx", "meshbuild", "terrain": return .model
         case "gltf", "glb", "obj", "fbx", "meshbuild", "terrain", "gridmap": return .model
         case "gltf", "glb", "obj", "fbx", "meshbuild", "terrain", "path": return .model
@@ -380,6 +381,7 @@ public enum EditorIcons {
         EditorLayout.animationGraph: "network",
         EditorLayout.characterBuilder: "person-standing",
         EditorLayout.materialBuilder: "palette",
+        EditorLayout.visualScript: "network",
     ]
 
     /// Console lines by level.

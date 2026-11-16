@@ -557,6 +557,7 @@ public final class AssetBrowserPanel {
             ("New Sound", SoundBuildNewCommand.id, { [unowned self] in model.newSoundBuild(); sync() }),
             ("New Post-FX", PostFXNewCommand.id, { [unowned self] in model.newPostFX(); sync() }),
             ("New Data Table", TableNewCommand.id, { [unowned self] in model.newDataTable(); sync() }),
+            ("New Visual Script", VScriptNewCommand.id, { [unowned self] in model.newVisualScript(); sync() }),
             ("New Terrain", TerrainNewCommand.id, { [unowned self] in model.newTerrain(); sync() }),
             ("New Sprite", PixelSpriteNewCommand.id, { [unowned self] in model.newPixelSprite(); sync() }),
             ("New Tilemap", TilemapNewCommand.id, { [unowned self] in model.newTilemap(); sync() }),

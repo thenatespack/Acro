@@ -136,6 +136,8 @@ public final class EditorApp: Game, EditorHost {
     /// The Post-FX tab (PostFXWorkspace.swift).
     public private(set) var postFXWorkspace: PostFXWorkspace!
     public private(set) var tableWorkspace: DataTableWorkspace!
+    /// The Visual Script tab (VisualScriptWorkspace.swift).
+    public private(set) var visualScriptWorkspace: VisualScriptWorkspace!
     /// The Terrain Builder tab (TerrainBuilderWorkspace.swift).
     public private(set) var terrainWorkspace: TerrainBuilderWorkspace!
     /// The Pixel Sprite Builder tab (PixelSpriteWorkspace.swift).
@@ -542,6 +544,14 @@ public final class EditorApp: Game, EditorHost {
             }
             dock.focusPanel(EditorLayout.characterBuilder)
         }
+        session.onOpenVisualScript = { [unowned self] id in
+            guard visualScriptWorkspace.open(id) else { return }
+            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.visualScript, EditorLayout.viewport) {
+                dock.dock(EditorLayout.visualScript, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
+                                                                                              : .edge(.bottom))
+            }
+            dock.focusPanel(EditorLayout.visualScript)
+        }
         session.onOpenTerrain = { [unowned self] id in
             guard terrainWorkspace.open(id) else { return }
             if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.terrainBuilder, EditorLayout.viewport) {
@@ -739,6 +749,7 @@ public final class EditorApp: Game, EditorHost {
         gameDialogueBox.style.width = 560
         gameWidget.addChild(gameDialogueBox)
         session.dialoguePresenter = gameDialogueBox
+        visualScriptWorkspace = VisualScriptWorkspace(session: session)
         meshWorkspace.device = engine?.device
         if let quality = engine?.quality { meshWorkspace.quality = quality }
         vfxWorkspace = VFXBuilderWorkspace(session: session)
@@ -804,6 +815,7 @@ public final class EditorApp: Game, EditorHost {
         postFXPanel.passesPointerThrough = true
         dock.addPanel(postFXPanel)
         dock.addPanel(DockPanel(id: EditorLayout.dataTable, title: "Data Table", content: tableWorkspace.view, minSize: Vec2(320, 200)))
+        dock.addPanel(DockPanel(id: EditorLayout.visualScript, title: "Visual Script", content: visualScriptWorkspace.view, minSize: Vec2(360, 220)))
         let terrainPanel = DockPanel(id: EditorLayout.terrainBuilder, title: "Terrain Builder", content: terrainWorkspace.view, minSize: Vec2(320, 200))
         terrainPanel.passesPointerThrough = true
         dock.addPanel(terrainPanel)
@@ -1236,6 +1248,7 @@ public final class EditorApp: Game, EditorHost {
             postFXWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
             tableWorkspace.update()
             dialogueWorkspace.update()
+            visualScriptWorkspace.update()
             terrainWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
             spriteWorkspace.update(dt: dt)
             tilemapWorkspace.update(dt: dt)

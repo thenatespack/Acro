@@ -25,6 +25,7 @@ Builder tools let people and AI agents author game content inside the Acro edito
 | [Dialogue Builder](#dialogue-builder) | `.dialogue` | Branching conversations with variables and events |
 | [Timeline Builder](#timeline-builder) | `.timeline` | Cutscenes: camera moves, animation, sound, effects, fades, events |
 | [Material Builder](#material-builder) | `.material` | Node-graph surface shaders compiled for Metal and Vulkan |
+| [Visual Script Builder](#visual-script-builder) | `.vscript` | Game logic as node graphs, run without a game module |
 
 Planned builders are tracked in [Tools.md](../Tools.md).
 
@@ -338,3 +339,55 @@ In the editor, use **New Material Graph** in the asset browser, then double-clic
 Editor MCP clients can use `materialGraph.new {preset}`, `materialGraph.edit {addNodes, removeNodes, connect, disconnect, params, output, settings}`, `materialGraph.set`, `materialGraph.get {code}`, `materialGraph.nodes` (the node catalog), `materialGraph.assign` and `materialGraph.open`. The older `material.get` and `material.set` keep editing a material's fixed fields. See [MCPTools.md](MCPTools.md) for schemas and parameters.
 
 Not yet: terrain layers and decals can't use graph materials, graph opacity doesn't shape shadows (alpha-tested graph materials cast solid shadows), graph materials don't receive planar reflections, and the canvas can't draw links by dragging (link from the sidebar instead).
+## Visual Script Builder
+
+Visual scripts (`.vscript`, JSON under `Assets/`) are game logic as node graphs, so people can script without writing Swift or building a game module; a game can mix graphs and Swift. Put a **VisualScript** component on an entity (Add Component, **Attach to Selection** in the tab or the asset inspector, or `vscript.attach`) and its graph runs in the editor's play mode and in built games. A VisualScript on an empty "Game Rules" entity is a scene-level graph. The component's `variables` lists the graph's exposed variables, so each entity can have its own values.
+
+A graph is `nodes` (`{id, type, x, y, config, inputs}`) and `links` (`{"from": "node.pin", "to": "node.pin"}`, always from an output pin to an input pin), plus `variables` (typed, with defaults), `functions` (sub-graphs from `function.entry` to `function.return`, called with `function.call`), `comments` (boxes) and `actions` (input actions: `{"jump": ["key.space", "pad.south"]}`). Every key is optional.
+
+```json
+{
+  "variables": [{"name": "speed", "type": "float", "default": 90}],
+  "nodes": [
+    {"id": "tick", "type": "event.update"},
+    {"id": "speed", "type": "var.get", "config": {"variable": "speed"}},
+    {"id": "mul", "type": "math.multiply"},
+    {"id": "turn", "type": "transform.rotate", "inputs": {"axis": [0, 1, 0]}}
+  ],
+  "links": [
+    {"from": "tick.out", "to": "turn.in"}, {"from": "tick.dt", "to": "mul.a"},
+    {"from": "speed.value", "to": "mul.b"}, {"from": "mul.result", "to": "turn.degrees"}
+  ]
+}
+```
+
+Event nodes start flows; exec wires (`in` / `out`, `true` / `false`, `body` / `done`…) carry the flow from node to node, and a node reads its data inputs by pulling values along data wires (pure nodes such as math are computed when read). An unconnected input uses the literal in `inputs`, else its default; an unconnected entity input means the script's own entity. Pins are typed (bool, int, float, string, vec2, vec3, vec4, color, quat, entity, asset, array, map, any) and convert automatically where it makes sense (int to float, anything to text…), shown as a dot on the wire.
+
+- **Events:** start, update, fixed update, late update, destroy, timer, key pressed / released, input action pressed / released, collision and trigger enter / exit (3D and 2D), custom events (`event.send` between graphs and to Swift), sprite clip events and clip finished.
+- **Flow:** branch, sequence, for loop, for each, while, gate, do once, delay, flip-flop, switch (on any value, so enum case names work).
+- **Data:** math (also per component on vectors), random, vectors, colors, comparison, logic, select, text format, arrays and maps, variables, functions, time and input.
+- **World:** self, spawn entity, spawn prefab (any `.prefab`, model, mesh build or `.vfx`), destroy (optionally after a delay), find by name, parent, transform get / set / translate / rotate / look at.
+- **Components:** `component.get` / `component.set` for every reflected field of every registered component (`config: {"component": "PointLight", "field": "intensity"}`), so game components show up with no extra code; `component.has` / `add` / `remove`. Setting a field goes through reflection (a fraction of a millisecond), fine for events, slow for thousands of entities per frame.
+- **Engine:** play sound (audio file or `.sfx`, as a one-shot emitter), spawn effect, raycast, apply force / impulse / velocity, load and reload scene, tween position / rotation / scale with easing, data table cells and row ids.
+
+The graph is interpreted by a small VM with no compile step: editing the file while the game plays applies on the next frame, keeping variable values and pending delays (start doesn't run again). A runaway graph (an endless while loop, unbounded recursion) is stopped with an error after 100 000 node runs in one event and stays stopped until its graph changes. Built games ship `.vscript` files as written, with the assets they name by `asset:<id>`.
+
+In the editor, use **New Visual Script** in the asset browser, then double-click the file (or **Open in Visual Script** in the inspector) to open the **Visual Script** tab next to the Scene view. Drag nodes to move them, drag from a pin to another to wire them, drop a wire on empty space or right-click (or press Space) to search for a node to add there (filtered by the dragged pin's type, and wired to it), right-click a pin to cut its wires, scroll to zoom, drag empty space to pan. Delete removes the selection, Cmd/Ctrl+C / V / D copy, paste and duplicate, F9 toggles a breakpoint. The sidebar edits the selected node's settings and input values, the graph's variables and functions (**Collapse to Function** moves the selected nodes into a new function, **Comment Box** frames them), and lists problems; nodes with errors (unknown type, type mismatch, unconnected required input, unreachable) are outlined on the canvas. Every change is one undo step. While playing, nodes that just ran glow along their wires, output pins show their values for the selected entity (hover a pin for its type and value), the sidebar shows that entity's variables, and a node with a breakpoint pauses play after the frame it ran in. Each graph's time shows in the profiler as `vscript <path>`.
+
+Game modules add nodes and events, and Swift and graphs send events both ways:
+
+```swift
+game.scriptNode("mygame.heal", title: "Heal", inputs: [VisualScriptPin("amount", .float, default: .float(10))]) { node in
+    let amount = try node.float("amount")
+    node.world.modify(Health.self, for: node.entity) { $0.points += amount }
+}
+game.scriptEvent("mygame.wave")                                  // an "On mygame.wave" event node
+world.sendScriptEvent("mygame.wave", value: .int(3))             // Swift → graphs
+VisualScriptRuntime.runtime(for: world)?.onEvent("pickup") { sender, value in … }   // graphs → Swift (event.send)
+```
+
+Other modules register nodes with `VisualScriptNodes.register(_:)` (or `addProvider` to register on first use) and raise events with `VisualScriptRuntime.addEventSource`, so builders that ship later add their own nodes.
+
+Editor MCP clients can use `vscript.new {template, target}` (templates: empty, spinner, mover, pickup, timer), `vscript.edit {addNodes, updateNodes, connect, disconnect, removeNodes, variables, functions, comments, actions}`, `vscript.nodes {search, pinType}` (every node type with its pins), `vscript.validate`, `vscript.get`, `vscript.set`, `vscript.attach` and `vscript.open`. See [MCPTools.md](MCPTools.md) for schemas and parameters.
+
+Not yet: step over / into while paused (breakpoints pause after the frame), macros (functions cover reusable sub-graphs), reroute points and node groups, play animation / dialogue / timeline nodes (added by those builders), and a function's entry and return pins are edited through `vscript.edit {functions}` rather than in the tab.

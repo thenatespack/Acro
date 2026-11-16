@@ -93,6 +93,10 @@ public enum EditorComponentCatalog {
         register(DialoguePlayer.self) { DialoguePlayer() }
         register(TimelinePlayer.self) { TimelinePlayer() }
         register(Animator.self) { Animator(targets: [], restPose: [], stateMachine: AnimationStateMachine(states: [])) }
+        ComponentRegistry.register(VisualScript.self)
+        register(VisualScript.self) { VisualScript() }
+        // Visual scripts list component fields from the same defaults Add Component uses.
+        VisualScriptNodes.componentDefaults = { EditorComponentCatalog.makeDefault(named: $0) }
     }
 
     /// Makes the component type registered as `name` addable, created by `make` (game modules,

@@ -368,6 +368,14 @@ public struct CookPlan: Sendable {
             let references = source.importer?.name == "timeline" ? Self.unique(Self.references(in: data)).filter { $0 != source.id } : []
             return Cooked(entry: entry, files: [:], data: data, origin: .file, references: references, warnings: [])
         }
+        // Audio and files without an importer ship as they are.
+        guard let importer = source.importer, importer.name != "audio", importer.name != "table", importer.name != "vscript" else {
+            let data = try Data(contentsOf: source.sourceURL)
+            if let importer = source.importer { entry.settings = importer.effectiveSettings(source.settings) }
+            // A visual script ships the sounds, prefabs and tables it names by asset:<id>.
+            let references = source.importer?.name == "vscript" ? Self.unique(Self.references(in: data)).filter { $0 != source.id } : []
+            return Cooked(entry: entry, files: [:], data: data, origin: .file, references: references, warnings: [])
+        }
         let settings = AssetCooker.shippingSettings(importer: importer, effective: importer.effectiveSettings(source.settings), options: options)
         let canonical = AssetJSON.canonical(settings)
         entry.settings = settings
