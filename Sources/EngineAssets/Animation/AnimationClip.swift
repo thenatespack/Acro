@@ -184,6 +184,36 @@ public final class AnimationLibrary {
 
     /// Every registered key, sorted.
     public var keys: [String] { clips.keys.sorted() }
+
+    // MARK: Clips from the asset database
+
+    /// Where clips named by asset references load from: a handle whose key is the text form of
+    /// an `AssetReference` ("asset:<id>#animation/Walk", a glTF file's clip) is looked up in
+    /// this database by `resolveAssetClips(_:)`.
+    public weak var assets: AssetDatabase?
+    private var assetRevisions: [String: Int] = [:]
+
+    /// Loads the clips of `handles` whose keys are asset references and that aren't loaded yet
+    /// (or whose file was reimported since), registering each under its key, so `clip(_:)`
+    /// finds them. Call on the main thread before sampling (the animation system does each
+    /// frame). Returns the keys that name no clip.
+    @discardableResult
+    public func resolveAssetClips(_ handles: some Sequence<AnimationClipHandle>) -> [String] {
+        guard let assets else { return [] }
+        var missing: [String] = []
+        for handle in handles where handle.key.hasPrefix(AssetReference.scheme) {
+            guard let reference = AssetReference(handle.key) else { missing.append(handle.key); continue }
+            // Checked once per revision of the file, found or not.
+            if let checked = assetRevisions[handle.key], checked == assets.revision(of: reference.asset), checked > 0 {
+                if clips[handle.key] == nil { missing.append(handle.key) }
+                continue
+            }
+            clips[handle.key] = assets.animationClip(reference)
+            assetRevisions[handle.key] = assets.revision(of: reference.asset)
+            if clips[handle.key] == nil { missing.append(handle.key) }
+        }
+        return missing
+    }
 }
 
 /// Local transforms for every target of an `Animator`, and which of them some clip drove.

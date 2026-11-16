@@ -700,6 +700,7 @@ public final class EditorSession {
             physics2D = physics
         }
         if world.count(of: SpriteAnimator.self) > 0 { world.addSpriteAnimationSystem(name: Self.spriteSystem) }
+        world.addSceneAnimationSystem(assets: { [weak self] in self?.assets }, name: Self.animationSystem)
         tweens = TweenSystem()
         if let audio = audioProvider?() {
             spatialAudio = world.addSpatialAudio(audio, assets: { [weak self] in self?.assets })
@@ -724,6 +725,7 @@ public final class EditorSession {
             physics2D = nil
         }
         world.removeSystem(named: Self.spriteSystem)
+        world.removeSystem(named: Self.animationSystem)
         spatialAudio?.remove()
         spatialAudio = nil
         tweens = nil
@@ -731,6 +733,7 @@ public final class EditorSession {
     }
 
     private static let spriteSystem = "editor.spriteAnimation"
+    private static let animationSystem = "editor.sceneAnimation"
 
     // MARK: Entities
 

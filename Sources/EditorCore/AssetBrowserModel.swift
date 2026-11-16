@@ -395,6 +395,7 @@ public final class AssetBrowserModel {
         case .material: .material
         case .texture: .texture
         case .prefab: .prefab
+        case .animation: .file
         }
     }
 }

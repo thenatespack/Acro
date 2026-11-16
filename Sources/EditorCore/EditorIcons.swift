@@ -260,6 +260,8 @@ public enum EditorIcons {
     /// The kinds of asset the browser and asset inspector tell apart by icon.
     public enum AssetIconKind: String, Sendable, CaseIterable {
         case folder, model, mesh, texture, material, prefab, scene, audio, shader, font, text, data, file
+        /// An imported animation clip.
+        case animation
     }
 
     /// The icon kind of an imported object.
@@ -317,6 +319,7 @@ public enum EditorIcons {
         case .font: named("type")
         case .text: named("file-text")
         case .data: named("file-json")
+        case .animation: named("film")
         case .file: named("file")
         }
     }
@@ -409,6 +412,7 @@ extension EditorIcons.AssetIconKind {
         case .material: self = .material
         case .texture: self = .texture
         case .prefab: self = .prefab
+        case .animation: self = .animation
         }
     }
 }

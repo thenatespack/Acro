@@ -320,6 +320,13 @@ public final class AssetDatabase {
         return nil
     }
 
+    /// The skeletal clip `reference` names (a glTF file's `animation/<name>` sub-asset; the
+    /// file's first clip for a whole-file reference).
+    public func animationClip(_ reference: AssetReference) -> AnimationClip? {
+        if case .animation(let clip)? = object(reference, kind: .animation)?.value { return clip }
+        return nil
+    }
+
     // MARK: Settings
 
     /// The asset's effective import settings (sidecar values over the importer's defaults).
