@@ -31,7 +31,7 @@ extension MeshBuildPart {
     /// Problems with the fields that shape the mesh (the importer reports them as warnings),
     /// without building a mesh unless the part is a profile shape.
     public var shapeWarnings: [String] {
-        guard shape == .lathe || shape == .extrude else { return fieldWarnings }
+        guard shape == .lathe || shape == .extrude || shape == .sweep || shape == .loft else { return fieldWarnings }
         var warnings: [String] = []
         _ = geometry(warnings: &warnings)
         return warnings
@@ -44,17 +44,17 @@ extension MeshBuildPart {
             warnings.append("bevel only rounds box and cylinder parts; this \(shape.rawValue) ignores it")
         }
         if let bevel, !bevel.isFinite || bevel < 0 { warnings.append("bevel must be a number of meters ≥ 0") }
-        if let profile, !profile.isEmpty, shape != .lathe && shape != .extrude {
-            warnings.append("profile is only used by lathe and extrude parts; this \(shape.rawValue) ignores it")
+        if let profile, !profile.isEmpty, shape != .lathe && shape != .extrude && shape != .sweep {
+            warnings.append("profile is only used by lathe, extrude and sweep parts; this \(shape.rawValue) ignores it")
         }
-        return warnings
+        return warnings + curveFieldWarnings
     }
 
     /// The box the part's mesh occupies in its own space: `size` centered on the origin for most
-    /// shapes, the scaled profile's extent for `lathe` and `extrude` (empty at the origin if the
-    /// profile can't be built).
+    /// shapes, the built mesh's extent for `lathe`, `extrude`, `sweep`, `loft` and deformed parts
+    /// (empty at the origin if it can't be built).
     public var localBounds: Bounds {
-        if shape == .lathe || shape == .extrude {
+        if shape == .lathe || shape == .extrude || shape == .sweep || shape == .loft || !(deform ?? []).isEmpty {
             return geometry().map(\.bounds) ?? Bounds(center: .zero, halfExtent: .zero)
         }
         return Bounds(center: .zero, halfExtent: Vec3(abs(size.x), abs(size.y), abs(size.z)) / 2)

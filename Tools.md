@@ -15,7 +15,7 @@ programs. Each one follows the same pattern as the Mesh Builder:
 
 ### Mesh Builder (`.meshbuild`)
 
-Models built from shapes (box, sphere, dome, cylinder, cone, capsule, torus, tube, plane,
+Models built from shapes (box, sphere, dome, cylinder, cone, capsule, torus, tube, plane, sweep, loft,
 wedge, pyramid, group pivots) with a part hierarchy, colors, textures, PBR settings, glow, and
 keyframe or ready-made animations (spin, bob, swing, pulse, shake). The Mesh Builder tab shows
 the model in its own viewport with picking, Move / Rotate / Scale gizmos and live animation
@@ -35,12 +35,30 @@ Shapes: `bevel` (rounded boxes and cylinder rims), `lathe` and `extrude` (`profi
 Symmetry: `mirror` ("x" or ["x","z"]) and `repeat` {count, offset, radial} copy a part and its
 subtree (repeat, then mirror); mirror copies swap Left/Right, Top/Bottom, Front/Back in names
 and play mirrored animations; results list them in `copies`. Importer version 2.
+Curves: `sweep` (a circle of `radius` or a `profile` along a centripetal Catmull-Rom `path`,
+rotation-minimizing frames, `radii` taper, `closed` loops, `smooth: false` mitred corners, capped
+ends) and `loft` (`sections` {at, size, roundness superellipse 2^r, or profile} along `axis`
+y/z/x, monotone cubic between sections or straight panels, auto-aligned rings, hard profile
+corners, capped ends); `deform` on any mesh part (taper, bend, twist, noise, in order, before
+mirroring) with edge-length `subdivide` (0-6, default 3, 60k-triangle cap) and normals recomputed
+keeping hard edges. Mesh Builder rows for path points, loft sections and deformers; three new
+examples (sailboat, gnarled tree, desk lamp). Importer version 3.
+Curves not done: sweep profiles are always closed (no open ribbons such as a sail cross-section
+or a leaf); no per-point twist or roll along a sweep (the frame is rotation-minimizing only, no
+`up` hint); loft sections can't rotate (every section is perpendicular to the axis, so no curved
+spine such as a banana or a swan neck; bend it with `deform` instead); deformers always work
+along the part's Y (no bend or taper along X or Z; rotate the part instead); bend has no
+`center`/range (it bends the whole height); noise is isotropic (no stretched bark grain); UVs are
+stretched by deformers; no self-intersection warning for sweeps that cross themselves; the
+editor has no viewport handles for path points or sections (number rows only, no insert or
+reorder); deformed parts are rebuilt on every check (no geometry cache), so a build with many
+large noisy parts takes a second or so to check in release.
 Not done: no warning for rotations that make no visible difference (round shapes); spatial checks
 use rest-pose AABBs, so a rotated part's box can hide a small gap and parts that collide only
 while animating aren't caught; `bounds` in a posed preview are still the rest pose's; preview
 labels overlap when part centers line up. Bevel on extrude; a 2D profile editor in the viewport
-(number rows only, no insert or reorder); partial-angle or thin-shell lathes, extrude holes,
-sweeps, taper or twist; open lathe ends on the axis use the slant normal; lathe caps use lathe
+(number rows only, no insert or reorder); partial-angle or thin-shell lathes, extrude holes;
+open lathe ends on the axis use the slant normal; lathe caps use lathe
 UVs; the 40° sharp-edge threshold is fixed. No `mirrorName` key (naming rule is fixed); renaming
 a source doesn't rename tracks or `partColors` that name its copies explicitly; a drag starting
 on a copy may move it for that one drag before selection jumps to the source; mirrored textures

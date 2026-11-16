@@ -17,9 +17,9 @@ public enum EditorMeshBuildCommands {
     /// What the tool docs say about the file format, shared by the tools.
     static let formatDoc = """
         A mesh build is a model made of shapes: `parts` (each: name, shape \
-        group|box|sphere|hemisphere|cylinder|cone|capsule|torus|tube|plane|wedge|pyramid|lathe|extrude, parent (another part's name; \
+        group|box|sphere|hemisphere|cylinder|cone|capsule|torus|tube|plane|wedge|pyramid|lathe|extrude|sweep|loft, parent (another part's name; \
         children move with it), position [x,y,z] m: the part's center in the parent's space, rotation [x,y,z] degrees \
-        (about X, then Y, then Z, fixed axes; children inherit it), size [x,y,z] m (the box the shape fills; lathe/extrude: a multiplier, see below), segments, \
+        (about X, then Y, then Z, fixed axes; children inherit it), size [x,y,z] m (the box the shape fills; lathe/extrude/sweep/loft: a multiplier, see below), segments, \
         thickness (tube wall), color [r,g,b] 0-1 sRGB, opacity, texture (path under Assets/ such as "Textures/brick.png" \
         or a .proctex, or "asset:<id>"), textureScale [u,v], worldUV (texture keeps its size in meters), metallic, \
         roughness, glow [r,g,b] emitted color, glowStrength, material (a .material asset replacing the look)) and \
@@ -38,7 +38,7 @@ public enum EditorMeshBuildCommands {
         Results include `bounds` (size, min, max, base) and warnings about floating, buried, hidden or out-of-scale \
         parts and a model off the ground. Workflow: build, look at it with meshBuild.preview, fix the warnings, repeat; \
         meshBuild.examples has correct builds to copy.
-        """ + " " + MeshBuildPart.shapesDoc + " " + symmetryDoc
+        """ + " " + MeshBuildPart.shapesDoc + " " + MeshBuildPart.curvesDoc + " " + symmetryDoc
 
     /// The `mirror` / `repeat` part keys (appended to `formatDoc`).
     static let symmetryDoc = """

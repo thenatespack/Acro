@@ -151,7 +151,11 @@ struct MeshBuildSpatial {
     /// Negative sizes (the sign is ignored) and zero sizes on an axis the shape uses.
     private func sizeWarnings() -> [String] {
         var warnings: [String] = []
-        for part in parts where part.geometry() != nil {
+        // Deformers never decide whether a part has a mesh or which axes it spans, so they are
+        // skipped here (they are the slow part of building a mesh).
+        for var part in parts {
+            part.deform = nil
+            guard part.geometry() != nil else { continue }
             let axes = ["x", "y", "z"]
             let negative = (0..<3).filter { part.size[$0] < 0 }
             if !negative.isEmpty {
