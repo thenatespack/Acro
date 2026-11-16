@@ -190,7 +190,9 @@ public final class PostFXWorkspace {
         }
         self.grid = grid
         sidebar.addChild(grid)
-        let note = Label("Depth of field and LUT grading are not available yet. The preview clips highlights to 8-bit, so bloom looks weaker here than in the game.", role: .caption)
+        let note = Label("The preview clips highlights to 8-bit, so bloom and bokeh look weaker here than in the game. "
+                         + "Focus target names an entity of the sample scene here (Ball, Crate, Pillar, Pebble) and of your scene in the game.",
+                         role: .caption)
         note.wraps = true
         sidebar.addChild(note)
     }
@@ -256,7 +258,14 @@ public final class PostFXWorkspace {
         renderer.beginViews(world: world, frame: frame, shadowFocus: view)
         renderer.renderView(view, into: target, frame: frame)
         processor.splitPreview = splitEnabled ? splitPosition : 0
-        processor.renderPreview(scene: target.texture, settings: profile, into: output, dt: lastDT)
+        processor.assets = session.assets
+        var settings = profile
+        var depth: PostProcessor.Depth?
+        if settings.depthOfField {
+            depth = renderer.renderDepth(for: view, size: (target.width, target.height), frame: frame)
+            settings = PostFXResolver.autoFocused(settings, world: world, cameraWorld: view.view.inverse) ?? settings
+        }
+        processor.renderPreview(scene: target.texture, settings: settings, into: output, dt: lastDT, depth: depth)
     }
 
     public func hasPointer(_ input: ViewportInput) -> Bool {

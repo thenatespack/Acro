@@ -57,8 +57,8 @@ optional arguments.
 | `ui` | [`ui.click`](#uiclick), [`ui.drag`](#uidrag), [`ui.find`](#uifind), [`ui.hover`](#uihover), [`ui.key`](#uikey), [`ui.scroll`](#uiscroll), [`ui.snapshot`](#uisnapshot), [`ui.type`](#uitype) |
 | `uiLayout` | [`uiLayout.edit`](#uilayoutedit), [`uiLayout.get`](#uilayoutget), [`uiLayout.new`](#uilayoutnew), [`uiLayout.open`](#uilayoutopen), [`uiLayout.set`](#uilayoutset) |
 | `vfx` | [`vfx.edit`](#vfxedit), [`vfx.get`](#vfxget), [`vfx.new`](#vfxnew), [`vfx.open`](#vfxopen), [`vfx.set`](#vfxset) |
-| `view` | [`view.appearance`](#viewappearance), [`view.frameSelection`](#viewframeselection), [`view.gameCamera`](#viewgamecamera), [`view.pick`](#viewpick), [`view.screenshot`](#viewscreenshot) |
-| `vscript` | [`vscript.attach`](#vscriptattach), [`vscript.edit`](#vscriptedit), [`vscript.get`](#vscriptget), [`vscript.new`](#vscriptnew), [`vscript.nodes`](#vscriptnodes), [`vscript.open`](#vscriptopen), [`vscript.set`](#vscriptset), [`vscript.step`](#vscriptstep), [`vscript.validate`](#vscriptvalidate) |
+| `view` | [`view.appearance`](#viewappearance), [`view.frameSelection`](#viewframeselection), [`view.gameCamera`](#viewgamecamera), [`view.pick`](#viewpick), [`view.scenePostFX`](#viewscenepostfx), [`view.screenshot`](#viewscreenshot) |
+| `vscript` | [`vscript.attach`](#vscriptattach), [`vscript.edit`](#vscriptedit), [`vscript.get`](#vscriptget), [`vscript.new`](#vscriptnew), [`vscript.nodes`](#vscriptnodes), [`vscript.open`](#vscriptopen), [`vscript.set`](#vscriptset), [`vscript.validate`](#vscriptvalidate) |
 
 ## activity
 
@@ -2607,7 +2607,7 @@ Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `path`: string
-- `settings`: {adaptationSpeed?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, exposure?: number, filmGrain?: number, gain?: number[3], gamma?: number[3], lift?: number[3], saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
+- `settings`: {adaptationSpeed?: number, aperture?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, depthOfField?: boolean, exposure?: number, filmGrain?: number, focalLength?: number, focusDistance?: number, focusRange?: number, focusTarget?: string, gain?: number[3], gamma?: number[3], lift?: number[3], lut?: string, lutIntensity?: number, maxBlur?: number, saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
 - `warnings`: [string]
 
 ### `postfx.get`
@@ -2625,14 +2625,14 @@ Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `path`: string
-- `settings`: {adaptationSpeed?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, exposure?: number, filmGrain?: number, gain?: number[3], gamma?: number[3], lift?: number[3], saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
+- `settings`: {adaptationSpeed?: number, aperture?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, depthOfField?: boolean, exposure?: number, filmGrain?: number, focalLength?: number, focusDistance?: number, focusRange?: number, focusTarget?: string, gain?: number[3], gamma?: number[3], lift?: number[3], lut?: string, lutIntensity?: number, maxBlur?: number, saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
 - `warnings`: [string]
 
 ### `postfx.new`
 
 **New Post-FX**
 
-Writes a .postfx profile in `folder` (default: the Assets root) from a `preset` (default neutral) with optional `settings` overrides, and imports it. Returns the asset, its contents and warnings. Assign it with postfx.assign, tweak it with postfx.edit. A post-fx profile is a camera look; every key is optional (missing = neutral): tonemapper none|reinhard|neutral|aces, exposure (EV stops, -10..10), autoExposure (bool), autoExposureMin/autoExposureMax (EV), adaptationSpeed, bloom (bool), bloomIntensity (0..1), color grading applied after tonemapping: contrast (0.5..1.5, 1 = unchanged), lift [r,g,b] (adds to shadows, 0 = unchanged), gamma [r,g,b] (midtone, 1 = unchanged), gain [r,g,b] (multiplier, 1 = unchanged), saturation (0..2, 1 = unchanged), vignette (0..1), vignetteSoftness (0..1), chromaticAberration (0..1), filmGrain (0..1). Presets: neutral, cinematic, warm, cold, noir, retro. Assign a profile to a camera (Camera.postFX) or a PostFXVolume component (profile, shape box|sphere, size, radius, blendDistance, priority, weight, isGlobal) with postfx.assign.
+Writes a .postfx profile in `folder` (default: the Assets root) from a `preset` (default neutral) with optional `settings` overrides, and imports it. Returns the asset, its contents and warnings. Assign it with postfx.assign, tweak it with postfx.edit. A post-fx profile is a camera look; every key is optional (missing = neutral): tonemapper none|reinhard|neutral|aces, exposure (EV stops, -10..10), autoExposure (bool), autoExposureMin/autoExposureMax (EV), adaptationSpeed, bloom (bool), bloomIntensity (0..1), color grading applied after tonemapping: contrast (0.5..1.5, 1 = unchanged), lift [r,g,b] (adds to shadows, 0 = unchanged), gamma [r,g,b] (midtone, 1 = unchanged), gain [r,g,b] (multiplier, 1 = unchanged), saturation (0..2, 1 = unchanged), vignette (0..1), vignetteSoftness (0..1), chromaticAberration (0..1), filmGrain (0..1); depth of field: depthOfField (bool), focusDistance (m), focusRange (m kept fully sharp around it), aperture (f-number, lower blurs more), focalLength (mm, longer blurs more; the view's field of view is unchanged), maxBlur (largest blur radius, % of the height, 0..10), focusTarget (entity name to auto-focus on); LUT grading: lut (path under Assets/ of a .cube file, or of an N²×N strip image whose sidecar importer is "lut"), lutIntensity (0..1). Presets: neutral, cinematic, warm, cold, noir, retro. Assign a profile to a camera (Camera.postFX) or a PostFXVolume component (profile, shape box|sphere, size, radius, blendDistance, priority, weight, isGlobal) with postfx.assign.
 
 Arguments:
 
@@ -2645,7 +2645,7 @@ Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `path`: string
-- `settings`: {adaptationSpeed?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, exposure?: number, filmGrain?: number, gain?: number[3], gamma?: number[3], lift?: number[3], saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
+- `settings`: {adaptationSpeed?: number, aperture?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, depthOfField?: boolean, exposure?: number, filmGrain?: number, focalLength?: number, focusDistance?: number, focusRange?: number, focusTarget?: string, gain?: number[3], gamma?: number[3], lift?: number[3], lut?: string, lutIntensity?: number, maxBlur?: number, saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
 - `warnings`: [string]
 
 ### `postfx.open`
@@ -2667,20 +2667,20 @@ Result:
 
 **Set Post-FX** · _undoable_, _idempotent_
 
-Replaces a .postfx profile's whole contents (`settings`, or a `preset`) and reimports it; cameras and volumes using it update. Undoable. For a few changes, postfx.edit is shorter. A post-fx profile is a camera look; every key is optional (missing = neutral): tonemapper none|reinhard|neutral|aces, exposure (EV stops, -10..10), autoExposure (bool), autoExposureMin/autoExposureMax (EV), adaptationSpeed, bloom (bool), bloomIntensity (0..1), color grading applied after tonemapping: contrast (0.5..1.5, 1 = unchanged), lift [r,g,b] (adds to shadows, 0 = unchanged), gamma [r,g,b] (midtone, 1 = unchanged), gain [r,g,b] (multiplier, 1 = unchanged), saturation (0..2, 1 = unchanged), vignette (0..1), vignetteSoftness (0..1), chromaticAberration (0..1), filmGrain (0..1). Presets: neutral, cinematic, warm, cold, noir, retro. Assign a profile to a camera (Camera.postFX) or a PostFXVolume component (profile, shape box|sphere, size, radius, blendDistance, priority, weight, isGlobal) with postfx.assign. Undoable (one step; edit.undo reverts it).
+Replaces a .postfx profile's whole contents (`settings`, or a `preset`) and reimports it; cameras and volumes using it update. Undoable. For a few changes, postfx.edit is shorter. A post-fx profile is a camera look; every key is optional (missing = neutral): tonemapper none|reinhard|neutral|aces, exposure (EV stops, -10..10), autoExposure (bool), autoExposureMin/autoExposureMax (EV), adaptationSpeed, bloom (bool), bloomIntensity (0..1), color grading applied after tonemapping: contrast (0.5..1.5, 1 = unchanged), lift [r,g,b] (adds to shadows, 0 = unchanged), gamma [r,g,b] (midtone, 1 = unchanged), gain [r,g,b] (multiplier, 1 = unchanged), saturation (0..2, 1 = unchanged), vignette (0..1), vignetteSoftness (0..1), chromaticAberration (0..1), filmGrain (0..1); depth of field: depthOfField (bool), focusDistance (m), focusRange (m kept fully sharp around it), aperture (f-number, lower blurs more), focalLength (mm, longer blurs more; the view's field of view is unchanged), maxBlur (largest blur radius, % of the height, 0..10), focusTarget (entity name to auto-focus on); LUT grading: lut (path under Assets/ of a .cube file, or of an N²×N strip image whose sidecar importer is "lut"), lutIntensity (0..1). Presets: neutral, cinematic, warm, cold, noir, retro. Assign a profile to a camera (Camera.postFX) or a PostFXVolume component (profile, shape box|sphere, size, radius, blendDistance, priority, weight, isGlobal) with postfx.assign. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `path?`: string
 - `preset?`: string
-- `settings?`: {adaptationSpeed?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, exposure?: number, filmGrain?: number, gain?: number[3], gamma?: number[3], lift?: number[3], saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
+- `settings?`: {adaptationSpeed?: number, aperture?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, depthOfField?: boolean, exposure?: number, filmGrain?: number, focalLength?: number, focusDistance?: number, focusRange?: number, focusTarget?: string, gain?: number[3], gamma?: number[3], lift?: number[3], lut?: string, lutIntensity?: number, maxBlur?: number, saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
 
 Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `path`: string
-- `settings`: {adaptationSpeed?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, exposure?: number, filmGrain?: number, gain?: number[3], gamma?: number[3], lift?: number[3], saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
+- `settings`: {adaptationSpeed?: number, aperture?: number, autoExposure?: boolean, autoExposureMax?: number, autoExposureMin?: number, bloom?: boolean, bloomIntensity?: number, chromaticAberration?: number, contrast?: number, depthOfField?: boolean, exposure?: number, filmGrain?: number, focalLength?: number, focusDistance?: number, focusRange?: number, focusTarget?: string, gain?: number[3], gamma?: number[3], lift?: number[3], lut?: string, lutIntensity?: number, maxBlur?: number, saturation?: number, tonemapper?: "none" \| "reinhard" \| "neutral" \| "aces", vignette?: number, vignetteSoftness?: number}
 - `warnings`: [string]
 
 ## prefab
@@ -4946,6 +4946,22 @@ Result:
 - `origin`: number[3] — [x, y, z]
 - `point?`: number[3] — [x, y, z]
 
+### `view.scenePostFX`
+
+**Scene View Post-FX** · _idempotent_
+
+Shows post-processing in the Scene view (the View menu's Scene Post-FX items): `mode` off (the plain scene, the default), on (the look the game would use at the editor camera: the scene camera's post-fx profile or the scene's PostProcess component, with the PostFXVolumes the editor camera is in blended over it) or split (plain left of `split`, 0.05-0.95 of the width, the look right of it). Without arguments it only returns the setting. view.screenshot {source: "window"} shows the result (the "viewport" source renders without it).
+
+Arguments:
+
+- `mode?`: "off" \| "on" \| "split"
+- `split?`: number
+
+Result:
+
+- `mode`: "off" \| "on" \| "split"
+- `split`: number
+
 ### `view.screenshot`
 
 **Screenshot** · _read-only_, _idempotent_, _deferred_
@@ -5005,7 +5021,7 @@ Result:
 
 **Edit Visual Script** · _undoable_
 
-Changes part of a .vscript graph in one undoable step, in this order: removeNodes, addNodes, updateNodes, disconnect, connect (in `function` when given), then variables, removeVariables, functions, signatures (a function's inputs and outputs, with renames: wires on its entry, return and call nodes follow, and those to removed pins go), removeFunctions, comments, removeComments, actions. New nodes without an id get one from their type (returned in `added`); nodes without x/y are placed right of the others. A link into a data input that has one replaces it. Returns node ids and problems (unconnected required inputs, type mismatches, unreachable nodes). A .vscript file is a node graph run by the VisualScript component in play mode and built games (no game module needed; edits apply while playing). `nodes`: {id, type, x, y, config {settings such as variable, component, field, key, name}, inputs {literal values for unconnected input pins}}. `links`: {"from": "node.pin", "to": "node.pin"}, always from an output pin to an input pin. Exec pins carry the flow (most nodes: input `in`, output `out`; branch: `true`/`false`; loops: `body`/`done`); event nodes (event.start, event.update, event.keyPressed, event.triggerEnter, event.custom…) start flows. Data pins are typed (bool, int, float, string, vec2, vec3, vec4, color, quat, entity, asset, array, map, any) and convert automatically where it makes sense; an unconnected entity input means the script's own entity. `variables`: {name, type, default, exposed}; `functions`: {name, inputs, outputs, nodes, links, macro?} called with function.call (config.function), starting at function.entry and ending at function.return (a `macro` is copied into each use instead, and its inputs and outputs may be exec pins). `reroute` nodes bend a wire. `actions`: input actions {"jump": ["key.space", "pad.south"]} for event.actionPressed. List node types and their pins with vscript.nodes {search}. Undoable (one step; edit.undo reverts it).
+Changes part of a .vscript graph in one undoable step, in this order: removeNodes, addNodes, updateNodes, disconnect, connect (in `function` when given), then variables, removeVariables, functions, removeFunctions, comments, removeComments, actions. New nodes without an id get one from their type (returned in `added`); nodes without x/y are placed right of the others. A link into a data input that has one replaces it. Returns node ids and problems (unconnected required inputs, type mismatches, unreachable nodes). A .vscript file is a node graph run by the VisualScript component in play mode and built games (no game module needed; edits apply while playing). `nodes`: {id, type, x, y, config {settings such as variable, component, field, key, name}, inputs {literal values for unconnected input pins}}. `links`: {"from": "node.pin", "to": "node.pin"}, always from an output pin to an input pin. Exec pins carry the flow (most nodes: input `in`, output `out`; branch: `true`/`false`; loops: `body`/`done`); event nodes (event.start, event.update, event.keyPressed, event.triggerEnter, event.custom…) start flows. Data pins are typed (bool, int, float, string, vec2, vec3, vec4, color, quat, entity, asset, array, map, any) and convert automatically where it makes sense; an unconnected entity input means the script's own entity. `variables`: {name, type, default, exposed}; `functions`: {name, inputs, outputs, nodes, links} called with function.call (config.function), starting at function.entry and ending at function.return. `actions`: input actions {"jump": ["key.space", "pad.south"]} for event.actionPressed. List node types and their pins with vscript.nodes {search}. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
@@ -5016,13 +5032,12 @@ Arguments:
 - `connect?`: [string[2]]
 - `disconnect?`: [string[2]]
 - `function?`: string
-- `functions?`: [{inputs?: [object], links?: [string[2]], macro?: boolean, name?: string, nodes?: [object], outputs?: [object], pure?: boolean}]
+- `functions?`: [{inputs?: [object], links?: [string[2]], name?: string, nodes?: [object], outputs?: [object], pure?: boolean}]
 - `path?`: string
 - `removeComments?`: [string]
 - `removeFunctions?`: [string]
 - `removeNodes?`: [string]
 - `removeVariables?`: [string]
-- `signatures?`: [{function: string, inputs?: [object], outputs?: [object], renamedInputs?: object, renamedOutputs?: object}]
 - `updateNodes?`: [{breakpoint?: boolean, collapsed?: boolean, comment?: string, config?: object, id: string, inputs?: object, type?: string, x?: number, y?: number}]
 - `variables?`: [{default?: any, exposed?: boolean, name?: string, tooltip?: string, type?: string (15 cases)}]
 
@@ -5059,7 +5074,7 @@ Result:
 
 **New Visual Script** · _undoable_
 
-Writes a .vscript graph in `folder` (default: the Assets root) from `template` (empty, spinner, mover, pickup, timer) and imports it; with `target` (an entity id) also puts a VisualScript component running it on that entity (undoable). Build it with vscript.edit (addNodes, connect, variables…), find nodes with vscript.nodes. A .vscript file is a node graph run by the VisualScript component in play mode and built games (no game module needed; edits apply while playing). `nodes`: {id, type, x, y, config {settings such as variable, component, field, key, name}, inputs {literal values for unconnected input pins}}. `links`: {"from": "node.pin", "to": "node.pin"}, always from an output pin to an input pin. Exec pins carry the flow (most nodes: input `in`, output `out`; branch: `true`/`false`; loops: `body`/`done`); event nodes (event.start, event.update, event.keyPressed, event.triggerEnter, event.custom…) start flows. Data pins are typed (bool, int, float, string, vec2, vec3, vec4, color, quat, entity, asset, array, map, any) and convert automatically where it makes sense; an unconnected entity input means the script's own entity. `variables`: {name, type, default, exposed}; `functions`: {name, inputs, outputs, nodes, links, macro?} called with function.call (config.function), starting at function.entry and ending at function.return (a `macro` is copied into each use instead, and its inputs and outputs may be exec pins). `reroute` nodes bend a wire. `actions`: input actions {"jump": ["key.space", "pad.south"]} for event.actionPressed. List node types and their pins with vscript.nodes {search}. Undoable (one step; edit.undo reverts it).
+Writes a .vscript graph in `folder` (default: the Assets root) from `template` (empty, spinner, mover, pickup, timer) and imports it; with `target` (an entity id) also puts a VisualScript component running it on that entity (undoable). Build it with vscript.edit (addNodes, connect, variables…), find nodes with vscript.nodes. A .vscript file is a node graph run by the VisualScript component in play mode and built games (no game module needed; edits apply while playing). `nodes`: {id, type, x, y, config {settings such as variable, component, field, key, name}, inputs {literal values for unconnected input pins}}. `links`: {"from": "node.pin", "to": "node.pin"}, always from an output pin to an input pin. Exec pins carry the flow (most nodes: input `in`, output `out`; branch: `true`/`false`; loops: `body`/`done`); event nodes (event.start, event.update, event.keyPressed, event.triggerEnter, event.custom…) start flows. Data pins are typed (bool, int, float, string, vec2, vec3, vec4, color, quat, entity, asset, array, map, any) and convert automatically where it makes sense; an unconnected entity input means the script's own entity. `variables`: {name, type, default, exposed}; `functions`: {name, inputs, outputs, nodes, links} called with function.call (config.function), starting at function.entry and ending at function.return. `actions`: input actions {"jump": ["key.space", "pad.south"]} for event.actionPressed. List node types and their pins with vscript.nodes {search}. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
@@ -5125,7 +5140,7 @@ Result:
 
 **Set Visual Script** · _undoable_, _idempotent_
 
-Replaces a .vscript file's whole graph and reimports it (a running game picks it up next frame, keeping variables). Undoable. For a few changes, vscript.edit is shorter. A .vscript file is a node graph run by the VisualScript component in play mode and built games (no game module needed; edits apply while playing). `nodes`: {id, type, x, y, config {settings such as variable, component, field, key, name}, inputs {literal values for unconnected input pins}}. `links`: {"from": "node.pin", "to": "node.pin"}, always from an output pin to an input pin. Exec pins carry the flow (most nodes: input `in`, output `out`; branch: `true`/`false`; loops: `body`/`done`); event nodes (event.start, event.update, event.keyPressed, event.triggerEnter, event.custom…) start flows. Data pins are typed (bool, int, float, string, vec2, vec3, vec4, color, quat, entity, asset, array, map, any) and convert automatically where it makes sense; an unconnected entity input means the script's own entity. `variables`: {name, type, default, exposed}; `functions`: {name, inputs, outputs, nodes, links, macro?} called with function.call (config.function), starting at function.entry and ending at function.return (a `macro` is copied into each use instead, and its inputs and outputs may be exec pins). `reroute` nodes bend a wire. `actions`: input actions {"jump": ["key.space", "pad.south"]} for event.actionPressed. List node types and their pins with vscript.nodes {search}. Undoable (one step; edit.undo reverts it).
+Replaces a .vscript file's whole graph and reimports it (a running game picks it up next frame, keeping variables). Undoable. For a few changes, vscript.edit is shorter. A .vscript file is a node graph run by the VisualScript component in play mode and built games (no game module needed; edits apply while playing). `nodes`: {id, type, x, y, config {settings such as variable, component, field, key, name}, inputs {literal values for unconnected input pins}}. `links`: {"from": "node.pin", "to": "node.pin"}, always from an output pin to an input pin. Exec pins carry the flow (most nodes: input `in`, output `out`; branch: `true`/`false`; loops: `body`/`done`); event nodes (event.start, event.update, event.keyPressed, event.triggerEnter, event.custom…) start flows. Data pins are typed (bool, int, float, string, vec2, vec3, vec4, color, quat, entity, asset, array, map, any) and convert automatically where it makes sense; an unconnected entity input means the script's own entity. `variables`: {name, type, default, exposed}; `functions`: {name, inputs, outputs, nodes, links} called with function.call (config.function), starting at function.entry and ending at function.return. `actions`: input actions {"jump": ["key.space", "pad.south"]} for event.actionPressed. List node types and their pins with vscript.nodes {search}. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
@@ -5143,26 +5158,6 @@ Result:
 - `path`: string
 - `variables`: [string]
 - `warnings`: [string]
-
-### `vscript.step`
-
-**Step Visual Script**
-
-While play is paused at a visual script breakpoint: `into` shows the next node of the flow (entering function calls), `over` the next one not inside a call made here, `out` the next one in the caller, `continue` resumes play. The flow from the breakpoint to the end of its event was recorded during the frame (scripts run inside the world's update and can't stop half way), so each step shows that node's inputs, outputs and the variables as it started; past the end, play resumes until the same entity's graph runs another node and pauses there. Without `mode`, reports the current step.
-
-Arguments:
-
-- `mode?`: "into" \| "over" \| "out" \| "continue"
-
-Result:
-
-- `atBreakpoint`: boolean
-- `count`: integer
-- `index?`: integer
-- `paused`: boolean
-- `playing`: boolean
-- `step?`: {depth: integer, entity?: entity id, error?: string, function?: string, graph: string, inputs: object, node: string, outputs: object, variables: object}
-- `truncated`: boolean
 
 ### `vscript.validate`
 

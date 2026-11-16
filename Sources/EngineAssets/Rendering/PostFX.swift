@@ -39,12 +39,19 @@ extension PostProcessSettings {
         if vignetteSoftness <= 0 || vignetteSoftness > 1 { out.append("vignetteSoftness \(vignetteSoftness) is outside 0...1") }
         if chromaticAberration < 0 || chromaticAberration > 1 { out.append("chromaticAberration \(chromaticAberration) is outside 0...1") }
         if filmGrain < 0 || filmGrain > 1 { out.append("filmGrain \(filmGrain) is outside 0...1") }
+        if focusDistance <= 0 { out.append("focusDistance should be above 0") }
+        if focusRange < 0 { out.append("focusRange should be 0 or more") }
+        if aperture < 0.5 || aperture > 64 { out.append("aperture f/\(aperture) is outside f/0.5...f/64") }
+        if focalLength < 1 || focalLength > 2000 { out.append("focalLength \(focalLength) mm is outside 1...2000") }
+        if lutIntensity < 0 || lutIntensity > 1 { out.append("lutIntensity \(lutIntensity) is outside 0...1") }
+        if maxBlur < 0 || maxBlur > 10 { out.append("maxBlur \(maxBlur) is outside 0...10 (% of the height)") }
         return out
     }
 
     /// This profile moved toward `other` by `weight` (0 = this, 1 = other). Numbers and colors
     /// interpolate; the tonemapper and auto-exposure switch take `other`'s once `weight` reaches
-    /// a half. Bloom stays on while either side has it, fading with the intensity.
+    /// a half. Bloom stays on while either side has it, fading with the intensity; so does depth
+    /// of field, fading with `maxBlur` (its focus target, like the switches, flips at a half).
     public func blended(to other: PostProcessSettings, weight: Float) -> PostProcessSettings {
         let t = min(max(weight, 0), 1)
         if t <= 0 { return self }
@@ -69,6 +76,26 @@ extension PostProcessSettings {
         r.vignetteSoftness = mix(vignetteSoftness, other.vignetteSoftness)
         r.chromaticAberration = mix(chromaticAberration, other.chromaticAberration)
         r.filmGrain = mix(filmGrain, other.filmGrain)
+        r.depthOfField = depthOfField || other.depthOfField
+        r.focusDistance = depthOfField && other.depthOfField ? mix(focusDistance, other.focusDistance)
+            : (depthOfField ? focusDistance : other.focusDistance)
+        r.focusRange = depthOfField && other.depthOfField ? mix(focusRange, other.focusRange)
+            : (depthOfField ? focusRange : other.focusRange)
+        r.aperture = depthOfField && other.depthOfField ? mix(aperture, other.aperture) : (depthOfField ? aperture : other.aperture)
+        r.focalLength = depthOfField && other.depthOfField ? mix(focalLength, other.focalLength)
+            : (depthOfField ? focalLength : other.focalLength)
+        r.maxBlur = mix(depthOfField ? maxBlur : 0, other.depthOfField ? other.maxBlur : 0)
+        // The same LUT fades its intensity; between two LUTs the first fades out, then the second in.
+        let lutA: Float = lut.isEmpty ? 0 : lutIntensity, lutB: Float = other.lut.isEmpty ? 0 : other.lutIntensity
+        if lut == other.lut {
+            r.lutIntensity = mix(lutIntensity, other.lutIntensity)
+        } else if lut.isEmpty || other.lut.isEmpty {
+            r.lut = lut.isEmpty ? other.lut : lut
+            r.lutIntensity = mix(lutA, lutB)
+        } else {
+            r.lut = t < 0.5 ? lut : other.lut
+            r.lutIntensity = t < 0.5 ? lutA * (1 - 2 * t) : lutB * (2 * t - 1)
+        }
         return r
     }
 }
@@ -247,14 +274,37 @@ public enum PostFXResolver {
             volumes.append((volume.priority, entity.index, volume,
                             world.get(GlobalTransform.self, for: entity)?.matrix ?? world.worldMatrix(of: entity)))
         }
-        guard !volumes.isEmpty else { return ScreenFade.strongest(in: world)?.applied(to: settings) ?? settings }
+        guard !volumes.isEmpty else {
+            return autoFocused(ScreenFade.strongest(in: world)?.applied(to: settings) ?? settings, world: world, cameraWorld: cameraWorld)
+        }
         let eye = Vec3(cameraWorld.c3.x, cameraWorld.c3.y, cameraWorld.c3.z)
         for item in volumes.sorted(by: { ($0.priority, $0.index) < ($1.priority, $1.index) }) {
             let weight = item.volume.influence(at: eye, volumeWorld: item.world)
             guard weight > 0, let profile = profile(item.volume.profile, assets: assets) else { continue }
             settings = (settings ?? PostProcessSettings()).blended(to: profile, weight: weight)
         }
-        return ScreenFade.strongest(in: world)?.applied(to: settings) ?? settings
+        return autoFocused(ScreenFade.strongest(in: world)?.applied(to: settings) ?? settings, world: world, cameraWorld: cameraWorld)
+    }
+
+    /// `settings` with depth of field focused on its `focusTarget` (the first entity with that
+    /// `Name`): its distance from the camera along the view axis (at least 0.1 m). Unchanged
+    /// without depth of field, a target, or an entity of that name.
+    @MainActor
+    public static func autoFocused(_ settings: PostProcessSettings?, world: World, cameraWorld: Mat4) -> PostProcessSettings? {
+        guard var settings, settings.depthOfField else { return settings }
+        let name = settings.focusTarget.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return settings }
+        var target: Entity?
+        world.query(Name.self) { entity, entityName in
+            if entityName.value == name, target == nil || entity.index < target!.index { target = entity }
+        }
+        guard let target else { return settings }
+        let m = world.get(GlobalTransform.self, for: target)?.matrix ?? world.worldMatrix(of: target)
+        let eye = Vec3(cameraWorld.c3.x, cameraWorld.c3.y, cameraWorld.c3.z)
+        let back = normalize(Vec3(cameraWorld.c2.x, cameraWorld.c2.y, cameraWorld.c2.z))
+        let offset = Vec3(m.c3.x, m.c3.y, m.c3.z) - eye
+        settings.focusDistance = max(-dot(offset, back), 0.1)
+        return settings
     }
 }
 
@@ -265,14 +315,27 @@ public struct PostFXImporter: AssetImporter {
 
     public var name: String { "postfx" }
     public var fileExtensions: [String] { ["postfx"] }
-    public var version: Int { 1 }
+    public var version: Int { 2 }
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
-        let profile: PostProcessSettings
+        var profile: PostProcessSettings
         do { profile = try AssetJSON.decoder().decode(PostProcessSettings.self, from: context.data()) } catch {
             throw AssetError.unreadable("not a post-fx profile: \(error)")
         }
         for warning in profile.validationWarnings() { context.warn(warning) }
+        // The LUT as "asset:<id>", so cooking ships it with the profile.
+        let lutKey = profile.lut.trimmingCharacters(in: .whitespaces)
+        if !lutKey.isEmpty, AssetReference(lutKey) == nil {
+            let path = lutKey.hasPrefix("Assets/") ? String(lutKey.dropFirst("Assets/".count)) : lutKey
+            if let id = context.assetsByPath[path] {
+                profile.lut = AssetReference(id).description
+            } else {
+                context.warn("lut \(lutKey): no such asset (a path under Assets/)")
+                // Remembered as a missing dependency, so adding the file later reimports this profile.
+                let up = String(repeating: "../", count: context.assetPath.split(separator: "/").count - 1)
+                _ = try? context.readDependency(relativePath: up + path)
+            }
+        }
         let stem = ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension
         var asset = ImportedAsset()
         var namer = SubAssetNamer()

@@ -97,3 +97,44 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(workspace.profile == PostFXPreset.neutral.settings)
     }
 }
+
+/// The Scene view's post-fx preview: the `view.scenePostFX` setting and the look it resolves.
+@MainActor
+@Suite struct PostFXScenePreviewTests {
+    @Test func scenePostFXCommandSetsModeAndSplit() throws {
+        let session = makeSession()
+        #expect(try call(session, "view.scenePostFX")["mode"] as? String == "off")
+        let set = try call(session, "view.scenePostFX", ["mode": "split", "split": 2])
+        #expect(set["mode"] as? String == "split" && abs((set["split"] as? Double ?? 0) - 0.95) < 1e-6)
+        #expect(session.scenePostFX == ScenePostFXSettings(mode: .split, split: 0.95))
+        #expect(throws: (any Error).self) { try call(session, "view.scenePostFX", ["mode": "sideways"]) }
+        let preview = ScenePostFXPreview()
+        #expect(preview.caption(ScenePostFXSettings()) == nil)
+        #expect(preview.caption(session.scenePostFX) == "Post-FX split: none in this scene")
+    }
+
+    @Test func previewUsesTheLookAtTheEditorCamera() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
+        let assets = try #require(session.assets)
+        let noir = try assets.createPostFX(PostFXPreset.noir.settings, at: "Looks/noir.postfx")
+        let world = World()
+        var base = PostProcessSettings()
+        base.exposure = 1
+        world.spawn(Name("PostFXScenePreviewTestsSettings"), base)
+        world.spawn(Transform(position: Vec3(20, 0, 0)), Name("PostFXScenePreviewTestsVolume"),
+                    PostFXVolume(profile: "Looks/noir.postfx", size: Vec3(4, 4, 4), blendDistance: 0))
+        world.propagateTransforms()
+        func view(at eye: Vec3) -> SceneView {
+            SceneView(view: Mat4.lookAt(eye: eye, target: eye + Vec3(0, 0, -1), up: Vec3(0, 1, 0)),
+                      projection: Mat4.perspective(fovY: 1, aspect: 1, near: 0.1, far: 100))
+        }
+        #expect(ScenePostFXPreview.settings(world: world, view: view(at: Vec3(0, 0, 0)), assets: assets)?.exposure == 1)
+        let inside = ScenePostFXPreview.settings(world: world, view: view(at: Vec3(20, 0, 0)), assets: assets)
+        #expect(inside?.saturation == 0, "inside the volume: noir")
+        _ = noir
+        #expect(ScenePostFXPreview.settings(world: World(), view: view(at: .zero), assets: assets) == nil)
+    }
+}

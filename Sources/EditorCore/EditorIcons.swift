@@ -314,6 +314,7 @@ public enum EditorIcons {
         case "behavior": return .model
         case "png", "jpg", "jpeg", "tga", "hdr", "exr", "ktx", "ktx2", "dds", "bmp", "proctex": return .texture
         case "sprite": return .texture
+        case "cube": return .texture
         case "material": return .material
         case "postfx": return .material
         case "prefab": return .prefab

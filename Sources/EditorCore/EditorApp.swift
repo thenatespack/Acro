@@ -137,6 +137,8 @@ public final class EditorApp: Game, EditorHost {
     public private(set) var soundWorkspace: SoundBuilderWorkspace!
     /// The Post-FX tab (PostFXWorkspace.swift).
     public private(set) var postFXWorkspace: PostFXWorkspace!
+    /// Post-processing over the Scene view (`session.scenePostFX`, ScenePostFXPreview.swift).
+    let scenePostFX = ScenePostFXPreview()
     public private(set) var tableWorkspace: DataTableWorkspace!
     /// The Visual Script tab (VisualScriptWorkspace.swift).
     public private(set) var visualScriptWorkspace: VisualScriptWorkspace!
@@ -1331,7 +1333,7 @@ public final class EditorApp: Game, EditorHost {
         characterWorkspace.prepareFrame(pixelScale: ui.scale)
         materialWorkspace.prepareFrame(pixelScale: ui.scale)
         buildGizmos()
-        viewportWidget.texture = target.texture
+        viewportWidget.texture = scenePostFX.texture(for: target, settings: session.scenePostFX) ?? target.texture
         viewportWidget.billboards = transformTool.billboards
         gameWidget.texture = gameCurrentView != nil ? gameTarget.texture : nil
         gameWidget.overlayLines = session.netPlay.map { $0.showsOverlay ? $0.overlayLines() : [] } ?? []
@@ -1463,6 +1465,7 @@ public final class EditorApp: Game, EditorHost {
     /// over the image); the badge only shows when the bar has no room for it.
     func updateViewportCaption() {
         let scene = "Perspective · \(session.tool.title)" + (playState().map { " · \($0)" } ?? "")
+            + (scenePostFX.caption(session.scenePostFX).map { " · \($0)" } ?? "")
         setCaption(scene, of: viewportWidget, panel: EditorLayout.viewport)
         setCaption(gameCaption(), of: gameWidget, panel: EditorLayout.game)
         gameWidget.placeholder = RenderPrep.findCamera(in: session.gameWorld) == nil
@@ -1802,6 +1805,8 @@ public final class EditorApp: Game, EditorHost {
             sceneSprites.render(into: pass, viewProjection: view.viewProjection, reversedZ: view.reversedZ)
             toolDrawRenderer.draw(toolDraw, in: pass, view: debugView)
         }
+        scenePostFX.render(view: view, target: target, world: world, renderer: sceneRenderer, assets: session.assets,
+                           settings: session.scenePostFX, frame: frame, dt: 1.0 / 60)
     }
 
     public func render(engine: Engine, pass: RenderPass) {}
@@ -2300,17 +2305,21 @@ final class Toolbar {
 
     /// The View menu: every panel (open ones checked; picking one opens a closed panel where the
     /// default layout has it, or brings an open one to the front), then Settings…, Reset Layout,
-    /// Animate in Scene View, the themes (`EditorApp.menuThemes`) and the zooms, the current ones checked.
+    /// Animate in Scene View, the themes (`EditorApp.menuThemes`), the zooms and the Scene view's
+    /// post-fx modes (`view.scenePostFX`), the current ones checked.
     func showViewMenu() {
         guard let context = view.context else { return }
         let panels = menuPanels
         let themes = EditorApp.menuThemes, zooms = EditorApp.menuZooms
         let settingsTitle = "Settings… (\(app.shortcuts.shortcutText(for: .settings)))"
-        let options = [settingsTitle, "Reset Layout", ViewAnimateInEditModeCommand.title] + themes.map { "\($0) Theme" } + zooms.map { "Zoom \(Int(($0 * 100).rounded()))%" }
+        let postFXModes = ScenePostFXSettings.Mode.allCases
+        let options = [settingsTitle, "Reset Layout", ViewAnimateInEditModeCommand.title] + themes.map { "\($0) Theme" }
+            + zooms.map { "Zoom \(Int(($0 * 100).rounded()))%" } + postFXModes.map { "Scene Post-FX: \($0.rawValue.capitalized)" }
         let menu = PopupMenu(items: panels.map(\.title) + options, anchor: viewButton, name: "viewMenu")
         menu.itemCommandIDs = panels.map { _ in PanelOpenCommand.id.rawValue }
             + [SettingsGetCommand.id.rawValue, LayoutResetCommand.id.rawValue, ViewAnimateInEditModeCommand.id.rawValue]
-            + options.dropFirst(3).map { _ in ViewAppearanceCommand.id.rawValue }
+            + options.dropFirst(3).dropLast(postFXModes.count).map { _ in ViewAppearanceCommand.id.rawValue }
+            + postFXModes.map { _ in ViewScenePostFXCommand.id.rawValue }
         menu.itemIcons = panels.map { EditorIcons.panelIconNames[$0.id].map(EditorIcons.named) }
             + [EditorIcons.named("sliders-horizontal"), EditorIcons.named("layout-dashboard"), EditorIcons.named("person-standing")]
         let first = panels.count
@@ -2318,6 +2327,10 @@ final class Toolbar {
         if app.session.editAnimation.isEnabled { checked.insert(first + 2) }
         if let theme = themes.firstIndex(of: context.theme.name) { checked.insert(first + 3 + theme) }
         if let zoom = zooms.firstIndex(of: app.preferredUIScale) { checked.insert(first + 3 + themes.count + zoom) }
+        // The Scene view's post-fx mode is checked while it's on (On or Split).
+        if app.session.scenePostFX.mode != .off, let mode = postFXModes.firstIndex(of: app.session.scenePostFX.mode) {
+            checked.insert(first + 3 + themes.count + zooms.count + mode)
+        }
         menu.checkedIndices = checked
         let session = app.session
         menu.onSelect = { [unowned app] index in
@@ -2331,6 +2344,8 @@ final class Toolbar {
             case 1: app.resetLayout()
             case 2: session.run(ViewAnimateInEditModeCommand.self, .init())
             case 3...(themes.count + 2): session.run(ViewAppearanceCommand.self, .init(theme: themes[index - 3]))
+            case (3 + themes.count + zooms.count)...:
+                session.run(ViewScenePostFXCommand.self, .init(mode: postFXModes[index - 3 - themes.count - zooms.count]))
             default: session.run(ViewAppearanceCommand.self, .init(uiScale: zooms[index - 3 - themes.count]))
             }
         }

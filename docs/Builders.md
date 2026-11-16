@@ -11,7 +11,7 @@ Builder tools let people and AI agents author game content inside the Acro edito
 |---|---|---|
 | [Mesh Builder](#mesh-builder) | `.meshbuild` | Models from primitive shapes, with materials and animation |
 | [VFX Builder](#vfx-builder) | `.vfx` | Effects made of stacked GPU particle emitters |
-| [Post-FX Builder](#post-fx-builder) | `.postfx` | Camera looks: tonemapping, bloom, grading, vignette, grain |
+| [Post-FX Builder](#post-fx-builder) | `.postfx` | Camera looks: tonemapping, bloom, grading, LUTs, depth of field, vignette, grain |
 | [Terrain Builder](#terrain-builder) | `.terrain` | Sculpted, painted heightmap terrain with scattered props |
 | [Character Builder](#character-builder) | `.character` | Rigged, animated characters from body templates and parts |
 | [Sound Builder](#sound-builder) | `.sfx` | Synthesized sound effects |
@@ -61,11 +61,17 @@ Editor MCP clients can use `vfx.new {preset}`, `vfx.edit {addEmitters, updateEmi
 
 ## Post-FX Builder
 
-A `.postfx` file is a saved camera look: tonemapper, exposure and auto exposure, bloom, color grading (contrast, lift, gamma, gain, saturation), vignette, chromatic aberration and film grain, all in one post pass on Metal and Vulkan. Make one with the Assets panel's New Post-FX (or `postfx.new {preset}`: neutral, cinematic, warm, cold, noir, retro) and open it in the Post-FX tab for a sample scene with sliders, presets and a before/after split; each change is one undo step. Use it per camera (the Camera's `postFX` field, or `postfx.assign`) or blend it by area with a `PostFXVolume` component (box or sphere, blend distance, priority, weight).
+A `.postfx` file is a saved camera look: tonemapper, exposure and auto exposure, bloom, color grading (contrast, lift, gamma, gain, saturation), vignette, chromatic aberration, film grain, depth of field and LUT grading, on Metal and Vulkan. Make one with the Assets panel's New Post-FX (or `postfx.new {preset}`: neutral, cinematic, warm, cold, noir, retro) and open it in the Post-FX tab for a sample scene with sliders, presets and a before/after split; each change is one undo step. Use it per camera (the Camera's `postFX` field, or `postfx.assign`) or blend it by area with a `PostFXVolume` component (box or sphere, blend distance, priority, weight).
 
-Tools: `postfx.new`, `postfx.get`, `postfx.set`, `postfx.edit`, `postfx.assign`, `postfx.open`.
+Depth of field (`depthOfField`) blurs what is nearer or farther than `focusDistance` (meters along the camera's view axis), keeping `focusRange` meters around it fully sharp. The blur is a thin lens: `aperture` is the f-number (lower blurs more) and `focalLength` the lens in millimeters (longer blurs more; the camera's field of view doesn't change), capped at `maxBlur` percent of the image height. Bright out-of-focus spots spread into soft discs (bokeh). `focusTarget` names an entity to auto-focus on every frame (its distance along the view axis replaces `focusDistance`). It runs on the HDR scene before bloom and exposure and uses a depth prepass of the opaque meshes, so transparent surfaces take the blur of what's behind them. Volumes blend it in by fading `maxBlur`.
 
-Not yet: depth of field and LUT grading. The tab previews on an 8-bit image, so bloom looks weaker there than in the game.
+LUT grading (`lut`, `lutIntensity`) applies a 3D color lookup table right after tonemapping, before lift, gamma and gain (so screen fades still reach their color). `lut` is a path under `Assets/` (or `asset:<id>`) of a `.cube` file (a 3D LUT from Resolve, Photoshop and other grading tools, up to 64³) or of a LUT strip image: N² × N pixels, blue slices side by side, with `"importer": "lut"` in its `.meta` sidecar. Both import as an unmipmapped linear texture, the LUT works on sRGB-encoded values like grading tools do, and a profile ships its LUT when the game is cooked.
+
+The Scene view can show the look too: the View menu's Scene Post-FX items (or `view.scenePostFX {mode, split}`) switch between Off (the plain scene, the default), On and Split (plain on the left of the line, the look on the right). It uses the look the game would at the editor camera: the scene camera's profile or the scene's `PostProcess` component, with the volumes the editor camera is in blended over it. Gizmos drawn into the view are graded with it.
+
+Tools: `postfx.new`, `postfx.get`, `postfx.set`, `postfx.edit`, `postfx.assign`, `postfx.open`, `view.scenePostFX`.
+
+The tab and the Scene view preview on an 8-bit image, so bloom and bokeh look weaker there than in the game. The split's left side is the scene before every effect (no depth of field or LUT).
 
 ## Terrain Builder
 
