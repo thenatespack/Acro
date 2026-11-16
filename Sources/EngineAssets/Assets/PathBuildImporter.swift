@@ -97,7 +97,14 @@ public struct PathBuildImporter: AssetImporter {
     private static func parts(of piece: PathPiece, index: Int, meshNamer: inout SubAssetNamer, materialNamer: inout SubAssetNamer,
                               asset: inout ImportedAsset, _ context: inout ImportContext) -> [TerrainImporter.PropPart]? {
         if !piece.asset.trimmingCharacters(in: .whitespaces).isEmpty {
-            return TerrainImporter.prop(TerrainScatter(name: piece.name, asset: piece.asset, material: piece.material), &context)
+            let before = context.warnings.count
+            let parts = TerrainImporter.prop(TerrainScatter(name: piece.name, asset: piece.asset, material: piece.material), &context)
+            // The shared loader speaks of scatter rules; here they're pieces.
+            let scatter = "scatter '\(piece.name)'"
+            for i in before..<context.warnings.count where context.warnings[i].hasPrefix(scatter) {
+                context.warnings[i] = "piece '\(piece.name)'" + context.warnings[i].dropFirst(scatter.count)
+            }
+            return parts
         }
         let part = MeshBuildPart(name: piece.name, shape: piece.shape, size: piece.size, color: piece.color,
                                  metallic: piece.metallic, roughness: piece.roughness)

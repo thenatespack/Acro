@@ -192,6 +192,12 @@ private func straight(_ length: Float = 20) -> PathBuild {
         database.waitForAll()
         let moved = try #require(database.prefab(AssetReference(id))?.roots.first)
         #expect(abs(moved.children[2].children[0].transform.position.y - 8.6) < 0.01)
+
+        // A piece whose asset is missing is reported as a piece.
+        build.bank = 1  // a change, so it reimports
+        let warnings = try database.writePathBuild(build, to: id)
+        #expect(warnings.contains("piece 'Lost': no asset 'Models/missing.meshbuild'"), "\(warnings)")
+        #expect(!warnings.contains { $0.contains("scatter") })
     }
 }
 
