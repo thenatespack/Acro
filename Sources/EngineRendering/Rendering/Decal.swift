@@ -27,7 +27,8 @@ public struct Decal: Component, Codable, Equatable, Sendable {
                                  tooltip: "Low values give wet, reflective patches (specular from the sun, lights and environment)"),
          "angleFade": FieldHints(range: 0...1, step: 0.01,
                                  tooltip: "Fades out on surfaces turned away from the projection axis: alpha = cos(angle) / angleFade; 0 disables"),
-         "sortOrder": FieldHints(tooltip: "Decals with a higher order are drawn on top of lower ones")]
+         "sortOrder": FieldHints(tooltip: "Decals with a higher order are drawn on top of lower ones"),
+         "material": FieldHints(tooltip: "A material graph to paint instead of the texture (None: the texture and tint)")]
     }
 
     /// The projected image (RGBA; its alpha is the decal's coverage). nil: a flat `tint`.
@@ -46,9 +47,15 @@ public struct Decal: Component, Codable, Equatable, Sendable {
     /// Overlapping decals draw in ascending order (ties by entity index).
     public var sortOrder: Int
     public var isVisible: Bool
+    /// A material graph (a `.material` file with a `graph`) to paint instead of `texture`: its
+    /// base color (x `tint`), opacity (x `opacity`), metallic, roughness, normal, emissive and
+    /// occlusion, seeing the decal's UV and the painted surface's position and normal. nil, or
+    /// a material without a graph: the texture and tint. `roughness` then comes from the graph.
+    public var material: MaterialHandle?
 
     public init(texture: TextureHandle? = nil, tint: Vec3 = Vec3(1, 1, 1), opacity: Float = 1, emissive: Float = 0,
-                roughness: Float = 0.9, angleFade: Float = 0.5, sortOrder: Int = 0, isVisible: Bool = true) {
+                roughness: Float = 0.9, angleFade: Float = 0.5, sortOrder: Int = 0, isVisible: Bool = true,
+                material: MaterialHandle? = nil) {
         self.texture = texture
         self.tint = tint
         self.opacity = opacity
@@ -57,6 +64,7 @@ public struct Decal: Component, Codable, Equatable, Sendable {
         self.angleFade = angleFade
         self.sortOrder = sortOrder
         self.isVisible = isVisible
+        self.material = material
     }
 
     /// Missing fields take their defaults.
@@ -71,6 +79,7 @@ public struct Decal: Component, Codable, Equatable, Sendable {
         angleFade = try c.decodeIfPresent(Float.self, forKey: .angleFade) ?? d.angleFade
         sortOrder = try c.decodeIfPresent(Int.self, forKey: .sortOrder) ?? d.sortOrder
         isVisible = try c.decodeIfPresent(Bool.self, forKey: .isVisible) ?? d.isVisible
+        material = try c.decodeIfPresent(MaterialHandle.self, forKey: .material).flatMap { $0.key.isEmpty ? nil : $0 }
     }
 
     /// The world-space bounds (center, half extent) of the projector box under `matrix`.

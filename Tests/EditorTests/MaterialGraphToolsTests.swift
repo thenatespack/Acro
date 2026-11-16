@@ -146,6 +146,20 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(session.performUndo())
         #expect(session.world.get(MeshRenderer.self, for: child)?.material.key == MaterialHandle.default.key)
 
+        // A decal paints the graph (Decal.material); undo clears it again.
+        let decal = session.world.spawn(Transform(), Name("Paint"), Decal())
+        let decalID = try #require(session.world.ensureID(of: decal))
+        let painted = try call(session, "materialGraph.assign", ["path": "Glow.material", "entity": decalID.description])
+        #expect((painted["entities"] as? [Any])?.count == 1)
+        #expect(session.world.get(Decal.self, for: decal)?.material?.key == key)
+        #expect(session.performUndo())
+        #expect(session.world.get(Decal.self, for: decal)?.material == nil)
+        let bare = try #require(session.world.ensureID(of: session.world.spawn(Transform(), Name("Empty"))))
+        #expect(throws: (any Error).self) { try call(session, "materialGraph.assign", ["path": "Glow.material", "entity": bare.description]) }
+        // The inspector offers materials for it.
+        let choices = AssetChoices(meshes: { [] }, materials: { ["checker"] }, textures: { [] })
+        #expect(choices.options(component: Decal.componentName, path: "material") == ["", "checker"])
+
         var opened: AssetID?
         session.onOpenMaterialGraph = { opened = $0 }
         try call(session, "materialGraph.open", ["path": "Glow.material", "shape": "cube", "light": "rim"])

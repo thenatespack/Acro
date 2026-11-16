@@ -531,9 +531,9 @@ public enum MaterialGraphAssignCommand: EditorCommand {
     public struct Arguments: Codable, Equatable, Sendable, MaterialGraphTarget {
         public var asset: AssetReference?
         public var path: String?
-        /// The entity whose MeshRenderer gets the material (default: the selection's primary entity).
+        /// The entity whose MeshRenderer (or Decal) gets the material (default: the selection's primary entity).
         public var entity: EntityID?
-        /// Also every MeshRenderer below it (a placed model or prefab).
+        /// Also every MeshRenderer and Decal below it (a placed model or prefab).
         public var children: Bool?
         public init(asset: AssetReference? = nil, path: String? = nil, entity: EntityID? = nil, children: Bool? = nil) {
             self.asset = asset
@@ -545,13 +545,13 @@ public enum MaterialGraphAssignCommand: EditorCommand {
 
     public struct Result: Codable, Equatable, Sendable {
         public var path: String
-        /// The entities whose MeshRenderer.material was set.
+        /// The entities whose MeshRenderer.material or Decal.material was set.
         public var entities: [EntityID]
     }
 
     public static let id: CommandID = "materialGraph.assign"
     public static let title = "Assign Material Graph"
-    public static let doc = "Sets the MeshRenderer.material of an entity (default: the selected one), and with `children: true` of every MeshRenderer below it (a placed model or prefab), to a .material file. Undoable, one step. Mesh build parts use a material through their `material` key instead."
+    public static let doc = "Sets the MeshRenderer.material of an entity (default: the selected one), and with `children: true` of every MeshRenderer below it (a placed model or prefab), to a .material file. A Decal gets it as its `material` (it paints the graph instead of its texture). Undoable, one step. Mesh build parts use a material through their `material` key instead."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
@@ -562,20 +562,27 @@ public enum MaterialGraphAssignCommand: EditorCommand {
         if let entityID = arguments.entity ?? session.selection.primary { root = try world.require(entityID) } else {
             throw CommandError.failed("\(title): select an entity or pass `entity`")
         }
-        var targets: [(Entity, String)] = []
+        var targets: [(entity: Entity, component: String, old: FieldValue)] = []
         func visit(_ entity: Entity) {
-            if let renderer = world.get(MeshRenderer.self, for: entity) { targets.append((entity, renderer.material.key)) }
+            if let renderer = world.get(MeshRenderer.self, for: entity) {
+                targets.append((entity, MeshRenderer.componentName, .string(renderer.material.key)))
+            }
+            if let decal = world.get(Decal.self, for: entity) {
+                targets.append((entity, Decal.componentName, decal.material.map { .string($0.key) } ?? .null))
+            }
             if arguments.children == true { for child in world.children(of: entity) { visit(child) } }
         }
         visit(root)
-        guard !targets.isEmpty else { throw CommandError.failed("\(title): no MeshRenderer on the entity\(arguments.children == true ? " or below it" : "")") }
+        guard !targets.isEmpty else {
+            throw CommandError.failed("\(title): no MeshRenderer or Decal on the entity\(arguments.children == true ? " or below it" : "")")
+        }
         let value = AssetReference(id, subAsset: "material").description
         var edits: [any UndoCommand] = []
         var ids: [EntityID] = []
-        for (entity, old) in targets {
+        for (entity, component, old) in targets {
             guard let entityID = world.ensureID(of: entity) else { continue }
-            edits.append(SetFieldCommand(id: entityID, component: MeshRenderer.componentName, path: "material", old: .string(old), new: .string(value)))
-            ids.append(entityID)
+            edits.append(SetFieldCommand(id: entityID, component: component, path: "material", old: old, new: .string(value)))
+            if ids.last != entityID { ids.append(entityID) }
         }
         guard session.perform(GroupCommand(title, edits)) else { throw CommandError.failed("\(title) failed") }
         return Result(path: session.assets?.path(of: id) ?? "", entities: ids)

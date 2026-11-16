@@ -506,6 +506,20 @@ public final class SceneRenderer {
         return prep.materials.contains(handle.key) ? materials[prep.materials.id(of: handle.key)!].material : nil
     }
 
+    /// Binds the environment's textures and sampler (slots 6-7) again, after a graph decal used slot 7.
+    func rebindEnvironmentLighting(in pass: RenderPass) { environmentLighting.bindLighting(in: pass) }
+
+    /// The material graph a decal with `key` as its `Decal.material` draws with: nil until it is
+    /// registered (see `gatherDecals`), or when it has no graph or no decal variant.
+    func decalGraph(_ key: String) -> DecalRenderer.Graph? {
+        guard let id = prep.materials.id(of: key), let buffer = graphBuffers[id] else { return nil }
+        let (material, sampler) = materials[id]
+        guard let program = material.graph, program.metalDecalFragment != nil, program.spirvDecalFragment != nil else { return nil }
+        return DecalRenderer.Graph(program: program, values: buffer, sampler: sampler,
+                                   textures: [material.texture, material.metallicRoughnessTexture, material.normalTexture,
+                                              material.occlusionTexture, material.emissiveTexture])
+    }
+
     // MARK: - Frame
 
     /// Forgets the previous frame's camera and object transforms (after a camera cut or a
@@ -1050,8 +1064,10 @@ public final class SceneRenderer {
     /// buffer 2 is the skinning block with the material's uniforms as its prefix.
     private func bindMaterial(_ index: Int, in pass: RenderPass, skin: Int = -1, reflection: GPUTexture? = nil) {
         let (material, sampler) = materials[index]
-        // PBR materials without an occlusion map receive the planar reflection in that texture slot.
-        let reflected = reflection != nil && skin < 0 && material.shading == .pbr && material.occlusionTexture == nil && material.graph == nil
+        // PBR materials without an occlusion map receive the planar reflection in that texture slot;
+        // material graphs too while their textures leave slot 4 free (three or fewer).
+        let reflected = reflection != nil && skin < 0 && material.shading == .pbr && material.occlusionTexture == nil
+            && (material.graph?.textures.count ?? 0) < 4
         if let buffer = graphBuffers[index] {
             pass.setStorageBuffer(buffer, index: 0, stage: .fragment)
             pass.setPushConstants(Vec4(graphTime, material.alphaMode == .mask ? 1 : 0, material.alphaCutoff, 0))

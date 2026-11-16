@@ -42,7 +42,7 @@ public struct MeshHandle: Hashable, Codable, Sendable, CustomStringConvertible {
 
 /// Names a `Material` registered with a `SceneRenderer` (`registerMaterial(_:key:)`).
 /// Encodes as its key string. `.default` (light gray, matte) is registered by default.
-public struct MaterialHandle: Hashable, Codable, Sendable, CustomStringConvertible {
+public struct MaterialHandle: Hashable, Codable, Sendable, CustomStringConvertible, ReflectedAsString {
     public var key: String
 
     public init(_ key: String) { self.key = key }
@@ -61,7 +61,7 @@ public struct MaterialHandle: Hashable, Codable, Sendable, CustomStringConvertib
 /// Names a texture registered with a `SceneRenderer` (`registerTexture(_:key:)`), or a project
 /// texture asset (`TextureHandle(AssetReference)`, resolved through `SceneRenderer.assets`).
 /// Encodes as its key string. Used by `SceneEnvironment.environmentMap`.
-public struct TextureHandle: Hashable, Codable, Sendable, CustomStringConvertible {
+public struct TextureHandle: Hashable, Codable, Sendable, CustomStringConvertible, ReflectedAsString {
     public var key: String
 
     public init(_ key: String) { self.key = key }

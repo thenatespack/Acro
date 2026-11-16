@@ -241,6 +241,10 @@ extension Quat {
     }
 }
 
+/// A type that encodes as a single string (an asset handle such as `MaterialHandle`): a nil
+/// optional of it reflects as a string field, so `setField` can set it.
+public protocol ReflectedAsString {}
+
 // MARK: Reflecting encoder
 
 /// One field while reflecting: a leaf value, or a structure / array of children.
@@ -336,6 +340,7 @@ final class ReflectionNode {
         case is Entity.Type: .entity
         // Encodes as its text form, so a nil one is a string field that can be set.
         case is AssetReference.Type: .string
+        case is any ReflectedAsString.Type: .string
         case is EntityRef.Type: .string
         default: nil
         }

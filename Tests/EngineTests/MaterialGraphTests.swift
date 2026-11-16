@@ -84,6 +84,13 @@ private func spirvValidation(_ spirv: [UInt8]) -> String? {
             if let validation = spirvValidation(program.spirvFragment) {
                 #expect(validation.isEmpty, "\(name): \(validation)")
             }
+            // The decal variant.
+            let decalMetal = try #require(program.metalDecalFragment, "\(name)")
+            let decalSPIRV = try #require(program.spirvDecalFragment, "\(name)")
+            #expect(decalMetal.contains(program.code) && !decalMetal.contains("float4 a = baseColorMap.sample"), "\(name)")
+            if let validation = spirvValidation(decalSPIRV) {
+                #expect(validation.isEmpty, "\(name) decal: \(validation)")
+            }
             // The depth-only variant (masked graphs in shadows and the depth prepass).
             let depthMetal = try #require(program.metalDepthFragment, "\(name)")
             let depthSPIRV = try #require(program.spirvDepthFragment, "\(name)")
@@ -355,6 +362,125 @@ private func spirvValidation(_ spirv: [UInt8]) -> String? {
             #expect(abs(brightness(colors["mask.hole"]) - lit) < 12, "\(label)")
             let hole = colors["decal.hole"]!, outside = colors["decal.lit"]!
             #expect(hole[2] > 150 && hole[0] < 60 && outside[2] > 150 && outside[0] < 60, "\(label)")
+        }
+        if let metal = results["metal"], let vulkan = results["vulkan"] {
+            for (name, color) in metal {
+                let other = try #require(vulkan[name])
+                #expect(zip(color, other).allSatisfy { abs(Int($0) - Int($1)) <= 3 }, "\(name): metal \(color) vulkan \(other)")
+            }
+        }
+    }
+
+    /// A decal with a graph material paints the graph on Metal and on Vulkan: its texture slot,
+    /// UV and opacity work. The decal box (4 wide, projecting down onto a gray ground) holds a
+    /// 2x1 red | blue texture as emissive, cut out where u < 0.3.
+    @Test func graphDecalPaintsTheGraphOnEveryBackend() throws {
+        let textureRef = AssetReference(AssetID(high: 7, low: 7))
+        let painted = try graph(#"""
+        {"nodes": [{"id": "t", "type": "texture", "texture": "\#(textureRef.description)"},
+                   {"id": "keep", "type": "math", "op": "step", "a": 0.3, "b": "uv.x"}],
+         "output": {"baseColor": [0, 0, 0], "emissive": "t.rgb", "opacity": "keep", "roughness": 1, "occlusion": 0}}
+        """#)
+        let eye = Vec3(0, 8, 0)
+        let view = SceneView(view: Mat4.lookAt(eye: eye, target: .zero, up: Vec3(0, 0, -1)),
+                             projection: Mat4.perspective(fovY: 0.9, aspect: 1, near: 1, far: 20))
+        let size = 64
+        func pixel(_ image: Image, _ p: Vec3) -> [UInt8] {
+            let clip = view.viewProjection * Vec4(p, 1)
+            let x = Int((clip.x / clip.w * 0.5 + 0.5) * Float(size)), y = Int((0.5 - clip.y / clip.w * 0.5) * Float(size))
+            let i = (min(max(y, 0), size - 1) * image.width + min(max(x, 0), size - 1)) * 4
+            return Array(image.pixels[i..<i + 4])
+        }
+        // u = 0.5 + x / 4: red at u 0.375, blue at 0.75, cut at 0.125, and outside the box.
+        let points: [String: Vec3] = ["red": Vec3(-0.5, 0, 0), "blue": Vec3(1, 0, 0), "cut": Vec3(-1.5, 0, 0),
+                                      "outside": Vec3(-2.6, 0, 0)]
+        var results: [String: [String: [UInt8]]] = [:]
+        try TestDevices.forEachBackend { device, frames in
+            let renderer = try SceneRenderer(device: device, quality: .low)
+            let target = try RenderTarget(device: device, width: size, height: size, multisampled: false)
+            let texture = try device.makeTexture(pixels: [255, 0, 0, 255, 0, 0, 255, 255], width: 2, height: 1)
+            var asset = MaterialAsset()
+            asset.filter = .nearest
+            asset.graph = painted
+            let material = try asset.material(textures: { $0 == textureRef ? texture : nil })
+            #expect(material.graph?.textures == [textureRef])
+            try renderer.registerMaterial(material, key: "MaterialGraphTests.paint")
+            try renderer.registerMaterial(Material(baseColor: Vec4(0.3, 0.3, 0.3, 1), roughness: 1), key: "MaterialGraphTests.ground")
+            let world = World()
+            _ = world.spawn(Transform(), DirectionalLight(intensity: 1, direction: normalize(Vec3(0.2, -1, 0.1)), castsShadows: false))
+            _ = world.spawn(Transform(scale: Vec3(12, 1, 12)), MeshRenderer(mesh: .plane, material: MaterialHandle("MaterialGraphTests.ground")))
+            _ = world.spawn(Transform(rotation: Quat(angle: -.pi / 2, axis: Vec3(1, 0, 0)), scale: Vec3(4, 4, 1)),
+                            Decal(tint: Vec3(1, 1, 1), angleFade: 0, material: MaterialHandle("MaterialGraphTests.paint")))
+            world.propagateTransforms()
+            var pixels: Image?
+            try frames.run { frame in
+                renderer.beginViews(world: world, frame: frame, shadowFocus: view)
+                renderer.renderView(view, into: target, frame: frame)
+                device.readBack(target.gpu) { pixels = $0 }
+            }
+            let image = try #require(pixels)
+            results["\(device.backend)"] = points.mapValues { pixel(image, $0) }
+        }
+        for (backend, colors) in results {
+            let label = "\(backend): \(colors.sorted { $0.key < $1.key })"
+            let red = colors["red"]!, blue = colors["blue"]!, cut = colors["cut"]!, outside = colors["outside"]!
+            #expect(red[0] > 200 && red[1] < 120 && red[2] < 120, "\(label)")
+            #expect(blue[2] > 200 && blue[0] < 120 && blue[1] < 120, "\(label)")
+            #expect(cut == outside && abs(Int(cut[0]) - Int(cut[2])) < 20, "\(label)")
+        }
+        if let metal = results["metal"], let vulkan = results["vulkan"] {
+            for (name, color) in metal {
+                let other = try #require(vulkan[name])
+                #expect(zip(color, other).allSatisfy { abs(Int($0) - Int($1)) <= 3 }, "\(name): metal \(color) vulkan \(other)")
+            }
+        }
+    }
+
+    /// A graph material on a PlanarReflection's plane shows the reflection on Metal and on
+    /// Vulkan (its textures leave the reflection's slot free): a glowing red cube above a
+    /// mirror-like graph floor shows up in the floor where its mirror image projects.
+    @Test func graphMaterialReceivesPlanarReflections() throws {
+        let mirror = try graph(#"{"nodes": [], "output": {"baseColor": [1, 1, 1], "metallic": 1, "roughness": 0.05}}"#)
+        let view = SceneView(view: Mat4.lookAt(eye: Vec3(0, 2, 4), target: .zero),
+                             projection: Mat4.perspective(fovY: 0.9, aspect: 1, near: 0.5, far: 30))
+        let size = 64
+        // The floor point the cube's mirror image (0, -1, -2) is seen through: (0, 0, 0).
+        func center(_ image: Image) -> [UInt8] {
+            let clip = view.viewProjection * Vec4(0, 0, 0, 1)
+            let x = Int((clip.x / clip.w * 0.5 + 0.5) * Float(size)), y = Int((0.5 - clip.y / clip.w * 0.5) * Float(size))
+            let i = (y * image.width + x) * 4
+            return Array(image.pixels[i..<i + 4])
+        }
+        var results: [String: [String: [UInt8]]] = [:]
+        try TestDevices.forEachBackend { device, frames in
+            let renderer = try SceneRenderer(device: device, quality: .low)
+            let target = try RenderTarget(device: device, width: size, height: size, multisampled: false)
+            var asset = MaterialAsset()
+            asset.graph = mirror
+            try renderer.registerMaterial(asset.material(textures: { _ in nil }), key: "MaterialGraphTests.mirror")
+            try renderer.registerMaterial(Material(baseColor: Vec4(0, 0, 0, 1), emissiveColor: Vec3(1, 0, 0), emissiveStrength: 4),
+                                          key: "MaterialGraphTests.glow")
+            @MainActor func render(reflecting: Bool) throws -> [UInt8] {
+                let world = World()
+                _ = world.spawn(Transform(), DirectionalLight(intensity: 0.5, direction: normalize(Vec3(0.3, -1, 0.2)), castsShadows: false))
+                _ = world.spawn(Transform(scale: Vec3(20, 1, 20)), MeshRenderer(mesh: .plane, material: MaterialHandle("MaterialGraphTests.mirror")))
+                _ = world.spawn(Transform(position: Vec3(0, 1, -2)), MeshRenderer(mesh: .cube, material: MaterialHandle("MaterialGraphTests.glow")))
+                if reflecting { _ = world.spawn(Transform(), PlanarReflection(resolutionScale: 1)) }
+                world.propagateTransforms()
+                var pixels: Image?
+                try frames.run { frame in
+                    renderer.beginViews(world: world, frame: frame, shadowFocus: view)
+                    renderer.renderView(view, into: target, frame: frame)
+                    device.readBack(target.gpu) { pixels = $0 }
+                }
+                return center(try #require(pixels))
+            }
+            results["\(device.backend)"] = ["plain": try render(reflecting: false), "reflected": try render(reflecting: true)]
+        }
+        for (backend, colors) in results {
+            let plain = colors["plain"]!, reflected = colors["reflected"]!
+            let label = "\(backend): plain \(plain) reflected \(reflected)"
+            #expect(Int(reflected[0]) > Int(plain[0]) + 60 && reflected[0] > reflected[1] + 60, "\(label)")
         }
         if let metal = results["metal"], let vulkan = results["vulkan"] {
             for (name, color) in metal {
