@@ -226,8 +226,11 @@ public struct TerrainImporter: AssetImporter {
             context.warn("scatter '\(rule.name)': '\(value)' isn't a mesh build; use a .meshbuild or an asset:<id>#mesh/<name> reference")
             return nil
         }
-        // The sub-asset names the mesh build importer gave its parts (mirror / repeat copies included).
-        let build = file.expanded()
+        // The sub-asset names the mesh build importer gave its parts (mirror / repeat copies included;
+        // a sculpt's children are in its mesh).
+        let expansion = file.expansion()
+        let sculpting = expansion.build.gatheringSculpts(sources: expansion.sources)
+        let build = sculpting.build
         var meshNamer = SubAssetNamer(), materialNamer = SubAssetNamer()
         var firstIndex: [String: Int] = [:]
         for (i, part) in build.parts.enumerated() where firstIndex[part.name] == nil { firstIndex[part.name] = i }
@@ -238,7 +241,7 @@ public struct TerrainImporter: AssetImporter {
             return Transform(position: parent.position + parent.rotation * part.position, rotation: parent.rotation * part.transform.rotation)
         }
         var pieces: [PropPart] = []
-        for (i, part) in build.parts.enumerated() {
+        for (i, part) in build.parts.enumerated() where !sculpting.sculpted.contains(i) {
             guard let geometry = part.geometry(), !geometry.indices.isEmpty else { continue }
             let meshID = meshNamer.id(kind: "mesh", name: part.name, index: i)
             var material: AssetReference?

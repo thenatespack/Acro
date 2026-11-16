@@ -13,7 +13,7 @@ public struct MeshBuildExample: Codable, Equatable, Sendable {
 }
 
 public enum MeshBuildExamples {
-    public static var all: [MeshBuildExample] { [streetLamp, cart, turret] }
+    public static var all: [MeshBuildExample] { [streetLamp, cart, turret, armchair, stoneArch] }
 
     static let iron = Vec3(0.18, 0.19, 0.2)
     static let wood = Vec3(0.55, 0.36, 0.2)
@@ -84,6 +84,77 @@ public enum MeshBuildExamples {
     }
 }
 
+// MARK: Sculpts
+
+extension MeshBuildPart {
+    /// This part with its sculpt fields set (for building examples in code).
+    func sculpting(blend: MeshBuildBlend? = nil, smooth: Float? = nil, resolution: Int? = nil, noise: MeshBuildNoise? = nil) -> MeshBuildPart {
+        var part = self
+        part.blend = blend
+        part.smooth = smooth
+        part.resolution = resolution
+        part.noise = noise
+        return part
+    }
+}
+
+extension MeshBuildExamples {
+    /// An upholstered armchair: a sculpt frame whose back and rolled arms melt into the base, a
+    /// second sculpt for the puffy cushions (another color) and turned wooden legs.
+    public static var armchair: MeshBuildExample {
+        let fabric = Vec3(0.27, 0.33, 0.27), linen = Vec3(0.62, 0.58, 0.48)
+        return MeshBuildExample(name: "Armchair", about: "0.9 m wide, seat 0.47 m high, front at -Z. Two sculpts: Frame (base, back tilted 8° back, arms and rolled arm tops mirrored on x) melts its parts together with small smooth radii (0.02-0.04 m; larger radii on faces that line up bulge at the seam), and Cushions (a bevelled box plus a flattened sphere smoothed in for a puffy top, front and back) is a separate sculpt because a sculpt has one color. The tapered legs are lathes mirrored on x and z, touching the frame's underside at y=0.1.", build: MeshBuild(parts: [
+            MeshBuildPart(name: "Frame", shape: .sculpt, position: Vec3(0, 0.1, 0), color: fabric, roughness: 0.9),
+            MeshBuildPart(name: "Base", parent: "Frame", position: Vec3(0, 0.125, 0), size: Vec3(0.8, 0.25, 0.78), bevel: 0.05),
+            MeshBuildPart(name: "Back", parent: "Frame", position: Vec3(0, 0.42, 0.32), rotation: Vec3(-8, 0, 0), size: Vec3(0.84, 0.82, 0.16),
+                          bevel: 0.07).sculpting(smooth: 0.04),
+            MeshBuildPart(name: "Left Arm", parent: "Frame", position: Vec3(-0.35, 0.27, -0.01), size: Vec3(0.15, 0.52, 0.8), bevel: 0.06,
+                          mirror: [.x]).sculpting(smooth: 0.02),
+            MeshBuildPart(name: "Left Roll", shape: .capsule, parent: "Frame", position: Vec3(-0.355, 0.54, -0.02), rotation: Vec3(90, 0, 0),
+                          size: Vec3(0.18, 0.8, 0.15), mirror: [.x]).sculpting(smooth: 0.03),
+            MeshBuildPart(name: "Cushions", shape: .sculpt, position: Vec3(0, 0.35, 0), color: linen, roughness: 0.95),
+            MeshBuildPart(name: "Seat", parent: "Cushions", position: Vec3(0, 0.06, -0.06), size: Vec3(0.53, 0.12, 0.64), bevel: 0.05),
+            MeshBuildPart(name: "Puff", shape: .sphere, parent: "Cushions", position: Vec3(0, 0.08, -0.06), size: Vec3(0.48, 0.1, 0.58))
+                .sculpting(smooth: 0.04),
+            MeshBuildPart(name: "Back Cushion", parent: "Cushions", position: Vec3(0, 0.34, 0.2), rotation: Vec3(-10, 0, 0),
+                          size: Vec3(0.53, 0.46, 0.14), bevel: 0.06),
+            MeshBuildPart(name: "Back Puff", shape: .sphere, parent: "Cushions", position: Vec3(0, 0.34, 0.19), rotation: Vec3(-10, 0, 0),
+                          size: Vec3(0.46, 0.4, 0.15)).sculpting(smooth: 0.04),
+            MeshBuildPart(name: "Front Left Leg", shape: .lathe, position: Vec3(-0.35, 0, -0.32), color: Vec3(0.28, 0.17, 0.09), roughness: 0.5,
+                          profile: [Vec2(0, 0), Vec2(0.018, 0), Vec2(0.028, 0.1), Vec2(0, 0.1)], mirror: [.x, .z]),
+        ]))
+    }
+
+    /// A weathered stone arch: one sculpt carved with subtracts (the opening, mortar joints) and roughened with noise.
+    public static var stoneArch: MeshBuildExample {
+        func joint(_ name: String, at position: Vec3, size: Vec3, rotation: Vec3 = .zero, mirror: MeshBuildMirror, repeat r: MeshBuildRepeat) -> MeshBuildPart {
+            MeshBuildPart(name: name, parent: "Arch", position: position, rotation: rotation, size: size, mirror: mirror, repetition: r)
+                .sculpting(blend: .subtract, smooth: 0.006)
+        }
+        return MeshBuildExample(name: "Stone Arch", about: "2.6 m wide, 2.65 m high, the opening 1.3 m wide. One sculpt: a wall box with the opening cut out by a subtracted cylinder (the round top, turned [90,0,0] to run along Z) and box (below it), and mortar joints cut 1.5 cm into both faces by thin subtracted boxes: courses repeated up the wall, staggered vertical joints mirrored on x and z, and voussoir joints in a half ring around the opening (repeat radial about z with a radius, angle 180). Keystone, cornice and plinths are added with a 1 cm smooth so they join like mortared stone. noise (1 cm bumps 12 cm across) weathers the stone, and the last child, Trim (a big box intersected, standing on y=0), trims the bumps off the base so it stands flat on y=0: intersects aren't roughened. resolution 120 keeps the joints sharp.", build: MeshBuild(parts: [
+            MeshBuildPart(name: "Arch", shape: .sculpt, color: Vec3(0.66, 0.6, 0.5), roughness: 0.95)
+                .sculpting(resolution: 120, noise: MeshBuildNoise(amount: 0.01, scale: 0.12, seed: 7)),
+            MeshBuildPart(name: "Wall", parent: "Arch", position: Vec3(0, 1.25, 0), size: Vec3(2.4, 2.5, 0.6), bevel: 0.03),
+            MeshBuildPart(name: "Opening Top", shape: .cylinder, parent: "Arch", position: Vec3(0, 1.55, 0), rotation: Vec3(90, 0, 0),
+                          size: Vec3(1.3, 1, 1.3)).sculpting(blend: .subtract, smooth: 0.02),
+            MeshBuildPart(name: "Opening", parent: "Arch", position: Vec3(0, 0.75, 0), size: Vec3(1.3, 1.6, 1)).sculpting(blend: .subtract, smooth: 0.02),
+            joint("Front Course", at: Vec3(0, 0.42, -0.3), size: Vec3(2.6, 0.04, 0.035), mirror: [.z],
+                  repeat: MeshBuildRepeat(count: 4, offset: Vec3(0, 0.42, 0))),
+            joint("Front Left Joint", at: Vec3(-1, 0.21, -0.3), size: Vec3(0.04, 0.42, 0.035), mirror: [.x, .z],
+                  repeat: MeshBuildRepeat(count: 3, offset: Vec3(0, 0.84, 0))),
+            joint("Front Left Joint B", at: Vec3(-0.82, 0.63, -0.3), size: Vec3(0.04, 0.42, 0.035), mirror: [.x, .z],
+                  repeat: MeshBuildRepeat(count: 2, offset: Vec3(0, 0.84, 0))),
+            joint("Front Voussoir", at: Vec3(0, 1.55, -0.3), size: Vec3(0.04, 0.44, 0.035), rotation: Vec3(0, 0, 90), mirror: [.z],
+                  repeat: MeshBuildRepeat(count: 8, radial: MeshBuildRepeat.Radial(axis: .z, radius: 0.87, angle: 180))),
+            MeshBuildPart(name: "Keystone", parent: "Arch", position: Vec3(0, 2.27, 0), size: Vec3(0.3, 0.44, 0.66), bevel: 0.02).sculpting(smooth: 0.01),
+            MeshBuildPart(name: "Cornice", parent: "Arch", position: Vec3(0, 2.56, 0), size: Vec3(2.6, 0.14, 0.72), bevel: 0.025).sculpting(smooth: 0.01),
+            MeshBuildPart(name: "Left Plinth", parent: "Arch", position: Vec3(-0.88, 0.14, 0), size: Vec3(0.64, 0.28, 0.7), bevel: 0.025, mirror: [.x])
+                .sculpting(smooth: 0.01),
+            MeshBuildPart(name: "Trim", parent: "Arch", position: Vec3(0, 1.5, 0), size: Vec3(3, 3, 1)).sculpting(blend: .intersect),
+        ]))
+    }
+}
+
 public enum MeshBuildExamplesCommand: EditorCommand {
     public struct Arguments: Codable, Equatable, Sendable {
         /// One example by name (default: all).
@@ -127,7 +198,7 @@ public enum MeshBuildExamplesCommand: EditorCommand {
 
     public static let id: CommandID = "meshBuild.examples"
     public static let title = "Mesh Build Examples"
-    public static let doc = "Returns small, correct mesh builds to learn from or start with (pass one's `build` to meshBuild.new; keys at their defaults are left out): a street lamp (a parent chain, glow), a wooden cart (wheels turned onto an axle, a spin animation) and a turret (a group pivot swinging its children). Each stands on y=0, faces -Z and gives no warnings. `name` picks one."
+    public static let doc = "Returns small, correct mesh builds to learn from or start with (pass one's `build` to meshBuild.new; keys at their defaults are left out): a street lamp (a parent chain, glow), a wooden cart (wheels turned onto an axle, a spin animation) and a turret (a group pivot swinging its children), an armchair (two sculpts: parts melted together with smooth, puffy cushions) and a stone arch (a sculpt carved with subtracts and roughened with noise). Each stands on y=0, faces -Z and gives no warnings. `name` picks one."
     public static let isReadOnly = true
     public static let isIdempotent = true
     public static func unavailableReason(in session: EditorSession) -> String? { nil }

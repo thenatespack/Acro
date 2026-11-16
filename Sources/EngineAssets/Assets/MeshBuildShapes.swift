@@ -47,14 +47,14 @@ extension MeshBuildPart {
         if let profile, !profile.isEmpty, shape != .lathe && shape != .extrude {
             warnings.append("profile is only used by lathe and extrude parts; this \(shape.rawValue) ignores it")
         }
-        return warnings
+        return warnings + sculptFieldWarnings
     }
 
     /// The box the part's mesh occupies in its own space: `size` centered on the origin for most
-    /// shapes, the scaled profile's extent for `lathe` and `extrude` (empty at the origin if the
-    /// profile can't be built).
+    /// shapes, the scaled profile's extent for `lathe` and `extrude`, the mesh's for a `sculpt` with
+    /// its `sculptChildren` gathered (empty at the origin if nothing can be built).
     public var localBounds: Bounds {
-        if shape == .lathe || shape == .extrude {
+        if shape == .lathe || shape == .extrude || shape == .sculpt {
             return geometry().map(\.bounds) ?? Bounds(center: .zero, halfExtent: .zero)
         }
         return Bounds(center: .zero, halfExtent: Vec3(abs(size.x), abs(size.y), abs(size.z)) / 2)

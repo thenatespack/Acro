@@ -352,9 +352,10 @@ struct MeshBuildSpatial {
 
 extension MeshBuildCheck {
     /// The parts the checks look at, as the importer makes them: the file's parts in order, then
-    /// the `mirror` / `repeat` copies.
+    /// the `mirror` / `repeat` copies. A sculpt's children are part of its mesh, not parts of their own.
     nonisolated static func parts(of build: MeshBuild) -> [MeshBuildPart] {
-        build.expanded().parts
+        let expansion = build.expansion()
+        return expansion.build.gatheringSculpts(sources: expansion.sources).drawnParts
     }
 
     /// The overall bounds and the spatial warnings of `build` (`includeParts`: every part's box too).
