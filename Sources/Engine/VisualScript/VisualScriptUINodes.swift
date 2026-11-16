@@ -29,6 +29,8 @@ public final class VisualScriptUI {
         weak var view: UIBuildView?
         /// Shown by `ui.show` (removed again with `ui.hide` or when play stops).
         var owned: Bool
+        /// Takes an owned view off where `ui.show` put it (default: its parent).
+        var detach: (() -> Void)?
     }
     private var entries: [String: Entry] = [:]
     var pressed: [(view: String, event: UIBuildEvent)] = []
@@ -46,9 +48,9 @@ public final class VisualScriptUI {
 
     /// Names `view` for graphs and forwards its button presses to them (its `onEvent` handler
     /// keeps working: it is called first).
-    func add(_ view: UIBuildView, name: String, owned: Bool = false) {
-        if let old = entries[name]?.view, old !== view, entries[name]?.owned == true { old.removeFromParent() }
-        entries[name] = Entry(view: view, owned: owned)
+    func add(_ view: UIBuildView, name: String, owned: Bool = false, detach: (() -> Void)? = nil) {
+        if let old = entries[name], old.view !== view, old.owned { Self.detach(old) }
+        entries[name] = Entry(view: view, owned: owned, detach: detach)
         let previous = view.onEvent
         view.onEvent = { [weak self] event in
             previous?(event)
@@ -65,14 +67,18 @@ public final class VisualScriptUI {
 
     func remove(_ name: String) {
         guard let entry = entries.removeValue(forKey: name) else { return }
-        if entry.owned { entry.view?.removeFromParent() }
+        if entry.owned { Self.detach(entry) }
     }
 
     func removeOwned() {
         for (name, entry) in entries where entry.owned {
-            entry.view?.removeFromParent()
+            Self.detach(entry)
             entries[name] = nil
         }
+    }
+
+    private static func detach(_ entry: Entry) {
+        if let detach = entry.detach { detach() } else { entry.view?.removeFromParent() }
     }
 
     /// The names graphs can use.
@@ -122,7 +128,7 @@ enum VisualScriptUINodes {
         let view = VisualScriptPin("view", .string, doc: "The layout's name (empty: every layout shown)")
         return [
             S.action("ui.show", "Show UI Layout", "UI",
-                     "Shows the .ui layout `layout` over the game as `name` (default: the file's name), following edits to the file. Needs a game UI layer: the editor's Game view, or game code adding layouts with world.scriptUI.",
+                     "Shows the .ui layout `layout` over the game as `name` (default: the file's name), following edits to the file. Needs a game UI layer: the game's (`world.gameUI`: the editor's Game view, GameRunner and exported games), or game code adding layouts with world.scriptUI.",
                      [VisualScriptPin("layout", .asset, required: true, doc: "A .ui file: asset:<id> or a path under Assets/"),
                       VisualScriptPin("name", .string)], [VisualScriptPin("view", .string)]) { c in
                 guard let assets = c.host.assets() else { throw VisualScriptError("no asset database to load the layout from") }
@@ -132,14 +138,23 @@ enum VisualScriptUINodes {
                 if name.isEmpty { name = ((assets.path(of: id) ?? value) as NSString).lastPathComponent.split(separator: ".").first.map(String.init) ?? "layout" }
                 let registry = VisualScriptUI.of(c.runtime)
                 if registry.view(name) == nil {
-                    guard let layer = c.host.services[VisualScriptUI.layerService] as? Widget else {
+                    let gameUI = c.world.gameUI
+                    let layer = c.host.services[VisualScriptUI.layerService] as? Widget
+                    guard gameUI != nil || layer != nil else {
                         throw VisualScriptError("nowhere to show UI: this host has no game UI layer (game code can add layouts with world.scriptUI)")
                     }
                     let shown = UIBuildView(name: "vscriptUI.\(name)")
                     guard shown.follow(assets, asset: id) else { throw VisualScriptError("'\(value)' isn't a .ui layout") }
                     shown.style.position = .absolute(.fill())
-                    layer.addChild(shown)
-                    registry.add(shown, name: name, owned: true)
+                    if let gameUI {
+                        gameUI.add(shown)
+                        registry.add(shown, name: name, owned: true) { [weak gameUI, weak shown] in
+                            if let shown { gameUI?.remove(shown) }
+                        }
+                    } else {
+                        layer?.addChild(shown)
+                        registry.add(shown, name: name, owned: true)
+                    }
                 }
                 c.set("view", .string(name))
                 return .next
