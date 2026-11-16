@@ -52,6 +52,7 @@ public enum EditorIcons {
         FieldAnimator.componentName: "sliders-horizontal",
         LightFlicker.componentName: "gauge",
         CameraPath.componentName: "orbit",
+        BehaviorTreeRunner.componentName: "bot",
         "Pulse": "gauge",
     ]
 
