@@ -117,7 +117,8 @@ public struct CharacterImporter: AssetImporter {
         // Mirror / repeat copies are parts too; partColors can name them or their source.
         let expansion = file.expansion()
         let sculpting = expansion.build.gatheringSculpts(sources: expansion.sources)  // a sculpt's children are in its mesh
-        let build = sculpting.build
+        let pieces = sculpting.splittingLooks()  // a sculpt with several looks has a part per look
+        let build = pieces.build
         // Each part's transform relative to the model's root (part hierarchies flattened).
         var firstIndex: [String: Int] = [:]
         for (i, part) in build.parts.enumerated() where firstIndex[part.name] == nil { firstIndex[part.name] = i }
@@ -129,13 +130,15 @@ public struct CharacterImporter: AssetImporter {
         }
         var drew = false
         for (i, part) in build.parts.enumerated() where !sculpting.sculpted.contains(i) {
-            guard let geometry = part.geometry(), !geometry.indices.isEmpty else { continue }
+            guard let geometry = pieces.geometry(i), !geometry.indices.isEmpty else { continue }
             let label = "\(attachment.name) \(part.name)"
             let meshID = namer.id(kind: "mesh", name: label, index: i)
             asset.add(meshID, name: label, .mesh(geometry))
             var material: AssetReference?
             let materialPath = part.material.trimmingCharacters(in: .whitespaces)
-            let recolor = attachment.color(ofPart: part.name, source: expansion.sources[i])
+            // A sculpt's look part is recolored with its sculpt.
+            let owner = pieces.pieceOf[i] ?? i
+            let recolor = attachment.color(ofPart: build.parts[owner].name, source: expansion.sources[owner])
             if recolor == nil, !materialPath.isEmpty {
                 material = Self.reference(materialPath, kind: "material", &context)
                 if material == nil { context.warn("attachment '\(attachment.name)', part '\(part.name)': no material '\(materialPath)'") }

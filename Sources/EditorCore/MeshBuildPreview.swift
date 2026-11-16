@@ -89,17 +89,27 @@ struct MeshBuildPreviewScene {
         world.propagateTransforms()
         if let animation { try pose(build, animation: animation, time: time) }
 
-        // The posed model's box, from the meshes as placed.
+        // A sculpt with several looks draws a mesh per look on nodes of their own (MeshBuildSculptLooks.swift).
+        let expansion = build.expansion()
+        let sculpting = expansion.build.gatheringSculpts(sources: expansion.sources)
+        let pieces = sculpting.splittingLooks()
+        var pieceSculpt: [String: String] = [:]
+        for (index, sculpt) in pieces.pieceOf { pieceSculpt[pieces.build.parts[index].name] = pieces.build.parts[sculpt].name }
+
+        // The posed model's box, from the meshes as placed; a label per part (a sculpt's over all its looks).
         var lo = Vec3(repeating: .infinity), hi = Vec3(repeating: -.infinity)
-        var partBoxes: [(String, Vec3)] = []
+        var labelBoxes: [String: (Vec3, Vec3)] = [:]
         for (name, entity) in parts.sorted(by: { $0.key < $1.key }) {
             guard let renderer = world.get(MeshRenderer.self, for: entity), let geometry = meshes(renderer.mesh),
                   !geometry.vertices.isEmpty else { continue }
             let b = geometry.bounds.transformed(by: world.get(GlobalTransform.self, for: entity)?.matrix ?? world.worldMatrix(of: entity))
             lo = pointwiseMin(lo, b.center - b.halfExtent)
             hi = pointwiseMax(hi, b.center + b.halfExtent)
-            partBoxes.append((name, b.center))
+            let label = pieceSculpt[name] ?? name
+            let known = labelBoxes[label] ?? (Vec3(repeating: .infinity), Vec3(repeating: -.infinity))
+            labelBoxes[label] = (pointwiseMin(known.0, b.center - b.halfExtent), pointwiseMax(known.1, b.center + b.halfExtent))
         }
+        let partBoxes = labelBoxes.sorted { $0.key < $1.key }.map { ($0.key, ($0.value.0 + $0.value.1) / 2) }
         guard lo.x <= hi.x else { throw CommandError.failed("The mesh build has no parts with a mesh to show") }
         self.lo = lo
         self.hi = hi
@@ -108,7 +118,13 @@ struct MeshBuildPreviewScene {
         guard unknown.isEmpty else {
             throw CommandError.failed("No part named \(unknown.joined(separator: ", ")) to highlight (parts: \(build.parts.map(\.name).joined(separator: ", ")))")
         }
-        let outlined = highlight.compactMap { parts[$0] }
+        // A sculpt child outlines the mesh of its look (its sculpt's when the sculpt has one look).
+        let outlined = highlight.flatMap { name -> [Entity] in
+            let looks = pieces.owners.filter { $0.value.contains(name) }.keys.sorted().compactMap { parts[$0] }
+            if !looks.isEmpty { return looks }
+            if let sculpt = sculpting.sculptOf[name], let entity = parts[sculpt] { return [entity] }
+            return parts[name].map { [$0] } ?? []
+        }
         // The ground is part of every picture, so a model off y = 0 shows it.
         let frameLo = Vec3(lo.x, min(lo.y, 0), lo.z), frameHi = Vec3(hi.x, max(hi.y, 0), hi.z)
         let extent = frameHi - frameLo
@@ -295,7 +311,7 @@ public enum MeshBuildPreviewCommand: EditorDeferredCommand {
 
     public static let id: CommandID = "meshBuild.preview"
     public static let title = "Preview Mesh Build"
-    public static let doc = "Returns one PNG of a .meshbuild model from fixed angles, tiled: by default front (camera at -Z, the model's front; +X is on the image's left), right (from +X), top (front up) and a 3/4 perspective; `views` picks and orders them (also back, left). Front / right / top are orthographic, each auto-framed with a ground grid (spacing in the caption; red line z=0, blue x=0) and a white ground line at y=0. `size`: tile pixels (default 384). `labels`: part names at their centers. `highlight`: part names to outline. `animation` + `time`: pose that animation at `time` seconds. Also returns a summary (size in m, part count), the bounds and the same warnings as meshBuild.get. Read-only: the model is shown in a world of its own, not the scene. Finishes after a few frames. Needs the editor window."
+    public static let doc = "Returns one PNG of a .meshbuild model from fixed angles, tiled: by default front (camera at -Z, the model's front; +X is on the image's left), right (from +X), top (front up) and a 3/4 perspective; `views` picks and orders them (also back, left). Front / right / top are orthographic, each auto-framed with a ground grid (spacing in the caption; red line z=0, blue x=0) and a white ground line at y=0. `size`: tile pixels (default 384). `labels`: part names at their centers. `highlight`: part names to outline (a sculpt child outlines the surface it owns: its look's mesh). `animation` + `time`: pose that animation at `time` seconds. Also returns a summary (size in m, part count), the bounds and the same warnings as meshBuild.get. Read-only: the model is shown in a world of its own, not the scene. Finishes after a few frames. Needs the editor window."
     public static let isReadOnly = true
     public static let isIdempotent = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) && session.host?.canRender == true }

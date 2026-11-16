@@ -44,8 +44,8 @@ mirroring) with edge-length `subdivide` (0-6, default 3, 60k-triangle cap) and n
 keeping hard edges. Mesh Builder rows for path points, loft sections and deformers; three new
 examples (sailboat, gnarled tree, desk lamp). Importer version 3.
 Merged with sculpt: the curves' straight-segments switch is `straight: true` (not `smooth`, which
-is a sculpt child's melt radius); sweeps and lofts inside a sculpt are left out with a warning
-(no signed-distance field for them yet), and `deform` on a sculpt child is ignored.
+is a sculpt child's melt radius). (Sweeps, lofts and deformed children now work in sculpts: see
+"Sculpt looks and mesh fields" below.)
 Curves not done: sweep profiles are always closed (no open ribbons such as a sail cross-section
 or a leaf); no per-point twist or roll along a sweep (the frame is rotation-minimizing only, no
 `up` hint); loft sections can't rotate (every section is perpendicular to the axis, so no curved
@@ -76,13 +76,41 @@ closed and outward; cached; children stay pivot nodes without meshes; spatial ch
 starter), Resolution / Noise rows, Blend / Smooth rows on children, wireframe ghost of a
 selected child. Examples: Armchair, Stone Arch. Importer version 3. About 0.6 s for a 20-child
 sculpt at resolution 64 (debug build, loaded machine).
-Not done: children's colors (the renderer has no vertex colors; use a second sculpt), no
-decimation of flat regions (a carved box has as many triangles as a curved one), no per-child
-noise, ellipsoids and oval round shapes use approximate fields (smooth radii vary a little
-around them), thin features under about a cell vanish or may leave non-manifold edges, the
-ghost is a wireframe of the shape (not the blended result) and `meshBuild.preview` can't
-highlight a child (it has no mesh), import of a large sculpt at resolution 128 takes seconds in
-a debug build, and `segments` of children is ignored (fields are exact).
+Not done: no decimation of flat regions (a carved box has as many triangles as a curved one), no
+per-child noise, ellipsoids and oval round shapes use approximate fields (smooth radii vary a
+little around them), thin features under about a cell vanish or may leave non-manifold edges,
+the ghost is a wireframe of the shape (not the blended result), import of a large sculpt at
+resolution 128 takes seconds in a debug build, and `segments` of analytic children is ignored
+(fields are exact).
+Sculpt looks and mesh fields (importer version 6): sculpt children that set any look field
+(color, look, wear, roughness, metallic, glow, texture, material…) keep their own look; the rest
+inherit the sculpt's. After dual contouring each vertex is owned by the owning child whose
+surface is nearest (|distance|, noise included; subtracts/intersects own their cut only when
+they set a look), edges between owners are cut where both are equally close (bisection, then
+onto the surface) and triangles split along the cuts (3-owner triangles get a center point), so
+the color boundary follows the surface; vertices are split per owner, cut points shared, so no
+cracks and no bleeding of UVs/AO. `MeshBuildSculpting.splittingLooks()` (used by the mesh build,
+terrain-scatter and character-attachment importers): a one-look sculpt keeps its mesh (with that
+look); with several, the sculpt node becomes a pivot (still animated) and each look is a node
+`<sculpt>/<first child of that look>` with `mesh/…` and `material/…` sub-assets of that name.
+Spatial checks, bounds and `parts(of:)` still use the whole mesh; preview labels name the
+sculpt once and `highlight` of a child outlines its look's mesh; clicking a look mesh in the
+Mesh Builder selects the sculpt. Sweeps, lofts and any shape with `deform` are sculpt children
+through an exact mesh distance field (MeshBuildMeshSDF.swift: welded mesh, BVH nearest-point
+query, sign from angle-weighted face/edge/corner pseudo-normals, BVH lower bounds for the
+per-block active lists; built at segments >= 32). 3 sweeps + 1 loft + a bent box at
+resolution 64: meshing ~0.7 s debug (test), whole set+import+checks ~0.9 s debug and ~70 ms release (separate parts: ~0.5 s / ~20 ms). Armchair is now one sculpt
+(fabric frame, linen-fabric cushions); new Teapot example (lathe body/lid, swept spout and
+handle, cream knob).
+Sculpt looks / mesh field gaps: a child that sets any look field uses all its own look fields
+(no per-field inheritance, so setting only `wear` drops the sculpt's color); in a smooth join the
+color changes at the fillet's middle as a sharp line (no blending between looks); several looks
+cost a mesh, material and draw each; a mesh child must be closed (an open deformed lathe or a
+sweep crossing itself can get the wrong sign near the gap or crossing); mesh children are
+faceted at their own segments (32+), which shows on large smooth sweeps at high resolution;
+lathe profiles are polygons in the field, so a coarse profile shows bands (write ~20+ points for
+a smooth pot); terrain scatter and character attachments draw the looks but character
+`partColors` recolor every look of a sculpt at once.
 Realistic surfaces (looks): parts take `look` (23 generated, tileable surfaces: woods, metals,
 stone, brick, fabric, glass, ground…), `lookScale` (m per tile), `wear` (0-1) and `grain`
 (x|y|z); `color` tints a look to its average color. Each look is albedo (sRGB) + normal map +

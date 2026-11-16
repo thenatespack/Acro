@@ -230,7 +230,8 @@ public struct TerrainImporter: AssetImporter {
         // a sculpt's children are in its mesh).
         let expansion = file.expansion()
         let sculpting = expansion.build.gatheringSculpts(sources: expansion.sources)
-        let build = sculpting.build
+        let split = sculpting.splittingLooks()  // a sculpt with several looks has a part per look
+        let build = split.build
         var meshNamer = SubAssetNamer(), materialNamer = SubAssetNamer()
         var firstIndex: [String: Int] = [:]
         for (i, part) in build.parts.enumerated() where firstIndex[part.name] == nil { firstIndex[part.name] = i }
@@ -242,7 +243,7 @@ public struct TerrainImporter: AssetImporter {
         }
         var pieces: [PropPart] = []
         for (i, part) in build.parts.enumerated() where !sculpting.sculpted.contains(i) {
-            guard let geometry = part.geometry(), !geometry.indices.isEmpty else { continue }
+            guard let geometry = split.geometry(i), !geometry.indices.isEmpty else { continue }
             let meshID = meshNamer.id(kind: "mesh", name: part.name, index: i)
             var material: AssetReference?
             if part.material.isEmpty {
