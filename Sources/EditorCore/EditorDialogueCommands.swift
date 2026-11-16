@@ -23,9 +23,12 @@ public enum EditorDialogueCommands {
         op set|add|subtract|toggle, value | expression}], next}; event {event, args {}, next}; end. An empty next ends the \
         conversation. Text fills in {variable}. Conditions/expressions: `gold >= 10 && !paid`, `visits + 1` (== != < <= > \
         >= && || ! and or not + - * / parentheses, "strings"). `key` is a localization key per line/option. `position` \
-        [x, y] places the node in the graph view (omitted: placed automatically). Problems (missing nodes, unknown \
+        [x, y] places the node in the graph view (omitted: placed automatically). `uiLayout` (path or asset:<id>) shows \
+        the dialogue in a .ui layout instead of the default box: it sets the values speaker, speakerColor, text, portrait, \
+        hasPortrait, isLine, isChoice, active, choiceCount, choice1…9, hasChoice1…9 and answers the button events continue \
+        and choice1…9 (uiLayout.new {preset: "dialogue"} makes one). Problems (missing nodes, unknown \
         speakers/variables, bad conditions, unreachable nodes) come back as `warnings`. In game a DialoguePlayer component \
-        {dialogue: path, startNode, autoStart} plays it; game code uses world.dialogues?.start(entity), \
+        {dialogue: path, startNode, autoStart, uiLayout} plays it; game code uses world.dialogues?.start(entity), \
         world.dialogue(for:)?.setVariable / .variable, and world.dialogues?.onEvent.
         """
 }
@@ -258,10 +261,13 @@ public enum DialogueEditCommand: EditorCommand {
         public var generateKeys: String?
         /// Re-place every node in columns by distance from the start.
         public var layout: Bool?
+        /// The .ui layout that shows the dialogue (path or asset:<id>, using the dialogue layout keys); "" for the default box.
+        public var uiLayout: String?
         public init(asset: AssetReference? = nil, path: String? = nil, speakers: [DialogueSpeaker]? = nil, removeSpeakers: [String]? = nil,
                     variables: [DialogueVariable]? = nil, removeVariables: [String]? = nil, removeNodes: [String]? = nil,
                     addNodes: [DialogueNode]? = nil, updateNodes: [String: JSONValue]? = nil, connect: [DialogueConnection]? = nil,
-                    start: String? = nil, generateKeys: String? = nil, layout: Bool? = nil) {
+                    start: String? = nil, generateKeys: String? = nil, layout: Bool? = nil, uiLayout: String? = nil) {
+            self.uiLayout = uiLayout
             self.asset = asset
             self.path = path
             self.speakers = speakers
@@ -280,13 +286,13 @@ public enum DialogueEditCommand: EditorCommand {
         var edit: DialogueEdit {
             DialogueEdit(speakers: speakers, removeSpeakers: removeSpeakers, variables: variables, removeVariables: removeVariables,
                          removeNodes: removeNodes, addNodes: addNodes, updateNodes: updateNodes, connect: connect, start: start,
-                         generateKeys: generateKeys, layout: layout)
+                         generateKeys: generateKeys, layout: layout, uiLayout: uiLayout)
         }
     }
 
     public static let id: CommandID = "dialogue.edit"
     public static let title = "Edit Dialogue"
-    public static let doc = "Changes part of a .dialogue file in one undoable step, in this order: speakers, removeSpeakers, variables, removeVariables, removeNodes, addNodes, updateNodes, connect, start, generateKeys, layout. Returns node summaries and warnings."
+    public static let doc = "Changes part of a .dialogue file in one undoable step, in this order: speakers, removeSpeakers, variables, removeVariables, removeNodes, addNodes, updateNodes, connect, start, generateKeys, layout, uiLayout. Returns node summaries and warnings."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }

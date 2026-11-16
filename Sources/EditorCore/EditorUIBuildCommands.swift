@@ -141,7 +141,7 @@ public enum UINewCommand: EditorCommand {
         public var folder: String?
         /// Default "New UI" (the file gets ".ui").
         public var name: String?
-        /// What to start from: hud (default: health bar, score, pause button), menu (title and Play / Options / Quit) or empty.
+        /// What to start from: hud (default: health bar, score, pause button), menu (title and Play / Options / Quit), dialogue (a dialogue box for DialoguePlayer.uiLayout) or empty.
         public var preset: String?
         /// Widgets to add after the preset's (same fields as in the file).
         public var widgets: [UIBuildWidget]?
@@ -157,7 +157,7 @@ public enum UINewCommand: EditorCommand {
 
     public static let id: CommandID = "uiLayout.new"
     public static let title = "New UI Layout"
-    public static let doc = "Writes a .ui file (a game menu or HUD) in `folder` (default: the Assets root) from a `preset` (hud, menu, empty) plus optional `widgets`, and imports it. Returns the widget ids, value keys, events and warnings. Change it with uiLayout.edit (add/update/move/remove widgets, bindings, sample values) or uiLayout.set. " + EditorUIBuildCommands.formatDoc
+    public static let doc = "Writes a .ui file (a game menu or HUD) in `folder` (default: the Assets root) from a `preset` (hud, menu, dialogue, empty) plus optional `widgets`, and imports it. Returns the widget ids, value keys, events and warnings. Change it with uiLayout.edit (add/update/move/remove widgets, bindings, sample values) or uiLayout.set. " + EditorUIBuildCommands.formatDoc
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> UIBuildResult {

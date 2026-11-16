@@ -26,9 +26,17 @@ public final class DialogueBox: Widget, DialoguePresenter {
     public private(set) weak var runner: DialogueRunner?
     /// Letters typed per second (0 shows each line at once).
     public var charactersPerSecond: Float = 45
-    /// The image for a speaker's portrait (e.g. its `portrait` texture); nil draws the initial
+    /// The image for a speaker's portrait, when code wants to choose it; nil (or a nil result)
+    /// loads the speaker's `portrait` texture through `portraitTextures`, else draws the initial
     /// in the speaker's color.
     public var portraitImage: ((DialogueSpeaker) -> UIIcon?)?
+    /// Loads a portrait texture by the path a speaker names (under `Assets/` or "asset:<id>");
+    /// asked again while it draws until it answers, so textures still loading show up.
+    /// `usePortraits(renderer:assets:)` sets one that uses a `SceneRenderer`.
+    public var portraitTextures: ((String) -> GPUTexture?)? {
+        get { portrait.textures }
+        set { portrait.textures = newValue }
+    }
     /// Hide the box when nothing is shown (default true; the editor preview keeps it).
     public var hidesWhenIdle = true
     /// The text shown below a line ("" for none).
@@ -116,6 +124,11 @@ public final class DialogueBox: Widget, DialoguePresenter {
         portrait.speaker = speaker ?? (id.isEmpty ? nil : DialogueSpeaker(id: id))
         portrait.image = speaker.flatMap { portraitImage?($0) }
         portrait.isHidden = portrait.speaker == nil
+    }
+
+    /// Loads speakers' `portrait` textures through `renderer` (project textures by path or "asset:<id>").
+    public func usePortraits(renderer: SceneRenderer, assets: AssetDatabase) {
+        portraitTextures = DialoguePortraitView.textureLoader(renderer: renderer, assets: assets)
     }
 
     // MARK: Input
@@ -241,16 +254,34 @@ public final class DialogueTextView: Widget {
     }
 }
 
-/// A speaker's portrait: an image when given, else the speaker's initial in a colored circle.
+/// A speaker's portrait: an image when given, else the speaker's `portrait` texture (through
+/// `textures`), else the speaker's initial in a colored circle.
 @MainActor
 public final class DialoguePortraitView: Widget {
     public var speaker: DialogueSpeaker? { didSet { setNeedsDisplay() } }
     public var image: UIIcon? { didSet { setNeedsDisplay() } }
     public var size: Float = 64 { didSet { setNeedsLayout() } }
+    /// Loads the speaker's `portrait` by path (nil: portraits come only from `image`).
+    public var textures: ((String) -> GPUTexture?)? { didSet { setNeedsDisplay() } }
 
     public override init(name: String = "dialoguePortrait") {
         super.init(name: name)
         isHitTestable = false
+    }
+
+    /// A loader for `textures` that reads project textures through `renderer`.
+    public static func textureLoader(renderer: SceneRenderer, assets: AssetDatabase) -> (String) -> GPUTexture? {
+        { [weak renderer, weak assets] path in
+            guard let renderer, let assets, let id = assets.assetID(forTableValue: path) else { return nil }
+            return renderer.texture(TextureHandle(AssetReference(id).description))
+        }
+    }
+
+    /// What is drawn: `image`, else the loaded `portrait` texture, else nil (the initial).
+    public var shownImage: UIIcon? {
+        if let image { return image }
+        guard let path = speaker?.portrait, !path.isEmpty, let texture = textures?(path) else { return nil }
+        return .image(texture)
     }
 
     public override func measureContent(width: Float?) -> Vec2 { Vec2(size, size) }
@@ -258,8 +289,13 @@ public final class DialoguePortraitView: Widget {
     public override func draw(_ list: UIDrawList, theme: UITheme) {
         let rect = UIRect(x: frame.x, y: frame.y, width: size, height: size)
         let tint = speaker?.parsedColor.map { UIColor($0.x, $0.y, $0.z, 1) } ?? theme.accent
-        switch image {
-        case .image(let texture, let uv, let color)?:
+        switch shownImage {
+        case .image(let texture, var uv, let color)?:
+            // A non-square texture is cropped to its middle square rather than squashed.
+            if uv == .unit, texture.width != texture.height, texture.width > 0, texture.height > 0 {
+                let w = Float(texture.width), h = Float(texture.height)
+                uv = w > h ? UIRect(x: (1 - h / w) / 2, y: 0, width: h / w, height: 1) : UIRect(x: 0, y: (1 - w / h) / 2, width: 1, height: w / h)
+            }
             list.drawImage(texture, in: rect, uv: uv, tint: color)
         case .custom(let draw)?:
             draw(list, rect, tint)

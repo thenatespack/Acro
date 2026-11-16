@@ -898,7 +898,7 @@ Result:
 
 **Edit Dialogue** · _undoable_
 
-Changes part of a .dialogue file in one undoable step, in this order: speakers, removeSpeakers, variables, removeVariables, removeNodes, addNodes, updateNodes, connect, start, generateKeys, layout. Returns node summaries and warnings. Undoable (one step; edit.undo reverts it).
+Changes part of a .dialogue file in one undoable step, in this order: speakers, removeSpeakers, variables, removeVariables, removeNodes, addNodes, updateNodes, connect, start, generateKeys, layout, uiLayout. Returns node summaries and warnings. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
@@ -913,6 +913,7 @@ Arguments:
 - `removeVariables?`: [string]
 - `speakers?`: [{color?: string, id?: string, name?: string, portrait?: string}]
 - `start?`: string
+- `uiLayout?`: string
 - `updateNodes?`: object
 - `variables?`: [{default?: any, name?: string, type?: "number" \| "bool" \| "text"}]
 
@@ -940,7 +941,7 @@ Arguments:
 Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
-- `dialogue`: {nodes?: [object], speakers?: [object], start?: string, variables?: [object]}
+- `dialogue`: {nodes?: [object], speakers?: [object], start?: string, uiLayout?: string, variables?: [object]}
 - `localizationKeys`: object
 - `path`: string
 - `warnings`: [string]
@@ -949,11 +950,11 @@ Result:
 
 **New Dialogue**
 
-Writes a .dialogue file in `folder` (default: the Assets root) and imports it: `dialogue` as given, else a starter conversation (or nothing with empty: true). Returns the asset, node summaries and warnings. Build it up with dialogue.edit {addNodes, connect, variables, speakers}, try it with dialogue.play. A .dialogue file is a branching conversation: `start` (node id), `speakers` [{id, name, portrait (texture path), color "#RRGGBB"}], `variables` [{name, type number|bool|text, default}] and `nodes` [{id, type, ...}]. Node types: line {speaker, text, key, next}; choice {speaker?, text? (prompt), choices [{text, key, next, condition}], next (used when no option is available)}; condition {condition, next (true), else (false)}; set {changes [{variable, op set|add|subtract|toggle, value | expression}], next}; event {event, args {}, next}; end. An empty next ends the conversation. Text fills in {variable}. Conditions/expressions: `gold >= 10 && !paid`, `visits + 1` (== != < <= > >= && || ! and or not + - * / parentheses, "strings"). `key` is a localization key per line/option. `position` [x, y] places the node in the graph view (omitted: placed automatically). Problems (missing nodes, unknown speakers/variables, bad conditions, unreachable nodes) come back as `warnings`. In game a DialoguePlayer component {dialogue: path, startNode, autoStart} plays it; game code uses world.dialogues?.start(entity), world.dialogue(for:)?.setVariable / .variable, and world.dialogues?.onEvent.
+Writes a .dialogue file in `folder` (default: the Assets root) and imports it: `dialogue` as given, else a starter conversation (or nothing with empty: true). Returns the asset, node summaries and warnings. Build it up with dialogue.edit {addNodes, connect, variables, speakers}, try it with dialogue.play. A .dialogue file is a branching conversation: `start` (node id), `speakers` [{id, name, portrait (texture path), color "#RRGGBB"}], `variables` [{name, type number|bool|text, default}] and `nodes` [{id, type, ...}]. Node types: line {speaker, text, key, next}; choice {speaker?, text? (prompt), choices [{text, key, next, condition}], next (used when no option is available)}; condition {condition, next (true), else (false)}; set {changes [{variable, op set|add|subtract|toggle, value | expression}], next}; event {event, args {}, next}; end. An empty next ends the conversation. Text fills in {variable}. Conditions/expressions: `gold >= 10 && !paid`, `visits + 1` (== != < <= > >= && || ! and or not + - * / parentheses, "strings"). `key` is a localization key per line/option. `position` [x, y] places the node in the graph view (omitted: placed automatically). `uiLayout` (path or asset:<id>) shows the dialogue in a .ui layout instead of the default box: it sets the values speaker, speakerColor, text, portrait, hasPortrait, isLine, isChoice, active, choiceCount, choice1…9, hasChoice1…9 and answers the button events continue and choice1…9 (uiLayout.new {preset: "dialogue"} makes one). Problems (missing nodes, unknown speakers/variables, bad conditions, unreachable nodes) come back as `warnings`. In game a DialoguePlayer component {dialogue: path, startNode, autoStart, uiLayout} plays it; game code uses world.dialogues?.start(entity), world.dialogue(for:)?.setVariable / .variable, and world.dialogues?.onEvent.
 
 Arguments:
 
-- `dialogue?`: {nodes?: [object], speakers?: [object], start?: string, variables?: [object]}
+- `dialogue?`: {nodes?: [object], speakers?: [object], start?: string, uiLayout?: string, variables?: [object]}
 - `empty?`: boolean
 - `folder?`: string
 - `name?`: string
@@ -1016,7 +1017,7 @@ Replaces a .dialogue file's whole contents and reimports it (running games pick 
 Arguments:
 
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
-- `dialogue`: {nodes?: [object], speakers?: [object], start?: string, variables?: [object]}
+- `dialogue`: {nodes?: [object], speakers?: [object], start?: string, uiLayout?: string, variables?: [object]}
 - `path?`: string
 
 Result:
@@ -4704,7 +4705,7 @@ Result:
 
 **New UI Layout**
 
-Writes a .ui file (a game menu or HUD) in `folder` (default: the Assets root) from a `preset` (hud, menu, empty) plus optional `widgets`, and imports it. Returns the widget ids, value keys, events and warnings. Change it with uiLayout.edit (add/update/move/remove widgets, bindings, sample values) or uiLayout.set. A .ui file is a game menu or HUD: `theme` (game|dark|light|highContrast), `colors` (theme color name → "#RRGGBB[AA]"; names: text, secondaryText, accent, accentText, panel, panelBorder, control, controlHover, barBackground, health, warning, danger, hudText, hudShadow), `fontSize`, `safeArea` (points kept clear of the screen edges), `size` (design screen size [w, h]), `values` (sample values by key for the preview) and `widgets`, a flat list. Each widget: `id` (unique), `type` (panel|vstack|hstack|label|image|button|bar|spacer), `parent` (a container id; "" is the screen). The screen and panels place children by `anchor` (topLeft|top|topRight|left|center|right|bottomLeft|bottom|bottomRight|fill) and `offset` [x, y] points in from the anchored edges; stacks line them up (`spacing`, `align` auto|start|center|end|stretch, `justify` start|center|end|spaceBetween, children's `grow`). Also: width/height (omit to fit content), padding, background/borderColor/color ("#hex" or a theme color name), cornerRadius, opacity, hidden; label/button `text` with `{key}` placeholders, fontSize, textAlign, wrap, shadow; image `image` (path under Assets/), fit fit|fill|stretch; bar value, max, kind progress|health, segments, trail; button primary, event (default: the id). `bind` ties a widget to a value key (bar fill = value / max; label/button text; image path) and `visibleWhen` shows it only while a key is truthy ("!key": falsy). Game code: let hud = UIBuildView(assets: assets, path: "UI/hud.ui"); ui.root.addChild(hud); hud.set("health", 64); hud.on("pause") { ... }.
+Writes a .ui file (a game menu or HUD) in `folder` (default: the Assets root) from a `preset` (hud, menu, dialogue, empty) plus optional `widgets`, and imports it. Returns the widget ids, value keys, events and warnings. Change it with uiLayout.edit (add/update/move/remove widgets, bindings, sample values) or uiLayout.set. A .ui file is a game menu or HUD: `theme` (game|dark|light|highContrast), `colors` (theme color name → "#RRGGBB[AA]"; names: text, secondaryText, accent, accentText, panel, panelBorder, control, controlHover, barBackground, health, warning, danger, hudText, hudShadow), `fontSize`, `safeArea` (points kept clear of the screen edges), `size` (design screen size [w, h]), `values` (sample values by key for the preview) and `widgets`, a flat list. Each widget: `id` (unique), `type` (panel|vstack|hstack|label|image|button|bar|spacer), `parent` (a container id; "" is the screen). The screen and panels place children by `anchor` (topLeft|top|topRight|left|center|right|bottomLeft|bottom|bottomRight|fill) and `offset` [x, y] points in from the anchored edges; stacks line them up (`spacing`, `align` auto|start|center|end|stretch, `justify` start|center|end|spaceBetween, children's `grow`). Also: width/height (omit to fit content), padding, background/borderColor/color ("#hex" or a theme color name), cornerRadius, opacity, hidden; label/button `text` with `{key}` placeholders, fontSize, textAlign, wrap, shadow; image `image` (path under Assets/), fit fit|fill|stretch; bar value, max, kind progress|health, segments, trail; button primary, event (default: the id). `bind` ties a widget to a value key (bar fill = value / max; label/button text; image path) and `visibleWhen` shows it only while a key is truthy ("!key": falsy). Game code: let hud = UIBuildView(assets: assets, path: "UI/hud.ui"); ui.root.addChild(hud); hud.set("health", 64); hud.on("pause") { ... }.
 
 Arguments:
 

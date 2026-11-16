@@ -182,4 +182,42 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         guard case .line(let line)? = session.world.dialogue(for: npc)?.state else { Issue.record("expected the starter's first line"); return }
         #expect(line.text == "Hello there, traveler.")
     }
+
+    @Test func aUILayoutShowsTheDialogue() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = try project(folder)
+        let created = try call(session, "dialogue.new", ["name": "gate", "folder": "Talk"])
+        let id = try #require((created["asset"] as? String).flatMap { AssetID($0) })
+
+        let layout = try call(session, "uiLayout.new", ["name": "talk", "folder": "UI", "preset": "dialogue"])
+        #expect((layout["warnings"] as? [String]) == [])
+        let edited = try call(session, "dialogue.edit", ["asset": id.description, "uiLayout": "UI/talk.ui"])
+        #expect((edited["warnings"] as? [String]) == [])
+        #expect(session.assets?.dialogueContents(of: id)?.uiLayout == "UI/talk.ui")
+        let wrong = try call(session, "dialogue.edit", ["asset": id.description, "uiLayout": "Talk/gate.dialogue"])
+        #expect((wrong["warnings"] as? [String])?.contains { $0.contains("isn't a .ui file") } == true)
+        #expect(session.performUndo())
+
+        // The tab previews in the layout, and back in the default box when it is cleared.
+        let workspace = DialogueWorkspace(session: session)
+        #expect(workspace.open(id))
+        workspace.update()
+        let preview = try #require(workspace.previewLayout)
+        #expect(workspace.previewBox.isHidden)
+        workspace.playFrom(nil)
+        #expect(preview.view.value("speaker") != .string("") && preview.view.value("isLine") == .bool(true))
+        try call(session, "dialogue.edit", ["asset": id.description, "uiLayout": ""])
+        workspace.update()
+        #expect(workspace.previewLayout == nil && !workspace.previewBox.isHidden)
+        #expect(workspace.previewBox.textView.text == "Hello there, traveler.", "the preview carries on in the box")
+
+        // New Dialogue Layout writes one beside the file and uses it.
+        workspace.makeLayout()
+        workspace.update()
+        let made = try #require(session.assets?.dialogueContents(of: id)?.uiLayout)
+        #expect(made == "Talk/gate Box.ui")
+        #expect(session.assets?.assetID(forTableValue: made).flatMap { session.assets?.uiBuild(of: $0) } == .dialogue)
+        #expect(workspace.previewLayout != nil)
+    }
 }

@@ -315,6 +315,177 @@ private func decode(_ json: String) throws -> DialogueAsset { try DialogueAsset.
         #expect(box.textView.isComplete, "the first continue shows the whole line")
         #expect(runner.currentNode == "hello")
     }
+
+    @Test func dialogueBoxPortraitsLoadTheSpeakersTexture() throws {
+        var dialogue = try decode(gate)
+        dialogue.speakers[0].portrait = "Art/guard.png"
+        let texture = DialogueTestsTexture()
+        var asked: [String] = []
+        let box = DialogueBox()
+        box.charactersPerSecond = 0
+        let runner = DialogueRunner(dialogue)
+        runner.start()
+        box.present(runner)
+        #expect(box.portrait.shownImage == nil, "no loader: the initial is drawn")
+        box.portraitTextures = { path in asked.append(path); return texture }
+        guard case .image(let shown, _, _)? = box.portrait.shownImage else { Issue.record("expected the portrait texture"); return }
+        #expect(shown === texture)
+        #expect(asked == ["Art/guard.png"])
+        // Code's own choice wins; a nil answer falls back to the texture.
+        box.portraitImage = { _ in nil }
+        box.present(runner)
+        #expect(box.portrait.shownImage != nil)
+        // A texture that isn't loaded yet keeps the initial until it is.
+        box.portraitTextures = { _ in nil }
+        #expect(box.portrait.shownImage == nil)
+    }
+
+    // MARK: .ui layouts
+
+    @Test func layoutKeysAndTheStarterLayout() throws {
+        #expect(DialogueLayoutKeys.problems(in: .dialogue).isEmpty, "the starter layout uses every key it needs")
+        #expect(DialogueLayoutKeys.problems(in: UIBuild()).count == 3)
+        #expect(UIBuild.preset("dialogue") == .dialogue && UIBuild.presetNames.contains("dialogue"))
+        #expect(DialogueLayoutKeys.choiceIndex(ofEvent: "choice3") == 2)
+        #expect(DialogueLayoutKeys.choiceIndex(ofEvent: "choice0") == nil && DialogueLayoutKeys.choiceIndex(ofEvent: "continue") == nil)
+
+        var dialogue = try decode(gate)
+        dialogue.speakers[0].portrait = "Art/guard.png"
+        let runner = DialogueRunner(dialogue)
+        runner.setVariable("gold", 10)
+        runner.start()
+        let line = DialogueLayoutKeys.values(for: runner.state, text: "Toll")
+        #expect(line["speaker"] == .string("Gate Guard") && line["speakerColor"] == .string("#E0A040"))
+        #expect(line["text"] == .string("Toll") && line["portrait"] == .string("Art/guard.png") && line["hasPortrait"] == .bool(true))
+        #expect(line["isLine"] == .bool(true) && line["isChoice"] == .bool(false) && line["active"] == .bool(true))
+        runner.advance()
+        let choices = DialogueLayoutKeys.values(for: runner.state)
+        #expect(choices["text"] == .string("Well?") && choices["choiceCount"] == .int(2))
+        #expect(choices["choice1"] == .string("Pay") && choices["hasChoice2"] == .bool(true) && choices["hasChoice3"] == .bool(false))
+        let idle = DialogueLayoutKeys.values(for: nil)
+        #expect(idle["active"] == .bool(false) && idle.count == DialogueLayoutKeys.allValueKeys.count)
+    }
+
+    @Test func layoutPresenterDrivesALayout() throws {
+        let ui = UIContext()
+        ui.setViewport(size: Vec2(800, 600), scale: 1)
+        let presenter = DialogueLayoutPresenter()
+        presenter.charactersPerSecond = 0
+        ui.root.addChild(presenter)
+        #expect(presenter.isHidden, "nothing to show")
+        let runner = DialogueRunner(try decode(gate))
+        runner.setVariable("gold", 10)
+        runner.start()
+        presenter.present(runner)
+        #expect(!presenter.isHidden)
+        #expect(presenter.view.value("speaker") == .string("Gate Guard"))
+        #expect(presenter.view.value("text") == .string("Toll is 10. You have 10."))
+        #expect(presenter.view.press("continue"))
+        presenter.present(runner)
+        #expect(presenter.view.value("choice2") == .string("Leave") && presenter.view.value("isChoice") == .bool(true))
+        #expect(presenter.view.press("choice2"))
+        #expect(runner.state == .finished)
+        presenter.present(runner)
+        #expect(presenter.isHidden)
+
+        // Typing: the first continue shows the whole line.
+        presenter.charactersPerSecond = 10
+        runner.start()
+        presenter.present(runner)
+        #expect(!presenter.isTextComplete && presenter.view.value("text") == .string(""))
+        presenter.continueOrComplete()
+        #expect(presenter.isTextComplete && presenter.view.value("text") == .string("Toll is 10. You have 10."))
+        #expect(runner.currentNode == "hello")
+
+        // A click on the panel (not a button) continues; the number keys pick options.
+        ui.layoutIfNeeded()
+        let text = try #require(presenter.view.widget("text"))
+        let point = Vec2(text.frame.x + 4, text.frame.y + text.frame.height / 2)
+        #expect(ui.hitTest(point) != nil)
+        ui.pointerMoved(to: point)
+        ui.pointerButton(.left, down: true)
+        ui.pointerButton(.left, down: false)
+        #expect(runner.currentNode == "ask")
+        presenter.present(runner)
+        #expect(presenter.handleEvent(.key(KeyEvent(key: .num2))))
+        #expect(runner.state == .finished)
+    }
+
+    @Test func dialogueViewShowsTheLayoutAConversationNames() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let assets = AssetDatabase(project: project)
+        try assets.createUIBuild(.dialogue, at: "UI/talk.ui")
+        try assets.createUIBuild(.dialogue, at: "UI/shop.ui")
+        var withLayout = try decode(gate)
+        withLayout.uiLayout = "UI/talk.ui"
+        try assets.createDialogue(withLayout, at: "Talk/gate.dialogue")
+        try assets.createDialogue(try decode(gate), at: "Talk/plain.dialogue")
+        #expect(assets.dialogueIssues(withLayout).isEmpty)
+        var broken = withLayout
+        broken.uiLayout = "Talk/plain.dialogue"
+        #expect(assets.dialogueIssues(broken).contains { $0.description.contains("isn't a .ui file") })
+        broken.uiLayout = "UI/none.ui"
+        #expect(assets.dialogueIssues(broken).contains { $0.description.contains("UI/none.ui") })
+
+        let ui = UIContext()
+        ui.setViewport(size: Vec2(800, 600), scale: 1)
+        let view = DialogueView(assets: { assets })
+        view.box.charactersPerSecond = 0
+        view.configureLayout = { $0.charactersPerSecond = 0 }
+        ui.root.addChild(view)
+        let world = World()
+        let director = world.addDialogueSystem(assets: { assets })
+        director.presenter = view
+        let own = world.spawn(DialoguePlayer(dialogue: "Talk/gate.dialogue"))
+        let player = world.spawn(DialoguePlayer(dialogue: "Talk/gate.dialogue", uiLayout: "UI/shop.ui"))
+        let plain = world.spawn(DialoguePlayer(dialogue: "Talk/plain.dialogue"))
+        let missing = world.spawn(DialoguePlayer(dialogue: "Talk/plain.dialogue", uiLayout: "UI/none.ui"))
+        world.update(dt: 1.0 / 60)
+
+        // The dialogue's own layout.
+        director.start(own)
+        #expect(director.activeLayout == "UI/talk.ui")
+        let talk = try #require(view.activeLayout)
+        #expect(view.box.isHidden && !talk.isHidden)
+        #expect(talk.view.value("speaker") == .string("Gate Guard"))
+        // Continuing in the layout moves the director's runner on.
+        #expect(talk.view.press("continue"))
+        #expect(world.dialogue(for: own)?.currentNode == "ask")
+        #expect(talk.view.value("isChoice") == .bool(true), "the director re-presents on every state change")
+
+        // The player's layout wins over the dialogue's.
+        director.start(player)
+        #expect(director.activeLayout == "UI/shop.ui")
+        let shop = try #require(view.activeLayout)
+        #expect(shop !== talk && talk.isHidden && !shop.isHidden)
+
+        // No layout, or one that can't be loaded: the default box.
+        director.start(plain)
+        #expect(view.activeLayout == nil && !view.box.isHidden && shop.isHidden)
+        director.start(missing)
+        #expect(view.activeLayout == nil && !view.box.isHidden)
+
+        // Clicks on the box reach it; elsewhere they pass through to the game.
+        ui.layoutIfNeeded()
+        #expect(ui.hitTest(Vec2(20, 20)) == nil)
+        let box = view.box.frame
+        let center = Vec2(box.x + box.width / 2, box.y + 12)
+        #expect(ui.hitTest(center) != nil)
+        ui.pointerMoved(to: center)
+        ui.pointerButton(.left, down: true)
+        ui.pointerButton(.left, down: false)
+        #expect(world.dialogue(for: missing)?.currentNode == "ask", "a click on the box continues")
+
+        world.dialogue(for: missing)?.stop()
+        #expect(view.activeLayout == nil && view.box.isHidden)
+    }
+}
+
+@MainActor private final class DialogueTestsTexture: GPUTexture {
+    var width = 8, height = 8
+    var format = TextureFormat.rgba8Unorm
+    var mipLevelCount = 1
 }
 
 @MainActor private final class RecordingPresenter: DialoguePresenter {

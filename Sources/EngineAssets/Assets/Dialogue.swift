@@ -376,15 +376,21 @@ public struct DialogueAsset: Codable, Equatable, Sendable {
     public var speakers: [DialogueSpeaker]
     public var variables: [DialogueVariable]
     public var nodes: [DialogueNode]
+    /// The `.ui` layout that shows this dialogue (a path under `Assets/` or "asset:<id>"; it
+    /// uses the `DialogueLayoutKeys`); "" uses the default `DialogueBox`. A `DialoguePlayer`'s
+    /// own `uiLayout` wins over it.
+    public var uiLayout: String
 
-    public init(start: String = "", speakers: [DialogueSpeaker] = [], variables: [DialogueVariable] = [], nodes: [DialogueNode] = []) {
+    public init(start: String = "", speakers: [DialogueSpeaker] = [], variables: [DialogueVariable] = [], nodes: [DialogueNode] = [],
+                uiLayout: String = "") {
         self.start = start
         self.speakers = speakers
         self.variables = variables
         self.nodes = nodes
+        self.uiLayout = uiLayout
     }
 
-    private enum CodingKeys: String, CodingKey { case start, speakers, variables, nodes }
+    private enum CodingKeys: String, CodingKey { case start, uiLayout, speakers, variables, nodes }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -392,11 +398,13 @@ public struct DialogueAsset: Codable, Equatable, Sendable {
         speakers = try c.decodeIfPresent([DialogueSpeaker].self, forKey: .speakers) ?? []
         variables = try c.decodeIfPresent([DialogueVariable].self, forKey: .variables) ?? []
         nodes = try c.decodeIfPresent([DialogueNode].self, forKey: .nodes) ?? []
+        uiLayout = try c.decodeIfPresent(String.self, forKey: .uiLayout) ?? ""
     }
 
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         if !start.isEmpty { try c.encode(start, forKey: .start) }
+        if !uiLayout.isEmpty { try c.encode(uiLayout, forKey: .uiLayout) }
         try c.encode(speakers, forKey: .speakers)
         try c.encode(variables, forKey: .variables)
         try c.encode(nodes, forKey: .nodes)
@@ -468,6 +476,9 @@ public struct DialogueAsset: Codable, Equatable, Sendable {
         var issues: [DialogueIssue] = []
         if nodes.isEmpty { issues.append(DialogueIssue("there are no nodes")) }
         if !start.isEmpty, nodeIndex(start) == nil { issues.append(DialogueIssue("the start node '\(start)' doesn't exist")) }
+        if let assetExists, !uiLayout.isEmpty, !assetExists(uiLayout) {
+            issues.append(DialogueIssue("no asset '\(uiLayout)' for the UI layout (the default box is used)"))
+        }
         var seen = Set<String>()
         for node in nodes {
             if node.id.isEmpty { issues.append(DialogueIssue("a \(node.type.rawValue) node has no id")) }

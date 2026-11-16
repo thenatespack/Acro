@@ -236,7 +236,7 @@ hud.widget("score")                                       // the engine widget, 
 
 `UIBuildView(build)` and `load(_:)` show a `UIBuild` value made in code, and `onEvent` reports every press. The view's widgets use the layout's theme (`Widget.themeOverride`), not the game's context theme. Cooked games ship the file as written; include layouts and their images with the cooker's `--include`.
 
-MCP clients use `uiLayout.new {preset: hud|menu|empty, widgets}`, `uiLayout.edit {addWidgets, updateWidgets, moveWidgets, removeWidgets, bindings, values, theme, colors}`, `uiLayout.get`, `uiLayout.set` and `uiLayout.open {previewSize, values, select}`; see [MCPTools.md](MCPTools.md). (The `ui.*` names belong to the editor's UI automation tools.)
+MCP clients use `uiLayout.new {preset: hud|menu|dialogue|empty, widgets}`, `uiLayout.edit {addWidgets, updateWidgets, moveWidgets, removeWidgets, bindings, values, theme, colors}`, `uiLayout.get`, `uiLayout.set` and `uiLayout.open {previewSize, values, select}`; see [MCPTools.md](MCPTools.md). (The `ui.*` names belong to the editor's UI automation tools.)
 
 Not yet: per-widget animation and transitions, sliders / toggles / text fields as layout widgets, navigation order for gamepads beyond the toolkit's spatial default, and scaling the whole layout with the screen (it is laid out in points; anchors keep it in place at any size).
 ## Dialogue Builder
@@ -252,9 +252,9 @@ Dialogue assets (`.dialogue`, JSON under `Assets/`) are branching conversations 
 
 Conditions are small expressions: `gold >= 10 && !paid`, `visits + 1 > 3`, `name == "Ann"` (comparisons, `&&` `||` `!` or `and` `or` `not`, `+ - * /`, parentheses). Every line and option can have a localization `key`; **Make Keys** (or `dialogue.edit {generateKeys: "prefix"}`) fills in missing ones. The importer warns about links to missing nodes, unknown speakers or variables, conditions that don't parse, nodes nothing reaches and missing portraits.
 
-In the editor, use **New Dialogue** in the asset browser, then double-click the file (or **Open in Dialogue Builder** in the inspector) to open the **Dialogue** tab. The graph shows each node as a box colored by type, with arrows for its links: click a node to select it, drag it to move it, drag from its dot onto another node to link them, and drag empty space or scroll to pan. The toolbar adds nodes of each type (linked from the selected node when it has a free link), deletes, re-arranges and makes keys. Below the graph, the play-through preview runs the conversation in the same `DialogueBox` the game uses, highlights the node it is at, and lists the variables it tracks (edit one to try another branch); it follows edits live. The sidebar edits the selected node, the start node, the speakers and the variables, and lists problems. Every change is one undo step.
+In the editor, use **New Dialogue** in the asset browser, then double-click the file (or **Open in Dialogue Builder** in the inspector) to open the **Dialogue** tab. The graph shows each node as a box colored by type, with arrows for its links: click a node to select it, drag it to move it, drag from its dot onto another node to link them, and drag empty space or scroll to pan. The toolbar adds nodes of each type (linked from the selected node when it has a free link), deletes, re-arranges and makes keys. Below the graph, the play-through preview runs the conversation in the same `DialogueBox` the game uses (or the dialogue's `.ui` layout), highlights the node it is at, and lists the variables it tracks (edit one to try another branch); it follows edits live. The sidebar edits the selected node, the start node, the layout it is shown in (**Shown in**: the default box or a project `.ui` file; **New Dialogue Layout** writes one from the dialogue preset beside the file and picks it), the speakers and the variables, and lists problems. Every change is one undo step.
 
-In a game, add a `DialoguePlayer` component (`dialogue`: the file, `startNode`, `autoStart`) to an entity. The dialogue system runs in play mode, in `GameRunner` and in exported games; in the editor the conversation shows in a `DialogueBox` over the Game view. Game code drives it through `world.dialogues` (a `DialogueDirector`):
+In a game, add a `DialoguePlayer` component (`dialogue`: the file, `startNode`, `autoStart`, `uiLayout`) to an entity. The dialogue system runs in play mode, in `GameRunner` and in exported games; in the editor the conversation shows over the Game view, in the default `DialogueBox` or the `.ui` layout it names (the player's `uiLayout`, else the dialogue file's), and clicks on it continue and pick options. Game code drives it through `world.dialogues` (a `DialogueDirector`):
 
 ```swift
 world.dialogues?.start(npc)                              // talk to this NPC
@@ -265,11 +265,23 @@ world.dialogues?.onEvent { entity, event in
 }
 ```
 
-`DialogueRunner` plays a dialogue without the component (`start`, `advance`, `choose`, `variable` / `setVariable`, `onEvent`, `onStateChange`, `localize` or `useLocalization([key: text])`). The UI is anything that conforms to `DialoguePresenter`; the default `DialogueBox` widget shows a portrait (the speaker's initial in its color, or an image from `portraitImage`), the name, the line typed out, and the options as buttons (click, Enter / Space, or keys 1-9). Host one in your own UI with `world.dialogues?.presenter = box`.
+`DialogueRunner` plays a dialogue without the component (`start`, `advance`, `choose`, `variable` / `setVariable`, `onEvent`, `onStateChange`, `localize` or `useLocalization([key: text])`). The UI is anything that conforms to `DialoguePresenter`:
 
-Editor MCP clients use `dialogue.new`, `dialogue.edit {speakers, variables, addNodes, updateNodes, removeNodes, connect, start, generateKeys, layout}`, `dialogue.set`, `dialogue.get`, `dialogue.play {variables, choices, strings}` (a play-through that returns the transcript, events and final variables) and `dialogue.open`. See [MCPTools.md](MCPTools.md).
+- `DialogueBox`, the default widget: a portrait, the name, the line typed out, and the options as buttons (click, Enter / Space, or keys 1-9). The portrait is the speaker's `portrait` texture when `portraitTextures` loads it (`box.usePortraits(renderer:assets:)`), an image from `portraitImage`, else the speaker's initial in its color.
+- `DialogueLayoutPresenter`: shows the conversation in a `.ui` layout. It sets the values `speaker`, `speakerColor`, `text` (typed out), `portrait`, `hasPortrait`, `isLine`, `isChoice`, `active`, `choiceCount`, `choice1`…`choice9` and `hasChoice1`…`hasChoice9`, and answers the button events `continue` and `choice1`…`choice9` (a click on a panel, Enter / Space and keys 1-9 work too). The `dialogue` preset in the UI tab (`uiLayout.new {preset: "dialogue"}`) uses all of them; the importer warns when a dialogue's layout lacks `text`, `continue` or the choice buttons.
+- `DialogueView`: the one to hand the dialogue system. It fills its frame, shows the default box or the layout each conversation names, and lets clicks elsewhere through to the game.
 
-Not yet: portraits in the box come from game code (`portraitImage`), not loaded automatically from the speaker's `portrait`, and a `.ui` layout can't yet be picked as the presenter from the editor.
+```swift
+let dialogue = DialogueView(assets: { assets })
+dialogue.useImages(renderer: sceneRenderer, assets: assets)   // portraits and layout images
+ui.root.addChild(dialogue)
+world.dialogues?.presenter = dialogue
+```
+
+Editor MCP clients use `dialogue.new`, `dialogue.edit {speakers, variables, addNodes, updateNodes, removeNodes, connect, start, generateKeys, layout, uiLayout}`, `dialogue.set`, `dialogue.get`, `dialogue.play {variables, choices, strings}` (a play-through that returns the transcript, events and final variables) and `dialogue.open`. See [MCPTools.md](MCPTools.md).
+
+Not yet: a game run by `GameRunner` or exported shows conversations only when game code adds a presenter (the game UI layer will add one).
+
 ## Timeline Builder
 
 Timelines (`.timeline`, JSON under `Assets/`) are cutscenes and scripted moments. A timeline has a `duration`, `loop`, `skippable` and tracks; each track has a `kind`, a `target` entity named by its `Name` or a `"Parent/Child"` path (so one file plays in any scene that has those names) and keys at times in seconds:

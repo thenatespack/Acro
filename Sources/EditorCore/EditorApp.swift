@@ -154,8 +154,10 @@ public final class EditorApp: Game, EditorHost {
     public private(set) var uiWorkspace: UIBuilderWorkspace!
     /// The Dialogue tab (DialogueWorkspace.swift).
     public private(set) var dialogueWorkspace: DialogueWorkspace!
-    /// Shows `DialoguePlayer` conversations over the Game view while playing.
-    let gameDialogueBox = DialogueBox(name: "gameDialogueBox")
+    /// Shows `DialoguePlayer` conversations over the Game view while playing: the default box,
+    /// or the `.ui` layout a conversation names.
+    let gameDialogue = DialogueView(box: DialogueBox(name: "gameDialogueBox"), name: "gameDialogue")
+    var gameDialogueBox: DialogueBox { gameDialogue.box }
     /// The Timeline tab (TimelineWorkspace.swift).
     public private(set) var timelineWorkspace: TimelineWorkspace!
     /// The Animation Graph Builder tab (AnimationGraphWorkspace.swift).
@@ -745,10 +747,11 @@ public final class EditorApp: Game, EditorHost {
         meshWorkspace = MeshBuilderWorkspace(session: session)
         tableWorkspace = DataTableWorkspace(session: session)
         dialogueWorkspace = DialogueWorkspace(session: session)
-        gameDialogueBox.style.position = .absolute(UIAnchor.bottom.anchors(offset: Vec2(0, 16)))
-        gameDialogueBox.style.width = 560
-        gameWidget.addChild(gameDialogueBox)
-        session.dialoguePresenter = gameDialogueBox
+        gameDialogue.assets = { [unowned self] in session.assets }
+        gameDialogue.images = { [unowned self] path in projectTexture(path) }
+        dialogueWorkspace.images = { [unowned self] path in projectTexture(path) }
+        gameWidget.addChild(gameDialogue)
+        session.dialoguePresenter = gameDialogue
         visualScriptWorkspace = VisualScriptWorkspace(session: session)
         meshWorkspace.device = engine?.device
         if let quality = engine?.quality { meshWorkspace.quality = quality }
@@ -897,6 +900,14 @@ public final class EditorApp: Game, EditorHost {
         ui.root.addChild(column)
     }
 
+    /// A project texture by path under `Assets/` or "asset:<id>" (dialogue portraits and layout
+    /// images): the scene renderer's full-size copy, else the asset browser's thumbnail.
+    private func projectTexture(_ path: String) -> GPUTexture? {
+        guard let assets = session.assets, let id = assets.assetID(forTableValue: path) else { return nil }
+        let reference = AssetReference(id)
+        return sceneRenderer?.texture(TextureHandle(reference.description)) ?? thumbnails?.thumbnail(reference, kind: .texture)
+    }
+
     /// Dropdown options: the renderer's code-registered keys, then the project's assets.
     private func makeAssetChoices() -> AssetChoices {
         AssetChoices(
@@ -916,6 +927,7 @@ public final class EditorApp: Game, EditorHost {
     private func assetsChanged() {
         sceneRenderer?.assets = session.assets
         thumbnails?.assets = session.assets
+        if session.assets !== shownAssets { gameDialogue.clearLayouts() }
         meshBoundsCache.removeAll()
         // Rebuilding the dropdowns resets the inspector's grid, so only when the choices changed
         // (not for every reimport, such as a material edited live).
