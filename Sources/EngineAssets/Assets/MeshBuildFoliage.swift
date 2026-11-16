@@ -204,7 +204,23 @@ extension MeshBuildPart {
         } else {
             canopy(&g, cards: cards, rng: &rng)
         }
+        g.paint = Self.cardVariation(cardCount: g.vertices.count / 4, seed: foliageSeed)
         return g.indices.isEmpty ? nil : g
+    }
+
+    /// Each card's (4 vertices') vertex paint: a subtle, seeded color jitter so a canopy isn't one
+    /// flat tint: brightness ±12%, a warmer (yellower) or cooler (bluer) cast up to about 7%, and
+    /// roughness ±8%.
+    static func cardVariation(cardCount: Int, seed: UInt64) -> [VertexPaint] {
+        var rng = MeshBuildLeafPainter.Random(Int(truncatingIfNeeded: seed ^ 0x5EED_CA4D))
+        var paint: [VertexPaint] = []
+        paint.reserveCapacity(cardCount * 4)
+        for _ in 0..<cardCount {
+            let brightness = rng.range(0.88, 1.12), warmth = rng.range(-1, 1), rough = rng.range(0.92, 1.08)
+            let color = Vec4(brightness * (1 + 0.06 * warmth), brightness * (1 + 0.015 * warmth), brightness * (1 - 0.07 * warmth), 1)
+            paint += Array(repeating: VertexPaint(color: color, surface: Vec4(rough, 1, 1, 0)), count: 4)
+        }
+        return paint
     }
 
     /// A random unit vector.

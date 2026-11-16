@@ -93,7 +93,10 @@ extension MeshBuildImporter {
     /// About how many triangles splitting meshes for baked occlusion may bring a model to.
     static let occlusionTriangleBudget = 30_000
 
-    static func finishSurfaces(_ build: MeshBuild, _ geometries: inout [MeshGeometry?], occlusion: Bool, firstIndex: [String: Int]) {
+    /// `layers`: sculpt blend layers (MeshBuildSculptBlend.swift) by index: they take their look's
+    /// texture coordinates as its piece does, don't occlude and copy the occlusion of the pieces they lie on.
+    static func finishSurfaces(_ build: MeshBuild, _ geometries: inout [MeshGeometry?], occlusion: Bool, firstIndex: [String: Int],
+                               layers: [Int: MeshBuildSculptPieces.Layer] = [:]) {
         let parts = build.parts
         let hasLooks = parts.contains { $0.resolvedLook != nil }
         guard occlusion || hasLooks else { return }
@@ -130,15 +133,16 @@ extension MeshBuildImporter {
         let budget = max(1500, occlusionTriangleBudget / meshCount)
         for i in parts.indices {
             guard var g = geometries[i], !g.indices.isEmpty else { continue }
-            // Foliage cards keep their four corners (splitting them only adds triangles).
-            if occlusion && parts[i].shape != .foliage { g = g.tessellated(maxEdge: scale.edge, maxTriangles: budget) }
+            // Foliage cards keep their four corners (splitting them only adds triangles); painted sculpt
+            // pieces and their blend layers keep their triangles, which must stay alike.
+            if occlusion && parts[i].shape != .foliage && g.paint == nil { g = g.tessellated(maxEdge: scale.edge, maxTriangles: budget) }
             if parts[i].resolvedLook != nil && parts[i].material.trimmingCharacters(in: .whitespaces).isEmpty {
-                g = parts[i].applyingLookUVs(to: g)
+                g = parts[layers[i]?.piece ?? i].applyingLookUVs(to: g)
             }
             geometries[i] = g
         }
         guard occlusion else { return }
-        let indices = parts.indices.filter { geometries[$0].map { !$0.indices.isEmpty } ?? false }
+        let indices = parts.indices.filter { layers[$0] == nil && geometries[$0].map { !$0.indices.isEmpty } ?? false }
         let placed = indices.map { i in
             MeshBuildAO.Placed(geometry: geometries[i]!, rotation: placements[i]?.0 ?? .identity,
                                translation: placements[i]?.1 ?? .zero, wear: parts[i].wear ?? 0)
@@ -149,11 +153,17 @@ extension MeshBuildImporter {
             MeshBuildAO.store(baked[k], in: &g)
             geometries[i] = g
         }
+        for (layer, info) in layers {
+            guard var g = geometries[layer] else { continue }
+            MeshBuildAO.store(MeshBuildAO.copied(to: g, from: info.surfaces.compactMap { geometries[$0] }), in: &g)
+            geometries[layer] = g
+        }
     }
 
     /// Edge coordinates (MeshBuildEdgeWear.swift) in the meshes of parts whose edges wear.
-    static func finishEdgeWear(_ build: MeshBuild, _ geometries: inout [MeshGeometry?]) {
-        for (i, part) in build.parts.enumerated() where wearsEdges(part) {
+    /// `skipping`: parts that don't wear (sculpt blend layers).
+    static func finishEdgeWear(_ build: MeshBuild, _ geometries: inout [MeshGeometry?], skipping: Set<Int> = []) {
+        for (i, part) in build.parts.enumerated() where wearsEdges(part) && !skipping.contains(i) {
             guard var g = geometries[i], !g.indices.isEmpty, let look = part.resolvedLook else { continue }
             MeshBuildEdgeWear.apply(to: &g, wear: part.wear ?? 0, look: look)
             geometries[i] = g

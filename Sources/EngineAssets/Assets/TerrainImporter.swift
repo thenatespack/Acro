@@ -230,7 +230,7 @@ public struct TerrainImporter: AssetImporter {
         // a sculpt's children are in its mesh).
         let expansion = file.expansion()
         let sculpting = expansion.build.gatheringSculpts(sources: expansion.sources)
-        let split = sculpting.splittingLooks()  // a sculpt with several looks has a part per look
+        let split = sculpting.splittingLooks(blending: true)  // a part per look of a sculpt, and its blend layers
         let build = split.build
         var meshNamer = SubAssetNamer(), materialNamer = SubAssetNamer()
         var firstIndex: [String: Int] = [:]

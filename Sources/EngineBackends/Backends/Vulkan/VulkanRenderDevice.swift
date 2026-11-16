@@ -313,6 +313,8 @@ package final class VulkanRenderDevice: RenderDevice {
     package let deviceName: String
     package let sampleCount: Int
     package let maxTextureSize: Int
+    /// `maxVertexInputAttributes`: pipelines using a location at or above it fail to create.
+    let maxVertexAttributes: Int
     package var captureNextFrame = false
     package var captureWindow = false
     /// `readBack` requests of the current frame.
@@ -437,6 +439,11 @@ package final class VulkanRenderDevice: RenderDevice {
         deviceName = vkString(properties.deviceName)
         let limits = properties.limits
         maxTextureSize = Int(min(limits.maxImageDimension2D, limits.maxFramebufferWidth, limits.maxFramebufferHeight))
+        maxVertexAttributes = Int(limits.maxVertexInputAttributes)
+        if ProcessInfo.processInfo.environment["ENGINE_VULKAN_LIMITS"] != nil {
+            print("Vulkan limits (\(vkString(properties.deviceName))): maxVertexInputAttributes \(limits.maxVertexInputAttributes), "
+                  + "maxVertexInputBindings \(limits.maxVertexInputBindings)")
+        }
 
         let supportedSamples = properties.limits.framebufferColorSampleCounts & properties.limits.framebufferDepthSampleCounts
         sampleCount = [8, 4, 2, 1].first { $0 <= requestedSamples && supportedSamples & VkFlags($0) != 0 } ?? 1
@@ -1101,7 +1108,13 @@ package final class VulkanRenderDevice: RenderDevice {
 
         var bindings: [VkVertexInputBindingDescription] = []
         var attributes: [VkVertexInputAttributeDescription] = []
-        let layouts = [(descriptor.vertexLayout, VK_VERTEX_INPUT_RATE_VERTEX), (descriptor.instanceLayout ?? .none, VK_VERTEX_INPUT_RATE_INSTANCE)]
+        let layouts = [(descriptor.vertexLayout, VK_VERTEX_INPUT_RATE_VERTEX), (descriptor.instanceLayout ?? .none, VK_VERTEX_INPUT_RATE_INSTANCE),
+                       (descriptor.secondVertexLayout ?? .none, VK_VERTEX_INPUT_RATE_VERTEX)]
+        // Every device has at least 16 attributes (the spec's minimum); more are optional.
+        let locations = layouts.flatMap { $0.0.attributes.map(\.location) }
+        if let highest = locations.max(), highest >= maxVertexAttributes {
+            throw GraphicsError("Pipeline uses vertex attribute \(highest); this device has \(maxVertexAttributes)")
+        }
         for (binding, (layout, rate)) in layouts.enumerated() where !layout.attributes.isEmpty {
             bindings.append(VkVertexInputBindingDescription(binding: UInt32(binding), stride: UInt32(layout.stride), inputRate: rate))
             attributes += layout.attributes.map {

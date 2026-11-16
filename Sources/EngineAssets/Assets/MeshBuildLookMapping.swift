@@ -159,7 +159,7 @@ extension MeshGeometry {
                 vertex.uv = uvs[k] + offset
                 vertex.tangent = .zero
                 let index = UInt32(result.vertices.count)
-                result.vertices.append(vertex)
+                result.append(vertex: vertex, from: self, ids[k])
                 if remap[key] == nil { remap[key] = index }
                 result.indices.append(index)
             }
@@ -196,7 +196,7 @@ extension MeshGeometry {
             var n = a.normal + b.normal
             let len = length(n)
             n = len > 1e-6 ? n / len : a.normal
-            g.vertices.append(MeshVertex(position: (a.position + b.position) / 2, normal: n, uv: (a.uv + b.uv) / 2))
+            g.appendMidpoint(MeshVertex(position: (a.position + b.position) / 2, normal: n, uv: (a.uv + b.uv) / 2), between: Int(i), Int(j))
             let m = UInt32(g.vertices.count - 1)
             midpoints[k] = m
             return m

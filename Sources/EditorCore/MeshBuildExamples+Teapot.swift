@@ -8,7 +8,7 @@ extension MeshBuildExamples {
     /// A glazed ceramic teapot: a lathe body and lid, a swept spout and handle melted on, a lid
     /// knob in another glaze.
     public static var teapot: MeshBuildExample {
-        MeshBuildExample(name: "Teapot", about: "0.42 m from spout tip to handle, 0.22 m tall, spout toward -X (on the right seen from the front). One sculpt with the ceramic look: the body and lid are lathes, the spout and handle are sweeps melted on with smooth (sweeps, lofts and deformed shapes work in sculpts like any shape), a thin torus subtracted at the lid's edge draws the lid seam and a short cylinder subtracted at the spout's tip opens it. The knob sets its own color and look, so it is drawn in a cream glaze with its own mesh and material; the boundary follows where the knob and lid surfaces meet. resolution 120 keeps the 2.4 cm handle round.", build: decoded(teapotJSON))
+        MeshBuildExample(name: "Teapot", about: "0.42 m from spout tip to handle, 0.22 m tall, spout toward -X (on the right seen from the front). One sculpt with the ceramic look: the body and lid are lathes, the spout and handle are sweeps melted on with smooth (sweeps, lofts and deformed shapes work in sculpts like any shape), a thin torus subtracted at the lid's edge draws the lid seam and a short cylinder subtracted at the spout's tip opens it. The knob sets its own color and look, so it is drawn in a cream glaze with its own mesh and material; it melts into the lid with smooth 0.015, so the two glazes blend over about 2 cm where the surfaces meet (smooth 0 would keep a sharp line). resolution 120 keeps the 2.4 cm handle round.", build: decoded(teapotJSON))
     }
 
     static let teapotJSON = #"""
@@ -20,7 +20,7 @@ extension MeshBuildExamples {
           {"name":"Spout","shape":"sweep","parent":"Teapot","radius":0.02,"radii":[1.7,1.1,0.85,0.75],"path":[[-0.07,0.05,0],[-0.14,0.07,0],[-0.175,0.115,0],[-0.2,0.175,0]],"smooth":0.02},
           {"name":"Spout Opening","shape":"cylinder","parent":"Teapot","position":[-0.201,0.178,0],"rotation":[0,0,23],"size":[0.017,0.06,0.017],"blend":"subtract","smooth":0.002},
           {"name":"Handle","shape":"sweep","parent":"Teapot","radius":0.012,"radii":[1.3,1,1,1,1.3],"path":[[0.1,0.125,0],[0.165,0.135,0],[0.196,0.095,0],[0.18,0.05,0],[0.105,0.035,0]],"smooth":0.012},
-          {"name":"Knob","shape":"sphere","parent":"Teapot","position":[0,0.2,0],"size":[0.046,0.036,0.046],"smooth":0.008,"look":"ceramic","color":[0.9,0.85,0.74]}
+          {"name":"Knob","shape":"sphere","parent":"Teapot","position":[0,0.2,0],"size":[0.046,0.036,0.046],"smooth":0.015,"look":"ceramic","color":[0.9,0.85,0.74]}
         ]}
         """#
 }
