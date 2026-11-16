@@ -57,6 +57,9 @@ public enum MeshBuildShape: String, Codable, CaseIterable, Sendable {
     /// A flat outline (`profile`, `[x, y]` points in meters) pushed out along Z by `size.z`
     /// meters, like a sign, a letter or a blade. See `MeshBuildPart.shapesDoc`.
     case extrude
+    /// Its children (the whole subtree) melted, cut and combined into one smooth surface instead
+    /// of drawn on their own. See MeshBuildSculpt.swift and `MeshBuildPart.sculptDoc`.
+    case sculpt
 }
 
 /// One shape of a mesh build: geometry, placement in its parent and its look.
@@ -113,6 +116,18 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
     /// `MeshBuild.expansion()`; `geometry()` applies it.
     public var reflection = Vec3(1, 1, 1)
 
+    // Sculpt fields (MeshBuildSculpt.swift). Not in `init`'s parameters: set them after.
+    /// A sculpt child's way of combining with the children before it (nil: add).
+    public var blend: MeshBuildBlend? = nil
+    /// A sculpt child's smoothing radius with the children before it, meters (nil: 0, sharp).
+    public var smooth: Float? = nil
+    /// A sculpt's grid: cells along its longest side (nil: the default).
+    public var resolution: Int? = nil
+    /// A sculpt's surface bumps.
+    public var noise: MeshBuildNoise? = nil
+    /// Not in the file: a sculpt's children in its space, set by `MeshBuild.gatheringSculpts`; `geometry()` meshes them.
+    public var sculptChildren: [MeshBuildSculptChild] = []
+
     public static var fieldHints: [String: FieldHints] {
         ["parent": FieldHints(tooltip: "The part this one is attached to (moves with it)"),
          "rotation": FieldHints(step: 1, tooltip: "Degrees"),
@@ -130,7 +145,10 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
          // Edited by the Mesh Builder's own widgets, shown only for the shapes that use them.
          "bevel": FieldHints(hidden: true), "profile": FieldHints(hidden: true),
          // Edited in the Mesh Builder's own Mirror / Repeat rows.
-         "mirror": FieldHints(hidden: true), "repeat": FieldHints(hidden: true)]
+         "mirror": FieldHints(hidden: true), "repeat": FieldHints(hidden: true),
+         // Edited in the Mesh Builder's Sculpt rows.
+         "blend": FieldHints(hidden: true), "smooth": FieldHints(hidden: true), "resolution": FieldHints(hidden: true),
+         "noise": FieldHints(hidden: true)]
     }
 
     public init(name: String = "Part", shape: MeshBuildShape = .box, parent: String = "", position: Vec3 = .zero,
@@ -166,6 +184,8 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
         case name, shape, parent, position, rotation, size, segments, thickness, color, opacity, texture, textureScale, worldUV,
              metallic, roughness, glow, glowStrength, material, bevel, profile, mirror
         case repetition = "repeat"
+        // Sculpt fields (MeshBuildSculpt.swift).
+        case blend, smooth, resolution, noise
     }
 
     /// Every key is optional.
@@ -194,6 +214,11 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
                   profile: try c.decodeIfPresent([Vec2].self, forKey: .profile),
                   mirror: try c.decodeIfPresent(MeshBuildMirror.self, forKey: .mirror),
                   repetition: try c.decodeIfPresent(MeshBuildRepeat.self, forKey: .repetition))
+        // Sculpt fields (MeshBuildSculpt.swift).
+        blend = try c.decodeIfPresent(MeshBuildBlend.self, forKey: .blend)
+        smooth = try c.decodeIfPresent(Float.self, forKey: .smooth)
+        resolution = try c.decodeIfPresent(Int.self, forKey: .resolution)
+        noise = try c.decodeIfPresent(MeshBuildNoise.self, forKey: .noise)
     }
 
     /// The part's local transform (its size is in the mesh, not the scale).
@@ -494,6 +519,7 @@ extension MeshBuildPart {
         var g: MeshGeometry
         switch shape {
         case .group: return nil
+        case .sculpt: return sculptGeometry(warnings: &warnings)
         case .box:
             guard bevel > 0 else { g = .cube(size: 1); break }
             return finish(MeshGeometry.roundedBox(halfExtent: s / 2, radius: bevel, segments: segments))
@@ -661,7 +687,7 @@ public struct MeshBuildImporter: AssetImporter {
 
     public var name: String { "meshbuild" }
     public var fileExtensions: [String] { ["meshbuild"] }
-    public var version: Int { 2 }  // 2: mirror and repeat
+    public var version: Int { 3 }  // 2: mirror and repeat, 3: sculpt
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         let file: MeshBuild
@@ -671,7 +697,10 @@ public struct MeshBuildImporter: AssetImporter {
         // Mirror and repeat copies become parts of their own (after the file's parts).
         let expansion = file.expansion()
         for warning in expansion.warnings { context.warn(warning) }
-        let build = expansion.build
+        // A sculpt's subtree is meshed into it (MeshBuildSculpt.swift): those parts stay nodes (pivots) without meshes.
+        let sculpting = expansion.build.gatheringSculpts(sources: expansion.sources)
+        let build = sculpting.build
+        for warning in build.sculptContextWarnings(sculpting) { context.warn(warning) }
         let stem = ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension
         var asset = ImportedAsset()
         var namer = SubAssetNamer()
@@ -696,7 +725,8 @@ public struct MeshBuildImporter: AssetImporter {
         for (i, part) in build.parts.enumerated() {
             var node = PrefabNode(name: part.name, transform: part.transform)
             var shapeWarnings: [String] = []
-            let geometry = part.geometry(warnings: &shapeWarnings)
+            let geometry = sculpting.sculpted.contains(i) ? nil : part.geometry(warnings: &shapeWarnings)
+            if sculpting.sculpted.contains(i), i < file.parts.count { shapeWarnings += part.fieldWarnings }
             for warning in shapeWarnings { context.warn("part '\(part.name)': \(warning)") }
             if let geometry, !geometry.indices.isEmpty {
                 let meshID = namer.id(kind: "mesh", name: part.name, index: i)
