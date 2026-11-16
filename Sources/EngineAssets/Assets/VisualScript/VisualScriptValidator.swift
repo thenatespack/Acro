@@ -186,9 +186,10 @@ public enum VisualScriptValidator {
         }
 
         // Reachability: flows start at event nodes (or a function's entry) and follow exec wires;
-        // pure nodes count when something reachable reads them.
+        // pure nodes count when something reachable reads them. A function's Return is read when
+        // its flow ends even if no exec wire reaches it.
         var reached = Set<String>()
-        var queue = nodes.filter { definitions[$0.id]?.kind == .event || $0.type == "function.entry" }.map(\.id)
+        var queue = nodes.filter { definitions[$0.id]?.kind == .event || $0.type == "function.entry" || $0.type == "function.return" }.map(\.id)
         while let id = queue.popLast() {
             guard reached.insert(id).inserted else { continue }
             queue += execEdges[id] ?? []

@@ -343,7 +343,7 @@ Not yet: terrain layers and decals can't use graph materials, graph opacity does
 
 Visual scripts (`.vscript`, JSON under `Assets/`) are game logic as node graphs, so people can script without writing Swift or building a game module; a game can mix graphs and Swift. Put a **VisualScript** component on an entity (Add Component, **Attach to Selection** in the tab or the asset inspector, or `vscript.attach`) and its graph runs in the editor's play mode and in built games. A VisualScript on an empty "Game Rules" entity is a scene-level graph. The component's `variables` lists the graph's exposed variables, so each entity can have its own values.
 
-A graph is `nodes` (`{id, type, x, y, config, inputs}`) and `links` (`{"from": "node.pin", "to": "node.pin"}`, always from an output pin to an input pin), plus `variables` (typed, with defaults), `functions` (sub-graphs from `function.entry` to `function.return`, called with `function.call`), `comments` (boxes) and `actions` (input actions: `{"jump": ["key.space", "pad.south"]}`). Every key is optional.
+A graph is `nodes` (`{id, type, x, y, config, inputs}`) and `links` (`{"from": "node.pin", "to": "node.pin"}`, always from an output pin to an input pin), plus `variables` (typed, with defaults), `functions` (sub-graphs from `function.entry` to `function.return`, called with `function.call`; a flow that ends without reaching the Return still returns what is wired into it), `comments` (boxes) and `actions` (input actions: `{"jump": ["key.space", "pad.south"]}`). Every key is optional.
 
 ```json
 {

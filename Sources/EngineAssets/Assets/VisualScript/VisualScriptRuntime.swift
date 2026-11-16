@@ -874,6 +874,16 @@ public final class VisualScriptRuntime {
                 try execute(instance, frame, next.node, next.pin)
             }
         }
+        // A flow that ended without reaching Return (or a Return no exec wire reaches) still
+        // returns what is wired into the Return node, read now.
+        if frame.results == nil, let ret = body.nodes.firstIndex(where: { $0.source.type == "function.return" }) {
+            epoch += 1
+            let node = body.nodes[ret]
+            frame.results = try function.outputs.map { parameter in
+                guard let pin = node.inputIndex[parameter.name] else { return .zero(parameter.type) }
+                return try pull(instance, frame, ret, pin)
+            }
+        }
         let results = frame.results ?? []
         return function.outputs.enumerated().map { i, parameter in
             (i < results.count ? results[i] : .zero(parameter.type)).converted(to: parameter.type)

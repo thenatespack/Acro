@@ -6,8 +6,10 @@ extension VisualScriptGraph {
     /// Moves the event graph's nodes `ids` into a new function `name` and puts a
     /// `function.call` node in their place: wires coming in become the function's inputs,
     /// wires going out its outputs, and the flow enters at the one exec input wired from
-    /// outside and leaves at the one exec output wired to the outside. Nodes without exec
-    /// pins make a pure function. Throws when that doesn't fit (event nodes selected, flow
+    /// outside and leaves at the one exec output wired to the outside. When no exec wire leaves
+    /// the selection, the flow ends inside and the call's outputs are what is wired into the
+    /// function's Return when it ends (see `VisualScriptRuntime.call`). Nodes without exec pins
+    /// make a pure function. Throws when that doesn't fit (event nodes selected, flow
     /// entering at several places).
     @MainActor
     public func collapsingToFunction(_ ids: Set<String>, name: String) throws -> VisualScriptGraph {

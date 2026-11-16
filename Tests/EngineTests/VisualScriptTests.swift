@@ -566,6 +566,37 @@ private final class Rig {
         }
     }
 
+    @Test func collapsingAFlowThatEndsInsideKeepsItsOutputs() throws {
+        // start → s1 (n = 4) ends the flow; dbl reads s1 and update stores dbl into m.
+        let graph = try decode("""
+            {"variables": [{"name": "n", "type": "int"}, {"name": "m", "type": "int"}],
+             "nodes": [
+              {"id": "start", "type": "event.start"},
+              {"id": "s1", "type": "var.set", "config": {"variable": "n"}, "inputs": {"value": 4}},
+              {"id": "dbl", "type": "math.multiply", "inputs": {"b": 2}},
+              {"id": "tick", "type": "event.update"},
+              {"id": "s2", "type": "var.set", "config": {"variable": "m"}}
+             ],
+             "links": [{"from": "start.out", "to": "s1.in"}, {"from": "s1.value", "to": "dbl.a"},
+                       {"from": "tick.out", "to": "s2.in"}, {"from": "dbl.result", "to": "s2.value"}]}
+            """)
+        let original = Rig(graph)
+        original.step()
+        #expect(original.variable("m") == .int(8))
+
+        let collapsed = try graph.collapsingToFunction(["s1", "dbl"], name: "setup")
+        let function = try #require(collapsed.function("setup"))
+        #expect(!function.pure && function.outputs.map(\.name) == ["result"])
+        #expect(!function.links.contains { $0.to == "return.in" }, "no exec wire leaves: the flow ends inside")
+        let issues = VisualScriptValidator.validate(collapsed).filter { $0.severity != .info }
+        #expect(issues.isEmpty, "\(issues)")
+        let rig = Rig(collapsed)
+        rig.step()
+        #expect(rig.lines.isEmpty, "\(rig.lines)")
+        #expect(rig.variable("n") == .int(4))
+        #expect(rig.variable("m") == .int(8), "the call's output is what reaches Return when the flow ends, not zero")
+    }
+
     @Test func componentDefaultsListExposedVariables() {
         let graph = VisualScriptGraph(variables: [VisualScriptVariable(name: "speed", type: .float, defaultValue: .int(3)),
                                                   VisualScriptVariable(name: "secret", type: .int, exposed: false)])
