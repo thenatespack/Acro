@@ -228,3 +228,74 @@ private func locomotion() -> AnimationGraph {
         #expect(problems.contains { $0.contains("'missing', which doesn't exist") })
     }
 }
+
+@Suite struct AnimationGraphLayerMaskTests {
+    /// Root › spine › arm, plus a leg under the root.
+    @MainActor private func rig() -> (World, Entity, [Entity]) {
+        let world = World()
+        let root = world.spawn(Transform(), Name("Root"))
+        let spine = world.spawn(Transform(position: Vec3(0, 1, 0)), Name("mixamorig:Spine"))
+        let arm = world.spawn(Transform(position: Vec3(0.3, 0, 0)), Name("Arm"))
+        let leg = world.spawn(Transform(position: Vec3(0.1, -1, 0)), Name("Leg"))
+        world.setParent(spine, to: root)
+        world.setParent(arm, to: spine)
+        world.setParent(leg, to: root)
+        return (world, root, world.animationRig(of: root).targets)
+    }
+
+    /// Every target moved to x = `x` (y and z 0) for the whole clip.
+    private func everywhere(_ x: Float) -> AnimationClip {
+        AnimationClip(name: "all", channels: (0..<4).map {
+            AnimationChannel(target: $0, path: .translation, sampler: AnimationSampler(times: [0, 1], values: [x, 0, 0, x, 0, 0]))
+        })
+    }
+
+    @Test @MainActor func masksLimitLayersToBoneSubtrees() {
+        let (world, root, targets) = rig()
+        #expect(targets.count == 4)
+        let skeleton = world.animationSkeleton(targets: targets)
+        #expect(Animator.maskTargets(["spine"], in: skeleton) == [1, 2], "normalized name, with its subtree")
+        #expect(Animator.maskTargets(["Leg", "Nope"], in: skeleton) == [3])
+
+        let rest = world.animationRig(of: root).restPose
+        let clips = ["AnimationGraphLayerMaskTests.base": everywhere(0), "AnimationGraphLayerMaskTests.wave": everywhere(2)]
+        var animator = Animator(targets: targets, restPose: rest, clip: AnimationClipHandle("AnimationGraphLayerMaskTests.base"))
+        animator.layers = [AdditiveAnimationLayer(clip: AnimationClipHandle("AnimationGraphLayerMaskTests.wave"), weight: 0.5,
+                                                  blend: .override, mask: ["Spine"])]
+        // Unresolved masks touch nothing.
+        #expect(animator.needsLayerMasks)
+        var pose = animator.update(dt: 0.1) { clips[$0.key] }
+        #expect(pose.transforms.map(\.position.x) == [0, 0, 0, 0])
+        animator = animator.withLayerMasks(in: world)
+        #expect(!animator.needsLayerMasks && animator.layers[0].maskTargets == [1, 2])
+        pose = animator.update(dt: 0.1) { clips[$0.key] }
+        #expect(pose.transforms.map(\.position.x) == [0, 1, 1, 0], "override at half weight on the spine's subtree only")
+
+        // Additive, masked: the wave's offset from its reference (none: it holds still) adds nothing...
+        animator.layers[0].blend = nil
+        animator.layers[0].weight = 1
+        pose = animator.update(dt: 0.1) { clips[$0.key] }
+        #expect(pose.transforms.map(\.position.x) == [0, 0, 0, 0])
+        // ...an additive clip that moves does, on the mask only.
+        let move = AnimationClip(name: "move", channels: (0..<4).map {
+            AnimationChannel(target: $0, path: .translation, sampler: AnimationSampler(times: [0, 1], values: [0, 0, 0, 1, 0, 0]))
+        })
+        animator.layers[0] = AdditiveAnimationLayer(clip: AnimationClipHandle("move"), time: 0.5, mask: ["Leg"])
+        animator = animator.withLayerMasks(in: world)
+        pose = animator.update(dt: 0) { $0.key == "move" ? move : clips[$0.key] }
+        #expect(pose.transforms.map(\.position.x) == [0, 0, 0, 0.5])
+    }
+
+    @Test func graphLayersCarryBlendAndMask() throws {
+        let graph = try AssetJSON.decoder().decode(AnimationGraph.self, from: Data("""
+            {"layers": [{"name": "Wave", "clip": "wave", "blend": "override", "mask": ["Spine"]}, {"name": "Breathe", "clip": "b"}]}
+            """.utf8))
+        #expect(graph.layers[0].isOverride && graph.layers[0].mask == ["Spine"] && graph.layers[1].blend == nil)
+        let encoded = String(decoding: try graph.fileData(), as: UTF8.self)
+        #expect(!encoded.contains("null"))
+        #expect(try AssetJSON.decoder().decode(AnimationGraph.self, from: graph.fileData()) == graph)
+        let layers = graph.additiveLayers
+        #expect(layers[0].blend == .override && layers[0].mask == ["Spine"] && layers[0].maskTargets == nil)
+        #expect(layers[1].blend == nil && layers[1].mask == nil)
+    }
+}

@@ -266,4 +266,30 @@ private func twoClipGLTF() -> Data {
         plot.onPick?(Vec2(0.25, 0.75))
         #expect(live["moveX"] == .float(0.25) && live["moveY"] == .float(0.75))
     }
+
+    @Test func overrideLayersWithBoneMasks() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        _ = try project(session, folder)
+        try call(session, "animGraph.new", ["name": "Layers", "preview": "Models/hero.gltf"])
+        let result = try call(session, "animGraph.edit", ["path": "Layers.animgraph", "addLayers": [
+            ["name": "Wave", "clip": "Models/hero.gltf#animation/Walk", "blend": "override", "mask": ["Body"]],
+            ["name": "Lost", "clip": "Models/hero.gltf#animation/Idle", "mask": ["Tail"]]]])
+        let warnings = try #require(result["warnings"] as? [String])
+        #expect(warnings == ["layer 'Lost' masks bone 'Tail', which the preview model doesn't have"])
+        let id = try #require(session.assets?.id(forPath: "Layers.animgraph"))
+        let layers = try #require(session.assets?.animationGraph(of: id)?.layers)
+        #expect(layers[0].isOverride && layers[0].mask == ["Body"] && layers[1].blend == nil)
+        try call(session, "animGraph.edit", ["path": "Layers.animgraph", "updateLayers": ["Lost": ["mask": ["Body"], "blend": "override"]]])
+        #expect(session.assets?.animationGraph(of: id)?.layers[1].isOverride == true)
+
+        // The tab's layer editor shows the blend mode, the mask and a bone picker from the preview model.
+        let form = try #require(AnimationGraphView(session: session, asset: id))
+        let name = try #require(form.view.descendant(named: "animGraphLayerName") as? Button)
+        name.action?()
+        #expect(form.view.descendant(named: "animGraphLayerBlend") != nil)
+        #expect((form.view.descendant(named: "animGraphLayerMaskBone") as? Label)?.text == "Mask: Body")
+        #expect(form.view.descendant(named: "animGraphLayerMaskPick") != nil)
+    }
 }

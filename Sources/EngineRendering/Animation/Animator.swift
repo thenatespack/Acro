@@ -176,8 +176,10 @@ public struct AnimationPlayback: Codable, Equatable, Sendable {
     var fadeStart: Float
 }
 
-/// An additive layer: `clip`'s difference from its pose at `referenceTime` is added on top of
-/// the state machine's pose, scaled by `weight` (see `AnimationPose.add`).
+/// A layer on top of the state machine's pose. Additive (the default): `clip`'s difference from
+/// its pose at `referenceTime` is added, scaled by `weight` (see `AnimationPose.add`). Override:
+/// the clip's pose replaces the bones it animates, mixed in by `weight`. `mask` limits either
+/// to some bones' subtrees (AnimatorLayers.swift).
 public struct AdditiveAnimationLayer: Codable, Equatable, Sendable {
     public var clip: AnimationClipHandle
     public var weight: Float
@@ -185,13 +187,23 @@ public struct AdditiveAnimationLayer: Codable, Equatable, Sendable {
     /// Seconds into the clip (wrapped when it loops).
     public var time: Float
     public var referenceTime: Float
+    /// How the layer combines with the pose below; nil is `.additive`.
+    public var blend: AnimationLayerBlend?
+    /// Bone (target `Name`) whose subtrees the layer affects; nil affects every target.
+    public var mask: [String]?
+    /// `mask` as target indices, worked out from the targets' names and hierarchy
+    /// (`Animator.resolveLayerMasks`); nil until then.
+    public var maskTargets: [Int]?
 
-    public init(clip: AnimationClipHandle, weight: Float = 1, speed: Float = 1, time: Float = 0, referenceTime: Float = 0) {
+    public init(clip: AnimationClipHandle, weight: Float = 1, speed: Float = 1, time: Float = 0, referenceTime: Float = 0,
+                blend: AnimationLayerBlend? = nil, mask: [String]? = nil) {
         self.clip = clip
         self.weight = weight
         self.speed = speed
         self.time = time
         self.referenceTime = referenceTime
+        self.blend = blend
+        self.mask = mask
     }
 }
 
@@ -467,11 +479,7 @@ public struct Animator: Component, Equatable, Sendable {
         var result = poses.count == 1 ? poses[0] : AnimationPose.blend(poses, weights: weights, rest: restPose)
         for layer in layers where layer.weight > 0 {
             guard let clip = lookup(layer.clip), clip.duration > 0 else { continue }
-            var pose = AnimationPose(restPose), reference = AnimationPose(restPose)
-            let t = layer.time.truncatingRemainder(dividingBy: clip.duration)
-            clip.sample(at: t < 0 ? t + clip.duration : t, into: &pose)
-            clip.sample(at: layer.referenceTime, into: &reference)
-            result.add(pose, reference: reference, weight: layer.weight)
+            result.apply(layer, clip: clip, rest: restPose)
         }
         return result
     }
@@ -496,7 +504,7 @@ extension World {
         addSystem(name, stage: stage) { world in
             let dt = world.time.delta
             animators.removeAll(keepingCapacity: true)
-            world.query(Animator.self) { _, animator in animators.append(animator) }
+            world.query(Animator.self) { _, animator in animators.append(animator.withLayerMasks(in: world)) }
             let count = animators.count
             poses = Array(repeating: AnimationPose([]), count: count)
             missing = Array(repeating: [], count: count)

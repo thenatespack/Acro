@@ -22,7 +22,8 @@ import EngineScene
 //     {"from": "Locomotion", "to": "Jump", "conditions": [{"parameter": "jump", "test": "triggered"}], "duration": 0.1},
 //     {"from": "Jump", "to": "Locomotion", "exitTime": 0.9}
 //   ],
-//   "layers": [{"name": "Breathe", "clip": "asset:<id>#animation/Breathe", "weight": 0.5}],
+//   "layers": [{"name": "Breathe", "clip": "asset:<id>#animation/Breathe", "weight": 0.5},
+//              {"name": "Wave", "clip": "asset:<id>#animation/Wave", "blend": "override", "mask": ["Spine"]}],
 //   "retarget": {"boneMap": {"mixamorig:Spine1": "chest"}, "rotation": "world", "translation": "root"}
 // }
 // ```
@@ -246,24 +247,34 @@ public struct AnimationGraphTransition: Codable, Equatable, Sendable {
     public var isAnyState: Bool { from == nil }
 }
 
-/// An additive layer (`AdditiveAnimationLayer`): a clip's difference from its pose at
-/// `referenceTime`, added on top of the state machine's pose.
+/// A layer (`AdditiveAnimationLayer`) on top of the states' pose: additive (a clip's difference
+/// from its pose at `referenceTime` is added) or override (the clip's pose replaces the bones it
+/// animates), optionally masked to the subtrees of the bones in `mask`.
 public struct AnimationGraphLayer: Codable, Equatable, Sendable {
     public var name: String
     public var clip: String
     public var weight: Float
     public var speed: Float
     public var referenceTime: Float
+    /// `override` replaces the bones the clip animates (mixed in by `weight`); nil adds to them.
+    public var blend: AnimationGraphLayerBlend?
+    /// Bones whose subtrees the layer affects (every bone when nil).
+    public var mask: [String]?
 
-    public init(name: String, clip: String, weight: Float = 1, speed: Float = 1, referenceTime: Float = 0) {
+    public init(name: String, clip: String, weight: Float = 1, speed: Float = 1, referenceTime: Float = 0,
+                blend: AnimationGraphLayerBlend? = nil, mask: [String]? = nil) {
         self.name = name
         self.clip = clip
         self.weight = weight
         self.speed = speed
         self.referenceTime = referenceTime
+        self.blend = blend
+        self.mask = mask
     }
 
-    private enum CodingKeys: String, CodingKey { case name, clip, weight, speed, referenceTime }
+    public var isOverride: Bool { blend == .override }
+
+    private enum CodingKeys: String, CodingKey { case name, clip, weight, speed, referenceTime, blend, mask }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -272,7 +283,14 @@ public struct AnimationGraphLayer: Codable, Equatable, Sendable {
         weight = try c.decodeIfPresent(Float.self, forKey: .weight) ?? 1
         speed = try c.decodeIfPresent(Float.self, forKey: .speed) ?? 1
         referenceTime = try c.decodeIfPresent(Float.self, forKey: .referenceTime) ?? 0
+        blend = try c.decodeIfPresent(AnimationGraphLayerBlend.self, forKey: .blend)
+        mask = try c.decodeIfPresent([String].self, forKey: .mask)
     }
+}
+
+/// How a graph layer combines with the states' pose.
+public enum AnimationGraphLayerBlend: String, Codable, Sendable, CaseIterable {
+    case additive, override
 }
 
 /// An `.animgraph` file: parameters, states, transitions and additive layers of an `Animator`,

@@ -121,6 +121,7 @@ public final class AnimationGraphWorkspace {
         guard var animator, let assets = session.assets else { return }
         library.assets = assets
         library.resolveAssetClips(animator.clipHandles)
+        animator = animator.withLayerMasks(in: world)
         let clips = clipCache.clips(for: previewRoot ?? .invalid, animator, in: world, library: library)
         let pose = animator.update(dt: dt) { clips[$0] }
         for i in 0..<min(pose.count, animator.targets.count) where pose.animated[i] {

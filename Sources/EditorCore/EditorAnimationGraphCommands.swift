@@ -26,7 +26,8 @@ public enum EditorAnimationGraphCommands {
         speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` \
         [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, \
         value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] \
-        (checked in order, the first that applies fires), `layers` (additive) [{name, clip, weight, speed, referenceTime}], \
+        (checked in order, the first that applies fires), `layers` [{name, clip, weight, speed, referenceTime, blend additive|override \
+        (override replaces the bones the clip animates), mask [bone names: the layer only touches their subtrees]}], \
         `initialState`. Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths \
         are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes.
         """
@@ -72,10 +73,19 @@ extension EditorSession {
 
     /// `graph`'s problems, including clips that name nothing in the project.
     public func animationGraphProblems(_ graph: AnimationGraph) -> [String] {
-        AnimationGraphCheck.problems(graph, clipExists: { [weak self] key in
+        var problems = AnimationGraphCheck.problems(graph, clipExists: { [weak self] key in
             guard let reference = AssetReference(key) else { return true }  // a key registered in code
             return self?.assets?.animationClip(reference) != nil
         })
+        // Mask bones the preview model doesn't have.
+        if let skeleton = graph.preview.flatMap(AssetReference.init).flatMap({ assets?.animationSkeleton(of: $0) }) {
+            for layer in graph.layers {
+                for bone in layer.mask ?? [] where Animator.maskTargets([bone], in: skeleton).isEmpty {
+                    problems.append("layer '\(layer.name)' masks bone '\(bone)', which the preview model doesn't have")
+                }
+            }
+        }
+        return problems
     }
 
     /// The clips a graph can use: the preview model's own first, then every other imported clip.
@@ -316,7 +326,7 @@ public enum AnimGraphEditCommand: EditorCommand {
         public var addTransitions: [AnimationGraphTransition]?
         /// Changes to transitions: index (as a string) → the fields to change, e.g. {"0": {"duration": 0.1}}.
         public var updateTransitions: [String: JSONValue]?
-        /// Additive layers to add.
+        /// Layers to add (additive unless `blend` is "override"; `mask` limits them to bone subtrees).
         public var addLayers: [AnimationGraphLayer]?
         /// Changes to layers: name → fields.
         public var updateLayers: [String: JSONValue]?

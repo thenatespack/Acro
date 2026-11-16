@@ -87,6 +87,7 @@ extension World {
                     animator.targets = rig.targets
                     animator.restPose = rig.restPose
                 }
+                animator = animator.withLayerMasks(in: world)
                 for key in library.resolveAssetClips(animator.clipHandles) where reported.insert(key).inserted {
                     EngineLog.warning("no animation clip '\(key)'", category: .animation)
                 }
@@ -177,7 +178,10 @@ extension AnimationGraph {
     }
 
     public var additiveLayers: [AdditiveAnimationLayer] {
-        layers.map { AdditiveAnimationLayer(clip: AnimationClipHandle($0.clip), weight: $0.weight, speed: $0.speed, referenceTime: $0.referenceTime) }
+        layers.map {
+            AdditiveAnimationLayer(clip: AnimationClipHandle($0.clip), weight: $0.weight, speed: $0.speed, referenceTime: $0.referenceTime,
+                                   blend: $0.blend == .override ? .override : nil, mask: $0.mask)
+        }
     }
 }
 

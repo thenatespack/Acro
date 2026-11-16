@@ -985,7 +985,7 @@ public final class AnimationGraphView {
     // MARK: Layers
 
     private func addLayersSection() {
-        view.addChild(Label("Additive Layers", role: .secondary))
+        view.addChild(Label("Layers", role: .secondary))
         for layer in graph.layers {
             let name = Button(layer.name, name: "animGraphLayerName") { [unowned self] in
                 selectedLayer = selectedLayer == layer.name ? nil : layer.name
@@ -1019,6 +1019,7 @@ public final class AnimationGraphView {
                     }
                     apply(edited, label: "Edit Layer")
                 }
+                addLayerBlendAndMask(layer)
             }
         }
         let add = Button("Add Layer", name: "animGraphAddLayer") { [unowned self] in
@@ -1029,7 +1030,60 @@ public final class AnimationGraphView {
             apply(edited, label: "Add Layer")
         }
         add.command = AnimGraphEditCommand.id.rawValue
-        add.tooltip = "Add a clip on top of the states (its difference from its first frame is added)"
+        add.tooltip = "Add a clip on top of the states (additive: its difference from its first frame is added; override: it replaces the bones it animates)"
         view.addChild(HStack(spacing: 6, [add, Spacer()]))
+    }
+
+    private func editLayer(_ name: String, _ label: String, _ change: (inout AnimationGraphLayer) -> Void) {
+        var edited = graph
+        guard let i = edited.layers.firstIndex(where: { $0.name == name }) else { return }
+        change(&edited.layers[i])
+        apply(edited, label: label)
+    }
+
+    /// The selected layer's blend mode and bone mask.
+    private func addLayerBlendAndMask(_ layer: AnimationGraphLayer) {
+        let blend = Dropdown(options: ["Additive", "Override"], selectedIndex: layer.isOverride ? 1 : 0, name: "animGraphLayerBlend") {
+            [unowned self] index in
+            editLayer(layer.name, "Set Layer Blend") { $0.blend = index == 1 ? .override : nil }
+        }
+        blend.tooltip = "Additive adds the clip's motion; override replaces the bones the clip animates, mixed in by the weight"
+        view.addChild(HStack(spacing: 6, [Label("Blend"), Spacer(), blend]))
+        let skeleton = graph.preview.flatMap(AssetReference.init).flatMap { session.assets?.animationSkeleton(of: $0) }
+        let mask = layer.mask ?? []
+        if mask.isEmpty {
+            view.addChild(note("Affects every bone. Add a mask bone to limit the layer to that bone and the bones below it."))
+        } else {
+            if let skeleton {
+                let count = Animator.maskTargets(mask, in: skeleton).count
+                view.addChild(note("Affects \(count) of \(skeleton.count) bones of the preview model."))
+            }
+            for bone in mask {
+                let remove = Button("✕", name: "animGraphLayerMaskRemove") { [unowned self] in
+                    editLayer(layer.name, "Remove Mask Bone") { l in
+                        l.mask?.removeAll { $0 == bone }
+                        if l.mask?.isEmpty == true { l.mask = nil }
+                    }
+                }
+                remove.tooltip = "Stop limiting the layer to this bone's subtree"
+                view.addChild(HStack(spacing: 6, [Label("Mask: " + bone, role: .caption, name: "animGraphLayerMaskBone"), Spacer(), remove]))
+            }
+        }
+        guard let skeleton else {
+            view.addChild(note("Pick a preview model to choose mask bones."))
+            return
+        }
+        let depths = skeleton.depths
+        let names = skeleton.names
+        let labels = names.indices.map { String(repeating: "  ", count: min(depths[$0], 12)) + (names[$0].isEmpty ? "(unnamed)" : names[$0]) }
+        var picked = 0
+        let bones = Dropdown(options: labels, selectedIndex: 0, name: "animGraphLayerMaskPick") { picked = $0 }
+        bones.tooltip = "A bone of the preview model; the layer affects it and every bone below it"
+        bones.style.shrink = 1
+        let add = Button("Add to Mask", name: "animGraphLayerMaskAdd") { [unowned self] in
+            guard names.indices.contains(picked), !names[picked].isEmpty, !mask.contains(names[picked]) else { return }
+            editLayer(layer.name, "Add Mask Bone") { $0.mask = ($0.mask ?? []) + [names[picked]] }
+        }
+        view.addChild(HStack(spacing: 6, [bones, add]))
     }
 }
