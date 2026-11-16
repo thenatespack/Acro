@@ -211,4 +211,33 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         workspace.update()
         #expect(workspace.map?.paintedCounts == [0, 0, 0])
     }
+
+    @Test func canvasKeyboardShortcutsPickToolsAndTurnTheBrush() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
+        let created = try call(session, "tilemap.new", ["name": "K", "size": [8, 6]])
+        let id = try #require((created["asset"] as? String).flatMap { AssetID($0) })
+        let workspace = TilemapWorkspace(session: session)
+        #expect(workspace.open(id))
+        func press(_ key: Key, _ modifiers: KeyModifiers = []) -> Bool {
+            workspace.canvas.handleEvent(.key(KeyEvent(key: key, modifiers: modifiers)))
+        }
+
+        for tool in TilemapTool.allCases {
+            #expect(press(tool.shortcut) && workspace.tool == tool, "\(tool)")
+        }
+        #expect(Set(TilemapTool.allCases.map(\.shortcut)).count == TilemapTool.allCases.count, "one key per tool")
+        #expect(!TilemapTool.allCases.contains { $0.shortcut == .f }, "F frames the selection editor-wide")
+        #expect(press(.x) && workspace.flipX && press(.y) && workspace.flipY)
+        #expect(press(.z) && workspace.rotation == 1 && press(.z, .shift) && workspace.rotation == 0)
+        #expect(press(.g, .shift) && !workspace.canvas.showsGrid)
+        workspace.selectTile(0)
+        #expect(press(.rightBracket) && workspace.brushTile == 1)
+        #expect(press(.leftBracket) && press(.leftBracket) && workspace.brushTile == 31, "wraps around the tile set")
+        // Editor shortcuts (undo, save) pass through.
+        #expect(!press(.z, .command) && !press(.s, .control) && workspace.rotation == 0)
+        #expect(!press(.k))
+    }
 }
