@@ -273,4 +273,22 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         view.reload()
         #expect(view.character == CharacterBuild())
     }
+
+    /// The file's colors are sRGB; the grid's swatches show linear fields as sRGB, so the proxies convert.
+    @Test func formColorProxiesShowTheFilesSRGBColors() {
+        let srgb = Vec3(0.5, 0.35, 0.2)
+        var character = CharacterBuild()
+        character.colors[.body] = srgb
+        let proxy = CharacterColorsComponent(character)
+        let shown = UIColor(linearRGB: proxy[.body])
+        #expect(abs(shown.r - 0.5) < 1e-3 && abs(shown.g - 0.35) < 1e-3 && abs(shown.b - 0.2) < 1e-3)
+        let attachment = CharacterAttachment(name: "Sword", color: srgb, partColors: ["Blade": Vec3(1, 0, 0)])
+        var form = CharacterAttachmentComponent(attachment)
+        form.scale = 2
+        #expect(form.attachment(keeping: attachment).color == srgb, "an untouched color keeps its exact value")
+        #expect(form.attachment(keeping: attachment).partColors == attachment.partColors)
+        form.color = UIColor(0.25, 0.5, 0.75).linearRGB
+        let picked = form.attachment(keeping: attachment).color ?? .zero
+        #expect(abs(picked.x - 0.25) < 1e-3 && abs(picked.y - 0.5) < 1e-3 && abs(picked.z - 0.75) < 1e-3)
+    }
 }

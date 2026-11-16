@@ -37,7 +37,17 @@ struct CharacterBodyComponent: Component {
     }
 }
 
-/// The proxy component for the region colors (the ones in use, defaults included).
+/// The file's colors are sRGB; the property grid's color fields hold linear values (and show
+/// them as sRGB), so the proxies convert both ways.
+enum CharacterProxyColor {
+    static func linear(_ srgb: Vec3) -> Vec3 { UIColor(srgb.x, srgb.y, srgb.z).linearRGB }
+    static func srgb(_ linear: Vec3) -> Vec3 {
+        let c = UIColor(linearRGB: linear)
+        return Vec3(c.r, c.g, c.b)
+    }
+}
+
+/// The proxy component for the region colors (the ones in use, defaults included), linear.
 struct CharacterColorsComponent: Component {
     static var componentName: String { "Colors" }
     static var fieldHints: [String: FieldHints] {
@@ -48,7 +58,8 @@ struct CharacterColorsComponent: Component {
     var skin: Vec3, body: Vec3, legs: Vec3, accent: Vec3, eyes: Vec3
 
     init(_ c: CharacterBuild) {
-        skin = c.color(.skin); body = c.color(.body); legs = c.color(.legs); accent = c.color(.accent); eyes = c.color(.eyes)
+        func f(_ region: CharacterRegion) -> Vec3 { CharacterProxyColor.linear(c.color(region)) }
+        skin = f(.skin); body = f(.body); legs = f(.legs); accent = f(.accent); eyes = f(.eyes)
     }
 
     subscript(region: CharacterRegion) -> Vec3 {
@@ -84,13 +95,16 @@ struct CharacterAttachmentComponent: Component {
     init(_ a: CharacterAttachment) {
         name = a.name; bone = a.bone; asset = a.asset; position = a.position; rotation = a.rotation; scale = a.scale
         recolor = a.color != nil
-        color = a.color ?? Vec3(0.8, 0.8, 0.8)
+        color = CharacterProxyColor.linear(a.color ?? Vec3(0.8, 0.8, 0.8))
     }
 
     /// The attachment with these fields (`partColors` from `original`, which the grid doesn't show).
     func attachment(keeping original: CharacterAttachment) -> CharacterAttachment {
-        CharacterAttachment(name: name, bone: bone, asset: asset, position: position, rotation: rotation, scale: max(scale, 0.01),
-                            color: recolor ? color : nil, partColors: original.partColors)
+        // An unchanged color keeps the file's exact value (no round trip through linear).
+        let unchanged = original.color.map { CharacterProxyColor.linear($0) == color } ?? false
+        let srgb = unchanged ? original.color : CharacterProxyColor.srgb(color)
+        return CharacterAttachment(name: name, bone: bone, asset: asset, position: position, rotation: rotation, scale: max(scale, 0.01),
+                                   color: recolor ? srgb ?? CharacterProxyColor.srgb(color) : nil, partColors: original.partColors)
     }
 }
 
@@ -111,7 +125,7 @@ public final class CharacterBuilderView {
     private var gridEntities: [Entity] = []
     private var listed: [String] = []
     private var newAsset = 0
-    private var newBone = 0
+    private var newBone = Int.max  // the template's hand bone until one is picked
     private var pending: (character: CharacterBuild, label: String, select: String?)?
     private static var selections: [AssetID: String] = [:]
 
@@ -225,8 +239,9 @@ public final class CharacterBuilderView {
         view.addChild(Label("Colors", role: .secondary))
         addGrid(CharacterColorsComponent(character), name: "characterColorsGrid") { [unowned self] (colors: CharacterColorsComponent) in
             var edited = character
-            for region in CharacterRegion.allCases where colors[region] != character.color(region) {
-                edited.colors[region] = colors[region]
+            let before = CharacterColorsComponent(character)
+            for region in CharacterRegion.allCases where colors[region] != before[region] {
+                edited.colors[region] = CharacterProxyColor.srgb(colors[region])
             }
             apply(edited, label: "Edit Colors")
         }
@@ -278,7 +293,7 @@ public final class CharacterBuilderView {
             for problem in problems { view.addChild(note(problem)) }
         }
         view.addChild(note("Imported as a skinned prefab with an Animator: states per clip plus \"locomotion\" (idle, walk and run blended by the "
-                           + "float parameter speed, m/s); triggers jump, attack and die. Placed copies animate in play mode."))
+                           + "float parameter speed, m/s); triggers jump, attack and die. Placed copies animate in play mode, and in the Scene view with View > Animate in Scene View."))
     }
 
     private func addGrid<C: Component>(_ proxy: C, name: String, onCommit: @escaping (C) -> Void) {
