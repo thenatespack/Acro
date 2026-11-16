@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 255 tools.
+named by its id (see README › Use the editor › AI control). 257 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -33,7 +33,7 @@ optional arguments.
 | `log` | [`log.clear`](#logclear), [`log.read`](#logread) |
 | `material` | [`material.get`](#materialget), [`material.set`](#materialset) |
 | `materialGraph` | [`materialGraph.assign`](#materialgraphassign), [`materialGraph.edit`](#materialgraphedit), [`materialGraph.get`](#materialgraphget), [`materialGraph.new`](#materialgraphnew), [`materialGraph.nodes`](#materialgraphnodes), [`materialGraph.open`](#materialgraphopen), [`materialGraph.set`](#materialgraphset) |
-| `meshBuild` | [`meshBuild.edit`](#meshbuildedit), [`meshBuild.get`](#meshbuildget), [`meshBuild.new`](#meshbuildnew), [`meshBuild.open`](#meshbuildopen), [`meshBuild.set`](#meshbuildset) |
+| `meshBuild` | [`meshBuild.edit`](#meshbuildedit), [`meshBuild.examples`](#meshbuildexamples), [`meshBuild.get`](#meshbuildget), [`meshBuild.new`](#meshbuildnew), [`meshBuild.open`](#meshbuildopen), [`meshBuild.preview`](#meshbuildpreview), [`meshBuild.set`](#meshbuildset) |
 | `net` | [`net.overlay`](#netoverlay), [`net.setConditions`](#netsetconditions), [`net.start`](#netstart), [`net.stats`](#netstats), [`net.stop`](#netstop), [`net.view`](#netview) |
 | `panel` | [`panel.close`](#panelclose), [`panel.dock`](#paneldock), [`panel.focus`](#panelfocus), [`panel.list`](#panellist), [`panel.open`](#panelopen) |
 | `path` | [`path.edit`](#pathedit), [`path.flattenTerrain`](#pathflattenterrain), [`path.get`](#pathget), [`path.new`](#pathnew), [`path.open`](#pathopen), [`path.sample`](#pathsample), [`path.set`](#pathset) |
@@ -2084,7 +2084,7 @@ Result:
 
 **Edit Mesh Build** · _undoable_
 
-Changes part of a .meshbuild file in one undoable step, in this order: removeParts, addParts, updateParts (name → fields to change; "name" renames), removeAnimations, addAnimations, then addMotions / addTracks into `animation`. Placed copies update. Returns the part and animation names and import warnings. Undoable (one step; edit.undo reverts it).
+Changes part of a .meshbuild file in one undoable step, in this order: removeParts, addParts, updateParts (name → fields to change; "name" renames), removeAnimations, addAnimations, then addMotions / addTracks into `animation`. Placed copies update. Returns the part and animation names, `bounds` and warnings (broken references and spatial problems). Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
@@ -2103,17 +2103,32 @@ Result:
 
 - `animations`: [string]
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `bounds?`: {base: number, max: number[3], min: number[3], parts?: [object], size: number[3]}
 - `entities?`: [entity id]
 - `parts`: [string]
 - `path`: string
 - `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `warnings`: [string]
 
+### `meshBuild.examples`
+
+**Mesh Build Examples** · _read-only_, _idempotent_
+
+Returns small, correct mesh builds to learn from or start with (pass one's `build` to meshBuild.new; keys at their defaults are left out): a street lamp (a parent chain, glow), a wooden cart (wheels turned onto an axle, a spin animation) and a turret (a group pivot swinging its children). Each stands on y=0, faces -Z and gives no warnings. `name` picks one.
+
+Arguments:
+
+- `name?`: string
+
+Result:
+
+- `examples`: [{about: string, build: any, name: string}]
+
 ### `meshBuild.get`
 
 **Get Mesh Build** · _read-only_, _idempotent_
 
-Reads a .meshbuild file: its parts and animations (every field, defaults included), the prefab to place, and problems with its references.
+Reads a .meshbuild file: its parts and animations (every field, defaults included), the prefab to place, warnings (broken references; floating, buried, hidden or out-of-scale parts; a model not standing on y=0) and `bounds`: overall size, min, max and base height plus every part's world box (rest pose, meters).
 
 Arguments:
 
@@ -2123,6 +2138,7 @@ Arguments:
 Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `bounds?`: {base: number, max: number[3], min: number[3], parts?: [object], size: number[3]}
 - `build`: {animations?: [object], parts?: [object]}
 - `path`: string
 - `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
@@ -2132,7 +2148,7 @@ Result:
 
 **New Mesh Build**
 
-Writes a .meshbuild file in `folder` (default: the Assets root) and imports it as a model (a prefab of its parts, one mesh and material per part), optionally placing it in the scene (`place`, at `position`; undoable). Returns the asset, its prefab, the part names and import warnings. Edit it later with meshBuild.edit (small changes) or meshBuild.set (whole contents); placed copies update. A mesh build is a model made of shapes: `parts` (each: name, shape group|box|sphere|hemisphere|cylinder|cone|capsule|torus|tube|plane|wedge|pyramid, parent (another part's name; children move with it), position [x,y,z] m in the parent's space, rotation [x,y,z] degrees, size [x,y,z] m (the box the shape fills; cylinders/cones/capsules run along Y), segments, thickness (tube wall), color [r,g,b] 0-1 sRGB, opacity, texture (path under Assets/ such as "Textures/brick.png" or a .proctex, or "asset:<id>"), textureScale [u,v], worldUV (texture keeps its size in meters), metallic, roughness, glow [r,g,b] emitted color, glowStrength, material (a .material asset replacing the look)) and `animations` (each: name, autoplay (default true; every autoplay animation plays at once in play mode and games), loop loop|once|pingPong, speed, motions (ready-made: {part, kind spin|bob|swing|pulse|shake, axis x|y|z, amount (spin: turns, bob/shake: m, swing: degrees, pulse: growth fraction), period seconds}) and tracks (keyframes: {part, property position|rotation|scale, interpolation linear|hermite|step, keys [{time, value [x,y,z]}]}; values are relative to the part's rest pose: position offset in m, rotation degrees added, scale multiplier (1 = unchanged))). Every key is optional. A group part has no mesh: use it as a pivot (hinge, turret) for animated children.
+Writes a .meshbuild file in `folder` (default: the Assets root) and imports it as a model (a prefab of its parts, one mesh and material per part), optionally placing it in the scene (`place`, at `position`; undoable). Returns the asset, its prefab, the part names, `bounds` and warnings. Edit it later with meshBuild.edit (small changes) or meshBuild.set (whole contents); placed copies update. A mesh build is a model made of shapes: `parts` (each: name, shape group|box|sphere|hemisphere|cylinder|cone|capsule|torus|tube|plane|wedge|pyramid, parent (another part's name; children move with it), position [x,y,z] m: the part's center in the parent's space, rotation [x,y,z] degrees (about X, then Y, then Z, fixed axes; children inherit it), size [x,y,z] m (the box the shape fills), segments, thickness (tube wall), color [r,g,b] 0-1 sRGB, opacity, texture (path under Assets/ such as "Textures/brick.png" or a .proctex, or "asset:<id>"), textureScale [u,v], worldUV (texture keeps its size in meters), metallic, roughness, glow [r,g,b] emitted color, glowStrength, material (a .material asset replacing the look)) and `animations` (each: name, autoplay (default true; every autoplay animation plays at once in play mode and games), loop loop|once|pingPong, speed, motions (ready-made: {part, kind spin|bob|swing|pulse|shake, axis x|y|z (the part's own axes), amount (spin: turns, bob/shake: m, swing: degrees, pulse: growth fraction), period seconds}) and tracks (keyframes: {part, property position|rotation|scale, interpolation linear|hermite|step, keys [{time, value [x,y,z]}]}; values are relative to the part's rest pose: position offset in m, rotation degrees added, scale multiplier (1 = unchanged))). Every key is optional. A group part has no mesh: use it as a pivot (hinge, turret) for animated children. Conventions: meters; +Y is up, the model's front faces -Z (the engine's forward), +X is its right. The origin is the model's base center: it stands on y=0, so a 1 m box on the ground has position [0,0.5,0]. Cylinders, cones, capsules and tubes run along Y: a wheel on an axle along X (a vehicle facing -Z) needs rotation [0,0,90], one on an axle along Z [90,0,0]. Real sizes: person 1.8 m, door 2 x 0.9 m, table top 0.75 m high, chair seat 0.45 m, car about 4.5 x 1.5 x 1.8 m (long, high, wide). Results include `bounds` (size, min, max, base) and warnings about floating, buried, hidden or out-of-scale parts and a model off the ground. Workflow: build, look at it with meshBuild.preview, fix the warnings, repeat; meshBuild.examples has correct builds to copy.
 
 Arguments:
 
@@ -2146,6 +2162,7 @@ Result:
 
 - `animations`: [string]
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `bounds?`: {base: number, max: number[3], min: number[3], parts?: [object], size: number[3]}
 - `entities?`: [entity id]
 - `parts`: [string]
 - `path`: string
@@ -2167,6 +2184,31 @@ Result:
 
 - `path`: string
 
+### `meshBuild.preview`
+
+**Preview Mesh Build** · _read-only_, _idempotent_, _deferred_
+
+Returns one PNG of a .meshbuild model from fixed angles, tiled: by default front (camera at -Z, the model's front; +X is on the image's left), right (from +X), top (front up) and a 3/4 perspective; `views` picks and orders them (also back, left). Front / right / top are orthographic, each auto-framed with a ground grid (spacing in the caption; red line z=0, blue x=0) and a white ground line at y=0. `size`: tile pixels (default 384). `labels`: part names at their centers. `highlight`: part names to outline. `animation` + `time`: pose that animation at `time` seconds. Also returns a summary (size in m, part count), the bounds and the same warnings as meshBuild.get. Read-only: the model is shown in a world of its own, not the scene. Finishes after a few frames. Needs the editor window.
+
+Arguments:
+
+- `animation?`: string
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `highlight?`: [string]
+- `labels?`: boolean
+- `path?`: string
+- `size?`: integer
+- `time?`: number
+- `views?`: ["front" \| "right" \| "top" \| "threeQuarter" \| "back" \| "left"]
+
+Result:
+
+- `bounds?`: {base: number, max: number[3], min: number[3], parts?: [object], size: number[3]}
+- `image`: {data?: string, height: integer, mimeType: string, width: integer}
+- `summary`: string
+- `views`: ["front" \| "right" \| "top" \| "threeQuarter" \| "back" \| "left"]
+- `warnings`: [string]
+
 ### `meshBuild.set`
 
 **Set Mesh Build** · _undoable_, _idempotent_
@@ -2183,6 +2225,7 @@ Result:
 
 - `animations`: [string]
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `bounds?`: {base: number, max: number[3], min: number[3], parts?: [object], size: number[3]}
 - `entities?`: [entity id]
 - `parts`: [string]
 - `path`: string

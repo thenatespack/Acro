@@ -10,23 +10,34 @@ public enum EditorMeshBuildCommands {
         MeshBuildSetCommand.self,
         MeshBuildEditCommand.self,
         MeshBuildOpenCommand.self,
+        MeshBuildPreviewCommand.self,
+        MeshBuildExamplesCommand.self,
     ]
 
     /// What the tool docs say about the file format, shared by the tools.
     static let formatDoc = """
         A mesh build is a model made of shapes: `parts` (each: name, shape \
         group|box|sphere|hemisphere|cylinder|cone|capsule|torus|tube|plane|wedge|pyramid, parent (another part's name; \
-        children move with it), position [x,y,z] m in the parent's space, rotation [x,y,z] degrees, size [x,y,z] m (the box \
-        the shape fills; cylinders/cones/capsules run along Y), segments, thickness (tube wall), color [r,g,b] 0-1 sRGB, \
-        opacity, texture (path under Assets/ such as "Textures/brick.png" or a .proctex, or "asset:<id>"), textureScale \
-        [u,v], worldUV (texture keeps its size in meters), metallic, roughness, glow [r,g,b] emitted color, glowStrength, \
-        material (a .material asset replacing the look)) and `animations` (each: name, autoplay (default true; every \
-        autoplay animation plays at once in play mode and games), loop loop|once|pingPong, speed, motions (ready-made: \
-        {part, kind spin|bob|swing|pulse|shake, axis x|y|z, amount (spin: turns, bob/shake: m, swing: degrees, pulse: \
-        growth fraction), period seconds}) and tracks (keyframes: {part, property position|rotation|scale, interpolation \
-        linear|hermite|step, keys [{time, value [x,y,z]}]}; values are relative to the part's rest pose: position offset \
-        in m, rotation degrees added, scale multiplier (1 = unchanged))). Every key is optional. A group part has no mesh: \
-        use it as a pivot (hinge, turret) for animated children.
+        children move with it), position [x,y,z] m: the part's center in the parent's space, rotation [x,y,z] degrees \
+        (about X, then Y, then Z, fixed axes; children inherit it), size [x,y,z] m (the box the shape fills), segments, \
+        thickness (tube wall), color [r,g,b] 0-1 sRGB, opacity, texture (path under Assets/ such as "Textures/brick.png" \
+        or a .proctex, or "asset:<id>"), textureScale [u,v], worldUV (texture keeps its size in meters), metallic, \
+        roughness, glow [r,g,b] emitted color, glowStrength, material (a .material asset replacing the look)) and \
+        `animations` (each: name, autoplay (default true; every autoplay animation plays at once in play mode and games), \
+        loop loop|once|pingPong, speed, motions (ready-made: {part, kind spin|bob|swing|pulse|shake, axis x|y|z (the \
+        part's own axes), amount (spin: turns, bob/shake: m, swing: degrees, pulse: growth fraction), period seconds}) \
+        and tracks (keyframes: {part, property position|rotation|scale, interpolation linear|hermite|step, keys [{time, \
+        value [x,y,z]}]}; values are relative to the part's rest pose: position offset in m, rotation degrees added, \
+        scale multiplier (1 = unchanged))). Every key is optional. A group part has no mesh: use it as a pivot (hinge, \
+        turret) for animated children. \
+        Conventions: meters; +Y is up, the model's front faces -Z (the engine's forward), +X is its right. The origin is \
+        the model's base center: it stands on y=0, so a 1 m box on the ground has position [0,0.5,0]. Cylinders, cones, \
+        capsules and tubes run along Y: a wheel on an axle along X (a vehicle facing -Z) needs rotation [0,0,90], one \
+        on an axle along Z [90,0,0]. Real sizes: person 1.8 m, door 2 x 0.9 m, table top 0.75 m high, chair seat 0.45 m, \
+        car about 4.5 x 1.5 x 1.8 m (long, high, wide). \
+        Results include `bounds` (size, min, max, base) and warnings about floating, buried, hidden or out-of-scale \
+        parts and a model off the ground. Workflow: build, look at it with meshBuild.preview, fix the warnings, repeat; \
+        meshBuild.examples has correct builds to copy.
         """
 }
 
@@ -128,19 +139,26 @@ public struct MeshBuildResult: Codable, Equatable, Sendable {
     /// Part names in file order.
     public var parts: [String]
     public var animations: [String]
-    /// Import problems (missing parents, textures, animated parts that don't exist).
+    /// Problems to fix: import problems (missing parents, textures, animated parts that don't
+    /// exist) and spatial ones (floating, buried, hidden or out-of-scale parts, a model not
+    /// standing on y = 0).
     public var warnings: [String]
+    /// Where the model is: overall size and extent in meters, and its lowest point (0: on the ground).
+    public var bounds: MeshBuildBounds?
     /// Entities placed in the scene (meshBuild.new with `place`).
     public var entities: [EntityID]?
 }
 
 extension MeshBuildResult {
-    @MainActor init(_ id: AssetID, _ build: MeshBuild, warnings: [String], entities: [EntityID]? = nil, in session: EditorSession) {
+    @MainActor init(_ id: AssetID, _ build: MeshBuild, entities: [EntityID]? = nil, includePartBounds: Bool = false,
+                    in session: EditorSession) {
         let record = session.assets?.record(id)
         let prefab = record?.objects.first { $0.kind == .prefab }.map { AssetReference(id, subAsset: $0.id) } ?? AssetReference(id)
+        let check = MeshBuildCheck.report(build, includePartBounds: includePartBounds, in: session)
         self.init(asset: id, path: session.assets?.path(of: id) ?? "", prefab: prefab, parts: build.parts.map(\.name),
-                  animations: build.animations.map(\.name), warnings: warnings + (record?.importError.map { ["import failed: \($0)"] } ?? []),
-                  entities: entities)
+                  animations: build.animations.map(\.name),
+                  warnings: (record?.importError.map { ["import failed: \($0)"] } ?? []) + check.warnings,
+                  bounds: check.bounds, entities: entities)
     }
 }
 
@@ -166,7 +184,7 @@ public enum MeshBuildNewCommand: EditorCommand {
 
     public static let id: CommandID = "meshBuild.new"
     public static let title = "New Mesh Build"
-    public static let doc = "Writes a .meshbuild file in `folder` (default: the Assets root) and imports it as a model (a prefab of its parts, one mesh and material per part), optionally placing it in the scene (`place`, at `position`; undoable). Returns the asset, its prefab, the part names and import warnings. Edit it later with meshBuild.edit (small changes) or meshBuild.set (whole contents); placed copies update. " + EditorMeshBuildCommands.formatDoc
+    public static let doc = "Writes a .meshbuild file in `folder` (default: the Assets root) and imports it as a model (a prefab of its parts, one mesh and material per part), optionally placing it in the scene (`place`, at `position`; undoable). Returns the asset, its prefab, the part names, `bounds` and warnings. Edit it later with meshBuild.edit (small changes) or meshBuild.set (whole contents); placed copies update. " + EditorMeshBuildCommands.formatDoc
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> MeshBuildResult {
@@ -178,13 +196,22 @@ public enum MeshBuildNewCommand: EditorCommand {
             entities = session.instantiate(.asset(id), at: arguments.position ?? .zero)
             try session.commands.check(!(entities ?? []).isEmpty, title)
         }
-        return MeshBuildResult(id, build, warnings: MeshBuildCheck.problems(build, in: session), entities: entities, in: session)
+        return MeshBuildResult(id, build, entities: entities, in: session)
     }
 }
 
-/// Problems with a mesh build's references, found without importing (the same ones the importer warns about).
+/// Problems with a mesh build found without importing: its references (the same ones the
+/// importer warns about) and where its parts are (MeshBuildSpatial.swift).
 @MainActor
 enum MeshBuildCheck {
+    /// Reference problems, then spatial warnings, and the bounds.
+    static func report(_ build: MeshBuild, includePartBounds: Bool = false, in session: EditorSession)
+        -> (warnings: [String], bounds: MeshBuildBounds?) {
+        let spatial = spatial(build, includeParts: includePartBounds)
+        return (problems(build, in: session) + spatial.warnings, spatial.bounds)
+    }
+
+    /// Problems with the references: duplicate names, missing parents, textures, materials and animated parts.
     static func problems(_ build: MeshBuild, in session: EditorSession) -> [String] {
         var problems: [String] = []
         let names = build.parts.map(\.name)
@@ -231,19 +258,22 @@ public enum MeshBuildGetCommand: EditorCommand {
         public var prefab: AssetReference
         public var build: MeshBuild
         public var warnings: [String]
+        /// Overall and per-part boxes in the model's space.
+        public var bounds: MeshBuildBounds?
     }
 
     public static let id: CommandID = "meshBuild.get"
     public static let title = "Get Mesh Build"
-    public static let doc = "Reads a .meshbuild file: its parts and animations (every field, defaults included), the prefab to place, and problems with its references."
+    public static let doc = "Reads a .meshbuild file: its parts and animations (every field, defaults included), the prefab to place, warnings (broken references; floating, buried, hidden or out-of-scale parts; a model not standing on y=0) and `bounds`: overall size, min, max and base height plus every part's world box (rest pose, meters)."
     public static let isReadOnly = true
     public static let isIdempotent = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
         let (id, build) = try session.resolveMeshBuild(arguments, title)
-        let summary = MeshBuildResult(id, build, warnings: MeshBuildCheck.problems(build, in: session), in: session)
-        return Result(asset: id, path: summary.path, prefab: summary.prefab, build: build, warnings: summary.warnings)
+        let summary = MeshBuildResult(id, build, includePartBounds: true, in: session)
+        return Result(asset: id, path: summary.path, prefab: summary.prefab, build: build, warnings: summary.warnings,
+                      bounds: summary.bounds)
     }
 }
 
@@ -270,7 +300,7 @@ public enum MeshBuildSetCommand: EditorCommand {
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> MeshBuildResult {
         let (id, _) = try session.resolveMeshBuild(arguments, title)
         _ = try session.commands.require(session.applyMeshBuild(arguments.build, to: id, label: title), title)
-        return MeshBuildResult(id, arguments.build, warnings: MeshBuildCheck.problems(arguments.build, in: session), in: session)
+        return MeshBuildResult(id, arguments.build, in: session)
     }
 }
 
@@ -315,7 +345,7 @@ public enum MeshBuildEditCommand: EditorCommand {
 
     public static let id: CommandID = "meshBuild.edit"
     public static let title = "Edit Mesh Build"
-    public static let doc = "Changes part of a .meshbuild file in one undoable step, in this order: removeParts, addParts, updateParts (name → fields to change; \"name\" renames), removeAnimations, addAnimations, then addMotions / addTracks into `animation`. Placed copies update. Returns the part and animation names and import warnings."
+    public static let doc = "Changes part of a .meshbuild file in one undoable step, in this order: removeParts, addParts, updateParts (name → fields to change; \"name\" renames), removeAnimations, addAnimations, then addMotions / addTracks into `animation`. Placed copies update. Returns the part and animation names, `bounds` and warnings (broken references and spatial problems)."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
@@ -323,7 +353,7 @@ public enum MeshBuildEditCommand: EditorCommand {
         let (id, original) = try session.resolveMeshBuild(arguments, title)
         let build = try edited(original, with: arguments)
         _ = try session.commands.require(session.applyMeshBuild(build, to: id, label: title), title)
-        return MeshBuildResult(id, build, warnings: MeshBuildCheck.problems(build, in: session), in: session)
+        return MeshBuildResult(id, build, in: session)
     }
 
     /// `build` with the edits of `arguments` applied (pure, for tests and the UI).

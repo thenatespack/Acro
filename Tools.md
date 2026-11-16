@@ -20,7 +20,18 @@ wedge, pyramid, group pivots) with a part hierarchy, colors, textures, PBR setti
 keyframe or ready-made animations (spin, bob, swing, pulse, shake). The Mesh Builder tab shows
 the model in its own viewport with picking, Move / Rotate / Scale gizmos and live animation
 preview. Tools: `meshBuild.new`, `meshBuild.get`, `meshBuild.set`, `meshBuild.edit`,
-`meshBuild.open`. See docs/Builders.md › Mesh Builder.
+`meshBuild.open`, `meshBuild.preview`, `meshBuild.examples`. See docs/Builders.md › Mesh Builder.
+Agent feedback loop: every result carries `bounds` (size, min, max, base; per-part boxes in
+`get`) and spatial warnings (floating, buried, hidden, zero/negative size, out-of-scale parts, a
+model off y=0), measured on the generated geometry through the parent chain.
+`meshBuild.preview` renders a 2x2 PNG (orthographic front/right/top, 3/4 perspective) of the
+model in a world of its own, with grid, labels, highlight outline and animation posing (needs the
+editor window). `meshBuild.examples` returns three warning-free builds; the tool docs now state
+the axes, origin, rotation order, cylinder orientation and reference sizes.
+Gaps: no warning for rotations that make no visible difference (round shapes); spatial checks
+use rest-pose AABBs, so a rotated part's box can hide a small gap and parts that collide only
+while animating aren't caught; `bounds` in a posed preview are still the rest pose's (the summary
+gives the posed size); labels overlap when part centers line up in a view.
 
 ### VFX Builder (`.vfx`)
 

@@ -249,6 +249,9 @@ public protocol EditorHost: AnyObject {
     /// Whether it renders (screenshots are possible); false for a UI without a GPU (headless).
     var canRender: Bool { get }
     func capture(_ request: ScreenshotRequest) -> CommandFuture<Image>?
+    /// Renders `views` of `world` (a world apart from the scene, such as a model preview) and
+    /// returns one image per view, or nil when this host can't render. Keeps `world` alive until done.
+    func capture(world: World, views: [WorldCaptureView]) -> CommandFuture<[Image]>?
     /// Sets the UI theme (a `UITheme` preset name) and / or zoom when given, saves them to the
     /// prefs, and returns the appearance; nil when this host has no UI.
     func appearance(theme: String?, uiScale: Float?) throws -> EditorAppearance?
@@ -274,6 +277,29 @@ extension EditorHost {
     public var pickMeshes: (any PickMeshSource)? { nil }
     public var frameStats: EditorStatsSnapshot? { nil }
     public func capture(_ request: ScreenshotRequest) -> CommandFuture<Image>? { nil }
+    public func capture(world: World, views: [WorldCaptureView]) -> CommandFuture<[Image]>? { nil }
+}
+
+/// One picture for `EditorHost.capture(world:views:)`.
+public struct WorldCaptureView {
+    public var view: SceneView
+    public var width: Int
+    public var height: Int
+    /// Drawn with the scene (grids, labels).
+    public var draw: DebugDraw
+    /// Entities drawn with the selection outline.
+    public var outline: [Entity]
+    /// A caption in the top-left corner ("" for none).
+    public var title: String
+
+    public init(view: SceneView, width: Int, height: Int, draw: DebugDraw = DebugDraw(), outline: [Entity] = [], title: String = "") {
+        self.view = view
+        self.width = width
+        self.height = height
+        self.draw = draw
+        self.outline = outline
+        self.title = title
+    }
 }
 
 /// The session's commands, by id. See the notes at the top of this file.
