@@ -617,6 +617,35 @@ private final class Rig {
         #expect(rig.variable("m") == .int(8), "the call's output is what reaches Return when the flow ends, not zero")
     }
 
+    @Test func reroutesPassFlowsAndValues() throws {
+        // start → r1 → r2 → set (exec through two reroutes); 21 → rv → mul.a (data), several targets from one reroute.
+        let graph = try decode("""
+            {"variables": [{"name": "x", "type": "int"}, {"name": "y", "type": "int"}],
+             "nodes": [
+              {"id": "start", "type": "event.start"}, {"id": "r1", "type": "reroute"}, {"id": "r2", "type": "reroute"},
+              {"id": "lit", "type": "math.add", "inputs": {"a": 20, "b": 1}}, {"id": "rv", "type": "reroute"},
+              {"id": "mul", "type": "math.multiply", "inputs": {"b": 2}},
+              {"id": "set", "type": "var.set", "config": {"variable": "x"}},
+              {"id": "set2", "type": "var.set", "config": {"variable": "y"}}
+             ],
+             "links": [{"from": "start.out", "to": "r1.in"}, {"from": "r1.out", "to": "r2.in"}, {"from": "r2.out", "to": "set.in"},
+                       {"from": "set.out", "to": "set2.in"},
+                       {"from": "lit.result", "to": "rv.in"}, {"from": "rv.out", "to": "mul.a"}, {"from": "mul.result", "to": "set.value"},
+                       {"from": "rv.out", "to": "set2.value"}]}
+            """)
+        let execType = VisualScriptNodes.definition("reroute")?.signature(for: graph.node("r2")!, in: graph)
+        #expect(execType?.inputs.first?.type == .exec)
+        #expect(VisualScriptNodes.definition("reroute")?.signature(for: graph.node("rv")!, in: graph).outputs.first?.type
+                == VisualScriptNodes.definition("math.add")?.signature(for: graph.node("lit")!, in: graph).output("result")?.type, "the type of the wire in")
+        let issues = VisualScriptValidator.validate(graph).filter { $0.severity != .info }
+        #expect(issues.isEmpty, "\(issues)")
+        let rig = Rig(graph)
+        rig.step()
+        #expect(rig.lines.isEmpty, "\(rig.lines)")
+        #expect(rig.variable("x") == .int(42) && rig.variable("y") == .int(21))
+        #expect(!rig.runtime.instances.values.first!.program.nodeIDs.contains("r1"), "reroutes are compiled away")
+    }
+
     @Test func componentDefaultsListExposedVariables() {
         let graph = VisualScriptGraph(variables: [VisualScriptVariable(name: "speed", type: .float, defaultValue: .int(3)),
                                                   VisualScriptVariable(name: "secret", type: .int, exposed: false)])

@@ -244,6 +244,32 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(session.assets?.visualScript(of: asset)?.function("half")?.inputs.map(\.name) == ["value"])
     }
 
+    @Test func rerouteOnAWire() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = try project(folder)
+        let created = try call(session, "vscript.new", ["name": "bend", "template": "spinner"])
+        let asset = try #require(AssetID(created["asset"] as! String))
+        let workspace = VisualScriptWorkspace(session: session)
+        #expect(workspace.open(asset))
+        workspace.update()
+        let wire = VisualScriptLink(from: "update.out", to: "rotate.in")
+        let id = try #require(workspace.insertReroute(on: wire, at: Vec2(200, -60)))
+        workspace.update()
+        let graph = try #require(session.assets?.visualScript(of: asset))
+        #expect(graph.node(id)?.type == "reroute")
+        #expect(graph.links.contains(VisualScriptLink(from: "update.out", to: "\(id).in")) && graph.links.contains(VisualScriptLink(from: "\(id).out", to: "rotate.in")))
+        #expect(!graph.links.contains(wire))
+        #expect(VisualScriptValidator.validate(graph).filter { $0.severity != .info }.isEmpty)
+        let node = try #require(workspace.canvas.nodes.first { $0.id == id })
+        #expect(node.isReroute && node.size == VisualScriptCanvas.rerouteSize && node.inputs.first?.type == .exec)
+        // Found under the pointer: the wire from the reroute to rotate.
+        let p = try #require(workspace.canvas.pinPosition(node: node, pin: "out", isOutput: true))
+        let q = try #require(workspace.canvas.pinPosition(node: workspace.canvas.nodes.first { $0.id == "rotate" }!, pin: "in", isOutput: false))
+        let mid = VisualScriptCanvas.wirePoints(workspace.canvas.toScreen(p), workspace.canvas.toScreen(q), zoom: workspace.canvas.zoom)[10]
+        #expect(workspace.canvas.link(at: mid) == VisualScriptLink(from: "\(id).out", to: "rotate.in"))
+    }
+
     @Test func workspaceEditsAreUndoSteps() throws {
         let folder = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: folder) }

@@ -89,6 +89,7 @@ public final class VisualScriptProgram {
 
     static func compile(_ nodes: [VisualScriptNode], _ links: [VisualScriptLink], graph: VisualScriptGraph,
                         function: VisualScriptFunction?) -> VSCompiledBody {
+        let (nodes, links) = VisualScriptReroute.resolve(nodes, links)
         let body = VSCompiledBody(name: function?.name ?? "", function: function)
         for source in nodes where body.index[source.id] == nil {
             let definition = VisualScriptNodes.definition(source.type)

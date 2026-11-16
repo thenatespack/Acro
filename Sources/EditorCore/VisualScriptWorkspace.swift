@@ -204,6 +204,18 @@ public final class VisualScriptWorkspace {
         apply(VisualScriptEdit(updateNodes: nodes.map { VisualScriptNodePatch(id: $0.id, breakpoint: on) }), on ? "Add Breakpoint" : "Remove Breakpoint")
     }
 
+    /// Puts a reroute point on `link` at `position` (graph space): the wire then runs through it.
+    @discardableResult
+    func insertReroute(on link: VisualScriptLink, at position: Vec2) -> String? {
+        let id = function.flatMap { graph.function($0)?.uniqueNodeID("reroute") } ?? graph.uniqueNodeID("reroute")
+        let at = position - VisualScriptCanvas.rerouteSize / 2
+        let added = apply(VisualScriptEdit(addNodes: [VisualScriptNode(id: id, type: VisualScriptReroute.type, x: at.x.rounded(), y: at.y.rounded())],
+                                           disconnect: [link],
+                                           connect: [VisualScriptLink(from: link.from, to: "\(id).in"), VisualScriptLink(from: "\(id).out", to: link.to)]),
+                          "Add Reroute")
+        return added.first
+    }
+
     /// Moves the selected event graph nodes into a new function.
     public func collapseSelection(name: String? = nil) {
         guard function == nil else { session.log.error("Collapse to Function: only nodes of the event graph"); return }
@@ -282,6 +294,7 @@ public final class VisualScriptWorkspace {
             focusSearch()
         }
         canvas.onKey = { [unowned self] key in handleKey(key) }
+        canvas.onInsertReroute = { [unowned self] link, position in insertReroute(on: link, at: position) }
         searchField.onChange = { [unowned self] _ in refreshResults() }
         searchField.onSubmit = { [unowned self] _ in
             if let first = catalog().first { addNode(type: first.type, config: first.config ?? [:]) }
@@ -340,11 +353,13 @@ public final class VisualScriptWorkspace {
                 + (node.configString("field").map { "." + $0 } ?? "")
         }
         for key in ["key", "action", "name"] { if let value = node.configString(key) { title += " " + value } }
-        let size = VisualScriptCanvas.size(title: title, inputs: signature.inputs, outputs: signature.outputs, literals: literals, collapsed: node.collapsed)
+        let reroute = node.type == VisualScriptReroute.type
+        let size = reroute ? VisualScriptCanvas.rerouteSize
+            : VisualScriptCanvas.size(title: title, inputs: signature.inputs, outputs: signature.outputs, literals: literals, collapsed: node.collapsed)
         return VisualScriptCanvasNode(id: node.id, title: title, kind: definition?.kind ?? .action, known: definition != nil,
                                       position: Vec2(node.x, node.y), size: size, inputs: signature.inputs, outputs: signature.outputs,
                                       literals: literals, breakpoint: node.breakpoint, collapsed: node.collapsed, comment: node.comment,
-                                      doc: definition?.doc ?? "Unknown node type \(node.type)")
+                                      doc: definition?.doc ?? "Unknown node type \(node.type)", isReroute: reroute)
     }
 
     static func text(of value: JSONValue) -> String {

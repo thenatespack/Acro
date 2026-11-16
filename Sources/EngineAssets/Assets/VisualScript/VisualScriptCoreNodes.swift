@@ -51,7 +51,7 @@ enum VSNode {
 @MainActor
 enum VisualScriptCoreNodes {
     static func all() -> [VSDef] {
-        events() + flow() + math() + vectors() + logic() + text() + collections() + variables() + functions() + misc()
+        events() + flow() + math() + vectors() + logic() + text() + collections() + variables() + functions() + misc() + VisualScriptReroute.definitions()
     }
 
     // MARK: Events
