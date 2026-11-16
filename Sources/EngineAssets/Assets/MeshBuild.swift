@@ -141,6 +141,16 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
     /// How finely the mesh is split before deforming (0...6, default 3).
     public var subdivide: Int?
 
+    // Looks (MeshBuildLooks.swift): a realistic surface from generated textures.
+    /// A `MeshBuildLook` name ("wood", "rustyMetal"…); `color` tints it (its average color),
+    /// leave `color` at the default for the look's own. Unknown names warn.
+    public var look: String?
+    /// Meters one texture tile of the look covers (default per look).
+    public var lookScale: Float?
+    /// 0...1: grime in low spots, scratches, chipped paint, darker creases.
+    public var wear: Float?
+    /// The part axis the look's grain runs along (default: Y for round shapes, else the longest side).
+    public var grain: MeshBuildAxis?
     /// Not in the file: the signs (±1 per axis) the mesh is reflected by, set on mirror copies by
     /// `MeshBuild.expansion()`; `geometry()` applies it.
     public var reflection = Vec3(1, 1, 1)
@@ -181,7 +191,10 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
          // Curves and deformers: edited in the Mesh Builder's own rows.
          "path": FieldHints(hidden: true), "radius": FieldHints(hidden: true), "radii": FieldHints(hidden: true),
          "closed": FieldHints(hidden: true), "straight": FieldHints(hidden: true), "sections": FieldHints(hidden: true),
-         "axis": FieldHints(hidden: true), "deform": FieldHints(hidden: true), "subdivide": FieldHints(hidden: true)]
+         "axis": FieldHints(hidden: true), "deform": FieldHints(hidden: true), "subdivide": FieldHints(hidden: true),
+         // Edited in the Mesh Builder's own Look rows.
+         "look": FieldHints(hidden: true), "lookScale": FieldHints(hidden: true), "wear": FieldHints(hidden: true),
+         "grain": FieldHints(hidden: true)]
     }
 
     public init(name: String = "Part", shape: MeshBuildShape = .box, parent: String = "", position: Vec3 = .zero,
@@ -191,7 +204,9 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
                 material: String = "", bevel: Float? = nil, profile: [Vec2]? = nil, mirror: MeshBuildMirror? = nil, repetition: MeshBuildRepeat? = nil,
                 // Curves and deformers.
                 path: [Vec3]? = nil, radius: Float? = nil, radii: [Float]? = nil, closed: Bool? = nil, straight: Bool? = nil,
-                sections: [MeshBuildSection]? = nil, axis: MeshBuildAxis? = nil, deform: [MeshBuildDeform]? = nil, subdivide: Int? = nil) {
+                sections: [MeshBuildSection]? = nil, axis: MeshBuildAxis? = nil, deform: [MeshBuildDeform]? = nil, subdivide: Int? = nil,
+                // Looks.
+                look: String? = nil, lookScale: Float? = nil, wear: Float? = nil, grain: MeshBuildAxis? = nil) {
         self.name = name
         self.shape = shape
         self.parent = parent
@@ -224,6 +239,11 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
         self.axis = axis
         self.deform = deform
         self.subdivide = subdivide
+        // Looks.
+        self.look = look
+        self.lookScale = lookScale
+        self.wear = wear
+        self.grain = grain
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -234,6 +254,8 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
         case blend, smooth, resolution, noise
         // Curves and deformers.
         case path, radius, radii, closed, straight, sections, axis, deform, subdivide
+        // Looks.
+        case look, lookScale, wear, grain
     }
 
     /// Every key is optional.
@@ -272,7 +294,12 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
                   axis: try? c.decodeIfPresent(MeshBuildAxis.self, forKey: .axis),
                   deform: (try? c.decodeIfPresent([MeshBuildDeform].self, forKey: .deform))
                       ?? (try? c.decodeIfPresent(MeshBuildDeform.self, forKey: .deform)).flatMap { $0.map { [$0] } },
-                  subdivide: try? c.decodeIfPresent(Int.self, forKey: .subdivide))
+                  subdivide: try? c.decodeIfPresent(Int.self, forKey: .subdivide),
+                  // Looks: lenient, a value of the wrong type reads as unset.
+                  look: (try? c.decodeIfPresent(String.self, forKey: .look)) ?? nil,
+                  lookScale: (try? c.decodeIfPresent(Float.self, forKey: .lookScale)) ?? nil,
+                  wear: (try? c.decodeIfPresent(Float.self, forKey: .wear)) ?? nil,
+                  grain: (try? c.decodeIfPresent(MeshBuildAxis.self, forKey: .grain)) ?? nil)
         // Sculpt fields (MeshBuildSculpt.swift).
         blend = try c.decodeIfPresent(MeshBuildBlend.self, forKey: .blend)
         smooth = try c.decodeIfPresent(Float.self, forKey: .smooth)
@@ -465,18 +492,22 @@ public struct MeshBuildAnimation: Codable, Equatable, Sendable {
 public struct MeshBuild: Codable, Equatable, Sendable {
     public var parts: [MeshBuildPart]
     public var animations: [MeshBuildAnimation]
+    /// Baked ambient occlusion: parts darken where they meet (MeshBuildAO.swift). nil is on.
+    public var ao: Bool?
 
-    public init(parts: [MeshBuildPart] = [], animations: [MeshBuildAnimation] = []) {
+    public init(parts: [MeshBuildPart] = [], animations: [MeshBuildAnimation] = [], ao: Bool? = nil) {
         self.parts = parts
         self.animations = animations
+        self.ao = ao
     }
 
-    private enum CodingKeys: String, CodingKey { case parts, animations }
+    private enum CodingKeys: String, CodingKey { case parts, animations, ao }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(parts: try c.decodeIfPresent([MeshBuildPart].self, forKey: .parts) ?? [],
-                  animations: try c.decodeIfPresent([MeshBuildAnimation].self, forKey: .animations) ?? [])
+                  animations: try c.decodeIfPresent([MeshBuildAnimation].self, forKey: .animations) ?? [],
+                  ao: (try? c.decodeIfPresent(Bool.self, forKey: .ao)) ?? nil)
     }
 
     /// A one-part starting point: a light gray unit cube resting on the ground.
@@ -753,7 +784,7 @@ public struct MeshBuildImporter: AssetImporter {
 
     public var name: String { "meshbuild" }
     public var fileExtensions: [String] { ["meshbuild"] }
-    public var version: Int { 4 }  // 2: mirror and repeat, 3: sculpt, 4: sweep, loft and deform
+    public var version: Int { 5 }  // 2: mirror and repeat, 3: sculpt, 4: sweep, loft and deform, 5: looks and baked occlusion
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         let file: MeshBuild
@@ -787,14 +818,21 @@ public struct MeshBuildImporter: AssetImporter {
             }
         }
 
-        var nodes: [PrefabNode] = []
-        for (i, part) in build.parts.enumerated() {
-            var node = PrefabNode(name: part.name, transform: part.transform)
+        // Every part's mesh first: looks and baked occlusion (MeshBuildImporter+Looks.swift) need them all.
+        var geometries: [MeshGeometry?] = build.parts.enumerated().map { i, part in
             var shapeWarnings: [String] = []
             let geometry = sculpting.sculpted.contains(i) ? nil : part.geometry(warnings: &shapeWarnings)
             if sculpting.sculpted.contains(i), i < file.parts.count { shapeWarnings += part.fieldWarnings }
             for warning in shapeWarnings { context.warn("part '\(part.name)': \(warning)") }
-            if let geometry, !geometry.indices.isEmpty {
+            return geometry
+        }
+        Self.finishSurfaces(build, &geometries, occlusion: file.ao ?? true, firstIndex: firstIndex)
+        var lookTextures = LookTextureRefs()
+
+        var nodes: [PrefabNode] = []
+        for (i, part) in build.parts.enumerated() {
+            var node = PrefabNode(name: part.name, transform: part.transform)
+            if let geometry = geometries[i], !geometry.indices.isEmpty {
                 let meshID = namer.id(kind: "mesh", name: part.name, index: i)
                 asset.add(meshID, name: part.name, .mesh(geometry))
                 node.mesh = context.reference(meshID)
@@ -802,8 +840,9 @@ public struct MeshBuildImporter: AssetImporter {
                     node.material = material
                 } else {
                     let materialID = namer.id(kind: "material", name: part.name, index: i)
-                    asset.add(materialID, name: part.name,
-                              .material(Self.material(for: part, texture: resolve(part.texture, kind: "texture", part: part.name, &context))))
+                    let texture = resolve(part.texture, kind: "texture", part: part.name, &context)
+                    let look = part.resolvedLook.map { lookTextures.references($0, wear: part.wear, &asset, &namer, &context) }
+                    asset.add(materialID, name: part.name, .material(Self.material(for: part, texture: texture, look: look)))
                     node.material = context.reference(materialID)
                 }
             }

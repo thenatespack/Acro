@@ -9,7 +9,9 @@ import EngineScene
 /// It is the contents of a `.proctex` file (JSON, every key optional; `ProceduralTextureImporter`
 /// imports it as one `texture` sub-asset that materials reference like any texture) and can be
 /// used straight from code: `ProceduralTexture.windowGrid(...)`, `.checker(...)`, `.gradient(...)`,
-/// `.noise(...)`, `.bricks(...)`, `.stripes(...)`, or `texture.render()`.
+/// `.noise(...)`, `.bricks(...)`, `.stripes(...)`, or `texture.render()`. With `normalStrength` > 0
+/// the import also has a `normal` texture: a linear tangent-space normal map of the texture's
+/// height (see `renderNormalMap()`), for a material's normal slot.
 ///
 /// Colors are display (sRGB) values 0...1; the default import is sRGB, so they come out unchanged.
 /// Output is deterministic (integer hashing from `seed`), identical on every machine, and tiles
@@ -26,9 +28,26 @@ import EngineScene
 /// - `bricks`: `rows` rows of `columns` bricks (odd rows shifted half a brick), `colorA` bricks
 ///   darkened by up to `variation`, `colorB` mortar of `margin` cell fraction.
 /// - `stripes`: `columns` stripes along `angle` degrees (0: vertical), `fraction` of each `colorA`, the rest `colorB`.
+///
+/// Noise generators (ProceduralTexture+Noise.swift), each a value 0...1 mapped `colorA` to `colorB`
+/// (that value is also the height for the normal map):
+/// - `fbm`: smooth fractal gradient noise, `scale` base cells, `octaves` octaves.
+/// - `ridged`: ridged fractal noise (sharp crests, like veins or mountain ridges), same fields.
+/// - `voronoi`: distance to the nearest of `scale` x `scale` scattered points (0 at a point).
+/// - `cells`: those points' cells (stones, scales, cracked mud), each a random shade between
+///   `colorA` and `colorB`, with `colorC` borders `margin` (fraction of a cell) wide.
+/// - `woodRings`: wood grain: `rows` growth lines across, along the U axis, bent by noise of
+///   `scale` cells and `variation` strength; `colorB` is the dark latewood.
+/// - `streaks`: brushed or streaky lines: noise stretched along `angle` (0, 45, 90 or 135
+///   degrees, to keep it tileable), `columns` streaks across; `fraction` > 0 thins it into
+///   scratches covering about that fraction.
+///
+/// Height for the normal map: the generator's value for the noise kinds, the bricks (1) and
+/// mortar (0) for `bricks`, the color's luminance for the rest.
 public struct ProceduralTexture: Codable, Equatable, Sendable {
     public enum Generator: String, Codable, CaseIterable, Sendable {
         case windowGrid, checker, gradient, noise, bricks, stripes
+        case fbm, ridged, voronoi, cells, woodRings, streaks
     }
 
     public static let maxSize = 4096
@@ -48,6 +67,8 @@ public struct ProceduralTexture: Codable, Equatable, Sendable {
     public var scale: Int
     public var octaves: Int
     public var angle: Float
+    /// Bump strength of the companion `normal` texture (0: no normal map; 1 is moderate).
+    public var normalStrength: Float
 
     public static var fieldHints: [String: FieldHints] {
         ["width": FieldHints(range: 1...Double(maxSize), step: 1), "height": FieldHints(range: 1...Double(maxSize), step: 1),
@@ -59,13 +80,14 @@ public struct ProceduralTexture: Codable, Equatable, Sendable {
          "fraction": FieldHints(range: 0...1, step: 0.01, tooltip: "windowGrid: lit fraction. stripes: width of colorA"),
          "variation": FieldHints(range: 0...1, step: 0.01, tooltip: "Random color variation per window / brick"),
          "scale": FieldHints(range: 1...256, step: 1, tooltip: "noise: base cells across the texture"),
-         "octaves": FieldHints(range: 1...8, step: 1), "angle": FieldHints(range: -180...180, step: 1, tooltip: "Degrees")]
+         "octaves": FieldHints(range: 1...8, step: 1), "angle": FieldHints(range: -180...180, step: 1, tooltip: "Degrees"),
+         "normalStrength": FieldHints(range: 0...20, step: 0.1, tooltip: "Also make a normal map of the texture's height (0: none)")]
     }
 
     public init(generator: Generator = .windowGrid, width: Int = 256, height: Int = 256, seed: Int = 1,
                 colorA: Vec3 = Vec3(0.03, 0.03, 0.04), colorB: Vec3 = Vec3(1, 0.82, 0.45), colorC: Vec3 = Vec3(0.02, 0.03, 0.05),
                 columns: Int = 8, rows: Int = 8, margin: Float = 0.2, fraction: Float = 0.5, variation: Float = 0.25,
-                scale: Int = 4, octaves: Int = 4, angle: Float = 0) {
+                scale: Int = 4, octaves: Int = 4, angle: Float = 0, normalStrength: Float = 0) {
         self.generator = generator
         self.width = width
         self.height = height
@@ -81,6 +103,7 @@ public struct ProceduralTexture: Codable, Equatable, Sendable {
         self.scale = scale
         self.octaves = octaves
         self.angle = angle
+        self.normalStrength = normalStrength
     }
 
     /// Every key is optional.
@@ -101,7 +124,8 @@ public struct ProceduralTexture: Codable, Equatable, Sendable {
                   variation: try c.decodeIfPresent(Float.self, forKey: .variation) ?? d.variation,
                   scale: try c.decodeIfPresent(Int.self, forKey: .scale) ?? d.scale,
                   octaves: try c.decodeIfPresent(Int.self, forKey: .octaves) ?? d.octaves,
-                  angle: try c.decodeIfPresent(Float.self, forKey: .angle) ?? d.angle)
+                  angle: try c.decodeIfPresent(Float.self, forKey: .angle) ?? d.angle,
+                  normalStrength: (try? c.decodeIfPresent(Float.self, forKey: .normalStrength)) ?? d.normalStrength)
     }
 
     /// A sensible starting point for `generator` (colors and counts that look like what it is named for).
@@ -120,6 +144,8 @@ public struct ProceduralTexture: Codable, Equatable, Sendable {
             t.colorA = Vec3(0.6, 0.25, 0.18); t.colorB = Vec3(0.7, 0.7, 0.68); t.rows = 12; t.columns = 6; t.margin = 0.06
         case .stripes:
             t.colorA = Vec3(0.9, 0.8, 0.1); t.colorB = Vec3(0.1, 0.1, 0.1); t.columns = 8; t.angle = 45
+        case .fbm, .ridged, .voronoi, .cells, .woodRings, .streaks:
+            t.applyNoisePreset()
         }
         return t
     }
@@ -130,7 +156,7 @@ public struct ProceduralTexture: Codable, Equatable, Sendable {
         let columns = max(columns, 1), rows = max(rows, 1)
         let colorA = colorA, colorB = colorB, colorC = colorC
         let seed = seed, margin = margin, fraction = fraction, variation = variation
-        let sample: (Float, Float) -> Vec3
+        let sample: @Sendable (Float, Float) -> Vec3
         var samples = 2
         switch generator {
         case .windowGrid:
@@ -188,29 +214,31 @@ public struct ProceduralTexture: Codable, Equatable, Sendable {
                 let t = (u * dx + v * dy) * Float(columns)
                 return t - t.rounded(.down) < fraction ? colorA : colorB
             }
+        case .fbm, .ridged, .voronoi, .cells, .woodRings, .streaks:
+            samples = 1
+            sample = noiseColorSampler()
         }
-        var pixels = [UInt8](repeating: 255, count: w * h * 4)
         let n = Float(samples * samples)
-        for y in 0..<h {
+        let sampleCount = samples  // rows in parallel (each pixel depends only on its coordinates)
+        let pixels = TileNoise.parallelRows(h, w * 4, initial: UInt8(255)) { y, row in
             for x in 0..<w {
                 var sum = Vec3.zero
-                for sy in 0..<samples {
-                    for sx in 0..<samples {
-                        sum += sample((Float(x) + (Float(sx) + 0.5) / Float(samples)) / Float(w),
-                                      (Float(y) + (Float(sy) + 0.5) / Float(samples)) / Float(h))
+                for sy in 0..<sampleCount {
+                    for sx in 0..<sampleCount {
+                        sum += sample((Float(x) + (Float(sx) + 0.5) / Float(sampleCount)) / Float(w),
+                                      (Float(y) + (Float(sy) + 0.5) / Float(sampleCount)) / Float(h))
                     }
                 }
                 let c = sum / n
-                let i = (y * w + x) * 4
-                pixels[i] = Self.byte(c.x)
-                pixels[i + 1] = Self.byte(c.y)
-                pixels[i + 2] = Self.byte(c.z)
+                row[x * 4] = Self.byte(c.x)
+                row[x * 4 + 1] = Self.byte(c.y)
+                row[x * 4 + 2] = Self.byte(c.z)
             }
         }
         return Image(width: w, height: h, pixels: pixels)
     }
 
-    private static func byte(_ v: Float) -> UInt8 { UInt8(min(max(v, 0), 1) * 255 + 0.5) }
+    static func byte(_ v: Float) -> UInt8 { UInt8(min(max(v, 0), 1) * 255 + 0.5) }
 
     /// `color` darkened per channel by up to `amount`, from the cell's hash.
     private static func varied(_ color: Vec3, _ amount: Float, _ seed: Int, _ x: Int, _ y: Int) -> Vec3 {
@@ -301,7 +329,7 @@ public struct ProceduralTextureImporter: AssetImporter {
 
     public var name: String { "proctex" }
     public var fileExtensions: [String] { ["proctex"] }
-    public var version: Int { 1 }
+    public var version: Int { 2 }  // 2: noise generators and the normal map
     public var defaultSettings: Settings { Settings() }
 
     public func importAsset(_ context: inout ImportContext, settings: Settings) throws -> ImportedAsset {
@@ -312,6 +340,11 @@ public struct ProceduralTextureImporter: AssetImporter {
         var asset = ImportedAsset()
         asset.add("texture", name: ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension,
                   .texture(TextureAsset(image: spec.render(), isSRGB: settings.sRGB, generatesMipmaps: settings.mipmaps)))
+        if spec.normalStrength > 0 {
+            // The companion normal map ("asset:<id>#normal"), always linear.
+            asset.add("normal", name: "normal", .texture(TextureAsset(image: spec.renderNormalMap(), isSRGB: false,
+                                                                     generatesMipmaps: settings.mipmaps)))
+        }
         return asset
     }
 }

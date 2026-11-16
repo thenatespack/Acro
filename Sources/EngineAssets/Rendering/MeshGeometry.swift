@@ -13,7 +13,9 @@ public struct MeshVertex: Equatable, Sendable, BitwiseCopyable {
     /// xyz: the direction of increasing U, w: ±1, the handedness of the tangent frame: the
     /// bitangent (toward decreasing V, "up" in the texture) is `cross(normal, tangent.xyz) * w`
     /// (glTF `TANGENT`). All zero when unknown; `SceneRenderer.registerMesh` then generates
-    /// them (`MeshGeometry.generateTangents()`).
+    /// them (`MeshGeometry.generateTangents()`). A magnitude of w below 1 is baked ambient
+    /// occlusion that the lit shader multiplies into the ambient light (mesh builds bake it, see
+    /// MeshBuildAO.swift); only the sign is the handedness.
     public var tangent: Vec4
 
     public init(position: Vec3, normal: Vec3, uv: Vec2 = .zero, tangent: Vec4 = .zero) {

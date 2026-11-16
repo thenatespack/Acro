@@ -38,7 +38,20 @@ public enum EditorMeshBuildCommands {
         Results include `bounds` (size, min, max, base) and warnings about floating, buried, hidden or out-of-scale \
         parts and a model off the ground. Workflow: build, look at it with meshBuild.preview, fix the warnings, repeat; \
         meshBuild.examples has correct builds to copy.
-        """ + " " + MeshBuildPart.shapesDoc + " " + MeshBuildPart.curvesDoc + " " + symmetryDoc + " " + MeshBuildPart.sculptDoc
+        """ + " " + MeshBuildPart.shapesDoc + " " + MeshBuildPart.curvesDoc + " " + symmetryDoc + " " + MeshBuildPart.sculptDoc + " " + looksDoc
+
+    /// The look part keys and the file's `ao` (appended to `formatDoc`).
+    static let looksDoc = """
+        Looks: a part's look gives it a realistic surface (generated color, bump, roughness and metal textures, sized in \
+        meters, so it looks right at any part size): \(MeshBuildLook.allCases.map(\.rawValue).joined(separator: "|")). \
+        Its color tints the look (the average color: a stain for wood, the paint of paintedMetal; leave color out for the \
+        look's own); metallic is ignored, roughness (if set) sets the average. lookScale: meters per texture tile \
+        (default per look); wear 0-1: grime in low spots, scratches, chipped paint, darker creases; grain x|y|z: the \
+        part axis wood grain, planks and brushing run along (default: y on round shapes, else the longest side). The \
+        file's ao (default true) bakes ambient occlusion, darkening parts where they meet. Use looks for anything meant \
+        to look real. Example: {"name": "Lid", "shape": "box", "size": [0.8, 0.05, 0.6], "look": "planks", "wear": 0.4}, \
+        {"name": "Hinge", "look": "paintedMetal", "color": [0.1, 0.1, 0.1], "wear": 0.6}.
+        """
 
     /// The `mirror` / `repeat` part keys (appended to `formatDoc`).
     static let symmetryDoc = """

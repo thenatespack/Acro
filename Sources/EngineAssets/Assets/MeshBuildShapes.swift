@@ -47,6 +47,7 @@ extension MeshBuildPart {
         if let profile, !profile.isEmpty, shape != .lathe && shape != .extrude && shape != .sweep {
             warnings.append("profile is only used by lathe, extrude and sweep parts; this \(shape.rawValue) ignores it")
         }
+        warnings += lookWarnings  // MeshBuildLookMapping.swift
         return warnings + sculptFieldWarnings + curveFieldWarnings
     }
 

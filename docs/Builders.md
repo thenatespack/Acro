@@ -82,6 +82,21 @@ In the Mesh Builder, the **Sculpt** button adds a sculpt that starts as a rounde
 
 The file keeps the short form. `MeshBuild.expanded()` writes the copies out as parts; the importer, character attachments, terrain scatter and grid maps all use it. In the Mesh Builder, the sidebar has Mirror (X / Y / Z) and Repeat (count, line or ring, offset, axis, angle, radius) rows. Copies show in the view, and clicking one selects the part it comes from.
 
+### Looks and ambient occlusion
+
+A part's `look` gives it a realistic surface instead of a flat color: generated, tileable textures for color, bumps (a tangent-space normal map), roughness / metalness and cavity occlusion, all made procedurally (no downloaded assets). Looks: `wood`, `paintedWood`, `planks`, `bark`, `brushedMetal`, `polishedMetal`, `paintedMetal`, `rustyMetal`, `gold`, `copper`, `brass`, `stone`, `cobblestone`, `concrete`, `brick`, `ceramic`, `plastic`, `rubber`, `glass` (see-through), `fabric`, `leather`, `dirt` (ground), `grass`. Names are matched loosely (`"painted metal"`, `"ground"`); an unknown name warns and lists them.
+
+- `color` tints the look: it becomes the surface's average color (the stain of wood, the paint of painted metal). Leave `color` at its default for the look's own colors. `metallic` is ignored; `roughness`, when set, sets the average roughness.
+- `lookScale`: meters one texture tile covers (default per look, e.g. 1 m of wood, 0.9 m of brick). Texture coordinates come from the part's size in meters, so grain and bricks keep their real size on parts of any size: round shapes are wrapped around their Y axis in a whole number of tiles (caps projected from above), the others get a box projection per triangle.
+- `grain` (`"x"`, `"y"`, `"z"`): the part axis wood grain, planks, bark and brushing run along; by default Y for round shapes and the longest side for the others.
+- `wear` (0–1): grime gathering in low spots, scratches, chipped paint (painted looks show the metal or wood underneath) and darker creases.
+
+The file-level `ao` (default on; `"ao": false` turns it off) bakes ambient occlusion into the model: each part's mesh is tessellated and every vertex measures how much of the sky the rest of the model hides, so parts darken where they meet (under a lid, around a bolt, between slats). The lit shader multiplies it into the ambient light like an occlusion texture.
+
+Textures are generated once per look, wear level (wear is rounded to quarters) and resolution per editor or game process and stored with the import in `Library/`; parts sharing a look share its textures. A look's 512 px set takes about 25 ms in a release build (about 0.3–1 s in a debug build). The sidebar's **Look** rows have a look picker with a swatch palette, a **Wear** slider, **Look scale** and **Grain**; the **Ambient occlusion** checkbox is under the part list.
+
+`.proctex` files gained noise generators that use the same tileable noise: `fbm`, `ridged`, `voronoi`, `cells` (stones, scales), `woodRings` and `streaks` (brushed lines or, with `fraction`, scratches). A `normalStrength` above 0 adds a `normal` texture (`"asset:<id>#normal"`, linear) computed from the texture's height, for any material's normal slot.
+
 Editor MCP clients can create and edit these assets with `meshBuild.new`, `meshBuild.edit`, `meshBuild.set`, and `meshBuild.get`, and show one in the Mesh Builder tab with `meshBuild.open`. See [MCPTools.md](MCPTools.md) for schemas and parameters.
 
 ### Conventions

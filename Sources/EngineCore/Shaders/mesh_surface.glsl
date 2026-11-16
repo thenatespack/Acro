@@ -401,6 +401,10 @@ void main() {
     float ao = material.flags.w > 0.5 ? 1.0
         : 1.0 + material.surface.w * (texture(sampler2D(occlusionMap, materialSampler), uv).r - 1.0);
 #endif
+    // Baked vertex occlusion (mesh builds, MeshBuildAO.swift): |tangent.w| below 1. Other meshes
+    // have |w| = 1 (or 0 without tangents), which leaves ao as it is.
+    float vertexAO = abs(vTangent.w);
+    if (vertexAO > 0.0) ao *= min(vertexAO, 1.0);
 
     vec3 color;
     if (!pbr) {

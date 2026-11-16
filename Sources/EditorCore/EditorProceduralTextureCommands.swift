@@ -62,7 +62,7 @@ public enum AssetNewProceduralTextureCommand: EditorCommand {
 
     public static let id: CommandID = "asset.newProceduralTexture"
     public static let title = "New Procedural Texture"
-    public static let doc = "Writes a .proctex file in `folder`: a texture generated from parameters (generator windowGrid, checker, gradient, noise, bricks or stripes; size, colors, seed, counts, margin, variation), imported like any texture so materials can use its `texture` object. Returns its asset id and path. Change it with asset.setProceduralTexture."
+    public static let doc = "Writes a .proctex file in `folder`: a texture generated from parameters (generator windowGrid, checker, gradient, noise, bricks, stripes, or the tileable noise kinds fbm, ridged, voronoi, cells, woodRings, streaks; size, colors, seed, counts, margin, variation, scale, octaves, angle), imported like any texture so materials can use its `texture` object; normalStrength > 0 also makes a linear `normal` texture (a normal map of its height) for a material's normal slot. Returns its asset id and path. Change it with asset.setProceduralTexture."
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
