@@ -15,6 +15,7 @@ Builder tools let people and AI agents author game content inside the Acro edito
 | [Terrain Builder](#terrain-builder) | `.terrain` | Sculpted, painted heightmap terrain with scattered props |
 | [Sound Builder](#sound-builder) | `.sfx` | Synthesized sound effects |
 | [Data Table Builder](#data-table-builder) | `.table` | Typed spreadsheets for game data |
+| [Pixel Sprite Builder](#pixel-sprite-builder) | `.sprite` | Pixel art and sprite animation for `SpriteAnimator` |
 
 Planned builders are tracked in [Tools.md](../Tools.md).
 
@@ -76,3 +77,35 @@ let loot = enemies?.row("goblin")?.reference("drops")   // row column
 
 Cooked games ship the file as written; include tables game code loads by path with the cooker's `--include`. MCP clients use `table.new`, `table.edit`, `table.query`, `table.get`, `table.set`, `table.importCsv`, `table.exportCsv` and `table.open`; see [MCPTools.md](MCPTools.md).
 
+## Pixel Sprite Builder
+
+Pixel Sprite assets (`.sprite`, JSON under `Assets/`) are pixel art with layers, frames and tags. Pixels are palette indices: each cel (one layer in one frame) is a list of row strings with one character per pixel, `.` for transparent and `0`-`9`, `a`-`z`, `A`-`Z` for palette entries 0-61, so a file reads like the picture:
+
+```json
+{"width": 6, "height": 2, "palette": ["#000000", "#ff004d"],
+ "layers": [{"name": "Body", "cels": [["..11..", ".1001."], ["......", "..11.."]]}],
+ "frames": [{"duration": 100}, {"duration": 150}],
+ "tags": [{"name": "idle", "from": 0, "to": 1, "mode": "loop"}]}
+```
+
+Every key is optional (a blank 16 x 16 canvas with the PICO-8 palette). Layers are listed bottom first, with `visible` and `opacity`. Frame durations are milliseconds. A tag names an inclusive frame range played as `loop`, `once` or `pingPong`. `pivot` (default bottom middle) and `pixelsPerUnit` (default 16) apply when the frames are drawn as sprites. Palette presets: `pico8`, `db16`, `db32`, `gameboy`, `grayscale`.
+
+The importer composites each frame and lays the frames out as an atlas grid in one `texture` sub-asset (no mipmaps). Each cell has a 1-pixel border that repeats the frame's edge. Indexing is stable: frame `i` is atlas frame `i`, in cell `i` in reading order, whatever the tags. So the same file also works as a tile set (tile `i` is frame `i`, see `SpriteSheet.frameIndex(column:row:)`). Each tag becomes one `SpriteClip`. Frames longer than the clip's shortest frame are repeated, so per-frame timing plays exactly at the clip's `fps`. A sprite without tags gets one looping `default` clip.
+
+Game code loads sprites through `SpriteAssetLibrary`. It uploads the atlas with nearest filtering, registers it with a `SpriteRenderer` under the file's path and reloads it when the file changes:
+
+```swift
+let library = SpriteAssetLibrary(assets: assets, device: device, renderer: sprites)
+let hero = library.handle(path: "Sprites/hero.sprite")!
+world.spawn(Transform(), Sprite(atlas: hero), library.animator(path: "Sprites/hero.sprite", playing: "run")!)
+// once a frame:
+library.update()
+```
+
+`AssetDatabase.spriteSheet(path:)` returns the same data as plain CPU values: the image, frame rectangles, clips and grid. Cooked packs keep the `.sprite` source next to its texture, so this also works in a shipped game.
+
+In the editor, use **New Sprite** in the asset browser, then double-click the file (or use **Open in Pixel Sprite Builder** in the inspector) to open the **Pixel Sprite Builder** tab next to the Scene view. The canvas shows the current frame with onion skin (the previous frame in red and the next in blue) and a pixel grid when zoomed in. The wheel zooms and middle-drag pans. Left-drag draws with the selected tool: pencil, line, rectangle (outline or filled), fill, eraser or color picker. Alt+click picks a color with any tool, and right-drag erases. Mirror X / Mirror Y draw mirrored copies. The sidebar has an animation preview of the selected tag, the palette (click a swatch, edit the selected color, add, remove, load a preset), layers (add, remove, reorder, rename, show or hide, opacity), frames (step, add, duplicate, remove, reorder, duration, flip, clear the cel), tags (name, range, mode) and the canvas size. Each stroke and each form change is saved to the file as one undo step.
+
+Editor MCP clients can use `sprite.new {width, height, palette, frames}`, `sprite.draw {frame, layer, pixels, x, y, ops}` (rows to stamp, then pencil / line / rect / fill / eraser operations, optionally mirrored; a color is a palette index, a row character or a hex color, which is added to the palette if needed), `sprite.edit {addFrames, copyFrame, removeFrames, durations, tags, addTags, addLayers, updateLayers, palette, width, height}`, `sprite.set`, `sprite.get` (with `frame`, returns that frame as rows) and `sprite.open`. See [MCPTools.md](MCPTools.md) for schemas and parameters.
+
+Not yet: selections and copy / paste between cels, layer blend modes other than normal, importing PNG sprite sheets into a `.sprite`, and per-tag frame events.

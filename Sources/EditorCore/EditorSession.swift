@@ -137,6 +137,9 @@ public final class EditorSession {
     /// The terrain open in the Terrain Builder tab (`terrain.open`), and how the app shows it.
     public var openTerrain: AssetID?
     public var onOpenTerrain: ((AssetID) -> Void)?
+    /// The sprite open in the Pixel Sprite Builder tab (`sprite.open`), and how the app shows it.
+    public var openPixelSprite: AssetID?
+    public var onOpenPixelSprite: ((AssetID) -> Void)?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()

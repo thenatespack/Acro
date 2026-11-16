@@ -371,7 +371,9 @@ public struct CookPlan: Sendable {
             entry.objects = manifest.objects
             let text = (try? AssetJSON.encode(manifest.objects.filter { $0.material != nil || $0.prefab != nil })) ?? Data()
             let references = Self.unique(Self.references(in: text)).filter { $0 != source.id }
-            return Cooked(entry: entry, files: files, data: nil, origin: origin, references: references,
+            // A `.sprite` keeps its source too: games read its frames and tags (AssetDatabase.spriteSheet).
+            let data = importer.name == "sprite" ? try? Data(contentsOf: source.sourceURL) : nil
+            return Cooked(entry: entry, files: files, data: data, origin: origin, references: references,
                           warnings: warnings.map { "\(source.path): \($0)" })
         }
 

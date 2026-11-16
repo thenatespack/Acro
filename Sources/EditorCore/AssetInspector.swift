@@ -419,6 +419,16 @@ public final class AssetInspectorView {
                 content.addChildren([HStack(spacing: 6, [open, Spacer()]),
                                      note("A heightmap terrain, \(Int(size.x)) x \(Int(size.y)) m, split into chunks with colliders. The Terrain Builder has brushes, texture layers and scatter rules.")])
             }
+            if session.isPixelSpriteFile(id) {
+                let open = Button("Open in Pixel Sprite Builder", role: .primary, name: "openSpriteBuilder") { [unowned self] in
+                    session.run(PixelSpriteOpenCommand.self, .init(asset: AssetReference(id)))
+                }
+                open.command = PixelSpriteOpenCommand.id.rawValue
+                open.tooltip = "Draw and animate this sprite in the Pixel Sprite Builder tab (or double-click it in the Assets panel)"
+                let sprite = session.assets?.pixelSprite(of: id)
+                content.addChildren([HStack(spacing: 6, [open, Spacer()]),
+                                     note("Pixel art, \(sprite?.width ?? 0) x \(sprite?.height ?? 0) px, \(sprite?.frames.count ?? 0) frames, \(sprite?.tags.count ?? 0) tags. Imported as an atlas texture; SpriteAssetLibrary gives a SpriteAtlas and one SpriteAnimator clip per tag.")])
+            }
             if session.isMaterialFile(id) {
                 addMaterialForm(AssetReference(id, subAsset: "material"))
             }
