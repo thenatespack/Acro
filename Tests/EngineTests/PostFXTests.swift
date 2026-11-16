@@ -215,3 +215,117 @@ import Testing
         #expect(PostFXResolver.autoFocused(s, world: world, cameraWorld: camera)?.focusDistance == 10)
     }
 }
+
+/// A `.cube` file of size `n` whose output is `transform(input)`.
+func postFXLUTTestsCube(size n: Int, _ transform: (Vec3) -> Vec3) -> String {
+    var text = "# test\nTITLE \"test\"\nLUT_3D_SIZE \(n)\n\n"
+    for b in 0..<n {
+        for g in 0..<n {
+            for r in 0..<n {
+                let out = transform(Vec3(Float(r), Float(g), Float(b)) / Float(n - 1))
+                text += "\(out.x) \(out.y) \(out.z)\n"
+            }
+        }
+    }
+    return text
+}
+
+// LUT grading: `.cube` parsing, the strip layout, the importers, blending and cooking.
+@MainActor @Suite struct PostFXLUTTests {
+    @Test func cubeFilesBecomeStrips() throws {
+        let (strip, warnings) = try PostFXLUT.parseCube(postFXLUTTestsCube(size: 3) { Vec3($0.x, $0.y * 0.5, 1 - $0.z) })
+        #expect(warnings.isEmpty && strip.width == 9 && strip.height == 3)
+        // Texel (r, g, b) sits at x = r + b·N, y = g.
+        let i = (2 * 9 + 1 * 3 + 2) * 4  // r 2, g 2, b 1
+        #expect(strip.pixels[i] == 1 && strip.pixels[i + 1] == 0.5 && strip.pixels[i + 2] == 0.5)
+        #expect(try PostFXLUT.parseCube(postFXLUTTestsCube(size: 2) { $0 }) .strip.pixels == PostFXLUT.identity(size: 2).pixels)
+        #expect(throws: AssetError.self) { try PostFXLUT.parseCube("LUT_1D_SIZE 4\n0 0 0") }
+        #expect(throws: AssetError.self) { try PostFXLUT.parseCube("LUT_3D_SIZE 2\n0 0 0\n1 1 1") }
+        #expect(throws: AssetError.self) { try PostFXLUT.parseCube("LUT_3D_SIZE 99") }
+        #expect(PostFXLUT.size(width: 256, height: 16) == 16 && PostFXLUT.size(width: 256, height: 15) == nil)
+    }
+
+    @Test func applyingInterpolatesInSRGB() {
+        let identity = PostFXLUT.identity(size: 17)
+        for c in [Vec3(0, 0, 0), Vec3(0.2, 0.5, 0.9), Vec3(1, 1, 1), Vec3(0.01, 0.7, 0.33)] {
+            let out = PostFXLUT.apply(c, lut: identity, intensity: 1)
+            #expect(abs(out.x - c.x) < 1e-4 && abs(out.y - c.y) < 1e-4 && abs(out.z - c.z) < 1e-4)
+        }
+        let invert = try! PostFXLUT.parseCube(postFXLUTTestsCube(size: 2) { Vec3(1, 1, 1) - $0 }).strip
+        let out = PostFXLUT.apply(Vec3(1, 0, 0.214), lut: invert, intensity: 1)  // 0.214 linear ≈ 0.5 encoded
+        #expect(abs(out.x) < 1e-5 && abs(out.y - 1) < 1e-5 && abs(out.z - 0.214) < 0.01)
+        #expect(PostFXLUT.apply(Vec3(1, 0, 0), lut: invert, intensity: 0.5) == Vec3(0.5, 0.5, 0.5))
+    }
+
+    @Test func lutsBlendByIntensity() {
+        let none = PostProcessSettings()
+        let a = PostProcessSettings(lut: "a.cube", lutIntensity: 0.8)
+        let b = PostProcessSettings(lut: "b.cube", lutIntensity: 1)
+        let fadeIn = none.blended(to: a, weight: 0.5)
+        #expect(fadeIn.lut == "a.cube" && abs(fadeIn.lutIntensity - 0.4) < 1e-6)
+        let early = a.blended(to: b, weight: 0.25), late = a.blended(to: b, weight: 0.75)
+        #expect(early.lut == "a.cube" && abs(early.lutIntensity - 0.4) < 1e-6)
+        #expect(late.lut == "b.cube" && abs(late.lutIntensity - 0.5) < 1e-6)
+        #expect(PostProcessSettings(lut: "a.cube", lutIntensity: 1.5).validationWarnings().count == 1)
+    }
+
+    @Test func importsCubesAndStripImagesAndProfilesReferenceThem() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("PostFXLUTTests-\(UUID().uuidString)", isDirectory: true)
+        let project = try Project.create(at: url, name: "PostFXLUT")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let assets = AssetDatabase(project: project)
+        let cubeURL = project.url(forAssetPath: "Grading/film.cube")
+        try FileManager.default.createDirectory(at: cubeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(postFXLUTTestsCube(size: 4) { $0 * 0.9 }.utf8).write(to: cubeURL)
+        // A strip PNG whose sidecar names the lut importer.
+        let identity = PostFXLUT.identity(size: 4)
+        let pngURL = project.url(forAssetPath: "Grading/strip.png")
+        try Image(width: 16, height: 4, pixels: identity.pixels.map { UInt8(($0 * 255).rounded()) }).writePNG(to: pngURL)
+        try AssetSidecar(id: AssetID.random(), importer: "lut").write(to: AssetSidecar.url(for: pngURL))
+        assets.scan()
+        let cube = try #require(assets.id(forPath: "Grading/film.cube"))
+        let strip = try #require(assets.id(forPath: "Grading/strip.png"))
+        #expect(assets.record(cube)?.importer == "lut" && assets.record(strip)?.importer == "lut")
+        let cubeTexture = try #require(assets.texture(AssetReference(cube)))
+        #expect(!cubeTexture.generatesMipmaps && PostFXLUT.strip(from: cubeTexture)?.width == 16)
+        let stripTexture = try #require(assets.texture(AssetReference(strip)))
+        #expect(!stripTexture.isSRGB && PostFXLUT.strip(from: stripTexture)?.pixels[4] == 85.0 / 255)
+        // A profile naming the LUT by path stores it as asset:<id> (so cooking follows it).
+        let look = try assets.createPostFX(PostProcessSettings(lut: "Grading/film.cube", lutIntensity: 0.7), at: "Looks/film.postfx")
+        #expect(assets.prefab(AssetReference(look))?.roots.first?.postFX?.lut == AssetReference(cube).description)
+        #expect(assets.postFX(of: look)?.lut == "Grading/film.cube", "the file keeps the path")
+        let missing = try assets.createPostFX(PostProcessSettings(lut: "Grading/none.cube"), at: "Looks/missing.postfx")
+        #expect(assets.record(missing)?.importError == nil)
+        #expect(assets.prefab(AssetReference(missing))?.roots.first?.postFX?.lut == "Grading/none.cube")
+        // Adding the missing LUT later reimports the profile.
+        try Data(postFXLUTTestsCube(size: 2) { $0 }.utf8).write(to: project.url(forAssetPath: "Grading/none.cube"))
+        assets.refresh()
+        let added = try #require(assets.id(forPath: "Grading/none.cube"))
+        #expect(assets.prefab(AssetReference(missing))?.roots.first?.postFX?.lut == AssetReference(added).description)
+    }
+
+    @Test func cookingShipsTheLUTWithTheProfile() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("PostFXLUTTests-\(UUID().uuidString)", isDirectory: true)
+        let project = try Project.create(at: url, name: "PostFXLUTCook")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let assets = AssetDatabase(project: project)
+        let cubeURL = project.url(forAssetPath: "Grading/film.cube")
+        try FileManager.default.createDirectory(at: cubeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(postFXLUTTestsCube(size: 4) { $0 * 0.9 }.utf8).write(to: cubeURL)
+        assets.scan()
+        let look = try assets.createPostFX(PostProcessSettings(lut: "Grading/film.cube"), at: "Looks/film.postfx")
+        let world = World()
+        world.spawn(Transform(), Name("PostFXLUTTestsCamera"), Camera(postFX: AssetReference(look).description))
+        let sceneURL = project.url(forAssetPath: "Scenes/Main.scene")
+        try FileManager.default.createDirectory(at: sceneURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try world.save().write(to: sceneURL)
+        assets.scan()
+        let report = try AssetCooker.plan(database: assets, options: CookOptions(scenes: ["Scenes/Main.scene"], target: CookTarget(platform: .linux)))
+            .run(to: url.appendingPathComponent("out"))
+        let pack = try AssetPack(url: URL(fileURLWithPath: report.packPath))
+        let cube = try #require(assets.id(forPath: "Grading/film.cube"))
+        #expect(pack.contains(look) && pack.contains(cube))
+        let mounted = AssetDatabase(mounting: pack)
+        #expect(PostFXLUT.strip(from: try #require(mounted.texture(AssetReference(cube))))?.height == 4)
+    }
+}

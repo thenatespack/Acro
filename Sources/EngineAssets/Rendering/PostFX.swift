@@ -43,6 +43,7 @@ extension PostProcessSettings {
         if focusRange < 0 { out.append("focusRange should be 0 or more") }
         if aperture < 0.5 || aperture > 64 { out.append("aperture f/\(aperture) is outside f/0.5...f/64") }
         if focalLength < 1 || focalLength > 2000 { out.append("focalLength \(focalLength) mm is outside 1...2000") }
+        if lutIntensity < 0 || lutIntensity > 1 { out.append("lutIntensity \(lutIntensity) is outside 0...1") }
         if maxBlur < 0 || maxBlur > 10 { out.append("maxBlur \(maxBlur) is outside 0...10 (% of the height)") }
         return out
     }
@@ -84,6 +85,17 @@ extension PostProcessSettings {
         r.focalLength = depthOfField && other.depthOfField ? mix(focalLength, other.focalLength)
             : (depthOfField ? focalLength : other.focalLength)
         r.maxBlur = mix(depthOfField ? maxBlur : 0, other.depthOfField ? other.maxBlur : 0)
+        // The same LUT fades its intensity; between two LUTs the first fades out, then the second in.
+        let lutA: Float = lut.isEmpty ? 0 : lutIntensity, lutB: Float = other.lut.isEmpty ? 0 : other.lutIntensity
+        if lut == other.lut {
+            r.lutIntensity = mix(lutIntensity, other.lutIntensity)
+        } else if lut.isEmpty || other.lut.isEmpty {
+            r.lut = lut.isEmpty ? other.lut : lut
+            r.lutIntensity = mix(lutA, lutB)
+        } else {
+            r.lut = t < 0.5 ? lut : other.lut
+            r.lutIntensity = t < 0.5 ? lutA * (1 - 2 * t) : lutB * (2 * t - 1)
+        }
         return r
     }
 }
@@ -303,14 +315,27 @@ public struct PostFXImporter: AssetImporter {
 
     public var name: String { "postfx" }
     public var fileExtensions: [String] { ["postfx"] }
-    public var version: Int { 1 }
+    public var version: Int { 2 }
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
-        let profile: PostProcessSettings
+        var profile: PostProcessSettings
         do { profile = try AssetJSON.decoder().decode(PostProcessSettings.self, from: context.data()) } catch {
             throw AssetError.unreadable("not a post-fx profile: \(error)")
         }
         for warning in profile.validationWarnings() { context.warn(warning) }
+        // The LUT as "asset:<id>", so cooking ships it with the profile.
+        let lutKey = profile.lut.trimmingCharacters(in: .whitespaces)
+        if !lutKey.isEmpty, AssetReference(lutKey) == nil {
+            let path = lutKey.hasPrefix("Assets/") ? String(lutKey.dropFirst("Assets/".count)) : lutKey
+            if let id = context.assetsByPath[path] {
+                profile.lut = AssetReference(id).description
+            } else {
+                context.warn("lut \(lutKey): no such asset (a path under Assets/)")
+                // Remembered as a missing dependency, so adding the file later reimports this profile.
+                let up = String(repeating: "../", count: context.assetPath.split(separator: "/").count - 1)
+                _ = try? context.readDependency(relativePath: up + path)
+            }
+        }
         let stem = ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension
         var asset = ImportedAsset()
         var namer = SubAssetNamer()

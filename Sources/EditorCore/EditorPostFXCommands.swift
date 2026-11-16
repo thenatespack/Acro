@@ -22,7 +22,8 @@ public enum EditorPostFXCommands {
         shadows, 0 = unchanged), gamma [r,g,b] (midtone, 1 = unchanged), gain [r,g,b] (multiplier, 1 = unchanged), saturation \
         (0..2, 1 = unchanged), vignette (0..1), vignetteSoftness (0..1), chromaticAberration (0..1), filmGrain (0..1); depth of \
         field: depthOfField (bool), focusDistance (m), focusRange (m kept fully sharp around it), aperture (f-number, lower \
-        blurs more), focalLength (mm, longer blurs more; the view's field of view is unchanged), maxBlur (largest blur radius, % of the height, 0..10), focusTarget (entity name to auto-focus on). Presets: \
+        blurs more), focalLength (mm, longer blurs more; the view's field of view is unchanged), maxBlur (largest blur radius, % of the height, 0..10), focusTarget (entity name to auto-focus on); LUT grading: lut (path under Assets/ of a .cube file, or of an \
+        N²×N strip image whose sidecar importer is "lut"), lutIntensity (0..1). Presets: \
         \(PostFXPreset.allCases.map(\.rawValue).joined(separator: ", ")). Assign a profile to a camera (Camera.postFX) or a \
         PostFXVolume component (profile, shape box|sphere, size, radius, blendDistance, priority, weight, isGlobal) with postfx.assign.
         """

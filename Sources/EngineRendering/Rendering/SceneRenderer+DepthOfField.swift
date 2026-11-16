@@ -8,6 +8,7 @@ import EngineScene
 /// `prepare` notes whether this frame's post-processing wants it, then `renderShadows` hands
 /// the post-processor the main camera's depth: the particles' or volumetric fog's prepass when
 /// one was rendered this frame, otherwise its own. Without depth of field nothing extra is drawn.
+/// `prepare` also points the post-processor at this renderer's assets, for LUT grading.
 @MainActor
 final class DepthOfFieldState {
     struct Setup {
@@ -28,6 +29,7 @@ extension SceneRenderer {
         depthOfField.setup = nil
         depthOfField.postProcessor = engine.postProcessor
         engine.postProcessor?.sceneDepth = nil
+        engine.postProcessor?.assets = assets  // where LUTs are looked up
         guard let projection, engine.postProcess?.depthOfField == true, engine.postProcessor != nil,
               size.width > 0, size.height > 0 else { return }
         depthOfField.setup = .init(projection: projection, viewProjection: viewProjection, reversedZ: reversedZ, size: size)

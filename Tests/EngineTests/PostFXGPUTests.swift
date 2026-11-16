@@ -39,13 +39,16 @@ import Testing
 
     /// Renders the test world, runs `settings` over it with the preview path, returns the bytes.
     /// `depth`: render the view's depth and pass it (depth of field).
-    static func render(_ settings: [PostProcessSettings], split: Float = 0, depth: Bool = false) throws -> [String: [[UInt8]]] {
+    /// `assets`: where LUTs are looked up.
+    static func render(_ settings: [PostProcessSettings], split: Float = 0, depth: Bool = false,
+                       assets: AssetDatabase? = nil) throws -> [String: [[UInt8]]] {
         var out: [String: [[UInt8]]] = [:]
         try TestDevices.forEachBackend { device, frames in
             let (world, cameraEntity) = postFXGPUTestWorld()
             let renderer = try SceneRenderer(device: device, quality: .high)
             let processor = try PostProcessor(device: device)
             processor.splitPreview = split
+            processor.assets = assets
             let target = try RenderTarget(device: device, width: size.width, height: size.height, multisampled: false)
             let output = try device.makeRenderTarget(.color(width: size.width, height: size.height, format: .rgba8Srgb))
             let view = try #require(SceneView(camera: cameraEntity, in: world, aspect: target.aspectRatio))
@@ -155,6 +158,42 @@ import Testing
             #expect(Self.edgeEnergy(images[1], in: nearRows, columns: nearColumns) < nearSharp * 2 / 3, "\(backend): near cube blurs")
             #expect(Self.meanDifference(images[2], images[0], rows: nearRows, columns: nearColumns) < 6,
                     "\(backend): near cube in focus")
+        }
+        if let metal = results["metal"], let vulkan = results["vulkan"] { #expect(metal == vulkan) }
+    }
+
+    /// LUT grading on both backends: an identity LUT leaves the image (within a code of
+    /// rounding), an inverting one turns every byte into 255 minus it (the LUT works on the
+    /// sRGB-encoded values the target stores), half intensity lands in between, and the same
+    /// bytes come out of Metal and Vulkan.
+    @Test func lutGradingOnEveryBackend() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("PostFXGPUTests-\(UUID().uuidString)", isDirectory: true)
+        let project = try Project.create(at: url, name: "PostFXGPU")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let assets = AssetDatabase(project: project)
+        for (name, transform) in [("identity", { (c: Vec3) in c }), ("invert", { (c: Vec3) in Vec3(1, 1, 1) - c })] {
+            let file = project.url(forAssetPath: "\(name).cube")
+            try Data(postFXLUTTestsCube(size: 17, transform).utf8).write(to: file)
+        }
+        assets.scan()
+        let plain = PostProcessSettings(tonemapper: .neutral)
+        var identity = plain, invert = plain, half = plain
+        identity.lut = "identity.cube"
+        invert.lut = "Assets/invert.cube"
+        half.lut = "asset:" + (assets.id(forPath: "invert.cube")?.description ?? "")
+        half.lutIntensity = 0.5
+        let results = try Self.render([plain, identity, invert, half], assets: assets)
+        for (backend, images) in results.sorted(by: { $0.key < $1.key }) {
+            print("PostFXGPUTests LUT \(backend): " + images.map(Self.hash).joined(separator: " "))
+            Self.dump(images, "lut-\(backend)")
+            var identityError = 0, invertError = 0
+            for i in images[0].indices where i % 4 != 3 {
+                identityError = max(identityError, abs(Int(images[1][i]) - Int(images[0][i])))
+                invertError = max(invertError, abs(Int(images[2][i]) - (255 - Int(images[0][i]))))
+            }
+            #expect(identityError <= 1, "\(backend): identity LUT off by \(identityError)")
+            #expect(invertError <= 2, "\(backend): inverting LUT off by \(invertError)")
+            #expect(images[3] != images[0] && images[3] != images[2])
         }
         if let metal = results["metal"], let vulkan = results["vulkan"] { #expect(metal == vulkan) }
     }

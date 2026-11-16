@@ -204,6 +204,7 @@ public struct AssetImporterRegistry: Sendable {
         registry.register(VFXBuildImporter())
         registry.register(SoundBuildImporter())
         registry.register(PostFXImporter())
+        registry.register(LUTImporter())
         registry.register(DataTableImporter())
         registry.register(VisualScriptImporter())
         registry.register(TerrainImporter())

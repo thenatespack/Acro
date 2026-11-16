@@ -7,7 +7,8 @@
 //    intensity: an energy-conserving lerp, so there is no threshold and brightness is preserved;
 // 2. scale by the exposure: 2^EV, times the auto exposure (exposure_adapt.frag) when enabled;
 // 3. tonemap to 0...1 with the selected curve;
-// 4. write linear values: the sRGB target encodes them.
+// 4. LUT grading (PostFXLUT.swift), then color grading, vignette and grain;
+// 5. write linear values: the sRGB target encodes them.
 // The curves mirror `PostProcessMath` (unit-tested there).
 
 #include "post_common.glsl"
@@ -15,6 +16,7 @@
 layout(set = 2, binding = 9) uniform texture2D sceneImage;
 layout(set = 2, binding = 10) uniform texture2D bloomImage;     // final bloom level (half size)
 layout(set = 2, binding = 11) uniform texture2D exposureImage;  // 1x1, r: auto exposure in EV
+layout(set = 2, binding = 12) uniform texture2D lutImage;       // LUT strip: N² x N, sRGB-encoded values
 
 layout(push_constant) uniform PushConstants {
     float exposure;        // 2^EV
@@ -27,6 +29,7 @@ layout(push_constant) uniform PushConstants {
     vec4 gain;             // rgb: gain (multiplier)
     vec4 look;             // x saturation, y contrast, z vignette intensity, w vignette softness
     vec4 fx;               // x chromatic aberration, y film grain, z time (seconds), w split position (0 = off)
+    vec4 lut;              // x LUT intensity, y LUT size N (0 = no LUT)
 } pc;
 
 layout(location = 0) out vec4 outColor;
@@ -61,6 +64,33 @@ vec3 aces(vec3 c) {
     return vec3(dot(vec3(1.60475, -0.53108, -0.07367), v),
                 dot(vec3(-0.10208, 1.10813, -0.00605), v),
                 dot(vec3(-0.00327, -0.07276, 1.07602), v));
+}
+
+vec3 srgbEncode(vec3 c) {
+    return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
+}
+
+vec3 srgbDecode(vec3 c) {
+    return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+}
+
+vec3 lutTexel(int r, int g, int b, int n) {
+    return texelFetch(sampler2D(lutImage, pointSampler), ivec2(r + b * n, g), 0).rgb;
+}
+
+// `color` (linear, 0...1) through the LUT strip: sRGB-encoded, looked up trilinearly with
+// exact loads, decoded (`PostFXLUT.apply` mirrors it).
+vec3 applyLUT(vec3 color) {
+    int n = int(pc.lut.y);
+    vec3 s = clamp(srgbEncode(clamp(color, 0.0, 1.0)), 0.0, 1.0) * float(n - 1);
+    ivec3 i = min(ivec3(floor(s)), ivec3(n - 2));
+    vec3 f = s - vec3(i);
+    vec3 c00 = mix(lutTexel(i.x, i.y, i.z, n), lutTexel(i.x + 1, i.y, i.z, n), f.x);
+    vec3 c10 = mix(lutTexel(i.x, i.y + 1, i.z, n), lutTexel(i.x + 1, i.y + 1, i.z, n), f.x);
+    vec3 c01 = mix(lutTexel(i.x, i.y, i.z + 1, n), lutTexel(i.x + 1, i.y, i.z + 1, n), f.x);
+    vec3 c11 = mix(lutTexel(i.x, i.y + 1, i.z + 1, n), lutTexel(i.x + 1, i.y + 1, i.z + 1, n), f.x);
+    vec3 graded = mix(mix(c00, c10, f.y), mix(c01, c11, f.y), f.z);
+    return srgbDecode(clamp(graded, 0.0, 1.0));
 }
 
 float hash12(vec2 p) {
@@ -113,6 +143,9 @@ void main() {
         color = aces(color);
     }
     color = clamp(color, 0.0, 1.0);
+    if (pc.lut.y > 1.5) {
+        color = mix(color, applyLUT(color), pc.lut.x);
+    }
     if (pc.lift.w > 0.5) {
         // Color grading on the display-referred (linear) result: contrast around middle gray,
         // lift / gamma / gain, then saturation.

@@ -258,6 +258,7 @@ public final class PostFXWorkspace {
         renderer.beginViews(world: world, frame: frame, shadowFocus: view)
         renderer.renderView(view, into: target, frame: frame)
         processor.splitPreview = splitEnabled ? splitPosition : 0
+        processor.assets = session.assets
         var settings = profile
         var depth: PostProcessor.Depth?
         if settings.depthOfField {

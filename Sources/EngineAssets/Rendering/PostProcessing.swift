@@ -82,6 +82,12 @@ public struct PostProcessSettings: Component, Codable, Equatable, Sendable {
     public var focalLength: Float
     /// The largest blur radius, in percent of the image height.
     public var maxBlur: Float
+    /// LUT grading: a `.cube` file or LUT strip image (path relative to `Assets/` or
+    /// "asset:<id>"; see `PostFXLUT`) applied after tonemapping, before lift / gamma / gain.
+    /// Empty = none. Needs `PostProcessor.assets` (`SceneRenderer` sets it).
+    public var lut: String
+    /// How much of the LUT's result is mixed in (0...1).
+    public var lutIntensity: Float
     /// Auto-focus: the name of an entity whose distance from the camera (along its view axis)
     /// replaces `focusDistance` every frame. Empty = manual focus.
     public var focusTarget: String
@@ -93,7 +99,9 @@ public struct PostProcessSettings: Component, Codable, Equatable, Sendable {
                 saturation: Float = 1, contrast: Float = 1, vignette: Float = 0, vignetteSoftness: Float = 0.5,
                 chromaticAberration: Float = 0, filmGrain: Float = 0,
                 depthOfField: Bool = false, focusDistance: Float = 10, focusRange: Float = 2, aperture: Float = 2.8,
-                focalLength: Float = 50, maxBlur: Float = 1.5, focusTarget: String = "") {
+                focalLength: Float = 50, maxBlur: Float = 1.5, focusTarget: String = "", lut: String = "", lutIntensity: Float = 1) {
+        self.lut = lut
+        self.lutIntensity = lutIntensity
         self.focalLength = focalLength
         self.depthOfField = depthOfField
         self.focusDistance = focusDistance
@@ -127,7 +135,7 @@ public struct PostProcessSettings: Component, Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case tonemapper, exposure, autoExposure, autoExposureMin, autoExposureMax, adaptationSpeed, bloom, bloomIntensity
         case lift, gamma, gain, saturation, contrast, vignette, vignetteSoftness, chromaticAberration, filmGrain
-        case depthOfField, focusDistance, focusRange, aperture, focalLength, maxBlur, focusTarget
+        case depthOfField, focusDistance, focusRange, aperture, focalLength, maxBlur, focusTarget, lut, lutIntensity
     }
 
     /// Missing keys take their defaults, so scene files stay loadable when fields are added.
@@ -158,6 +166,8 @@ public struct PostProcessSettings: Component, Codable, Equatable, Sendable {
         focalLength = try c.decodeIfPresent(Float.self, forKey: .focalLength) ?? d.focalLength
         maxBlur = try c.decodeIfPresent(Float.self, forKey: .maxBlur) ?? d.maxBlur
         focusTarget = try c.decodeIfPresent(String.self, forKey: .focusTarget) ?? d.focusTarget
+        lut = try c.decodeIfPresent(String.self, forKey: .lut) ?? d.lut
+        lutIntensity = try c.decodeIfPresent(Float.self, forKey: .lutIntensity) ?? d.lutIntensity
     }
 
     public static var fieldHints: [String: FieldHints] {
@@ -180,6 +190,8 @@ public struct PostProcessSettings: Component, Codable, Equatable, Sendable {
             "focalLength": FieldHints(range: 10...300, step: 1, displayName: "Focal length (mm)", tooltip: "Longer blurs more"),
             "maxBlur": FieldHints(range: 0...5, step: 0.05, displayName: "Max blur (% of height)"),
             "focusTarget": FieldHints(tooltip: "Auto-focus on the entity with this name"),
+            "lut": FieldHints(displayName: "LUT", tooltip: "A .cube file or LUT strip image (path under Assets/)"),
+            "lutIntensity": FieldHints(range: 0...1, step: 0.01, displayName: "LUT intensity"),
         ]
     }
 
@@ -359,6 +371,8 @@ public final class PostProcessor {
     private let depthOfFieldPipeline: RenderPipeline
     private var depthOfFieldTarget: GPURenderTarget?
     private let pointSampler: GPUSampler
+    /// The LUT strip last uploaded, by key and asset revision.
+    private var lutCache: (key: String, revision: Int, texture: GPUTexture?)?
     /// Bound in place of inputs a pass doesn't use (Vulkan wants every declared binding valid).
     private let black: GPUTexture
     private var bloomChain: (width: Int, height: Int, down: [GPURenderTarget], up: [GPURenderTarget])?
@@ -413,6 +427,29 @@ public final class PostProcessor {
     }
 
     public var sceneDepth: Depth?
+
+    /// Where `PostProcessSettings.lut` is looked up. `SceneRenderer` sets it to its own.
+    public weak var assets: AssetDatabase?
+
+    /// The LUT strip `key` names, uploaded (cached until the asset changes); nil if it names
+    /// none or isn't a strip.
+    func lutTexture(_ key: String) -> GPUTexture? {
+        let key = key.trimmingCharacters(in: .whitespaces)
+        guard let assets else { return nil }
+        let id: AssetID? = AssetReference(key)?.asset
+            ?? assets.id(forPath: key.hasPrefix("Assets/") ? String(key.dropFirst("Assets/".count)) : key)
+        guard let id else { return nil }
+        let revision = assets.revision(of: id)
+        if let cache = lutCache, cache.key == key, cache.revision == revision { return cache.texture }
+        var texture: GPUTexture?
+        if let asset = assets.texture(AssetReference(id)), let strip = PostFXLUT.strip(from: asset) {
+            do { texture = try device.makeTexture(image: strip, generateMipmaps: false) } catch {
+                print("PostProcessor: LUT \(key) unavailable: \(error)")
+            }
+        }
+        lutCache = (key, revision, texture)
+        return texture
+    }
 
     /// Makes the next auto-exposure frame converge at once instead of adapting (camera cuts).
     public func resetExposure() {
@@ -477,6 +514,8 @@ public final class PostProcessor {
         pass.setTexture(scene, index: 1)
         pass.setTexture(inputs.bloom ?? black, index: 2)
         pass.setTexture(inputs.exposure ?? black, index: 3)
+        let lut = settings.lut.isEmpty || settings.lutIntensity <= 0 ? nil : lutTexture(settings.lut)
+        pass.setTexture(lut ?? black, index: 4)
         pass.setSampler(pointSampler, index: 1)
         let bloom = inputs.bloom
         grainTime += 1.0 / 60
@@ -495,7 +534,8 @@ public final class PostProcessor {
             look: SIMD4(max(settings.saturation, 0), max(settings.contrast, 0), min(max(settings.vignette, 0), 1),
                         min(max(settings.vignetteSoftness, 0.01), 1)),
             fx: SIMD4(max(settings.chromaticAberration, 0), max(settings.filmGrain, 0), grainTime,
-                      min(max(splitPreview, 0), 1))))
+                      min(max(splitPreview, 0), 1)),
+            lut: SIMD4(min(max(settings.lutIntensity, 0), 1), Float(lut?.height ?? 0), 0, 0)))
         pass.draw(vertexCount: 3)
     }
 
@@ -652,4 +692,6 @@ struct TonemapConstants {
     var gain: SIMD4<Float>
     var look: SIMD4<Float>
     var fx: SIMD4<Float>
+    /// x LUT intensity, y LUT size (0: none).
+    var lut: SIMD4<Float>
 }
