@@ -349,6 +349,9 @@ public final class GridMapWorkspace {
             while let entity = stack.popLast() {
                 world.modify(MeshRenderer.self, for: entity) { renderer in
                     renderer.opacity = opacity
+                    // Glow fades too: emission is added on top of the blended color, so a lamp
+                    // on a faded floor would otherwise shine as brightly as on the edited one.
+                    renderer.emissiveStrength = opacity
                     renderer.isVisible = visible
                 }
                 stack += world.children(of: entity)

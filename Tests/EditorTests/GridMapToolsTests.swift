@@ -169,6 +169,10 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(!renderers("Floor 1").isEmpty && renderers("Floor 1").allSatisfy { !$0.isVisible })
         workspace.builder?.setFloor(2)
         #expect(renderers("Floor 0").allSatisfy { $0.isVisible && $0.opacity < 1 })
+        #expect(renderers("Floor 0").allSatisfy { $0.emissiveStrength == $0.opacity }, "glow fades with the floor")
+        workspace.builder?.setFloor(0)
+        #expect(renderers("Floor 0").allSatisfy { $0.opacity == 1 && $0.emissiveStrength == 1 })
+        workspace.builder?.setFloor(2)
 
         _ = session.performUndo()
         _ = session.performUndo()
