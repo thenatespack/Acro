@@ -148,7 +148,7 @@ struct MaterialAssetComponent: Component {
         return hints
     }()
     /// The node graph is edited in the Material Builder, not as rows here.
-    static var fieldHints: [String: FieldHints] { colorHints.merging(["graph": FieldHints(hidden: true)]) { a, _ in a } }
+    static var fieldHints: [String: FieldHints] { colorHints.merging(["graph": FieldHints(hidden: true), "terrain": FieldHints(hidden: true)]) { a, _ in a } }
 
     var material: MaterialAsset
 

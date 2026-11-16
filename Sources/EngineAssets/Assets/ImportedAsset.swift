@@ -147,6 +147,9 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
     /// `emissive` still apply. The importer resolves its textures to references and puts them in
     /// the five texture slots, in the order `MaterialGraphCompiler` assigns them.
     public var graph: MaterialGraph?
+    /// Per-pixel terrain layer blending (see TerrainSplat.swift), which uses the texture slots its
+    /// own way; the `.terrain` importer sets it. Ignored when there is a `graph`.
+    public var terrain: TerrainSplat?
 
     public init(shading: ShadingModel = .pbr, baseColor: Vec4 = Vec4(0.8, 0.8, 0.8, 1), texture: AssetReference? = nil,
                 filter: SamplerFilter = .linear, mipFilter: SamplerMipFilter = .linear, addressMode: SamplerAddressMode = .repeat,
@@ -212,6 +215,12 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
             normalScale: normalScale, occlusionTexture: try resolve(occlusionTexture), occlusionStrength: occlusionStrength,
             emissiveColor: emissiveColor, emissiveTexture: try resolve(emissiveTexture), emissiveStrength: emissiveStrength,
             alphaMode: alphaMode, alphaCutoff: alphaCutoff, doubleSided: doubleSided)
+        if graph == nil, let terrain {
+            // Drawn by the material graph path with the terrain shader; the textures stay in their slots.
+            material.shading = .pbr
+            material.graph = terrain.program(metallic: metallic, roughness: roughness, normalScale: normalScale)
+            return material
+        }
         guard let graph else { return material }
         // A graph material: compiled (cached by its code), lit as PBR, its textures in slots 1-5.
         material.shading = .pbr
@@ -237,7 +246,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         case shading, baseColor, texture, filter, mipFilter, addressMode, uvScale, uvOffset, uvRotation, checker, emissive
         case specular, shininess, metallic, roughness, metallicRoughnessTexture, normalTexture, normalScale
         case occlusionTexture, occlusionStrength, emissiveColor, emissiveTexture, emissiveStrength, alphaMode, alphaCutoff
-        case doubleSided, isTransparent, graph
+        case doubleSided, isTransparent, graph, terrain
     }
 
     public init(from decoder: any Decoder) throws {
@@ -280,6 +289,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         alphaCutoff = try c.decodeIfPresent(Float.self, forKey: .alphaCutoff) ?? d.alphaCutoff
         doubleSided = try c.decodeIfPresent(Bool.self, forKey: .doubleSided) ?? d.doubleSided
         graph = try c.decodeIfPresent(MaterialGraph.self, forKey: .graph)
+        terrain = try c.decodeIfPresent(TerrainSplat.self, forKey: .terrain)
     }
 
     /// Writes every key except unset textures. `alphaMode` is written as "opaque", "mask" or "blend".
@@ -314,6 +324,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         try c.encode(alphaCutoff, forKey: .alphaCutoff)
         try c.encode(doubleSided, forKey: .doubleSided)
         try c.encodeIfPresent(graph, forKey: .graph)
+        try c.encodeIfPresent(terrain, forKey: .terrain)
     }
 }
 
@@ -525,16 +536,19 @@ public struct PrefabNode: Equatable, Sendable, Codable {
     public var collider2D: Collider2D?
     /// Layer parallax and tile animation (instantiating adds the `TilemapMotion`); tilemaps use it.
     public var tilemapMotion: TilemapMotion?
+    /// Coarser meshes by camera distance (instantiating adds the `MeshLOD`); terrains use it for their chunks.
+    public var lod: MeshLOD?
     public var children: [PrefabNode]
 
     public init(name: String, transform: Transform = Transform(), mesh: AssetReference? = nil,
                 material: AssetReference? = nil, skin: PrefabSkin? = nil, animator: FieldAnimator? = nil,
                 children: [PrefabNode] = [], particles: ParticleEmitter? = nil, postFX: PostProcessSettings? = nil,
                 collider: ColliderShape? = nil, collider2D: Collider2D? = nil, subEmitterNodes: [Int]? = nil,
-                tilemapMotion: TilemapMotion? = nil) {
+                tilemapMotion: TilemapMotion? = nil, lod: MeshLOD? = nil) {
         self.subEmitterNodes = subEmitterNodes
         self.collider2D = collider2D
         self.tilemapMotion = tilemapMotion
+        self.lod = lod
         self.postFX = postFX
         self.collider = collider
         self.name = name
@@ -590,6 +604,7 @@ extension World {
             if let shape = node.collider { add(Collider(shape), to: entity) }
             if let collider2D = node.collider2D { add(collider2D, to: entity) }
             if let motion = node.tilemapMotion { add(motion, to: entity) }
+            if let lod = node.lod { add(lod, to: entity) }
             if let skin = node.skin { skinned.append((entity, skin)) }
             if let parent { setParent(entity, to: parent) }
             for child in node.children { _ = spawn(child, parent: entity) }

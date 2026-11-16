@@ -593,10 +593,16 @@ public final class SceneRenderer {
         environmentLighting.prepare(environment, map: map, toLight: light.toLight, lightColor: light.color * light.intensity)
     }
 
-    func gather(_ world: World) {
+    /// `viewpoint` is where `MeshLOD` levels are measured from (default: the camera `prepare` uses).
+    func gather(_ world: World, viewpoint: Vec3? = nil) {
         graphTime = Float(world.time.elapsed.truncatingRemainder(dividingBy: 3600))
         syncAssets()
         syncLineMeshes(world)
+        if world.existingStore(MeshLOD.self) != nil {
+            prep.lodViewpoint = viewpoint
+                ?? RenderPrep.findCamera(in: world, preferred: camera).map { Vec3($0.world.c3.x, $0.world.c3.y, $0.world.c3.z) }
+        }
+        prep.lowQuality = quality == .low
         prep.gather(world: world)
         reflections.find(in: world)
         // Upload assets entities started using, then gather again so they draw this frame
@@ -750,7 +756,7 @@ public final class SceneRenderer {
             Profiler.end()
             stats.prepareTime = Self.seconds(since: start)
         }
-        gather(world)
+        gather(world, viewpoint: shadowFocus?.eye)
         let focus: ShadowSetup.Focus
         if let shadowFocus {
             focus = ShadowSetup.Focus(view: shadowFocus.view, projection: shadowFocus.projection,

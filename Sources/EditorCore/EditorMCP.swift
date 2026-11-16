@@ -646,6 +646,7 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
             properties["alphaMode"] = cases(["opaque", "mask", "blend"])
             properties["isTransparent"] = nil
             properties["graph"] = nil  // edited with the materialGraph.* tools
+            properties["terrain"] = nil  // set by the .terrain importer
             properties["baseColor"]?["description"] = "Linear [r, g, b, a]."
             properties["emissiveColor"] = Self.floats(3, "Linear [r, g, b].")
             material["properties"] = .object(properties)

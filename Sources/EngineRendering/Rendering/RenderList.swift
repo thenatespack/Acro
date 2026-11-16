@@ -131,8 +131,40 @@ public struct RenderPrep {
     /// The same, split by what the entity wanted the key for.
     public private(set) var missingMeshKeys: Set<String> = []
     public private(set) var missingMaterialKeys: Set<String> = []
+    /// Where `MeshLOD` distances are measured from (the camera); nil draws every entity's level 0.
+    public var lodViewpoint: Vec3?
+    /// Draws `MeshLOD.lowQualityMaterial`s instead of the renderers' materials.
+    public var lowQuality = false
+    /// The `MeshLOD` level each entity drew last (for hysteresis) and the frame it was seen.
+    private var lodLevels: [Entity: (level: Int, frame: Int)] = [:]
+    private var lodFrame = 0
 
     public init() {}
+
+    /// The `MeshLOD` level `entity` drew in the last gather (nil if it has none or nothing was measured).
+    public func lodLevel(of entity: Entity) -> Int? { lodLevels[entity]?.level }
+
+    /// The mesh and material keys `renderer` draws with this frame under `lod`. A level or material
+    /// that isn't registered yet is reported missing (so it loads) and the entity keeps what it drew.
+    private mutating func lodKeys(_ lod: MeshLOD, entity: Entity, renderer: MeshRenderer, model: Mat4) -> (mesh: String, material: String) {
+        var materialKey = renderer.material.key
+        if lowQuality, let low = lod.lowQualityMaterial?.key {
+            if materials.contains(low) { materialKey = low } else { missingKeys.insert(low); missingMaterialKeys.insert(low) }
+        }
+        guard let eye = lodViewpoint, let base = meshes.id(of: renderer.mesh.key) else { return (renderer.mesh.key, materialKey) }
+        let distance = MeshLOD.distance(from: eye, to: meshes[base].transformed(by: model))
+        let previous = lodLevels[entity]?.level ?? -1
+        var level = lod.level(distance: distance, current: previous)
+        let key = lod.mesh(level: level, base: renderer.mesh).key
+        if level > 0 && !meshes.contains(key) {
+            missingKeys.insert(key)
+            missingMeshKeys.insert(key)
+            level = max(previous, 0)
+            if level > 0 && !meshes.contains(lod.mesh(level: level, base: renderer.mesh).key) { level = 0 }
+        }
+        lodLevels[entity] = (level, lodFrame)
+        return (lod.mesh(level: level, base: renderer.mesh).key, materialKey)
+    }
 
     /// Rebuilds `items` from every visible entity with a `GlobalTransform` and a
     /// `MeshRenderer`, and advances the motion history by one frame.
@@ -141,17 +173,25 @@ public struct RenderPrep {
         items.removeAll(keepingCapacity: true)
         skins.removeAll(keepingCapacity: true)
         let hasArrays = world.existingStore(MeshArray.self) != nil
+        let hasLODs = world.existingStore(MeshLOD.self) != nil
+        lodFrame += 1
+        var lodSeen = 0
         world.query(GlobalTransform.self, MeshRenderer.self) { entity, transform, renderer in
             guard renderer.isVisible else { return }
-            let mesh = meshes.id(of: renderer.mesh.key), material = materials.id(of: renderer.material.key)
+            var meshKey = renderer.mesh.key, materialKey = renderer.material.key
+            if hasLODs, let lod = world.get(MeshLOD.self, for: entity) {
+                (meshKey, materialKey) = lodKeys(lod, entity: entity, renderer: renderer, model: transform.matrix)
+                lodSeen += 1
+            }
+            let mesh = meshes.id(of: meshKey), material = materials.id(of: materialKey)
             guard let mesh, let material else {
                 if mesh == nil {
-                    missingKeys.insert(renderer.mesh.key)
-                    missingMeshKeys.insert(renderer.mesh.key)
+                    missingKeys.insert(meshKey)
+                    missingMeshKeys.insert(meshKey)
                 }
                 if material == nil {
-                    missingKeys.insert(renderer.material.key)
-                    missingMaterialKeys.insert(renderer.material.key)
+                    missingKeys.insert(materialKey)
+                    missingMaterialKeys.insert(materialKey)
                 }
                 return
             }
@@ -196,6 +236,7 @@ public struct RenderPrep {
                 alphaTested: materials[material].alphaTested,
                 skin: skin))
         }
+        if lodLevels.count > 2 * lodSeen + 64 { lodLevels = lodLevels.filter { $0.value.frame == lodFrame } }
         gatherLines(world: world)
         poseSkins(world: world)
     }

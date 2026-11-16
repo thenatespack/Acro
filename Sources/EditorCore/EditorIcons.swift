@@ -26,6 +26,7 @@ public enum EditorIcons {
         MeshRenderer.componentName: "box",
         LineRenderer.componentName: "cable",
         MeshArray.componentName: "layout-grid",
+        MeshLOD.componentName: "layers",
         Collider.componentName: "square-dashed",
         RigidBody.componentName: "weight",
         Joint.componentName: "link",

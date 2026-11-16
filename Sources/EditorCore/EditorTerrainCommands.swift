@@ -19,9 +19,12 @@ public enum EditorTerrainCommands {
     static let formatDoc = """
         A terrain is a heightmap centered on its origin: `size` [x,z] meters, `resolution` height samples per side (3-1025), \
         `heightRange` (meters at full height; heights span 0 to heightRange), `chunkCells` (cells per chunk mesh), `lods` \
-        (extra detail meshes per chunk), `collider` (a triangle-mesh collider per chunk), `colliderLod`, `albedoSize`, `seed`, \
+        (detail levels per chunk, swapped by camera distance), `lodDistance` (meters where level 1 starts, doubling per level; 0: \
+        1.5 chunk widths), `collider` (a triangle-mesh collider per chunk), `colliderLod`, `albedoSize`, `seed`, \
         `layers` (each: name, color [r,g,b] 0-1 sRGB, texture (path under Assets/: an image or .proctex), tileSize meters per \
-        repeat), `scatter` rules (each: name, asset (a .meshbuild path, or "asset:<id>#mesh/<name>"), material, density \
+        repeat, normalMap (an optional tangent-space normal map path, tiled like texture), material (an optional graph .material path \
+        drawn where the layer is painted, its UVs repeating every tileSize, instead of texture)); up to 8 layers blend per pixel on \
+        the GPU (more are baked into one albedo, which low quality always draws), `scatter` rules (each: name, asset (a .meshbuild path, or "asset:<id>#mesh/<name>"), material, density \
         (candidate spots per 100 m²), minSlope/maxSlope degrees, minHeight/maxHeight meters, minScale/maxScale, layer (only \
         where this layer is painted), alignToNormal, seed, maxCount), and the data `heights` (base64 UInt16) and `splat` \
         (base64 UInt8 weights per layer). Positions in tools are terrain-space [x,z] meters from the center (x and z each run \
@@ -162,8 +165,17 @@ enum TerrainCheck {
         var problems: [String] = []
         let names = terrain.layers.map(\.name)
         if Set(names).count != names.count { problems.append("some layers share a name; scatter rules use the first") }
+        if names.count > TerrainSplat.maxLayers {
+            problems.append("\(names.count) layers: only \(TerrainSplat.maxLayers) blend per pixel, so they're baked into one texture")
+        }
         for layer in terrain.layers where !layer.texture.isEmpty && MeshBuildCheck.resolve(layer.texture, session: session) == nil {
             problems.append("layer '\(layer.name)': no texture asset '\(layer.texture)'")
+        }
+        for layer in terrain.layers where !layer.normalMap.isEmpty && MeshBuildCheck.resolve(layer.normalMap, session: session) == nil {
+            problems.append("layer '\(layer.name)': no normal map asset '\(layer.normalMap)'")
+        }
+        for layer in terrain.layers where !layer.material.isEmpty && MeshBuildCheck.resolve(layer.material, session: session) == nil {
+            problems.append("layer '\(layer.name)': no material asset '\(layer.material)'")
         }
         for rule in terrain.scatter {
             if rule.asset.isEmpty {
@@ -217,7 +229,7 @@ public enum TerrainNewCommand: EditorCommand {
 
     public static let id: CommandID = "terrain.new"
     public static let title = "New Terrain"
-    public static let doc = "Writes a .terrain file in `folder` (default: the Assets root): rolling hills generated from `seed` with grass, rock and dirt layers (grass everywhere), imported as chunk meshes with colliders and a baked albedo, optionally placed in the scene. Then shape it with terrain.sculpt, texture it with terrain.paint, and add props with terrain.scatter. " + EditorTerrainCommands.formatDoc
+    public static let doc = "Writes a .terrain file in `folder` (default: the Assets root): rolling hills generated from `seed` with grass, rock and dirt layers (grass everywhere), imported as chunk meshes with colliders and per-pixel blended layers (a baked albedo on low quality), optionally placed in the scene. Then shape it with terrain.sculpt, texture it with terrain.paint, and add props with terrain.scatter. " + EditorTerrainCommands.formatDoc
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> TerrainResult {
@@ -260,6 +272,7 @@ public enum TerrainGetCommand: EditorCommand {
         public var heightRange: Float
         public var chunkCells: Int
         public var lods: Int
+        public var lodDistance: Float
         public var collider: Bool
         public var colliderLod: Int
         public var albedoSize: Int
@@ -288,7 +301,7 @@ public enum TerrainGetCommand: EditorCommand {
             }
         }
         return Result(summary: TerrainResult(id, t, warnings: TerrainCheck.problems(t, in: session), in: session), size: t.size,
-                      resolution: t.res, heightRange: t.heightRange, chunkCells: t.chunkCells, lods: t.lods, collider: t.collider,
+                      resolution: t.res, heightRange: t.heightRange, chunkCells: t.chunkCells, lods: t.lods, lodDistance: t.lodDistance, collider: t.collider,
                       colliderLod: t.colliderLod, albedoSize: t.albedoSize, seed: t.seed, layers: t.layers, scatter: t.scatter, heights: grid)
     }
 }
@@ -335,6 +348,8 @@ public enum TerrainEditCommand: EditorCommand {
         public var heightRange: Float?
         public var chunkCells: Int?
         public var lods: Int?
+        /// Meters where detail level 1 starts (0: automatic).
+        public var lodDistance: Float?
         public var collider: Bool?
         public var colliderLod: Int?
         public var albedoSize: Int?
@@ -351,7 +366,7 @@ public enum TerrainEditCommand: EditorCommand {
         /// Rule name → fields to change.
         public var updateScatter: [String: JSONValue]?
         public init(asset: AssetReference? = nil, path: String? = nil, size: Vec2? = nil, resolution: Int? = nil, heightRange: Float? = nil,
-                    chunkCells: Int? = nil, lods: Int? = nil, collider: Bool? = nil, colliderLod: Int? = nil, albedoSize: Int? = nil,
+                    chunkCells: Int? = nil, lods: Int? = nil, lodDistance: Float? = nil, collider: Bool? = nil, colliderLod: Int? = nil, albedoSize: Int? = nil,
                     seed: Int? = nil, removeLayers: [String]? = nil, addLayers: [TerrainLayer]? = nil,
                     updateLayers: [String: JSONValue]? = nil, removeScatter: [String]? = nil, addScatter: [TerrainScatter]? = nil,
                     updateScatter: [String: JSONValue]? = nil) {
@@ -362,6 +377,7 @@ public enum TerrainEditCommand: EditorCommand {
             self.heightRange = heightRange
             self.chunkCells = chunkCells
             self.lods = lods
+            self.lodDistance = lodDistance
             self.collider = collider
             self.colliderLod = colliderLod
             self.albedoSize = albedoSize
@@ -411,6 +427,7 @@ public enum TerrainEditCommand: EditorCommand {
         }
         if let v = arguments.chunkCells { t.chunkCells = min(max(v, 2), 256) }
         if let v = arguments.lods { t.lods = min(max(v, 1), 4) }
+        if let v = arguments.lodDistance { t.lodDistance = v.isFinite ? min(max(v, 0), 100_000) : 0 }
         if let v = arguments.collider { t.collider = v }
         if let v = arguments.colliderLod { t.colliderLod = min(max(v, 0), 3) }
         if let v = arguments.albedoSize { t.albedoSize = min(max(v, 0), 2048) }
