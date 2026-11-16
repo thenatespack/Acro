@@ -74,6 +74,7 @@ extension SceneRenderer {
             return
         }
         renderDepthPrepass(into: texture, list: list, instances: uploaded, viewProjection: setup.uniforms.viewProj,
+                           eye: Vec3(setup.uniforms.cameraPos.x, setup.uniforms.cameraPos.y, setup.uniforms.cameraPos.z),
                            reversedZ: setup.reversedZ, frame: frame)
         volumetric.depth = texture
     }

@@ -14,7 +14,7 @@ import EngineText
 /// Each frame, per view, the renderer draws the scene again from the camera mirrored in the
 /// plane, into an offscreen image of `resolutionScale` times the view's size, keeping only what
 /// lies above the plane (an oblique near plane). PBR materials without an occlusion texture
-/// then sample it where their surface lies on the plane (within `tolerance`, facing along its
+/// (material graphs with three textures or fewer) then sample it where their surface lies on the plane (within `tolerance`, facing along its
 /// normal): the image replaces the environment's reflection, blurred with the material's
 /// roughness (a 12-tap spiral of `blur` x roughness), faded out toward `maxRoughness`, scaled
 /// by the usual split-sum Fresnel term, and shifted by the normal map's tilt (`distortion`).

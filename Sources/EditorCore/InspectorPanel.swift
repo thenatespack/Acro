@@ -92,6 +92,7 @@ public struct AssetChoices {
         if Self.isTextureField(component: component, path: path) { return [""] + textures() }
         if component == AudioEmitter.componentName { return path == "clip" ? [""] + audioClips() : nil }
         if component == BehaviorTreeRunner.componentName { return path == "tree" ? [""] + behaviorTrees() : nil }
+        if component == Decal.componentName { return path == "material" ? [""] + materials() : nil }
         guard component == MeshRenderer.componentName else { return nil }
         switch path {
         case "mesh": return meshes()

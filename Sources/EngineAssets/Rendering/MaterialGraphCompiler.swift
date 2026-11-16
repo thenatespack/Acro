@@ -15,6 +15,10 @@ import EngineScene
 //    and replaces the body of `graphSurface` in the template's SPIR-V; for Metal it is emitted as
 //    MSL and replaces the same function's body in the template's MSL (SPIRV-Cross output, where
 //    the function keeps its name and gets the globals it uses as parameters).
+// 3. The same body goes into mesh_graph_depth.frag (material_graph.glsl's declarations, a
+//    discard below the cutoff and no color), the depth-only fragment stage masked graphs cast
+//    shadows and fill the depth prepass with (`metalDepthFragment` / `spirvDepthFragment`), and
+//    into decal_graph.frag, which decals with a graph material draw with (`metalDecalFragment`).
 //
 // The program's `key` is a hash of the generated code: materials whose graphs differ only in
 // constants share pipelines.
@@ -28,6 +32,23 @@ public struct MaterialGraphProgram: Sendable, Equatable {
     public var metalFragmentColor0: String?
     /// mesh_graph's fragment stage in SPIR-V with the graph's code.
     public var spirvFragment: [UInt8]
+    /// mesh_graph_depth's fragment stage with the graph's code, in MSL and in SPIR-V: discards
+    /// where the graph's opacity is below push constant `params.z`, writes no color. Draw it
+    /// after mesh_shadow_graph.vert (or mesh_shadow_graph_skinned.vert) in a depth-only
+    /// pipeline (`depthOnlyFragment`), with the program's values in storage buffer 0, its
+    /// textures in slots 1-5 with sampler 1, and push constants
+    /// `(time, 1, cutoff, 0), (camera position, 0)` (see `SceneRenderer.drawShadows`).
+    /// Optional (programs built in code may leave them out): without both, a masked material
+    /// with this program casts its whole shape (`Material.masksDepth` is false).
+    public var metalDepthFragment: String? = nil
+    public var spirvDepthFragment: [UInt8]? = nil
+    /// decal_graph's fragment stage with the graph's code, in MSL and in SPIR-V: a `Decal` whose
+    /// `material` has this program paints the graph's surface (see `DecalRenderer`). Draw it
+    /// after decal.vert with the program's values in storage buffer 0, its textures in slots
+    /// 1-5 with sampler 1, the depth prepass in texture slot 7 and push constants `(time, 0, 0, 0)`.
+    /// Optional, as the depth variant: without both, such decals draw their own texture and tint.
+    public var metalDecalFragment: String? = nil
+    public var spirvDecalFragment: [UInt8]? = nil
     /// The graph's constants, the shader's `graphValues.values` (at least one).
     public var values: [Vec4]
     /// The textures in shader slots 1-5, in order.
@@ -71,7 +92,11 @@ public enum MaterialGraphCompiler {
             shaders = try cachedShaders(key: key) { template in
                 Shaders(metal: try template.metal.replacingFunctionBody("graphSurface", with: msl),
                         metalColor0: try template.metalColor0.map { try $0.replacingFunctionBody("graphSurface", with: msl) },
-                        spirv: try SPIRVSplicer(template.spirv).replacingGraphSurface(builder.ir, outputs: builder.outputs))
+                        spirv: try SPIRVSplicer(template.spirv).replacingGraphSurface(builder.ir, outputs: builder.outputs),
+                        metalDepth: try template.metalDepth.replacingFunctionBody("graphSurface", with: msl),
+                        spirvDepth: try SPIRVSplicer(template.spirvDepth).replacingGraphSurface(builder.ir, outputs: builder.outputs),
+                        metalDecal: try template.metalDecal.replacingFunctionBody("graphSurface", with: msl),
+                        spirvDecal: try SPIRVSplicer(template.spirvDecal).replacingGraphSurface(builder.ir, outputs: builder.outputs))
             }
         } catch {
             warnings.append("the material graph shader couldn't be built: \(error)")
@@ -81,6 +106,8 @@ public enum MaterialGraphCompiler {
         if values.isEmpty { values = [.zero] }
         let program = MaterialGraphProgram(
             key: key, metalFragment: shaders.metal, metalFragmentColor0: shaders.metalColor0, spirvFragment: shaders.spirv,
+            metalDepthFragment: shaders.metalDepth, spirvDepthFragment: shaders.spirvDepth,
+            metalDecalFragment: shaders.metalDecal, spirvDecalFragment: shaders.spirvDecal,
             values: values, textures: builder.textures, usesTime: builder.ir.ops.contains { $0.kind == .input("gTime") }, code: msl)
         return MaterialGraphCompilation(program: program, warnings: warnings)
     }
@@ -91,12 +118,22 @@ public enum MaterialGraphCompiler {
         var metal: String
         var metalColor0: String?
         var spirv: [UInt32]
+        /// mesh_graph_depth.frag's.
+        var metalDepth: String
+        var spirvDepth: [UInt32]
+        /// decal_graph.frag's.
+        var metalDecal: String
+        var spirvDecal: [UInt32]
     }
 
     struct Shaders {
         var metal: String
         var metalColor0: String?
         var spirv: [UInt8]
+        var metalDepth: String
+        var spirvDepth: [UInt8]
+        var metalDecal: String
+        var spirvDecal: [UInt8]
     }
 
     struct CompileError: Error, CustomStringConvertible {
@@ -106,15 +143,19 @@ public enum MaterialGraphCompiler {
 
     static let template: Result<Template, CompileError> = {
         let bundle = Bundle.engineResources
-        func url(_ ext: String) -> URL? { bundle.url(forResource: "mesh_graph", withExtension: ext, subdirectory: "Shaders") }
-        guard let metalURL = url("frag.metal"), let spirvURL = url("frag.spv"),
-              let metal = try? String(contentsOf: metalURL, encoding: .utf8), let data = try? Data(contentsOf: spirvURL),
-              data.count % 4 == 0 else {
-            return .failure(CompileError("mesh_graph.frag.metal / .spv missing from the engine's resources"))
+        func url(_ name: String, _ ext: String) -> URL? { bundle.url(forResource: name, withExtension: ext, subdirectory: "Shaders") }
+        func load(_ name: String) -> (metal: String, spirv: [UInt32])? {
+            guard let metalURL = url(name, "frag.metal"), let spirvURL = url(name, "frag.spv"),
+                  let metal = try? String(contentsOf: metalURL, encoding: .utf8), let data = try? Data(contentsOf: spirvURL),
+                  data.count % 4 == 0 else { return nil }
+            return (metal, data.withUnsafeBytes { Array($0.bindMemory(to: UInt32.self)) })
         }
-        let color0 = url("frag.color0.metal").flatMap { try? String(contentsOf: $0, encoding: .utf8) }
-        let words = data.withUnsafeBytes { Array($0.bindMemory(to: UInt32.self)) }
-        return .success(Template(metal: metal, metalColor0: color0, spirv: words))
+        guard let lit = load("mesh_graph"), let depth = load("mesh_graph_depth"), let decal = load("decal_graph") else {
+            return .failure(CompileError("mesh_graph / mesh_graph_depth / decal_graph .frag.metal / .spv missing from the engine's resources"))
+        }
+        let color0 = url("mesh_graph", "frag.color0.metal").flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+        return .success(Template(metal: lit.metal, metalColor0: color0, spirv: lit.spirv, metalDepth: depth.metal, spirvDepth: depth.spirv,
+                                 metalDecal: decal.metal, spirvDecal: decal.spirv))
     }()
 
     private static let cacheLock = NSLock()

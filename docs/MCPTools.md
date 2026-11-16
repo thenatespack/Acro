@@ -1825,7 +1825,7 @@ Arguments:
 
 **Assign Material Graph** · _undoable_
 
-Sets the MeshRenderer.material of an entity (default: the selected one), and with `children: true` of every MeshRenderer below it (a placed model or prefab), to a .material file. Undoable, one step. Mesh build parts use a material through their `material` key instead. Undoable (one step; edit.undo reverts it).
+Sets the MeshRenderer.material of an entity (default: the selected one), and with `children: true` of every MeshRenderer below it (a placed model or prefab), to a .material file. A Decal gets it as its `material` (it paints the graph instead of its texture). Undoable, one step. Mesh build parts use a material through their `material` key instead. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
