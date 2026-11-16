@@ -75,7 +75,7 @@ extension MeshBuildImporter {
         material.alphaMode = opacity < 1 ? .blend : .opaque
         if let geometry, wearsEdges(part) {
             let width = MeshBuildEdgeWear.bandWidth(size: geometry.bounds.halfExtent * 2, wear: part.wear ?? 0, look: kind)
-            material.edgeWear = kind.edgeWear(average: color, width: width, scale: part.effectiveLookScale)
+            material.edgeWear = kind.edgeWear(average: color, width: width)
         }
         return material
     }
@@ -84,7 +84,7 @@ extension MeshBuildImporter {
     static func wearsEdges(_ part: MeshBuildPart) -> Bool {
         guard let look = part.resolvedLook, let wear = part.wear, wear.isFinite, wear > 0,
               part.material.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
-        return look.edgeWear(average: Vec3(repeating: 0.5), width: 0.01, scale: 1) != nil
+        return look.edgeWear(average: Vec3(repeating: 0.5), width: 0.01) != nil
     }
 
     /// Gives look parts their look texture coordinates and, with `occlusion`, tessellates every

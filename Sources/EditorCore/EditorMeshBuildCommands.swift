@@ -48,7 +48,8 @@ public enum EditorMeshBuildCommands {
         look's own); metallic is ignored, roughness (if set) sets the average. lookScale: meters per texture tile \
         (default per look); wear 0-1: grime in low spots, scratches, chipped paint, darker creases, and worn convex edges \
         and corners (paint chipped to bare metal or wood, lighter rubbed wood, stone and leather, polished edges on \
-        rusty and plain metal; sharp and bevelled edges count, smooth round sides don't); grain x|y|z: the \
+        rusty and plain metal; sharp and bevelled edges count, smooth round sides don't; chips wrap around edges and \
+        corners); grain x|y|z: the \
         part axis wood grain, planks and brushing run along (default: y on round shapes, else the longest side). The \
         file's ao (default true) bakes ambient occlusion, darkening parts where they meet. Use looks for anything meant \
         to look real. Example: {"name": "Lid", "shape": "box", "size": [0.8, 0.05, 0.6], "look": "planks", "wear": 0.4}, \
