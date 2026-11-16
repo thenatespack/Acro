@@ -338,6 +338,127 @@ private func flat(_ resolution: Int = 33, size: Float = 32, height: Float = 0.25
                 #expect(low == near, "\(label)")
             }
         }
+        #if ENGINE_VULKAN && canImport(Metal)
+        #expect(results.keys.contains("vulkan high") && results.keys.contains("metal high"), "both backends ran")
+        #endif
+        for quality in ["high", "low"] {
+            if let metal = results["metal \(quality)"], let vulkan = results["vulkan \(quality)"] {
+                for (name, color) in metal {
+                    #expect(zip(color, vulkan[name]!).allSatisfy { abs(Int($0) - Int($1)) <= 3 }, "\(name) \(quality): metal \(color) vulkan \(vulkan[name]!)")
+                }
+            }
+        }
+    }
+
+    // MARK: Per-pixel layers
+
+    @Test func splatValuesAndAtlasesPackTheLayers() {
+        var t = flat(9, size: 8)
+        t.layers = [TerrainLayer(name: "A", color: Vec3(1, 0, 0), tileSize: 2), TerrainLayer(name: "B", color: Vec3(0, 0, 1), tileSize: 4)]
+        t.normalizeData()
+        t.paint(layer: 1, at: [Vec2(4, 0)], radius: 1.5, strength: 1)
+        let splat = t.splatImage(firstLayer: 0)
+        #expect(splat.width == 9 && splat.height == 9)
+        let edge = (4 * 9 + 8) * 4, center = (4 * 9 + 4) * 4
+        #expect(splat.pixels[edge + 1] > 200 && splat.pixels[center] == 255 && splat.pixels[center + 2] == 0 && splat.pixels[center + 3] == 0)
+        let s = TerrainSplat(tileSizes: [2, 4], normalLayers: [false, true], size: Vec2(8, 8), resolution: 9, cellSize: 16)
+        let v = s.values(metallic: 0, roughness: 0.9, normalScale: 1)
+        #expect(v[0] == Vec4(2, 2, 8.0 / 9, 0.5 / 9) && v[2] == Vec4(0, 4, 1, 16) && v[3] == Vec4(0.5, 0.25, 1, 1))
+        let gray = Image(width: 2, height: 1, pixels: [0, 0, 0, 255, 255, 255, 255, 255])
+        let atlas = TerrainSplat.atlas(images: [nil, gray], colors: [Vec3(1, 0, 0), .zero], cellSize: 16)
+        #expect(atlas.width == 64 && atlas.height == 16)
+        #expect(Array(atlas.pixels[0..<3]) == [255, 0, 0], "a flat color cell")
+        let left = (8 * 64 + 16 + 4) * 4, right = (8 * 64 + 16 + 12) * 4
+        #expect(atlas.pixels[left] < 60 && atlas.pixels[right] > 195, "the image resampled into its cell")
+        #expect(TerrainSplat.cellSize(for: [gray, nil]) == 16 && TerrainSplat.cellSize(for: []) == 64)
+        #expect(TerrainSplat.cellSize(for: [Image(width: 300, height: 2, pixels: [UInt8](repeating: 0, count: 2400))]) == 512)
+        let layer = TerrainLayer(name: "N", normalMap: "Textures/n.png")
+        #expect(try! JSONDecoder().decode(TerrainLayer.self, from: JSONEncoder().encode(layer)) == layer)
+        #expect(!String(decoding: try! JSONEncoder().encode(TerrainLayer()), as: UTF8.self).contains("normalMap"))
+    }
+
+    /// An imported terrain blends its layers per pixel (flat color, image, image with a normal map)
+    /// on Metal and on Vulkan, alike, and draws the baked albedo on low quality.
+    @MainActor @Test func layersBlendPerPixelOnEveryBackend() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        let blue = Image(width: 4, height: 4, pixels: [UInt8](repeating: 0, count: 64).enumerated().map { $0.offset % 4 >= 2 ? 255 : 0 })
+        // Tilted toward +U (+x on the terrain): (0.7, 0, 0.7).
+        let tilted = Image(width: 4, height: 4, pixels: (0..<64).map { [217, 128, 217, 255][$0 % 4] })
+        try FileManager.default.createDirectory(at: project.assetsURL.appendingPathComponent("Textures"), withIntermediateDirectories: true)
+        try blue.pngData().write(to: project.assetsURL.appendingPathComponent("Textures/blue.png"))
+        try tilted.pngData().write(to: project.assetsURL.appendingPathComponent("Textures/tilted.png"))
+        database.refresh()
+        var terrain = flat(9, size: 8, height: 0)
+        terrain.collider = false
+        terrain.layers = [TerrainLayer(name: "Red", color: Vec3(1, 0, 0)),
+                          TerrainLayer(name: "Blue", color: Vec3(0, 1, 0), texture: "Textures/blue.png", tileSize: 2),
+                          TerrainLayer(name: "Bumpy", color: Vec3(0, 1, 0), texture: "Textures/blue.png", tileSize: 2,
+                                       normalMap: "Textures/tilted.png")]
+        terrain.normalizeData()
+        // Columns 0-2 red, 3-5 blue, 6-8 bumpy.
+        terrain.splatData = (0..<3).map { layer in (0..<81).map { i in (i % 9) / 3 == layer ? 255 : 0 } }
+        let id = try database.createTerrain(terrain, at: "Maps/splat.terrain")
+        database.waitForAll()
+        let record = try #require(database.record(id))
+        #expect(record.importError == nil)
+        let names = Set(record.objects.map(\.id))
+        #expect(names.isSuperset(of: ["texture/layers", "texture/layer normals", "texture/splat 0", "material/terrain baked"]))
+        #expect(!names.contains("texture/splat 1"), "three layers fit in one splat texture")
+        let prefab = try #require(database.prefab(AssetReference(id)))
+        #expect(prefab.roots[0].children[0].lod?.lowQualityMaterial?.key == AssetReference(id, subAsset: "material/terrain baked").description)
+
+        let view = SceneView(view: Mat4.lookAt(eye: Vec3(0, 7, 4), target: .zero),
+                             projection: Mat4.perspective(fovY: 0.9, aspect: 1, near: 0.1, far: 30))
+        func pixel(_ p: Vec3) -> (Int, Int) {
+            let c = view.viewProjection * Vec4(p.x, p.y, p.z, 1)
+            return (Int((c.x / c.w * 0.5 + 0.5) * 32), Int((0.5 - c.y / c.w * 0.5) * 32))
+        }
+        let spots = ["red": pixel(Vec3(-3, 0, 0)), "blue": pixel(Vec3(0, 0, 0)), "bumpy": pixel(Vec3(3, 0, 0))]
+        var results: [String: [String: [UInt8]]] = [:]
+        for quality in [RenderQuality.high, .low] {
+            try TestDevices.forEachBackend { device, frames in
+                let renderer = try SceneRenderer(device: device, quality: quality)
+                renderer.assets = database
+                renderer.blocksOnAssetLoading = true
+                let target = try RenderTarget(device: device, width: 32, height: 32, multisampled: false)
+                let world = World()
+                // Light from +x and above: the tilted normals face it more.
+                _ = world.spawn(Transform(rotation: .lookRotation(forward: -normalize(Vec3(1, 0.5, 0)))), DirectionalLight(intensity: 0.5))
+                _ = world.instantiate(prefab)
+                world.propagateTransforms()
+                var pixels: Image?
+                for _ in 0..<2 {  // the first frame loads the assets
+                    try frames.run { frame in
+                        renderer.beginViews(world: world, frame: frame, shadowFocus: view)
+                        renderer.renderView(view, into: target, frame: frame)
+                        device.readBack(target.gpu) { pixels = $0 }
+                    }
+                }
+                let image = try #require(pixels)
+                var colors: [String: [UInt8]] = [:]
+                for (name, (x, y)) in spots {
+                    let i = (y * image.width + x) * 4
+                    colors[name] = Array(image.pixels[i..<i + 3])
+                }
+                results["\(device.backend) \(quality)"] = colors
+            }
+        }
+        for (label, colors) in results {
+            let red = colors["red"]!, blue = colors["blue"]!, bumpy = colors["bumpy"]!
+            #expect(red[0] > 2 * Int(red[2]) + 10 && red[0] > 40, "\(label): \(colors)")
+            #expect(blue[2] > 2 * Int(blue[0]) + 10 && blue[2] > 40, "the image, not the layer's color, \(label): \(colors)")
+            #expect(blue[1] < blue[2] / 2, "\(label): \(colors)")
+            if label.hasSuffix("high") {
+                #expect(Int(bumpy[2]) > Int(blue[2]) + 15, "the normal map faces the light, \(label): \(colors)")
+            } else {
+                #expect(abs(Int(bumpy[2]) - Int(blue[2])) <= 4, "the baked albedo has no normal maps, \(label): \(colors)")
+            }
+        }
+        #if ENGINE_VULKAN && canImport(Metal)
+        #expect(results.keys.contains("vulkan high") && results.keys.contains("metal high"), "both backends ran")
+        #endif
         for quality in ["high", "low"] {
             if let metal = results["metal \(quality)"], let vulkan = results["vulkan \(quality)"] {
                 for (name, color) in metal {

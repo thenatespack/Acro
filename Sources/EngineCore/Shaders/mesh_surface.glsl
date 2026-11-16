@@ -33,7 +33,8 @@
 // Material graphs (MATERIAL_GRAPH, defined by mesh_graph.frag; see MaterialGraphCompiler.swift):
 // graphSurface() computes the PBR inputs from the g* globals instead of the material's fixed
 // textures. The body here is a placeholder: the engine replaces it, in this shader's SPIR-V and
-// in its MSL, with the code compiled from a `.material` file's node graph.
+// in its MSL, with the code compiled from a `.material` file's node graph. Terrains
+// (TERRAIN_SPLAT too, mesh_terrain.frag) use the same path with terrain_splat.glsl's graphSurface().
 
 // Must match `SceneRenderer.FrameUniforms`.
 layout(set = 0, binding = 0, std140) uniform Frame {
@@ -154,6 +155,10 @@ float gRoughness;
 vec3 gEmissive;
 float gOcclusion;
 
+#ifdef TERRAIN_SPLAT
+// Terrains (mesh_terrain.frag): graphSurface() blends the splat-mapped layers per pixel.
+#include "terrain_splat.glsl"
+#else
 // Replaced with the compiled graph. This placeholder reads every input and resource so each
 // stays a parameter of the function after SPIRV-Cross (the MSL body is swapped by name).
 void graphSurface() {
@@ -171,6 +176,7 @@ void graphSurface() {
     gEmissive = e.rgb;
     gOcclusion = d.r;
 }
+#endif
 #endif
 
 const float PI = 3.14159265;

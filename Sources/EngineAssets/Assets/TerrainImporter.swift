@@ -6,8 +6,10 @@ import EnginePhysics
 import EngineScene
 
 /// Imports `.terrain` files (a `Terrain` as JSON): `mesh/chunk <x>_<z>` per chunk (plus
-/// `… lod<n>` for the extra detail levels), `material/terrain`, `texture/albedo` (the painted layers
-/// baked together) and the main `prefab/<file name>`: a root named after the file with one node
+/// `… lod<n>` for the extra detail levels), `material/terrain` (per-pixel layer blending, see
+/// `TerrainSplat`, with `texture/layers`, `texture/layer normals`, `texture/splat 0` and `splat 1`),
+/// `material/terrain baked` with `texture/albedo` (the painted layers baked together, drawn on low
+/// quality through each chunk's `MeshLOD`) and the main `prefab/<file name>`: a root named after the file with one node
 /// per chunk (mesh, material and a triangle-mesh `Collider`) and a `Scatter` node holding the
 /// props of every scatter rule. Props sharing a mesh and material draw as one instanced batch.
 public struct TerrainImporter: AssetImporter {
@@ -15,7 +17,7 @@ public struct TerrainImporter: AssetImporter {
 
     public var name: String { "terrain" }
     public var fileExtensions: [String] { ["terrain"] }
-    public var version: Int { 2 }
+    public var version: Int { 3 }
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         var terrain: Terrain
@@ -31,16 +33,61 @@ public struct TerrainImporter: AssetImporter {
         var asset = ImportedAsset()
         var namer = SubAssetNamer()
 
-        // The layers' textures, baked into one albedo.
-        var images: [Image?] = []
+        // The layers' textures, baked into one albedo (drawn on low quality, or always with more
+        // layers than the per-pixel shader blends) and packed for per-pixel blending.
+        var images: [Image?] = [], normals: [Image?] = []
         for layer in terrain.layers {
             images.append(layer.texture.isEmpty ? nil : Self.image(layer.texture, layer: layer.name, &context))
+            normals.append(layer.normalMap.isEmpty ? nil : Self.image(layer.normalMap, layer: layer.name, &context))
         }
         let textureID = namer.id(kind: "texture", name: "albedo", index: 0)
         asset.add(textureID, name: "albedo", .texture(TextureAsset(image: terrain.bakeAlbedo(images: images))))
+        let baked = MaterialAsset(shading: .pbr, baseColor: Vec4(1, 1, 1, 1), texture: context.reference(textureID), metallic: 0,
+                                  roughness: 0.95)
+        let perPixel = terrain.layers.count <= TerrainSplat.maxLayers
+        if !perPixel {
+            context.warn("\(terrain.layers.count) layers: only \(TerrainSplat.maxLayers) blend per pixel, so the layers are baked into one texture")
+        }
         let materialID = namer.id(kind: "material", name: "terrain", index: 0)
-        asset.add(materialID, name: "terrain", .material(MaterialAsset(
-            shading: .pbr, baseColor: Vec4(1, 1, 1, 1), texture: context.reference(textureID), metallic: 0, roughness: 0.95)))
+        var lowQuality: MaterialHandle?
+        if perPixel {
+            let layers = terrain.layers.isEmpty ? [TerrainLayer()] : terrain.layers
+            let cell = TerrainSplat.cellSize(for: images + normals)
+            let atlasID = namer.id(kind: "texture", name: "layers", index: 1)
+            asset.add(atlasID, name: "layers", .texture(TextureAsset(image: TerrainSplat.atlas(images: images, colors: layers.map(\.color),
+                                                                                                cellSize: cell))))
+            var normalID: SubAssetID?
+            if normals.contains(where: { $0 != nil }) {
+                let id = namer.id(kind: "texture", name: "layer normals", index: 2)
+                let flat = Vec3(0.5, 0.5, 1)
+                asset.add(id, name: "layer normals", .texture(TextureAsset(
+                    image: TerrainSplat.atlas(images: normals, colors: layers.map { _ in flat }, cellSize: cell), isSRGB: false)))
+                normalID = id
+            }
+            let splatA = namer.id(kind: "texture", name: "splat 0", index: 3)
+            asset.add(splatA, name: "splat 0", .texture(TextureAsset(image: terrain.splatImage(firstLayer: 0), isSRGB: false,
+                                                                     generatesMipmaps: false)))
+            var splatB: SubAssetID?
+            if layers.count > 4 {
+                let id = namer.id(kind: "texture", name: "splat 1", index: 4)
+                asset.add(id, name: "splat 1", .texture(TextureAsset(image: terrain.splatImage(firstLayer: 4), isSRGB: false,
+                                                                     generatesMipmaps: false)))
+                splatB = id
+            }
+            var splat = baked
+            splat.texture = context.reference(atlasID)
+            splat.metallicRoughnessTexture = context.reference(splatA)
+            splat.normalTexture = normalID.map { context.reference($0) }
+            splat.emissiveTexture = splatB.map { context.reference($0) }
+            splat.terrain = TerrainSplat(tileSizes: layers.map(\.tileSize), normalLayers: normals.map { $0 != nil }, size: terrain.size,
+                                         resolution: terrain.res, cellSize: cell)
+            asset.add(materialID, name: "terrain", .material(splat))
+            let bakedID = namer.id(kind: "material", name: "terrain baked", index: 1)
+            asset.add(bakedID, name: "terrain baked", .material(baked))
+            lowQuality = MaterialHandle(context.reference(bakedID))
+        } else {
+            asset.add(materialID, name: "terrain", .material(baked))
+        }
         let material = context.reference(materialID)
 
         var chunks: [PrefabNode] = []
@@ -60,7 +107,8 @@ public struct TerrainImporter: AssetImporter {
                     asset.add(lodID, name: lodLabel, .mesh(terrain.chunkMesh(cx, cz, lod: lod, skirt: skirt)))
                     levels.append(MeshHandle(context.reference(lodID)))
                 }
-                let lod = levels.isEmpty ? nil : MeshLOD(meshes: levels, distances: terrain.lodDistances)
+                let lod = levels.isEmpty && lowQuality == nil ? nil
+                    : MeshLOD(meshes: levels, distances: levels.isEmpty ? [] : terrain.lodDistances, lowQualityMaterial: lowQuality)
                 chunks.append(PrefabNode(name: label, mesh: context.reference(meshID), material: material,
                                          collider: terrain.collider ? terrain.chunkCollider(cx, cz) : nil, lod: lod))
                 index += 1
