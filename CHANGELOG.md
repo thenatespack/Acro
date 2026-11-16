@@ -4,6 +4,39 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-15
+
+### Added
+
+- Builder gap-fill: the "not done" lists of fifteen builders (see `Tools.md`), among them:
+  - Pixel Sprite: selections and copy/paste, PNG sheet import (`sprite.importSheet`), tag frame events, blend modes, canvas shortcuts; the Scene and Game views draw `Sprite` components.
+  - Tilemap: `.sprite` tile sets, `TilemapMotion` (animated tiles and parallax in placed maps), one-way platforms that follow rotation, canvas shortcuts.
+  - GridMap: a piece import cache, multi-cell auto-join pieces, `.prefab` variants and built-in meshes as pieces, mirrored animations, shortcuts.
+  - Path: `PathFollower`, click to add points, `path.flattenTerrain`, T and X junctions, miter correction.
+  - Behavior Tree: a node-graph canvas, grid navigation (`NavigationArea`, `world.findPath`, `behavior.navigation`) used by moveTo, patrol, chase and flee.
+  - UI / HUD: a runtime game UI layer (`UILayoutPlayer`, `world.gameUI`), screen scaling, sliders, toggles and text fields, transitions, gamepad navigation order, color pickers.
+  - Dialogue: `.ui` layouts as the dialogue box (`DialogueView`, `DialogueLayoutPresenter`), portraits; conversations show in GameRunner and exported games with no game code.
+  - Timeline: a dialogue track, a preview that plays clips, sounds and conversations, `holdFade`.
+  - Animation Graph: retargeting (`AnimationClip.retargeted`, `animGraph.bones`), 2D blend spaces, layer masks and override layers, sub-state machines, glTF clip events, parallel animators.
+  - Character: edit-mode animation (View › Animate in Scene View), retargeted glTF clips, per-part colors, clips in GameRunner.
+  - Material: masked graphs in shadows and the depth prepass, graph decals, planar reflections on graphs, dragging links.
+  - Visual Script: nodes for animation graphs, dialogue, timelines, behavior trees and UI layouts; a `Tag` component; step over / into / out (`vscript.step`); reroutes, groups and macros.
+  - Terrain: runtime LOD switching (`MeshLOD`), per-pixel GPU splat blending with normal maps, graph materials as layers.
+  - VFX: particle textures and flipbooks, sub-emitter links (with a new birth trigger).
+  - Post-FX: depth of field, LUT grading (`.cube` and strip PNGs), a Scene view split preview (`view.scenePostFX`).
+
+### Changed
+
+- 2D physics simulates colliders at their world pose, so colliders under a parent follow it.
+- The cooker ships files that timelines, visual scripts and UI layouts name by path, and keeps the sources of sprites, tilemaps, paths and terrains (`AssetCooker.keepsSource`).
+- `Animator` and its blend-space and layer-mask code moved to EngineAssets; `AssetClipLoader` and `addAssetAnimationSystem` are removed (use `addSceneAnimationSystem`).
+
+### Fixed
+
+- The editor finishes background asset loads every frame, so a load started while a builder tab covers the Scene and Game views no longer stalls (and no longer holds MCP replies).
+- Visual Script calls of pure functions computed nothing.
+- Nil asset handles (such as `Decal.texture`) can be set through the inspector and `setField`.
+
 ## [0.14.1] - 2026-11-15
 
 ### Added
