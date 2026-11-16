@@ -136,7 +136,10 @@ private struct TinyPackage {
         let checker = ScriptChecker(session: session)
 
         func settle() async throws {
-            let deadline = Date().addingTimeInterval(60)
+            // Generous: CI runs the whole suite in parallel on a few cores, and the check's result
+            // arrives through poll() on the main actor every @MainActor test shares. It returns
+            // as soon as the check lands.
+            let deadline = Date().addingTimeInterval(300)
             repeat {
                 checker.poll()
                 if !checker.isBusy { return }
