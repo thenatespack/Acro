@@ -43,6 +43,11 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
             let triangles = try #require(created["triangles"] as? Int, "\(name) reports its triangles")
             #expect(triangles > 1000 && triangles < limit, "\(name): \(triangles) triangles (limit \(limit))")
             #expect((created["bounds"] as? [String: Any])?["base"] as? Double == 0, "\(name) stands on y=0")
+            // Plants get detail levels down to a 6-triangle impostor (MeshBuildLOD.swift).
+            let levels = try #require(created["lodTriangles"] as? [Int], "\(name) reports its detail levels")
+            #expect(levels.count == 4 && levels[0] == triangles && levels[3] == 6, "\(name): \(levels)")
+            #expect(levels[1] < triangles * 2 / 3 && levels[2] < levels[1], "\(name): \(levels)")
+            #expect((created["lodDistances"] as? [Double])?.count == 3)
         }
     }
 
