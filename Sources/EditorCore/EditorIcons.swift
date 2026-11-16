@@ -262,6 +262,8 @@ public enum EditorIcons {
         case folder, model, mesh, texture, material, prefab, scene, audio, shader, font, text, data, file
         /// An imported animation clip.
         case animation
+        /// An animation graph (`.animgraph`).
+        case animationGraph
     }
 
     /// The icon kind of an imported object.
@@ -286,6 +288,7 @@ public enum EditorIcons {
         switch ext {
         case "gltf", "glb", "obj", "fbx", "meshbuild": return .model
         case "vfx": return .prefab
+        case "animgraph": return .animationGraph
         case "table": return .model
         case "gltf", "glb", "obj", "fbx", "meshbuild", "terrain": return .model
         case "png", "jpg", "jpeg", "tga", "hdr", "exr", "ktx", "ktx2", "dds", "bmp", "proctex": return .texture
@@ -320,6 +323,7 @@ public enum EditorIcons {
         case .text: named("file-text")
         case .data: named("file-json")
         case .animation: named("film")
+        case .animationGraph: named("network")
         case .file: named("file")
         }
     }
@@ -353,6 +357,7 @@ public enum EditorIcons {
         EditorLayout.postFXBuilder: "aperture",
         EditorLayout.dataTable: "layout-grid",
         EditorLayout.terrainBuilder: "layers",
+        EditorLayout.animationGraph: "network",
     ]
 
     /// Console lines by level.
@@ -413,6 +418,7 @@ extension EditorIcons.AssetIconKind {
         case .texture: self = .texture
         case .prefab: self = .prefab
         case .animation: self = .animation
+        case .animationGraph: self = .animationGraph
         }
     }
 }

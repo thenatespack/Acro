@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 166 tools.
+named by its id (see README › Use the editor › AI control). 172 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -14,6 +14,7 @@ optional arguments.
 |---|---|
 | `activity` | [`activity.clear`](#activityclear), [`activity.list`](#activitylist), [`activity.revert`](#activityrevert) |
 | `ai` | [`ai.settings`](#aisettings) |
+| `animGraph` | [`animGraph.assign`](#animgraphassign), [`animGraph.edit`](#animgraphedit), [`animGraph.get`](#animgraphget), [`animGraph.new`](#animgraphnew), [`animGraph.open`](#animgraphopen), [`animGraph.set`](#animgraphset) |
 | `asset` | [`asset.applySettings`](#assetapplysettings), [`asset.assign`](#assetassign), [`asset.delete`](#assetdelete), [`asset.extractMaterials`](#assetextractmaterials), [`asset.get`](#assetget), [`asset.import`](#assetimport), [`asset.instantiate`](#assetinstantiate), [`asset.list`](#assetlist), [`asset.move`](#assetmove), [`asset.newFolder`](#assetnewfolder), [`asset.newMaterial`](#assetnewmaterial), [`asset.newProceduralTexture`](#assetnewproceduraltexture), [`asset.reimport`](#assetreimport), [`asset.rename`](#assetrename), [`asset.select`](#assetselect), [`asset.setProceduralTexture`](#assetsetproceduraltexture), [`asset.waitForImports`](#assetwaitforimports) |
 | `component` | [`component.add`](#componentadd), [`component.remove`](#componentremove), [`component.setField`](#componentsetfield), [`component.types`](#componenttypes) |
 | `diagnostics` | [`diagnostics.get`](#diagnosticsget) |
@@ -107,6 +108,143 @@ Result:
 - `httpEnabled?`: boolean
 - `readOnly?`: boolean
 
+## animGraph
+
+### `animGraph.assign`
+
+**Assign Animation Graph** · _undoable_
+
+Puts an Animator playing an .animgraph on an entity (default: the selection), usually a placed model's root: its targets are the entity and its descendants depth first, which is how imported clips address a model's nodes. Replaces an Animator already there. Undoable. The animator plays in play mode and in exported games, and follows the graph file when it changes. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `entity?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `path?`: string
+
+Result:
+
+- `entity`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `graph`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `targets`: integer
+- `warnings`: [string]
+
+### `animGraph.edit`
+
+**Edit Animation Graph** · _undoable_
+
+Changes part of an .animgraph file in one undoable step, in this order: removeTransitions (indices), removeStates, removeParameters, removeLayers, parameters (add or replace by name), addStates, updateStates (name → fields; "name" renames everywhere), addTransitions, updateTransitions (index → fields), addLayers, updateLayers, initialState, preview. Clip paths become asset references. Returns the states, numbered transitions, parameters and problems. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` (additive) [{name, clip, weight, speed, referenceTime}], `initialState`. Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `addLayers?`: [{clip?: string, name?: string, referenceTime?: number, speed?: number, weight?: number}]
+- `addStates?`: [{blend?: object, clip?: string, loops?: boolean, name?: string, position?: number[2], speed?: number, speedParameter?: string}]
+- `addTransitions?`: [{canTransitionToSelf?: boolean, conditions?: [object], duration?: number, exitTime?: number, from?: string, to?: string}]
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `initialState?`: string
+- `parameters?`: [{default?: boolean, name?: string, type?: "float" \| "bool" \| "trigger"}]
+- `path?`: string
+- `preview?`: string
+- `removeLayers?`: [string]
+- `removeParameters?`: [string]
+- `removeStates?`: [string]
+- `removeTransitions?`: [integer]
+- `updateLayers?`: object
+- `updateStates?`: object
+- `updateTransitions?`: object
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `initialState?`: string
+- `layers`: [string]
+- `parameters`: [string]
+- `path`: string
+- `states`: [string]
+- `transitions`: [string]
+- `warnings`: [string]
+
+### `animGraph.get`
+
+**Get Animation Graph** · _read-only_, _idempotent_
+
+Reads an .animgraph file: its parameters, states, transitions (in order), layers and preview model (every field, defaults included), the clips it can use, and problems found (unknown states or parameters, wrong parameter types, missing clips, transitions that can't fire).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `clips`: [string]
+- `graph`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, states?: [object], transitions?: [object]}
+- `path`: string
+- `warnings`: [string]
+
+### `animGraph.new`
+
+**New Animation Graph**
+
+Writes an .animgraph file in `folder` (default: the Assets root) and imports it: `graph` contents, or a starter (Idle, plus Move on a `speed` parameter when the `preview` model has two clips or more, using its clips). Returns the states, transitions, parameters and warnings. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` (additive) [{name, clip, weight, speed, referenceTime}], `initialState`. Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes.
+
+Arguments:
+
+- `folder?`: string
+- `graph?`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, states?: [object], transitions?: [object]}
+- `name?`: string
+- `preview?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `initialState?`: string
+- `layers`: [string]
+- `parameters`: [string]
+- `path`: string
+- `states`: [string]
+- `transitions`: [string]
+- `warnings`: [string]
+
+### `animGraph.open`
+
+**Open in Animation Graph Builder** · _idempotent_
+
+Opens an .animgraph file in the editor's Animation Graph Builder tab (the node editor, a live preview on the graph's model with parameters you drive by hand, and the form) and brings the tab to the front. view.screenshot {source: "panel", panel: "animationGraph"} shows it.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `path`: string
+
+### `animGraph.set`
+
+**Set Animation Graph** · _undoable_, _idempotent_
+
+Replaces an .animgraph file's whole contents and reimports it; animators using it follow. Undoable. For a few changes, animGraph.edit is shorter. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `graph`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, states?: [object], transitions?: [object]}
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `initialState?`: string
+- `layers`: [string]
+- `parameters`: [string]
+- `path`: string
+- `states`: [string]
+- `transitions`: [string]
+- `warnings`: [string]
+
 ## asset
 
 ### `asset.applySettings`
@@ -131,7 +269,7 @@ Arguments:
 
 - `asset`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `entity`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
-- `kind?`: "mesh" \| "material" \| "texture" \| "prefab"
+- `kind?`: "mesh" \| "material" \| "texture" \| "prefab" \| "animation" \| "animationGraph"
 
 ### `asset.delete`
 
@@ -216,7 +354,7 @@ Lists a folder of the project: its subfolders and assets, each with id, path, im
 Arguments:
 
 - `folder?`: string
-- `kind?`: "mesh" \| "material" \| "texture" \| "prefab"
+- `kind?`: "mesh" \| "material" \| "texture" \| "prefab" \| "animation" \| "animationGraph"
 - `recursive?`: boolean
 - `search?`: string
 

@@ -327,6 +327,12 @@ public final class AssetDatabase {
         return nil
     }
 
+    /// The imported animation graph `reference` names (an `.animgraph` file).
+    public func animationGraph(_ reference: AssetReference) -> AnimationGraph? {
+        if case .animationGraph(let graph)? = object(reference, kind: .animationGraph)?.value { return graph }
+        return nil
+    }
+
     // MARK: Settings
 
     /// The asset's effective import settings (sidecar values over the importer's defaults).

@@ -107,7 +107,7 @@ public final class AssetThumbnails {
                 }
             case .mesh, .material, .prefab:
                 layOut(reference, kind: kind, key: key, revision: revision, slot: batch.count, assets: assets)
-            case .animation:
+            case .animation, .animationGraph:
                 break
             }
         }

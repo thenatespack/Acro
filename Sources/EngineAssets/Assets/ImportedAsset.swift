@@ -66,6 +66,8 @@ public enum AssetKind: String, Codable, Sendable, CaseIterable {
     case mesh, material, texture, prefab
     /// A skeletal `AnimationClip` (glTF animations).
     case animation
+    /// An `AnimationGraph` (`.animgraph` files): an `Animator`'s state machine.
+    case animationGraph
 }
 
 /// An imported object. Each kind is plain CPU data:
@@ -77,12 +79,14 @@ public enum AssetKind: String, Codable, Sendable, CaseIterable {
 /// - `.animation`: a skeletal `AnimationClip` whose channel targets are the node numbers of the
 ///   file's prefab (depth first, roots first, as `PrefabSkin` numbers them), so an `Animator`
 ///   bound to an instance of that prefab (`World.animationRig(of:)`) plays it.
+/// - `.animationGraph`: an `AnimationGraph` (`.animgraph`), which `Animator.graph` names.
 public enum AssetObject: Sendable {
     case mesh(MeshGeometry)
     case material(MaterialAsset)
     case texture(TextureAsset)
     case prefab(PrefabAsset)
     case animation(AnimationClip)
+    case animationGraph(AnimationGraph)
 
     public var kind: AssetKind {
         switch self {
@@ -91,6 +95,7 @@ public enum AssetObject: Sendable {
         case .texture: .texture
         case .prefab: .prefab
         case .animation: .animation
+        case .animationGraph: .animationGraph
         }
     }
 }

@@ -141,6 +141,8 @@ public final class AssetBrowserModel {
             session.run(TableOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where session.isTerrainFile(id):
             session.run(TerrainOpenCommand.self, .init(asset: AssetReference(id)))
+        case .asset(let id) where session.isAnimationGraphFile(id):
+            session.run(AnimGraphOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where entry.isExpandable:
             toggleExpanded(id)
         default:
@@ -210,6 +212,15 @@ public final class AssetBrowserModel {
     @discardableResult
     public func newProceduralTexture() -> AssetID? {
         guard let id = session.run(AssetNewProceduralTextureCommand.self, .init(folder: targetFolder))?.asset else { return nil }
+        invalidate()
+        selection = .asset(id)
+        return id
+    }
+
+    /// Creates an animation graph in the current folder (`animGraph.new`) and selects it.
+    @discardableResult
+    public func newAnimationGraph() -> AssetID? {
+        guard let id = session.run(AnimGraphNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
         invalidate()
         selection = .asset(id)
         return id
@@ -395,7 +406,7 @@ public final class AssetBrowserModel {
         case .material: .material
         case .texture: .texture
         case .prefab: .prefab
-        case .animation: .file
+        case .animation, .animationGraph: .file
         }
     }
 }

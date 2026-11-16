@@ -113,6 +113,7 @@ package enum AssetArtifacts {
         package var material: MaterialAsset?
         package var prefab: PrefabAsset?
         package var animation: AnimationClip?
+        package var animationGraph: AnimationGraph?
     }
 
     package static func write(_ asset: ImportedAsset, to directory: URL) throws {
@@ -179,6 +180,8 @@ package enum AssetArtifacts {
                 entry.prefab = prefab
             case .animation(let clip):
                 entry.animation = clip
+            case .animationGraph(let graph):
+                entry.animationGraph = graph
             }
             objects.append(entry)
         }
@@ -269,6 +272,9 @@ package enum AssetArtifacts {
             case .animation:
                 guard let clip = entry.animation else { return nil }
                 value = .animation(clip)
+            case .animationGraph:
+                guard let graph = entry.animationGraph else { return nil }
+                value = .animationGraph(graph)
             }
             asset.objects.append(ImportedObject(id: entry.id, name: entry.name, value: value))
         }
