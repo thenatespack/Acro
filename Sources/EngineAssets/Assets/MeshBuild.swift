@@ -8,7 +8,8 @@ import EngineScene
 // A model built from shapes: the contents of a `.meshbuild` file (JSON, every key optional).
 // `MeshBuildImporter` turns it into one mesh and one material per part plus a prefab of the part
 // tree, so it is placed, instanced and reimported like any glTF model. Animations become
-// `FieldAnimator`s on the parts and play in play mode and built games.
+// `FieldAnimator`s on the parts and play in play mode and built games. A part's `mirror` and
+// `repeat` stand for mirrored and repeated copies of it (see MeshBuildExpansion.swift).
 //
 // ```json
 // {
@@ -88,6 +89,15 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
     public var glowStrength: Float
     /// A material asset to use instead of the fields above.
     public var material: String
+    /// Also draw a mirror image of the part and its subtree across these axes of the parent
+    /// (see MeshBuildExpansion.swift).
+    public var mirror: MeshBuildMirror?
+    /// Copies of the part and its subtree in a line or a ring (`"repeat"` in the file; see
+    /// MeshBuildExpansion.swift).
+    public var repetition: MeshBuildRepeat?
+    /// Not in the file: the signs (±1 per axis) the mesh is reflected by, set on mirror copies by
+    /// `MeshBuild.expansion()`; `geometry()` applies it.
+    public var reflection = Vec3(1, 1, 1)
 
     public static var fieldHints: [String: FieldHints] {
         ["parent": FieldHints(tooltip: "The part this one is attached to (moves with it)"),
@@ -102,14 +112,16 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
          "textureScale": FieldHints(step: 0.1, tooltip: "Texture repeats (per meter with World UV)"),
          "worldUV": FieldHints(displayName: "World UV", tooltip: "Keep the texture's size in meters instead of stretching it"),
          "texture": FieldHints(tooltip: "A texture asset (image or .proctex)"),
-         "material": FieldHints(tooltip: "A material asset that replaces the look fields")]
+         "material": FieldHints(tooltip: "A material asset that replaces the look fields"),
+         // Edited in the Mesh Builder's own Mirror / Repeat rows.
+         "mirror": FieldHints(hidden: true), "repeat": FieldHints(hidden: true)]
     }
 
     public init(name: String = "Part", shape: MeshBuildShape = .box, parent: String = "", position: Vec3 = .zero,
                 rotation: Vec3 = .zero, size: Vec3 = Vec3(1, 1, 1), segments: Int = 24, thickness: Float = 0.1,
                 color: Vec3 = Vec3(0.8, 0.8, 0.8), opacity: Float = 1, texture: String = "", textureScale: Vec2 = Vec2(1, 1),
                 worldUV: Bool = false, metallic: Float = 0, roughness: Float = 0.5, glow: Vec3 = .zero, glowStrength: Float = 1,
-                material: String = "") {
+                material: String = "", mirror: MeshBuildMirror? = nil, repetition: MeshBuildRepeat? = nil) {
         self.name = name
         self.shape = shape
         self.parent = parent
@@ -128,11 +140,14 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
         self.glow = glow
         self.glowStrength = glowStrength
         self.material = material
+        self.mirror = mirror
+        self.repetition = repetition
     }
 
     private enum CodingKeys: String, CodingKey {
         case name, shape, parent, position, rotation, size, segments, thickness, color, opacity, texture, textureScale, worldUV,
-             metallic, roughness, glow, glowStrength, material
+             metallic, roughness, glow, glowStrength, material, mirror
+        case repetition = "repeat"
     }
 
     /// Every key is optional.
@@ -156,7 +171,9 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
                   roughness: try c.decodeIfPresent(Float.self, forKey: .roughness) ?? d.roughness,
                   glow: try c.decodeIfPresent(Vec3.self, forKey: .glow) ?? d.glow,
                   glowStrength: try c.decodeIfPresent(Float.self, forKey: .glowStrength) ?? d.glowStrength,
-                  material: try c.decodeIfPresent(String.self, forKey: .material) ?? d.material)
+                  material: try c.decodeIfPresent(String.self, forKey: .material) ?? d.material,
+                  mirror: try c.decodeIfPresent(MeshBuildMirror.self, forKey: .mirror),
+                  repetition: try c.decodeIfPresent(MeshBuildRepeat.self, forKey: .repetition))
     }
 
     /// The part's local transform (its size is in the mesh, not the scale).
@@ -365,9 +382,9 @@ public struct MeshBuild: Codable, Equatable, Sendable {
 
     public func fileData() throws -> Data { try AssetJSON.encode(self) }
 
-    /// A name not used by any part: `base`, else "`base` 2", "`base` 3"…
+    /// A name not used by any part (or mirror / repeat copy): `base`, else "`base` 2", "`base` 3"…
     public func uniquePartName(_ base: String) -> String {
-        let names = Set(parts.map(\.name))
+        let names = Set(parts.map(\.name) + (hasCopies ? expanded().parts.map(\.name) : []))
         guard names.contains(base) else { return base }
         var n = 2
         while names.contains("\(base) \(n)") { n += 1 }
@@ -434,8 +451,14 @@ public struct MeshBuild: Codable, Equatable, Sendable {
 
 extension MeshBuildPart {
     /// The part's mesh in its own space (nil for a `group`): the shape fitted to `size`, with
-    /// world-projected UVs under `worldUV`.
+    /// world-projected UVs under `worldUV`, reflected by `reflection` on mirror copies.
     public func geometry() -> MeshGeometry? {
+        guard reflection != Vec3(1, 1, 1), var g = shapeGeometry() else { return shapeGeometry() }
+        g.scale(by: reflection)  // flips the normals, and the winding when it is a mirror image
+        return g
+    }
+
+    private func shapeGeometry() -> MeshGeometry? {
         let s = Vec3(abs(size.x), abs(size.y), abs(size.z))
         let segments = min(max(segments, 3), 128)
         var g: MeshGeometry
@@ -592,13 +615,17 @@ public struct MeshBuildImporter: AssetImporter {
 
     public var name: String { "meshbuild" }
     public var fileExtensions: [String] { ["meshbuild"] }
-    public var version: Int { 1 }
+    public var version: Int { 2 }  // 2: mirror and repeat
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
-        let build: MeshBuild
-        do { build = try AssetJSON.decoder().decode(MeshBuild.self, from: context.data()) } catch {
+        let file: MeshBuild
+        do { file = try AssetJSON.decoder().decode(MeshBuild.self, from: context.data()) } catch {
             throw AssetError.unreadable("not a mesh build: \(error)")
         }
+        // Mirror and repeat copies become parts of their own (after the file's parts).
+        let expansion = file.expansion()
+        for warning in expansion.warnings { context.warn(warning) }
+        let build = expansion.build
         let stem = ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension
         var asset = ImportedAsset()
         var namer = SubAssetNamer()
@@ -606,7 +633,11 @@ public struct MeshBuildImporter: AssetImporter {
         // Part names must be unique for parenting and tracks; later duplicates are only drawn.
         var firstIndex: [String: Int] = [:]
         for (i, part) in build.parts.enumerated() {
-            if firstIndex[part.name] == nil { firstIndex[part.name] = i } else { context.warn("two parts are named '\(part.name)'") }
+            if firstIndex[part.name] == nil {
+                firstIndex[part.name] = i
+            } else if i < file.parts.count {  // copies that clash were warned about by the expansion
+                context.warn("two parts are named '\(part.name)'")
+            }
         }
         let partNames = Set(firstIndex.keys)
         for animation in build.animations {

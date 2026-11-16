@@ -6,7 +6,7 @@ import Foundation
 // camera, selection and undo stack for gizmo drags), with the `MeshBuilderView` form beside it.
 //
 // - Click a part to select it (the form follows, and picking a part in the form selects it in
-//   the view); the toolbar's Move / Rotate / Scale gizmos (W / E / R) edit it, and the drag is
+//   the view; clicking a mirror / repeat copy selects the part it comes from); the toolbar's Move / Rotate / Scale gizmos (W / E / R) edit it, and the drag is
 //   written to the file when it ends (scale grows the part's size).
 // - Orbit with right-drag (or middle-drag, or Alt + left-drag), pan with Shift, zoom with the wheel.
 // - Animate plays the model's autoplay animations live; turning it off puts the parts back.
@@ -41,6 +41,8 @@ public final class MeshBuilderWorkspace {
     private let animateToggle = Checkbox("Animate", kind: .toggleSwitch, name: "meshBuilderAnimate")
     private var root: Entity?
     private var partEntities: [String: Entity] = [:]
+    /// Mirror / repeat copies (shown, not in the file) → the part each comes from.
+    private(set) var copySources: [String: String] = [:]
     private var shownRevision = -1
     /// The part last agreed on by the form and the view's selection.
     private var syncedPart: String?
@@ -255,6 +257,11 @@ public final class MeshBuilderWorkspace {
         partEntities = [:]
         guard let prefab = assets.prefab(AssetReference(asset)), let newRoot = world.instantiate(prefab).first else { return }
         root = newRoot
+        let expansion = assets.meshBuild(of: asset)?.expansion()
+        copySources = [:]
+        for (part, source) in zip(expansion?.build.parts ?? [], expansion?.sources ?? []) where part.name != source {
+            copySources[part.name] = source
+        }
         var stack = world.children(of: newRoot)
         while let entity = stack.popLast() {
             if let name = world.get(Name.self, for: entity)?.value, partEntities[name] == nil { partEntities[name] = entity }
@@ -275,7 +282,13 @@ public final class MeshBuilderWorkspace {
             selection.set(syncedPart.flatMap { partEntities[$0] }.flatMap { world.ensureID(of: $0) }.map { [$0] } ?? [])
             return
         }
-        let picked = selection.primaryEntity(in: world).flatMap(part(of:))
+        var picked = selection.primaryEntity(in: world).flatMap(part(of:))
+        if let name = picked, let source = copySources[name] {
+            // A mirror / repeat copy isn't in the file: clicking it picks the part it comes from,
+            // which the gizmos then edit (the copies follow).
+            selection.set(partEntities[source].flatMap { world.ensureID(of: $0) }.map { [$0] } ?? [])
+            picked = source
+        }
         if picked != syncedPart, picked != nil || selection.ids.isEmpty {
             syncedPart = picked
             builder.selectPart(picked)
@@ -288,7 +301,7 @@ public final class MeshBuilderWorkspace {
         guard let builder else { return }
         var changes: [String: Transform] = [:]
         for entity in selection.entities(in: world) {
-            if let name = part(of: entity), let transform = world.get(Transform.self, for: entity) { changes[name] = transform }
+            if let name = part(of: entity), copySources[name] == nil, let transform = world.get(Transform.self, for: entity) { changes[name] = transform }
         }
         guard !changes.isEmpty else { return }
         builder.updateParts(label: "\(session.tool.title) Part") { part in

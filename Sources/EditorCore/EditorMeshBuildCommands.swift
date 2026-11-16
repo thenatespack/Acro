@@ -27,6 +27,17 @@ public enum EditorMeshBuildCommands {
         linear|hermite|step, keys [{time, value [x,y,z]}]}; values are relative to the part's rest pose: position offset \
         in m, rotation degrees added, scale multiplier (1 = unchanged))). Every key is optional. A group part has no mesh: \
         use it as a pivot (hinge, turret) for animated children.
+        """ + " " + symmetryDoc
+
+    /// The `mirror` / `repeat` part keys (appended to `formatDoc`).
+    static let symmetryDoc = """
+        Symmetry: a part's mirror ("x"|"y"|"z" or ["x","z"]: every combination) adds a mirror image of it and its children \
+        across the parent's plane through its origin, and repeat {count (parts in all, the original first), offset [x,y,z] \
+        step per copy, radial {axis (default y), angle (total degrees, default 360 = evenly round), radius (ring around \
+        the part's own position; omitted: around the parent's origin)}} adds copies "<name> 2", "<name> 3"… (repeat \
+        first, then mirror); a mirror copy's name swaps Left/Right or L/R (x), Top/Bottom or Upper/Lower (y), \
+        Front/Back (z), else gets " (mirror x)", copies play their source's animations mirrored, tracks and partColors \
+        can name them, and results list them in `copies`.
         """
 }
 
@@ -132,6 +143,8 @@ public struct MeshBuildResult: Codable, Equatable, Sendable {
     public var warnings: [String]
     /// Entities placed in the scene (meshBuild.new with `place`).
     public var entities: [EntityID]?
+    /// The parts `mirror` and `repeat` add, by name (nil: none).
+    public var copies: [String]?
 }
 
 extension MeshBuildResult {
@@ -141,6 +154,8 @@ extension MeshBuildResult {
         self.init(asset: id, path: session.assets?.path(of: id) ?? "", prefab: prefab, parts: build.parts.map(\.name),
                   animations: build.animations.map(\.name), warnings: warnings + (record?.importError.map { ["import failed: \($0)"] } ?? []),
                   entities: entities)
+        let copies = build.hasCopies ? build.expansion().copies : []
+        self.copies = copies.isEmpty ? nil : copies
     }
 }
 
@@ -185,11 +200,15 @@ public enum MeshBuildNewCommand: EditorCommand {
 /// Problems with a mesh build's references, found without importing (the same ones the importer warns about).
 @MainActor
 enum MeshBuildCheck {
+    /// The parts as the importer makes them: `mirror` / `repeat` copies written out after the file's parts.
+    static func parts(of build: MeshBuild) -> [MeshBuildPart] { build.expanded().parts }
+
     static func problems(_ build: MeshBuild, in session: EditorSession) -> [String] {
-        var problems: [String] = []
+        let expansion = build.expansion()  // mirror / repeat copies count as parts
+        var problems: [String] = expansion.warnings
         let names = build.parts.map(\.name)
-        let known = Set(names)
-        if known.count != names.count { problems.append("some parts share a name; parenting and animation use the first") }
+        let known = Set(expansion.build.parts.map(\.name))
+        if Set(names).count != names.count { problems.append("some parts share a name; parenting and animation use the first") }
         for part in build.parts {
             if !part.parent.isEmpty && !known.contains(part.parent) { problems.append("part '\(part.name)' has a missing parent '\(part.parent)'") }
             for (value, kind) in [(part.texture, AssetKind.texture), (part.material, .material)] where !value.isEmpty {

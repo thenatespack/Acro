@@ -369,14 +369,15 @@ public final class CharacterBuilderView {
     /// it gets now), with Reset where one is set.
     private func addPartColors(_ attachment: CharacterAttachment) {
         guard let id = MeshBuildCheck.resolve(attachment.asset.trimmingCharacters(in: .whitespaces), session: session),
-              let build = session.assets?.meshBuild(of: id) else { return }
+              let expansion = session.assets?.meshBuild(of: id)?.expansion() else { return }
+        let build = expansion.build  // mirror / repeat copies included
         var names: [String] = []
-        for part in build.parts where !names.contains(part.name) && part.geometry() != nil { names.append(part.name) }
+        for part in build.parts where !names.contains(part.name) && part.shape != .group { names.append(part.name) }
         guard !names.isEmpty else { return }
         view.addChild(Label("Part Colors", role: .secondary))
         for name in names {
             let own = build.parts.first { $0.name == name }?.color ?? Vec3(0.8, 0.8, 0.8)
-            let current = attachment.color(ofPart: name) ?? own
+            let current = attachment.color(ofPart: name, source: expansion.source(of: name)) ?? own
             let swatch = ColorSwatch(color: UIColor(current.x, current.y, current.z), name: "characterPartColor.\(name)")
             swatch.tooltip = "The color of part \(name) (over Color)"
             swatch.onEditEnded = { [unowned self] _, end in setPartColor(name, Vec3(end.r, end.g, end.b), of: attachment.name) }

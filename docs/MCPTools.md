@@ -2090,7 +2090,7 @@ Arguments:
 
 - `addAnimations?`: [{autoplay?: boolean, loop?: "once" \| "loop" \| "pingPong", motions?: [object], name?: string, speed?: number, tracks?: [object]}]
 - `addMotions?`: [{amount?: number, axis?: "x" \| "y" \| "z", kind?: "spin" \| "bob" \| "swing" \| "pulse" \| "shake", part?: string, period?: number}]
-- `addParts?`: [{color?: number[3], glow?: number[3], glowStrength?: number, material?: string, metallic?: number, name?: string, opacity?: number, parent?: string, position?: number[3], rotation?: number[3], roughness?: number, segments?: integer, shape?: string (12 cases), size?: number[3], texture?: string, textureScale?: number[2], thickness?: number, worldUV?: boolean}]
+- `addParts?`: [{color?: number[3], glow?: number[3], glowStrength?: number, material?: string, metallic?: number, mirror?: "x" \| "y" \| "z" \| ["x" \| "y" \| "z"], name?: string, opacity?: number, parent?: string, position?: number[3], repeat?: object, rotation?: number[3], roughness?: number, segments?: integer, shape?: string (12 cases), size?: number[3], texture?: string, textureScale?: number[2], thickness?: number, worldUV?: boolean}]
 - `addTracks?`: [{interpolation?: "linear" \| "step" \| "hermite", keys?: [object], part?: string, property?: "position" \| "rotation" \| "scale"}]
 - `animation?`: string
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
@@ -2103,6 +2103,7 @@ Result:
 
 - `animations`: [string]
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `copies?`: [string]
 - `entities?`: [entity id]
 - `parts`: [string]
 - `path`: string
@@ -2132,7 +2133,7 @@ Result:
 
 **New Mesh Build**
 
-Writes a .meshbuild file in `folder` (default: the Assets root) and imports it as a model (a prefab of its parts, one mesh and material per part), optionally placing it in the scene (`place`, at `position`; undoable). Returns the asset, its prefab, the part names and import warnings. Edit it later with meshBuild.edit (small changes) or meshBuild.set (whole contents); placed copies update. A mesh build is a model made of shapes: `parts` (each: name, shape group|box|sphere|hemisphere|cylinder|cone|capsule|torus|tube|plane|wedge|pyramid, parent (another part's name; children move with it), position [x,y,z] m in the parent's space, rotation [x,y,z] degrees, size [x,y,z] m (the box the shape fills; cylinders/cones/capsules run along Y), segments, thickness (tube wall), color [r,g,b] 0-1 sRGB, opacity, texture (path under Assets/ such as "Textures/brick.png" or a .proctex, or "asset:<id>"), textureScale [u,v], worldUV (texture keeps its size in meters), metallic, roughness, glow [r,g,b] emitted color, glowStrength, material (a .material asset replacing the look)) and `animations` (each: name, autoplay (default true; every autoplay animation plays at once in play mode and games), loop loop|once|pingPong, speed, motions (ready-made: {part, kind spin|bob|swing|pulse|shake, axis x|y|z, amount (spin: turns, bob/shake: m, swing: degrees, pulse: growth fraction), period seconds}) and tracks (keyframes: {part, property position|rotation|scale, interpolation linear|hermite|step, keys [{time, value [x,y,z]}]}; values are relative to the part's rest pose: position offset in m, rotation degrees added, scale multiplier (1 = unchanged))). Every key is optional. A group part has no mesh: use it as a pivot (hinge, turret) for animated children.
+Writes a .meshbuild file in `folder` (default: the Assets root) and imports it as a model (a prefab of its parts, one mesh and material per part), optionally placing it in the scene (`place`, at `position`; undoable). Returns the asset, its prefab, the part names and import warnings. Edit it later with meshBuild.edit (small changes) or meshBuild.set (whole contents); placed copies update. A mesh build is a model made of shapes: `parts` (each: name, shape group|box|sphere|hemisphere|cylinder|cone|capsule|torus|tube|plane|wedge|pyramid, parent (another part's name; children move with it), position [x,y,z] m in the parent's space, rotation [x,y,z] degrees, size [x,y,z] m (the box the shape fills; cylinders/cones/capsules run along Y), segments, thickness (tube wall), color [r,g,b] 0-1 sRGB, opacity, texture (path under Assets/ such as "Textures/brick.png" or a .proctex, or "asset:<id>"), textureScale [u,v], worldUV (texture keeps its size in meters), metallic, roughness, glow [r,g,b] emitted color, glowStrength, material (a .material asset replacing the look)) and `animations` (each: name, autoplay (default true; every autoplay animation plays at once in play mode and games), loop loop|once|pingPong, speed, motions (ready-made: {part, kind spin|bob|swing|pulse|shake, axis x|y|z, amount (spin: turns, bob/shake: m, swing: degrees, pulse: growth fraction), period seconds}) and tracks (keyframes: {part, property position|rotation|scale, interpolation linear|hermite|step, keys [{time, value [x,y,z]}]}; values are relative to the part's rest pose: position offset in m, rotation degrees added, scale multiplier (1 = unchanged))). Every key is optional. A group part has no mesh: use it as a pivot (hinge, turret) for animated children. Symmetry: a part's mirror ("x"|"y"|"z" or ["x","z"]: every combination) adds a mirror image of it and its children across the parent's plane through its origin, and repeat {count (parts in all, the original first), offset [x,y,z] step per copy, radial {axis (default y), angle (total degrees, default 360 = evenly round), radius (ring around the part's own position; omitted: around the parent's origin)}} adds copies "<name> 2", "<name> 3"… (repeat first, then mirror); a mirror copy's name swaps Left/Right or L/R (x), Top/Bottom or Upper/Lower (y), Front/Back (z), else gets " (mirror x)", copies play their source's animations mirrored, tracks and partColors can name them, and results list them in `copies`.
 
 Arguments:
 
@@ -2146,6 +2147,7 @@ Result:
 
 - `animations`: [string]
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `copies?`: [string]
 - `entities?`: [entity id]
 - `parts`: [string]
 - `path`: string
@@ -2183,6 +2185,7 @@ Result:
 
 - `animations`: [string]
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `copies?`: [string]
 - `entities?`: [entity id]
 - `parts`: [string]
 - `path`: string
