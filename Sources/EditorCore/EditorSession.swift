@@ -147,6 +147,9 @@ public final class EditorSession {
     public var openGridMap: AssetID?
     public var openGridMapFloor = 0
     public var onOpenGridMap: ((AssetID) -> Void)?
+    /// The path open in the Path Builder tab (`path.open`), and how the app shows it.
+    public var openPathBuild: AssetID?
+    public var onOpenPathBuild: ((AssetID) -> Void)?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()

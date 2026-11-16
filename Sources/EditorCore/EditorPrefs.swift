@@ -115,8 +115,10 @@ public enum EditorLayout {
     public static let tilemapBuilder = "tilemapBuilder"
     /// The GridMap Builder tab (opened with a `.gridmap` file, tabbed with the Scene view; not in the default layout).
     public static let gridMapBuilder = "gridMapBuilder"
+    /// The Path Builder tab (opened with a `.path` file, tabbed with the Scene view; not in the default layout).
+    public static let pathBuilder = "pathBuilder"
     public static let panelIDs = [viewport, game, hierarchy, inspector, console, stats, assets, activity, scripts, files, meshBuilder, vfxBuilder,
-                                  soundBuilder, postFXBuilder, dataTable, terrainBuilder, spriteBuilder, tilemapBuilder, gridMapBuilder]
+                                  soundBuilder, postFXBuilder, dataTable, terrainBuilder, spriteBuilder, tilemapBuilder, gridMapBuilder, pathBuilder]
 
     /// Hierarchy above Files on the left, inspector right, the Scene view (tabbed with the Game
     /// view and Scripts, so scripts open where the Scene view is) in the middle above an Assets / Console / Activity /

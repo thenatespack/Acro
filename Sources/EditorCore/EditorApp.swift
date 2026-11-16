@@ -144,6 +144,8 @@ public final class EditorApp: Game, EditorHost {
     public private(set) var tilemapWorkspace: TilemapWorkspace!
     /// The GridMap Builder tab (GridMapWorkspace.swift).
     public private(set) var gridMapWorkspace: GridMapWorkspace!
+    /// The Path Builder tab (PathBuilderWorkspace.swift).
+    public private(set) var pathWorkspace: PathBuilderWorkspace!
     private(set) var statusBar: StatusBar!
     /// The Assets panel (browser) and its thumbnails.
     public private(set) var assetBrowser: AssetBrowserPanel!
@@ -531,6 +533,14 @@ public final class EditorApp: Game, EditorHost {
             }
             dock.focusPanel(EditorLayout.gridMapBuilder)
         }
+        session.onOpenPathBuild = { [unowned self] id in
+            guard pathWorkspace.open(id) else { return }
+            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.pathBuilder, EditorLayout.viewport) {
+                dock.dock(EditorLayout.pathBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
+                                                                                             : .edge(.bottom))
+            }
+            dock.focusPanel(EditorLayout.pathBuilder)
+        }
         session.onOpenScript = { [unowned self] path in
             let url = URL(fileURLWithPath: path)
             scriptEditor.openScript(at: url)
@@ -669,6 +679,9 @@ public final class EditorApp: Game, EditorHost {
         gridMapWorkspace = GridMapWorkspace(session: session)
         gridMapWorkspace.device = engine?.device
         if let quality = engine?.quality { gridMapWorkspace.quality = quality }
+        pathWorkspace = PathBuilderWorkspace(session: session)
+        pathWorkspace.device = engine?.device
+        if let quality = engine?.quality { pathWorkspace.quality = quality }
         files.onOpen = { [unowned self] file in openFile(file) }
         files.onNewScene = { [unowned self] name in newScene(named: name) }
 
@@ -706,6 +719,9 @@ public final class EditorApp: Game, EditorHost {
         let gridMapPanel = DockPanel(id: EditorLayout.gridMapBuilder, title: "GridMap Builder", content: gridMapWorkspace.view, minSize: Vec2(320, 200))
         gridMapPanel.passesPointerThrough = true
         dock.addPanel(gridMapPanel)
+        let pathPanel = DockPanel(id: EditorLayout.pathBuilder, title: "Path Builder", content: pathWorkspace.view, minSize: Vec2(320, 200))
+        pathPanel.passesPointerThrough = true
+        dock.addPanel(pathPanel)
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
         for (id, icon) in EditorIcons.panelIconNames { dock.panel(id)?.icon = EditorIcons.named(icon) }
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
@@ -1114,6 +1130,7 @@ public final class EditorApp: Game, EditorHost {
             spriteWorkspace.update(dt: dt)
             tilemapWorkspace.update(dt: dt)
             gridMapWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
+            pathWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
         }
         session.tick(dt: Double(dt))
 
@@ -1144,6 +1161,7 @@ public final class EditorApp: Game, EditorHost {
         postFXWorkspace.prepareFrame(pixelScale: ui.scale)
         terrainWorkspace.prepareFrame(pixelScale: ui.scale)
         gridMapWorkspace.prepareFrame(pixelScale: ui.scale)
+        pathWorkspace.prepareFrame(pixelScale: ui.scale)
         buildGizmos()
         viewportWidget.texture = target.texture
         viewportWidget.billboards = transformTool.billboards
@@ -1586,6 +1604,7 @@ public final class EditorApp: Game, EditorHost {
         postFXWorkspace.render(frame: frame)
         terrainWorkspace.render(frame: frame)
         gridMapWorkspace.render(frame: frame)
+        pathWorkspace.render(frame: frame)
         if let game = gameCurrentView, gameSizer.width > 0, gameWidget.isEffectivelyVisible {
             sceneRenderer.beginViews(world: session.gameWorld, frame: frame, shadowFocus: game)
             sceneRenderer.renderView(game, into: gameTarget, frame: frame, debugDraw: gameDraw)

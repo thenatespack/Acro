@@ -209,6 +209,7 @@ public struct AssetImporterRegistry: Sendable {
         registry.register(PixelSpriteImporter())
         registry.register(TilemapImporter())
         registry.register(GridMapImporter())
+        registry.register(PathBuildImporter())
         return registry
     }
 

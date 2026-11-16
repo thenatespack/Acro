@@ -449,6 +449,16 @@ public final class AssetInspectorView {
                 content.addChildren([HStack(spacing: 6, [open, Spacer()]),
                                      note("A \(map?.cols ?? 0) x \(map?.rowCount ?? 0) tilemap with \(map?.layers.count ?? 0) layers. Placed, it is layer meshes, merged Collider2D shapes and object points; game code reads it with assets.tilemap(path:).")])
             }
+            if session.isPathBuildFile(id) {
+                let open = Button("Open in Path Builder", role: .primary, name: "openPathBuilder") { [unowned self] in
+                    session.run(PathOpenCommand.self, .init(asset: AssetReference(id)))
+                }
+                open.command = PathOpenCommand.id.rawValue
+                open.tooltip = "Edit this path's points, profiles and pieces in the Path Builder tab (or double-click it in the Assets panel)"
+                let build = session.assets?.pathBuild(of: id)
+                content.addChildren([HStack(spacing: 6, [open, Spacer()]),
+                                     note("A \(build?.kind.rawValue ?? "path") spline through \(build?.points.count ?? 0) points, with geometry generated along it. The Path Builder has control-point gizmos, profiles, pieces and terrain following.")])
+            }
             if session.isMaterialFile(id) {
                 addMaterialForm(AssetReference(id, subAsset: "material"))
             }

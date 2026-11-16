@@ -154,22 +154,7 @@ public struct LineRenderer: Component, Codable, Equatable, Sendable {
     /// How far below its ends a span of `chord` length hangs at fraction `t`, as a fraction of its
     /// middle's drop `sag` (1 at t = 0.5, 0 at both ends).
     static func sagProfile(_ curve: Curve, t: Float, sag: Float, chord: Float) -> Float {
-        switch curve {
-        case .parabola:
-            return 4 * t * (1 - t)
-        case .catenary:
-            // Sag / chord = (cosh k - 1) / (2k) for a catenary a * cosh(x / a) with k = chord / 2a;
-            // solve k by bisection (the ratio grows monotonically with k).
-            let ratio = sag / max(chord, 1e-6)
-            guard ratio > 1e-5 else { return 4 * t * (1 - t) }
-            var lo: Float = 1e-4, hi: Float = 40
-            for _ in 0..<40 {
-                let k = (lo + hi) / 2
-                if (coshf(k) - 1) / (2 * k) < ratio { lo = k } else { hi = k }
-            }
-            let k = (lo + hi) / 2
-            return (coshf(k) - coshf(k * (2 * t - 1))) / (coshf(k) - 1)
-        }
+        CableSag.profile(catenary: curve == .catenary, t: t, sag: sag, chord: chord)
     }
 
     /// The sampled centerline: `segments` samples per span (plus the last point).
@@ -186,12 +171,7 @@ public struct LineRenderer: Component, Codable, Equatable, Sendable {
                 var point: Vec3
                 if spec.smooth {
                     // Uniform Catmull-Rom; end spans reuse their end point as the missing neighbor.
-                    let t2 = t * t, t3 = t2 * t
-                    let a = p1 * 2
-                    let b = (p2 - p0) * t
-                    let c = (p0 * 2 - p1 * 5 + p2 * 4 - p3) * t2
-                    let d = (p1 * 3 - p0 - p2 * 3 + p3) * t3
-                    point = (a + b + c + d) * 0.5
+                    point = CatmullRom.point(p0, p1, p2, p3, t)
                 } else {
                     point = p1 + (p2 - p1) * t
                 }

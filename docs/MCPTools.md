@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 188 tools.
+named by its id (see README › Use the editor › AI control). 194 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -31,6 +31,7 @@ optional arguments.
 | `meshBuild` | [`meshBuild.edit`](#meshbuildedit), [`meshBuild.get`](#meshbuildget), [`meshBuild.new`](#meshbuildnew), [`meshBuild.open`](#meshbuildopen), [`meshBuild.set`](#meshbuildset) |
 | `net` | [`net.overlay`](#netoverlay), [`net.setConditions`](#netsetconditions), [`net.start`](#netstart), [`net.stats`](#netstats), [`net.stop`](#netstop), [`net.view`](#netview) |
 | `panel` | [`panel.close`](#panelclose), [`panel.dock`](#paneldock), [`panel.focus`](#panelfocus), [`panel.list`](#panellist), [`panel.open`](#panelopen) |
+| `path` | [`path.edit`](#pathedit), [`path.get`](#pathget), [`path.new`](#pathnew), [`path.open`](#pathopen), [`path.sample`](#pathsample), [`path.set`](#pathset) |
 | `play` | [`play.pause`](#playpause), [`play.setTimeScale`](#playsettimescale), [`play.start`](#playstart), [`play.state`](#playstate), [`play.step`](#playstep), [`play.stop`](#playstop), [`play.toggle`](#playtoggle) |
 | `postfx` | [`postfx.assign`](#postfxassign), [`postfx.edit`](#postfxedit), [`postfx.get`](#postfxget), [`postfx.new`](#postfxnew), [`postfx.open`](#postfxopen), [`postfx.set`](#postfxset) |
 | `prefab` | [`prefab.apply`](#prefabapply), [`prefab.create`](#prefabcreate), [`prefab.createVariant`](#prefabcreatevariant), [`prefab.overrides`](#prefaboverrides), [`prefab.revert`](#prefabrevert), [`prefab.unpack`](#prefabunpack) |
@@ -1519,6 +1520,162 @@ Arguments:
 
 - `panel`: string
 - `placement?`: {beside?: string, edge?: "left" \| "right" \| "top" \| "bottom", floating?: [number], fraction?: number, tabWith?: string}
+
+## path
+
+### `path.edit`
+
+**Edit Path** · _undoable_
+
+Changes a .path file in one undoable step, in this order: kind (applies that preset's profiles and pieces), points (replace all), removePoints, insertPoints, addPoints, updatePoints ({index, position?, bank?, width?}), the curve settings (closed, smooth, spacing, bank, autoBank), profile (fields to change on `profileName` or the first profile), removeProfiles, addProfiles, updateProfiles (name → fields), removePieces, addPieces, updatePieces, terrain (fields: asset, offset, height). Placed copies update. Returns the length, piece counts and warnings. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `addPieces?`: [{asset?: string, collider?: boolean, color?: number[3], material?: string, metallic?: number, mirror?: boolean, name?: string, offset?: number[3], rotation?: number[3], roughness?: number, scale?: number, shape?: string (12 cases), size?: number[3], spacing?: number, start?: number, upright?: boolean}]
+- `addPoints?`: [number[3]]
+- `addProfiles?`: [{closedShape?: boolean, collider?: boolean, color?: number[3], glow?: number[3], height?: number, material?: string, metallic?: number, name?: string, offset?: number[2], opacity?: number, points?: [number[2]], roughness?: number, sag?: number, shape?: "flat" \| "box" \| "tube" \| "custom", sides?: integer, texture?: string, textureScale?: number[2], width?: number}]
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `autoBank?`: number
+- `bank?`: number
+- `closed?`: boolean
+- `insertPoints?`: [{index: integer, points: [number[3]]}]
+- `kind?`: "road" \| "rail" \| "river" \| "fence" \| "cable" \| "wall" \| "custom"
+- `path?`: string
+- `points?`: [number[3]]
+- `profile?`: any — Any JSON value.
+- `profileName?`: string
+- `removePieces?`: [string]
+- `removePoints?`: [integer]
+- `removeProfiles?`: [string]
+- `smooth?`: boolean
+- `spacing?`: number
+- `terrain?`: any — Any JSON value.
+- `updatePieces?`: object
+- `updatePoints?`: [{bank?: number, index: integer, position?: number[3], width?: number}]
+- `updateProfiles?`: object
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `entities?`: [entity id]
+- `kind`: "road" \| "rail" \| "river" \| "fence" \| "cable" \| "wall" \| "custom"
+- `length`: number
+- `path`: string
+- `pieceCounts`: [integer]
+- `pieces`: [string]
+- `points`: integer
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `profiles`: [string]
+- `terrain?`: string
+- `warnings`: [string]
+
+### `path.get`
+
+**Get Path** · _read-only_, _idempotent_
+
+Reads a .path file: every field (defaults included) and a summary (length, piece counts, the followed terrain, problems). path.sample returns points along it.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `build`: {autoBank?: number, bank?: number, closed?: boolean, kind?: string (7 cases), pieces?: [object], points?: [number[3]], profiles?: [object], smooth?: boolean, spacing?: number, terrain?: {asset?: string, height?: number, offset?: number[3]}}
+- `summary`: {asset: asset id, entities?: [entity id], kind: string (7 cases), length: number, path: string, pieceCounts: [integer], pieces: [string], points: integer, prefab: asset id, profiles: [string], terrain?: string, warnings: [string]}
+
+### `path.new`
+
+**New Path**
+
+Writes a .path file in `folder` (default: the Assets root) from a `kind` preset (road: a road bed with a center line and a collider; rail: ballast, two rails and sleepers; river: water over a bed; fence: posts and two rails; cable: a sagging wire 6 m up; wall: a wall with a cap), through `points` (default an S curve), optionally following a terrain and placed in the scene. Then reshape it with path.edit. A path is a spline through `points` (each [x,y,z] meters, or {position, bank (degrees, positive lowers the right side), width (multiplies the profiles' widths there)}), `closed` (a loop), `smooth` (Catmull-Rom; false: straight lines), `spacing` (meters between samples), `bank` (degrees added everywhere), `autoBank` (extra degrees in tight turns), `kind` (road, rail, river, fence, cable, wall, custom), `profiles` (cross-sections swept into meshes; each: name, shape flat|box|tube|custom, width, height, offset [right, up] meters from the centerline, sides (tube), points (custom outline [right, up], counter-clockwise seen along the path), closedShape, sag (cables hang this far between control points), color [r,g,b] 0-1 sRGB, opacity, metallic, roughness, glow, texture, textureScale [across, per meter along], material, collider), `pieces` (repeated along the path; each: name, asset (a .meshbuild path or "asset:<id>#mesh/<name>"; empty uses shape/size/color, a Mesh Builder shape such as box or cylinder), spacing meters, start, offset [right, up, forward], rotation degrees, scale, upright, mirror (also on the other side), collider) and `terrain` {asset (a .terrain path), offset (the terrain's origin in the path's space), height (meters above the ground)}: with a terrain every sample and piece sits on its surface (point y is ignored). Forward is the direction of travel, right is level with the ground. Every key is optional.
+
+Arguments:
+
+- `closed?`: boolean
+- `folder?`: string
+- `kind?`: "road" \| "rail" \| "river" \| "fence" \| "cable" \| "wall" \| "custom"
+- `name?`: string
+- `place?`: boolean
+- `points?`: [number[3]]
+- `position?`: number[3] — [x, y, z]
+- `terrain?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `entities?`: [entity id]
+- `kind`: "road" \| "rail" \| "river" \| "fence" \| "cable" \| "wall" \| "custom"
+- `length`: number
+- `path`: string
+- `pieceCounts`: [integer]
+- `pieces`: [string]
+- `points`: integer
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `profiles`: [string]
+- `terrain?`: string
+- `warnings`: [string]
+
+### `path.open`
+
+**Open in Path Builder** · _idempotent_
+
+Opens a .path file in the editor's Path Builder tab (a viewport showing the path over the terrain it follows, control-point handles you click and drag with the Move gizmo, and the points, profiles and pieces forms) and brings the tab to the front. view.screenshot {source: "panel", panel: "pathBuilder"} shows it.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `path`: string
+
+### `path.sample`
+
+**Sample Path** · _read-only_, _idempotent_
+
+Returns points along a .path's centerline (on its terrain when it follows one), in the path's space: position, forward (direction of travel), right and up (after banking), and the distance in meters. Use it to place things along a road or river (add the placed path entity's position).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `count?`: integer
+- `distances?`: [number]
+- `path?`: string
+
+Result:
+
+- `length`: number
+- `points`: [{distance: number, forward: number[3], position: number[3], right: number[3], up: number[3]}]
+
+### `path.set`
+
+**Set Path** · _undoable_, _idempotent_
+
+Replaces a .path file's whole contents and reimports it; placed copies update. Undoable. For a few changes path.edit is shorter. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `build`: {autoBank?: number, bank?: number, closed?: boolean, kind?: string (7 cases), pieces?: [object], points?: [number[3]], profiles?: [object], smooth?: boolean, spacing?: number, terrain?: {asset?: string, height?: number, offset?: number[3]}}
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `entities?`: [entity id]
+- `kind`: "road" \| "rail" \| "river" \| "fence" \| "cable" \| "wall" \| "custom"
+- `length`: number
+- `path`: string
+- `pieceCounts`: [integer]
+- `pieces`: [string]
+- `points`: integer
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `profiles`: [string]
+- `terrain?`: string
+- `warnings`: [string]
 
 ## play
 

@@ -147,6 +147,8 @@ public final class AssetBrowserModel {
             session.run(TilemapOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where session.isGridMapFile(id):
             session.run(GridMapOpenCommand.self, .init(asset: AssetReference(id)))
+        case .asset(let id) where session.isPathBuildFile(id):
+            session.run(PathOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where entry.isExpandable:
             toggleExpanded(id)
         default:
@@ -233,6 +235,14 @@ public final class AssetBrowserModel {
     @discardableResult
     public func newGridMap() -> AssetID? {
         guard let id = session.run(GridMapNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
+        invalidate()
+        selection = .asset(id)
+        return id
+    }
+    /// Creates a path (a road) in the current folder (`path.new`) and selects it.
+    @discardableResult
+    public func newPathBuild() -> AssetID? {
+        guard let id = session.run(PathNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
         invalidate()
         selection = .asset(id)
         return id
