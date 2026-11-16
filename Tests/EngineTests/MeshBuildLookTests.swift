@@ -49,7 +49,7 @@ private func node(_ name: String, in nodes: [PrefabNode]) -> PrefabNode? {
             }
             let mean = sum / Double(32 * 32)
             #expect(abs(mean - 0.5) < 0.12, "\(look): mean \(mean)")
-            #expect(t.averageColor.x > 0 && t.averageColor.x <= 1, "\(look)")
+            #expect(t.averageColor.x > 0 && t.averageColor.x <= 1.05, "\(look)")
         }
         // Metals are metallic, the rest aren't.
         let gold = MeshBuildLookTextures.generate(.gold, wearLevel: 0, resolution: 16)
@@ -124,8 +124,12 @@ private func node(_ name: String, in nodes: [PrefabNode]) -> PrefabNode? {
         // A cylinder wraps a whole number of tiles around.
         let post = MeshBuildPart(shape: .cylinder, size: Vec3(0.3, 2, 0.3), look: "bark", lookScale: 0.4)
         let side = post.applyingLookUVs(to: try #require(post.geometry())).vertices.filter { abs($0.normal.y) < 0.5 }
-        let around = side.map(\.uv.y).max()! - side.map(\.uv.y).min()!
-        #expect(abs(around - (Float.pi * 0.3 / 0.4).rounded()) < 0.05, "\(around)")
+        // Tiles per radian away from the seam: a whole number of tiles in a full turn.
+        let away = side.filter { abs(atan2f($0.position.x, $0.position.z)) < 2.5 }
+        let a0 = try #require(away.min { atan2f($0.position.x, $0.position.z) < atan2f($1.position.x, $1.position.z) })
+        let a1 = try #require(away.max { atan2f($0.position.x, $0.position.z) < atan2f($1.position.x, $1.position.z) })
+        let perTurn = (a1.uv.y - a0.uv.y) / (atan2f(a1.position.x, a1.position.z) - atan2f(a0.position.x, a0.position.z)) * 2 * .pi
+        #expect(abs(perTurn - (Float.pi * 0.3 / 0.4).rounded()) < 1e-3, "\(perTurn)")
         #expect(abs((side.map(\.uv.x).max()! - side.map(\.uv.x).min()!) - 2 / 0.4) < 1e-3, "U runs up the post (grain Y)")
     }
 

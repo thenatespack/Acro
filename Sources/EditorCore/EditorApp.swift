@@ -1962,8 +1962,13 @@ extension EditorApp {
 
     /// Renders queued world captures: the first two frames only gather the world (uploading its
     /// meshes and textures), the third renders every view into a target of its own and reads it back.
+    /// Asset loads block while a capture gathers its world, so a preview never shows a material
+    /// whose textures are still being prepared (a mesh build's generated look textures, say).
     func renderWorldCaptures(frame: Frame) {
         guard !worldCaptureJobs.isEmpty else { return }
+        let blocked = sceneRenderer.blocksOnAssetLoading
+        sceneRenderer.blocksOnAssetLoading = true
+        defer { sceneRenderer.blocksOnAssetLoading = blocked }
         var remaining: [WorldCaptureJob] = []
         for var job in worldCaptureJobs {
             sceneRenderer.beginViews(world: job.world, frame: frame, shadowFocus: job.views[0].view)

@@ -76,7 +76,7 @@ public enum MeshBuildLook: String, Codable, CaseIterable, Sendable {
     /// Height range of the look's bumps in meters at its default scale (the normal map's depth).
     var bumpDepth: Float {
         switch self {
-        case .wood: 0.0012
+        case .wood: 0.0008
         case .paintedWood: 0.0005
         case .planks: 0.004
         case .bark: 0.03
@@ -514,8 +514,8 @@ enum MeshBuildLookSampler {
     static func wood(_ u: Float, _ v: Float, seed: Int) -> MeshBuildLookTexel {
         // Growth lines run along U; slow warps bend them into gentle arches, and their spacing
         // varies (rings of fast and slow years).
-        let warp = fbm(u, v, 1, 2, octaves: 3, seed: seed) * 1.6 + fbm(u, v, 2, 6, octaves: 2, seed: seed &+ 1) * 0.3
-        let rings = v * 16 + warp + fbm(u, v, 1, 5, octaves: 2, seed: seed &+ 6) * 0.9
+        let warp = fbm(u, v, 1, 2, octaves: 2, seed: seed) * 0.9 + fbm(u, v, 1, 6, octaves: 2, seed: seed &+ 1) * 0.25
+        let rings = v * 20 + warp + fbm(u, v, 1, 4, octaves: 2, seed: seed &+ 6) * 0.5
         let r = fract(rings)
         let late = smoothstep(0.55, 0.88, r) * (1 - smoothstep(0.9, 1.0, r))
         let fibers = fbm(u, v, 2, 180, octaves: 3, seed: seed &+ 2)
@@ -630,9 +630,9 @@ enum MeshBuildLookSampler {
         let stain = fbm(u, v, 2, 2, octaves: 5, seed: seed)
         let mid = fbm(u, v, 10, 10, octaves: 3, seed: seed &+ 1)
         let fine = perlin(u, v, 160, 160, seed: seed &+ 2)
-        let pores = TileNoise.cells(u, v, 48, 48, seed: seed &+ 3)
-        let pore = (1 - smoothstep(0.08, 0.16, pores.f1)) * (TileNoise.hash01(seed, Int(pores.id & 0xFFFF)) < 0.35 ? 1 : 0)
-        let c = mul(lin(0.6, 0.59, 0.56), 1 + stain * 0.09 + mid * 0.04 + fine * 0.03 - pore * 0.35)
+        let pores = TileNoise.cells(u, v, 64, 64, seed: seed &+ 3)
+        let pore = (1 - smoothstep(0.08, 0.16, pores.f1)) * (TileNoise.hash01(seed, Int(pores.id & 0xFFFF)) < 0.12 ? 1 : 0)
+        let c = mul(lin(0.6, 0.59, 0.56), 1 + stain * 0.09 + mid * 0.04 + fine * 0.03 - pore * 0.2)
         return MeshBuildLookTexel(c, h: 0.6 + mid * 0.15 + fine * 0.06 - pore * 0.45, rough: 0.88 + fine * 0.04)
     }
 
@@ -699,7 +699,7 @@ enum MeshBuildLookSampler {
         // Scattered irregular pebbles of different sizes, in clusters.
         let wu = u + fbm(u, v, 32, 32, octaves: 2, seed: seed &+ 5) * 0.008
         let wv = v + fbm(u, v, 32, 32, octaves: 2, seed: seed &+ 6) * 0.008
-        let p = TileNoise.cells(wu, wv, 20, 20, seed: seed &+ 2)
+        let p = TileNoise.cells(wu, wv, 30, 30, seed: seed &+ 2)
         let pick = TileNoise.hash01(seed, Int(p.id & 0xFFFF), 7)
         let cluster = smoothstep(0.35, 0.75, fbm(u, v, 3, 3, octaves: 2, seed: seed &+ 4) * 0.5 + 0.5)
         let size = 0.15 + 0.3 * TileNoise.hash01(seed, Int(p.id >> 16), 8)

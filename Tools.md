@@ -45,6 +45,26 @@ UVs; the 40° sharp-edge threshold is fixed. No `mirrorName` key (naming rule is
 a source doesn't rename tracks or `partColors` that name its copies explicitly; a drag starting
 on a copy may move it for that one drag before selection jumps to the source; mirrored textures
 read backwards.
+Realistic surfaces (looks): parts take `look` (23 generated, tileable surfaces: woods, metals,
+stone, brick, fabric, glass, ground…), `lookScale` (m per tile), `wear` (0-1) and `grain`
+(x|y|z); `color` tints a look to its average color. Each look is albedo (sRGB) + normal map +
+ORM (occlusion/roughness/metal, linear), generated on all cores (~25 ms per 512 px set in
+release, ~0.3-1 s in debug), cached per look/wear level/resolution per process and stored with
+the import. Look UVs are in meters: round shapes wrap around Y in whole tiles, others get
+per-triangle box projection. File-level `ao` (default on) bakes per-vertex ambient occlusion
+from the whole model (voxel ray march on tessellated meshes) into `MeshVertex.tangent.w`'s
+magnitude, which mesh_surface.glsl multiplies into the ambient term (Metal and Vulkan from one
+GLSL source). `.proctex` gained fbm, ridged, voronoi, cells, woodRings, streaks and a
+`normalStrength` companion normal map. Examples use looks; new Weathered Crate and Park Bench.
+`meshBuild.preview` (all world captures) now waits for texture loads. Importer version 3.
+Looks gaps: no edge wear on convex edges (vertex data has no free channel besides the AO one;
+unbevelled boxes have no edge vertices anyway); no triplanar blending, so box projection shows
+a seam where projections meet on curved non-round shapes (bevels, extrude sides) and spheres pinch
+slightly at the cap boundary; metals look flat under the preview's plain sky (no reflections of
+interest); textures are 512 px (up close below ~0.3 m the grain gets soft); textures are
+duplicated per .meshbuild file in Library (≈1 MB per texture); vertex AO only darkens ambient
+light, not direct light; AO is baked at rest pose (moving parts keep it); debug-build editors
+spend ~0.5 s per new look on first import.
 
 ### VFX Builder (`.vfx`)
 

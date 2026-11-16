@@ -12,8 +12,9 @@ import EngineScene
 // The whole model (all parts at rest, in model space) is drawn into a voxel grid of its surfaces;
 // from every vertex, 24 fixed rays (cosine-distributed over its normal's hemisphere) march through
 // the grid up to a reach of about 15% of the model's size; a ray that hits a surface occludes by
-// how close the hit is. Meshes are first tessellated to about two grid cells per edge, so a box
-// face can darken in the middle where something touches it.
+// how close the hit is, and the result is smoothed along the mesh's edges (hiding the grid's
+// steps). Meshes are first tessellated to about two grid cells per edge, so a box face can darken
+// in the middle where something touches it. Parts with `wear` darken their creases more.
 //
 // The result rides in `MeshVertex.tangent.w`: its sign stays the tangent frame's handedness and
 // its magnitude (below 1) is the occlusion, which the lit shader multiplies into the ambient
@@ -98,7 +99,7 @@ enum MeshBuildAO {
             }
         }
         // Rays.
-        let reach = scale.reach, step = cell * 0.8, start = cell * 1.75
+        let reach = scale.reach, step = cell * 0.8, start = cell * 2.5
         let steps = max(Int(((reach - start) / step).rounded(.up)), 1)
         let dims3 = dims, lo3 = lo
         return grid.withUnsafeBufferPointer { (gridBuffer: UnsafeBufferPointer<UInt8>) -> [[Float]] in
@@ -122,10 +123,27 @@ enum MeshBuildAO {
                         }
                     }
                 }
-                result.append(Array(values.prefix(count)))
+                result.append(smoothed(Array(values.prefix(count)), indices: part.geometry.indices))
             }
             return result
         }
+    }
+
+    /// `values` (one per vertex) averaged twice with their neighbors along the mesh's edges, which
+    /// hides the voxel grid's stair steps.
+    static func smoothed(_ values: [Float], indices: [UInt32]) -> [Float] {
+        var a = values
+        for _ in 0..<2 {
+            var sum = a, count = [Float](repeating: 1, count: a.count)
+            for t in stride(from: 0, to: indices.count - 2, by: 3) {
+                let i = Int(indices[t]), j = Int(indices[t + 1]), k = Int(indices[t + 2])
+                sum[i] += a[j] + a[k]; count[i] += 2
+                sum[j] += a[i] + a[k]; count[j] += 2
+                sum[k] += a[i] + a[j]; count[k] += 2
+            }
+            for v in a.indices { a[v] = sum[v] / count[v] }
+        }
+        return a
     }
 
     /// The occlusion factor at one vertex (model space) from the surface grid.

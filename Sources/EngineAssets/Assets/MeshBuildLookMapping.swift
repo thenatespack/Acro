@@ -95,7 +95,9 @@ extension MeshGeometry {
 
         func boxUV(_ p: Vec3, axis d: Int) -> Vec2 {
             let others = [0, 1, 2].filter { $0 != d }
-            let (uAxis, vAxis) = grain != d ? (grain, others.first { $0 != grain }!) : (others[0], others[1])
+            // On an end face (the grain points out of it) keep U level: planks stay horizontal on walls.
+            let (uAxis, vAxis) = grain != d ? (grain, others.first { $0 != grain }!)
+                : others.contains(1) ? (others.first { $0 != 1 }!, 1) : (others[0], others[1])
             // Keep "up" up on the walls: V runs down the Y axis.
             let vSign: Float = vAxis == 1 ? -1 : 1
             return Vec2(p[uAxis], p[vAxis] * vSign) * inv

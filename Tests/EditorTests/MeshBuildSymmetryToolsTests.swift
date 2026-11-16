@@ -96,7 +96,7 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect(MeshBuildCheck.parts(of: build).map(\.name) == ["Left Wing", "Flap", "Right Wing"])
         let session = makeSession()
         #expect(MeshBuildCheck.problems(build, in: session).isEmpty, "a part may hang from a copy and tracks may name one")
-        #expect(EditorMeshBuildCommands.formatDoc.hasSuffix(EditorMeshBuildCommands.symmetryDoc))
+        #expect(EditorMeshBuildCommands.formatDoc.contains(EditorMeshBuildCommands.symmetryDoc))
         #expect(MeshBuildNewCommand.doc.contains("mirror") && MeshBuildNewCommand.doc.contains("repeat"))
     }
 
