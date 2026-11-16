@@ -326,6 +326,7 @@ public final class SceneRenderer {
         var baseColor: Vec4
         /// x: checker, y: unlit, z: specular, w: shininess
         var params: Vec4
+        /// xyz: the UV transform's rows; w: `EdgeWear.packed` (0: none)
         var uvRow0: Vec4
         var uvRow1: Vec4
         /// x: metallic, y: roughness, z: normal scale, w: occlusion strength
@@ -341,6 +342,8 @@ public final class SceneRenderer {
             baseColor = material.baseColor
             params = Vec4(material.checker ? 1 : 0, material.emissive, material.specular, material.shininess)
             (uvRow0, uvRow1) = material.uvTransformRows
+            // The rows' unused w: worn edges (`EdgeWear.packed`), 0 for none.
+            if let wear = material.edgeWear { (uvRow0.w, uvRow1.w) = wear.packed }
             surface = Vec4(material.metallic, material.roughness, material.normalScale, material.occlusionStrength)
             emissive = Vec4(material.emissiveColor * material.emissiveStrength, material.shading == .pbr ? 1 : 0)
             let normalLayout: Float = switch material.normalTexture?.format {

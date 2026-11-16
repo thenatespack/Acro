@@ -150,6 +150,8 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
     /// Per-pixel terrain layer blending (see TerrainSplat.swift), which uses the texture slots its
     /// own way; the `.terrain` importer sets it. Ignored when there is a `graph`.
     public var terrain: TerrainSplat?
+    /// Worn convex edges (see `EdgeWear`; mesh builds set it).
+    public var edgeWear: EdgeWear?
 
     public init(shading: ShadingModel = .pbr, baseColor: Vec4 = Vec4(0.8, 0.8, 0.8, 1), texture: AssetReference? = nil,
                 filter: SamplerFilter = .linear, mipFilter: SamplerMipFilter = .linear, addressMode: SamplerAddressMode = .repeat,
@@ -215,6 +217,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
             normalScale: normalScale, occlusionTexture: try resolve(occlusionTexture), occlusionStrength: occlusionStrength,
             emissiveColor: emissiveColor, emissiveTexture: try resolve(emissiveTexture), emissiveStrength: emissiveStrength,
             alphaMode: alphaMode, alphaCutoff: alphaCutoff, doubleSided: doubleSided)
+        material.edgeWear = edgeWear
         if graph == nil, let terrain {
             // Drawn by the material graph path with the terrain shader; the textures stay in their slots.
             material.shading = .pbr
@@ -246,7 +249,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         case shading, baseColor, texture, filter, mipFilter, addressMode, uvScale, uvOffset, uvRotation, checker, emissive
         case specular, shininess, metallic, roughness, metallicRoughnessTexture, normalTexture, normalScale
         case occlusionTexture, occlusionStrength, emissiveColor, emissiveTexture, emissiveStrength, alphaMode, alphaCutoff
-        case doubleSided, isTransparent, graph, terrain
+        case doubleSided, isTransparent, graph, terrain, edgeWear
     }
 
     public init(from decoder: any Decoder) throws {
@@ -290,6 +293,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         doubleSided = try c.decodeIfPresent(Bool.self, forKey: .doubleSided) ?? d.doubleSided
         graph = try c.decodeIfPresent(MaterialGraph.self, forKey: .graph)
         terrain = try c.decodeIfPresent(TerrainSplat.self, forKey: .terrain)
+        edgeWear = try c.decodeIfPresent(EdgeWear.self, forKey: .edgeWear)
     }
 
     /// Writes every key except unset textures. `alphaMode` is written as "opaque", "mask" or "blend".
@@ -325,6 +329,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         try c.encode(doubleSided, forKey: .doubleSided)
         try c.encodeIfPresent(graph, forKey: .graph)
         try c.encodeIfPresent(terrain, forKey: .terrain)
+        try c.encodeIfPresent(edgeWear, forKey: .edgeWear)
     }
 }
 

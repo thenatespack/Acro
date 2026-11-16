@@ -8,7 +8,8 @@ import EngineScene
 // The mesh build importer's looks and baked occlusion: look parts get look texture coordinates
 // (MeshBuildLookMapping.swift) and a material with the look's textures (MeshBuildLooks.swift),
 // added once per look and wear level to the import; with occlusion on, every mesh is tessellated
-// and gets its occlusion in the tangents' w (MeshBuildAO.swift).
+// and gets its occlusion in the tangents' w (MeshBuildAO.swift); worn look parts get edge
+// coordinates in their tangents and `EdgeWear` in their material (MeshBuildEdgeWear.swift).
 
 extension MeshBuildImporter {
     /// A look's textures as added to the import.
@@ -48,7 +49,9 @@ extension MeshBuildImporter {
     /// the albedo times twice the part's color (its average color) or the look's own average,
     /// the ORM texture for occlusion, roughness and metalness, the normal map. A `texture`
     /// replaces the look's albedo; `roughness` (when not the default 0.5) sets the average roughness.
-    static func material(for part: MeshBuildPart, texture: AssetReference?, look: LookMaterialTextures?) -> MaterialAsset {
+    /// `geometry`: the part's mesh, which sizes its edge wear.
+    static func material(for part: MeshBuildPart, texture: AssetReference?, look: LookMaterialTextures?,
+                         geometry: MeshGeometry? = nil) -> MaterialAsset {
         var material = material(for: part, texture: texture)
         guard let look, let kind = part.resolvedLook else { return material }
         let defaults = MeshBuildPart()
@@ -70,7 +73,18 @@ extension MeshBuildImporter {
         material.occlusionTexture = look.orm
         material.occlusionStrength = 1
         material.alphaMode = opacity < 1 ? .blend : .opaque
+        if let geometry, wearsEdges(part) {
+            let width = MeshBuildEdgeWear.bandWidth(size: geometry.bounds.halfExtent * 2, wear: part.wear ?? 0, look: kind)
+            material.edgeWear = kind.edgeWear(average: color, width: width, scale: part.effectiveLookScale)
+        }
         return material
+    }
+
+    /// Whether `part`'s convex edges wear: it has a look whose edges wear, `wear` above 0 and no `material`.
+    static func wearsEdges(_ part: MeshBuildPart) -> Bool {
+        guard let look = part.resolvedLook, let wear = part.wear, wear.isFinite, wear > 0,
+              part.material.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
+        return look.edgeWear(average: Vec3(repeating: 0.5), width: 0.01, scale: 1) != nil
     }
 
     /// Gives look parts their look texture coordinates and, with `occlusion`, tessellates every
@@ -132,6 +146,15 @@ extension MeshBuildImporter {
         for (k, i) in indices.enumerated() {
             guard var g = geometries[i] else { continue }
             MeshBuildAO.store(baked[k], in: &g)
+            geometries[i] = g
+        }
+    }
+
+    /// Edge coordinates (MeshBuildEdgeWear.swift) in the meshes of parts whose edges wear.
+    static func finishEdgeWear(_ build: MeshBuild, _ geometries: inout [MeshGeometry?]) {
+        for (i, part) in build.parts.enumerated() where wearsEdges(part) {
+            guard var g = geometries[i], !g.indices.isEmpty, let look = part.resolvedLook else { continue }
+            MeshBuildEdgeWear.apply(to: &g, wear: part.wear ?? 0, look: look)
             geometries[i] = g
         }
     }
