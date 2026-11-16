@@ -37,7 +37,6 @@ public final class CharacterBuilderWorkspace {
     public private(set) var root: Entity?
     private var shownRevision = -1
     private var needsFraming = false
-    private let clips: AssetClipLoader
 
     private var renderer: SceneRenderer?
     private var target: RenderTarget?
@@ -51,7 +50,8 @@ public final class CharacterBuilderWorkspace {
                     DirectionalLight(intensity: 2.2, castsShadows: true))
         world.spawn(Name("Environment"), SceneEnvironment(ambientIntensity: 0.6, fogDensity: 0))
         world.spawn(Transform(scale: Vec3(8, 1, 8)), Name("Ground"), MeshRenderer(mesh: .plane, material: MaterialHandle("characterGround")))
-        clips = world.addAssetAnimationSystem(assets: { [weak session] in session?.assets }, name: "characterBuilder.animation")
+        // The play-mode system (SceneAnimation.swift), so the tab previews exactly what plays in games.
+        world.addSceneAnimationSystem(assets: { [weak session] in session?.assets }, name: "characterBuilder.animation")
         view = VStack(spacing: 0, name: "characterBuilderWorkspace")
         layOutChrome()
         showEmpty()
@@ -233,7 +233,6 @@ public final class CharacterBuilderWorkspace {
         root = nil
         guard let prefab = assets.prefab(AssetReference(asset)), let newRoot = world.instantiate(prefab).first else { return }
         root = newRoot
-        clips.update(world, assets: assets)
         if let clip, let animator = world.get(Animator.self, for: newRoot), animator.stateMachine.index(of: clip) != nil {
             world.modify(Animator.self, for: newRoot) { $0.play(clip, fade: 0) }
         } else {

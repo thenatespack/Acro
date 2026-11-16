@@ -22,7 +22,7 @@ import EngineScene
 /// `locomotion` 1D blend of idle, walk and run on the float parameter `speed` (meters per second),
 /// starting in `defaultClip`. Triggers `jump`, `attack` and `die` play those clips from any state;
 /// jump and attack then return to locomotion. Its clip handles are the clips' reference text
-/// ("asset:<id>#animation/walk"), which `World.addAssetAnimationSystem` loads from the asset database.
+/// ("asset:<id>#animation/walk"), which `World.addSceneAnimationSystem` loads from the asset database.
 public struct CharacterImporter: AssetImporter {
     public init() {}
 

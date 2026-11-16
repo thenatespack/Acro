@@ -139,10 +139,10 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         session.world.modify(Animator.self, for: character) { $0.setFloat("speed", 1.2); $0.play("locomotion", fade: 0) }
         let leg = try #require(session.world.get(Animator.self, for: character)?.targets[CharacterRig(template: .quadruped).index(of: "frontUpper.L")!])
         let rest = try #require(session.world.get(Transform.self, for: leg)).rotation
-        session.world.addAssetAnimationSystem(assets: { [weak session] in session?.assets }, name: "CharacterToolsTests.animation")
+        session.world.addSceneAnimationSystem(assets: { [weak session] in session?.assets }, name: "CharacterToolsTests.animation")
         for _ in 0..<8 { session.world.update(dt: 1.0 / 30) }
         #expect(session.world.get(Transform.self, for: leg)?.rotation.vector != rest.vector)
-        session.world.removeAssetAnimationSystem(name: "CharacterToolsTests.animation")
+        session.world.removeSystem(named: "CharacterToolsTests.animation")
     }
 
     @Test func builderFormEditsAreOneUndoStepEach() throws {
