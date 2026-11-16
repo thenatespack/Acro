@@ -236,6 +236,12 @@ private func expectSolid(_ g: MeshGeometry, _ label: String, sourceLocation: Sou
         }
     }
 
+    @Test func badNumbersBuildNothing() {
+        var warnings: [String] = []
+        #expect(sculpt([child("Ball", .sphere, at: Vec3(.nan, 0, 0), size: Vec3(1, 1, 1))]).geometry(warnings: &warnings) == nil)
+        #expect(warnings.contains { $0.contains("isn't a number") })
+    }
+
     @Test func planesAreLeftOutWithAWarning() {
         var warnings: [String] = []
         let g = sculpt([child("Ball", .sphere, size: Vec3(1, 1, 1)), child("Sheet", .plane, size: Vec3(2, 1, 2))]).geometry(warnings: &warnings)
@@ -296,6 +302,31 @@ private func expectSolid(_ g: MeshGeometry, _ label: String, sourceLocation: Sou
         let root = try #require(database.prefab(AssetReference(id))?.roots.first)
         let stone = try #require(root.children.first)
         #expect(stone.mesh != nil && stone.children.map(\.name) == ["Block", "Hole"] && stone.children.allSatisfy { $0.mesh == nil })
+    }
+
+    @MainActor @Test func terrainScatterAndCharacterAttachmentsDrawTheSculpt() throws {
+        SkeletalAnimation.registerComponents()
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("MeshBuildSculptTests-\(UUID().uuidString)", isDirectory: true)
+        let project = try Project.create(at: url, name: "Sculpt")
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        try database.createMeshBuild(MeshBuild(parts: [
+            MeshBuildPart(name: "Rock", shape: .sculpt, position: Vec3(0, 0.3, 0)),
+            MeshBuildPart(name: "Lump", shape: .sphere, parent: "Rock", size: Vec3(0.6, 0.6, 0.6)),
+            MeshBuildPart(name: "Knob", shape: .sphere, parent: "Rock", position: Vec3(0.3, 0, 0), size: Vec3(0.3, 0.3, 0.3)),
+        ]), at: "Props/rock.meshbuild")
+        var terrain = Terrain.generated(size: Vec2(16, 16), resolution: 9, seed: 1)
+        terrain.scatter = [TerrainScatter(name: "Rocks", asset: "Props/rock.meshbuild", density: 1, maxSlope: 90, maxCount: 2)]
+        let terrainID = try database.createTerrain(terrain, at: "Maps/field.terrain")
+        let characterID = try database.createCharacter(CharacterBuild(), at: "hero.character")
+        _ = try database.writeCharacter(CharacterBuild(attachments: [CharacterAttachment(name: "Pet", bone: "head", asset: "Props/rock.meshbuild")]),
+                                        to: characterID)
+        database.refreshAsync()
+        database.waitForAll()
+        let rock = try #require(database.prefab(AssetReference(terrainID))?.roots.first?.children.last?.children.first?.children.first)
+        #expect(rock.children.map(\.name) == ["Rock"] && rock.children[0].mesh?.subAsset == "mesh/Rock")
+        #expect(database.object(AssetReference(characterID, subAsset: "mesh/Pet Rock"), kind: .mesh) != nil)
+        #expect(database.object(AssetReference(characterID, subAsset: "mesh/Pet Lump"), kind: .mesh) == nil)
     }
 
     @Test func blendOutsideASculptWarns() {

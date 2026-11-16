@@ -554,6 +554,11 @@ struct MeshBuildSculptor {
     /// The child as a distance function, nil for groups and shapes without an inside.
     static func primitive(_ child: MeshBuildSculptChild, warnings: inout [String]) -> SculptPrimitive? {
         let part = child.part
+        let numbers = [child.position.x, child.position.y, child.position.z, part.size.x, part.size.y, part.size.z] + Array(child.rotation.vector.indices.map { child.rotation.vector[$0] })
+        guard numbers.allSatisfy(\.isFinite) else {
+            warnings.append("its position, rotation or size has a value that isn't a number; it is left out")
+            return nil
+        }
         let s = Vec3(abs(part.size.x), abs(part.size.y), abs(part.size.z))
         let h = s / 2
         let m = min(s.x, s.z)

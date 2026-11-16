@@ -116,7 +116,8 @@ public struct CharacterImporter: AssetImporter {
         guard let file = Self.meshBuild(attachment.asset, owner: attachment.name, &context) else { return }
         // Mirror / repeat copies are parts too; partColors can name them or their source.
         let expansion = file.expansion()
-        let build = expansion.build
+        let sculpting = expansion.build.gatheringSculpts(sources: expansion.sources)  // a sculpt's children are in its mesh
+        let build = sculpting.build
         // Each part's transform relative to the model's root (part hierarchies flattened).
         var firstIndex: [String: Int] = [:]
         for (i, part) in build.parts.enumerated() where firstIndex[part.name] == nil { firstIndex[part.name] = i }
@@ -127,7 +128,7 @@ public struct CharacterImporter: AssetImporter {
             return world(p, depth + 1) * local
         }
         var drew = false
-        for (i, part) in build.parts.enumerated() {
+        for (i, part) in build.parts.enumerated() where !sculpting.sculpted.contains(i) {
             guard let geometry = part.geometry(), !geometry.indices.isEmpty else { continue }
             let label = "\(attachment.name) \(part.name)"
             let meshID = namer.id(kind: "mesh", name: label, index: i)
