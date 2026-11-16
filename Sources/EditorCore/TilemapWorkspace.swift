@@ -37,7 +37,25 @@ public enum TilemapTool: String, CaseIterable, Sendable {
         }
     }
 
+    /// The key that picks the tool on the canvas.
+    public var shortcut: Key {
+        switch self {
+        case .pencil: .b
+        case .rectangle: .r
+        case .fill: .g   // F frames the selection editor-wide
+        case .erase: .e
+        case .random: .n
+        case .terrain: .t
+        case .object: .o
+        case .pick: .i
+        }
+    }
+
     var tooltip: String {
+        "\(description) (\(shortcut.rawValue.uppercased()))"
+    }
+
+    private var description: String {
         switch self {
         case .pencil: "Paint the selected tile cell by cell"
         case .rectangle: "Drag a rectangle to fill with the selected tile"
@@ -71,6 +89,9 @@ public final class TilemapCanvas: Widget {
 
     public override func measureContent(width: Float?) -> Vec2 { Vec2(320, 240) }
 
+    /// Takes keyboard focus on click, for the tool shortcuts (`TilemapWorkspace.handleKey`).
+    public override var acceptsFocus: Bool { true }
+
     /// The cell under a window point (nil outside the map).
     func cell(at point: Vec2) -> (x: Int, y: Int)? {
         guard let map = workspace?.map else { return nil }
@@ -100,6 +121,7 @@ public final class TilemapCanvas: Widget {
         guard let workspace else { return false }
         switch event {
         case .pointerDown(let e):
+            context?.focus(self)
             if e.button == .middle || (e.button == .left && e.modifiers.contains(.alt)) {
                 panning = e.position
                 return true
@@ -135,6 +157,8 @@ public final class TilemapCanvas: Widget {
                 setNeedsDisplay()
             }
             return false
+        case .key(let key):
+            return workspace.handleKey(key)
         case .scroll(let delta, let position):
             let factor = powf(1.0015, delta.y * 10)
             let anchor = position - contentRect.origin
@@ -173,7 +197,7 @@ public final class TilemapCanvas: Widget {
                         for x in x0...x1 {
                             let c = map.cell(layer: li, x: x, y: y)
                             guard !c.isEmpty else { continue }
-                            let frame = map.tileset.tile(c.tile)?.animation?.frame(at: workspace.time) ?? c.tile
+                            let frame = workspace.animation(ofTile: c.tile, in: map)?.frame(at: workspace.time) ?? c.tile
                             drawTile(list, frame: frame, cell: c, at: Vec2(origin.x + Float(x) * tw, origin.y + Float(y) * th),
                                      size: Vec2(tw, th), alpha: alpha)
                         }
@@ -220,7 +244,7 @@ public final class TilemapCanvas: Widget {
             }
         }
         let caption = hoverCell.map { "cell \($0.x), \($0.y) · " } ?? ""
-        list.drawText(caption + "\(workspace.tool.title) · middle-drag pans · wheel zooms", at: Vec2(rect.x + 8, rect.maxY - 18), size: 11,
+        list.drawText(caption + "\(workspace.tool.title) (\(workspace.tool.shortcut.rawValue.uppercased())) · middle-drag pans · wheel zooms · click, then keys pick tools", at: Vec2(rect.x + 8, rect.maxY - 18), size: 11,
                       color: theme.secondaryTextColor)
     }
 
@@ -327,6 +351,8 @@ public final class TilemapWorkspace {
     public private(set) var texture: GPUTexture?
     public private(set) var sampler: GPUSampler?
     public private(set) var layout: TilesetLayout?
+    /// Tile animations from a `.sprite` tile set's tags (tiles with their own animation keep it).
+    public private(set) var tagAnimations: [Int: TilemapAnimation] = [:]
     /// The rectangle tool's drag, as cells (x0, y0, x1, y1).
     public private(set) var rectPreview: (Int, Int, Int, Int)?
 
@@ -373,6 +399,8 @@ public final class TilemapWorkspace {
         map = contents
         shownRevision = session.assets?.revision(of: id) ?? 0
         title.text = session.assets?.record(id)?.fileName ?? "Tilemap Builder"
+        // The toolbar can squeeze the name to a few letters; the tooltip keeps it readable.
+        title.tooltip = session.assets?.record(id)?.path
         builder = TilemapBuilderView(workspace: self)
         reloadTexture()
         needsSidebar = true
@@ -425,21 +453,23 @@ public final class TilemapWorkspace {
             rotation = (rotation + 1) % 4
             rebuildToolbar()
         }
-        fx.tooltip = "Mirror placed tiles left to right"
-        fy.tooltip = "Mirror placed tiles top to bottom"
-        rot.tooltip = "Turn placed tiles a quarter turn clockwise"
+        fx.tooltip = "Mirror placed tiles left to right (X)"
+        fy.tooltip = "Mirror placed tiles top to bottom (Y)"
+        rot.tooltip = "Turn placed tiles a quarter turn clockwise (Z; Shift-Z turns back)"
         let grid = Button("Grid", role: canvas.showsGrid ? .primary : .normal, name: "tilemapGrid") { [unowned self] in
             canvas.showsGrid.toggle()
             rebuildToolbar()
         }
+        grid.tooltip = "Show the cell grid (Shift-G)"
         let fit = Button("Fit", name: "tilemapFit") { [unowned self] in canvas.fit() }
-        fit.tooltip = "Zoom to show the whole map"
+        fit.tooltip = "Zoom to show the whole map (0)"
         let close = Button("Close", name: "tilemapClose") { [unowned self] in self.close() }
         toolbar.addChildren([fx, fy, rot, grid, fit, close])
     }
 
     private func showEmpty() {
         title.text = "Tilemap Builder"
+        title.tooltip = nil
         sidebar.removeAllChildren()
         let note = Label("Double-click a .tilemap file in the Assets panel to paint it here, or make one with the Assets panel's "
                          + "New Tilemap (right-click).", role: .caption)
@@ -508,6 +538,7 @@ public final class TilemapWorkspace {
         let revision = assets.revision(of: asset)
         guard revision != textureRevision else { return }
         textureRevision = revision
+        tagAnimations = map.flatMap { assets.tilesetSprite(of: $0) }.map(Tilemap.spriteTagAnimations) ?? [:]
         guard let tileset = assets.tileset(of: asset) else {
             layout = nil
             texture = nil
@@ -522,6 +553,11 @@ public final class TilemapWorkspace {
             session.log.error("Tilemap Builder: the tile set can't be shown: \(error)")
             texture = nil
         }
+    }
+
+    /// The animation tile `tile` plays: its own entry's, else its sprite tag's.
+    public func animation(ofTile tile: Int, in map: Tilemap) -> TilemapAnimation? {
+        map.tileset.tile(tile)?.animation ?? tagAnimations[tile]
     }
 
     // MARK: Edits
@@ -548,6 +584,40 @@ public final class TilemapWorkspace {
         reloadTexture()
         clampSelection()
         needsSidebar = true
+    }
+
+    /// The canvas's keyboard shortcuts: a tool's letter picks it (B Pencil, R Rect, G Fill, E Erase,
+    /// N Random, T Terrain, O Object, I Pick); X and Y flip placed tiles, Z turns them clockwise
+    /// (Shift-Z counterclockwise); [ and ] step the brush through the tile set; Shift-G toggles the
+    /// grid and 0 fits the map. Keys with Command, Control or Alt held pass on (undo, save...).
+    @discardableResult
+    public func handleKey(_ key: KeyEvent) -> Bool {
+        guard map != nil, !key.modifiers.contains(.command), !key.modifiers.contains(.control), !key.modifiers.contains(.alt) else { return false }
+        if key.key == .g && key.modifiers.contains(.shift) {
+            canvas.showsGrid.toggle()
+            rebuildToolbar()
+            canvas.setNeedsDisplay()
+            return true
+        }
+        if let t = TilemapTool.allCases.first(where: { $0.shortcut == key.key }) {
+            tool = t
+            return true
+        }
+        switch key.key {
+        case .x: flipX.toggle()
+        case .y: flipY.toggle()
+        case .z: rotation = (rotation + (key.modifiers.contains(.shift) ? 3 : 1)) % 4
+        case .num0: canvas.fit(); return true
+        case .leftBracket, .rightBracket:
+            let count = layout?.count ?? 0
+            guard count > 0 else { return true }
+            selectTile(((brushTile + (key.key == .rightBracket ? 1 : -1)) % count + count) % count)
+            return true
+        default: return false
+        }
+        rebuildToolbar()
+        canvas.setNeedsDisplay()
+        return true
     }
 
     /// Picks the brush tile (with `adding`, toggles it in the random set).

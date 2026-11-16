@@ -27,7 +27,8 @@ public struct Spin: Component, Equatable, Sendable {
 
 extension World {
     /// Registers the data-driven animation systems: `Spin`, `FieldAnimator`, `LightFlicker`
-    /// (all in `.update`) and `CameraPath` (`.lateUpdate`, after gameplay moved its targets).
+    /// (all in `.update`), `CameraPath` (`.lateUpdate`, after gameplay moved its targets) and
+    /// `TilemapMotion` (`.lateUpdate`, after the camera moved: placed tilemaps' parallax and tiles).
     /// They need no game module, so every host that runs a scene's systems calls this: the
     /// editor's play mode (`addEditorSystems`), `GamePlayer` (built games) and `GameRunner`.
     /// Idempotent. Scenes without those components pay one count check per system per frame.
@@ -43,5 +44,6 @@ extension World {
         addSystem("builtin.fieldAnimator", stage: .update) { world in world.runFieldAnimators() }
         addSystem("builtin.lightFlicker", stage: .update) { world in world.runLightFlickers() }
         addSystem("builtin.cameraPath", stage: .lateUpdate) { world in world.runCameraPaths() }
+        addSystem("builtin.tilemapMotion", stage: .lateUpdate) { world in world.runTilemapMotion() }
     }
 }

@@ -141,6 +141,8 @@ public enum AssetCooker {
     /// Of those, the ones whose references are cooked along with them: `asset:<id>`s, and string
     /// values naming a file by its path under `Assets/` (see `pathReferences`).
     public static let followsReferences: Set<String> = ["timeline", "vscript"]
+    /// Importers whose source files ship next to their imported assets, for game code that reads them as written.
+    public static let keepsSource: Set<String> = ["sprite", "tilemap"]
 
     /// Opens the project at `url`, scans it and cooks it to `output` (a folder). Blocks.
     @MainActor
@@ -381,9 +383,14 @@ public struct CookPlan: Sendable {
             entry.main = manifest.main
             entry.objects = manifest.objects
             let text = (try? AssetJSON.encode(manifest.objects.filter { $0.material != nil || $0.prefab != nil || $0.animationGraph != nil })) ?? Data()
-            let references = Self.unique(Self.references(in: text)).filter { $0 != source.id }
+            var references = Self.unique(Self.references(in: text)).filter { $0 != source.id }
             // A `.sprite` keeps its source too: games read its frames and tags (AssetDatabase.spriteSheet).
-            let data = importer.name == "sprite" ? try? Data(contentsOf: source.sourceURL) : nil
+            // So does a `.tilemap` (assets.tilemap(path:)), with a `.sprite` tile set for its tag animations.
+            let data = AssetCooker.keepsSource.contains(importer.name) ? try? Data(contentsOf: source.sourceURL) : nil
+            if importer.name == "tilemap", let data, let map = try? AssetJSON.decoder().decode(Tilemap.self, from: data),
+               case .sprite(let path) = map.tileset.source, let id = assetsByPath[TilemapImporter.normalized(path)], !references.contains(id) {
+                references.append(id)
+            }
             return Cooked(entry: entry, files: files, data: data, origin: origin, references: references,
                           warnings: warnings.map { "\(source.path): \($0)" })
         }

@@ -1,8 +1,8 @@
 // ECS components for 2D physics. An entity with a `Collider2D` gets a body: static without a
 // `RigidBody2D`, else as the `RigidBody2D` says. A `Joint2D` connects the entity's body to
-// another entity's body (or to the world). The entity's `Transform` is the body's pose: x / y
-// position and the rotation about z (parents, z and scale are ignored; collider sizes are in
-// meters). All of them serialize with scenes.
+// another entity's body (or to the world). The entity's world transform (its `Transform` under
+// its parents') is the body's pose: x / y position and the rotation about z (z and scale are
+// ignored; collider sizes are in meters). All of them serialize with scenes.
 import EngineCore
 import EngineGraphics
 import EngineScene
@@ -155,6 +155,8 @@ struct BodySync2D {
     var transform: Transform?
     var rigidBody: RigidBody2D?
     var collider: Collider2D?
+    /// The world matrix of the entity's transform parent at the last sync (nil: a root).
+    var parent: Mat4?
 }
 
 extension PhysicsWorld2D {

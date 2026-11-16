@@ -171,7 +171,7 @@ MainActor.assumeIsolated {
         let module = loaded.module
         // Scenes name components by their registered names.
         for component in module.components { ComponentRegistry.register(component.type) }
-        ComponentRegistry.register(Spin.self, FieldAnimator.self, LightFlicker.self, CameraPath.self, TimelinePlayer.self)
+        ComponentRegistry.register(Spin.self, FieldAnimator.self, LightFlicker.self, CameraPath.self, TimelinePlayer.self, TilemapMotion.self)
         print("Loaded \(module.name): \(module.componentNames.joined(separator: ", "))")
         if check {
             // The module filled in this process's GameModule through Engine's API (on Windows,
