@@ -210,6 +210,7 @@ public struct AssetImporterRegistry: Sendable {
         registry.register(TilemapImporter())
         registry.register(GridMapImporter())
         registry.register(PathBuildImporter())
+        registry.register(BehaviorTreeImporter())
         return registry
     }
 

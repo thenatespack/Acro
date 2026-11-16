@@ -289,6 +289,7 @@ public enum EditorIcons {
         case "gltf", "glb", "obj", "fbx", "meshbuild", "terrain": return .model
         case "gltf", "glb", "obj", "fbx", "meshbuild", "terrain", "gridmap": return .model
         case "gltf", "glb", "obj", "fbx", "meshbuild", "terrain", "path": return .model
+        case "behavior": return .model
         case "png", "jpg", "jpeg", "tga", "hdr", "exr", "ktx", "ktx2", "dds", "bmp", "proctex": return .texture
         case "sprite": return .texture
         case "material": return .material
@@ -358,6 +359,7 @@ public enum EditorIcons {
         EditorLayout.tilemapBuilder: "square-dashed",
         EditorLayout.gridMapBuilder: "boxes",
         EditorLayout.pathBuilder: "route",
+        EditorLayout.behaviorTree: "network",
     ]
 
     /// Console lines by level.

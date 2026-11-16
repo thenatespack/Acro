@@ -45,6 +45,7 @@ public enum BuiltinCommands {
       + EditorTilemapCommands.all
       + EditorGridMapCommands.all
       + EditorPathCommands.all
+      + EditorBehaviorCommands.all
 }
 
 extension CommandID {

@@ -562,6 +562,7 @@ public final class AssetBrowserPanel {
             ("New Tilemap", TilemapNewCommand.id, { [unowned self] in model.newTilemap(); sync() }),
             ("New GridMap", GridMapNewCommand.id, { [unowned self] in model.newGridMap(); sync() }),
             ("New Path", PathNewCommand.id, { [unowned self] in model.newPathBuild(); sync() }),
+            ("New Behavior Tree", BehaviorNewCommand.id, { [unowned self] in model.newBehaviorTree(); sync() }),
         ]
         if let entry {
             if case .folder = entry.item {

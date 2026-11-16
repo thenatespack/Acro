@@ -88,6 +88,7 @@ public enum EditorComponentCatalog {
         register(FieldAnimator.self) { FieldAnimator(tracks: [.wave("Transform.position.y", amplitude: 0.25, frequency: 0.5)]) }
         register(LightFlicker.self) { LightFlicker() }
         register(CameraPath.self) { CameraPath() }
+        register(BehaviorTreeRunner.self) { BehaviorTreeRunner() }
     }
 
     /// Makes the component type registered as `name` addable, created by `make` (game modules,

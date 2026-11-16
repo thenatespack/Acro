@@ -459,6 +459,16 @@ public final class AssetInspectorView {
                 content.addChildren([HStack(spacing: 6, [open, Spacer()]),
                                      note("A \(build?.kind.rawValue ?? "path") spline through \(build?.points.count ?? 0) points, with geometry generated along it. The Path Builder has control-point gizmos, profiles, pieces and terrain following.")])
             }
+            if session.isBehaviorFile(id) {
+                let open = Button("Open in Behavior Tree Builder", role: .primary, name: "openBehaviorTree") { [unowned self] in
+                    session.run(BehaviorOpenCommand.self, .init(asset: AssetReference(id)))
+                }
+                open.command = BehaviorOpenCommand.id.rawValue
+                open.tooltip = "Edit this tree in the Behavior Tree tab (or double-click it in the Assets panel)"
+                let count = session.assets?.behaviorTreeContents(of: id)?.nodes.count ?? 0
+                content.addChildren([HStack(spacing: 6, [open, Spacer()]),
+                                     note("NPC AI of \(count) node\(count == 1 ? "" : "s"). An entity runs it in play mode with a BehaviorTreeRunner component (behavior.assign).")])
+            }
             if session.isMaterialFile(id) {
                 addMaterialForm(AssetReference(id, subAsset: "material"))
             }

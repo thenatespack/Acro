@@ -117,8 +117,11 @@ public enum EditorLayout {
     public static let gridMapBuilder = "gridMapBuilder"
     /// The Path Builder tab (opened with a `.path` file, tabbed with the Scene view; not in the default layout).
     public static let pathBuilder = "pathBuilder"
+    /// The Behavior Tree tab (opened with a `.behavior` file, tabbed with the Scene view; not in the default layout).
+    public static let behaviorTree = "behaviorTree"
     public static let panelIDs = [viewport, game, hierarchy, inspector, console, stats, assets, activity, scripts, files, meshBuilder, vfxBuilder,
-                                  soundBuilder, postFXBuilder, dataTable, terrainBuilder, spriteBuilder, tilemapBuilder, gridMapBuilder, pathBuilder]
+                                  soundBuilder, postFXBuilder, dataTable, terrainBuilder, spriteBuilder, tilemapBuilder, gridMapBuilder, pathBuilder,
+                                  behaviorTree]
 
     /// Hierarchy above Files on the left, inspector right, the Scene view (tabbed with the Game
     /// view and Scripts, so scripts open where the Scene view is) in the middle above an Assets / Console / Activity /

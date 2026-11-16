@@ -21,6 +21,8 @@ public struct AssetChoices {
     public var textures: () -> [String]
     /// The project's audio files as `asset:` keys (`AudioEmitter.clip`).
     public var audioClips: () -> [String] = { [] }
+    /// The project's `.behavior` files as `asset:` keys (`BehaviorTreeRunner.tree`).
+    public var behaviorTrees: () -> [String] = { [] }
     /// What the dropdown shows for a key (the key itself by default; "" is "None").
     public var title: (String) -> String
 
@@ -45,6 +47,7 @@ public struct AssetChoices {
                 return assets.displayName(of: reference)
             })
         audioClips = { assets()?.audioReferences().map(\.description) ?? [] }
+        behaviorTrees = { assets()?.behaviorTreeReferences().map(\.description) ?? [] }
     }
 
     /// Paths of `component`'s `TextureHandle` fields (optional or not), from the catalog's
@@ -88,6 +91,7 @@ public struct AssetChoices {
     public func options(component: String, path: String) -> [String]? {
         if Self.isTextureField(component: component, path: path) { return [""] + textures() }
         if component == AudioEmitter.componentName { return path == "clip" ? [""] + audioClips() : nil }
+        if component == BehaviorTreeRunner.componentName { return path == "tree" ? [""] + behaviorTrees() : nil }
         guard component == MeshRenderer.componentName else { return nil }
         switch path {
         case "mesh": return meshes()

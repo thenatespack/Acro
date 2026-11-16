@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 194 tools.
+named by its id (see README › Use the editor › AI control). 201 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -15,6 +15,7 @@ optional arguments.
 | `activity` | [`activity.clear`](#activityclear), [`activity.list`](#activitylist), [`activity.revert`](#activityrevert) |
 | `ai` | [`ai.settings`](#aisettings) |
 | `asset` | [`asset.applySettings`](#assetapplysettings), [`asset.assign`](#assetassign), [`asset.delete`](#assetdelete), [`asset.extractMaterials`](#assetextractmaterials), [`asset.get`](#assetget), [`asset.import`](#assetimport), [`asset.instantiate`](#assetinstantiate), [`asset.list`](#assetlist), [`asset.move`](#assetmove), [`asset.newFolder`](#assetnewfolder), [`asset.newMaterial`](#assetnewmaterial), [`asset.newProceduralTexture`](#assetnewproceduraltexture), [`asset.reimport`](#assetreimport), [`asset.rename`](#assetrename), [`asset.select`](#assetselect), [`asset.setProceduralTexture`](#assetsetproceduraltexture), [`asset.waitForImports`](#assetwaitforimports) |
+| `behavior` | [`behavior.assign`](#behaviorassign), [`behavior.debug`](#behaviordebug), [`behavior.edit`](#behavioredit), [`behavior.get`](#behaviorget), [`behavior.new`](#behaviornew), [`behavior.open`](#behavioropen), [`behavior.set`](#behaviorset) |
 | `component` | [`component.add`](#componentadd), [`component.remove`](#componentremove), [`component.setField`](#componentsetfield), [`component.types`](#componenttypes) |
 | `diagnostics` | [`diagnostics.get`](#diagnosticsget) |
 | `edit` | [`edit.batch`](#editbatch), [`edit.beginBatch`](#editbeginbatch), [`edit.endBatch`](#editendbatch), [`edit.redo`](#editredo), [`edit.undo`](#editundo) |
@@ -370,6 +371,159 @@ Result:
 - `errors`: [string]
 - `finished`: boolean
 - `pending`: integer
+
+## behavior
+
+### `behavior.assign`
+
+**Assign Behavior Tree** · _undoable_
+
+Makes an entity run a .behavior tree while playing: adds or updates its BehaviorTreeRunner component (tree, optional target entity, speed and blackboard overrides) as one undoable step. Give it a CharacterController or dynamic RigidBody to move with physics; otherwise its Transform is moved. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `blackboard?`: object
+- `entity`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `path?`: string
+- `speed?`: number
+- `target?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+
+Result:
+
+- `path`: string
+
+### `behavior.debug`
+
+**Debug Behavior Tree** · _read-only_
+
+While playing: an entity's behavior tree state from the last tick (root status, the running path, each ticked node's status, the blackboard, problems such as a missing custom leaf). The Behavior Tree tab highlights the same path.
+
+Arguments:
+
+- `entity?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+
+Result:
+
+- `blackboard`: object
+- `entity?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `nodes`: object
+- `playing`: boolean
+- `problems`: [string]
+- `runningPath`: [string]
+- `status`: string
+- `ticks`: integer
+- `tree`: string
+
+### `behavior.edit`
+
+**Edit Behavior Tree** · _undoable_
+
+Changes part of a .behavior file in one undoable step, in this order: preset (replace everything first), removeNodes, addNodes, updateNodes, disconnect, connect, root, blackboard, speed / turnSpeed / tickRate. NPCs running it while playing pick up the change. Returns the outline and warnings. Example: {"addNodes": [{"id": "low", "type": "healthBelow", "value": 20}, {"id": "run", "type": "flee"}, {"id": "escape", "type": "sequence", "children": ["low", "run"]}], "connect": [{"parent": "root", "child": "escape", "index": 0}]}. A behavior tree (.behavior) is NPC AI as nodes: `nodes` is a flat list of {id, type, name?, children? [ids], ...parameters}, `root` the root id (default: the first node nobody lists as a child), `blackboard` starting shared values ({"health": 100, "home": [0, 0, 0]}), `speed` (m/s, default 3), `turnSpeed` (rad/s, 10) and `tickRate` (per second, 0 = every frame). Types: composites sequence (memory: resume at running child, default true), selector (re-checks from the first child every tick), parallel (succeedOn all|one, failOn one|all); decorators (one child) invert, repeat (count, 0 = forever; untilFailure), cooldown (seconds), succeed; conditions canSeeTarget (range, fov degrees about -Z, lineOfSight, eyeHeight), withinRange (range), healthBelow (key=health, value), checkBlackboard (key, op == != < <= > >= set unset, value); actions moveTo (position [x,y,z] or key), patrol (points [[x,y,z]...], relative, loop, wait), chase (stopDistance, giveUpDistance), flee (safeDistance), attack (range, damage, cooldown, key, animation), wait (seconds, randomness), playAnimation (animation, fade, duration), setBlackboard (key, value), custom (leaf: a name game code registered with BehaviorTreeLeaves.register). Move nodes take `speed`; target nodes take `target` (a blackboard key, default "target": an entity name, else the BehaviorTreeRunner's target entity). Problems are reported in `warnings`. An entity runs a tree with a BehaviorTreeRunner component (behavior.assign) while playing. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `addNodes?`: [{children?: [string], id?: string, name?: string, type?: string}]
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `blackboard?`: object
+- `connect?`: [{child: string, index?: integer, parent: string}]
+- `disconnect?`: [{child: string, index?: integer, parent: string}]
+- `path?`: string
+- `preset?`: "empty" \| "patrol" \| "guard" \| "chaser" \| "coward"
+- `removeNodes?`: [string]
+- `root?`: string
+- `speed?`: number
+- `tickRate?`: number
+- `turnSpeed?`: number
+- `updateNodes?`: object
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `blackboard`: [string]
+- `nodeCount`: integer
+- `outline`: [string]
+- `path`: string
+- `root`: string
+- `warnings`: [string]
+
+### `behavior.get`
+
+**Get Behavior Tree** · _read-only_, _idempotent_
+
+Reads a .behavior file: its nodes, blackboard and settings as stored, an indented outline from the root, and its problems.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `outline`: [string]
+- `path`: string
+- `tree`: {blackboard?: object, nodes?: [object], root?: string, speed?: number, tickRate?: number, turnSpeed?: number}
+- `warnings`: [string]
+
+### `behavior.new`
+
+**New Behavior Tree**
+
+Writes a .behavior file in `folder` (default: the Assets root) from a `preset` (empty: a selector with a wait; patrol: walks a square; guard: patrols, chases and attacks the target it sees, flees when hurt; chaser; coward) and imports it. Returns the outline and warnings. Change it with behavior.edit; run it on an entity with behavior.assign. A behavior tree (.behavior) is NPC AI as nodes: `nodes` is a flat list of {id, type, name?, children? [ids], ...parameters}, `root` the root id (default: the first node nobody lists as a child), `blackboard` starting shared values ({"health": 100, "home": [0, 0, 0]}), `speed` (m/s, default 3), `turnSpeed` (rad/s, 10) and `tickRate` (per second, 0 = every frame). Types: composites sequence (memory: resume at running child, default true), selector (re-checks from the first child every tick), parallel (succeedOn all|one, failOn one|all); decorators (one child) invert, repeat (count, 0 = forever; untilFailure), cooldown (seconds), succeed; conditions canSeeTarget (range, fov degrees about -Z, lineOfSight, eyeHeight), withinRange (range), healthBelow (key=health, value), checkBlackboard (key, op == != < <= > >= set unset, value); actions moveTo (position [x,y,z] or key), patrol (points [[x,y,z]...], relative, loop, wait), chase (stopDistance, giveUpDistance), flee (safeDistance), attack (range, damage, cooldown, key, animation), wait (seconds, randomness), playAnimation (animation, fade, duration), setBlackboard (key, value), custom (leaf: a name game code registered with BehaviorTreeLeaves.register). Move nodes take `speed`; target nodes take `target` (a blackboard key, default "target": an entity name, else the BehaviorTreeRunner's target entity). Problems are reported in `warnings`. An entity runs a tree with a BehaviorTreeRunner component (behavior.assign) while playing.
+
+Arguments:
+
+- `folder?`: string
+- `name?`: string
+- `preset?`: "empty" \| "patrol" \| "guard" \| "chaser" \| "coward"
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `blackboard`: [string]
+- `nodeCount`: integer
+- `outline`: [string]
+- `path`: string
+- `root`: string
+- `warnings`: [string]
+
+### `behavior.open`
+
+**Open in Behavior Tree Builder** · _idempotent_
+
+Opens a .behavior file in the editor's Behavior Tree tab (the tree as an outline with a node form, presets and the blackboard; while playing it highlights the running path of the selected entity) and brings the tab to the front. view.screenshot {source: "panel", panel: "behaviorTree"} shows it.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `path`: string
+
+### `behavior.set`
+
+**Set Behavior Tree** · _undoable_, _idempotent_
+
+Replaces a .behavior file's whole contents and reimports it (NPCs running it while playing switch to it). Undoable. For a few changes, behavior.edit is shorter. A behavior tree (.behavior) is NPC AI as nodes: `nodes` is a flat list of {id, type, name?, children? [ids], ...parameters}, `root` the root id (default: the first node nobody lists as a child), `blackboard` starting shared values ({"health": 100, "home": [0, 0, 0]}), `speed` (m/s, default 3), `turnSpeed` (rad/s, 10) and `tickRate` (per second, 0 = every frame). Types: composites sequence (memory: resume at running child, default true), selector (re-checks from the first child every tick), parallel (succeedOn all|one, failOn one|all); decorators (one child) invert, repeat (count, 0 = forever; untilFailure), cooldown (seconds), succeed; conditions canSeeTarget (range, fov degrees about -Z, lineOfSight, eyeHeight), withinRange (range), healthBelow (key=health, value), checkBlackboard (key, op == != < <= > >= set unset, value); actions moveTo (position [x,y,z] or key), patrol (points [[x,y,z]...], relative, loop, wait), chase (stopDistance, giveUpDistance), flee (safeDistance), attack (range, damage, cooldown, key, animation), wait (seconds, randomness), playAnimation (animation, fade, duration), setBlackboard (key, value), custom (leaf: a name game code registered with BehaviorTreeLeaves.register). Move nodes take `speed`; target nodes take `target` (a blackboard key, default "target": an entity name, else the BehaviorTreeRunner's target entity). Problems are reported in `warnings`. An entity runs a tree with a BehaviorTreeRunner component (behavior.assign) while playing. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+- `tree`: {blackboard?: object, nodes?: [object], root?: string, speed?: number, tickRate?: number, turnSpeed?: number}
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `blackboard`: [string]
+- `nodeCount`: integer
+- `outline`: [string]
+- `path`: string
+- `root`: string
+- `warnings`: [string]
 
 ## component
 

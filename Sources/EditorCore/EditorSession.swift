@@ -150,6 +150,9 @@ public final class EditorSession {
     /// The path open in the Path Builder tab (`path.open`), and how the app shows it.
     public var openPathBuild: AssetID?
     public var onOpenPathBuild: ((AssetID) -> Void)?
+    /// The behavior tree open in the Behavior Tree tab (`behavior.open`), and how the app shows it.
+    public var openBehavior: AssetID?
+    public var onOpenBehavior: ((AssetID) -> Void)?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()
@@ -717,6 +720,7 @@ public final class EditorSession {
         if let audio = audioProvider?() {
             spatialAudio = world.addSpatialAudio(audio, assets: { [weak self] in self?.assets })
         }
+        world.addBehaviorTrees(name: Self.behaviorSystem, assets: { [weak self] in self?.assets }, physics: { [weak self] in self?.physics })
         gameModule.addSystems()
     }
 
@@ -737,6 +741,7 @@ public final class EditorSession {
             physics2D = nil
         }
         world.removeSystem(named: Self.spriteSystem)
+        world.removeSystem(named: Self.behaviorSystem)
         spatialAudio?.remove()
         spatialAudio = nil
         tweens = nil
@@ -744,6 +749,8 @@ public final class EditorSession {
     }
 
     private static let spriteSystem = "editor.spriteAnimation"
+    /// Runs `BehaviorTreeRunner`s while playing (BehaviorTreeRuntime.swift).
+    static let behaviorSystem = "editor.behaviorTrees"
 
     // MARK: Entities
 

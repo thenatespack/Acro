@@ -149,6 +149,8 @@ public final class AssetBrowserModel {
             session.run(GridMapOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where session.isPathBuildFile(id):
             session.run(PathOpenCommand.self, .init(asset: AssetReference(id)))
+        case .asset(let id) where session.isBehaviorFile(id):
+            session.run(BehaviorOpenCommand.self, .init(asset: AssetReference(id)))
         case .asset(let id) where entry.isExpandable:
             toggleExpanded(id)
         default:
@@ -298,6 +300,15 @@ public final class AssetBrowserModel {
     @discardableResult
     public func newPostFX() -> AssetID? {
         guard let id = session.run(PostFXNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
+        invalidate()
+        selection = .asset(id)
+        return id
+    }
+
+    /// Creates a behavior tree in the current folder (`behavior.new`) and selects it.
+    @discardableResult
+    public func newBehaviorTree() -> AssetID? {
+        guard let id = session.run(BehaviorNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
         invalidate()
         selection = .asset(id)
         return id
