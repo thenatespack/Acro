@@ -74,10 +74,11 @@ struct MeshBuildPreviewScene {
     /// Places `prefab` (the import of `build`), poses `animation` at `time`, and sets up `views`.
     /// `meshes` gives a mesh handle's geometry.
     init(build: MeshBuild, prefab: PrefabAsset, views: [MeshBuildPreviewView], tileSize: Int, labels: Bool, highlight: [String],
-         animation: String?, time: Float?, meshes: (MeshHandle) -> MeshGeometry?) throws {
+         animation: String?, time: Float?, environment: MeshBuildPreviewEnvironment = .studio,
+         meshes: (MeshHandle) -> MeshGeometry?) throws {
         world.spawn(Transform(rotation: Quat(eulerDegrees: Vec3(-55, 35, 0))), Name("Light"),
                     DirectionalLight(intensity: 2.2, castsShadows: true))
-        world.spawn(Name("Environment"), SceneEnvironment(ambientIntensity: 0.6, fogDensity: 0))
+        world.spawn(Name("Environment"), environment.sceneEnvironment)
         world.addBuiltinAnimationSystems()
         guard let root = world.instantiate(prefab).first else { throw CommandError.failed("The mesh build's model didn't load") }
         var stack = world.children(of: root)
@@ -269,9 +270,13 @@ public enum MeshBuildPreviewCommand: EditorDeferredCommand {
         /// of its length). Without it the model is in its rest pose.
         public var animation: String?
         public var time: Float?
+        /// What lights the model: studio (default), outdoor or flat.
+        public var environment: MeshBuildPreviewEnvironment?
 
         public init(asset: AssetReference? = nil, path: String? = nil, views: [MeshBuildPreviewView]? = nil, size: Int? = nil,
-                    labels: Bool? = nil, highlight: [String]? = nil, animation: String? = nil, time: Float? = nil) {
+                    labels: Bool? = nil, highlight: [String]? = nil, animation: String? = nil, time: Float? = nil,
+                    environment: MeshBuildPreviewEnvironment? = nil) {
+            self.environment = environment
             self.asset = asset
             self.path = path
             self.views = views
@@ -295,7 +300,7 @@ public enum MeshBuildPreviewCommand: EditorDeferredCommand {
 
     public static let id: CommandID = "meshBuild.preview"
     public static let title = "Preview Mesh Build"
-    public static let doc = "Returns one PNG of a .meshbuild model from fixed angles, tiled: by default front (camera at -Z, the model's front; +X is on the image's left), right (from +X), top (front up) and a 3/4 perspective; `views` picks and orders them (also back, left). Front / right / top are orthographic, each auto-framed with a ground grid (spacing in the caption; red line z=0, blue x=0) and a white ground line at y=0. `size`: tile pixels (default 384). `labels`: part names at their centers. `highlight`: part names to outline. `animation` + `time`: pose that animation at `time` seconds. Also returns a summary (size in m, part count), the bounds and the same warnings as meshBuild.get. Read-only: the model is shown in a world of its own, not the scene. Finishes after a few frames. Needs the editor window."
+    public static let doc = "Returns one PNG of a .meshbuild model from fixed angles, tiled: by default front (camera at -Z, the model's front; +X is on the image's left), right (from +X), top (front up) and a 3/4 perspective; `views` picks and orders them (also back, left). Front / right / top are orthographic, each auto-framed with a ground grid (spacing in the caption; red line z=0, blue x=0) and a white ground line at y=0. `size`: tile pixels (default 384). `labels`: part names at their centers. `highlight`: part names to outline. `animation` + `time`: pose that animation at `time` seconds. `environment`: what lights the model, \"studio\" (default: a neutral photo studio with softboxes that metals reflect), \"outdoor\" (the procedural sky) or \"flat\" (plain ambient light, nothing to reflect). Also returns a summary (size in m, part count), the bounds and the same warnings as meshBuild.get. Read-only: the model is shown in a world of its own, not the scene. Finishes after a few frames. Needs the editor window."
     public static let isReadOnly = true
     public static let isIdempotent = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) && session.host?.canRender == true }
@@ -314,7 +319,7 @@ public enum MeshBuildPreviewCommand: EditorDeferredCommand {
         let scene = try MeshBuildPreviewScene(
             build: build, prefab: prefab, views: views, tileSize: arguments.size ?? MeshBuildPreviewScene.defaultTileSize,
             labels: arguments.labels ?? false, highlight: arguments.highlight ?? [], animation: arguments.animation,
-            time: arguments.time) { handle in
+            time: arguments.time, environment: arguments.environment ?? .studio) { handle in
                 handle.assetReference.flatMap { assets.mesh($0) } ?? MeshGeometry.builtin(handle)
             }
         let check = MeshBuildResult(id, build, in: session)

@@ -78,6 +78,9 @@ public struct Material {
     /// computes the PBR inputs itself. Its textures are in the five texture fields, in slot order;
     /// the color, factor and UV fields are unused.
     public var graph: MaterialGraphProgram?
+    /// Worn convex edges (see `EdgeWear`): nil draws none. Needs a mesh with edge coordinates in
+    /// its tangents (`EdgeWear.encode`); not used by material graphs.
+    public var edgeWear: EdgeWear?
 
     public init(shading: ShadingModel = .pbr, baseColor: Vec4 = Vec4(0.8, 0.8, 0.8, 1), texture: GPUTexture? = nil,
                 sampler: SamplerDescriptor = SamplerDescriptor(minFilter: .linear, magFilter: .linear, mipFilter: .linear, addressMode: .repeat),
@@ -143,6 +146,80 @@ public struct Material {
         // offset + [c s; -s c] * (scale * uv), the KHR_texture_transform matrix.
         if uvRotation == 0 { return (Vec4(uvScale.x, 0, uvOffset.x, 0), Vec4(0, uvScale.y, uvOffset.y, 0)) }
         return (Vec4(c * uvScale.x, s * uvScale.y, uvOffset.x, 0), Vec4(-s * uvScale.x, c * uvScale.y, uvOffset.y, 0))
+    }
+}
+
+/// Worn convex edges: where a mesh's edges and corners stick out, the surface blends toward a
+/// worn variant (chipped paint showing bare metal, lighter rubbed wood or stone, polished edges on
+/// rust). Mesh builds set it on parts with a look and `wear` (MeshBuildEdgeWear.swift).
+///
+/// How far each point is from a convex edge comes from the mesh: every vertex carries an edge
+/// coordinate e = strength - distance / band width (1 on a sharp edge, 0 one band width away,
+/// negative further in, up to 1.5 at corners), stored as the component of `MeshVertex.tangent`'s
+/// xyz along the vertex normal (`encode`). The lit shader already removes that component before
+/// using the tangent (it projects the tangent onto the surface), so it changes nothing else, and
+/// since e is linear in the distance to the edge it interpolates exactly across a flat triangle:
+/// a box face split into a few triangles still gets a sharp band along its edges. The shader
+/// (mesh_surface.glsl) adds noise in texture space for an irregular, chipped boundary.
+///
+/// The parameters reach the shader in the two unused w components of the material's UV rows
+/// (`MaterialUniforms.uvRow0.w` / `uvRow1.w`) as 24-bit integers (`packed`); 0 means none.
+public struct EdgeWear: Equatable, Sendable, Codable {
+    /// Linear albedo of the worn surface (0...2), times half the base color texture's detail
+    /// (mix(1, texture x 2, 0.5): looks normalize their albedo to an average of 0.5) and the instance tint.
+    public var color: Vec3
+    public var roughness: Float
+    public var metallic: Float
+    /// Cycles per UV unit of the noise that breaks up the band (4...~5000).
+    public var noiseFrequency: Float
+    /// 0: a soft rubbed edge, 1: crisp chips.
+    public var crisp: Float
+
+    public init(color: Vec3, roughness: Float, metallic: Float, noiseFrequency: Float, crisp: Float) {
+        self.color = color
+        self.roughness = roughness
+        self.metallic = metallic
+        self.noiseFrequency = noiseFrequency
+        self.crisp = crisp
+    }
+
+    /// The edge coordinate's range (mesh_surface.glsl's EDGE_MIN / EDGE_MAX): values beyond it
+    /// are clamped, so a triangle reaching further than `-minimum` band widths from an edge
+    /// widens the band a little.
+    public static let minimum: Float = -24
+    public static let maximum: Float = 1.5
+
+    /// The tangent's component along the normal that carries edge coordinate `e` (0...1; 0 is
+    /// `minimum`, far from any edge, which is what a mesh without edge coordinates reads as).
+    public static func encode(_ e: Float) -> Float {
+        (min(max(e, minimum), maximum) - minimum) / (maximum - minimum)
+    }
+
+    /// The edge coordinate a tangent's component along the normal (`encode`) stands for.
+    public static func decode(_ s: Float) -> Float { minimum + s * (maximum - minimum) }
+
+    /// The edge coordinate a vertex's tangent carries (the ratio of its component along `normal`
+    /// to the rest, as the shader computes it).
+    public static func coordinate(tangent: Vec3, normal: Vec3) -> Float {
+        let n = normalize(normal)
+        let along = dot(n, tangent)
+        return decode(along / max(length(tangent - n * along), 1e-6))
+    }
+
+    /// The noise frequency's 5-bit code: 4 x 2^(code / 3) cycles per UV unit.
+    static func frequencyCode(_ f: Float) -> Int {
+        guard f.isFinite, f > 4 else { return 0 }
+        return min(Int((3 * log2f(f / 4)).rounded()), 31)
+    }
+
+    /// The parameters as the shader reads them: (rgb bytes of color / 2; roughness, metallic and
+    /// a byte with the frequency code, crispness in two bits and a set top bit). Every value is
+    /// an integer below 2^24, exact in a float.
+    public var packed: (Float, Float) {
+        func byte(_ x: Float) -> Int { Int((min(max(x.isFinite ? x : 0, 0), 1) * 255).rounded()) }
+        let rgb = byte(color.x / 2) + byte(color.y / 2) << 8 + byte(color.z / 2) << 16
+        let flags = Self.frequencyCode(noiseFrequency) | Int((min(max(crisp, 0), 1) * 3).rounded()) << 5 | 128
+        return (Float(rgb), Float(byte(roughness) + byte(metallic) << 8 + flags << 16))
     }
 }
 

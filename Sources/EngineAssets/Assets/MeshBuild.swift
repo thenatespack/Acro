@@ -784,7 +784,7 @@ public struct MeshBuildImporter: AssetImporter {
 
     public var name: String { "meshbuild" }
     public var fileExtensions: [String] { ["meshbuild"] }
-    public var version: Int { 5 }  // 2: mirror and repeat, 3: sculpt, 4: sweep, loft and deform, 5: looks and baked occlusion
+    public var version: Int { 6 }  // 2: mirror and repeat, 3: sculpt, 4: sweep, loft and deform, 5: looks and baked occlusion, 6: edge wear
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         let file: MeshBuild
@@ -827,6 +827,7 @@ public struct MeshBuildImporter: AssetImporter {
             return geometry
         }
         Self.finishSurfaces(build, &geometries, occlusion: file.ao ?? true, firstIndex: firstIndex)
+        Self.finishEdgeWear(build, &geometries)
         var lookTextures = LookTextureRefs()
 
         var nodes: [PrefabNode] = []
@@ -842,7 +843,7 @@ public struct MeshBuildImporter: AssetImporter {
                     let materialID = namer.id(kind: "material", name: part.name, index: i)
                     let texture = resolve(part.texture, kind: "texture", part: part.name, &context)
                     let look = part.resolvedLook.map { lookTextures.references($0, wear: part.wear, &asset, &namer, &context) }
-                    asset.add(materialID, name: part.name, .material(Self.material(for: part, texture: texture, look: look)))
+                    asset.add(materialID, name: part.name, .material(Self.material(for: part, texture: texture, look: look, geometry: geometry)))
                     node.material = context.reference(materialID)
                 }
             }

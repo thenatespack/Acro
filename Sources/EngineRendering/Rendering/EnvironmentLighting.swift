@@ -178,7 +178,8 @@ struct SkyUniforms: BitwiseCopyable, Equatable {
     var inverseViewProj = Mat4.identity
     /// x: 1 map, 0 procedural; y: intensity; z, w: cos, sin of the rotation.
     var params = Vec4.zero
-    /// x: far-plane depth; y: map mip level (env_base); zw: target size (env_base).
+    /// x: far-plane depth; y: map mip level (env_base) or c / (1 + c) output (sky); zw: target
+    /// size (env_base); z: 1 for an orthographic view (sky).
     var extra = Vec4.zero
     var zenith = Vec4.zero
     var horizon = Vec4.zero
@@ -392,7 +393,8 @@ final class EnvironmentLighting {
         rotation.c3 = Vec4(0, 0, 0, 1)
         var u = sky.uniforms
         u.inverseViewProj = (projection * rotation).inverse
-        u.extra = Vec4(reversedZ ? 0 : 1, encoded ? 1 : 0, 0, 0)
+        // z: an orthographic projection (no perspective divide), whose rays are all parallel.
+        u.extra = Vec4(reversedZ ? 0 : 1, encoded ? 1 : 0, projection.c2.w == 0 ? 1 : 0, 0)
         pass.setPipeline(pipeline)
         pass.setUniformData(u, index: 2)
         pass.setTexture(sky.map ?? placeholder, index: 1)

@@ -3,7 +3,7 @@
 layout(set = 2, binding = 2, std140) uniform SkyData {
     mat4 inverseViewProj;  // clip -> world direction (the view's rotation only; jittered like the scene)
     vec4 params;           // x: 1 equirectangular map, 0 procedural; y: intensity; z, w: cos, sin of the rotation
-    vec4 extra;            // x: far-plane depth (1, or 0 with reversed-Z); y: map mip level (env_base); zw: target size (env_base)
+    vec4 extra;            // x: far-plane depth (1, or 0 with reversed-Z); y: map mip level (env_base) or 1 to store c / (1 + c) (sky); zw: target size (env_base); z: 1 for an orthographic view (sky)
     vec4 zenith;
     vec4 horizon;
     vec4 ground;

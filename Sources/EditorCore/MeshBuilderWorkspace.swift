@@ -69,7 +69,7 @@ public final class MeshBuilderWorkspace {
         undo = UndoStack(world: world)
         world.spawn(Transform(rotation: Quat(eulerDegrees: Vec3(-55, 35, 0))), Name("Light"),
                     DirectionalLight(intensity: 2.2, castsShadows: true))
-        world.spawn(Name("Environment"), SceneEnvironment(ambientIntensity: 0.6, fogDensity: 0))
+        world.spawn(Name("Environment"), MeshBuildPreviewEnvironment.studio.sceneEnvironment)
         world.addBuiltinAnimationSystems()
         view = VStack(spacing: 0, name: "meshBuilderWorkspace")
         layOutChrome()
@@ -406,6 +406,7 @@ public final class MeshBuilderWorkspace {
         do {
             let renderer = try SceneRenderer(device: device, quality: quality)
             renderer.assets = session.assets
+            MeshBuildPreviewEnvironment.registerStudio(in: renderer)
             self.renderer = renderer
             target = try RenderTarget(device: device, width: 640, height: 360, label: "mesh builder view")
             outline = try SelectionOutlineRenderer(device: device, maskLabel: "mesh builder outline mask")

@@ -223,6 +223,8 @@ public final class EditorApp: Game, EditorHost {
     private var worldCaptureJobs: [WorldCaptureJob] = []
     /// Draws the captions of world captures.
     private var worldCaptureText: TextRenderer?
+    /// Whether `sceneRenderer` has the mesh build preview's studio map (`MeshBuildPreviewEnvironment`).
+    private var hasPreviewStudio = false
     private var lastStats: EditorStatsSnapshot?
     /// The game has the keyboard and the mouse this frame: playing, `showsGameCamera`, the Game
     /// view in front and a Camera entity.
@@ -1969,6 +1971,10 @@ extension EditorApp {
         let blocked = sceneRenderer.blocksOnAssetLoading
         sceneRenderer.blocksOnAssetLoading = true
         defer { sceneRenderer.blocksOnAssetLoading = blocked }
+        if !hasPreviewStudio {
+            MeshBuildPreviewEnvironment.registerStudio(in: sceneRenderer)
+            hasPreviewStudio = true
+        }
         var remaining: [WorldCaptureJob] = []
         for var job in worldCaptureJobs {
             sceneRenderer.beginViews(world: job.world, frame: frame, shadowFocus: job.views[0].view)

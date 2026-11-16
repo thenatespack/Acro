@@ -80,8 +80,8 @@ layout(set = 0, binding = 0, std140) uniform Frame {
 layout(set = 2, binding = 2, std140) uniform MaterialData {
     vec4 baseColor;  // linear rgb, a: opacity
     vec4 params;     // x: world-space checkerboard, y: unlit (0 lit .. 1 unlit), z: specular, w: shininess (Blinn-Phong)
-    vec4 uvRow0;     // UV transform, rows of a 2x3 matrix: uv' = (dot(row0.xy, uv) + row0.z, dot(row1.xy, uv) + row1.z)
-    vec4 uvRow1;
+    vec4 uvRow0;     // UV transform, rows of a 2x3 matrix: uv' = (dot(row0.xy, uv) + row0.z, dot(row1.xy, uv) + row1.z);
+    vec4 uvRow1;     // w of both: worn edges (`EdgeWear.packed`, see edgeWearMask), 0 for none
     vec4 surface;    // x: metallic, y: perceptual roughness, z: normal scale, w: occlusion strength
     vec4 emissive;   // rgb: emissive color x strength (linear), w: 1 PBR, 0 Blinn-Phong
     vec4 flags;      // x: alpha cutoff (mask), y: 1 when there is a normal map, z: its layout (below), w: 1 when the occlusion slot holds the planar reflection
@@ -253,6 +253,59 @@ vec2 environmentBRDF(float NoV, float roughness) {
     return vec2(-1.04, 1.04) * a004 + r.zw;
 }
 
+// Worn convex edges (`EdgeWear` in Material.swift; mesh builds set it). The mesh's edge
+// coordinate e (1 on a sharp convex edge, 0 one band width away, negative further in) rides in
+// the vertex tangent's component along the normal, as a fraction of EDGE_MIN...EDGE_MAX. The
+// tangent frame code below projects that component away, so it changes nothing else.
+#ifndef MATERIAL_GRAPH
+const float EDGE_MIN = -24.0;
+const float EDGE_MAX = 1.5;
+
+float edgeHash(vec2 cell) {
+    uvec2 q = uvec2(ivec2(cell) + ivec2(65536));
+    uint h = (q.x * 1597334677u) ^ (q.y * 3812015801u);
+    h *= 1597334677u;
+    h ^= h >> 16;
+    return float(h & 0xFFFFu) / 65535.0;
+}
+
+// Smooth value noise in 0...1.
+float edgeNoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = p - i;
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(edgeHash(i), edgeHash(i + vec2(1.0, 0.0)), u.x),
+               mix(edgeHash(i + vec2(0.0, 1.0)), edgeHash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+// How worn this fragment is (0...1), from the edge coordinate, noise at `uv` x the material's
+// frequency and its crispness; `edge` gets the worn surface (rgb albedo factor, roughness, metallic).
+float edgeWearMask(vec2 uv, out vec3 edgeColor, out vec2 edgeSurface) {
+    vec4 c = vec4(material.uvRow0.w, material.uvRow1.w, 0.0, 0.0);
+    // Three bytes per float, low first (all exact integers).
+    vec3 hi = floor(c.xyy / 65536.0);
+    vec3 mid = floor((c.xyy - hi * 65536.0) / 256.0);
+    vec3 lo = c.xyy - hi * 65536.0 - mid * 256.0;
+    edgeColor = vec3(lo.x, mid.x, hi.x) / 255.0 * 2.0;
+    edgeSurface = vec2(lo.y, mid.y) / 255.0;
+    float flags = hi.y - 128.0;
+    float code = mod(flags, 32.0);
+    float crisp = floor(flags / 32.0) / 3.0;
+    float frequency = 4.0 * exp2(code / 3.0);
+
+    vec3 gn = normalize(vNormal);
+    float along = dot(gn, vTangent.xyz);
+    float across = length(vTangent.xyz - gn * along);
+    float e = EDGE_MIN + along / max(across, 1e-6) * (EDGE_MAX - EDGE_MIN);
+    if (e < -2.0) return 0.0;
+    vec2 p = uv * frequency;
+    float n = edgeNoise(p) * 0.65 + edgeNoise(p * 2.7 + vec2(17.3, 5.1)) * 0.35;
+    float width = mix(0.45, 0.05, crisp);
+    float t = e - 0.45 + (n - 0.5) * mix(0.8, 2.2, crisp);
+    return smoothstep(-width, width, t);
+}
+#endif
+
 // The radiance arriving from point / spot light `i`, and the unit direction toward it in `l`.
 vec3 punctualRadiance(uint i, out vec3 l) {
     vec4 position = lightPositions.data[i];
@@ -345,6 +398,14 @@ void main() {
         vec2 cell = floor(vWorldPos.xz / 2.0);
         albedo *= (mod(abs(cell.x + cell.y), 2.0) < 0.5) ? 1.0 : 0.75;
     }
+    float edgeWear = 0.0;
+    vec2 edgeSurface = vec2(0.0);
+    if (material.uvRow1.w > 0.5) {
+        vec3 edgeColor;
+        edgeWear = edgeWearMask(uv, edgeColor, edgeSurface);
+        // The worn surface keeps half the texture's detail (fresh material is more even).
+        albedo = mix(albedo, vColor.rgb * edgeColor * mix(vec3(1.0), texel.rgb * 2.0, 0.5), edgeWear);
+    }
 #endif
 
     vec3 n = normalize(vNormal);
@@ -434,6 +495,10 @@ void main() {
         vec4 mr = texture(sampler2D(metallicRoughnessMap, materialSampler), uv);
         float metallic = clamp(material.surface.x * mr.b, 0.0, 1.0);
         float roughness = clamp(material.surface.y * mr.g, 0.045, 1.0);
+        if (edgeWear > 0.0) {
+            metallic = mix(metallic, edgeSurface.y, edgeWear);
+            roughness = mix(roughness, max(edgeSurface.x, 0.045), edgeWear);
+        }
 #endif
         float a = roughness * roughness;
         vec3 diffuseColor = albedo * (1.0 - metallic);

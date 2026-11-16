@@ -99,14 +99,36 @@ Merged with sculpt and curves (importer version 5): looks box-project on sculpt,
 meshes; splitting meshes for occlusion is capped at about 30k triangles per model (edges half the
 occlusion reach), which cut the examples from up to 260k triangles to 10-50k (the tree, with
 noise-deformed foliage, is about 100k from its own subdivision) and imports 3-4x faster.
-Looks gaps: no edge wear on convex edges (vertex data has no free channel besides the AO one;
-unbevelled boxes have no edge vertices anyway); no triplanar blending, so box projection shows
-a seam where projections meet on curved non-round shapes (bevels, extrude sides) and spheres pinch
-slightly at the cap boundary; metals look flat under the preview's plain sky (no reflections of
-interest); textures are 512 px (up close below ~0.3 m the grain gets soft); textures are
-duplicated per .meshbuild file in Library (≈1 MB per texture); vertex AO only darkens ambient
-light, not direct light; AO is baked at rest pose (moving parts keep it); debug-build editors
-spend ~0.5 s per new look on first import.
+Studio light and edge wear (importer version 6): `meshBuild.preview` and the Mesh Builder tab
+light models with a neutral gray HDR studio (gradient walls, darker floor, five white softboxes;
+made in code, `MeshBuildPreviewEnvironment`) through the existing image-based lighting
+(`SceneEnvironment.sky = .map`), so metals get highlights and reflections; the preview takes
+`environment` studio|outdoor|flat. Look parts with `wear` get worn convex edges and corners:
+paint chipped to bare metal or wood, lighter rubbed wood/stone/brick/leather, polished edges on
+rusty and plain metal. Per vertex, the importer stores an edge coordinate (strength - distance to
+the nearest convex edge / band width, linear so it interpolates exactly across big flat
+triangles) as the tangent's component along the normal, which mesh_surface.glsl already
+projects away; the worn surface's color, roughness, metalness, noise frequency and crispness
+ride in the two unused w components of the material's UV rows (`EdgeWear`, packed as 24-bit
+integers). Shared rendering changes: `Material.edgeWear` / `MaterialAsset.edgeWear` (optional,
+not written when nil), `SceneRenderer.MaterialUniforms.uvRow0.w / uvRow1.w`, and a branch in
+mesh_surface.glsl (not in material graph or terrain variants) that only runs when
+`uvRow1.w > 0`; and the sky under an orthographic view (sky.vert, `SkyUniforms.extra.z`, set by
+`EnvironmentLighting.drawSky`) now looks along the view direction everywhere (one flat color)
+instead of fanning out by screen position. Demo scenes (pbr, gltf, reflections, sky, textures,
+facades, skinning) render byte-identical before/after on Metal and Vulkan.
+Looks gaps: no triplanar blending, so box projection shows a seam where projections meet on
+curved non-round shapes (bevels, extrude sides) and spheres pinch slightly at the cap boundary;
+edge-wear noise is in texture space, so chips don't line up across a box edge (each face has its
+own projection); edge strength is per part, so where two parts meet nothing wears (only each
+part's own edges); concave edges and creases get no wear-specific treatment beyond AO; very
+non-uniform entity scale skews the edge band a little (the coordinate is a ratio of tangent
+components); edge wear needs a look (plain-colored parts with `wear` get none) and isn't on parts
+with a `material` asset or in material graphs; the studio isn't selectable in the tab (always
+studio) and has a fixed orientation; textures are 512 px (up close below ~0.3 m the grain gets
+soft); textures are duplicated per .meshbuild file in Library (≈1 MB per texture); vertex AO only
+darkens ambient light, not direct light; AO is baked at rest pose (moving parts keep it);
+debug-build editors spend ~0.5 s per new look on first import.
 
 ### VFX Builder (`.vfx`)
 
