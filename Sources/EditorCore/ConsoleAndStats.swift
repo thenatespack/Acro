@@ -1,7 +1,7 @@
 import Engine
 import Foundation
 
-/// The console panel: the `EditorLog` with a level filter and a Clear button. Lines are
+/// The console panel: the `EditorLog` with a level filter, Copy and Clear buttons. Lines are
 /// rebuilt only when the log or the filter changed, and the view follows new messages.
 @MainActor
 public final class ConsolePanel {
@@ -35,6 +35,12 @@ public final class ConsolePanel {
         view = VStack(spacing: 4, padding: EdgeInsets(top: 4, left: 4, bottom: 0, right: 4), name: "consolePanel")
         filter.style.width = 120
         filter.onChange = { [unowned self] index in minimumLevel = Self.levels[index].level }
+        let copyButton = Button("Copy", name: "consoleCopy")
+        copyButton.icon = EditorIcons.named("copy")
+        copyButton.action = { [unowned self, unowned copyButton] in
+            (copyButton.context?.clipboard ?? SystemClipboard()).string = copyText
+        }
+        copyButton.tooltip = "Copy the messages shown by the filter to the clipboard"
         let clearButton = Button("Clear", name: "consoleClear")
         clearButton.icon = EditorIcons.named("eraser")
         clearButton.action = { [unowned self] in if let onClear { onClear() } else { log.clear() } }
@@ -43,7 +49,7 @@ public final class ConsolePanel {
         filter.tooltip = "Show only messages at this level or above"
         clearButton.tooltip = "Clear the console"
         let bar = HStack(spacing: 8, padding: EdgeInsets(horizontal: 4, vertical: 0), [
-            filter, clearButton, Spacer(), countLabel,
+            filter, copyButton, clearButton, Spacer(), countLabel,
         ])
         view.addChildren([bar, scroll])
         refresh()
@@ -58,6 +64,12 @@ public final class ConsolePanel {
     /// The text of the lines shown (for tests).
     public var shownLines: [String] {
         lines.children.compactMap { ($0 as? Label)?.text }
+    }
+
+    /// What Copy puts on the clipboard: every entry at the filter's level or above (not only
+    /// the `maxLines` shown), one per line, formatted as shown.
+    public var copyText: String {
+        log.entries(atLeast: minimumLevel).map(format).joined(separator: "\n")
     }
 
     /// Rebuilds the lines in the current theme's warning and error colors (after a theme change).

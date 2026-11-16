@@ -794,6 +794,21 @@ private func temporaryDirectory() -> URL {
         #expect(console.shownLines.isEmpty)
     }
 
+    @Test func copyTakesTheFilteredEntries() {
+        let log = EditorLog()
+        log.echoesToStandardOutput = false
+        let console = ConsolePanel(log: log)
+        console.showsTime = false
+        console.maxLines = 1
+        log.info("hello")
+        log.warning("careful")
+        log.error("broken")
+        #expect(console.copyText.split(separator: "\n").count == 3)
+        console.setMinimumLevel(.warning)
+        let copied = console.copyText.split(separator: "\n")
+        #expect(copied.count == 2 && copied[0].hasSuffix("careful") && copied[1].hasSuffix("broken"))
+    }
+
     @Test func logKeepsTheNewest() {
         let log = EditorLog()
         log.echoesToStandardOutput = false

@@ -106,6 +106,7 @@ import Testing
         #expect(tooltip(hierarchy.view, "delete") == "Delete the selection (\(shortcuts.shortcutText(for: .delete)))")
         let console = ConsolePanel(log: session.log)
         #expect(tooltip(console.view, "consoleClear") == "Clear the console")
+        #expect(tooltip(console.view, "consoleCopy") != nil)
         #expect(tooltip(console.view, "consoleFilter") != nil)
     }
 
