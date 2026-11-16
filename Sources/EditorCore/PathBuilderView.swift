@@ -479,6 +479,7 @@ public final class PathBuilderView {
             : "Pick a .terrain to make the path hug its ground."))
         guard build.terrain.isOn else { return }
 
+        view.addChild(Separator())
         view.addChild(Label("Shape the terrain", role: .secondary))
         let shapingEntity = formWorld.spawn(PathShapingComponent(shaping))
         formEntities.append(shapingEntity)
@@ -494,7 +495,7 @@ public final class PathBuilderView {
         view.addChild(shapingGrid)
         let shape = Button("Shape Terrain", name: "pathShapeTerrain") { [unowned self] in shapeTerrain() }
         shape.tooltip = "Writes the terrain's heights under the path (one undo step); the path then follows the new ground"
-        view.addChild(shape)
+        view.addChild(HStack(spacing: 6, [shape, Spacer()]))
         if let lastShape { view.addChild(note(lastShape)) }
     }
 

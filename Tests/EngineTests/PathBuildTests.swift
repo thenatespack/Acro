@@ -309,7 +309,7 @@ private func road(_ from: Vec3, _ to: Vec3) -> PathBuild {
         #expect(fromStart.made == ["T with Roads/main.path"] && fromStart.cuts[0].lowerBound == 0 && abs(fromStart.cuts[0].upperBound - 6) < 0.05)
     }
 
-    @Test func anXJunctionCutsBothSidesAndSkipsPieces() {
+    @Test func anXJunctionCutsBothSidesAndSkipsPieces() throws {
         var side = road(Vec3(0, 0, 30), Vec3(0, 0, -30))
         side.pieces = [PathPiece(name: "Lamps", spacing: 2)]
         let x = layout(side, radius: 2)
@@ -319,6 +319,26 @@ private func road(_ from: Vec3, _ to: Vec3) -> PathBuild {
         #expect(runs.count == 2 && abs((runs[0].last?.distance ?? 0) - 25) < 0.05 && abs((runs[1].first?.distance ?? 0) - 35) < 0.05)
         let lamps = side.instances(of: side.pieces[0], samples: side.samples(), excluding: x.cuts)
         #expect(lamps.count == 31 - 5 && !lamps.contains { abs($0.position.z) < 5 })
+
+        // On a curving main road the paving meets its real edge, and starts exactly where the side road stops.
+        let curvy = PathBuild.preset(.road, points: [PathPoint(Vec3(-50, 0, 0)), PathPoint(Vec3(-15, 0, -6)), PathPoint(Vec3(15, 0, 6)), PathPoint(Vec3(50, 0, 0))])
+        let curvySamples = curvy.samples()
+        let joining = road(Vec3(-5, 0, 45), Vec3(0, 0, 0))
+        let joint = joining.junctionLayout([PathJunctionTarget(PathJunction(path: "c", radius: 4), other: curvy, samples: curvySamples)],
+                                           samples: joining.samples())
+        let paving = try #require(joint.patch).vertices.filter { $0.normal == Vec3(0, 1, 0) }.map(\.position)
+        let onEdge = paving.filter { p in
+            let d = curvySamples.map { length(Vec3($0.position.x - p.x, 0, $0.position.z - p.z)) }.min() ?? 0
+            return abs(d - 3) < 0.1
+        }
+        #expect(onEdge.count >= 8, "the last row lies on the main road's edge")
+        #expect(!paving.contains { p in curvySamples.contains { length(Vec3($0.position.x - p.x, 0, $0.position.z - p.z)) < 2.8 } },
+                "nothing paved over the main road")
+        let cutEnd = try #require(PathBuild.runs(joining.samples(), outside: joint.cuts).first?.last)
+        for side in [Float(-3), 3] {
+            let corner = cutEnd.position + cutEnd.right * side + cutEnd.up * 0.05
+            #expect(paving.contains { length($0 - corner) < 1e-3 }, "the paving starts at the road's end")
+        }
 
         // At an angle the corners still meet both edges.
         let angled = layout(road(Vec3(-20, 0, 20), Vec3(20, 0, -20)))

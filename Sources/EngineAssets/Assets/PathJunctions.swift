@@ -208,50 +208,72 @@ extension PathBuild {
         let cut = min(cutStart, approach.reach)...max(cutStart, approach.reach)
         guard let start = PathBuild.sample(samples, atDistance: cutStart, closed: closed) else { return nil }
 
-        // Heights: this road's surface at the cut, the other's along its edge.
-        let thisTop = start.position.y + paving.surfaceHeight
-        func otherTop(_ p: Vec3) -> Float {
-            (nearestSample(p, on: target.samples)?.position.y ?? approach.center.y) + target.surface
-        }
-        let eLeft = Vec3(start.position.x, 0, start.position.z) - right * thisHalf
-        let eRight = Vec3(start.position.x, 0, start.position.z) + right * thisHalf
-        let mLeft = eLeft + f * toEdge(eLeft), mRight = eRight + f * toEdge(eRight)
+        // The first row is this road's cut end, exactly where its surface stops.
+        let surfaceOffset = paving.offset.x, w = max(paving.width, 0.001) * start.width / 2
+        let edgeA = start.position + start.mitered(start.right * (surfaceOffset - w) + start.up * paving.surfaceHeight)
+        let edgeB = start.position + start.mitered(start.right * (surfaceOffset + w) + start.up * paving.surfaceHeight)
+        let (eLeft, eRight) = dot(edgeA - edgeB, right) < 0 ? (edgeA, edgeB) : (edgeB, edgeA)
+        // Where this road's edges meet the other's, and the ends of the rounded corners along it.
+        func flatP(_ p: Vec3) -> Vec3 { Vec3(p.x, 0, p.z) }
+        let mLeft = flatP(eLeft) + f * toEdge(flatP(eLeft)), mRight = flatP(eRight) + f * toEdge(flatP(eRight))
         let alongEdgeLeft = dot(m, -right) >= 0 ? m : -m
         let bLeft = mLeft + alongEdgeLeft * radius, bRight = mRight - alongEdgeLeft * radius
-        func lifted(_ p: Vec3, _ y: Float) -> Vec3 { Vec3(p.x, y, p.z) }
-        let segments = radius > 0.01 ? 8 : 1
+        // The other road's surface edge nearest `p` (its real, curving edge, at its height).
+        func onOtherEdge(_ p: Vec3) -> Vec3 {
+            guard let s = project(p, on: target.samples) else { return Vec3(p.x, approach.center.y + target.surface, p.z) }
+            let side: Float = dot(flatP(p - s.position), s.right) >= 0 ? 1 : -1
+            return s.position + s.mitered(s.right * (side * target.halfWidth * s.width) + s.up * target.surface)
+        }
+        let segments = radius > 0.01 ? 8 : 2
         func curve(_ a: Vec3, _ control: Vec3, _ b: Vec3) -> [Vec3] {
             (0...segments).map { i in
                 let t = Float(i) / Float(segments)
                 return a * ((1 - t) * (1 - t)) + control * (2 * (1 - t) * t) + b * (t * t)
             }
         }
-        let leftCurve = curve(lifted(eLeft, thisTop), lifted(mLeft, otherTop(mLeft)), lifted(bLeft, otherTop(bLeft)))
-        let rightCurve = curve(lifted(bRight, otherTop(bRight)), lifted(mRight, otherTop(mRight)), lifted(eRight, thisTop))
-        let outline = leftCurve + rightCurve  // E_l … B_l, B_r … E_r; closes along the cut line
-        addFan(outline, to: &patch, uvScale: paving.textureScale)
+        let leftCurve = curve(eLeft, onOtherEdge(mLeft), onOtherEdge(bLeft))
+        let rightCurve = curve(eRight, onOtherEdge(mRight), onOtherEdge(bRight))
+        // A grid between the two corner curves: row 0 is the cut, the last row lies on the other road's edge.
+        let columns = 8
+        var grid: [[Vec3]] = []
+        for j in 0...segments {
+            var row: [Vec3] = []
+            for c in 0..<columns {
+                let p = leftCurve[j] + (rightCurve[j] - leftCurve[j]) * (Float(c) / Float(columns - 1))
+                row.append(j == segments && c > 0 && c < columns - 1 ? onOtherEdge(p) : p)
+            }
+            grid.append(row)
+        }
+        addGrid(grid, to: &patch, uvScale: paving.textureScale)
         if paving.shape == .box {
             let depth = max(paving.height, 0.001)
-            let center = outline.reduce(Vec3.zero, +) / Float(outline.count)
+            let center = grid.flatMap { $0 }.reduce(Vec3.zero, +) / Float(grid.count * columns)
             addSkirt(leftCurve, depth: depth, awayFrom: center, to: &patch)
             addSkirt(rightCurve, depth: depth, awayFrom: center, to: &patch)
         }
         return cut
     }
 
-    /// An up-facing fan over `outline` from its centroid.
-    static func addFan(_ outline: [Vec3], to g: inout MeshGeometry, uvScale: Vec2) {
-        guard outline.count >= 3 else { return }
-        let center = outline.reduce(Vec3.zero, +) / Float(outline.count)
+    /// Up-facing triangles over a grid of rows of points.
+    static func addGrid(_ grid: [[Vec3]], to g: inout MeshGeometry, uvScale: Vec2) {
+        guard grid.count >= 2, let columns = grid.first?.count, columns >= 2 else { return }
         let start = UInt32(g.vertices.count)
-        for p in [center] + outline {
-            g.vertices.append(MeshVertex(position: p, normal: Vec3(0, 1, 0), uv: Vec2(p.x * uvScale.x, p.z * uvScale.y)))
+        for row in grid {
+            for p in row { g.vertices.append(MeshVertex(position: p, normal: Vec3(0, 1, 0), uv: Vec2(p.x * uvScale.x, p.z * uvScale.y))) }
         }
-        let k = UInt32(outline.count)
-        for i in 0..<k {
-            let a = start + 1 + i, b = start + 1 + (i + 1) % k
-            let pa = g.vertices[Int(a)].position, pb = g.vertices[Int(b)].position
-            if cross(pa - center, pb - center).y >= 0 { g.indices += [start, a, b] } else { g.indices += [start, b, a] }
+        func add(_ a: UInt32, _ b: UInt32, _ c: UInt32) {
+            let pa = g.vertices[Int(a)].position, pb = g.vertices[Int(b)].position, pc = g.vertices[Int(c)].position
+            let n = cross(pb - pa, pc - pa)
+            guard EngineCore.length(n) > 1e-9 else { return }
+            if n.y >= 0 { g.indices += [a, b, c] } else { g.indices += [a, c, b] }
+        }
+        let k = UInt32(columns)
+        for j in 0..<UInt32(grid.count - 1) {
+            for c in 0..<(k - 1) {
+                let a = start + j * k + c, b = a + 1, d = a + k, e = d + 1
+                add(a, b, d)
+                add(b, e, d)
+            }
         }
     }
 
@@ -338,6 +360,20 @@ extension PathBuild {
             if d < (best?.0 ?? .infinity) { best = (d, q, flat(b - a)) }
         }
         return best.map { ($0.1, $0.2) }
+    }
+
+    /// The point of the polyline `samples` nearest to `p` (XZ), as an interpolated sample.
+    static func project(_ p: Vec3, on samples: [PathSample]) -> PathSample? {
+        guard samples.count > 1 else { return samples.first }
+        var best: (Float, Float)?
+        for i in 1..<samples.count {
+            let a = samples[i - 1].position, b = samples[i].position
+            let ab = Vec3(b.x - a.x, 0, b.z - a.z), l2 = dot(ab, ab)
+            let t = l2 > 1e-9 ? min(max(dot(Vec3(p.x - a.x, 0, p.z - a.z), ab) / l2, 0), 1) : 0
+            let d = flatLength(a + (b - a) * t - p)
+            if d < (best?.0 ?? .infinity) { best = (d, samples[i - 1].distance + (samples[i].distance - samples[i - 1].distance) * t) }
+        }
+        return best.flatMap { PathBuild.sample(samples, atDistance: $0.1) }
     }
 
     /// The sample of `samples` nearest to `p` (XZ).

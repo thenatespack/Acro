@@ -113,6 +113,8 @@ public final class PathBuilderWorkspace {
     private let sidebar = VStack(spacing: 6, padding: EdgeInsets(top: 8, left: 10, bottom: 8, right: 10), name: "pathBuilderSidebar")
     private var root: Entity?
     private var terrainRoot: Entity?
+    /// Copies of the paths this one joins (junctions), so the joins are seen in context.
+    private(set) var joinedRoots: [Entity] = []
     /// The handle entity of each control point, in order.
     public private(set) var handles: [Entity] = []
     private var shownRevision = -1
@@ -186,9 +188,10 @@ public final class PathBuilderWorkspace {
     }
 
     private func clearCopies() {
-        for entity in [root, terrainRoot].compactMap({ $0 }) + handles { world.despawn(entity) }
+        for entity in [root, terrainRoot].compactMap({ $0 }) + handles + joinedRoots { world.despawn(entity) }
         root = nil
         terrainRoot = nil
+        joinedRoots = []
         handles = []
         curve = []
         shownSamples = []
@@ -351,6 +354,12 @@ public final class PathBuilderWorkspace {
             terrainRoot = t
         }
         if let prefab = assets.prefab(AssetReference(asset)), let newRoot = world.instantiate(prefab).first { root = newRoot }
+        for junction in build.junctions {
+            guard let other = MeshBuildCheck.resolve(junction.path, session: session), other != asset, session.isPathBuildFile(other),
+                  let prefab = assets.prefab(AssetReference(other)), let copy = world.instantiate(prefab).first else { continue }
+            world.modify(Transform.self, for: copy) { $0.position = junction.offset }
+            joinedRoots.append(copy)
+        }
 
         let samples = build.samples(on: ground?.terrain)
         curve = samples.map(\.position)

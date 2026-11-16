@@ -310,6 +310,8 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         view.addJunction()
         view.refresh()
         #expect(view.build.junctions.map(\.path) == ["Main.path"])
+        workspace.update(input: nil, dt: 0)
+        #expect(workspace.joinedRoots.count == 1, "the joined road is shown too")
         view.removeJunction(0)
         view.refresh()
         #expect(view.build.junctions.isEmpty)
