@@ -225,7 +225,8 @@ public struct CharacterAttachment: Codable, Equatable, Sendable {
     /// Recolors every part of the model (nil keeps its own colors).
     public var color: Vec3?
     /// Mesh-build part name → color ([r, g, b] 0-1 sRGB) for those parts, over `color` and
-    /// the parts' own looks.
+    /// the parts' own looks. Mirror / repeat copies ("Right Arm", "Leg 2") can be named, and
+    /// otherwise take their source part's entry.
     public var partColors: [String: Vec3]
 
     public init(name: String = "Part", bone: String = "head", asset: String = "", position: Vec3 = .zero, rotation: Vec3 = .zero,
@@ -267,8 +268,11 @@ public struct CharacterAttachment: Codable, Equatable, Sendable {
         if !partColors.isEmpty { try c.encode(partColors, forKey: .partColors) }
     }
 
-    /// The color `part` gets: its entry in `partColors`, else `color` (nil: the part's own look).
-    public func color(ofPart part: String) -> Vec3? { partColors[part] ?? color }
+    /// The color `part` gets: its entry in `partColors`, else (for a mirror / repeat copy) the
+    /// entry of the part it was copied from, `source`, else `color` (nil: the part's own look).
+    public func color(ofPart part: String, source: String? = nil) -> Vec3? {
+        partColors[part] ?? source.flatMap { partColors[$0] } ?? color
+    }
 
     public static var fieldHints: [String: FieldHints] {
         ["bone": FieldHints(tooltip: "The bone it follows"),

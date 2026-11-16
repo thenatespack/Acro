@@ -44,6 +44,14 @@ For less blocky models, a box's `bevel` (meters) rounds its edges and corners an
 
 A profile that can't be built (too few points, no area, crossing edges, non-numbers) builds nothing for that part and the tools and importer report a warning. In the sidebar, the **Lathe** and **Extrude** buttons start from a vase and an arrow, profile points are edited as number rows (**Add Point**, **Remove**), and boxes and cylinders get a **Bevel** slider.
 
+Symmetric and repeated models stay short with two part keys, which also copy the part's children:
+
+- `mirror` (`"x"`, or several axes such as `["x", "z"]` for every combination) adds a mirror image across the parent's plane through its origin. The copy is a true reflection: its position is negated on that axis, the other two rotation angles are negated (so its transform stays a proper rotation), and its mesh is reflected, so asymmetric shapes such as wedges come out right.
+- `repeat` (`{"count": 5, "offset": [1, 0, 0]}` for a row, `{"count": 8, "radial": {"axis": "y"}}` for a ring about the parent's origin, with `"radius"` for a ring centered on the part and `"angle"` for an arc) adds copies; `count` includes the original. An offset with a ring makes a spiral.
+- Repeat is applied first, then mirror. Copies are named `"<name> 2"`, `"<name> 3"`… for repeats. Mirror copies swap a side word for their axis (Left/Right or L/R for x, Top/Bottom or Upper/Lower for y, Front/Back for z: `"Front Left Leg"` with `["x", "z"]` gives Front Right, Back Left and Back Right Leg); a name without one gets `" (mirror x)"`. Copies play their source's animations, mirrored for mirror copies and turned for ring copies. Tracks, character `partColors` and other parts' `parent` can name copies (`partColors` for a source also colors its copies). A copy name that clashes with another part gives a warning. The tools' results list the copies in `copies`.
+
+The file keeps the short form. `MeshBuild.expanded()` writes the copies out as parts; the importer, character attachments, terrain scatter and grid maps all use it. In the Mesh Builder, the sidebar has Mirror (X / Y / Z) and Repeat (count, line or ring, offset, axis, angle, radius) rows. Copies show in the view, and clicking one selects the part it comes from.
+
 Editor MCP clients can create and edit these assets with `meshBuild.new`, `meshBuild.edit`, `meshBuild.set`, and `meshBuild.get`, and show one in the Mesh Builder tab with `meshBuild.open`. See [MCPTools.md](MCPTools.md) for schemas and parameters.
 
 ## VFX Builder

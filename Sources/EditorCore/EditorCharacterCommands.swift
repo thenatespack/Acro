@@ -183,7 +183,7 @@ enum CharacterCheck {
             }
             if session.assets?.record(id)?.importer != MeshBuildImporter().name {
                 problems.append("attachment '\(a.name)': '\(a.asset)' isn't a .meshbuild")
-            } else if let build = session.assets?.meshBuild(of: id) {
+            } else if let build = session.assets?.meshBuild(of: id)?.expanded() {
                 let parts = Set(build.parts.map(\.name))
                 for part in a.partColors.keys.sorted() where !parts.contains(part) {
                     problems.append("attachment '\(a.name)': partColors names no part '\(part)' (parts: \(build.parts.map(\.name).joined(separator: ", ")))")

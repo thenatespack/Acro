@@ -222,11 +222,12 @@ public struct TerrainImporter: AssetImporter {
         }
         guard path.lowercased().hasSuffix(".meshbuild"),
               let data = try? context.readDependency(relativePath: relative(path, from: context.assetPath)),
-              let build = try? AssetJSON.decoder().decode(MeshBuild.self, from: data) else {
+              let file = try? AssetJSON.decoder().decode(MeshBuild.self, from: data) else {
             context.warn("scatter '\(rule.name)': '\(value)' isn't a mesh build; use a .meshbuild or an asset:<id>#mesh/<name> reference")
             return nil
         }
-        // The sub-asset names the mesh build importer gave its parts.
+        // The sub-asset names the mesh build importer gave its parts (mirror / repeat copies included).
+        let build = file.expanded()
         var meshNamer = SubAssetNamer(), materialNamer = SubAssetNamer()
         var firstIndex: [String: Int] = [:]
         for (i, part) in build.parts.enumerated() where firstIndex[part.name] == nil { firstIndex[part.name] = i }

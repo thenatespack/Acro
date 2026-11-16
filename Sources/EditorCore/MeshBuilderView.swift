@@ -136,8 +136,8 @@ public final class MeshBuilderView {
         listedParts = orderedParts()
         partList.items = listedParts.map { name in
             let depth = self.depth(of: name)
-            let shape = build.parts.first { $0.name == name }?.shape.rawValue ?? ""
-            return String(repeating: "    ", count: depth) + name + "  ·  " + shape
+            let part = build.parts.first { $0.name == name }
+            return String(repeating: "    ", count: depth) + name + "  ·  " + (part?.shape.rawValue ?? "") + (part.map(Self.copiesSummary) ?? "")
         }
         if let selectedPart, let row = listedParts.firstIndex(of: selectedPart) { partList.selectRow(row, reveal: true) }
         view.addChild(partList)
@@ -155,7 +155,123 @@ public final class MeshBuilderView {
         }
         addPartGrid(part)
         addShapeSection(for: part)
+        addSymmetrySection(for: part)
         addAnimationSection(for: part)
+    }
+
+    /// "  ·  ×4  ·  mirror x" for a part with copies, else "".
+    static func copiesSummary(_ part: MeshBuildPart) -> String {
+        var text = ""
+        if let r = part.repetition, r.count > 1 { text += "  ·  ×\(r.count)" }
+        if let m = part.mirror, !m.axes.isEmpty { text += "  ·  mirror " + m.axes.map(\.rawValue).joined() }
+        return text
+    }
+
+    // MARK: Mirror and repeat
+
+    /// Rows for the part's `mirror` (an axis toggle each) and `repeat` (count, then a line's
+    /// offset or a ring's axis, angle and radius).
+    private func addSymmetrySection(for part: MeshBuildPart) {
+        let name = part.name
+        view.addChild(Separator())
+        view.addChild(Label("Mirror and Repeat", role: .secondary))
+        if part.mirror != nil || part.repetition != nil {
+            view.addChild(note("Copies show in the view and follow this part (with its children); clicking one picks this part."))
+        }
+
+        var mirrorRow: [Widget] = [rowLabel("Mirror")]
+        for axis in MeshBuildAxis.allCases {
+            let box = Checkbox(axis.rawValue.uppercased(), isOn: part.mirror?.axes.contains(axis) ?? false,
+                               name: "meshBuildMirror.\(axis.rawValue)") { [unowned self] on in
+                editPart(name, label: "Mirror Part") { p in
+                    var axes = p.mirror?.axes ?? []
+                    if on { axes.append(axis) } else { axes.removeAll { $0 == axis } }
+                    p.mirror = axes.isEmpty ? nil : MeshBuildMirror(axes)
+                }
+            }
+            box.command = MeshBuildEditCommand.id.rawValue
+            box.tooltip = "Add a mirror image of this part and its children across the parent's \(axis.rawValue) = 0 plane"
+            mirrorRow.append(box)
+        }
+        mirrorRow.append(Spacer())
+        view.addChild(HStack(spacing: 6, mirrorRow))
+
+        let repetition = part.repetition
+        let count = NumberField(value: Double(repetition?.count ?? 1), isInteger: true, range: 1...Double(MeshBuildRepeat.maxCount),
+                                step: 1, name: "meshBuildRepeatCount")
+        count.tooltip = "Parts in all, this one included (1: no copies)"
+        count.onEditEnded = { [unowned self] _, end in
+            editPart(name, label: "Repeat Part") { p in
+                let n = Int(end.rounded())
+                if n <= 1 { p.repetition = nil; return }
+                var r = p.repetition ?? MeshBuildRepeat(offset: Vec3(p.size.x + 0.1, 0, 0))
+                r.count = n
+                p.repetition = r
+            }
+        }
+        count.style.grow = 1
+        view.addChild(HStack(spacing: 6, [rowLabel("Repeat"), count]))
+        guard let repetition else { return }
+
+        let modes = ["Line", "Ring around parent", "Ring around itself"]
+        let mode = repetition.radial == nil ? 0 : repetition.radial?.radius == nil ? 1 : 2
+        let modeMenu = Dropdown(options: modes, selectedIndex: mode, name: "meshBuildRepeatMode") { [unowned self] index in
+            editPart(name, label: "Repeat Part") { p in
+                guard var r = p.repetition else { return }
+                switch index {
+                case 0: r.radial = nil
+                case 1: r.radial = MeshBuildRepeat.Radial(axis: r.radial?.axis ?? .y, angle: r.radial?.angle ?? 360); r.offset = .zero
+                default: r.radial = MeshBuildRepeat.Radial(axis: r.radial?.axis ?? .y, radius: r.radial?.radius ?? 0.5,
+                                                           angle: r.radial?.angle ?? 360); r.offset = .zero
+                }
+                p.repetition = r
+            }
+        }
+        modeMenu.tooltip = "A row of copies, a ring about the parent's origin, or a ring centered on this part"
+        modeMenu.style.grow = 1
+        view.addChild(HStack(spacing: 6, [rowLabel("Arrange"), modeMenu]))
+
+        let offset = VectorField(count: 3, values: [repetition.offset.x, repetition.offset.y, repetition.offset.z].map(Double.init),
+                                 step: 0.05, name: "meshBuildRepeatOffset")
+        offset.tooltip = "Each copy's step from the one before, meters in the parent's space"
+        offset.onEditEnded = { [unowned self] _, end in
+            editPart(name, label: "Repeat Part") { p in p.repetition?.offset = Vec3(Float(end[0]), Float(end[1]), Float(end[2])) }
+        }
+        offset.style.grow = 1
+        view.addChild(HStack(spacing: 6, [rowLabel(repetition.radial == nil ? "Offset" : "Rise"), offset]))
+        guard let radial = repetition.radial else { return }
+
+        let axis = Dropdown(options: ["X axis", "Y axis", "Z axis"], selectedIndex: radial.axis.index, name: "meshBuildRepeatAxis") {
+            [unowned self] index in editPart(name, label: "Repeat Part") { p in p.repetition?.radial?.axis = MeshBuildAxis.allCases[index] }
+        }
+        axis.tooltip = "The parent's axis the ring turns about"
+        let angle = NumberField(value: Double(radial.angle), range: -360...360, step: 1, name: "meshBuildRepeatAngle")
+        angle.tooltip = "Degrees the ring spans: 360 spaces the copies evenly all round; less spreads them from 0 to this, both ends"
+        angle.onEditEnded = { [unowned self] _, end in editPart(name, label: "Repeat Part") { p in p.repetition?.radial?.angle = Float(end) } }
+        angle.style.grow = 1
+        view.addChild(HStack(spacing: 6, [rowLabel("Ring"), axis, angle]))
+        if let radius = radial.radius {
+            let field = NumberField(value: Double(radius), range: 0...10_000, step: 0.05, name: "meshBuildRepeatRadius")
+            field.tooltip = "How far each copy sits from this part's position, meters"
+            field.onEditEnded = { [unowned self] _, end in editPart(name, label: "Repeat Part") { p in p.repetition?.radial?.radius = Float(end) } }
+            field.style.grow = 1
+            view.addChild(HStack(spacing: 6, [rowLabel("Radius"), field]))
+        }
+    }
+
+    private func rowLabel(_ text: String) -> Label {
+        let label = Label(text)
+        label.style.width = 104
+        return label
+    }
+
+    /// Changes the part `name` as one edit (applied on the next `refresh`).
+    private func editPart(_ name: String, label: String, _ change: (inout MeshBuildPart) -> Void) {
+        var edited = pending?.build ?? build
+        guard let i = edited.parts.firstIndex(where: { $0.name == name }) else { return }
+        change(&edited.parts[i])
+        guard edited != build else { return }
+        apply(edited, label: label, select: name)
     }
 
     private func addPartGrid(_ part: MeshBuildPart) {

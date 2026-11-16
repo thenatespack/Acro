@@ -113,7 +113,10 @@ public struct CharacterImporter: AssetImporter {
                                _ asset: inout ImportedAsset, _ namer: inout SubAssetNamer, _ scene: inout CharacterScene) {
         let nodePath = path + "/" + attachment.name
         let node = scene.add(name: attachment.name, transform: attachment.transform, parent: parent, path: nodePath)
-        guard let build = Self.meshBuild(attachment.asset, owner: attachment.name, &context) else { return }
+        guard let file = Self.meshBuild(attachment.asset, owner: attachment.name, &context) else { return }
+        // Mirror / repeat copies are parts too; partColors can name them or their source.
+        let expansion = file.expansion()
+        let build = expansion.build
         // Each part's transform relative to the model's root (part hierarchies flattened).
         var firstIndex: [String: Int] = [:]
         for (i, part) in build.parts.enumerated() where firstIndex[part.name] == nil { firstIndex[part.name] = i }
@@ -131,7 +134,7 @@ public struct CharacterImporter: AssetImporter {
             asset.add(meshID, name: label, .mesh(geometry))
             var material: AssetReference?
             let materialPath = part.material.trimmingCharacters(in: .whitespaces)
-            let recolor = attachment.color(ofPart: part.name)
+            let recolor = attachment.color(ofPart: part.name, source: expansion.sources[i])
             if recolor == nil, !materialPath.isEmpty {
                 material = Self.reference(materialPath, kind: "material", &context)
                 if material == nil { context.warn("attachment '\(attachment.name)', part '\(part.name)': no material '\(materialPath)'") }

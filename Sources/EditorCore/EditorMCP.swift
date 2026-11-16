@@ -634,6 +634,11 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
             ],
             "description": "What to aim at: an entity id or a world point [x, y, z].",
         ], sample: .point(.zero))
+        let axis: JSON = ["type": "string", "enum": ["x", "y", "z"]]
+        generator.override(MeshBuildMirror.self, schema: [
+            "oneOf": [axis, ["type": "array", "items": axis, "minItems": 1, "maxItems": 3]],
+            "description": "Mirror across this axis of the parent (\"x\"), or several ([\"x\", \"z\"]: every combination).",
+        ], sample: [.x])
 
         // MaterialAsset reads its enums as strings and accepts a legacy key: state the cases.
         var material = generator.schema(for: MaterialAsset.self)
