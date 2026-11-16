@@ -380,6 +380,8 @@ public struct PathBuild: Codable, Equatable, Sendable {
     public var profiles: [PathProfile]
     public var pieces: [PathPiece]
     public var terrain: PathTerrain
+    /// Other paths this one meets: T junctions at its ends, X junctions where it crosses them.
+    public var junctions: [PathJunction]
 
     public static var fieldHints: [String: FieldHints] {
         ["closed": FieldHints(tooltip: "Join the end back to the start (a loop)"),
@@ -391,7 +393,8 @@ public struct PathBuild: Codable, Equatable, Sendable {
 
     public init(kind: PathKind = .custom, points: [PathPoint] = [PathPoint(Vec3(-10, 0, 0)), PathPoint(Vec3(10, 0, 0))],
                 closed: Bool = false, smooth: Bool = true, spacing: Float = 0.5, bank: Float = 0, autoBank: Float = 0,
-                profiles: [PathProfile] = [PathProfile()], pieces: [PathPiece] = [], terrain: PathTerrain = PathTerrain()) {
+                profiles: [PathProfile] = [PathProfile()], pieces: [PathPiece] = [], terrain: PathTerrain = PathTerrain(),
+                junctions: [PathJunction] = []) {
         self.kind = kind
         self.points = points
         self.closed = closed
@@ -402,9 +405,10 @@ public struct PathBuild: Codable, Equatable, Sendable {
         self.profiles = profiles
         self.pieces = pieces
         self.terrain = terrain
+        self.junctions = junctions
     }
 
-    private enum CodingKeys: String, CodingKey { case kind, points, closed, smooth, spacing, bank, autoBank, profiles, pieces, terrain }
+    private enum CodingKeys: String, CodingKey { case kind, points, closed, smooth, spacing, bank, autoBank, profiles, pieces, terrain, junctions }
 
     /// Every key is optional.
     public init(from decoder: any Decoder) throws {
@@ -419,7 +423,24 @@ public struct PathBuild: Codable, Equatable, Sendable {
                   autoBank: try c.decodeIfPresent(Float.self, forKey: .autoBank) ?? d.autoBank,
                   profiles: try c.decodeIfPresent([PathProfile].self, forKey: .profiles) ?? d.profiles,
                   pieces: try c.decodeIfPresent([PathPiece].self, forKey: .pieces) ?? d.pieces,
-                  terrain: try c.decodeIfPresent(PathTerrain.self, forKey: .terrain) ?? d.terrain)
+                  terrain: try c.decodeIfPresent(PathTerrain.self, forKey: .terrain) ?? d.terrain,
+                  junctions: try c.decodeIfPresent([PathJunction].self, forKey: .junctions) ?? d.junctions)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(kind, forKey: .kind)
+        try c.encode(points, forKey: .points)
+        try c.encode(closed, forKey: .closed)
+        try c.encode(smooth, forKey: .smooth)
+        try c.encode(spacing, forKey: .spacing)
+        try c.encode(bank, forKey: .bank)
+        try c.encode(autoBank, forKey: .autoBank)
+        try c.encode(profiles, forKey: .profiles)
+        try c.encode(pieces, forKey: .pieces)
+        try c.encode(terrain, forKey: .terrain)
+        // Left out when there are none, so files without junctions read as before.
+        if !junctions.isEmpty { try c.encode(junctions, forKey: .junctions) }
     }
 
     public func fileData() throws -> Data { try AssetJSON.encode(self) }
@@ -775,7 +796,7 @@ public struct PathBuild: Codable, Equatable, Sendable {
 
     /// Where `piece` goes along `samples` (on `ground` when given), at most `limit` of them.
     public func instances(of piece: PathPiece, samples: [PathSample], on ground: Terrain? = nil,
-                          limit: Int = PathBuild.maxPieces) -> [PathPieceInstance] {
+                          limit: Int = PathBuild.maxPieces, excluding cuts: [ClosedRange<Float>] = []) -> [PathPieceInstance] {
         guard let total = samples.last?.distance, total > 0, limit > 0 else { return [] }
         let spacing = max(piece.spacing, 0.05)
         var result: [PathPieceInstance] = []
@@ -784,6 +805,10 @@ public struct PathBuild: Codable, Equatable, Sendable {
         // A closed path doesn't repeat a piece at its end (it is the start).
         let end = wraps ? total - spacing * 0.5 : total + 1e-4
         while d <= end, result.count < limit {
+            if cuts.contains(where: { $0.contains(d) }) {
+                d += spacing
+                continue
+            }
             guard let s = Self.sample(samples, atDistance: d, closed: wraps) else { break }
             var forward = s.forward, right = s.right, up = s.up
             if piece.upright {

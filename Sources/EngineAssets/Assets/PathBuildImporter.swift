@@ -17,7 +17,7 @@ public struct PathBuildImporter: AssetImporter {
 
     public var name: String { "path" }
     public var fileExtensions: [String] { ["path"] }
-    public var version: Int { 1 }
+    public var version: Int { 2 }
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         let build: PathBuild
@@ -28,12 +28,18 @@ public struct PathBuildImporter: AssetImporter {
         let stem = ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension
         let ground = Self.terrain(build.terrain, &context)
         let samples = build.samples(on: ground)
+        let junctions = build.junctionLayout(Self.junctionTargets(build, ground: ground, &context), samples: samples)
+        for warning in junctions.warnings { context.warn(warning) }
+        let runs = PathBuild.runs(samples, outside: junctions.cuts)
+        let paving = build.pavingProfile?.name
         var asset = ImportedAsset()
         var meshNamer = SubAssetNamer(), materialNamer = SubAssetNamer()
         var children: [PrefabNode] = []
 
         for (i, profile) in build.profiles.enumerated() {
-            guard let geometry = build.mesh(profile, samples: samples) else {
+            var pieces = runs.compactMap { build.mesh(profile, samples: $0) }
+            if profile.name == paving, let patch = junctions.patch { pieces.append(patch) }
+            guard let geometry = MeshGeometry.joined(pieces) else {
                 if samples.count >= 2 { context.warn("profile '\(profile.name)' makes no geometry") }
                 continue
             }
@@ -55,7 +61,7 @@ public struct PathBuildImporter: AssetImporter {
             guard let parts = Self.parts(of: piece, index: i, meshNamer: &meshNamer, materialNamer: &materialNamer, asset: &asset, &context) else {
                 continue
             }
-            var instances = build.instances(of: piece, samples: samples, on: ground, limit: budget + 1)
+            var instances = build.instances(of: piece, samples: samples, on: ground, limit: budget + 1, excluding: junctions.cuts)
             if instances.count > budget {
                 context.warn("piece '\(piece.name)': more than \(PathBuild.maxPieces) pieces in total; the rest are dropped")
                 instances = Array(instances.prefix(budget))
@@ -145,6 +151,38 @@ public struct PathBuildImporter: AssetImporter {
             return nil
         }
         return terrain
+    }
+
+    /// The other paths `build` meets, read as dependencies (so editing one reimports this path),
+    /// with their curves on their terrains.
+    static func junctionTargets(_ build: PathBuild, ground: Terrain?, _ context: inout ImportContext) -> [PathJunctionTarget] {
+        build.junctions.compactMap { junction -> PathJunctionTarget? in
+            var value = junction.path.trimmingCharacters(in: .whitespaces)
+            if value.hasPrefix(AssetReference.scheme), let reference = AssetReference(value) {
+                guard let path = context.assetsByPath.first(where: { $0.value == reference.asset })?.key else {
+                    context.warn("junction: no path asset '\(junction.path)'")
+                    return nil
+                }
+                value = path
+            }
+            let path = normalized(value)
+            guard path.lowercased().hasSuffix(".path") else {
+                context.warn("junction: '\(junction.path)' isn't a .path file")
+                return nil
+            }
+            guard path != context.assetPath else {
+                context.warn("junction: a path can't join itself")
+                return nil
+            }
+            guard let data = try? context.readDependency(relativePath: relative(path, from: context.assetPath)),
+                  let other = try? AssetJSON.decoder().decode(PathBuild.self, from: data) else {
+                context.warn("junction: no readable path '\(junction.path)'")
+                return nil
+            }
+            let sameGround = other.terrain.isOn && normalized(other.terrain.asset) == normalized(build.terrain.asset)
+            let otherGround = sameGround ? ground : terrain(other.terrain, &context)
+            return PathJunctionTarget(junction, other: other, samples: other.samples(on: otherGround))
+        }
     }
 
     private static func texture(_ profile: PathProfile, _ context: inout ImportContext) -> AssetReference? {

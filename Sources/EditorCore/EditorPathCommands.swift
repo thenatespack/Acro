@@ -27,7 +27,12 @@ public enum EditorPathCommands {
         shape/size/color, a Mesh Builder shape such as box or cylinder), spacing meters, start, offset [right, up, forward], \
         rotation degrees, scale, upright, mirror (also on the other side), collider) and `terrain` {asset (a .terrain path), \
         offset (the terrain's origin in the path's space), height (meters above the ground)}: with a terrain every sample and \
-        piece sits on its surface (point y is ignored). Forward is the direction of travel, right is level with the ground. \
+        piece sits on its surface (point y is ignored). `junctions` (other paths this one meets; each: path (a .path under \
+        Assets/ or "asset:<id>"), radius (meters of corner rounding, default 3), offset (the other path's origin in this \
+        path's space)): where this path's end stops at, just short of or just past the other road it makes a T, where it \
+        crosses the other road it makes an X; this path is cut back from the other road's edges (its profiles and pieces \
+        leave a gap) and a patch with rounded corners paves the gap with its widest flat or box profile, at both roads' \
+        heights. The other road stays whole. Forward is the direction of travel, right is level with the ground. \
         Every key is optional.
         """
 }
@@ -183,6 +188,13 @@ enum PathBuildCheck {
         for piece in build.pieces where !piece.asset.isEmpty
             && MeshBuildCheck.resolve(piece.asset.components(separatedBy: "#")[0], session: session) == nil {
             problems.append("piece '\(piece.name)': no asset '\(piece.asset)'")
+        }
+        for junction in build.junctions {
+            if let id = MeshBuildCheck.resolve(junction.path, session: session) {
+                if !session.isPathBuildFile(id) { problems.append("junction: '\(junction.path)' isn't a .path file") }
+            } else {
+                problems.append("junction: no path '\(junction.path)'")
+            }
         }
         return problems
     }
@@ -352,13 +364,18 @@ public enum PathEditCommand: EditorCommand {
         public var updatePieces: [String: JSONValue]?
         /// Fields to change on the terrain following ({"asset": ""} turns it off).
         public var terrain: JSONValue?
+        /// Other paths (by `path`) to stop joining, then junctions to add or replace (matched by `path`).
+        public var removeJunctions: [String]?
+        public var addJunctions: [PathJunction]?
         public init(asset: AssetReference? = nil, path: String? = nil, kind: PathKind? = nil, points: [PathPoint]? = nil,
                     removePoints: [Int]? = nil, insertPoints: [PathPointInsert]? = nil, addPoints: [PathPoint]? = nil,
                     updatePoints: [PathPointUpdate]? = nil, closed: Bool? = nil, smooth: Bool? = nil, spacing: Float? = nil,
                     bank: Float? = nil, autoBank: Float? = nil, profile: JSONValue? = nil, profileName: String? = nil,
                     removeProfiles: [String]? = nil, addProfiles: [PathProfile]? = nil, updateProfiles: [String: JSONValue]? = nil,
                     removePieces: [String]? = nil, addPieces: [PathPiece]? = nil, updatePieces: [String: JSONValue]? = nil,
-                    terrain: JSONValue? = nil) {
+                    terrain: JSONValue? = nil, removeJunctions: [String]? = nil, addJunctions: [PathJunction]? = nil) {
+            self.removeJunctions = removeJunctions
+            self.addJunctions = addJunctions
             self.asset = asset
             self.path = path
             self.kind = kind
@@ -386,7 +403,7 @@ public enum PathEditCommand: EditorCommand {
 
     public static let id: CommandID = "path.edit"
     public static let title = "Edit Path"
-    public static let doc = "Changes a .path file in one undoable step, in this order: kind (applies that preset's profiles and pieces), points (replace all), removePoints, insertPoints, addPoints, updatePoints ({index, position?, bank?, width?}), the curve settings (closed, smooth, spacing, bank, autoBank), profile (fields to change on `profileName` or the first profile), removeProfiles, addProfiles, updateProfiles (name → fields), removePieces, addPieces, updatePieces, terrain (fields: asset, offset, height). Placed copies update. Returns the length, piece counts and warnings."
+    public static let doc = "Changes a .path file in one undoable step, in this order: kind (applies that preset's profiles and pieces), points (replace all), removePoints, insertPoints, addPoints, updatePoints ({index, position?, bank?, width?}), the curve settings (closed, smooth, spacing, bank, autoBank), profile (fields to change on `profileName` or the first profile), removeProfiles, addProfiles, updateProfiles (name → fields), removePieces, addPieces, updatePieces, terrain (fields: asset, offset, height), removeJunctions (other paths' paths), addJunctions ({path, radius, offset}; replaces one with the same path). Placed copies update. Returns the length, piece counts and warnings."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
@@ -469,6 +486,15 @@ public enum PathEditCommand: EditorCommand {
             try update(&b.pieces, at: i, with: changes, label: "updatePieces[\(name)]")
         }
         if let changes = arguments.terrain { b.terrain = try TerrainEditCommand.merged(b.terrain, changes, "terrain") }
+        if let paths = arguments.removeJunctions, !paths.isEmpty {
+            let missing = paths.filter { path in !b.junctions.contains { $0.path == path } }
+            guard missing.isEmpty else { throw CommandError.failed("No junction with \(missing.joined(separator: ", "))") }
+            b.junctions.removeAll { paths.contains($0.path) }
+        }
+        for junction in arguments.addJunctions ?? [] {
+            guard !junction.path.trimmingCharacters(in: .whitespaces).isEmpty else { throw CommandError.failed("addJunctions: give the other path's `path`") }
+            if let i = b.junctions.firstIndex(where: { $0.path == junction.path }) { b.junctions[i] = junction } else { b.junctions.append(junction) }
+        }
         return b
     }
 

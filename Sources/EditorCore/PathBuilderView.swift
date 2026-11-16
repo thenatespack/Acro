@@ -55,6 +55,15 @@ struct PathTerrainComponent: Component {
     func encode(to encoder: any Encoder) throws { try terrain.encode(to: encoder) }
 }
 
+struct PathJunctionComponent: Component {
+    static var componentName: String { "Path Junction" }
+    static var fieldHints: [String: FieldHints] { PathJunction.fieldHints }
+    var junction: PathJunction
+    init(_ junction: PathJunction) { self.junction = junction }
+    init(from decoder: any Decoder) throws { junction = try PathJunction(from: decoder) }
+    func encode(to encoder: any Encoder) throws { try junction.encode(to: encoder) }
+}
+
 /// The Shape Terrain form (width 0: the widest profile).
 struct PathShapingComponent: Component {
     static var componentName: String { "Path Terrain Shaping" }
@@ -226,6 +235,8 @@ public final class PathBuilderView {
         view.addChild(Separator())
         addPieceSection()
         view.addChild(Separator())
+        addJunctionSection()
+        view.addChild(Separator())
         addTerrainSection()
         addSummary()
     }
@@ -383,6 +394,64 @@ public final class PathBuilderView {
             commitNamed(piece, at: index, in: \.pieces, label: "Edit Piece")
         }
         view.addChild(grid)
+    }
+
+    private func addJunctionSection() {
+        view.addChild(Label("Junctions", role: .secondary))
+        let others = otherPathPaths()
+        for (index, junction) in build.junctions.enumerated() {
+            let entity = formWorld.spawn(PathJunctionComponent(junction))
+            formEntities.append(entity)
+            let grid = makeGrid(entity, name: "pathJunctionGrid.\(index)")
+            grid.stringChoices = { [unowned self] _, path in
+                path == "path" ? others + current(build.junctions.indices.contains(index) ? build.junctions[index].path : "", in: others) : nil
+            }
+            grid.onFieldEdit = { [unowned self] edit in
+                do { try formWorld.setField(edit.path, of: PathJunctionComponent.componentName, for: entity, to: edit.newValue) } catch {
+                    session.log.error("Path junction \(edit.path): \(error)")
+                    return
+                }
+                guard edit.phase == .ended, let value = formWorld.get(PathJunctionComponent.self, for: entity)?.junction else { return }
+                var edited = pending?.build ?? build
+                guard edited.junctions.indices.contains(index) else { return }
+                edited.junctions[index] = value
+                apply(edited, label: "Edit Junction")
+            }
+            view.addChild(grid)
+            let remove = Button("Remove Junction", name: "pathRemoveJunction.\(index)") { [unowned self] in removeJunction(index) }
+            remove.command = PathEditCommand.id.rawValue
+            view.addChild(HStack(spacing: 6, [remove, Spacer()]))
+        }
+        let add = Button("Add Junction", name: "pathAddJunction") { [unowned self] in addJunction() }
+        add.command = PathEditCommand.id.rawValue
+        add.isEnabled = !others.isEmpty
+        add.tooltip = others.isEmpty ? "Make another .path for this one to meet" : "Join another path: a T where this one ends at it, an X where it crosses it"
+        view.addChild(HStack(spacing: 6, [add, Spacer()]))
+        view.addChild(note(build.junctions.isEmpty
+            ? "Where this road ends at or crosses another path it can join it: it stops at the other road's edges and rounded corners pave the gap."
+            : "This path stops at the other roads' edges; its widest flat or box profile paves the corners. The other road stays whole."))
+    }
+
+    /// The project's other `.path` files.
+    private func otherPathPaths() -> [String] {
+        let mine = session.assets?.path(of: asset)
+        return assetPaths(extensions: ["path"]).filter { $0 != mine }
+    }
+
+    /// Joins the first other path not joined yet (one undo step).
+    public func addJunction(_ path: String? = nil) {
+        let joined = Set(build.junctions.map(\.path))
+        guard let other = path ?? otherPathPaths().first(where: { !joined.contains($0) }) ?? otherPathPaths().first else { return }
+        var edited = pending?.build ?? build
+        edited.junctions.append(PathJunction(path: other))
+        apply(edited, label: "Add Junction")
+    }
+
+    public func removeJunction(_ index: Int) {
+        var edited = pending?.build ?? build
+        guard edited.junctions.indices.contains(index) else { return }
+        edited.junctions.remove(at: index)
+        apply(edited, label: "Remove Junction")
     }
 
     private func addTerrainSection() {

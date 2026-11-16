@@ -282,4 +282,39 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         let named = try call(session, "path.flattenTerrain", ["path": "Loose.path", "terrain": "Maps/rough.terrain", "smoothing": 0])
         #expect((named["changedSamples"] as? Int ?? 0) > 0)
     }
+
+    @Test func junctionsAreEditedByToolAndTab() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
+        let assets = try #require(session.assets)
+        _ = try #require(session.createPathBuildAsset(in: "", name: "Main", build: .preset(.road, points: [PathPoint(Vec3(-30, 0, 0)), PathPoint(Vec3(30, 0, 0))])))
+        let side = try #require(session.createPathBuildAsset(in: "", name: "Side", build: .preset(.road, points: [PathPoint(Vec3(0, 0, 30)), PathPoint(Vec3(0, 0, 0))])))
+
+        let result = try call(session, "path.edit", ["path": "Side.path", "addJunctions": [["path": "Main.path", "radius": 2]]])
+        #expect((result["warnings"] as? [String])?.isEmpty == true)
+        #expect(assets.pathBuild(of: side)?.junctions == [PathJunction(path: "Main.path", radius: 2)])
+        let got = try call(session, "path.get", ["path": "Side.path"])
+        #expect(((got["build"] as? [String: Any])?["junctions"] as? [[String: Any]])?.first?["path"] as? String == "Main.path")
+        let missing = try call(session, "path.edit", ["path": "Side.path", "addJunctions": [["path": "Nope.path"]]])
+        #expect((missing["warnings"] as? [String])?.contains { $0.contains("junction: no path 'Nope.path'") } == true)
+        try call(session, "path.edit", ["path": "Side.path", "removeJunctions": ["Main.path", "Nope.path"]])
+        #expect(assets.pathBuild(of: side)?.junctions.isEmpty == true)
+        #expect(throws: (any Error).self) { try call(session, "path.edit", ["path": "Side.path", "removeJunctions": ["Main.path"]]) }
+
+        // The tab joins the other path and removes the junction, one undo step each.
+        let workspace = PathBuilderWorkspace(session: session)
+        #expect(workspace.open(side))
+        let view = try #require(workspace.builder)
+        view.addJunction()
+        view.refresh()
+        #expect(view.build.junctions.map(\.path) == ["Main.path"])
+        view.removeJunction(0)
+        view.refresh()
+        #expect(view.build.junctions.isEmpty)
+        #expect(session.performUndo())
+        view.reload()
+        #expect(view.build.junctions.count == 1)
+    }
 }

@@ -266,6 +266,105 @@ private func bumpyTerrain() -> Terrain {
     }
 }
 
+private func road(_ from: Vec3, _ to: Vec3) -> PathBuild {
+    PathBuild.preset(.road, points: [PathPoint(from), PathPoint(to)])
+}
+
+@Suite struct PathBuildJunctionTests {
+    let main = road(Vec3(-30, 0, 0), Vec3(30, 0, 0))
+
+    func layout(_ side: PathBuild, radius: Float = 3) -> PathJunctionLayout {
+        let target = PathJunctionTarget(PathJunction(path: "Roads/main.path", radius: radius), other: main, samples: main.samples())
+        return side.junctionLayout([target], samples: side.samples())
+    }
+
+    @Test func aTJunctionCutsTheSideRoadBackAndPavesRoundedCorners() throws {
+        // Ends on the main road's centerline: cut back 3 m (the main road's half width) + 3 m (the radius).
+        let side = road(Vec3(0, 0, 30), Vec3(0, 0, 0))
+        let t = layout(side)
+        #expect(t.warnings.isEmpty && t.made == ["T with Roads/main.path"])
+        #expect(t.cuts.count == 1 && abs(t.cuts[0].lowerBound - 24) < 0.05 && abs(t.cuts[0].upperBound - 30) < 0.01)
+        let patch = try #require(t.patch)
+        let tops = patch.vertices.filter { $0.normal == Vec3(0, 1, 0) }.map(\.position)
+        // Between the side road's cut (z 6) and the main road's edge (z 3), widening to 3 + 3 m each side.
+        #expect(tops.allSatisfy { $0.z >= 3 - 1e-3 && $0.z <= 6 + 1e-3 && abs($0.y - 0.05) < 1e-3 })
+        #expect(abs((tops.map(\.x).max() ?? 0) - 6) < 0.01 && abs((tops.map(\.x).min() ?? 0) + 6) < 0.01)
+        #expect(patch.vertices.contains { $0.normal.y == 0 }, "a box road gets skirts")
+        for i in stride(from: 0, to: patch.indices.count, by: 3) {
+            let a = patch.vertices[Int(patch.indices[i])], b = patch.vertices[Int(patch.indices[i + 1])], c = patch.vertices[Int(patch.indices[i + 2])]
+            #expect(dot(cross(b.position - a.position, c.position - a.position), a.normal) >= -1e-5, "faces wound toward their normals")
+        }
+        // An end that stops short of the road (or runs a little past it) makes the same T.
+        #expect(layout(road(Vec3(0, 0, 30), Vec3(0, 0, 4))).made == ["T with Roads/main.path"])
+        let past = layout(road(Vec3(0, 0, 30), Vec3(0, 0, -2)))
+        #expect(past.made == ["T with Roads/main.path"] && abs(past.cuts[0].upperBound - 32) < 0.01)
+        // From the start end too.
+        let fromStart = layout(road(Vec3(0, 0, 0), Vec3(0, 0, 30)))
+        #expect(fromStart.made == ["T with Roads/main.path"] && fromStart.cuts[0].lowerBound == 0 && abs(fromStart.cuts[0].upperBound - 6) < 0.05)
+    }
+
+    @Test func anXJunctionCutsBothSidesAndSkipsPieces() {
+        var side = road(Vec3(0, 0, 30), Vec3(0, 0, -30))
+        side.pieces = [PathPiece(name: "Lamps", spacing: 2)]
+        let x = layout(side, radius: 2)
+        #expect(x.made == ["X with Roads/main.path"])
+        #expect(x.cuts.count == 1 && abs(x.cuts[0].lowerBound - 25) < 0.05 && abs(x.cuts[0].upperBound - 35) < 0.05)
+        let runs = PathBuild.runs(side.samples(), outside: x.cuts)
+        #expect(runs.count == 2 && abs((runs[0].last?.distance ?? 0) - 25) < 0.05 && abs((runs[1].first?.distance ?? 0) - 35) < 0.05)
+        let lamps = side.instances(of: side.pieces[0], samples: side.samples(), excluding: x.cuts)
+        #expect(lamps.count == 31 - 5 && !lamps.contains { abs($0.position.z) < 5 })
+
+        // At an angle the corners still meet both edges.
+        let angled = layout(road(Vec3(-20, 0, 20), Vec3(20, 0, -20)))
+        #expect(angled.made == ["X with Roads/main.path"] && angled.patch != nil)
+        // Nearly parallel roads can't be joined; paths that never meet say so.
+        #expect(layout(road(Vec3(-30, 0, 1), Vec3(30, 0, -1))).warnings.contains { $0.contains("shallow") })
+        #expect(layout(road(Vec3(-30, 0, 50), Vec3(30, 0, 50))).warnings.contains { $0.contains("don't meet") })
+        // Without a flat or box profile there's nothing to pave with.
+        var fence = PathBuild.preset(.fence, points: side.points)
+        fence.profiles = []
+        #expect(layout(fence).warnings.contains { $0.contains("no flat or box") })
+    }
+
+    @MainActor @Test func importsJunctionsAndReimportsWhenTheOtherPathChanges() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        let mainID = try database.createPathBuild(main, at: "Roads/main.path")
+        var side = road(Vec3(0, 0, 30), Vec3(0, 0, 0))
+        let plain = try database.createPathBuild(side, at: "Roads/plain.path")
+        side.junctions = [PathJunction(path: "Roads/main.path", radius: 3)]
+        let id = try database.createPathBuild(side, at: "Roads/side.path")
+        database.refreshAsync()
+        database.waitForAll()
+        #expect(database.record(id)?.importError == nil)
+        #expect(database.pathBuild(of: id)?.junctions.count == 1)
+        func roadMesh(_ id: AssetID) throws -> MeshGeometry {
+            let root = try #require(database.prefab(AssetReference(id))?.roots.first)
+            return try #require(root.children.first { $0.name == "Road" }?.mesh.flatMap { database.mesh($0) })
+        }
+        let joined = try roadMesh(id), whole = try roadMesh(plain)
+        func extent(_ g: MeshGeometry) -> (minZ: Float, maxX: Float) { (g.vertices.map(\.position.z).min() ?? 0, g.vertices.map(\.position.x).max() ?? 0) }
+        #expect(extent(joined).minZ > 2.9, "stops at the main road's edge, not its centerline")
+        #expect(abs(extent(whole).minZ) < 0.01)
+        #expect(abs(extent(joined).maxX - 6) < 0.01, "the corners widen it")
+
+        // Moving the main road reimports the side road.
+        var moved = main
+        moved.points = [PathPoint(Vec3(-30, 0, 5)), PathPoint(Vec3(30, 0, 5))]
+        _ = try database.writePathBuild(moved, to: mainID)
+        database.refreshAsync()
+        database.waitForAll()
+        #expect(extent(try roadMesh(id)).minZ > 7.9)
+
+        // By id too; a missing one is reported in the path's own words.
+        side.junctions = [PathJunction(path: AssetReference(mainID).description), PathJunction(path: "Roads/gone.path")]
+        let warnings = try database.writePathBuild(side, to: id)
+        #expect(warnings.contains { $0.contains("junction: no readable path 'Roads/gone.path'") })
+        #expect(extent(try roadMesh(id)).minZ > 7.9)
+    }
+}
+
 // MARK: PathFollower
 
 @MainActor private func run(_ world: World, _ seconds: Double, dt: Double = 0.1) {
