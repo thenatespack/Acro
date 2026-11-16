@@ -304,6 +304,8 @@ final class PieceLoader {
     private let paths: [AssetID: String]
     private let assetsRoot: URL
     private let scratch: URL
+    /// Piece imports kept across reimports (nil outside an asset database).
+    let cache: GridMapPieceCache?
 
     init(_ context: ImportContext) {
         self.context = context
@@ -314,9 +316,13 @@ final class PieceLoader {
         for _ in context.assetPath.split(separator: "/") { root = root.deletingLastPathComponent() }
         assetsRoot = root
         scratch = FileManager.default.temporaryDirectory.appendingPathComponent("gridmap-\(UUID().uuidString)", isDirectory: true)
+        cache = GridMapPieceCache(context: context, assetsRoot: root)
     }
 
-    func cleanUp() { try? FileManager.default.removeItem(at: scratch) }
+    func cleanUp() {
+        try? FileManager.default.removeItem(at: scratch)
+        cache?.removeUnused()
+    }
 
     func id(forPath path: String) -> AssetID? { context.assetsByPath[path] }
 
@@ -338,18 +344,28 @@ final class PieceLoader {
         guard let path = paths[id] else { return nil }
         let ext = (path as NSString).pathExtension.lowercased()
         guard ext != "gridmap", let importer = AssetImporterRegistry.builtIn.importer(forExtension: ext) else { return nil }
-        guard (try? context.readDependency(relativePath: relative(path))) != nil else { return nil }
         let url = assetsRoot.appendingPathComponent(path)
         var settings: JSONValue?
         if let data = try? Data(contentsOf: URL(fileURLWithPath: url.path + "." + AssetSidecar.fileExtension)),
            let sidecar = try? AssetJSON.decoder().decode(AssetSidecar.self, from: data) {
             settings = sidecar.settings
         }
+        let canonical = AssetJSON.canonical(importer.effectiveSettings(settings))
+        if let cached = cache?.read(id: id, path: path, importer: importer, settings: canonical, log: context.dependencyLog) {
+            imports[id] = .some(cached)
+            return cached
+        }
+        guard (try? context.readDependency(relativePath: relative(path))) != nil else { return nil }
         let directory = scratch.appendingPathComponent(id.description, isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var inner = ImportContext(assetID: id, sourceURL: url, assetPath: path, artifactsDirectory: directory, cacheDirectory: nil,
                                   assetsByPath: context.assetsByPath)
         let result = try? importer.importAsset(&inner, settings: settings)
+        if let result, let cache, let source = context.dependencyLog.all.first(where: { $0.path == path }) {
+            cache.write(result, id: id, importer: importer, settings: canonical, source: source, dependencies: inner.dependencyLog.all)
+        }
+        // The map follows the files the piece's import read too (a model's buffers and textures).
+        inner.dependencyLog.all.forEach(context.dependencyLog.record)
         imports[id] = .some(result)
         return result
     }

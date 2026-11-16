@@ -488,7 +488,10 @@ public final class GridMapView {
                 session.log.warning("GridMap Builder: a map holds at most \(GridMap.maxCells) cells")
                 return
             }
-            edited.paint(brush.piece, at: area, rotation: brush.rotation, flipX: brush.flipX, flipZ: brush.flipZ, layer: layer)
+            // A multi-cell piece is laid side by side along a stroke or across an area, not once per cell.
+            let steps = edited.footprintSteps(area, piece: brush.piece, rotation: brush.rotation,
+                                              inside: brush.tool == .fill || (brush.tool == .rect && !outline))
+            edited.paint(brush.piece, at: steps, rotation: brush.rotation, flipX: brush.flipX, flipZ: brush.flipZ, layer: layer)
         }
         apply(edited, label: brush.tool.title + " GridMap")
     }

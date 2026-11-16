@@ -150,6 +150,42 @@ private func approx(_ a: Vec3, _ b: Vec3, _ tolerance: Float = 1e-4) -> Bool {
         #expect(warnings == ["no piece named 'Ghost' in the library"])
     }
 
+    @Test func multiCellAutoJoinPieces() {
+        var map = library()
+        // A 2x2 wall (its variants are the starter ones, drawn centered on the 2x2 block).
+        map.pieces.append(GridPiece(name: "Big Wall", footprint: SIMD2(2, 2), layer: "walls",
+                                    join: GridJoin(single: "Wall Single", end: "Wall End", straight: "Wall Straight", corner: "Wall Corner",
+                                                   tee: "Wall Tee", cross: "Wall Cross")))
+        // A line of three blocks along x, laid side by side (not once per cell).
+        let steps = map.footprintSteps(GridMap.line(from: GridCoord(0, 0, 0), to: GridCoord(5, 0, 0)), piece: "Big Wall", rotation: 0)
+        #expect(steps == [GridCoord(0, 0, 0), GridCoord(2, 0, 0), GridCoord(4, 0, 0)])
+        map.paint("Big Wall", at: steps)
+        // One more block below the last, touching it along its +z side only by one cell's offset.
+        map.paint("Big Wall", at: [GridCoord(5, 0, 2)])
+        #expect(map.cells.count == 4)
+        var warnings: [String] = []
+        let placements = map.placements(warnings: &warnings)
+        #expect(warnings.isEmpty)
+        func at(_ x: Int, _ z: Int) -> GridPlacement? { placements.first { $0.cell.at == GridCoord(x, 0, z) } }
+        func name(_ x: Int, _ z: Int) -> String? { at(x, z).map { map.pieces[$0.piece].name } }
+        #expect(name(0, 0) == "Wall End" && at(0, 0)?.turns == 0)
+        #expect(name(2, 0) == "Wall Straight")
+        #expect(name(4, 0) == "Wall Corner", "neighbors at -x and along its +z side (the block at 5,2 overlaps half of it)")
+        #expect(name(5, 2) == "Wall End" && at(5, 2)?.turns == 1, "its neighbor is on its -z side")
+        // Centered on the block, colliding as the block.
+        let first = at(0, 0)!
+        #expect(first.block == 2)
+        #expect(approx(map.transform(of: first).position, Vec3(2, 0, 2)))
+        let box = map.box(of: first)
+        #expect(approx(box.halfExtent, Vec3(2, 1.5, 2)))
+        // The block is what it covers: painting a crate inside it on the same layer replaces it.
+        #expect(map.cellIndex(at: GridCoord(1, 0, 1), layer: "walls") != nil)
+        // Rectangles only keep whole footprints.
+        let inside = map.footprintSteps(GridMap.rectangle(from: GridCoord(0, 0, 4), to: GridCoord(4, 0, 6)), piece: "Big Wall", rotation: 0,
+                                        inside: true)
+        #expect(inside == [GridCoord(0, 0, 4), GridCoord(2, 0, 4)])
+    }
+
     @Test func placementTransforms() {
         var map = library()
         map.pieces.append(GridPiece(name: "Offset", asset: "Pieces/Crate.meshbuild", offset: Vec3(0.5, 0, 0), rotation: 90))
@@ -275,4 +311,66 @@ private func approx(_ a: Vec3, _ b: Vec3, _ tolerance: Float = 1e-4) -> Bool {
         database.refresh()
         #expect(database.revision(of: id) != before, "the map follows its pieces")
     }
+
+    /// The highest collider vertex of the ramp's chunk (cells 0...3 of floor 0).
+    @MainActor private func rampTop(_ database: AssetDatabase, _ id: AssetID) -> Float? {
+        guard let root = database.prefab(AssetReference(id))?.roots.first, let chunk = root.children.first?.children.first,
+              case .triangleMesh(let vertices, _)? = chunk.collider else { return nil }
+        return vertices.map(\.y).max()
+    }
+
+    @MainActor @Test func pieceImportsAreCachedAcrossReimports() throws {
+        let project = try makeProject()
+        defer { try? FileManager.default.removeItem(at: project.root) }
+        let database = AssetDatabase(project: project)
+        let objURL = project.url(forAssetPath: "Models/ramp.obj")
+        try FileManager.default.createDirectory(at: objURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let ramp = "v -1 0 -1\nv 1 0 -1\nv 1 1 1\nv -1 1 1\nf 1 2 3\nf 1 3 4\n"
+        try ramp.write(to: objURL, atomically: true, encoding: .utf8)
+        // A whole-second mtime, so restoring it below gives back exactly the same one.
+        let stamp = Date(timeIntervalSinceReferenceDate: (Date().timeIntervalSinceReferenceDate - 60).rounded(.down))
+        try FileManager.default.setAttributes([.modificationDate: stamp], ofItemAtPath: objURL.path)
+        database.refresh()
+        let objID = try #require(database.id(forPath: "Models/ramp.obj"))
+
+        var map = GridMap(pieces: [GridPiece(name: "Ramp", asset: "Models/ramp.obj", collider: .mesh)])
+        map.paint("Ramp", at: [GridCoord(0, 0, 0)])
+        let id = try database.createGridMap(map, at: "Levels/ramps.gridmap")
+        #expect(rampTop(database, id) == 1)
+
+        // The map keeps the piece's meshes and prefab (not its textures) with what the import read.
+        let entry = database.artifactsURL(id).appendingPathComponent("cache/pieces/\(objID)", isDirectory: true)
+        let keyData = try Data(contentsOf: entry.appendingPathComponent(GridMapPieceCache.keyName))
+        let key = try AssetJSON.decoder().decode(GridMapPieceCache.Key.self, from: keyData)
+        #expect(key.importer == "obj" && key.source.path == "Models/ramp.obj")
+        let cached = try #require(AssetArtifacts.read(from: entry.appendingPathComponent(GridMapPieceCache.importFolder)))
+        #expect(cached.objects.contains { $0.kind == .mesh } && !cached.objects.contains { $0.kind == .texture })
+
+        // Same size and mtime counts as unchanged: a reimport of the map reuses the cached import,
+        // so a sneaky edit that keeps both shows the old ramp (a fresh import would read y = 5).
+        try ramp.replacingOccurrences(of: "v 1 1 1", with: "v 1 5 1").write(to: objURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: stamp], ofItemAtPath: objURL.path)
+        map.paint("Ramp", at: [GridCoord(1, 0, 0)])
+        _ = try database.writeGridMap(map, to: id)
+        #expect(rampTop(database, id) == 1, "from the map's cache")
+
+        // Without the map's cache, the database's own (up to date) import of the piece is read.
+        try FileManager.default.removeItem(at: entry)
+        map.paint("Ramp", at: [GridCoord(2, 0, 0)])
+        _ = try database.writeGridMap(map, to: id)
+        #expect(rampTop(database, id) == 1, "from the database's import")
+
+        // A real change (new mtime) reimports the piece and the map follows it.
+        try ramp.replacingOccurrences(of: "v 1 1 1", with: "v 1 5 1").write(to: objURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: objURL.path)
+        database.refresh()
+        #expect(rampTop(database, id) == 5)
+
+        // Entries of pieces the map no longer uses are removed.
+        map.pieces = [GridPiece(name: "Box", asset: "asset:\(objID)#mesh", collider: .box)]
+        map.cells = [GridCell(at: GridCoord(0, 0, 0), piece: "Box")]
+        _ = try database.writeGridMap(map, to: id)
+        #expect(!FileManager.default.fileExists(atPath: entry.path))
+    }
+
 }
