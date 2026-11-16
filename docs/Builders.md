@@ -222,21 +222,32 @@ Widgets show game values in three ways: `{key}` placeholders in text (`"Score: {
 
 In the editor, use **New UI Layout** in the asset browser (a starter HUD), then double-click the file (or **Open in UI Builder** in the inspector) to open the **UI Builder** tab next to the Scene view. The preview in the middle is drawn by the same `UIBuildView` games use, fitted to the panel at a screen size picked from presets (16:9, 21:9, 16:10, 4:3, phone landscape and portrait). Click a widget to select it; drag one that sits on the screen or in a panel to change its offset from its anchor. With **Interact** on, clicking the preview's buttons shows the event they send. On the left are the add buttons and the widget tree (drag rows to put a widget in another container or reorder it); on the right are the selected widget's properties and bindings, then the layout's theme, colors, sample values and problems. Every change is one undo step.
 
-Game code shows a layout, sets values and handles buttons. The view follows hot reload while the game runs:
+To show a layout in a game with no code, add a `UILayoutPlayer` component (`layout`: the file's `asset:<id>` or path, `visible`, `order`: higher draws on top, `focus`: give a menu keyboard / gamepad focus when it shows) to any entity: **Add to Scene** in the inspector of a `.ui` file does it, as does `uiLayout.place`. The game UI layer draws every player's layout over the game in the editor's Game view while playing, in `GameRunner` and in exported games, and follows hot reload. Game code reaches it through `world.gameUI` (a `GameUILayer`):
+
+```swift
+let ui = world.gameUI!
+ui.set("health", 64)                               // every layout on the layer reads it
+ui.on("pause") { event, entity in openPauseMenu() } // any layout's button; entity: whose layout sent it
+world.uiLayout(for: hudEntity)?.set("score", 1200)  // one entity's layout
+let menu = ui.show("UI/pause.ui", order: 10, focus: true)
+ui.hide(menu!)
+ui.add(dialogueBox, order: 20)                      // any widget, e.g. a DialoguePresenter
+```
+
+A host draws the layer by setting `ScenePlayback.uiRoot` (the root of a `UIContext.gameUI()`, which moves focus with the arrow keys and a gamepad's D-pad) and `uiImages`. Without the layer, a game shows a layout itself, and the view follows hot reload while the game runs:
 
 ```swift
 let hud = UIBuildView(assets: assets, path: "UI/hud.ui")!
 hud.useImages(renderer: sceneRenderer, assets: assets)   // project images
 ui.root.addChild(hud)                                     // fills the window; clicks between widgets reach the game
 hud.set("health", 64)
-hud.set("score", 1200)
 hud.on("pause") { openPauseMenu() }
 hud.widget("score")                                       // the engine widget, for anything the file can't express
 ```
 
-`UIBuildView(build)` and `load(_:)` show a `UIBuild` value made in code, and `onEvent` reports every press. The view's widgets use the layout's theme (`Widget.themeOverride`), not the game's context theme. Cooked games ship the file as written; include layouts and their images with the cooker's `--include`.
+`UIBuildView(build)` and `load(_:)` show a `UIBuild` value made in code, and `onEvent` reports every press. The view's widgets use the layout's theme (`Widget.themeOverride`), not the game's context theme. Cooked games ship the file as written, with the images it names (by path or `asset:<id>`); a scene's `UILayoutPlayer` that names its layout by `asset:<id>` (as **Add to Scene** does) ships the layout too, while one named by path needs the cooker's `--include`.
 
-MCP clients use `uiLayout.new {preset: hud|menu|empty, widgets}`, `uiLayout.edit {addWidgets, updateWidgets, moveWidgets, removeWidgets, bindings, values, theme, colors}`, `uiLayout.get`, `uiLayout.set` and `uiLayout.open {previewSize, values, select}`; see [MCPTools.md](MCPTools.md). (The `ui.*` names belong to the editor's UI automation tools.)
+MCP clients use `uiLayout.new {preset: hud|menu|empty, widgets}`, `uiLayout.edit {addWidgets, updateWidgets, moveWidgets, removeWidgets, bindings, values, theme, colors}`, `uiLayout.get`, `uiLayout.set`, `uiLayout.open {previewSize, values, select}` and `uiLayout.place {order, focus, visible}`; see [MCPTools.md](MCPTools.md). (The `ui.*` names belong to the editor's UI automation tools.)
 
 Not yet: per-widget animation and transitions, sliders / toggles / text fields as layout widgets, navigation order for gamepads beyond the toolkit's spatial default, and scaling the whole layout with the screen (it is laid out in points; anchors keep it in place at any size).
 ## Dialogue Builder

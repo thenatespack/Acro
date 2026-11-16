@@ -23,12 +23,23 @@ import EngineUI
 // The view fills its frame like a HUD layer and lets clicks between widgets reach the game.
 // Its widgets use the layout's theme (base preset + colors), whatever the context's theme is.
 
-/// A button press in a `UIBuildView`.
+/// A button press (or a slider, toggle or text field change) in a `UIBuildView`.
 public struct UIBuildEvent: Equatable, Sendable {
-    /// The event name (the button's `event`, or its id).
+    /// The event name (the widget's `event`, or its id).
     public var name: String
-    /// The id of the button that sent it.
+    /// The id of the widget that sent it.
     public var widget: String
+    /// The widget's new value (a slider's number, a toggle's bool, a text field's text); nil for a button.
+    public var value: JSONValue?
+    /// The value key the widget is bound to (`bind`), which now holds `value`; nil when unbound.
+    public var key: String?
+
+    public init(name: String, widget: String, value: JSONValue? = nil, key: String? = nil) {
+        self.name = name
+        self.widget = widget
+        self.value = value
+        self.key = key
+    }
 }
 
 /// A widget that shows a `UIBuild` (a `.ui` file). See the notes at the top of UIBuildView.swift.
@@ -112,7 +123,12 @@ public final class UIBuildView: Widget {
 
     /// Loads images through `renderer` (project textures by path or "asset:<id>").
     public func useImages(renderer: SceneRenderer, assets: AssetDatabase) {
-        images = { [weak renderer, weak assets] path in
+        images = Self.imageLoader(renderer: renderer, assets: assets)
+    }
+
+    /// An `images` loader that draws project textures (by path or "asset:<id>") through `renderer`.
+    public static func imageLoader(renderer: SceneRenderer, assets: AssetDatabase) -> (String) -> GPUTexture? {
+        { [weak renderer, weak assets] path in
             guard let renderer, let assets, let id = assets.assetID(forTableValue: path) else { return nil }
             return renderer.texture(TextureHandle(AssetReference(id).description))
         }
@@ -172,10 +188,59 @@ public final class UIBuildView: Widget {
         return true
     }
 
-    private func send(_ spec: UIBuildWidget) {
-        let event = UIBuildEvent(name: spec.eventName, widget: spec.id)
+    private func send(_ spec: UIBuildWidget, value: JSONValue? = nil) {
+        let event = UIBuildEvent(name: spec.eventName, widget: spec.id, value: value, key: value == nil || spec.bind.isEmpty ? nil : spec.bind)
         for handler in handlers[event.name] ?? [] { handler() }
         onEvent?(event)
+        layerHandler?(event)
+    }
+
+    /// The game UI layer's hook (`GameUILayer`), called after `onEvent`.
+    var layerHandler: ((UIBuildEvent) -> Void)?
+
+    // MARK: Showing and focus
+
+    /// Whether the view is shown (`show`) rather than hidden (`hide`), even while a transition plays.
+    public private(set) var isShown = true
+
+    /// Shows the view.
+    public func show(animated: Bool = true) {
+        isShown = true
+        isHidden = false
+        hideCompletion = nil
+    }
+
+    /// Hides the view, then calls `completion`.
+    public func hide(animated: Bool = true, completion: (() -> Void)? = nil) {
+        isShown = false
+        isHidden = true
+        hideCompletion = nil
+        completion?()
+    }
+
+    private var hideCompletion: (() -> Void)?
+
+    /// Focus the start widget the next time the view is drawn in a context.
+    var wantsFocus = false
+
+    /// Gives keyboard / gamepad focus to the layout's first focusable widget (a menu's first
+    /// button). Returns false when there is none or the view isn't in a `UIContext` yet (it then
+    /// focuses when it is next drawn).
+    @discardableResult
+    public func focusStartWidget() -> Bool {
+        wantsFocus = true
+        guard let context, isEffectivelyVisible, let start = startWidget() else { return false }
+        wantsFocus = false
+        context.focus(start, visible: true)
+        return true
+    }
+
+    /// The widget focus starts at: the first focusable widget in file order.
+    func startWidget() -> Widget? {
+        for (_, widget) in entries where widget.acceptsFocus && widget.isEffectivelyVisible && widget.isEffectivelyEnabled {
+            return widget
+        }
+        return nil
     }
 
     // MARK: Lookup
@@ -360,6 +425,7 @@ public final class UIBuildView: Widget {
 
     public override func draw(_ list: UIDrawList, theme: UITheme) {
         if reloadIfChanged() { layout(in: frame) }
+        if wantsFocus { focusStartWidget() }
         super.draw(list, theme: theme)
     }
 }

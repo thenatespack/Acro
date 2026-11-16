@@ -37,6 +37,13 @@ public final class ScenePlayback {
     /// Shows `DialoguePlayer` conversations (e.g. a `DialogueBox` in the host's UI); nil: none shown,
     /// game code can still drive them through `world.dialogues`.
     public var dialoguePresenter: (any DialoguePresenter)?
+    /// Where `UILayoutPlayer` layouts show (the host's `UIContext.root`); nil: the game UI layer
+    /// has no parent widget (game code can still set its values). See `GameUILayer`.
+    public var uiRoot: Widget?
+    /// Loads layout images (`UIBuildView.imageLoader(renderer:assets:)`).
+    public var uiImages: ((String) -> GPUTexture?)?
+    /// The game UI layer (`world.gameUI`), while systems run.
+    public private(set) var gameUI: GameUILayer?
     /// A scene file's bytes for a path given to `loadScene`.
     public let sceneData: @MainActor (String) throws -> Data
     /// Writes a line to the host's log.
@@ -118,6 +125,8 @@ public final class ScenePlayback {
         world.addBuiltinAnimationSystems()
         world.addBehaviorTrees(name: Self.behaviorSystem, assets: assets, physics: { [weak self] in self?.physics })
         world.addDialogueSystem(assets: assets).presenter = dialoguePresenter
+        gameUI = world.addGameUI(assets: assets, in: uiRoot)
+        gameUI?.images = uiImages
         timelines = world.addTimelinePlayers(assets: assets)
         for warning in module.addSystems(to: world, context: context) { log(warning) }
         visualScripts = world.addVisualScripts(context: context, assets: assets, physics: { [weak self] in self?.physics },
@@ -141,6 +150,8 @@ public final class ScenePlayback {
         spatialAudio?.remove()
         spatialAudio = nil
         world.removeDialogueSystem()
+        world.removeGameUI()
+        gameUI = nil
         timelines?.remove()
         timelines = nil
         world.removeVisualScripts(visualScripts)

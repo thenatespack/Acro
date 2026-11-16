@@ -171,4 +171,38 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         workspace.close()
         #expect(workspace.asset == nil)
     }
+    @Test func placeAddsALayoutPlayerThatShowsWhilePlaying() throws {
+        EditorComponentCatalog.registerBuiltins()
+        #expect(EditorComponentCatalog.addableNames.contains(UILayoutPlayer.componentName))
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = try project(folder)
+        let root = Widget(name: "UIBuilderToolsTests.gameView")
+        session.gameUIRoot = root
+        let created = try call(session, "uiLayout.new", ["name": "hud", "folder": "UI"])
+        let id = try #require((created["asset"] as? String).flatMap { AssetID($0) })
+
+        let placed = try call(session, "uiLayout.place", ["path": "UI/hud.ui", "order": 3, "focus": true])
+        let entities = try #require(placed["entities"] as? [Any])
+        #expect(entities.count == 1)
+        var players: [(Entity, UILayoutPlayer)] = []
+        session.world.query(UILayoutPlayer.self) { entity, player in players.append((entity, player)) }
+        #expect(players.count == 1)
+        #expect(players.first?.1 == UILayoutPlayer(layout: AssetReference(id).description, order: 3, focus: true))
+        #expect(session.world.get(Name.self, for: players[0].0)?.value == "hud")
+
+        session.play()
+        session.tick(dt: 1.0 / 60)
+        let layer = try #require(session.world.gameUI)
+        #expect(layer.container.parent === root)
+        #expect(layer.views.count == 1 && session.world.uiLayout(for: players[0].0) != nil)
+        session.stop()
+        #expect(root.children.isEmpty, "stopping takes the layer down")
+
+        #expect(session.performUndo())
+        var left = 0
+        session.world.query(UILayoutPlayer.self) { _, _ in left += 1 }
+        #expect(left == 0)
+        #expect(throws: (any Error).self) { try call(session, "uiLayout.place", ["path": "UI/none.ui"]) }
+    }
 }

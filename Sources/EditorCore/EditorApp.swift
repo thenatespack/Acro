@@ -156,6 +156,8 @@ public final class EditorApp: Game, EditorHost {
     public private(set) var dialogueWorkspace: DialogueWorkspace!
     /// Shows `DialoguePlayer` conversations over the Game view while playing.
     let gameDialogueBox = DialogueBox(name: "gameDialogueBox")
+    /// The game UI layer's place over the Game view (`UILayoutPlayer` layouts while playing).
+    let gameUILayerHost = Widget(name: "gameUILayerHost")
     /// The Timeline tab (TimelineWorkspace.swift).
     public private(set) var timelineWorkspace: TimelineWorkspace!
     /// The Animation Graph Builder tab (AnimationGraphWorkspace.swift).
@@ -745,6 +747,14 @@ public final class EditorApp: Game, EditorHost {
         meshWorkspace = MeshBuilderWorkspace(session: session)
         tableWorkspace = DataTableWorkspace(session: session)
         dialogueWorkspace = DialogueWorkspace(session: session)
+        gameUILayerHost.style.position = .absolute(.fill())
+        gameUILayerHost.isHitTestable = false
+        gameWidget.addChild(gameUILayerHost)
+        session.gameUIRoot = gameUILayerHost
+        session.gameUIImages = { [unowned self] path in
+            guard let id = session.assets?.assetID(forTableValue: path) else { return nil }
+            return sceneRenderer?.texture(TextureHandle(AssetReference(id).description)) ?? thumbnails?.thumbnail(AssetReference(id), kind: .texture)
+        }
         gameDialogueBox.style.position = .absolute(UIAnchor.bottom.anchors(offset: Vec2(0, 16)))
         gameDialogueBox.style.width = 560
         gameWidget.addChild(gameDialogueBox)

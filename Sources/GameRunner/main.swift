@@ -121,6 +121,10 @@ if headless && connect == nil { fail("--headless goes with --connect (--server i
     let sceneURL: URL
     var renderer: SceneRenderer!
     var playback: ScenePlayback!
+    /// The game's UI over the scene: `UILayoutPlayer` layouts (`world.gameUI`).
+    let ui = UIContext.gameUI()
+    /// The project the scene is in (its layouts, dialogues and timelines), when there is one.
+    var assets: AssetDatabase?
 
     init(module: GameModule, sceneURL: URL) {
         self.module = module
@@ -152,16 +156,42 @@ if headless && connect == nil { fail("--headless goes with --connect (--server i
         try renderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(0.6, 0.6, 0.58, 1), checker: true, specular: 0.1),
                                       key: "checker")
         let start = sceneURL
-        playback = ScenePlayback(module: module, context: GameContext(input: engine.input), audio: engine.audio) { path in
+        if let projectURL = Self.projectFolder(containing: sceneURL) {
+            assets = try? AssetDatabase.open(projectAt: projectURL).0
+            renderer.assets = assets
+        }
+        playback = ScenePlayback(module: module, context: GameContext(input: engine.input), audio: engine.audio,
+                                 assets: { [weak self] in self?.assets }) { path in
             try Data(contentsOf: SceneHost.resolve(path, from: start))
         }
+        playback.uiRoot = ui.root
+        if let assets { playback.uiImages = UIBuildView.imageLoader(renderer: renderer, assets: assets) }
         try playback.load(sceneURL.path)
         engine.world = playback.world
     }
 
+    /// The project folder (holding `Project.json`) at or above the scene's folder.
+    static func projectFolder(containing scene: URL) -> URL? {
+        var folder = scene.deletingLastPathComponent().standardizedFileURL
+        while folder.path != "/" && !folder.path.isEmpty {
+            if FileManager.default.fileExists(atPath: folder.appendingPathComponent(Project.fileName).path) { return folder }
+            folder = folder.deletingLastPathComponent()
+        }
+        return nil
+    }
+
     /// Runs before the world's update, so a scene asked for last frame loads between updates.
-    func update(engine: Engine, dt: Float) { playback.applyPendingScene() }
-    func renderOffscreen(engine: Engine, frame: Frame) { renderer.renderOffscreen(world: playback.world, engine: engine, frame: frame) }
+    func update(engine: Engine, dt: Float) {
+        playback.applyPendingScene()
+        ui.update(engine: engine, dt: dt)
+    }
+
+    /// After the world's update, so the UI shows this frame's values.
+    func renderOffscreen(engine: Engine, frame: Frame) {
+        renderer.renderOffscreen(world: playback.world, engine: engine, frame: frame)
+        ui.draw(into: engine.ui)
+    }
+
     func render(engine: Engine, pass: RenderPass) { renderer.draw(pass) }
 }
 
@@ -171,7 +201,7 @@ MainActor.assumeIsolated {
         let module = loaded.module
         // Scenes name components by their registered names.
         for component in module.components { ComponentRegistry.register(component.type) }
-        ComponentRegistry.register(Spin.self, FieldAnimator.self, LightFlicker.self, CameraPath.self, TimelinePlayer.self)
+        ComponentRegistry.register(Spin.self, FieldAnimator.self, LightFlicker.self, CameraPath.self, TimelinePlayer.self, UILayoutPlayer.self)
         print("Loaded \(module.name): \(module.componentNames.joined(separator: ", "))")
         if check {
             // The module filled in this process's GameModule through Engine's API (on Windows,

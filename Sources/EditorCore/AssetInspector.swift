@@ -501,9 +501,14 @@ public final class AssetInspectorView {
                 }
                 open.command = UIOpenCommand.id.rawValue
                 open.tooltip = "Lay out this menu or HUD in the UI Builder tab (or double-click it in the Assets panel)"
+                let place = Button("Add to Scene", name: "addUILayoutPlayer") { [unowned self] in
+                    session.run(UIPlaceCommand.self, .init(asset: AssetReference(id)))
+                }
+                place.command = UIPlaceCommand.id.rawValue
+                place.tooltip = "Add an entity with a UILayoutPlayer that shows this layout over the game while it plays"
                 let build = session.assets?.uiBuild(of: id)
-                content.addChildren([HStack(spacing: 6, [open, Spacer()]),
-                                     note("A game menu or HUD of \(build?.widgets.count ?? 0) widgets. Game code shows it with UIBuildView(assets:path:), sets values with set(key, value) and handles buttons with on(event).")])
+                content.addChildren([HStack(spacing: 6, [open, place, Spacer()]),
+                                     note("A game menu or HUD of \(build?.widgets.count ?? 0) widgets. A UILayoutPlayer component shows it over the game (Add to Scene); game code sets values with world.gameUI?.set(key, value) and handles events with on(event).")])
             }
             if session.isTimelineFile(id) {
                 let open = Button("Open in Timeline", role: .primary, name: "openTimeline") { [unowned self] in

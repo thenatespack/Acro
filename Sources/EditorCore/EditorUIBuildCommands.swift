@@ -10,6 +10,7 @@ public enum EditorUIBuildCommands {
         UISetCommand.self,
         UIEditCommand.self,
         UIOpenCommand.self,
+        UIPlaceCommand.self,
     ]
 
     /// What the tool docs say about the file format, shared by the tools.
@@ -67,6 +68,25 @@ extension EditorSession {
         let command = UIBuildFileEditCommand(asset: id, old: old, new: build, in: assets, label: label)
         guard perform(command) else { return nil }
         return command.warnings.value
+    }
+
+    /// Adds an entity with a `UILayoutPlayer` that shows the layout `id` over the game while it
+    /// plays, as one undo step, and selects it. Returns its id.
+    @discardableResult
+    public func addUILayoutPlayer(for id: AssetID, name: String? = nil, order: Int = 0, focus: Bool = false, visible: Bool = true) -> EntityID? {
+        let stem = ((assets?.path(of: id) ?? "UI") as NSString).lastPathComponent
+        let title = name ?? (stem as NSString).deletingPathExtension
+        do {
+            // By id, so it survives renames and cooking follows it into built games.
+            let player = UILayoutPlayer(layout: AssetReference(id).description, visible: visible, order: order, focus: focus)
+            let command = try SpawnCommand(components: [Transform(), player], name: title, in: world, label: "Add UI Layout Player")
+            guard perform(command) else { return nil }
+            selection.set(command.rootIDs)
+            return command.rootIDs.first
+        } catch {
+            log.error("Add UI Layout Player failed: \(error)")
+            return nil
+        }
     }
 
     /// The layout named by `asset` / `path` and its contents.
@@ -334,6 +354,43 @@ public enum UIOpenCommand: EditorCommand {
         session.uiPreviewRequest = UIPreviewRequest(size: arguments.previewSize, values: arguments.values, select: arguments.select)
         session.onOpenUIBuild?(id)
         return PathResult(path: session.assets?.path(of: id) ?? "")
+    }
+}
+
+public enum UIPlaceCommand: EditorCommand {
+    public struct Arguments: Codable, Equatable, Sendable {
+        public var asset: AssetReference?
+        public var path: String?
+        /// The entity's name (default: the file's name).
+        public var name: String?
+        /// Drawing order between layouts: higher draws on top (default 0).
+        public var order: Int?
+        /// Give the layout keyboard / gamepad focus when it shows (menus; default false).
+        public var focus: Bool?
+        /// Shown when play starts (default true).
+        public var visible: Bool?
+        public init(asset: AssetReference? = nil, path: String? = nil, name: String? = nil, order: Int? = nil, focus: Bool? = nil,
+                    visible: Bool? = nil) {
+            self.asset = asset
+            self.path = path
+            self.name = name
+            self.order = order
+            self.focus = focus
+            self.visible = visible
+        }
+    }
+
+    public static let id: CommandID = "uiLayout.place"
+    public static let title = "Add UI Layout to Scene"
+    public static let doc = "Adds an entity with a UILayoutPlayer to the open scene, so the .ui layout shows over the game while it plays (editor play mode, GameRunner, exported games) with no game code. Game code sets its values and handles its events through world.gameUI (set(key, value), on(event) { event, entity in }). Undoable; returns the new entity."
+    public static let isUndoable = true
+    public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
+    public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
+    public static func run(_ arguments: Arguments, in session: EditorSession) throws -> EntitiesResult {
+        let (id, _) = try session.resolveUIBuild(arguments.asset, path: arguments.path, title)
+        let entity = try session.commands.require(session.addUILayoutPlayer(for: id, name: arguments.name, order: arguments.order ?? 0,
+                                                                             focus: arguments.focus ?? false, visible: arguments.visible ?? true), title)
+        return EntitiesResult(entities: [entity])
     }
 }
 
