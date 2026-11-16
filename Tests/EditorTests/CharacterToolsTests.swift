@@ -145,6 +145,44 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         session.world.removeSystem(named: "CharacterToolsTests.animation")
     }
 
+    @Test func editModeAnimationShowsAPoseWithoutChangingTheScene() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
+        try call(session, "character.new", ["template": "humanoid", "place": true])
+        try call(session, "character.edit", ["path": "Humanoid.character", "defaultClip": "walk"])
+        _ = session.prefabs.sync(session.world, database: try #require(session.assets))
+        var root: Entity?
+        session.world.query(Animator.self) { entity, _ in root = entity }
+        let character = try #require(root)
+        let animatorBefore = try #require(session.world.get(Animator.self, for: character))
+        let leg = animatorBefore.targets[CharacterRig(template: .humanoid).index(of: "upperLeg.L")!]
+        let authored = try #require(session.world.get(Transform.self, for: leg))
+        let dirty = session.document.isDirty, undoDepth = session.undo.undoDepth
+
+        let on = try call(session, "view.animateInEditMode", ["on": true])
+        #expect(on["on"] as? Bool == true && on["animators"] as? Int == 1)
+        for _ in 0..<8 { session.tick(dt: 1.0 / 30) }
+        var posed: Transform?, posedGlobal: Mat4?
+        session.editAnimation.posing(session.world) {
+            posed = session.world.get(Transform.self, for: leg)
+            posedGlobal = session.world.get(GlobalTransform.self, for: leg)?.matrix
+        }
+        #expect(posed?.rotation.vector != authored.rotation.vector, "the walk shows while rendering")
+        #expect(posedGlobal != nil)
+        // Outside rendering the scene is as authored: transforms, the Animator, undo and dirty state.
+        #expect(session.world.get(Transform.self, for: leg) == authored)
+        #expect(session.world.get(Animator.self, for: character) == animatorBefore)
+        #expect(session.document.isDirty == dirty && session.undo.undoDepth == undoDepth)
+        #expect(session.world.get(GlobalTransform.self, for: leg)?.matrix != posedGlobal)
+
+        // Play mode doesn't use it; turning it off stops it.
+        let off = try call(session, "view.animateInEditMode", [:])
+        #expect(off["on"] as? Bool == false && session.editAnimation.count == 0)
+        session.editAnimation.posing(session.world) { #expect(session.world.get(Transform.self, for: leg) == authored) }
+    }
+
     @Test func builderFormEditsAreOneUndoStepEach() throws {
         let folder = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: folder) }

@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 245 tools.
+named by its id (see README › Use the editor › AI control). 246 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -57,7 +57,7 @@ optional arguments.
 | `ui` | [`ui.click`](#uiclick), [`ui.drag`](#uidrag), [`ui.find`](#uifind), [`ui.hover`](#uihover), [`ui.key`](#uikey), [`ui.scroll`](#uiscroll), [`ui.snapshot`](#uisnapshot), [`ui.type`](#uitype) |
 | `uiLayout` | [`uiLayout.edit`](#uilayoutedit), [`uiLayout.get`](#uilayoutget), [`uiLayout.new`](#uilayoutnew), [`uiLayout.open`](#uilayoutopen), [`uiLayout.set`](#uilayoutset) |
 | `vfx` | [`vfx.edit`](#vfxedit), [`vfx.get`](#vfxget), [`vfx.new`](#vfxnew), [`vfx.open`](#vfxopen), [`vfx.set`](#vfxset) |
-| `view` | [`view.appearance`](#viewappearance), [`view.frameSelection`](#viewframeselection), [`view.gameCamera`](#viewgamecamera), [`view.pick`](#viewpick), [`view.screenshot`](#viewscreenshot) |
+| `view` | [`view.animateInEditMode`](#viewanimateineditmode), [`view.appearance`](#viewappearance), [`view.frameSelection`](#viewframeselection), [`view.gameCamera`](#viewgamecamera), [`view.pick`](#viewpick), [`view.screenshot`](#viewscreenshot) |
 | `vscript` | [`vscript.attach`](#vscriptattach), [`vscript.edit`](#vscriptedit), [`vscript.get`](#vscriptget), [`vscript.new`](#vscriptnew), [`vscript.nodes`](#vscriptnodes), [`vscript.open`](#vscriptopen), [`vscript.set`](#vscriptset), [`vscript.validate`](#vscriptvalidate) |
 
 ## activity
@@ -4873,6 +4873,21 @@ Result:
 - `warnings`: [string]
 
 ## view
+
+### `view.animateInEditMode`
+
+**Animate in Scene View**
+
+Turns on (or off, or toggles without `on`) animation in the edit-mode Scene view: characters, glTF models with asset clips and animation graphs play their Animator (from its initial state, e.g. a character's idle) while you edit, without entering play mode. Editor-only and never saved: the pose is shown, not written into the scene, so saving, undo and the inspector see the authored transforms. Returns whether it is on and how many animators play.
+
+Arguments:
+
+- `on?`: boolean
+
+Result:
+
+- `animators`: integer
+- `on`: boolean
 
 ### `view.appearance`
 

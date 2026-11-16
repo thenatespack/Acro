@@ -1729,6 +1729,12 @@ public final class EditorApp: Game, EditorHost {
     }
 
     public func renderOffscreen(engine: Engine, frame: Frame) {
+        // Animate in Scene View: the preview pose is in the scene only while it renders.
+        guard !session.isPlaying else { return renderViews(frame: frame) }
+        session.editAnimation.posing(session.world) { renderViews(frame: frame) }
+    }
+
+    private func renderViews(frame: Frame) {
         thumbnails?.render(frame: frame)
         renderCaptures(frame: frame)
         guard !isLauncherShown else { return }
@@ -2252,23 +2258,24 @@ final class Toolbar {
 
     /// The View menu: every panel (open ones checked; picking one opens a closed panel where the
     /// default layout has it, or brings an open one to the front), then Settings…, Reset Layout,
-    /// the themes (`EditorApp.menuThemes`) and the zooms, the current ones checked.
+    /// Animate in Scene View, the themes (`EditorApp.menuThemes`) and the zooms, the current ones checked.
     func showViewMenu() {
         guard let context = view.context else { return }
         let panels = menuPanels
         let themes = EditorApp.menuThemes, zooms = EditorApp.menuZooms
         let settingsTitle = "Settings… (\(app.shortcuts.shortcutText(for: .settings)))"
-        let options = [settingsTitle, "Reset Layout"] + themes.map { "\($0) Theme" } + zooms.map { "Zoom \(Int(($0 * 100).rounded()))%" }
+        let options = [settingsTitle, "Reset Layout", ViewAnimateInEditModeCommand.title] + themes.map { "\($0) Theme" } + zooms.map { "Zoom \(Int(($0 * 100).rounded()))%" }
         let menu = PopupMenu(items: panels.map(\.title) + options, anchor: viewButton, name: "viewMenu")
         menu.itemCommandIDs = panels.map { _ in PanelOpenCommand.id.rawValue }
-            + [SettingsGetCommand.id.rawValue, LayoutResetCommand.id.rawValue]
-            + options.dropFirst(2).map { _ in ViewAppearanceCommand.id.rawValue }
+            + [SettingsGetCommand.id.rawValue, LayoutResetCommand.id.rawValue, ViewAnimateInEditModeCommand.id.rawValue]
+            + options.dropFirst(3).map { _ in ViewAppearanceCommand.id.rawValue }
         menu.itemIcons = panels.map { EditorIcons.panelIconNames[$0.id].map(EditorIcons.named) }
-            + [EditorIcons.named("sliders-horizontal"), EditorIcons.named("layout-dashboard")]
+            + [EditorIcons.named("sliders-horizontal"), EditorIcons.named("layout-dashboard"), EditorIcons.named("person-standing")]
         let first = panels.count
         var checked = Set(panels.indices.filter { app.dock.isOpen(panels[$0].id) })
-        if let theme = themes.firstIndex(of: context.theme.name) { checked.insert(first + 2 + theme) }
-        if let zoom = zooms.firstIndex(of: app.preferredUIScale) { checked.insert(first + 2 + themes.count + zoom) }
+        if app.session.editAnimation.isEnabled { checked.insert(first + 2) }
+        if let theme = themes.firstIndex(of: context.theme.name) { checked.insert(first + 3 + theme) }
+        if let zoom = zooms.firstIndex(of: app.preferredUIScale) { checked.insert(first + 3 + themes.count + zoom) }
         menu.checkedIndices = checked
         let session = app.session
         menu.onSelect = { [unowned app] index in
@@ -2280,8 +2287,9 @@ final class Toolbar {
             switch index {
             case 0: app.showSettings()
             case 1: app.resetLayout()
-            case 2...(themes.count + 1): session.run(ViewAppearanceCommand.self, .init(theme: themes[index - 2]))
-            default: session.run(ViewAppearanceCommand.self, .init(uiScale: zooms[index - 2 - themes.count]))
+            case 2: session.run(ViewAnimateInEditModeCommand.self, .init())
+            case 3...(themes.count + 2): session.run(ViewAppearanceCommand.self, .init(theme: themes[index - 3]))
+            default: session.run(ViewAppearanceCommand.self, .init(uiScale: zooms[index - 3 - themes.count]))
             }
         }
         context.presentOverlay(menu)

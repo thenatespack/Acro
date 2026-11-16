@@ -1,7 +1,8 @@
 import Engine
 import Foundation
 
-/// The character builder tools: `character.new`, `.get`, `.set`, `.edit`, `.open`, `.bones`.
+/// The character builder tools: `character.new`, `.get`, `.set`, `.edit`, `.open`, `.bones`, and
+/// `view.animateInEditMode`.
 @MainActor
 public enum EditorCharacterCommands {
     public static let all: [any EditorCommand.Type] = [
@@ -11,6 +12,7 @@ public enum EditorCharacterCommands {
         CharacterEditCommand.self,
         CharacterOpenCommand.self,
         CharacterBonesCommand.self,
+        ViewAnimateInEditModeCommand.self,
     ]
 
     /// What the tool docs say about the file format, shared by the tools.
@@ -482,5 +484,34 @@ public enum CharacterBonesCommand: EditorCommand {
         let character = try CharacterEditCommand.edited(CharacterBuild(template: template), with: .init(proportions: arguments.proportions))
         return Result(template: template, bones: CharacterGetCommand.bones(character.rig), handBone: template.handBone,
                       clips: CharacterClips.stockNames)
+    }
+}
+
+public enum ViewAnimateInEditModeCommand: EditorCommand {
+    public struct Arguments: Codable, Equatable, Sendable {
+        /// On or off; omitted: toggles.
+        public var on: Bool?
+        public init(on: Bool? = nil) { self.on = on }
+    }
+
+    public struct Result: Codable, Equatable, Sendable {
+        public var on: Bool
+        /// Animators the preview plays (counted at the next frame after turning it on).
+        public var animators: Int
+    }
+
+    public static let id: CommandID = "view.animateInEditMode"
+    public static let title = "Animate in Scene View"
+    public static let doc = """
+        Turns on (or off, or toggles without `on`) animation in the edit-mode Scene view: characters, glTF models with \
+        asset clips and animation graphs play their Animator (from its initial state, e.g. a character's idle) while you \
+        edit, without entering play mode. Editor-only and never saved: the pose is shown, not written into the scene, so \
+        saving, undo and the inspector see the authored transforms. Returns whether it is on and how many animators play.
+        """
+    public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
+        let preview = session.editAnimation
+        preview.isEnabled = arguments.on ?? !preview.isEnabled
+        if preview.isEnabled && !session.isPlaying { preview.advance(session.world, assets: session.assets, dt: 0) }
+        return Result(on: preview.isEnabled, animators: preview.count)
     }
 }
