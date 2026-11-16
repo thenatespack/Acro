@@ -17,7 +17,7 @@ public enum EditorMeshBuildCommands {
     /// What the tool docs say about the file format, shared by the tools.
     static let formatDoc = """
         A mesh build is a model made of shapes: `parts` (each: name, shape \
-        group|box|sphere|hemisphere|cylinder|cone|capsule|torus|tube|plane|wedge|pyramid|lathe|extrude|sculpt|sweep|loft, parent (another part's name; \
+        group|box|sphere|hemisphere|cylinder|cone|capsule|torus|tube|plane|wedge|pyramid|lathe|extrude|sculpt|sweep|loft|foliage, parent (another part's name; \
         children move with it), position [x,y,z] m: the part's center in the parent's space, rotation [x,y,z] degrees \
         (about X, then Y, then Z, fixed axes; children inherit it), size [x,y,z] m (the box the shape fills; lathe/extrude/sweep/loft: a multiplier, see below), segments, \
         thickness (tube wall), color [r,g,b] 0-1 sRGB, opacity, texture (path under Assets/ such as "Textures/brick.png" \
@@ -35,10 +35,10 @@ public enum EditorMeshBuildCommands {
         capsules and tubes run along Y: a wheel on an axle along X (a vehicle facing -Z) needs rotation [0,0,90], one \
         on an axle along Z [90,0,0]. Real sizes: person 1.8 m, door 2 x 0.9 m, table top 0.75 m high, chair seat 0.45 m, \
         car about 4.5 x 1.5 x 1.8 m (long, high, wide). \
-        Results include `bounds` (size, min, max, base) and warnings about floating, buried, hidden or out-of-scale \
-        parts and a model off the ground. Workflow: build, look at it with meshBuild.preview, fix the warnings, repeat; \
+        Results include `bounds` (size, min, max, base), `triangles` and warnings about floating, buried, hidden or \
+        out-of-scale parts and a model off the ground. Workflow: build, look at it with meshBuild.preview, fix the warnings, repeat; \
         meshBuild.examples has correct builds to copy.
-        """ + " " + MeshBuildPart.shapesDoc + " " + MeshBuildPart.curvesDoc + " " + symmetryDoc + " " + MeshBuildPart.sculptDoc + " " + looksDoc
+        """ + " " + MeshBuildPart.shapesDoc + " " + MeshBuildPart.curvesDoc + " " + symmetryDoc + " " + MeshBuildPart.sculptDoc + " " + looksDoc + " " + MeshBuildPart.foliageDoc
 
     /// The look part keys and the file's `ao` (appended to `formatDoc`).
     static let looksDoc = """
@@ -175,6 +175,8 @@ public struct MeshBuildResult: Codable, Equatable, Sendable {
     public var entities: [EntityID]?
     /// The parts `mirror` and `repeat` add, by name (nil: none).
     public var copies: [String]?
+    /// Triangles in the imported model (all its meshes): keep game models light (a tree well under 15k).
+    public var triangles: Int?
 }
 
 extension MeshBuildResult {
@@ -189,6 +191,11 @@ extension MeshBuildResult {
                   bounds: check.bounds, entities: entities)
         let copies = build.hasCopies ? build.expansion().copies : []
         self.copies = copies.isEmpty ? nil : copies
+        if let record, let assets = session.assets {
+            let meshes = record.objects.filter { $0.kind == .mesh }
+            let total = meshes.reduce(0) { $0 + (assets.mesh(AssetReference(id, subAsset: $1.id))?.indices.count ?? 0) / 3 }
+            triangles = meshes.isEmpty ? nil : total
+        }
     }
 }
 

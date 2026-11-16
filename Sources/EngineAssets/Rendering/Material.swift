@@ -72,8 +72,12 @@ public struct Material {
     /// map) whose base color alpha is below `alphaCutoff` and draws the rest opaque.
     public var alphaMode: AlphaMode
     public var alphaCutoff: Float
-    /// Draws back faces too (no culling). PBR materials light back faces with the flipped normal.
+    /// Draws back faces too (no culling). PBR materials light back faces with the flipped normal
+    /// (unless translucent).
     public var doubleSided: Bool
+    /// 0...1 (PBR): light through a thin surface such as a leaf: the side away from the light glows
+    /// with the base color, and back faces keep their normals (foliage cards' bent normals). 0: none.
+    public var translucency: Float = 0
     /// A compiled material graph (`MaterialAsset.graph`): draws with its shader variant, which
     /// computes the PBR inputs itself. Its textures are in the five texture fields, in slot order;
     /// the color, factor and UV fields are unused.

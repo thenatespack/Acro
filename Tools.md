@@ -16,7 +16,7 @@ programs. Each one follows the same pattern as the Mesh Builder:
 ### Mesh Builder (`.meshbuild`)
 
 Models built from shapes (box, sphere, dome, cylinder, cone, capsule, torus, tube, plane,
-wedge, pyramid, lathe, extrude, sweep, loft, sculpt, group pivots) with a part hierarchy, colors, textures, PBR settings, glow, and
+wedge, pyramid, lathe, extrude, sweep, loft, sculpt, foliage, group pivots) with a part hierarchy, colors, textures, PBR settings, glow, and
 keyframe or ready-made animations (spin, bob, swing, pulse, shake). The Mesh Builder tab shows
 the model in its own viewport with picking, Move / Rotate / Scale gizmos and live animation
 preview. Tools: `meshBuild.new`, `meshBuild.get`, `meshBuild.set`, `meshBuild.edit`,
@@ -46,8 +46,7 @@ examples (sailboat, gnarled tree, desk lamp). Importer version 3.
 Merged with sculpt: the curves' straight-segments switch is `straight: true` (not `smooth`, which
 is a sculpt child's melt radius). (Sweeps, lofts and deformed children now work in sculpts: see
 "Sculpt looks and mesh fields" below.)
-Curves not done: sweep profiles are always closed (no open ribbons such as a sail cross-section
-or a leaf); no per-point twist or roll along a sweep (the frame is rotation-minimizing only, no
+Curves not done: no per-point twist or roll along a sweep (the frame is rotation-minimizing only, no
 `up` hint); loft sections can't rotate (every section is perpendicular to the axis, so no curved
 spine such as a banana or a swan neck; bend it with `deform` instead); deformers always work
 along the part's Y (no bend or taper along X or Z; rotate the part instead); bend has no
@@ -127,6 +126,49 @@ Merged with sculpt and curves (importer version 5): looks box-project on sculpt,
 meshes; splitting meshes for occlusion is capped at about 30k triangles per model (edges half the
 occlusion reach), which cut the examples from up to 260k triangles to 10-50k (the tree, with
 noise-deformed foliage, is about 100k from its own subdivision) and imports 3-4x faster.
+Merged (importer version 8): edge wear on dense meshes (sculpt pieces) only searches the band plus
+the longest triangle edge and runs on all cores (the Armchair import went from 885 s to 8 s in a
+debug build); foliage and ribbons inside a sculpt are left out with a warning.
+Plants (importer version 8): shape `foliage` scatters leaf cards (alpha-cutout quads) over the
+ellipsoid of its `size` (78% on the shell facing out, tilted and rolled at random, the rest inside;
+kept inside the size box) or `on` named parts (along the outer `along` [from, to] of sweeps,
+default [0.35, 1], ending at the tips; over any other mesh's surface; a name covers its mirror /
+repeat copies); upright looks (grassBlades, flowers, fern) stand crossed tufts on the box's floor,
+size.y tall. `cardSize`, `density` (1 = full) or `count`, `seed` (plus the part name):
+deterministic; 2 triangles a card (4 a tuft), capped at 12k per part with a warning. Normals are
+bent toward the cloud's outward normal (ellipsoid, or the box around the leafy branches) so a
+crown shades as one volume; foliage isn't tessellated for AO but gets it (inner cards darker).
+Eight generated leaf looks (broadleaf, oakLeaves, mapleLeaves, pineNeedles, fern, grassBlades,
+flowers, ivy): a 512 px texture with four shaded sprig variants in its quadrants, albedo with alpha
+(push-pull filled under the cutout), normal and ORM, ~1 s per look in debug; materials are mask
+(cutoff 0.35-0.42), double-sided and translucent; `color` tints to that average. Ribbons: a
+sweep with `ribbon` (width) or `open: true` + `profile` (an open curve) is an uncapped,
+double-sided strip; a leaf look on a ribbon or plane maps one sprig along it (fern ribbons are
+fronds). Renderer: `MaterialAsset.translucency` (0...1, PBR; packed in the material uniform's
+params.z, which only Blinn-Phong used): back faces keep their normals instead of flipping, sunlight
+through the leaf adds to the side away from the sun, specular uses each card's face normal (screen
+derivatives, plus the normal map's bump) with NoV and VoH at least 0.5, so a bent-normal crown has
+scattered glints instead of one shiny blob or a grazing sheen (mesh_surface.glsl; Metal and Vulkan
+from one source). Deformers: subdivision has a budget of 8k triangles per part (was 60k); noise
+octaves finer than the mesh can show fade out, and noise whose largest lumps don't fit warns.
+Results report `triangles`. Examples: Gnarled Tree rebuilt (bark sweeps, oak cards on the branches
+plus a crown: 100,796 → ~8.8k triangles), new Shrub (~3k, with grass and wildflower tufts), Potted
+Fern (lathe pot, fern ribbons, ~8.7k), Small Pine (needle cards on six whorls, ~11.4k). Editor:
+Foliage button (a broadleaf crown), Leaves / Card size / Density / Count / Seed / Grows on / From
+rows, Ribbon width and Open profile on sweeps, a leaf look picker on planes and ribbons.
+Plants not done: no wind (no vertex sway or shader wind); no LODs or impostors, so a forest pays
+full triangles per tree (and no instancing of one foliage mesh across trees); mipmaps are plain box
+filters, so distant cards thin out a little (the low alpha cutoff hides most of it; no
+coverage-preserving mips or alpha-to-coverage); crossed tufts read as thin lines from straight
+above; colour variation between cards is only the texture's four shaded variants and the lighting
+(no vertex colors); leaves `on` a part are placed at rest, so an animated branch leaves its leaves
+behind unless the foliage is its child; the crown's bent normals come from one ellipsoid or box per
+foliage part (lobed crowns need several parts); no control of leaf arrangement on a branch
+(phyllotaxis, leaves only on top, droop); translucency is one factor per material (no thickness
+map, no subsurface color) and isn't exposed in the Material Builder or materialGraph tools; leaf
+sprigs are 256 px each, soft up close; the deform budget is fixed (no per-part override); spatial
+checks treat foliage by its box like any part (fine for crowns around branches, but a card cloud
+whose box overlaps a part counts as touching it).
 Studio light and edge wear (importer version 6): `meshBuild.preview` and the Mesh Builder tab
 light models with a neutral gray HDR studio (gradient walls, darker floor, five white softboxes;
 made in code, `MeshBuildPreviewEnvironment`) through the existing image-based lighting

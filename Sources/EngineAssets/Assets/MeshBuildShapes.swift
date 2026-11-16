@@ -31,7 +31,7 @@ extension MeshBuildPart {
     /// Problems with the fields that shape the mesh (the importer reports them as warnings),
     /// without building a mesh unless the part is a profile shape.
     public var shapeWarnings: [String] {
-        guard shape == .lathe || shape == .extrude || shape == .sweep || shape == .loft else { return fieldWarnings }
+        guard shape == .lathe || shape == .extrude || shape == .sweep || shape == .loft || shape == .foliage else { return fieldWarnings }
         var warnings: [String] = []
         _ = geometry(warnings: &warnings)
         return warnings
@@ -48,14 +48,14 @@ extension MeshBuildPart {
             warnings.append("profile is only used by lathe, extrude and sweep parts; this \(shape.rawValue) ignores it")
         }
         warnings += lookWarnings  // MeshBuildLookMapping.swift
-        return warnings + sculptFieldWarnings + curveFieldWarnings
+        return warnings + sculptFieldWarnings + curveFieldWarnings + foliageFieldWarnings
     }
 
     /// The box the part's mesh occupies in its own space: `size` centered on the origin for most
     /// shapes, the built mesh's extent for `lathe`, `extrude`, `sweep`, `loft`, deformed parts and a `sculpt` with
     /// its `sculptChildren` gathered (empty at the origin if nothing can be built).
     public var localBounds: Bounds {
-        if [.lathe, .extrude, .sculpt, .sweep, .loft].contains(shape) || !(deform ?? []).isEmpty {
+        if [.lathe, .extrude, .sculpt, .sweep, .loft, .foliage].contains(shape) || !(deform ?? []).isEmpty {
             return geometry().map(\.bounds) ?? Bounds(center: .zero, halfExtent: .zero)
         }
         return Bounds(center: .zero, halfExtent: Vec3(abs(size.x), abs(size.y), abs(size.z)) / 2)

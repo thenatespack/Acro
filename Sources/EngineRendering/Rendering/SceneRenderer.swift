@@ -324,7 +324,7 @@ public final class SceneRenderer {
     /// Must match `MaterialData` in mesh_surface.glsl (uniform buffer 2).
     struct MaterialUniforms: BitwiseCopyable {
         var baseColor: Vec4
-        /// x: checker, y: unlit, z: specular, w: shininess
+        /// x: checker, y: unlit, z: specular (Blinn-Phong) or translucency (PBR), w: shininess
         var params: Vec4
         /// xyz: the UV transform's rows; w: `EdgeWear.packed` (0: none)
         var uvRow0: Vec4
@@ -340,7 +340,8 @@ public final class SceneRenderer {
         /// `reflected`: the occlusion slot holds the planar reflection (`flags.w`).
         @MainActor init(_ material: Material, reflected: Bool = false) {
             baseColor = material.baseColor
-            params = Vec4(material.checker ? 1 : 0, material.emissive, material.specular, material.shininess)
+            params = Vec4(material.checker ? 1 : 0, material.emissive,
+                          material.shading == .pbr ? material.translucency : material.specular, material.shininess)
             (uvRow0, uvRow1) = material.uvTransformRows
             // The rows' unused w: worn edges (`EdgeWear.packed`), 0 for none.
             if let wear = material.edgeWear { (uvRow0.w, uvRow1.w) = wear.packed }

@@ -142,6 +142,10 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
     public var alphaMode: AlphaMode
     public var alphaCutoff: Float
     public var doubleSided: Bool
+    /// 0...1: light passing through a thin surface (leaves, paper, cloth): its side facing away
+    /// from the sun glows with the base color, and a double-sided PBR material keeps its normals on
+    /// back faces (foliage cards' bent normals) instead of flipping them. 0 (the default): opaque.
+    public var translucency: Float = 0
     /// A node graph that computes the PBR inputs instead of the fields above (see
     /// MaterialGraph.swift); `alphaMode`, `alphaCutoff`, `doubleSided`, the sampler settings and
     /// `emissive` still apply. The importer resolves its textures to references and puts them in
@@ -218,6 +222,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
             emissiveColor: emissiveColor, emissiveTexture: try resolve(emissiveTexture), emissiveStrength: emissiveStrength,
             alphaMode: alphaMode, alphaCutoff: alphaCutoff, doubleSided: doubleSided)
         material.edgeWear = edgeWear
+        material.translucency = min(max(translucency, 0), 1)
         if graph == nil, let terrain {
             // Drawn by the material graph path with the terrain shader; the textures stay in their slots.
             material.shading = .pbr
@@ -249,7 +254,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         case shading, baseColor, texture, filter, mipFilter, addressMode, uvScale, uvOffset, uvRotation, checker, emissive
         case specular, shininess, metallic, roughness, metallicRoughnessTexture, normalTexture, normalScale
         case occlusionTexture, occlusionStrength, emissiveColor, emissiveTexture, emissiveStrength, alphaMode, alphaCutoff
-        case doubleSided, isTransparent, graph, terrain, edgeWear
+        case doubleSided, isTransparent, graph, terrain, edgeWear, translucency
     }
 
     public init(from decoder: any Decoder) throws {
@@ -291,6 +296,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         }
         alphaCutoff = try c.decodeIfPresent(Float.self, forKey: .alphaCutoff) ?? d.alphaCutoff
         doubleSided = try c.decodeIfPresent(Bool.self, forKey: .doubleSided) ?? d.doubleSided
+        translucency = try c.decodeIfPresent(Float.self, forKey: .translucency) ?? 0
         graph = try c.decodeIfPresent(MaterialGraph.self, forKey: .graph)
         terrain = try c.decodeIfPresent(TerrainSplat.self, forKey: .terrain)
         edgeWear = try c.decodeIfPresent(EdgeWear.self, forKey: .edgeWear)
@@ -327,6 +333,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         try c.encode(alphaMode.rawValue.lowercased(), forKey: .alphaMode)
         try c.encode(alphaCutoff, forKey: .alphaCutoff)
         try c.encode(doubleSided, forKey: .doubleSided)
+        if translucency != 0 { try c.encode(translucency, forKey: .translucency) }
         try c.encodeIfPresent(graph, forKey: .graph)
         try c.encodeIfPresent(terrain, forKey: .terrain)
         try c.encodeIfPresent(edgeWear, forKey: .edgeWear)

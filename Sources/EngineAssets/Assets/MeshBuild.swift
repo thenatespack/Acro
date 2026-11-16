@@ -66,6 +66,9 @@ public enum MeshBuildShape: String, Codable, CaseIterable, Sendable {
     case sweep
     /// A skin through a stack of `sections` along `axis`, like a hull, bottle, fuselage or blade.
     case loft
+    /// Leaf cards (a leaf `look`) filling the ellipsoid of `size`, or growing `on` other parts:
+    /// tree crowns, shrubs, grass, flowers, ivy. See MeshBuildFoliage.swift and `MeshBuildPart.foliageDoc`.
+    case foliage
 }
 
 /// One shape of a mesh build: geometry, placement in its parent and its look.
@@ -167,6 +170,28 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
     /// Not in the file: a sculpt's children in its space, set by `MeshBuild.gatheringSculpts`; `geometry()` meshes them.
     public var sculptChildren: [MeshBuildSculptChild] = []
 
+    // Foliage and ribbons (MeshBuildFoliage.swift, MeshBuildRibbon.swift). Not in `init`'s parameters: set them after.
+    /// A foliage card's side, meters (nil: the leaf look's default).
+    public var cardSize: Float? = nil
+    /// Exactly this many foliage cards (nil: from `density`).
+    public var count: Int? = nil
+    /// How thickly foliage cards cover (nil: 1, a full canopy).
+    public var density: Float? = nil
+    /// Changes which cards a foliage part makes.
+    public var seed: Int? = nil
+    /// Parts foliage grows on (a name or a list in the file).
+    public var on: [String]? = nil
+    /// Where along the `on` sweeps leaves grow: [from, to] fractions of their length.
+    public var along: Vec2? = nil
+    /// A sweep whose `profile` is an open curve: a double-sided surface without caps.
+    public var open: Bool? = nil
+    /// A sweep drawn as a flat strip this many meters wide (times `radii`).
+    public var ribbon: Float? = nil
+    /// Not in the file: a foliage part's `on` targets in its space, set by `MeshBuild.attachingFoliageTargets`.
+    public var foliageTargets: [MeshBuildFoliageTarget] = []
+    /// Not in the file: problems with its `on` names, found with the targets.
+    public var foliageContextWarnings: [String] = []
+
     public static var fieldHints: [String: FieldHints] {
         ["parent": FieldHints(tooltip: "The part this one is attached to (moves with it)"),
          "rotation": FieldHints(step: 1, tooltip: "Degrees"),
@@ -194,7 +219,11 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
          "axis": FieldHints(hidden: true), "deform": FieldHints(hidden: true), "subdivide": FieldHints(hidden: true),
          // Edited in the Mesh Builder's own Look rows.
          "look": FieldHints(hidden: true), "lookScale": FieldHints(hidden: true), "wear": FieldHints(hidden: true),
-         "grain": FieldHints(hidden: true)]
+         "grain": FieldHints(hidden: true),
+         // Foliage and ribbons: edited in the Mesh Builder's own Foliage rows.
+         "cardSize": FieldHints(hidden: true), "count": FieldHints(hidden: true), "density": FieldHints(hidden: true),
+         "seed": FieldHints(hidden: true), "on": FieldHints(hidden: true), "along": FieldHints(hidden: true),
+         "open": FieldHints(hidden: true), "ribbon": FieldHints(hidden: true)]
     }
 
     public init(name: String = "Part", shape: MeshBuildShape = .box, parent: String = "", position: Vec3 = .zero,
@@ -256,6 +285,8 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
         case path, radius, radii, closed, straight, sections, axis, deform, subdivide
         // Looks.
         case look, lookScale, wear, grain
+        // Foliage and ribbons.
+        case cardSize, count, density, seed, on, along, open, ribbon
     }
 
     /// Every key is optional.
@@ -305,6 +336,15 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
         smooth = try c.decodeIfPresent(Float.self, forKey: .smooth)
         resolution = try c.decodeIfPresent(Int.self, forKey: .resolution)
         noise = try c.decodeIfPresent(MeshBuildNoise.self, forKey: .noise)
+        // Foliage and ribbons: lenient; `on` is a name or a list of names.
+        cardSize = (try? c.decodeIfPresent(Float.self, forKey: .cardSize)) ?? nil
+        count = (try? c.decodeIfPresent(Int.self, forKey: .count)) ?? nil
+        density = (try? c.decodeIfPresent(Float.self, forKey: .density)) ?? nil
+        seed = (try? c.decodeIfPresent(Int.self, forKey: .seed)) ?? nil
+        on = (try? c.decodeIfPresent([String].self, forKey: .on)) ?? (try? c.decodeIfPresent(String.self, forKey: .on)).flatMap { $0.map { [$0] } }
+        along = (try? c.decodeIfPresent(Vec2.self, forKey: .along)) ?? nil
+        open = (try? c.decodeIfPresent(Bool.self, forKey: .open)) ?? nil
+        ribbon = (try? c.decodeIfPresent(Float.self, forKey: .ribbon)) ?? nil
     }
 
     /// The part's local transform (its size is in the mesh, not the scale).
@@ -597,7 +637,9 @@ extension MeshBuildPart {
     public func geometry(warnings: inout [String]) -> MeshGeometry? {
         var shaped = shapeGeometry(warnings: &warnings)
         // Deformers bend the finished shape before the reflection, so mirror copies match (MeshBuildDeform.swift).
-        if let g = shaped, !(deform ?? []).isEmpty { shaped = deformed(g) }
+        if let g = shaped, !(deform ?? []).isEmpty { shaped = deformed(g, warnings: &warnings) }
+        // A leaf look on a ribbon or plane shows one sprig (MeshBuildFoliage.swift).
+        if let g = shaped, shape != .foliage, resolvedLeafLook != nil { shaped = leafSprigUVs(g) }
         guard reflection != Vec3(1, 1, 1), var g = shaped else { return shaped }
         g.scale(by: reflection)  // flips the normals, and the winding when it is a mirror image
         return g
@@ -612,6 +654,7 @@ extension MeshBuildPart {
         switch shape {
         case .group: return nil
         case .sculpt: return sculptGeometry(warnings: &warnings)
+        case .foliage: return foliageGeometry(warnings: &warnings)  // MeshBuildFoliage.swift
         case .box:
             guard bevel > 0 else { g = .cube(size: 1); break }
             return finish(MeshGeometry.roundedBox(halfExtent: s / 2, radius: bevel, segments: segments))
@@ -784,8 +827,9 @@ public struct MeshBuildImporter: AssetImporter {
 
     public var name: String { "meshbuild" }
     public var fileExtensions: [String] { ["meshbuild"] }
-    public var version: Int { 7 }  // 2: mirror and repeat, 3: sculpt, 4: sweep, loft and deform, 5: looks and baked occlusion,
-                                   // 6: sculpt children's looks, sweeps / lofts / deformers in sculpts, 7: edge wear
+    public var version: Int { 8 }  // 2: mirror and repeat, 3: sculpt, 4: sweep, loft and deform, 5: looks and baked occlusion,
+                                   // 6: sculpt children's looks, sweeps / lofts / deformers in sculpts, 7: edge wear,
+                                   // 8: foliage, ribbons, leaf looks, noise budget
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         let file: MeshBuild
@@ -832,6 +876,7 @@ public struct MeshBuildImporter: AssetImporter {
         Self.finishSurfaces(build, &geometries, occlusion: file.ao ?? true, firstIndex: firstIndex)
         Self.finishEdgeWear(build, &geometries)
         var lookTextures = LookTextureRefs()
+        var leafTextures = LeafTextureRefs()  // MeshBuildImporter+Foliage.swift
 
         var nodes: [PrefabNode] = []
         for (i, part) in build.parts.enumerated() {
@@ -846,7 +891,11 @@ public struct MeshBuildImporter: AssetImporter {
                     let materialID = namer.id(kind: "material", name: part.name, index: i)
                     let texture = resolve(part.texture, kind: "texture", part: part.name, &context)
                     let look = part.resolvedLook.map { lookTextures.references($0, wear: part.wear, &asset, &namer, &context) }
-                    asset.add(materialID, name: part.name, .material(Self.material(for: part, texture: texture, look: look, geometry: geometry)))
+                    var material = Self.material(for: part, texture: texture, look: look, geometry: geometry)
+                    if let leaf = part.resolvedLeafLook {
+                        material = Self.leafMaterial(for: part, texture: texture, leaf: leafTextures.references(leaf, &asset, &namer, &context))
+                    }
+                    asset.add(materialID, name: part.name, .material(material))
                     node.material = context.reference(materialID)
                 }
             }
@@ -903,7 +952,7 @@ public struct MeshBuildImporter: AssetImporter {
                              uvScale: part.textureScale, metallic: min(max(part.metallic, 0), 1),
                              roughness: min(max(part.roughness, 0), 1), emissiveColor: MeshBuildColor.linear(fromSRGB: part.glow),
                              emissiveStrength: max(part.glowStrength, 0), alphaMode: opacity < 1 ? .blend : .opaque,
-                             doubleSided: part.shape == .plane)
+                             doubleSided: part.shape == .plane || part.isRibbon || part.shape == .foliage)
     }
 
     /// The asset `value` names ("" is none): a reference ("asset:<id>[#object]"), else a path

@@ -162,6 +162,7 @@ extension MeshBuildPart {
     func curveGeometry(segments: Int, warnings: inout [String]) -> MeshGeometry? {
         switch shape {
         case .sweep:
+            if isRibbon { return ribbonGeometry(segments: segments, warnings: &warnings) }  // MeshBuildRibbon.swift
             return MeshGeometry.sweep(path: path ?? [], radius: radius ?? MeshGeometry.defaultSweepRadius, radii: radii,
                                       profile: profile, closed: closed ?? false, smooth: !(straight ?? false), segments: segments,
                                       warnings: &warnings)
@@ -373,7 +374,7 @@ extension MeshGeometry {
     }
 
     /// A ring point of the section at `s` (cut along its mitre plane at a straight path's corner).
-    private static func ringPoint(_ s: PathSample, right: Vec3, _ p: Vec2) -> Vec3 {
+    static func ringPoint(_ s: PathSample, right: Vec3, _ p: Vec2) -> Vec3 {
         var q = s.position + (right * p.x + s.up * p.y) * s.scale
         if let m = s.miter {
             let along = max(dot(s.tangent, m), 0.25)  // a near U-turn's mitre would reach far out
@@ -384,7 +385,7 @@ extension MeshGeometry {
 
     /// Samples along a centripetal Catmull-Rom spline through `points`: more where it turns or
     /// the radius changes, one step for a straight span.
-    private static func smoothSamples(_ points: [Vec3], scales: [Float], closed: Bool) -> [PathSample] {
+    static func smoothSamples(_ points: [Vec3], scales: [Float], closed: Bool) -> [PathSample] {
         let n = points.count
         let spans = closed ? n : n - 1
         func point(_ i: Int) -> Vec3 {
@@ -448,7 +449,7 @@ extension MeshGeometry {
     }
 
     /// Straight segments between the points, each corner a mitred pair of rings.
-    private static func cornerSamples(_ points: [Vec3], scales: [Float], closed: Bool) -> [PathSample] {
+    static func cornerSamples(_ points: [Vec3], scales: [Float], closed: Bool) -> [PathSample] {
         let n = points.count
         let segmentCount = closed ? n : n - 1
         let directions = (0..<segmentCount).map { normalize(points[($0 + 1) % n] - points[$0]) }

@@ -187,7 +187,7 @@ extension MeshBuildPart {
     /// lofts and deformed shapes have no exact formula.
     var needsMeshField: Bool {
         switch shape {
-        case .group, .sculpt, .plane: false
+        case .group, .sculpt, .plane, .foliage: false
         case .sweep, .loft: true
         default: !(deform ?? []).isEmpty
         }
@@ -199,7 +199,7 @@ extension MeshBuild {
     /// MeshBuildSculpt.swift). Run it on an expanded build (`expanded()`); `sources` (the
     /// expansion's) puts mirror / repeat copies right after the part they copy.
     public func gatheringSculpts(sources: [String]? = nil) -> MeshBuildSculpting {
-        guard parts.contains(where: { $0.shape == .sculpt }) else { return MeshBuildSculpting(build: self, sculpted: [], sculptOf: [:]) }
+        guard parts.contains(where: { $0.shape == .sculpt }) else { return MeshBuildSculpting(build: attachingFoliageTargets(sources: sources), sculpted: [], sculptOf: [:]) }
         var firstIndex: [String: Int] = [:]
         for (i, part) in parts.enumerated() where firstIndex[part.name] == nil { firstIndex[part.name] = i }
         // The parent of each part as the importer sees it: missing parents and loops hang from the root.
@@ -256,7 +256,7 @@ extension MeshBuild {
             let (position, rotation) = placement(i, sculpt: s)
             out.parts[s].sculptChildren.append(MeshBuildSculptChild(part: parts[i], position: position, rotation: rotation))
         }
-        return MeshBuildSculpting(build: out, sculpted: sculpted, sculptOf: sculptOf)
+        return MeshBuildSculpting(build: out.attachingFoliageTargets(sources: sources), sculpted: sculpted, sculptOf: sculptOf)
     }
 
     /// Problems only the whole build shows: animated sculpt children, blend / smooth on parts
@@ -635,6 +635,12 @@ struct MeshBuildSculptor {
             return nil
         case .plane:
             warnings.append("a plane has no inside, so it can't be part of a sculpt; it is left out (use a thin box)")
+            return nil
+        case .foliage:
+            warnings.append("foliage is leaf cards, not a solid, so it can't be part of a sculpt; it is left out (keep it outside the sculpt)")
+            return nil
+        case .sweep where part.isRibbon:
+            warnings.append("a ribbon is an open strip, not a solid, so it can't be part of a sculpt; it is left out (use a thin loft or box)")
             return nil
         case _ where part.needsMeshField:
             // Sweeps, lofts and deformed shapes: the field of their mesh (deformed, reflected), a

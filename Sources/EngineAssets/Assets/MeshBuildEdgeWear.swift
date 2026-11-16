@@ -109,11 +109,15 @@ enum MeshBuildEdgeWear {
         }
         var grid: [SIMD3<Int32>: [Int]] = [:]
         for (i, c) in centroids.enumerated() { grid[cellOf(c), default: []].append(i) }
-        var result: [Edge] = []
-        for bend in bends {
+        // Each bend's strength on its own (all cores): nil where it doesn't count.
+        var found = [Edge?](repeating: nil, count: bends.count)
+        found.withUnsafeMutableBufferPointer { out in
+            let slots = out
+            DispatchQueue.concurrentPerform(iterations: bends.count) { k in
+            let bend = bends[k]
             let axis = bend.b - bend.a
             let len = length(axis)
-            guard len > 0 else { continue }
+            guard len > 0 else { return }
             let dir = axis / len
             let n1 = faces[bend.faces.0], n2 = faces[bend.faces.1]
             let mean = normalize(n1 + n2)
@@ -142,9 +146,10 @@ enum MeshBuildEdgeWear {
             }
             let turn = acosf(min(max(dot(first, second), -1), 1))
             let strength = smoothstep(0.45, 1.0, turn)
-            if strength > 0.01 { result.append(Edge(a: bend.a, b: bend.b, strength: strength)) }
+            if strength > 0.01 { slots[k] = Edge(a: bend.a, b: bend.b, strength: strength) }
+            }
         }
-        return result
+        return found.compactMap { $0 }
     }
 
     @inline(__always) static func smoothstep(_ a: Float, _ b: Float, _ x: Float) -> Float {
@@ -164,8 +169,17 @@ enum MeshBuildEdgeWear {
     static func coordinates(_ geometry: MeshGeometry, edges: [Edge], width: Float) -> [Float] {
         let far = EdgeWear.minimum
         guard !edges.isEmpty, width > 0 else { return [Float](repeating: far, count: geometry.vertices.count) }
-        // Edges further than this from a vertex can't beat the floor.
-        let reach = width * (1 - far)
+        // A vertex needs its exact (linear) value only while one of its triangles can reach into the
+        // band, so look no further than the band plus the longest triangle edge (and never past the
+        // floor). Big flat triangles keep the full reach; dense meshes (sculpts) look only nearby
+        // instead of comparing every vertex with every edge.
+        var longest: Float = 0
+        let v = geometry.vertices, ix = geometry.indices
+        for t in stride(from: 0, to: ix.count - 2, by: 3) {
+            let a = v[Int(ix[t])].position, b = v[Int(ix[t + 1])].position, c = v[Int(ix[t + 2])].position
+            longest = max(longest, dot(b - a, b - a), dot(c - b, c - b), dot(a - c, a - c))
+        }
+        let reach = min(width * (1 - far), width * EdgeWear.maximum + longest.squareRoot())
         let cell = reach
         func cellOf(_ p: Vec3) -> SIMD3<Int32> {
             SIMD3(Int32(clamping: Int((p.x / cell).rounded(.down))), Int32(clamping: Int((p.y / cell).rounded(.down))),
@@ -182,22 +196,37 @@ enum MeshBuildEdgeWear {
             for z in lo.z...hi.z { for y in lo.y...hi.y { for x in lo.x...hi.x { grid[SIMD3(x, y, z), default: []].append(i) } } }
         }
         let always = grid[SIMD3(Int32.min, 0, 0)] ?? []
-        return geometry.vertices.map { v in
-            var best = far, bestDir = Vec3.zero
-            var candidates: [(Float, Vec3)] = []
-            for i in (grid[cellOf(v.position)] ?? []) + always {
-                let edge = edges[i]
-                let e = edge.strength - distance(v.position, edge.a, edge.b) / width
-                guard e > far else { continue }
-                let dir = normalize(edge.b - edge.a)
-                candidates.append((e, dir))
-                if e > best { best = e; bestDir = dir }
+        let directions = edges.map { normalize($0.b - $0.a) }
+        let vertices = geometry.vertices
+        var result = [Float](repeating: far, count: vertices.count)
+        result.withUnsafeMutableBufferPointer { out in
+            let slots = out
+            DispatchQueue.concurrentPerform(iterations: (vertices.count + 255) / 256) { chunk in
+                var candidates: [(Float, Int)] = []
+                for vi in chunk * 256..<min(vertices.count, chunk * 256 + 256) {
+                    let p = vertices[vi].position
+                    var best = far, bestEdge = -1
+                    candidates.removeAll(keepingCapacity: true)
+                    func consider(_ i: Int) {
+                        let edge = edges[i]
+                        let e = edge.strength - distance(p, edge.a, edge.b) / width
+                        guard e > far else { return }
+                        candidates.append((e, i))
+                        if e > best { best = e; bestEdge = i }
+                    }
+                    for i in grid[cellOf(p)] ?? [] { consider(i) }
+                    for i in always { consider(i) }
+                    // Corners: the best edge running another way adds a third.
+                    var second = far
+                    if bestEdge >= 0 {
+                        let bestDir = directions[bestEdge]
+                        for (e, i) in candidates where abs(dot(directions[i], bestDir)) < 0.7 { second = max(second, e) }
+                    }
+                    slots[vi] = min(max(best + max(second, 0) / 3, far), EdgeWear.maximum)
+                }
             }
-            // Corners: the best edge running another way adds a third.
-            var second = far
-            for (e, dir) in candidates where abs(dot(dir, bestDir)) < 0.7 { second = max(second, e) }
-            return min(max(best + max(second, 0) / 3, far), EdgeWear.maximum)
         }
+        return result
     }
 
     /// Writes edge coordinates `e` into the tangents (generating tangents first): xyz becomes the

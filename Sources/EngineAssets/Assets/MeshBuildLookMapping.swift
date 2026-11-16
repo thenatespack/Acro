@@ -30,8 +30,9 @@ extension MeshBuildPart {
     /// Problems with the look fields (empty when fine).
     public var lookWarnings: [String] {
         var warnings: [String] = []
-        if let look, !look.trimmingCharacters(in: .whitespaces).isEmpty, MeshBuildLook.named(look) == nil {
-            warnings.append("unknown look '\(look)'; looks: \(MeshBuildLook.nameList)")
+        if let look, !look.trimmingCharacters(in: .whitespaces).isEmpty, MeshBuildLook.named(look) == nil,
+           MeshBuildLeafLook.named(look) == nil, shape != .foliage {
+            warnings.append("unknown look '\(look)'; looks: \(MeshBuildLook.nameList); leaf looks: \(MeshBuildLeafLook.nameList)")
         }
         if let lookScale, !(lookScale.isFinite && lookScale > 0) { warnings.append("lookScale must be a number of meters > 0") }
         if let wear, !(wear.isFinite && wear >= 0 && wear <= 1) { warnings.append("wear must be between 0 and 1") }
