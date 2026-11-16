@@ -21,6 +21,7 @@ import EngineUI
 //                                  /Resources/<Name>.pack              the cooked assets
 //                                  /Resources/Acro_EngineCore.bundle   shaders, fonts
 // Linux   <out>/<Name>/<Name>, <Name>.pack, Acro_EngineCore.bundle/ (or .resources/), lib/libglfw.so.3, run.sh
+// Windows <out>/<Name>/<Name>.exe, <Name>.pack, Acro_EngineCore.resources/, Engine.dll, the Swift runtime and zlib DLLs
 // ```
 //
 // **Static linking.** In the editor a game is a module loaded at run time (GameModule.swift):
@@ -507,6 +508,16 @@ public struct GameExporter: Sendable {
         if options.cook.target.platform == .macos {
             // Ad-hoc signature over the whole bundle (the linker signed only the executable).
             _ = GameModuleBuilder.run(["codesign", "--force", "--sign", "-", app.path], in: options.output)
+        } else if options.cook.target.platform == .windows {
+            // No run.sh, strip or ldd: the .exe finds its pack next to it, and the DLLs it loads go beside it.
+            let sources = Self.windowsLibraries(builtIn: built.executable.deletingLastPathComponent(),
+                                                environment: ProcessInfo.processInfo.environment)
+            for source in sources {
+                let destination = app.appendingPathComponent(source.lastPathComponent)
+                guard !fm.fileExists(atPath: destination.path) else { continue }
+                try fm.copyItem(at: source, to: destination)
+            }
+            progress?("Bundled \(sources.count) DLLs (Engine, the Swift runtime, zlib)")
         } else {
             if let libraries = built.libraries {
                 // Built in Docker: stripped and its libraries collected in the container.
@@ -579,6 +590,39 @@ public struct GameExporter: Sendable {
         let bundles = ((try? FileManager.default.contentsOfDirectory(atPath: bin.path)) ?? [])
             .filter { $0.hasSuffix(".bundle") || $0.hasSuffix(".resources") }.sorted().map { bin.appendingPathComponent($0) }
         return BuiltPlayer(executable: executable, bundles: bundles, libraries: nil, seconds: build.seconds)
+    }
+
+    /// The DLLs a Windows export carries next to its .exe, as `Scripts/package-release.ps1` does
+    /// for the editor: every DLL in the build's products folder (`Engine.dll`: on Windows Engine
+    /// is a .dynamic product, see Package.swift), every DLL in the Swift runtime's folder (the one
+    /// on `Path` holding `swiftCore.dll`: the standard library, Foundation, ICU…), and zlib's
+    /// (`$ZLIB_DIR\bin\z*.dll`, else `zlib1.dll` or `z.dll` on `Path`). The Vulkan loader comes
+    /// with the GPU driver and GLFW is linked statically; the MSVC runtime is the player's
+    /// Visual C++ Redistributable. One file per name, first found wins.
+    static func windowsLibraries(builtIn bin: URL, environment: [String: String]) -> [URL] {
+        let fm = FileManager.default
+        func dlls(in folder: URL, matching keep: (String) -> Bool = { _ in true }) -> [URL] {
+            ((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).sorted()
+                .filter { $0.lowercased().hasSuffix(".dll") && keep($0.lowercased()) }
+                .map { folder.appendingPathComponent($0) }
+        }
+        // Windows environment names are case-insensitive ("Path" or "PATH").
+        let pathValue = environment.first { $0.key.uppercased() == "PATH" }?.value ?? ""
+        let pathFolders = pathValue.split(separator: ";").map { URL(fileURLWithPath: String($0), isDirectory: true) }
+        func onPath(_ name: String) -> URL? {
+            pathFolders.lazy.map { $0.appendingPathComponent(name) }.first { fm.fileExists(atPath: $0.path) }
+        }
+
+        var found = dlls(in: bin)
+        if let swiftCore = onPath("swiftCore.dll") { found += dlls(in: swiftCore.deletingLastPathComponent()) }
+        let zlibBin = environment.first { $0.key.uppercased() == "ZLIB_DIR" }.map {
+            URL(fileURLWithPath: $0.value, isDirectory: true).appendingPathComponent("bin", isDirectory: true)
+        }
+        let zlib = zlibBin.map { dlls(in: $0) { $0.hasPrefix("z") } } ?? []
+        found += zlib.isEmpty ? ["zlib1.dll", "z.dll"].compactMap(onPath) : zlib
+
+        var names = Set<String>()
+        return found.filter { names.insert($0.lastPathComponent.lowercased()).inserted }
     }
 
     /// Shared libraries a Linux export carries in `lib/` (found through the executable's rpath,

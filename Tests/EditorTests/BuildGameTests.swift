@@ -240,6 +240,34 @@ private let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathCompon
         #expect(bundled.map(\.name) == ["libglfw.so.3"])
     }
 
+    /// A Windows export carries the build's DLLs, the Swift runtime's folder (found through
+    /// swiftCore.dll on Path) and zlib's, each name once.
+    @Test func windowsExportCollectsTheDLLsTheGameLoads() throws {
+        let root = temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        func make(_ folder: String, _ files: [String]) throws -> URL {
+            let url = root.appendingPathComponent(folder, isDirectory: true)
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            for file in files { try Data().write(to: url.appendingPathComponent(file)) }
+            return url
+        }
+        let bin = try make("bin", ["Engine.dll", "SampleGamePlayer.exe", "Engine.lib"])
+        let swift = try make("swift", ["swiftCore.dll", "Foundation.dll", "Engine.dll", "notes.txt"])
+        let zlib = try make("zlib/bin", ["zlib1.dll", "other.dll"])
+        let empty = try make("empty", [])
+        let path = [empty.path, swift.path].joined(separator: ";")
+
+        let names = { (env: [String: String]) in GameExporter.windowsLibraries(builtIn: bin, environment: env).map(\.lastPathComponent) }
+        let withZlibDir = GameExporter.windowsLibraries(builtIn: bin, environment: ["Path": path, "ZLIB_DIR": zlib.deletingLastPathComponent().path])
+        // ZLIB_DIR\bin's z*.dll only; the build's Engine.dll wins over a same-named one elsewhere.
+        #expect(withZlibDir.map(\.lastPathComponent) == ["Engine.dll", "Foundation.dll", "swiftCore.dll", "zlib1.dll"])
+        #expect(withZlibDir.first?.deletingLastPathComponent().lastPathComponent == "bin")
+        // Without ZLIB_DIR, zlib1.dll is looked up on Path.
+        #expect(names(["PATH": path + ";" + zlib.path]) == ["Engine.dll", "Foundation.dll", "swiftCore.dll", "zlib1.dll"])
+        // Nothing on Path: only the build's own DLLs.
+        #expect(names([:]) == ["Engine.dll"])
+    }
+
     @Test func commandLineCooks() throws {
         let session = makeSession()
         let root = try projectWithScene(session)
