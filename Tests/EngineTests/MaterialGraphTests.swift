@@ -84,6 +84,15 @@ private func spirvValidation(_ spirv: [UInt8]) -> String? {
             if let validation = spirvValidation(program.spirvFragment) {
                 #expect(validation.isEmpty, "\(name): \(validation)")
             }
+            // The depth-only variant (masked graphs in shadows and the depth prepass).
+            let depthMetal = try #require(program.metalDepthFragment, "\(name)")
+            let depthSPIRV = try #require(program.spirvDepthFragment, "\(name)")
+            #expect(depthMetal.contains(program.code) && depthMetal.contains("discard_fragment"), "\(name)")
+            #expect(!depthMetal.contains("float4 a = baseColorMap.sample"), "\(name): placeholder body left in")
+            #expect(depthSPIRV.count % 4 == 0 && depthSPIRV.count > 500)
+            if let validation = spirvValidation(depthSPIRV) {
+                #expect(validation.isEmpty, "\(name) depth: \(validation)")
+            }
         }
         #expect(MaterialGraph.preset("nope") == nil)
     }
@@ -181,6 +190,11 @@ private func spirvValidation(_ spirv: [UInt8]) -> String? {
         // The runtime material carries the program and the graph's texture in slot 1.
         let engineMaterial = try #require(database.material(AssetReference(id))).material(textures: { _ in nil })
         #expect(engineMaterial.graph != nil && engineMaterial.shading == .pbr && !engineMaterial.alphaTested)
+        // Masked: its shadow and depth prepass run the graph's depth variant.
+        #expect(engineMaterial.masksDepth)
+        var codeBuilt = engineMaterial
+        codeBuilt.graph?.metalDepthFragment = nil  // a program built in code without the depth variant
+        #expect(!codeBuilt.masksDepth)
     }
 
     // MARK: GPU
@@ -259,6 +273,88 @@ private func spirvValidation(_ spirv: [UInt8]) -> String? {
             for name in MaterialGraph.presetNames {
                 #expect(colors[name] != colors["background"], "\(name) drew nothing, \(label)")
             }
+        }
+        if let metal = results["metal"], let vulkan = results["vulkan"] {
+            for (name, color) in metal {
+                let other = try #require(vulkan[name])
+                #expect(zip(color, other).allSatisfy { abs(Int($0) - Int($1)) <= 3 }, "\(name): metal \(color) vulkan \(other)")
+            }
+        }
+    }
+
+    /// A masked graph's cut-outs are cut out of its shadow and of the depth prepass, on Metal and
+    /// on Vulkan. A 2x2 plane at y = 1 keeps only its +x half (uv.x >= 0.5) over a ground plane;
+    /// the sun travels along (2, -1, 0), so the shadow of caster x lands on the ground at x + 2,
+    /// clear of the caster seen from above. A decal on the ground (it paints what the depth
+    /// prepass holds) shows through the hole only when the prepass is cut out too.
+    @Test func maskedGraphCutsOutShadowsAndDepth() throws {
+        let halfCut = try graph(#"""
+        {"nodes": [{"id": "keep", "type": "math", "op": "step", "a": 0.5, "b": "uv.x"}],
+         "output": {"baseColor": [0, 0, 0], "emissive": [1, 0, 0], "opacity": "keep", "occlusion": 0}}
+        """#)
+        let eye = Vec3(1, 8, 0)
+        let view = SceneView(view: Mat4.lookAt(eye: eye, target: Vec3(1, 0, 0), up: Vec3(0, 0, -1)),
+                             projection: Mat4.perspective(fovY: 0.9, aspect: 1, near: 1, far: 20))
+        let size = 64
+        func pixel(_ image: Image, _ p: Vec3) -> [UInt8] {
+            let clip = view.viewProjection * Vec4(p, 1)
+            let x = Int((clip.x / clip.w * 0.5 + 0.5) * Float(size)), y = Int((0.5 - clip.y / clip.w * 0.5) * Float(size))
+            let i = (min(max(y, 0), size - 1) * image.width + min(max(x, 0), size - 1)) * 4
+            return Array(image.pixels[i..<i + 4])
+        }
+        // Ground points: lit, under the cut half's shadow, under the kept half's shadow, seen
+        // through the hole, and the caster's kept half.
+        let points: [String: Vec3] = ["lit": Vec3(-2, 0, 0), "cutShadow": Vec3(1.5, 0, 0), "keptShadow": Vec3(2.5, 0, 0),
+                                      "hole": Vec3(-0.5, 0, 0), "caster": Vec3(0.5, 1, 0)]
+        var results: [String: [String: [UInt8]]] = [:]
+        try TestDevices.forEachBackend { device, frames in
+            let renderer = try SceneRenderer(device: device, quality: .low)
+            let target = try RenderTarget(device: device, width: size, height: size, multisampled: false)
+            try renderer.registerMaterial(Material(baseColor: Vec4(0.3, 0.3, 0.3, 1), roughness: 1), key: "MaterialGraphTests.ground")
+            @MainActor func render(_ alphaMode: AlphaMode, decal: Bool) throws -> [String: [UInt8]] {
+                var asset = MaterialAsset(alphaMode: alphaMode)
+                asset.graph = halfCut
+                try renderer.registerMaterial(asset.material(textures: { _ in nil }), key: "MaterialGraphTests.caster")
+                let world = World()
+                _ = world.spawn(Transform(), DirectionalLight(intensity: 1, direction: normalize(Vec3(2, -1, 0))))
+                _ = world.spawn(Transform(scale: Vec3(12, 1, 12)), MeshRenderer(mesh: .plane, material: MaterialHandle("MaterialGraphTests.ground")))
+                _ = world.spawn(Transform(position: Vec3(0, 1, 0), scale: Vec3(2, 1, 2)),
+                                MeshRenderer(mesh: .plane, material: MaterialHandle("MaterialGraphTests.caster")))
+                if decal {
+                    _ = world.spawn(Transform(rotation: Quat(angle: -.pi / 2, axis: Vec3(1, 0, 0)), scale: Vec3(12, 12, 0.5)),
+                                    Decal(tint: Vec3(0, 0, 1), emissive: 2))
+                }
+                world.propagateTransforms()
+                var pixels: Image?
+                try frames.run { frame in
+                    renderer.beginViews(world: world, frame: frame, shadowFocus: view)
+                    renderer.renderView(view, into: target, frame: frame)
+                    device.readBack(target.gpu) { pixels = $0 }
+                }
+                let image = try #require(pixels)
+                return points.mapValues { pixel(image, $0) }
+            }
+            var colors: [String: [UInt8]] = [:]
+            for (name, color) in try render(.mask, decal: false) { colors["mask." + name] = color }
+            for (name, color) in try render(.opaque, decal: false) { colors["opaque." + name] = color }
+            for (name, color) in try render(.mask, decal: true) { colors["decal." + name] = color }
+            results["\(device.backend)"] = colors
+        }
+        func brightness(_ c: [UInt8]?) -> Int { c.map { Int($0[0]) + Int($0[1]) + Int($0[2]) } ?? -1 }
+        for (backend, colors) in results {
+            let label = "\(backend): \(colors.sorted { $0.key < $1.key })"
+            let lit = brightness(colors["mask.lit"])
+            #expect(lit > 150, "\(label)")
+            // The kept half (red) is drawn; the opaque graph shades both shadow points.
+            #expect(colors["mask.caster"]![0] > 200 && colors["mask.caster"]![2] < 80, "\(label)")
+            #expect(brightness(colors["opaque.cutShadow"]) < lit * 3 / 4 && brightness(colors["opaque.keptShadow"]) < lit * 3 / 4, "\(label)")
+            // Masked: only the kept half casts a shadow.
+            #expect(brightness(colors["mask.keptShadow"]) < lit * 3 / 4, "\(label)")
+            #expect(abs(brightness(colors["mask.cutShadow"]) - lit) < 12, "\(label)")
+            // The ground seen through the hole is lit ground, and the decal paints it.
+            #expect(abs(brightness(colors["mask.hole"]) - lit) < 12, "\(label)")
+            let hole = colors["decal.hole"]!, outside = colors["decal.lit"]!
+            #expect(hole[2] > 150 && hole[0] < 60 && outside[2] > 150 && outside[0] < 60, "\(label)")
         }
         if let metal = results["metal"], let vulkan = results["vulkan"] {
             for (name, color) in metal {

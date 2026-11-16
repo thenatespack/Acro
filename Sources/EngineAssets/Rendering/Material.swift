@@ -127,6 +127,16 @@ public struct Material {
     /// Whether it draws with the alpha-tested shader variants (`alphaMode == .mask`).
     package var alphaTested: Bool { alphaMode == .mask && graph == nil }
 
+    /// Whether its shadow and depth prepass cut out what the alpha test discards (`alphaMode ==
+    /// .mask`): with the alpha-tested shadow shader, or a masked graph's own depth variant
+    /// (`MaterialGraphProgram.metalDepthFragment` / `spirvDepthFragment`; a graph without them
+    /// casts its whole shape).
+    package var masksDepth: Bool {
+        guard alphaMode == .mask else { return false }
+        guard let graph else { return true }
+        return graph.metalDepthFragment != nil && graph.spirvDepthFragment != nil
+    }
+
     /// The UV transform as the rows of a 2x3 matrix: `uv' = (dot(row0.xy, uv) + row0.z, dot(row1.xy, uv) + row1.z)`.
     package var uvTransformRows: (Vec4, Vec4) {
         let c = cosf(uvRotation), s = sinf(uvRotation)

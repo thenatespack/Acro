@@ -258,6 +258,11 @@ public final class SceneRenderer {
     let volumetric = VolumetricFogState()
     /// The camera depth prepass's pipelines (`DepthVariant.prepass`), created on first use.
     private var prepassPipelines: [PrepassKey: RenderPipeline] = [:]
+    /// Masked material graphs' depth-only pipelines (mesh_graph_depth), created on first use.
+    private var graphDepthPipelines: [GraphDepthKey: RenderPipeline] = [:]
+    /// Where material graphs drawn into the shadow atlas see the camera (`gView`): the frame's
+    /// camera, or the `beginViews` shadow focus.
+    private var shadowEye: Vec3 = .zero
 
     /// The light as `prepare` / `beginViews` set it up, with the frame's shadows.
     private struct LightSetup {
@@ -444,7 +449,7 @@ public final class SceneRenderer {
     public func registerMaterial(_ material: Material, key: String) throws -> MaterialHandle {
         let entry = (material, try device.makeSampler(material.sampler))
         let graphBuffer = try material.graph.map { try device.makeBuffer($0.values, usage: .storage) }
-        let id = prep.materials.register(MaterialTraits(blends: material.blends, alphaTested: material.alphaTested), key: key)
+        let id = prep.materials.register(MaterialTraits(blends: material.blends, alphaTested: material.masksDepth), key: key)
         if id == materials.count { materials.append(entry) } else { materials[id] = entry }
         graphBuffers[id] = graphBuffer
         if let program = material.graph { graphPrograms[program.key] = program }
@@ -551,6 +556,7 @@ public final class SceneRenderer {
         let jitteredProjection = engine.jittered(camera.projection(aspect: engine.aspectRatio))
         let jittered = jitteredProjection * view
         let eye = Vec3(cameraWorld.c3.x, cameraWorld.c3.y, cameraWorld.c3.z)
+        shadowEye = eye
 
         let environment = RenderPrep.findEnvironment(in: world)
         let viewFrustum = Frustum(viewProjection: jittered)
@@ -717,7 +723,7 @@ public final class SceneRenderer {
             for (tile, range) in zip(shadows.tiles, shadowCasters.tileBatches) where !range.isEmpty {
                 pass.setScissorRect(ScissorRect(x: tile.rect.x, y: tile.rect.y, width: tile.rect.width, height: tile.rect.height))
                 pass.setUniforms(ShadowPassUniforms(viewProj: tile.clip, lightViewProj: tile.clip))
-                drawShadows(pass, shadowCasters.batches[range], instances: instances)
+                drawShadows(pass, shadowCasters.batches[range], instances: instances, eye: shadowEye)
             }
         }
     }
@@ -761,6 +767,7 @@ public final class SceneRenderer {
             focus = ShadowSetup.Focus(view: view, projection: nil, frustum: nil)
         }
         let light = lightSetup(world: world, focus: focus)
+        shadowEye = shadowFocus?.eye ?? Vec3(focus.view.inverse.c3.x, focus.view.inverse.c3.y, focus.view.inverse.c3.z)
         let environment = RenderPrep.findEnvironment(in: world)
         views = ViewsFrame(light: light, environment: environment)
         prepareEnvironment(environment, light: light)
@@ -838,39 +845,89 @@ public final class SceneRenderer {
         var skinned: Bool
     }
 
-    /// Shadow batches: depth only, except alpha-tested ones, which sample their material's alpha.
-    /// Skinned casters use the skinning variants with their joint matrices. The pass starts with
-    /// `variant`'s plain pipeline set.
-    private func drawShadows(_ pass: RenderPass, _ batches: ArraySlice<RenderBatch>, instances: TransientBuffer,
-                             variant: DepthVariant = .shadow) {
-        guard let plain = depthPipeline(variant, alphaTested: false, skinned: false) else { return }
-        var masked = false
+    /// Masked material graphs' depth pipelines: mesh_shadow_graph(_skinned).vert and the graph's
+    /// `MaterialGraphProgram.metalDepthFragment` / `spirvDepthFragment`.
+    private struct GraphDepthKey: Hashable {
+        var variant: DepthVariant
+        var skinned: Bool
+        var graph: String
+    }
+
+    /// The depth pipeline a shadow / prepass batch draws with.
+    private struct DepthChoice: Equatable {
+        var alphaTested = false
         var skinned = false
+        var graph: String?
+    }
+
+    /// The push constants of mesh_graph_depth.frag (its `MaterialGraphPush`: mesh_surface.glsl's
+    /// plus the camera position).
+    private struct GraphDepthPush: BitwiseCopyable {
+        var params: Vec4
+        var eye: Vec4
+    }
+
+    /// Shadow batches: depth only, except alpha-tested ones, which sample their material's alpha,
+    /// and masked material graphs, which run their graph (seeing the camera at `eye`) and cut out
+    /// where its opacity is below the cutoff. Skinned casters use the skinning variants with
+    /// their joint matrices. The pass starts, and is left, with `variant`'s plain pipeline set.
+    private func drawShadows(_ pass: RenderPass, _ batches: ArraySlice<RenderBatch>, instances: TransientBuffer,
+                             variant: DepthVariant = .shadow, eye: Vec3) {
+        guard let plain = depthPipeline(variant, alphaTested: false, skinned: false) else { return }
+        var current = DepthChoice()
         for batch in batches {
-            if batch.skin >= 0 {
-                guard let pipeline = depthPipeline(variant, alphaTested: batch.material >= 0, skinned: true) else { continue }
+            let material = batch.material >= 0 ? materials[batch.material].material : nil
+            let choice = DepthChoice(alphaTested: material != nil, skinned: batch.skin >= 0,
+                                     graph: material?.masksDepth == true ? material?.graph?.key : nil)
+            if choice != current {
+                guard let pipeline = depthPipeline(variant, choice) else { continue }
                 pass.setPipeline(pipeline)
-                if batch.material >= 0 { bindMaterial(batch.material, in: pass, skin: batch.skin) } else { bindSkin(batch.skin, material: nil, in: pass) }
-                skinned = true
-                draw(pass, batch, instances: instances)
-                continue
+                current = choice
             }
-            if skinned {
-                // Back to the pipeline the batches below expect.
-                pass.setPipeline(masked ? depthPipeline(variant, alphaTested: true, skinned: false) ?? plain : plain)
-                skinned = false
-            }
-            if batch.material >= 0, let pipeline = depthPipeline(variant, alphaTested: true, skinned: false) {
-                if !masked { pass.setPipeline(pipeline) }
-                masked = true
-                bindMaterial(batch.material, in: pass)
-            } else if masked {
-                pass.setPipeline(plain)
-                masked = false
+            if let material {
+                bindMaterial(batch.material, in: pass, skin: batch.skin)
+                if choice.graph != nil {
+                    pass.setPushConstants(GraphDepthPush(params: Vec4(graphTime, 1, material.alphaCutoff, 0), eye: Vec4(eye, 0)))
+                }
+            } else if batch.skin >= 0 {
+                bindSkin(batch.skin, material: nil, in: pass)
             }
             draw(pass, batch, instances: instances)
         }
-        if skinned { pass.setPipeline(masked ? depthPipeline(variant, alphaTested: true, skinned: false) ?? plain : plain) }
+        if current != DepthChoice() { pass.setPipeline(plain) }
+    }
+
+    private func depthPipeline(_ variant: DepthVariant, _ choice: DepthChoice) -> RenderPipeline? {
+        guard let graph = choice.graph else { return depthPipeline(variant, alphaTested: choice.alphaTested, skinned: choice.skinned) }
+        return graphDepthPipeline(GraphDepthKey(variant: variant, skinned: choice.skinned, graph: graph))
+    }
+
+    private func graphDepthPipeline(_ key: GraphDepthKey) -> RenderPipeline? {
+        if let pipeline = graphDepthPipelines[key] { return pipeline }
+        guard let program = graphPrograms[key.graph] else { return nil }
+        do {
+            var shader = try ShaderSource.load(vertex: key.skinned ? "mesh_shadow_graph_skinned" : "mesh_shadow_graph",
+                                               fragment: "mesh_graph_depth", bundle: .engineResources)
+            guard let metal = program.metalDepthFragment, let spirv = program.spirvDepthFragment else { return nil }
+            shader.metalFragmentSource = metal
+            shader.metalFragmentColor0Source = nil
+            shader.spirvFragment = spirv
+            var descriptor = PipelineDescriptor(shader: shader, vertexLayout: key.skinned ? SkinnedMeshVertex.layout : MeshVertex.layout,
+                                                instanceLayout: MeshInstance.layout)
+            descriptor.target = .depthOnly
+            descriptor.depthOnlyFragment = true
+            descriptor.cullMode = .none
+            switch key.variant {
+            case .shadow: descriptor.depthBias = DepthBias(constant: 1.5, slopeScale: 2.5)
+            case .prepass(let reversedZ): descriptor.depthCompare = reversedZ ? .greater : .less
+            }
+            let pipeline = try device.makePipeline(descriptor)
+            graphDepthPipelines[key] = pipeline
+            return pipeline
+        } catch {
+            print("SceneRenderer: material graph depth pipeline creation failed: \(error)")
+            return nil
+        }
     }
 
     private func depthPipeline(_ variant: DepthVariant, alphaTested: Bool, skinned: Bool) -> RenderPipeline? {
@@ -912,19 +969,19 @@ public final class SceneRenderer {
     /// against (`softness`) and collide with (`collidesWithDepth`). Transparent batches don't
     /// occlude and aren't drawn.
     func renderDepthPrepass(into target: GPUTexture, list: RenderList, instances: TransientBuffer?, viewProjection: Mat4,
-                            reversedZ: Bool, frame: Frame) {
+                            eye: Vec3, reversedZ: Bool, frame: Frame) {
         let variant = DepthVariant.prepass(reversedZ: reversedZ)
         // Depth-only batches have no material, alpha-tested ones keep theirs (as for shadows).
         let batches = list.opaque.map { batch -> RenderBatch in
             var batch = batch
-            if !materials[batch.material].material.alphaTested { batch.material = -1 }
+            if !materials[batch.material].material.masksDepth { batch.material = -1 }
             return batch
         }
         frame.depthPass(into: target, clearDepth: reversedZ ? 0 : 1) { pass in
             guard let instances, !batches.isEmpty, let plain = depthPipeline(variant, alphaTested: false, skinned: false) else { return }
             pass.setPipeline(plain)
             pass.setUniforms(ShadowPassUniforms(viewProj: viewProjection, lightViewProj: viewProjection))
-            drawShadows(pass, batches[...], instances: instances, variant: variant)
+            drawShadows(pass, batches[...], instances: instances, variant: variant, eye: eye)
         }
     }
 

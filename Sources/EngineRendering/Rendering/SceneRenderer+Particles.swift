@@ -41,7 +41,7 @@ extension SceneRenderer {
         let forParticles = particles?.needsSceneDepth == true
         guard forParticles || needsDecalDepth, let view = particleView,
               let texture = depthTexture(&particleDepthTexture, size: view.size) else { return }
-        renderDepthPrepass(into: texture, list: list, instances: uploaded, viewProjection: view.viewProjection,
+        renderDepthPrepass(into: texture, list: list, instances: uploaded, viewProjection: view.viewProjection, eye: view.eye,
                            reversedZ: view.reversedZ, frame: frame)
         let depth = ParticleSceneDepth(texture: texture, viewProjection: view.viewProjection, projection: view.projection,
                                        cameraPosition: view.eye)
@@ -57,7 +57,7 @@ extension SceneRenderer {
         if texture == nil, viewParticleDepthTextures.count >= 4 { viewParticleDepthTextures.removeAll() }
         guard let texture = depthTexture(&texture, size: size) else { return nil }
         viewParticleDepthTextures[[size.width, size.height]] = texture
-        renderDepthPrepass(into: texture, list: list, instances: instances, viewProjection: view.viewProjection,
+        renderDepthPrepass(into: texture, list: list, instances: instances, viewProjection: view.viewProjection, eye: view.eye,
                            reversedZ: view.reversedZ, frame: frame)
         return ParticleSceneDepth(texture: texture, viewProjection: view.viewProjection, projection: view.projection,
                                   cameraPosition: view.eye)
