@@ -56,6 +56,8 @@ public enum UIBuildWidgetType: String, Codable, CaseIterable, Sendable {
 
     /// Whether the player changes its value (slider, toggle, text field): it writes its bound key and sends its event.
     public var isInput: Bool { self == .slider || self == .toggle || self == .textField }
+    /// Whether keyboard / gamepad focus can land on it (buttons and inputs).
+    public var isFocusable: Bool { self == .button || isInput }
     /// Whether it sends an event (a button or an input).
     public var sendsEvents: Bool { self == .button || isInput }
 
@@ -309,6 +311,13 @@ public struct UIBuildWidget: Codable, Equatable, Sendable {
     /// Seconds a bar's fill, or the numbers a label or button shows, take to move to a new value (0: at once).
     public var tween: Float
 
+    // Navigation (buttons and inputs): the widget ids focus moves to with Up / Down / Left / Right,
+    // overriding the layout's `navigation` order and the nearest-widget search ("": no override).
+    public var navUp: String
+    public var navDown: String
+    public var navLeft: String
+    public var navRight: String
+
     // Bindings.
     /// The value key this widget shows: a bar's fill, a label's / button's text (unless the text has `{…}` placeholders), an image's path.
     public var bind: String
@@ -324,7 +333,12 @@ public struct UIBuildWidget: Codable, Equatable, Sendable {
                 kind: UIBuildBarKind = .progress, segments: Int = 0, trail: Bool = false, primary: Bool = false,
                 event: String = "", bind: String = "", visibleWhen: String = "", min: Float = 0, step: Float = 0, on: Bool = false,
                 toggleStyle: UIBuildToggleStyle = .checkbox, placeholder: String = "", maxLength: Int = 0,
-                show: UIBuildTransition? = nil, hide: UIBuildTransition? = nil, tween: Float = 0) {
+                show: UIBuildTransition? = nil, hide: UIBuildTransition? = nil, tween: Float = 0, navUp: String = "",
+                navDown: String = "", navLeft: String = "", navRight: String = "") {
+        self.navUp = navUp
+        self.navDown = navDown
+        self.navLeft = navLeft
+        self.navRight = navRight
         self.show = show
         self.hide = hide
         self.tween = tween
@@ -373,7 +387,8 @@ public struct UIBuildWidget: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey, CaseIterable {
         case id, type, parent, anchor, offset, width, height, grow, padding, spacing, align, justify, background, borderColor,
              cornerRadius, opacity, hidden, text, fontSize, color, textAlign, wrap, shadow, image, fit, value, max, kind, segments,
-             trail, primary, event, bind, visibleWhen, min, step, on, toggleStyle, placeholder, maxLength, show, hide, tween
+             trail, primary, event, bind, visibleWhen, min, step, on, toggleStyle, placeholder, maxLength, show, hide, tween,
+             navUp, navDown, navLeft, navRight
     }
 
     /// Every key is optional.
@@ -399,6 +414,7 @@ public struct UIBuildWidget: Codable, Equatable, Sendable {
         w.show = try c.decodeIfPresent(UIBuildTransition.self, forKey: .show)
         w.hide = try c.decodeIfPresent(UIBuildTransition.self, forKey: .hide)
         try read(.tween, &w.tween)
+        try read(.navUp, &w.navUp); try read(.navDown, &w.navDown); try read(.navLeft, &w.navLeft); try read(.navRight, &w.navRight)
         self = w
     }
 
@@ -426,6 +442,8 @@ public struct UIBuildWidget: Codable, Equatable, Sendable {
         try write(.toggleStyle, toggleStyle, d.toggleStyle); try write(.placeholder, placeholder, d.placeholder)
         try write(.maxLength, maxLength, d.maxLength)
         try c.encodeIfPresent(show, forKey: .show); try c.encodeIfPresent(hide, forKey: .hide); try write(.tween, tween, d.tween)
+        try write(.navUp, navUp, d.navUp); try write(.navDown, navDown, d.navDown); try write(.navLeft, navLeft, d.navLeft)
+        try write(.navRight, navRight, d.navRight)
     }
 
     /// The event a press of this button (or a change of this input) sends.
@@ -478,13 +496,21 @@ public struct UIBuild: Codable, Equatable, Sendable {
     /// How the layout appears (`UIBuildView.show`) and goes away (`hide`); nil: at once.
     public var show: UIBuildTransition?
     public var hide: UIBuildTransition?
+    /// Keyboard / gamepad focus order: widget ids that Down / Right step through and Up / Left
+    /// step back through, wrapping (hidden ones are skipped). Empty: the nearest widget that way.
+    public var navigation: [String]
+    /// The widget focused when the layout takes focus ("": the first in `navigation`, else in the file).
+    public var focus: String
     /// Sample values by key: shown in the preview, and in the game until code sets the key.
     public var values: [String: JSONValue]
     public var widgets: [UIBuildWidget]
 
     public init(theme: String = "game", colors: [String: String] = [:], fontSize: Float = 0, safeArea: Float? = nil,
                 size: Vec2 = Vec2(1280, 720), scaleMode: UIBuildScaleMode = .none, show: UIBuildTransition? = nil,
-                hide: UIBuildTransition? = nil, values: [String: JSONValue] = [:], widgets: [UIBuildWidget] = []) {
+                hide: UIBuildTransition? = nil, navigation: [String] = [], focus: String = "", values: [String: JSONValue] = [:],
+                widgets: [UIBuildWidget] = []) {
+        self.navigation = navigation
+        self.focus = focus
         self.show = show
         self.hide = hide
         self.theme = theme
@@ -497,7 +523,7 @@ public struct UIBuild: Codable, Equatable, Sendable {
         self.widgets = widgets
     }
 
-    private enum CodingKeys: String, CodingKey { case theme, colors, fontSize, safeArea, size, scaleMode, show, hide, values, widgets }
+    private enum CodingKeys: String, CodingKey { case theme, colors, fontSize, safeArea, size, scaleMode, show, hide, navigation, focus, values, widgets }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -510,6 +536,8 @@ public struct UIBuild: Codable, Equatable, Sendable {
                   scaleMode: try c.decodeIfPresent(UIBuildScaleMode.self, forKey: .scaleMode) ?? .none,
                   show: try c.decodeIfPresent(UIBuildTransition.self, forKey: .show),
                   hide: try c.decodeIfPresent(UIBuildTransition.self, forKey: .hide),
+                  navigation: try c.decodeIfPresent([String].self, forKey: .navigation) ?? [],
+                  focus: try c.decodeIfPresent(String.self, forKey: .focus) ?? "",
                   values: try c.decodeIfPresent([String: JSONValue].self, forKey: .values) ?? [:],
                   widgets: try c.decodeIfPresent([UIBuildWidget].self, forKey: .widgets) ?? [])
     }
@@ -524,6 +552,8 @@ public struct UIBuild: Codable, Equatable, Sendable {
         if scaleMode != .none { try c.encode(scaleMode, forKey: .scaleMode) }
         try c.encodeIfPresent(show, forKey: .show)
         try c.encodeIfPresent(hide, forKey: .hide)
+        if !navigation.isEmpty { try c.encode(navigation, forKey: .navigation) }
+        if !focus.isEmpty { try c.encode(focus, forKey: .focus) }
         if !values.isEmpty { try c.encode(values, forKey: .values) }
         try c.encode(widgets, forKey: .widgets)
     }
@@ -750,6 +780,19 @@ public struct UIBuild: Codable, Equatable, Sendable {
             if let width = w.width, width < 0 { issues.append(UIBuildIssue(widget: name, "width can't be negative")) }
             if let height = w.height, height < 0 { issues.append(UIBuildIssue(widget: name, "height can't be negative")) }
         }
+        // Navigation names focusable widgets.
+        func checkFocusable(_ id: String, _ what: String, widget: String? = nil) {
+            guard !id.isEmpty else { return }
+            guard let target = types[id] else { return issues.append(UIBuildIssue(widget: widget, "\(what): no widget '\(id)'")) }
+            if !target.isFocusable { issues.append(UIBuildIssue(widget: widget, "\(what): '\(id)' is a \(target.rawValue), which can't take focus")) }
+        }
+        for id in navigation { checkFocusable(id, "navigation") }
+        checkFocusable(focus, "focus")
+        for w in widgets {
+            for (field, id) in [("navUp", w.navUp), ("navDown", w.navDown), ("navLeft", w.navLeft), ("navRight", w.navRight)] {
+                checkFocusable(id, field, widget: w.id)
+            }
+        }
         // Cycles: a parent chain that comes back to the widget.
         for w in widgets where !w.parent.isEmpty {
             var current = w.parent
@@ -808,11 +851,17 @@ public struct UIBuildEdit: Codable, Equatable, Sendable {
     /// The layout's show / hide transitions (kind "none" removes one).
     public var show: UIBuildTransition?
     public var hide: UIBuildTransition?
+    /// The focus order (widget ids; [] clears it) and the widget focused first ("" clears it).
+    public var navigation: [String]?
+    public var focus: String?
 
     public init(removeWidgets: [String]? = nil, addWidgets: [UIBuildWidget]? = nil, updateWidgets: [String: JSONValue]? = nil,
                 moveWidgets: [UIBuildMove]? = nil, bindings: [String: String]? = nil, values: [String: JSONValue]? = nil,
                 theme: String? = nil, colors: [String: String]? = nil, fontSize: Float? = nil, safeArea: Float? = nil, size: Vec2? = nil,
-                scaleMode: UIBuildScaleMode? = nil, show: UIBuildTransition? = nil, hide: UIBuildTransition? = nil) {
+                scaleMode: UIBuildScaleMode? = nil, show: UIBuildTransition? = nil, hide: UIBuildTransition? = nil,
+                navigation: [String]? = nil, focus: String? = nil) {
+        self.navigation = navigation
+        self.focus = focus
         self.scaleMode = scaleMode
         self.show = show
         self.hide = hide
@@ -856,6 +905,15 @@ extension UIBuild {
             var doomed: Set<String> = []
             for id in ids { doomed.formUnion(build.subtree(of: id)) }
             build.widgets.removeAll { doomed.contains($0.id) }
+            // Navigation forgets them.
+            build.navigation.removeAll { doomed.contains($0) }
+            if doomed.contains(build.focus) { build.focus = "" }
+            for i in build.widgets.indices {
+                for path: WritableKeyPath<UIBuildWidget, String> in [\.navUp, \.navDown, \.navLeft, \.navRight]
+                    where doomed.contains(build.widgets[i][keyPath: path]) {
+                    build.widgets[i][keyPath: path] = ""
+                }
+            }
         }
         for var widget in edit.addWidgets ?? [] {
             widget.id = build.uniqueID(widget.id.isEmpty ? widget.type.rawValue : widget.id)
@@ -889,6 +947,8 @@ extension UIBuild {
         if let scaleMode = edit.scaleMode { build.scaleMode = scaleMode }
         if let show = edit.show { build.show = show.kind == .none ? nil : show }
         if let hide = edit.hide { build.hide = hide.kind == .none ? nil : hide }
+        if let navigation = edit.navigation { build.navigation = navigation.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
+        if let focus = edit.focus { build.focus = focus.trimmingCharacters(in: .whitespaces) }
         return build
     }
 
@@ -912,6 +972,16 @@ extension UIBuild {
         widgets[index] = updated
         if updated.id != id {
             for i in widgets.indices where widgets[i].parent == id { widgets[i].parent = updated.id }
+            // Navigation follows the rename.
+            func renamed(_ ref: String) -> String { ref == id ? updated.id : ref }
+            navigation = navigation.map(renamed)
+            focus = renamed(focus)
+            for i in widgets.indices {
+                widgets[i].navUp = renamed(widgets[i].navUp)
+                widgets[i].navDown = renamed(widgets[i].navDown)
+                widgets[i].navLeft = renamed(widgets[i].navLeft)
+                widgets[i].navRight = renamed(widgets[i].navRight)
+            }
         }
     }
 

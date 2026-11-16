@@ -30,7 +30,9 @@ public enum EditorUIBuildCommands {
         textField text, placeholder, maxLength. Animation: the layout's and any widget's `show` / `hide` transitions \
         ({kind: none|fade|slide|scale, duration, delay, easing, from: left|right|top|bottom, distance, scale}; a widget's \
         play when visibleWhen / hidden change, the layout's when the game shows or hides it) and a bar's, label's or \
-        button's `tween` (seconds its numbers take to move to a new value). Sliders and toggles send their event when the player changes them, text \
+        button's `tween` (seconds its numbers take to move to a new value). Gamepad / arrow-key focus: the layout's \
+        `navigation` (widget ids that Down / Right step through, Up / Left back, wrapping) and `focus` (focused first); \
+        a button's or input's navUp / navDown / navLeft / navRight override it. Sliders and toggles send their event when the player changes them, text \
         fields on Enter, with the new value. `bind` ties a widget to a value key (bar fill = value / max; label/button \
         text; image path; slider / toggle / text field value, written back as the player changes it) and `visibleWhen` \
         shows it only while a key is truthy ("!key": falsy). In a game, a UILayoutPlayer component (uiLayout.place) shows \
@@ -292,11 +294,17 @@ public enum UIEditCommand: EditorCommand {
         /// The layout's show / hide transitions, e.g. {"kind": "slide", "from": "bottom", "duration": 0.3} (kind "none" removes one).
         public var show: UIBuildTransition?
         public var hide: UIBuildTransition?
+        /// Keyboard / gamepad focus order: widget ids Down / Right step through ([] clears it).
+        public var navigation: [String]?
+        /// The widget focused first ("" clears it).
+        public var focus: String?
         public init(asset: AssetReference? = nil, path: String? = nil, removeWidgets: [String]? = nil, addWidgets: [UIBuildWidget]? = nil,
                     updateWidgets: [String: JSONValue]? = nil, moveWidgets: [UIBuildMove]? = nil, bindings: [String: String]? = nil,
                     values: [String: JSONValue]? = nil, theme: String? = nil, colors: [String: String]? = nil, fontSize: Float? = nil,
                     safeArea: Float? = nil, size: Vec2? = nil, scaleMode: UIBuildScaleMode? = nil, show: UIBuildTransition? = nil,
-                    hide: UIBuildTransition? = nil) {
+                    hide: UIBuildTransition? = nil, navigation: [String]? = nil, focus: String? = nil) {
+            self.navigation = navigation
+            self.focus = focus
             self.scaleMode = scaleMode
             self.show = show
             self.hide = hide
@@ -318,13 +326,13 @@ public enum UIEditCommand: EditorCommand {
         var edit: UIBuildEdit {
             UIBuildEdit(removeWidgets: removeWidgets, addWidgets: addWidgets, updateWidgets: updateWidgets, moveWidgets: moveWidgets,
                         bindings: bindings, values: values, theme: theme, colors: colors, fontSize: fontSize, safeArea: safeArea, size: size,
-                        scaleMode: scaleMode, show: show, hide: hide)
+                        scaleMode: scaleMode, show: show, hide: hide, navigation: navigation, focus: focus)
         }
     }
 
     public static let id: CommandID = "uiLayout.edit"
     public static let title = "Edit UI Layout"
-    public static let doc = "Changes part of a .ui file in one undoable step, in this order: removeWidgets, addWidgets, updateWidgets (id → fields; null resets; \"id\" renames), moveWidgets, bindings (widget id → value key), values (sample values), then theme / colors / fontSize / safeArea / size / scaleMode / show / hide. Running games show the change. Returns widget ids, value keys, events and warnings."
+    public static let doc = "Changes part of a .ui file in one undoable step, in this order: removeWidgets, addWidgets, updateWidgets (id → fields; null resets; \"id\" renames), moveWidgets, bindings (widget id → value key), values (sample values), then theme / colors / fontSize / safeArea / size / scaleMode / show / hide / navigation / focus. Running games show the change. Returns widget ids, value keys, events and warnings."
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }

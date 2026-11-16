@@ -76,6 +76,8 @@ public final class UIBuildView: Widget {
         super.init(name: name)
         isHitTestable = false
         screen.isHitTestable = false
+        // Arrow keys / the D-pad stay in the layout while it has focus.
+        screen.isNavigationScope = true
         addChild(screen)
         rebuild()
     }
@@ -452,11 +454,17 @@ public final class UIBuildView: Widget {
         return true
     }
 
-    /// The widget focus starts at: the first focusable widget in file order.
+    /// The widget focus starts at: the layout's `focus` widget, else the first of its
+    /// `navigation` order, else the first focusable widget in file order (skipping hidden ones).
     func startWidget() -> Widget? {
-        for (_, widget) in entries where widget.acceptsFocus && widget.isEffectivelyVisible && widget.isEffectivelyEnabled {
+        func usable(_ widget: Widget?) -> Widget? {
+            guard let widget, widget.acceptsFocus, widget.isEffectivelyVisible, widget.isEffectivelyEnabled,
+                  widgetVisible[layoutID(of: widget) ?? ""] ?? true else { return nil }
             return widget
         }
+        if let widget = usable(byID[build.focus]) { return widget }
+        for id in build.navigation { if let widget = usable(byID[id]) { return widget } }
+        for (_, widget) in entries { if let widget = usable(widget) { return widget } }
         return nil
     }
 
@@ -677,6 +685,35 @@ public final class UIBuildView: Widget {
                 let text = UIBuild.display(value)
                 if field.text != text { field.text = text }
             default: break
+            }
+        }
+        applyNavigation()
+    }
+
+    /// Links focusable widgets for the arrow keys / D-pad: the layout's `navigation` order
+    /// (through the widgets showing now, wrapping), then each widget's own `navUp`… overrides.
+    private func applyNavigation() {
+        func showing(_ id: String) -> Widget? {
+            guard let widget = byID[id], widget.acceptsFocus, widgetVisible[id] ?? true else { return nil }
+            return widget
+        }
+        for (_, widget) in entries where widget.acceptsFocus {
+            for direction in UINavDirection.allCases { widget.setNavigation(direction, to: nil) }
+        }
+        let order = build.navigation.compactMap(showing)
+        if order.count > 1 {
+            for (i, widget) in order.enumerated() {
+                let next = order[(i + 1) % order.count], previous = order[(i + order.count - 1) % order.count]
+                widget.setNavigation(.down, to: next)
+                widget.setNavigation(.right, to: next)
+                widget.setNavigation(.up, to: previous)
+                widget.setNavigation(.left, to: previous)
+            }
+        }
+        for (spec, widget) in entries where widget.acceptsFocus {
+            for (direction, id) in [(UINavDirection.up, spec.navUp), (.down, spec.navDown), (.left, spec.navLeft), (.right, spec.navRight)]
+                where !id.isEmpty {
+                widget.setNavigation(direction, to: showing(id))
             }
         }
     }

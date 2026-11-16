@@ -221,8 +221,11 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         let build = try #require(session.assets?.uiBuild(of: id))
         #expect(build.scaleMode == .fit && build.show?.kind == .slide && build.show?.from == .top && build.hide?.kind == .fade)
         #expect(build.widget("volume")?.type == .slider && build.widget("mute")?.show?.kind == .scale)
-        try call(session, "uiLayout.edit", ["asset": id.description, "show": ["kind": "none"]])
-        #expect(session.assets?.uiBuild(of: id)?.show == nil)
+        try call(session, "uiLayout.edit", ["asset": id.description, "show": ["kind": "none"], "navigation": ["name", "volume", "mute"],
+                                            "focus": "volume", "updateWidgets": ["mute": ["navDown": "name"]]])
+        let navigated = try #require(session.assets?.uiBuild(of: id))
+        #expect(navigated.show == nil && navigated.navigation == ["name", "volume", "mute"] && navigated.focus == "volume")
+        #expect(navigated.widget("mute")?.navDown == "name")
 
         // The tab adds the new widget types and plays the layout's transitions in the preview.
         let workspace = UIBuilderWorkspace(session: session)

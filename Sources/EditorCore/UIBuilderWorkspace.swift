@@ -669,6 +669,20 @@ public final class UIBuilderWorkspace {
             numberRow("Tween", w.tween, name: "tween", range: 0...30, step: 0.05) { field("tween", .double($0)) }
         }
 
+        if w.type.isFocusable {
+            sidebar.addChild(Label("Navigation", role: .secondary))
+            let targets = [""] + build.widgets.filter { $0.type.isFocusable && $0.id != id }.map(\.id)
+            for (caption, key, current) in [("Up", "navUp", w.navUp), ("Down", "navDown", w.navDown), ("Left", "navLeft", w.navLeft),
+                                            ("Right", "navRight", w.navRight)] {
+                let options = targets + (targets.contains(current) ? [] : [current])
+                let picker = Dropdown(options: options.map { $0.isEmpty ? "(auto)" : $0 }, selectedIndex: options.firstIndex(of: current) ?? 0,
+                                      name: "uiBuilderField.\(key)")
+                picker.tooltip = "Where \(caption) on the arrow keys / D-pad moves focus from this widget (auto: the navigation order, else the nearest widget that way)"
+                picker.onChange = { index in field(key, .string(options[index])) }
+                row(caption, picker)
+            }
+        }
+
         sidebar.addChild(Label("Bindings", role: .secondary))
         if w.type == .bar || w.type == .label || w.type == .button || w.type == .image || w.type.isInput {
             let what = switch w.type {
@@ -715,6 +729,17 @@ public final class UIBuilderWorkspace {
         let none = UIBuildTransition(kind: .none)
         transitionRows("Show", build.show, name: "layoutShow", tooltip: "How the whole layout appears when the game shows it") { [unowned self] t in
             editLayout("Set Show Transition", UIBuildEdit(show: t ?? none, hide: build.show == nil && build.hide == nil ? t : nil))
+        }
+        let focusable = build.widgets.filter(\.type.isFocusable).map(\.id)
+        let focusOptions = [""] + focusable + (focusable.contains(build.focus) || build.focus.isEmpty ? [] : [build.focus])
+        let focusPicker = Dropdown(options: focusOptions.map { $0.isEmpty ? "(first)" : $0 }, selectedIndex: focusOptions.firstIndex(of: build.focus) ?? 0,
+                                   name: "uiBuilderField.focus")
+        focusPicker.tooltip = "The widget keyboard / gamepad focus starts at when the layout takes focus"
+        focusPicker.onChange = { [unowned self] index in editLayout("Set First Focus", UIBuildEdit(focus: focusOptions[index])) }
+        row("Focus first", focusPicker)
+        textRow("Nav order", build.navigation.joined(separator: ", "), placeholder: "nearest widget", name: "navigation",
+                tooltip: "Widget ids, comma separated: Down / Right step through them and Up / Left step back (wrapping)") { [unowned self] text in
+            editLayout("Set Navigation Order", UIBuildEdit(navigation: text.split(separator: ",").map(String.init)))
         }
         transitionRows("Hide", build.hide, name: "layoutHide", tooltip: "How the whole layout goes away when the game hides it") { [unowned self] t in
             editLayout("Set Hide Transition", UIBuildEdit(hide: t ?? none))

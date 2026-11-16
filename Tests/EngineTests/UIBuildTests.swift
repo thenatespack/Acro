@@ -465,6 +465,54 @@ private let hud = """
     }
 
 
+    // MARK: Gamepad navigation
+
+    @MainActor @Test func navigationOrderAndOverrides() throws {
+        let build = try decode("""
+        {"size": [800, 600], "navigation": ["quit", "play", "options"], "focus": "play",
+         "widgets": [
+           {"id": "menu", "type": "vstack", "anchor": "center"},
+           {"id": "play", "type": "button", "parent": "menu", "text": "Play"},
+           {"id": "options", "type": "button", "parent": "menu", "text": "Options", "visibleWhen": "hasOptions"},
+           {"id": "quit", "type": "button", "parent": "menu", "text": "Quit", "navLeft": "play"},
+           {"id": "title", "type": "label", "anchor": "top", "text": "Game"}
+         ]}
+        """)
+        #expect(build.validate().isEmpty)
+        #expect(try AssetJSON.decoder().decode(UIBuild.self, from: build.fileData()) == build)
+        var bad = build
+        bad.navigation.append("title")
+        bad.widgets[1].navUp = "nobody"
+        let problems = bad.validate().map(\.description)
+        #expect(problems.contains("navigation: 'title' is a label, which can't take focus"))
+        #expect(problems.contains("play: navUp: no widget 'nobody'"))
+
+        // Renames and removals follow.
+        var renamed = build
+        try renamed.update("quit", fields: ["id": .string("exit")])
+        #expect(renamed.navigation == ["exit", "play", "options"])
+        let removed = try build.applying(UIBuildEdit(removeWidgets: ["play"]))
+        #expect(removed.navigation == ["quit", "options"] && removed.focus == "" && removed.widget("quit")?.navLeft == "")
+
+        let view = UIBuildView(build)
+        let context = laidOut(view, size: Vec2(800, 600))
+        context.directionalNavigation = true
+        let play = try #require(view.widget("play")), quit = try #require(view.widget("quit"))
+        #expect(view.focusStartWidget())
+        #expect(context.focusedWidget === play, "the layout's focus widget")
+        // Order quit → play → (options hidden: skipped) → quit.
+        #expect(context.moveFocus(.down) && context.focusedWidget === quit)
+        #expect(context.moveFocus(.down) && context.focusedWidget === play)
+        #expect(context.moveFocus(.up) && context.focusedWidget === quit)
+        view.set("hasOptions", true)
+        let options = try #require(view.widget("options"))
+        #expect(context.moveFocus(.up) && context.focusedWidget === options, "shown again: back in the order")
+        // A widget's own link wins over the order.
+        context.focus(quit)
+        #expect(context.moveFocus(.left) && context.focusedWidget === play)
+    }
+
+
     // MARK: Scaling with the screen
 
     @Test func scaleModeFactors() throws {
