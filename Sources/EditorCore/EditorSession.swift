@@ -137,6 +137,9 @@ public final class EditorSession {
     /// The terrain open in the Terrain Builder tab (`terrain.open`), and how the app shows it.
     public var openTerrain: AssetID?
     public var onOpenTerrain: ((AssetID) -> Void)?
+    /// The timeline open in the Timeline tab (`timeline.open`), and how the app shows it.
+    public var openTimeline: AssetID?
+    public var onOpenTimeline: ((AssetID) -> Void)?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()
@@ -211,6 +214,8 @@ public final class EditorSession {
     /// assets load from the project) until Stop.
     public var audioProvider: (() -> AudioSystem?)?
     private var spatialAudio: SpatialAudioHandle?
+    /// Plays `TimelinePlayer`s while playing.
+    private var timelinePlayers: TimelinePlayerSystem?
     /// The play session's physics, when the scene has colliders (see `addPlaySystems`).
     public private(set) var physics: PhysicsWorld?
     /// The play session's 2D physics, when the scene has `Collider2D`s.
@@ -704,6 +709,7 @@ public final class EditorSession {
         if let audio = audioProvider?() {
             spatialAudio = world.addSpatialAudio(audio, assets: { [weak self] in self?.assets })
         }
+        timelinePlayers = world.addTimelinePlayers(assets: { [weak self] in self?.assets })
         gameModule.addSystems()
     }
 
@@ -726,6 +732,8 @@ public final class EditorSession {
         world.removeSystem(named: Self.spriteSystem)
         spatialAudio?.remove()
         spatialAudio = nil
+        timelinePlayers?.remove()
+        timelinePlayers = nil
         tweens = nil
         gameModule.removeSystems()
     }

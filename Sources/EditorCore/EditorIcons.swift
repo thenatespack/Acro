@@ -52,6 +52,7 @@ public enum EditorIcons {
         FieldAnimator.componentName: "sliders-horizontal",
         LightFlicker.componentName: "gauge",
         CameraPath.componentName: "orbit",
+        TimelinePlayer.componentName: "clapperboard",
         "Pulse": "gauge",
     ]
 
@@ -284,6 +285,7 @@ public enum EditorIcons {
         switch ext {
         case "gltf", "glb", "obj", "fbx", "meshbuild": return .model
         case "vfx": return .prefab
+        case "timeline": return .scene
         case "table": return .model
         case "gltf", "glb", "obj", "fbx", "meshbuild", "terrain": return .model
         case "png", "jpg", "jpeg", "tga", "hdr", "exr", "ktx", "ktx2", "dds", "bmp", "proctex": return .texture
@@ -350,6 +352,7 @@ public enum EditorIcons {
         EditorLayout.postFXBuilder: "aperture",
         EditorLayout.dataTable: "layout-grid",
         EditorLayout.terrainBuilder: "layers",
+        EditorLayout.timeline: "clapperboard",
     ]
 
     /// Console lines by level.

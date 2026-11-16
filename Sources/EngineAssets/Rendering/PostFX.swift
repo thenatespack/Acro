@@ -238,7 +238,7 @@ public enum PostFXResolver {
     }
 
     /// The camera's profile (else the scene's `PostProcess` component) with the volumes the
-    /// camera is in blended over it; nil when nothing asks for post-processing.
+    /// camera is in blended over it, then the strongest `ScreenFade`; nil when nothing asks for post-processing.
     @MainActor
     public static func resolve(world: World, camera: Camera, cameraWorld: Mat4, assets: AssetDatabase?) -> PostProcessSettings? {
         var settings = profile(camera.postFX, assets: assets) ?? PostProcessSettings.find(in: world)
@@ -247,14 +247,14 @@ public enum PostFXResolver {
             volumes.append((volume.priority, entity.index, volume,
                             world.get(GlobalTransform.self, for: entity)?.matrix ?? world.worldMatrix(of: entity)))
         }
-        guard !volumes.isEmpty else { return settings }
+        guard !volumes.isEmpty else { return ScreenFade.strongest(in: world)?.applied(to: settings) ?? settings }
         let eye = Vec3(cameraWorld.c3.x, cameraWorld.c3.y, cameraWorld.c3.z)
         for item in volumes.sorted(by: { ($0.priority, $0.index) < ($1.priority, $1.index) }) {
             let weight = item.volume.influence(at: eye, volumeWorld: item.world)
             guard weight > 0, let profile = profile(item.volume.profile, assets: assets) else { continue }
             settings = (settings ?? PostProcessSettings()).blended(to: profile, weight: weight)
         }
-        return settings
+        return ScreenFade.strongest(in: world)?.applied(to: settings) ?? settings
     }
 }
 

@@ -15,6 +15,7 @@ Builder tools let people and AI agents author game content inside the Acro edito
 | [Terrain Builder](#terrain-builder) | `.terrain` | Sculpted, painted heightmap terrain with scattered props |
 | [Sound Builder](#sound-builder) | `.sfx` | Synthesized sound effects |
 | [Data Table Builder](#data-table-builder) | `.table` | Typed spreadsheets for game data |
+| [Timeline Builder](#timeline-builder) | `.timeline` | Cutscenes: camera moves, animation, sound, effects, fades, events |
 
 Planned builders are tracked in [Tools.md](../Tools.md).
 
@@ -76,3 +77,29 @@ let loot = enemies?.row("goblin")?.reference("drops")   // row column
 
 Cooked games ship the file as written; include tables game code loads by path with the cooker's `--include`. MCP clients use `table.new`, `table.edit`, `table.query`, `table.get`, `table.set`, `table.importCsv`, `table.exportCsv` and `table.open`; see [MCPTools.md](MCPTools.md).
 
+## Timeline Builder
+
+Timelines (`.timeline`, JSON under `Assets/`) are cutscenes and scripted moments. A timeline has a `duration`, `loop`, `skippable` and tracks; each track has a `kind`, a `target` entity named by its `Name` or a `"Parent/Child"` path (so one file plays in any scene that has those names) and keys at times in seconds:
+
+- **camera**: position, aim (`lookAt` point, `lookAtEntity`, or `rotation` in degrees) and `fov`, blended with the later key's `easing`; `cut` jumps instead of blending, and `path` makes a constant-speed spline move (the `CameraPath` spline) through extra points to the next key, with `followPath` facing the direction of travel. No target: the active camera.
+- **transform**: an entity's position, rotation and scale.
+- **animation**: plays an `Animator` state (crossfade `blend`, `speed`) or `SpriteAnimator` clip on the target or its first descendant that has one.
+- **audio**: plays a sound file or `.sfx` (`clip`, `volume`, `pitch`, `loop`, `duration`) at the target, or unpositioned without one.
+- **particles**: spawns a `.vfx` (or other prefab) at the target for `duration` seconds (default: the effect's own).
+- **fade**: fades the screen toward `color` by `amount`, through the `ScreenFade` component (folded into the post pass's grading).
+- **event**: a `name` and `value` for game code.
+
+Every key field is optional; continuous kinds (camera, transform, fade) hold a field between the keys that set it. Track kinds are strings, so tracks of kinds this engine doesn't know (a later dialogue track, say) are kept and skipped with a warning.
+
+At runtime a `TimelinePlayer` component (`timeline`: the file's `asset:<id>` or path, `playOnStart`, `speed`, `loop`) plays it; the editor's play mode, exported games and GameRunner add its system. Edits to the file show up while playing. Control and listen from game code:
+
+```swift
+world.modify(TimelinePlayer.self, for: intro) { $0.skip() }   // also play(from:), pause(), resume(), stop(), seek(to:)
+for (_, event) in world.timelineEvents() where event.name == "introDone" { startLevel() }
+```
+
+`skip()` jumps to the end: the event keys not reached yet fire, the last animation key of each track plays, sounds and effects the timeline started stop, and the final frame is posed.
+
+In the editor, use **New Timeline** in the asset browser and double-click the file (or **Open in Timeline** in the inspector) to open the **Timeline** tab next to the Scene view. It previews a copy of the open scene posed by the timeline, through the timeline's camera (**Camera View**) or a free orbit camera, with Play / Pause, Stop and Loop. The strip under the preview has a row per track: click or drag to scrub, click a key to select it, drag it to retime it (snapped to 0.05 s), double-click a row to add a key. The sidebar edits the timeline's settings, adds and deletes tracks, sets a track's name, target and mute, and edits the selected key (Add Field / Remove Field choose which fields it sets; **Key From View** keys the camera at the free camera's framing). **Add Player to Scene** places an entity with a `TimelinePlayer`. Every change is one undo step. The preview doesn't play animation clips or sounds (play mode does).
+
+MCP clients use `timeline.new {duration, place}`, `timeline.edit {addTracks, updateTracks, removeTracks, addKeys, updateKeys, removeKeys, duration, loop}`, `timeline.set`, `timeline.get`, `timeline.sample {time}` (the camera and transform poses, the fade and the keys fired by then, without playing) and `timeline.open`; see [MCPTools.md](MCPTools.md). Cooked games ship the file as written, with sounds and effects it names by `asset:<id>`; include ones named by path with the cooker's `--include`.

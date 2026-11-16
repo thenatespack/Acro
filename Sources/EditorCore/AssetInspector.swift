@@ -419,6 +419,21 @@ public final class AssetInspectorView {
                 content.addChildren([HStack(spacing: 6, [open, Spacer()]),
                                      note("A heightmap terrain, \(Int(size.x)) x \(Int(size.y)) m, split into chunks with colliders. The Terrain Builder has brushes, texture layers and scatter rules.")])
             }
+            if session.isTimelineFile(id) {
+                let open = Button("Open in Timeline", role: .primary, name: "openTimeline") { [unowned self] in
+                    session.run(TimelineOpenCommand.self, .init(asset: AssetReference(id)))
+                }
+                open.command = TimelineOpenCommand.id.rawValue
+                open.tooltip = "Edit this cutscene in the Timeline tab (or double-click it in the Assets panel)"
+                let addPlayer = Button("Add Player to Scene", name: "addTimelinePlayer") { [unowned self] in
+                    session.addTimelinePlayer(for: id)
+                }
+                addPlayer.tooltip = "Add an entity with a TimelinePlayer that plays this timeline when the game runs"
+                let timeline = session.assets?.timeline(of: id)
+                content.addChildren([HStack(spacing: 6, [open, addPlayer, Spacer()]),
+                                     note(String(format: "A %.1f s cutscene with %d track%@. A TimelinePlayer component plays it; game code reads its events.",
+                                                 timeline?.duration ?? 0, timeline?.tracks.count ?? 0, (timeline?.tracks.count ?? 0) == 1 ? "" : "s"))])
+            }
             if session.isMaterialFile(id) {
                 addMaterialForm(AssetReference(id, subAsset: "material"))
             }

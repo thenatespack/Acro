@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 166 tools.
+named by its id (see README › Use the editor › AI control). 172 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -42,6 +42,7 @@ optional arguments.
 | `stats` | [`stats.get`](#statsget) |
 | `table` | [`table.edit`](#tableedit), [`table.exportCsv`](#tableexportcsv), [`table.get`](#tableget), [`table.importCsv`](#tableimportcsv), [`table.new`](#tablenew), [`table.open`](#tableopen), [`table.query`](#tablequery), [`table.set`](#tableset) |
 | `terrain` | [`terrain.edit`](#terrainedit), [`terrain.get`](#terrainget), [`terrain.new`](#terrainnew), [`terrain.open`](#terrainopen), [`terrain.paint`](#terrainpaint), [`terrain.scatter`](#terrainscatter), [`terrain.sculpt`](#terrainsculpt), [`terrain.set`](#terrainset) |
+| `timeline` | [`timeline.edit`](#timelineedit), [`timeline.get`](#timelineget), [`timeline.new`](#timelinenew), [`timeline.open`](#timelineopen), [`timeline.sample`](#timelinesample), [`timeline.set`](#timelineset) |
 | `tool` | [`tool.set`](#toolset), [`tool.snapping`](#toolsnapping) |
 | `transform` | [`transform.lookAt`](#transformlookat), [`transform.set`](#transformset) |
 | `ui` | [`ui.click`](#uiclick), [`ui.drag`](#uidrag), [`ui.find`](#uifind), [`ui.hover`](#uihover), [`ui.key`](#uikey), [`ui.scroll`](#uiscroll), [`ui.snapshot`](#uisnapshot), [`ui.type`](#uitype) |
@@ -2667,6 +2668,136 @@ Result:
 - `scatter`: [string]
 - `scatterCounts`: [integer]
 - `size`: number[2] — [x, y]
+- `warnings`: [string]
+
+## timeline
+
+### `timeline.edit`
+
+**Edit Timeline** · _undoable_
+
+Changes part of a .timeline file in one undoable step, in this order: removeTracks, addTracks, updateTracks (id → fields; "id" renames), removeKeys ({track, time | index}), addKeys (key fields plus "track"; replaces a key at the same time), updateKeys ({track, time | index, set: {field: value, …}}), then duration / loop / skippable. Keys are kept sorted by time. Returns the tracks and problems (e.g. a sound that doesn't exist). Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `addKeys?`: [{amount?: number, blend?: number, clip?: string, color?: number[3], cut?: boolean, duration?: number, easing?: string (25 cases), effect?: string, followPath?: boolean, fov?: number, lookAt?: number[3], lookAtEntity?: string, loop?: boolean, name?: string, path?: [number[3]], pitch?: number, position?: number[3], rotation?: number[3], scale?: number[3], speed?: number, time?: number, track: string, value?: string, volume?: number}]
+- `addTracks?`: [{id?: string, keys?: [object], kind?: string, muted?: boolean, name?: string, target?: string}]
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `duration?`: number
+- `loop?`: boolean
+- `path?`: string
+- `removeKeys?`: [{index?: integer, time?: number, track: string}]
+- `removeTracks?`: [string]
+- `skippable?`: boolean
+- `updateKeys?`: [{index?: integer, set: object, time?: number, track: string}]
+- `updateTracks?`: object
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `duration`: number
+- `key`: string
+- `path`: string
+- `player?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `tracks`: [string]
+- `warnings`: [string]
+
+### `timeline.get`
+
+**Get Timeline** · _read-only_, _idempotent_
+
+Reads a .timeline file: duration, loop, skippable and every track with its keys (only the fields set), its key for TimelinePlayer.timeline and problems found.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `key`: string
+- `path`: string
+- `timeline`: {duration?: number, loop?: boolean, skippable?: boolean, tracks?: [object]}
+- `warnings`: [string]
+
+### `timeline.new`
+
+**New Timeline**
+
+Writes a .timeline file (a cutscene) in `folder` (default: the Assets root) and imports it: the given `timeline`, else a starter of `duration` seconds with a camera track. `place` also adds an entity with a TimelinePlayer to the scene. Returns the asset, its key for TimelinePlayer.timeline, the tracks and problems. Change it with timeline.edit (tracks and keys) or timeline.set. A timeline is a cutscene: `duration` (seconds), `loop`, `skippable` and `tracks`. Each track: id (unique), kind (camera | transform | animation | audio | particles | fade | event), name, target (an entity Name or "Parent/Child" path; empty = the active camera for camera tracks, unpositioned for audio, the world origin for particles, else the entity holding the TimelinePlayer), muted, keys. Every key has `time` (s); continuous kinds blend from the previous key with this key's `easing` (linear, quadIn, quadOut, quadInOut, cubicIn, cubicOut, cubicInOut, … default linear) unless `cut` is true. camera keys: position [x,y,z], lookAt [x,y,z] | lookAtEntity "Name" | rotation [x,y,z] degrees, fov (degrees), cut, path [[x,y,z]…] (spline through position, these points and the next key's position until the next key, constant speed), followPath (face the travel direction). transform keys: position, rotation (degrees), scale, cut. animation keys: clip (Animator state or SpriteAnimator clip), blend (crossfade s), speed. audio keys: clip (audio file or .sfx: path under Assets/ or asset:<id>), volume, pitch, loop, duration (s), position (offset). particles keys: effect (.vfx or prefab path), duration (s; default the .vfx's), position, rotation. fade keys: amount (0 clear … 1 solid), color [r,g,b] sRGB. event keys: name, value (game code reads TimelinePlayer.events / world.timelineEvents()). Every key is optional. A TimelinePlayer component (timeline: the file's asset:<id> or path, playOnStart, speed, loop) plays it.
+
+Arguments:
+
+- `duration?`: number
+- `folder?`: string
+- `name?`: string
+- `place?`: boolean
+- `timeline?`: {duration?: number, loop?: boolean, skippable?: boolean, tracks?: [object]}
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `duration`: number
+- `key`: string
+- `path`: string
+- `player?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `tracks`: [string]
+- `warnings`: [string]
+
+### `timeline.open`
+
+**Open in Timeline** · _idempotent_
+
+Opens a .timeline file in the editor's Timeline tab (a preview of the open scene posed by the timeline, seen through its camera, with transport, scrubbing, the track strip and the key form) and brings the tab to the front. view.screenshot {source: "panel", panel: "timeline"} shows it.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `path`: string
+
+### `timeline.sample`
+
+**Sample Timeline** · _read-only_, _idempotent_
+
+Evaluates a .timeline at `time` seconds without playing it: each camera / transform / fade track's position, rotation (degrees), scale, fov and fade there (look-at entities resolve in the open scene), and the animation / audio / particles / event keys fired by then. Use it to check a camera move or timing.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+- `time`: number
+
+Result:
+
+- `fired`: [string]
+- `time`: number
+- `tracks`: [{fadeAmount?: number, fadeColor?: number[3], fov?: number, kind: string, position?: number[3], rotation?: number[3], scale?: number[3], target: string, targetFound: boolean, track: string}]
+
+### `timeline.set`
+
+**Set Timeline** · _undoable_, _idempotent_
+
+Replaces a .timeline file's whole contents (keys are sorted by time) and reimports it; playing TimelinePlayers pick it up. Undoable. For a few changes, timeline.edit is shorter. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+- `timeline`: {duration?: number, loop?: boolean, skippable?: boolean, tracks?: [object]}
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `duration`: number
+- `key`: string
+- `path`: string
+- `player?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `tracks`: [string]
 - `warnings`: [string]
 
 ## tool

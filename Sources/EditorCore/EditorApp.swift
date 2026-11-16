@@ -138,6 +138,8 @@ public final class EditorApp: Game, EditorHost {
     public private(set) var tableWorkspace: DataTableWorkspace!
     /// The Terrain Builder tab (TerrainBuilderWorkspace.swift).
     public private(set) var terrainWorkspace: TerrainBuilderWorkspace!
+    /// The Timeline tab (TimelineWorkspace.swift).
+    public private(set) var timelineWorkspace: TimelineWorkspace!
     private(set) var statusBar: StatusBar!
     /// The Assets panel (browser) and its thumbnails.
     public private(set) var assetBrowser: AssetBrowserPanel!
@@ -501,6 +503,13 @@ public final class EditorApp: Game, EditorHost {
             }
             dock.focusPanel(EditorLayout.terrainBuilder)
         }
+        session.onOpenTimeline = { [unowned self] id in
+            guard timelineWorkspace.open(id) else { return }
+            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.timeline, EditorLayout.viewport) {
+                dock.dock(EditorLayout.timeline, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport) : .edge(.bottom))
+            }
+            dock.focusPanel(EditorLayout.timeline)
+        }
         session.onOpenScript = { [unowned self] path in
             let url = URL(fileURLWithPath: path)
             scriptEditor.openScript(at: url)
@@ -633,6 +642,9 @@ public final class EditorApp: Game, EditorHost {
         terrainWorkspace = TerrainBuilderWorkspace(session: session)
         terrainWorkspace.device = engine?.device
         if let quality = engine?.quality { terrainWorkspace.quality = quality }
+        timelineWorkspace = TimelineWorkspace(session: session)
+        timelineWorkspace.device = engine?.device
+        if let quality = engine?.quality { timelineWorkspace.quality = quality }
         files.onOpen = { [unowned self] file in openFile(file) }
         files.onNewScene = { [unowned self] name in newScene(named: name) }
 
@@ -665,6 +677,9 @@ public final class EditorApp: Game, EditorHost {
         let terrainPanel = DockPanel(id: EditorLayout.terrainBuilder, title: "Terrain Builder", content: terrainWorkspace.view, minSize: Vec2(320, 200))
         terrainPanel.passesPointerThrough = true
         dock.addPanel(terrainPanel)
+        let timelinePanel = DockPanel(id: EditorLayout.timeline, title: "Timeline", content: timelineWorkspace.view, minSize: Vec2(320, 200))
+        timelinePanel.passesPointerThrough = true
+        dock.addPanel(timelinePanel)
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
         for (id, icon) in EditorIcons.panelIconNames { dock.panel(id)?.icon = EditorIcons.named(icon) }
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
@@ -1070,6 +1085,7 @@ public final class EditorApp: Game, EditorHost {
             postFXWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
             tableWorkspace.update()
             terrainWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
+            timelineWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
         }
         session.tick(dt: Double(dt))
 
@@ -1099,6 +1115,7 @@ public final class EditorApp: Game, EditorHost {
         vfxWorkspace.prepareFrame(pixelScale: ui.scale)
         postFXWorkspace.prepareFrame(pixelScale: ui.scale)
         terrainWorkspace.prepareFrame(pixelScale: ui.scale)
+        timelineWorkspace.prepareFrame(pixelScale: ui.scale)
         buildGizmos()
         viewportWidget.texture = target.texture
         viewportWidget.billboards = transformTool.billboards
@@ -1540,6 +1557,7 @@ public final class EditorApp: Game, EditorHost {
         vfxWorkspace.render(frame: frame)
         postFXWorkspace.render(frame: frame)
         terrainWorkspace.render(frame: frame)
+        timelineWorkspace.render(frame: frame)
         if let game = gameCurrentView, gameSizer.width > 0, gameWidget.isEffectivelyVisible {
             sceneRenderer.beginViews(world: session.gameWorld, frame: frame, shadowFocus: game)
             sceneRenderer.renderView(game, into: gameTarget, frame: frame, debugDraw: gameDraw)
