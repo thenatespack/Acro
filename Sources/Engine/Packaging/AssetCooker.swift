@@ -138,7 +138,8 @@ public enum AssetCooker {
     /// Importers whose source files ship unchanged: audio is streamed, and builder files that
     /// game code reads as written at run time (data tables, behavior trees, UI layouts…).
     public static let shippedAsWritten: Set<String> = ["audio", "table", "behavior", "ui", "timeline", "vscript"]
-    /// Of those, the ones whose `asset:<id>` references are cooked along with them.
+    /// Of those, the ones whose references are cooked along with them: `asset:<id>`s, and string
+    /// values naming a file by its path under `Assets/` (see `pathReferences`).
     public static let followsReferences: Set<String> = ["timeline", "vscript"]
 
     /// Opens the project at `url`, scans it and cooks it to `output` (a folder). Blocks.
@@ -366,9 +367,10 @@ public struct CookPlan: Sendable {
         guard let importer = source.importer, !AssetCooker.shippedAsWritten.contains(importer.name) else {
             let data = try Data(contentsOf: source.sourceURL)
             if let importer = source.importer { entry.settings = importer.effectiveSettings(source.settings) }
-            // Timelines and visual scripts ship the sounds, effects, prefabs and tables they name by "asset:<id>".
+            // Timelines and visual scripts ship the sounds, effects, prefabs and tables they name by "asset:<id>" or path.
             let follows = source.importer.map { AssetCooker.followsReferences.contains($0.name) } ?? false
-            let references = follows ? Self.unique(Self.references(in: data)).filter { $0 != source.id } : []
+            let references = follows ? Self.unique(Self.references(in: data) + Self.pathReferences(in: data, assetsByPath: assetsByPath))
+                .filter { $0 != source.id } : []
             return Cooked(entry: entry, files: [:], data: data, origin: .file, references: references, warnings: [])
         }
         let settings = AssetCooker.shippingSettings(importer: importer, effective: importer.effectiveSettings(source.settings), options: options)
@@ -461,6 +463,26 @@ public struct CookPlan: Sendable {
                 }
             }
         }
+        return ids
+    }
+
+    /// The assets that string values of the JSON `data` name by path under `Assets/` ("Audio/hit.wav",
+    /// also with an "Assets/" prefix), in order. Strings that aren't a project file's path are ignored.
+    static func pathReferences(in data: Data, assetsByPath: [String: AssetID]) -> [AssetID] {
+        guard !assetsByPath.isEmpty, let json = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else { return [] }
+        var ids: [AssetID] = []
+        func walk(_ value: Any) {
+            switch value {
+            case let text as String:
+                guard text.contains("."), !text.hasPrefix(AssetReference.scheme) else { return }
+                let path = text.hasPrefix("Assets/") ? String(text.dropFirst("Assets/".count)) : text
+                if let id = assetsByPath[path] { ids.append(id) }
+            case let array as [Any]: array.forEach(walk)
+            case let object as [String: Any]: object.keys.sorted().forEach { walk(object[$0]!) }
+            default: break
+            }
+        }
+        walk(json)
         return ids
     }
 
