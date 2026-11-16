@@ -181,9 +181,9 @@ private func makeProject() throws -> Project {
             #expect(abs(m.baseColor.x - MeshBuildColor.linear(fromSRGB: Vec3(0.7, 0.7, 0.8)).x) < 1e-5)
         }
 
-        // Plays with clips from the database.
+        // Plays with clips from the database, through the play-mode system (SceneAnimation.swift).
         world.propagateTransforms()
-        world.addAssetAnimationSystem(assets: { database })
+        _ = world.addSceneAnimationSystem(assets: { database })
         let hipsRest = world.get(Transform.self, for: animator.targets[0])!.position
         world.modify(Animator.self, for: root) { $0.play("walk", fade: 0) }
         for _ in 0..<10 { world.update(dt: 1.0 / 30) }
