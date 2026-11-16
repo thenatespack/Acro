@@ -137,7 +137,7 @@ public enum CookError: Error, Equatable, CustomStringConvertible {
 public enum AssetCooker {
     /// Importers whose source files ship unchanged: audio is streamed, and builder files that
     /// game code reads as written at run time (data tables, behavior trees, UI layouts…).
-    public static let shippedAsWritten: Set<String> = ["audio", "table", "behavior", "ui"]
+    public static let shippedAsWritten: Set<String> = ["audio", "table", "behavior", "ui", "timeline"]
 
     /// Opens the project at `url`, scans it and cooks it to `output` (a folder). Blocks.
     @MainActor
@@ -362,14 +362,6 @@ public struct CookPlan: Sendable {
                                             main: nil, objects: [], files: [:], data: nil)
         // Audio, files read as written at run time, and files without an importer ship as they are.
         guard let importer = source.importer, !AssetCooker.shippedAsWritten.contains(importer.name) else {
-            let data = try Data(contentsOf: source.sourceURL)
-            if let importer = source.importer { entry.settings = importer.effectiveSettings(source.settings) }
-            // A timeline's sounds and effects named "asset:<id>" ship with it.
-            let references = source.importer?.name == "timeline" ? Self.unique(Self.references(in: data)).filter { $0 != source.id } : []
-            return Cooked(entry: entry, files: [:], data: data, origin: .file, references: references, warnings: [])
-        }
-        // Audio and files without an importer ship as they are.
-        guard let importer = source.importer, importer.name != "audio", importer.name != "table", importer.name != "timeline" else {
             let data = try Data(contentsOf: source.sourceURL)
             if let importer = source.importer { entry.settings = importer.effectiveSettings(source.settings) }
             // A timeline's sounds and effects named "asset:<id>" ship with it.
