@@ -44,7 +44,18 @@ public final class MeshBuilderView {
     static let shapeButtons: [(MeshBuildShape, String)] = [
         (.box, "Box"), (.sphere, "Sphere"), (.hemisphere, "Dome"), (.cylinder, "Cylinder"), (.cone, "Cone"),
         (.capsule, "Capsule"), (.torus, "Torus"), (.tube, "Tube"), (.plane, "Plane"), (.wedge, "Wedge"),
-        (.pyramid, "Pyramid"), (.group, "Group"),
+        (.pyramid, "Pyramid"), (.lathe, "Lathe"), (.extrude, "Extrude"), (.group, "Group"),
+    ]
+
+    /// The profile a new lathe starts with: a vase with a flared lip (radius, height in meters).
+    static let starterLathe: [Vec2] = [
+        Vec2(0, 0), Vec2(0.18, 0), Vec2(0.25, 0.12), Vec2(0.27, 0.25), Vec2(0.22, 0.42), Vec2(0.12, 0.58),
+        Vec2(0.1, 0.68), Vec2(0.16, 0.78),
+    ]
+    /// The outline a new extrude starts with: an arrow pointing +X (x, y in meters).
+    static let starterExtrude: [Vec2] = [
+        Vec2(-0.5, -0.12), Vec2(0.1, -0.12), Vec2(0.1, -0.3), Vec2(0.5, 0), Vec2(0.1, 0.3), Vec2(0.1, 0.12),
+        Vec2(-0.5, 0.12),
     ]
 
     /// Nil when `asset` isn't a readable `.meshbuild` file.
@@ -111,9 +122,12 @@ public final class MeshBuilderView {
         for (shape, label) in Self.shapeButtons {
             let button = Button(label, name: "meshBuildAdd.\(shape.rawValue)") { [unowned self] in addPart(shape) }
             button.command = MeshBuildEditCommand.id.rawValue
-            button.tooltip = shape == .group
-                ? "An invisible pivot: attach parts to it and animate it (a hinge, a turret)"
-                : "Add a \(label.lowercased()) on top of the selected part"
+            button.tooltip = switch shape {
+            case .group: "An invisible pivot: attach parts to it and animate it (a hinge, a turret)"
+            case .lathe: "Add a round solid spun from a profile (starts as a vase; edit its points below)"
+            case .extrude: "Add a flat outline pushed out into a slab (starts as an arrow; edit its points below)"
+            default: "Add a \(label.lowercased()) on top of the selected part"
+            }
             shapes.addChild(button)
         }
         view.addChild(shapes)
@@ -140,6 +154,7 @@ public final class MeshBuilderView {
             return
         }
         addPartGrid(part)
+        addShapeSection(for: part)
         addAnimationSection(for: part)
     }
 
@@ -169,6 +184,100 @@ public final class MeshBuilderView {
         }
         partGrid = grid
         view.addChild(grid)
+    }
+
+    /// The fields the grid hides because only some shapes use them: a bevel slider for boxes and
+    /// cylinders, the profile's points for lathes and extrudes.
+    private func addShapeSection(for part: MeshBuildPart) {
+        if part.shape == .box || part.shape == .cylinder {
+            let s = Vec3(abs(part.size.x), abs(part.size.y), abs(part.size.z))
+            let limit = max(min(s.x, min(s.y, s.z)) / 2, 0.001)
+            let value = min(max(part.bevel ?? 0, 0), limit)
+            let caption = Label(String(format: "%.3f m", value), role: .caption, name: "meshBuildBevelValue")
+            let slider = Slider(value: value, in: 0...limit, step: 0, name: "meshBuildBevel")
+            slider.style.grow = 1
+            slider.tooltip = part.shape == .box ? "Round the box's edges (meters)" : "Round the cylinder's rims (meters)"
+            slider.accessibilityLabel = "Bevel"
+            var dragging = false
+            let commit: (Float) -> Void = { [unowned self] v in
+                updatePart(part.name, label: "Bevel") { $0.bevel = v > 0 ? v : nil }
+            }
+            slider.onEditBegan = { dragging = true }
+            slider.onChange = { v in
+                caption.text = String(format: "%.3f m", v)
+                if !dragging { commit(v) }  // keyboard changes come without began / ended
+            }
+            slider.onEditEnded = { [unowned slider] in
+                dragging = false
+                commit(slider.value)
+            }
+            let title = Label("Bevel", role: .body)
+            title.style.width = 104
+            view.addChild(HStack(spacing: 6, [title, slider, caption]))
+        }
+        guard part.shape == .lathe || part.shape == .extrude else { return }
+        let isLathe = part.shape == .lathe
+        let points = part.profile ?? []
+        view.addChild(Separator())
+        view.addChild(Label(isLathe ? "Profile: radius, height (m), bottom to top" : "Outline: x, y (m), around the shape",
+                            role: .secondary))
+        let minimum = isLathe ? 2 : 3
+        for (i, point) in points.enumerated() {
+            let index = Label("\(i + 1)", role: .caption)
+            index.style.width = 24
+            var fields: [Widget] = [index]
+            for axis in 0..<2 {
+                let field = NumberField(value: Double(point[axis]), step: 0.01, name: "meshBuildProfile.\(i).\(axis)")
+                field.prefix = isLathe ? (axis == 0 ? "r" : "h") : (axis == 0 ? "x" : "y")
+                field.precision = 3
+                field.style.grow = 1
+                field.onEditEnded = { [unowned self] start, end in
+                    guard start != end else { return }
+                    updatePart(part.name, label: "Edit Profile") { p in
+                        guard var profile = p.profile, profile.indices.contains(i) else { return }
+                        profile[i][axis] = Float(end)
+                        p.profile = profile
+                    }
+                }
+                fields.append(field)
+            }
+            let remove = Button("Remove", name: "meshBuildProfileRemove.\(i)") { [unowned self] in
+                updatePart(part.name, label: "Remove Profile Point") { p in
+                    if var profile = p.profile, profile.indices.contains(i) { profile.remove(at: i); p.profile = profile }
+                }
+            }
+            remove.command = MeshBuildEditCommand.id.rawValue
+            remove.isEnabled = points.count > minimum
+            remove.tooltip = "Remove this point (a \(part.shape.rawValue) keeps at least \(minimum))"
+            fields.append(remove)
+            view.addChild(HStack(spacing: 4, fields))
+        }
+        let add = Button("Add Point", name: "meshBuildProfileAdd") { [unowned self] in
+            updatePart(part.name, label: "Add Profile Point") { p in
+                var profile = p.profile ?? []
+                let last = profile.last ?? .zero
+                let step = profile.count >= 2 ? last - profile[profile.count - 2] : Vec2(0, 0.1)
+                profile.append(last + step)
+                p.profile = profile
+            }
+        }
+        add.command = MeshBuildEditCommand.id.rawValue
+        add.tooltip = isLathe ? "A new point above the last, continuing the profile" : "A new corner after the last, continuing the outline"
+        view.addChild(HStack(spacing: 6, [add, Spacer()]))
+        view.addChild(note(isLathe
+            ? "The profile spins around the part's Y axis; ends with a radius get flat caps, bends sharper than 40° stay hard. Size multiplies it."
+            : "The outline is pushed out along Z, size.z meters deep. Concave is fine; edges must not cross. Size multiplies x and y."))
+        let warnings = part.shapeWarnings
+        if !warnings.isEmpty { view.addChild(note("⚠ " + warnings.joined(separator: " "))) }
+    }
+
+    /// Changes the part named `name` as one edit (applied on the next `refresh`).
+    private func updatePart(_ name: String, label: String, _ change: (inout MeshBuildPart) -> Void) {
+        guard let index = build.parts.firstIndex(where: { $0.name == name }) else { return }
+        var edited = build
+        change(&edited.parts[index])
+        guard edited != build else { return }
+        apply(edited, label: label, select: name)
     }
 
     private func addAnimationSection(for part: MeshBuildPart) {
@@ -335,12 +444,19 @@ public final class MeshBuilderView {
     func addPart(_ shape: MeshBuildShape) {
         var edited = build
         let label = Self.shapeButtons.first { $0.0 == shape }?.1 ?? shape.rawValue.capitalized
-        var part = MeshBuildPart(name: edited.uniquePartName(label), shape: shape, position: Vec3(0, 0.5, 0))
-        if shape == .plane { part.size = Vec3(2, 1, 2); part.position = .zero }
+        var part = MeshBuildPart(name: edited.uniquePartName(label), shape: shape)
+        if shape == .plane { part.size = Vec3(2, 1, 2) }
         if shape == .torus { part.size = Vec3(1, 0.25, 1) }
+        if shape == .lathe { part.profile = Self.starterLathe }
+        if shape == .extrude { part.profile = Self.starterExtrude; part.size = Vec3(1, 1, 0.15) }
+        // Rest on the ground, or on top of the selected part (profile shapes aren't centered, so go by bounds).
+        let bounds = part.localBounds
+        let bottom = shape == .plane ? 0 : bounds.center.y - bounds.halfExtent.y
+        part.position = Vec3(0, -bottom, 0)
         if let selected = build.parts.first(where: { $0.name == selectedPart }) {
+            let below = selected.localBounds
             part.parent = selected.parent
-            part.position = selected.position + Vec3(0, selected.size.y / 2 + part.size.y / 2, 0)
+            part.position = selected.position + Vec3(0, below.center.y + below.halfExtent.y - bottom, 0)
         }
         edited.parts.append(part)
         apply(edited, label: "Add \(label)", select: part.name)
