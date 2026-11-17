@@ -4,7 +4,7 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
-## [0.17.0] - 2026-11-16
+## [0.17.1] - 2026-11-16
 
 ### Added
 
