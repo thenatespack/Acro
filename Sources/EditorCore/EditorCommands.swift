@@ -11,7 +11,8 @@ import Foundation
 /// Every built-in command, in the order of the README's table.
 @MainActor
 public enum BuiltinCommands {
-    public static let all: [any EditorCommand.Type] = [
+    /// The commands EditorCore has (the builder modules add theirs).
+    static let core: [any EditorCommand.Type] = [
         SceneNewCommand.self, SceneOpenCommand.self, SceneSaveCommand.self, SceneSaveAsCommand.self,
         EditUndoCommand.self, EditRedoCommand.self, EditBatchCommand.self, EditBeginBatchCommand.self, EditEndBatchCommand.self,
         PlayStartCommand.self, PlayStopCommand.self, PlayToggleCommand.self, PlayPauseCommand.self, PlayStepCommand.self,
@@ -36,22 +37,10 @@ public enum BuiltinCommands {
         LogReadCommand.self, StatsGetCommand.self, DiagnosticsGetCommand.self,
     ] + EditorUICommands.all + EditorSafetyCommands.all + EditorGameModuleCommands.all + EditorBuildCommands.all
       + EditorRecoveryCommands.all + EditorNetCommands.all + EditorLauncherCommands.all + EditorScriptCommands.all + EditorFilesCommands.all
-      + EditorProceduralTextureCommands.all + EditorMeshBuildCommands.all + EditorVFXCommands.all + EditorSettingsCommands.all
-      + EditorSoundBuildCommands.all
-      + EditorPostFXCommands.all
-      + EditorDataTableCommands.all + EditorVisualScriptCommands.all
-      + EditorTerrainCommands.all
-      + EditorPixelSpriteCommands.all
-      + EditorTilemapCommands.all
-      + EditorGridMapCommands.all
-      + EditorPathCommands.all
-      + EditorBehaviorCommands.all
-      + EditorUIBuildCommands.all
-      + EditorDialogueCommands.all
-      + EditorTimelineCommands.all
-      + EditorAnimationGraphCommands.all
-      + EditorCharacterCommands.all
-      + EditorMaterialGraphCommands.all
+      + EditorProceduralTextureCommands.all + EditorSettingsCommands.all + [ViewAnimateInEditModeCommand.self]
+
+    /// Every command: the core's (`core`) and the builder tabs' (`EditorBuilderRegistry`).
+    public static var all: [any EditorCommand.Type] { core + EditorBuilderRegistry.commands }
 }
 
 extension CommandID {
@@ -75,11 +64,13 @@ extension CommandID {
 /// A result holding one path.
 public struct PathResult: Codable, Equatable, Sendable {
     public var path: String
+    package init(path: String) { self.path = path }
 }
 
 /// A result holding entity ids (new or affected roots).
 public struct EntitiesResult: Codable, Equatable, Sendable {
     public var entities: [EntityID]
+    package init(entities: [EntityID]) { self.entities = entities }
 }
 
 // MARK: Scene
@@ -921,10 +912,10 @@ public enum TransformSpace: String, Codable, CaseIterable, Sendable {
 
 /// Commands on the open project's files: unavailable without a project.
 @MainActor
-func hasProject(_ session: EditorSession) -> Bool { session.assets != nil }
+package func hasProject(_ session: EditorSession) -> Bool { session.assets != nil }
 
 // Why commands are unavailable (`EditorCommand.unavailableReason(in:)`).
-let noProjectReason = "no project is open (run project.open or project.new first)"
+package let noProjectReason = "no project is open (run project.open or project.new first)"
 let noSelectionReason = "nothing is selected (run selection.set first)"
 private let noWindowReason = "it needs the editor window (the editor is running headless)"
 
@@ -1302,7 +1293,7 @@ public enum MaterialSetCommand: EditorCommand {
 
 extension World {
     /// The live entity for `id`, or throws `UndoError.entityNotFound`.
-    @MainActor func require(_ id: EntityID) throws -> Entity {
+    @MainActor package func require(_ id: EntityID) throws -> Entity {
         guard let entity = entity(for: id) else { throw UndoError.entityNotFound(id) }
         return entity
     }

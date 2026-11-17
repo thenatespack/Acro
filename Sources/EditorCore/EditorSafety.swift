@@ -177,7 +177,7 @@ extension EditorSession {
     }
 
     /// Whether asset paths (relative to `Assets/`) stay inside it while sandboxed; logs an error when not.
-    func checkAssetPaths(_ paths: [String], _ action: String) -> Bool {
+    package func checkAssetPaths(_ paths: [String], _ action: String) -> Bool {
         guard fileAccessRoots != nil else { return true }
         for path in paths {
             let parts = path.split(whereSeparator: { $0 == "/" || $0 == "\\" })

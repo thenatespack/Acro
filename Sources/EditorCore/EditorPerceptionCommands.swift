@@ -158,7 +158,7 @@ extension EditorSession {
     }
 
     /// What the viewport clears to: the scene's fog color when it has fog.
-    var viewportClearColor: Vec4 {
+    package var viewportClearColor: Vec4 {
         let environment = RenderPrep.findEnvironment(in: world)
         return environment.fogDensity > 0 ? Vec4(environment.fogColor, 1) : Vec4(0.08, 0.09, 0.11, 1)
     }

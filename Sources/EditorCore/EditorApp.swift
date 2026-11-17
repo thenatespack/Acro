@@ -129,49 +129,22 @@ public final class EditorApp: Game, EditorHost {
     private(set) var activity: ActivityPanel!
     public private(set) var scriptEditor: ScriptEditorPanel!
     public private(set) var files: FilesPanel!
-    /// The Mesh Builder tab (MeshBuilderWorkspace.swift).
-    public private(set) var meshWorkspace: MeshBuilderWorkspace!
-    /// The VFX Builder tab (VFXBuilderWorkspace.swift).
-    public private(set) var vfxWorkspace: VFXBuilderWorkspace!
+    /// The builder tabs (`EditorBuilderRegistry.modules`, in its order); the builder modules
+    /// find their workspaces in it (`meshWorkspace`… in the EditorBuilders modules).
+    package private(set) var builderTabs: [EditorBuilderTab] = []
     /// The Sound Builder tab (SoundBuilderWorkspace.swift).
-    public private(set) var soundWorkspace: SoundBuilderWorkspace!
+    public var soundWorkspace: SoundBuilderWorkspace! { builderWorkspace(SoundBuilderWorkspace.self) }
     /// The Post-FX tab (PostFXWorkspace.swift).
-    public private(set) var postFXWorkspace: PostFXWorkspace!
+    public var postFXWorkspace: PostFXWorkspace! { builderWorkspace(PostFXWorkspace.self) }
     /// Post-processing over the Scene view (`session.scenePostFX`, ScenePostFXPreview.swift).
     let scenePostFX = ScenePostFXPreview()
-    public private(set) var tableWorkspace: DataTableWorkspace!
-    /// The Visual Script tab (VisualScriptWorkspace.swift).
-    public private(set) var visualScriptWorkspace: VisualScriptWorkspace!
-    /// The Terrain Builder tab (TerrainBuilderWorkspace.swift).
-    public private(set) var terrainWorkspace: TerrainBuilderWorkspace!
-    /// The Pixel Sprite Builder tab (PixelSpriteWorkspace.swift).
-    public private(set) var spriteWorkspace: PixelSpriteWorkspace!
-    /// The Tilemap Builder tab (TilemapWorkspace.swift).
-    public private(set) var tilemapWorkspace: TilemapWorkspace!
-    /// The GridMap Builder tab (GridMapWorkspace.swift).
-    public private(set) var gridMapWorkspace: GridMapWorkspace!
-    /// The Path Builder tab (PathBuilderWorkspace.swift).
-    public private(set) var pathWorkspace: PathBuilderWorkspace!
-    /// The Behavior Tree tab (BehaviorTreeWorkspace.swift).
-    public private(set) var behaviorWorkspace: BehaviorTreeWorkspace!
-    /// The UI Builder tab (UIBuilderWorkspace.swift).
-    public private(set) var uiWorkspace: UIBuilderWorkspace!
-    /// The Dialogue tab (DialogueWorkspace.swift).
-    public private(set) var dialogueWorkspace: DialogueWorkspace!
+    public var tableWorkspace: DataTableWorkspace! { builderWorkspace(DataTableWorkspace.self) }
     /// Shows `DialoguePlayer` conversations over the Game view while playing: the default box,
     /// or the `.ui` layout a conversation names.
     let gameDialogue = DialogueView(box: DialogueBox(name: "gameDialogueBox"), name: "gameDialogue")
     var gameDialogueBox: DialogueBox { gameDialogue.box }
     /// The game UI layer's place over the Game view (`UILayoutPlayer` layouts while playing).
     let gameUILayerHost = Widget(name: "gameUILayerHost")
-    /// The Timeline tab (TimelineWorkspace.swift).
-    public private(set) var timelineWorkspace: TimelineWorkspace!
-    /// The Animation Graph Builder tab (AnimationGraphWorkspace.swift).
-    public private(set) var animGraphWorkspace: AnimationGraphWorkspace!
-    /// The Character Builder tab (CharacterBuilderWorkspace.swift).
-    public private(set) var characterWorkspace: CharacterBuilderWorkspace!
-    /// The Material Builder tab (MaterialBuilderWorkspace.swift).
-    public private(set) var materialWorkspace: MaterialBuilderWorkspace!
     private(set) var statusBar: StatusBar!
     /// The Assets panel (browser) and its thumbnails.
     public private(set) var assetBrowser: AssetBrowserPanel!
@@ -492,153 +465,7 @@ public final class EditorApp: Game, EditorHost {
             assetBrowser.model.search = ""
             assetBrowser.model.reveal(path)
         }
-        session.onOpenMeshBuild = { [unowned self] id in
-            guard meshWorkspace.open(id) else { return }
-            // The Mesh Builder opens where the Scene view is: tabbed with the viewport.
-            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.meshBuilder, EditorLayout.viewport) {
-                dock.dock(EditorLayout.meshBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
-                                                                                             : .edge(.bottom))
-            }
-            dock.focusPanel(EditorLayout.meshBuilder)
-        }
-        session.onOpenVFX = { [unowned self] id in
-            guard vfxWorkspace.open(id) else { return }
-            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.vfxBuilder, EditorLayout.viewport) {
-                dock.dock(EditorLayout.vfxBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
-                                                                                            : .edge(.bottom))
-            }
-            dock.focusPanel(EditorLayout.vfxBuilder)
-        }
-        session.onOpenSoundBuild = { [unowned self] id in
-            guard soundWorkspace.open(id) else { return }
-            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.soundBuilder, EditorLayout.viewport) {
-                dock.dock(EditorLayout.soundBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
-                                                                                              : .edge(.bottom))
-            }
-            dock.focusPanel(EditorLayout.soundBuilder)
-        }
-        session.onOpenPostFX = { [unowned self] id in
-            guard postFXWorkspace.open(id) else { return }
-            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.postFXBuilder, EditorLayout.viewport) {
-                dock.dock(EditorLayout.postFXBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
-                                                                                               : .edge(.bottom))
-            }
-            dock.focusPanel(EditorLayout.postFXBuilder)
-        }
-        session.onOpenTable = { [unowned self] id in
-            guard tableWorkspace.open(id) else { return }
-            // The Data Table opens where the Scene view is: tabbed with the viewport.
-            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.dataTable, EditorLayout.viewport) {
-                dock.dock(EditorLayout.dataTable, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
-                                                                                           : .edge(.bottom))
-            }
-            dock.focusPanel(EditorLayout.dataTable)
-        }
-        session.onOpenBehavior = { [unowned self] id in
-            guard behaviorWorkspace.open(id) else { return }
-            // The Behavior Tree tab opens where the Scene view is: tabbed with the viewport.
-            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.behaviorTree, EditorLayout.viewport) {
-                dock.dock(EditorLayout.behaviorTree, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
-                                                                                              : .edge(.bottom))
-            }
-            dock.focusPanel(EditorLayout.behaviorTree)
-        }
-        session.onOpenAnimationGraph = { [unowned self] id in
-            guard animGraphWorkspace.open(id) else { return }
-            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.animationGraph, EditorLayout.viewport) {
-                dock.dock(EditorLayout.animationGraph, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
-                                                                                              : .edge(.bottom))
-            }
-            dock.focusPanel(EditorLayout.animationGraph)
-        }
-        session.onOpenCharacter = { [unowned self] id in
-            guard characterWorkspace.open(id) else { return }
-            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.characterBuilder, EditorLayout.viewport) {
-                dock.dock(EditorLayout.characterBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
-                                                                                                  : .edge(.bottom))
-            }
-            dock.focusPanel(EditorLayout.characterBuilder)
-        }
-        session.onOpenVisualScript = { [unowned self] id in
-            guard visualScriptWorkspace.open(id) else { return }
-            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.visualScript, EditorLayout.viewport) {
-                dock.dock(EditorLayout.visualScript, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
-                                                                                              : .edge(.bottom))
-            }
-            dock.focusPanel(EditorLayout.visualScript)
-        }
-        session.onOpenTerrain = { [unowned self] id in
-            guard terrainWorkspace.open(id) else { return }
-            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.terrainBuilder, EditorLayout.viewport) {
-                dock.dock(EditorLayout.terrainBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
-                                                                                                : .edge(.bottom))
-            }
-            dock.focusPanel(EditorLayout.terrainBuilder)
-        }
-        session.onOpenPixelSprite = { [unowned self] id in
-            guard spriteWorkspace.open(id) else { return }
-            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.spriteBuilder, EditorLayout.viewport) {
-                dock.dock(EditorLayout.spriteBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
-                                                                                               : .edge(.bottom))
-            }
-            dock.focusPanel(EditorLayout.spriteBuilder)
-        }
-        session.onOpenTilemap = { [unowned self] id in
-            guard tilemapWorkspace.open(id) else { return }
-            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.tilemapBuilder, EditorLayout.viewport) {
-                dock.dock(EditorLayout.tilemapBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
-                                                                                                : .edge(.bottom))
-            }
-            dock.focusPanel(EditorLayout.tilemapBuilder)
-        }
-        session.onOpenGridMap = { [unowned self] id in
-            guard gridMapWorkspace.open(id, floor: session.openGridMapFloor) else { return }
-            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.gridMapBuilder, EditorLayout.viewport) {
-                dock.dock(EditorLayout.gridMapBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
-                                                                                                : .edge(.bottom))
-            }
-            dock.focusPanel(EditorLayout.gridMapBuilder)
-        }
-        session.onOpenPathBuild = { [unowned self] id in
-            guard pathWorkspace.open(id) else { return }
-            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.pathBuilder, EditorLayout.viewport) {
-                dock.dock(EditorLayout.pathBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
-                                                                                             : .edge(.bottom))
-            }
-            dock.focusPanel(EditorLayout.pathBuilder)
-        }
-        session.onOpenUIBuild = { [unowned self] id in
-            guard uiWorkspace.open(id) else { return }
-            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.uiBuilder, EditorLayout.viewport) {
-                dock.dock(EditorLayout.uiBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
-                                                                                           : .edge(.bottom))
-            }
-            dock.focusPanel(EditorLayout.uiBuilder)
-        }
-        session.onOpenDialogue = { [unowned self] id in
-            guard dialogueWorkspace.open(id) else { return }
-            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.dialogueBuilder, EditorLayout.viewport) {
-                dock.dock(EditorLayout.dialogueBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
-                                                                                                 : .edge(.bottom))
-            }
-            dock.focusPanel(EditorLayout.dialogueBuilder)
-        }
-        session.onOpenTimeline = { [unowned self] id in
-            guard timelineWorkspace.open(id) else { return }
-            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.timeline, EditorLayout.viewport) {
-                dock.dock(EditorLayout.timeline, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport) : .edge(.bottom))
-            }
-            dock.focusPanel(EditorLayout.timeline)
-        }
-        session.onOpenMaterialGraph = { [unowned self] id in
-            guard materialWorkspace.open(id) else { return }
-            materialWorkspace.applyRequest(from: session)
-            if !EditorLayout.shareGroup(in: dock.layout, EditorLayout.materialBuilder, EditorLayout.viewport) {
-                dock.dock(EditorLayout.materialBuilder, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport)
-                                                                                                 : .edge(.bottom))
-            }
-            dock.focusPanel(EditorLayout.materialBuilder)
-        }
+        for tab in builderTabs { tab.connect?() }
         session.onOpenScript = { [unowned self] path in
             let url = URL(fileURLWithPath: path)
             scriptEditor.openScript(at: url)
@@ -757,9 +584,6 @@ public final class EditorApp: Game, EditorHost {
         assetBrowser.onDrag = { [unowned self] entry, position, phase in assetDragged(entry, at: position, phase: phase) }
         scriptEditor = ScriptEditorPanel(session: session)
         files = FilesPanel(session: session)
-        meshWorkspace = MeshBuilderWorkspace(session: session)
-        tableWorkspace = DataTableWorkspace(session: session)
-        dialogueWorkspace = DialogueWorkspace(session: session)
         gameUILayerHost.style.position = .absolute(.fill())
         gameUILayerHost.isHitTestable = false
         gameWidget.addChild(gameUILayerHost)
@@ -770,47 +594,10 @@ public final class EditorApp: Game, EditorHost {
         }
         gameDialogue.assets = { [unowned self] in session.assets }
         gameDialogue.images = { [unowned self] path in projectTexture(path, fullSize: true) }
-        dialogueWorkspace.images = { [unowned self] path in projectTexture(path, fullSize: false) }
         gameWidget.addChild(gameDialogue)
         session.dialoguePresenter = gameDialogue
         session.visualScriptUILayer = gameWidget
-        visualScriptWorkspace = VisualScriptWorkspace(session: session)
-        meshWorkspace.device = engine?.device
-        if let quality = engine?.quality { meshWorkspace.quality = quality }
-        vfxWorkspace = VFXBuilderWorkspace(session: session)
-        vfxWorkspace.device = engine?.device
-        if let quality = engine?.quality { vfxWorkspace.quality = quality }
-        soundWorkspace = SoundBuilderWorkspace(session: session)
-        postFXWorkspace = PostFXWorkspace(session: session)
-        postFXWorkspace.device = engine?.device
-        if let quality = engine?.quality { postFXWorkspace.quality = quality }
-        terrainWorkspace = TerrainBuilderWorkspace(session: session)
-        behaviorWorkspace = BehaviorTreeWorkspace(session: session)
-        terrainWorkspace.device = engine?.device
-        if let quality = engine?.quality { terrainWorkspace.quality = quality }
-        spriteWorkspace = PixelSpriteWorkspace(session: session)
-        tilemapWorkspace = TilemapWorkspace(session: session)
-        tilemapWorkspace.device = engine?.device
-        gridMapWorkspace = GridMapWorkspace(session: session)
-        gridMapWorkspace.device = engine?.device
-        if let quality = engine?.quality { gridMapWorkspace.quality = quality }
-        pathWorkspace = PathBuilderWorkspace(session: session)
-        pathWorkspace.device = engine?.device
-        if let quality = engine?.quality { pathWorkspace.quality = quality }
-        uiWorkspace = UIBuilderWorkspace(session: session)
-        uiWorkspace.images = { [unowned self] reference in thumbnails?.thumbnail(reference, kind: .texture) }
-        timelineWorkspace = TimelineWorkspace(session: session)
-        timelineWorkspace.device = engine?.device
-        if let quality = engine?.quality { timelineWorkspace.quality = quality }
-        animGraphWorkspace = AnimationGraphWorkspace(session: session)
-        animGraphWorkspace.device = engine?.device
-        if let quality = engine?.quality { animGraphWorkspace.quality = quality }
-        characterWorkspace = CharacterBuilderWorkspace(session: session)
-        characterWorkspace.device = engine?.device
-        if let quality = engine?.quality { characterWorkspace.quality = quality }
-        materialWorkspace = MaterialBuilderWorkspace(session: session)
-        materialWorkspace.device = engine?.device
-        if let quality = engine?.quality { materialWorkspace.quality = quality }
+        builderTabs = EditorBuilderRegistry.modules.map { $0.makeTab(self) }
         files.onOpen = { [unowned self] file in openFile(file) }
         files.onNewScene = { [unowned self] name in newScene(named: name) }
 
@@ -829,45 +616,11 @@ public final class EditorApp: Game, EditorHost {
         dock.addPanel(DockPanel(id: EditorLayout.assets, title: "Assets", content: assetBrowser.view, minSize: Vec2(240, 120)))
         dock.addPanel(DockPanel(id: EditorLayout.scripts, title: "Scripts", content: scriptEditor.view, minSize: Vec2(240, 120)))
         dock.addPanel(DockPanel(id: EditorLayout.files, title: "Files", content: files.view, minSize: Vec2(160, 100)))
-        let meshPanel = DockPanel(id: EditorLayout.meshBuilder, title: "Mesh Builder", content: meshWorkspace.view, minSize: Vec2(320, 200))
-        meshPanel.passesPointerThrough = true
-        dock.addPanel(meshPanel)
-        let vfxPanel = DockPanel(id: EditorLayout.vfxBuilder, title: "VFX Builder", content: vfxWorkspace.view, minSize: Vec2(320, 200))
-        vfxPanel.passesPointerThrough = true
-        dock.addPanel(vfxPanel)
-        dock.addPanel(DockPanel(id: EditorLayout.soundBuilder, title: "Sound Builder", content: soundWorkspace.view, minSize: Vec2(320, 200)))
-        let postFXPanel = DockPanel(id: EditorLayout.postFXBuilder, title: "Post-FX", content: postFXWorkspace.view, minSize: Vec2(320, 200))
-        postFXPanel.passesPointerThrough = true
-        dock.addPanel(postFXPanel)
-        dock.addPanel(DockPanel(id: EditorLayout.dataTable, title: "Data Table", content: tableWorkspace.view, minSize: Vec2(320, 200)))
-        dock.addPanel(DockPanel(id: EditorLayout.visualScript, title: "Visual Script", content: visualScriptWorkspace.view, minSize: Vec2(360, 220)))
-        let terrainPanel = DockPanel(id: EditorLayout.terrainBuilder, title: "Terrain Builder", content: terrainWorkspace.view, minSize: Vec2(320, 200))
-        terrainPanel.passesPointerThrough = true
-        dock.addPanel(terrainPanel)
-        dock.addPanel(DockPanel(id: EditorLayout.spriteBuilder, title: "Pixel Sprite Builder", content: spriteWorkspace.view, minSize: Vec2(320, 200)))
-        dock.addPanel(DockPanel(id: EditorLayout.tilemapBuilder, title: "Tilemap Builder", content: tilemapWorkspace.view, minSize: Vec2(320, 200)))
-        let gridMapPanel = DockPanel(id: EditorLayout.gridMapBuilder, title: "GridMap Builder", content: gridMapWorkspace.view, minSize: Vec2(320, 200))
-        gridMapPanel.passesPointerThrough = true
-        dock.addPanel(gridMapPanel)
-        let pathPanel = DockPanel(id: EditorLayout.pathBuilder, title: "Path Builder", content: pathWorkspace.view, minSize: Vec2(320, 200))
-        pathPanel.passesPointerThrough = true
-        dock.addPanel(pathPanel)
-        dock.addPanel(DockPanel(id: EditorLayout.behaviorTree, title: "Behavior Tree", content: behaviorWorkspace.view, minSize: Vec2(320, 200)))
-        dock.addPanel(DockPanel(id: EditorLayout.uiBuilder, title: "UI Builder", content: uiWorkspace.view, minSize: Vec2(320, 200)))
-        dock.addPanel(DockPanel(id: EditorLayout.dialogueBuilder, title: "Dialogue", content: dialogueWorkspace.view, minSize: Vec2(320, 200)))
-        let timelinePanel = DockPanel(id: EditorLayout.timeline, title: "Timeline", content: timelineWorkspace.view, minSize: Vec2(320, 200))
-        timelinePanel.passesPointerThrough = true
-        dock.addPanel(timelinePanel)
-        let animGraphPanel = DockPanel(id: EditorLayout.animationGraph, title: "Animation Graph", content: animGraphWorkspace.view, minSize: Vec2(320, 200))
-        animGraphPanel.passesPointerThrough = true
-        dock.addPanel(animGraphPanel)
-        let characterPanel = DockPanel(id: EditorLayout.characterBuilder, title: "Character Builder", content: characterWorkspace.view,
-                                       minSize: Vec2(320, 200))
-        characterPanel.passesPointerThrough = true
-        dock.addPanel(characterPanel)
-        let materialPanel = DockPanel(id: EditorLayout.materialBuilder, title: "Material Builder", content: materialWorkspace.view, minSize: Vec2(320, 200))
-        materialPanel.passesPointerThrough = true
-        dock.addPanel(materialPanel)
+        for (module, tab) in zip(EditorBuilderRegistry.modules, builderTabs) {
+            let panel = DockPanel(id: module.panelID, title: module.title, content: tab.view, minSize: module.minSize)
+            panel.passesPointerThrough = module.passesPointerThrough
+            dock.addPanel(panel)
+        }
         dock.addPanel(DockPanel(id: EditorLayout.activity, title: "Activity", content: activity.view, minSize: Vec2(240, 100)))
         for (id, icon) in EditorIcons.panelIconNames { dock.panel(id)?.icon = EditorIcons.named(icon) }
         dock.restoreLayout(EditorLayout.initialLayout(stored: prefs.layout))
@@ -926,11 +679,29 @@ public final class EditorApp: Game, EditorHost {
     /// images): the scene renderer's full-size copy (only while it renders, `fullSize`), else
     /// the asset browser's thumbnail. The Dialogue tab uses thumbnails: a renderer upload started
     /// while nothing renders the scene never finishes, which holds MCP replies (they wait for loads).
-    private func projectTexture(_ path: String, fullSize: Bool) -> GPUTexture? {
+    package func projectTexture(_ path: String, fullSize: Bool) -> GPUTexture? {
         guard let assets = session.assets, let id = assets.assetID(forTableValue: path) else { return nil }
         let reference = AssetReference(id)
         let full = fullSize ? sceneRenderer?.texture(TextureHandle(reference.description)) : nil
         return full ?? thumbnails?.thumbnail(reference, kind: .texture)
+    }
+
+    /// The asset browser's thumbnail of an asset (nil without a GPU or before it is drawn).
+    package func assetThumbnail(_ reference: AssetReference, kind: AssetKind) -> GPUTexture? {
+        thumbnails?.thumbnail(reference, kind: kind)
+    }
+
+    /// The device and quality builder tabs with a 3D view render with (nil without a window).
+    package var builderDevice: RenderDevice? { engine?.device }
+    package var builderQuality: RenderQuality? { engine?.quality }
+
+    /// Shows a builder tab whose asset was opened: where the Scene view is (tabbed with the
+    /// viewport) unless it already shares its group, and in front.
+    package func showBuilderPanel(_ id: String) {
+        if !EditorLayout.shareGroup(in: dock.layout, id, EditorLayout.viewport) {
+            dock.dock(id, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport) : .edge(.bottom))
+        }
+        dock.focusPanel(id)
     }
 
     /// Dropdown options: the renderer's code-registered keys, then the project's assets.
@@ -1283,26 +1054,11 @@ public final class EditorApp: Game, EditorHost {
             let claimer = ui.focusedWidget as? EditorShortcutClaiming
             let presses = claimer.map { c in input.keyPresses.filter { !c.claimsShortcut($0) } } ?? input.keyPresses
             for command in shortcuts.actions(for: presses, focus: focus) { invoke(command) }
-            if !focus.textEditing, !focus.overlayOpen { gridMapWorkspace.handleKeys(input.keyPresses, pointer: uiPoint(input.mousePosition)) }
+            if !focus.textEditing, !focus.overlayOpen {
+                for tab in builderTabs { tab.handleKeys?(input.keyPresses, uiPoint(input.mousePosition)) }
+            }
             updateViewport(engine: engine, dt: dt, keyboardFree: !focus.textEditing)
-            meshWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
-            vfxWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
-            soundWorkspace.update()
-            postFXWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
-            tableWorkspace.update()
-            dialogueWorkspace.update()
-            visualScriptWorkspace.update()
-            terrainWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
-            spriteWorkspace.update(dt: dt)
-            tilemapWorkspace.update(dt: dt)
-            gridMapWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
-            pathWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
-            behaviorWorkspace.update()
-            uiWorkspace.update()
-            timelineWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
-            animGraphWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
-            characterWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
-            materialWorkspace.update(input: workspaceInput(engine.input, dt: dt), dt: dt)
+            for tab in builderTabs { tab.update?(workspaceInput(engine.input, dt: dt), dt) }
         }
         session.tick(dt: Double(dt))
 
@@ -1328,16 +1084,7 @@ public final class EditorApp: Game, EditorHost {
         // Size the target to the panel before painting, so the image drawn this frame is the one rendered.
         ui.layoutIfNeeded()
         resizeTarget(scale: ui.scale)
-        meshWorkspace.prepareFrame(pixelScale: ui.scale)
-        vfxWorkspace.prepareFrame(pixelScale: ui.scale)
-        postFXWorkspace.prepareFrame(pixelScale: ui.scale)
-        terrainWorkspace.prepareFrame(pixelScale: ui.scale)
-        gridMapWorkspace.prepareFrame(pixelScale: ui.scale)
-        pathWorkspace.prepareFrame(pixelScale: ui.scale)
-        timelineWorkspace.prepareFrame(pixelScale: ui.scale)
-        animGraphWorkspace.prepareFrame(pixelScale: ui.scale)
-        characterWorkspace.prepareFrame(pixelScale: ui.scale)
-        materialWorkspace.prepareFrame(pixelScale: ui.scale)
+        for tab in builderTabs { tab.prepareFrame?(ui.scale) }
         buildGizmos()
         viewportWidget.texture = scenePostFX.texture(for: target, settings: session.scenePostFX) ?? target.texture
         viewportWidget.billboards = transformTool.billboards
@@ -1783,16 +1530,7 @@ public final class EditorApp: Game, EditorHost {
         renderCaptures(frame: frame)
         renderWorldCaptures(frame: frame)
         guard !isLauncherShown else { return }
-        meshWorkspace.render(frame: frame)
-        vfxWorkspace.render(frame: frame)
-        postFXWorkspace.render(frame: frame)
-        terrainWorkspace.render(frame: frame)
-        gridMapWorkspace.render(frame: frame)
-        pathWorkspace.render(frame: frame)
-        timelineWorkspace.render(frame: frame)
-        animGraphWorkspace.render(frame: frame)
-        characterWorkspace.render(frame: frame)
-        materialWorkspace.render(frame: frame)
+        for tab in builderTabs { tab.render?(frame) }
         if let game = gameCurrentView, gameSizer.width > 0, gameWidget.isEffectivelyVisible {
             sceneRenderer.beginViews(world: session.gameWorld, frame: frame, shadowFocus: game)
             sceneSprites.prepare(world: session.gameWorld, assets: session.assets, reversedZ: game.reversedZ)
@@ -2177,33 +1915,33 @@ struct SequentialIDs {
 /// The viewport panel's content: the render target's image, a caption and, in play mode, a
 /// colored frame. Not hit-testable, and its panel passes the pointer through, so clicks and
 /// drags in it reach the viewport controller instead of the UI.
-final class ViewportWidget: Widget {
-    override var accessibilityRole: UIAccessibilityRole { .viewport }
-    override var accessibilityText: String? { label }
-    override var accessibilityValue: String? { caption }
+package final class ViewportWidget: Widget {
+    package override var accessibilityRole: UIAccessibilityRole { .viewport }
+    package override var accessibilityText: String? { label }
+    package override var accessibilityValue: String? { caption }
 
-    var texture: GPUTexture?
+    package var texture: GPUTexture?
     /// Said over the background when there is no image (the Game view without a camera).
-    var placeholder: String? { didSet { if placeholder != oldValue { setNeedsDisplay() } } }
+    package var placeholder: String? { didSet { if placeholder != oldValue { setNeedsDisplay() } } }
     private let label: String
-    var caption = "" { didSet { if caption != oldValue { setNeedsDisplay() } } }
+    package var caption = "" { didSet { if caption != oldValue { setNeedsDisplay() } } }
     /// Whether the caption is drawn as a badge over the image (when the tab bar can't show it).
-    var drawsCaption = true { didSet { if drawsCaption != oldValue { setNeedsDisplay() } } }
-    var isPlaying = false
+    package var drawsCaption = true { didSet { if drawsCaption != oldValue { setNeedsDisplay() } } }
+    package var isPlaying = false
     /// The icons of cameras, lights and other entities without a mesh, over the image.
-    var billboards: ViewportBillboards?
+    package var billboards: ViewportBillboards?
     /// How an entity is selected, for its billboard.
-    var selectionState: (Entity) -> ViewportBillboards.SelectionState = { _ in .none }
+    package var selectionState: (Entity) -> ViewportBillboards.SelectionState = { _ in .none }
     /// The network stats overlay's lines (EditorNetPlay.swift), top right; empty: none.
-    var overlayLines: [String] = [] { didSet { if overlayLines != oldValue { setNeedsDisplay() } } }
+    package var overlayLines: [String] = [] { didSet { if overlayLines != oldValue { setNeedsDisplay() } } }
 
-    init(name: String = "viewport", label: String = "Scene viewport") {
+    package init(name: String = "viewport", label: String = "Scene viewport") {
         self.label = label
         super.init(name: name)
         isHitTestable = false
     }
 
-    override func draw(_ list: UIDrawList, theme: UITheme) {
+    package override func draw(_ list: UIDrawList, theme: UITheme) {
         if let texture {
             list.drawImage(texture, in: frame)
         } else {
@@ -2219,7 +1957,7 @@ final class ViewportWidget: Widget {
         }
     }
 
-    override func drawForeground(_ list: UIDrawList, theme: UITheme) {
+    package override func drawForeground(_ list: UIDrawList, theme: UITheme) {
         if drawsCaption && !caption.isEmpty {
             let layout = context?.textLayout(caption, size: theme.smallFontSize) ?? TextLayout(caption, font: theme.font, size: theme.smallFontSize)
             let badge = UIRect(x: frame.x + 8, y: frame.y + 8, width: snap(layout.width + 16), height: snap(layout.height + 8))

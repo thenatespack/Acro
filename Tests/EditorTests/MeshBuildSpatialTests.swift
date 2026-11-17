@@ -1,6 +1,8 @@
 import Foundation
 import Testing
 @testable import EditorCore
+@testable import EditorBuildersAnimation
+@testable import EditorBuildersMesh
 @testable import Engine
 @testable import EngineCore
 @testable import EngineScene

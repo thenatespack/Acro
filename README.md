@@ -243,6 +243,7 @@ CI doesn't render the demo scenes. Check rendering changes locally with `Scripts
 | `Sources/EngineRendering/` | Scene renderer, animation, particles, and sprites |
 | `Sources/EnginePhysics/`, `Sources/EngineAudio/`, `Sources/EngineNet/`, `Sources/EngineUI/`, `Sources/EngineText/` | Physics (3D and 2D), audio, networking, UI widgets, and text |
 | `Sources/EditorCore/`, `Sources/Editor/` | Editor implementation and executable |
+| `Sources/EditorBuilders*/` | The editor's builder tabs (Mesh, Terrain, Tilemap, Dialogue…) in modules that compile in parallel; `EditorBuilders` registers them |
 | `Sources/Demo/` | Feature and rendering demo |
 | `Sources/SampleGame/`, `Sources/GameRunner/` | Example game module and standalone runner |
 | `Sources/EngineMCP/` | MCP protocol implementation |
