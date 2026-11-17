@@ -5,6 +5,7 @@ import Testing
 @testable import EngineScene
 @testable import EngineGraphics
 @testable import EngineAssets
+@testable import EngineMeshBuild
 
 // Curved and deformed mesh build geometry: sweep, loft, the deformers and subdivision.
 

@@ -280,7 +280,7 @@ extension AssetDatabase {
 
     /// `path` without surrounding slashes, refused when it is empty, leaves `Assets/` or
     /// names a sidecar.
-    static func validated(_ path: String) throws -> String {
+    package static func validated(_ path: String) throws -> String {
         let trimmed = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let parts = trimmed.split(separator: "/", omittingEmptySubsequences: false)
         guard !trimmed.isEmpty, !parts.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." || $0.hasPrefix(".") }),

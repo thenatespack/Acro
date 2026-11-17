@@ -162,7 +162,7 @@ public struct GameModuleBuilder: Sendable {
 
     /// The engine's modules (Package.swift's `engineModules`): `Engine` re-exports the rest.
     static let engineModules = ["EngineCore", "EngineScene", "EngineGraphics", "EngineBackends", "EngineText", "EnginePhysics",
-                                "EngineAudio", "EngineAssets", "EngineNet", "EngineUI", "EngineRendering", "Engine"]
+                                "EngineAudio", "EngineAssets", "EngineMeshBuild", "EngineNet", "EngineUI", "EngineRendering", "Engine"]
 
     /// Libraries a game module's objects autolink that only the host links (Windows).
     static let hostOnlyLibraries = ["zlib", "vulkan-1", "glfw3", "EngineMCP"] + engineModules

@@ -5,6 +5,7 @@ import Testing
 @testable import EngineScene
 @testable import EngineGraphics
 @testable import EngineAssets
+@testable import EngineMeshBuild
 
 // The .proctex noise generators (fbm, ridged, voronoi, cells, woodRings, streaks) and the
 // companion normal map.

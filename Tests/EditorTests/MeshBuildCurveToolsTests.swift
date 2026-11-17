@@ -5,6 +5,7 @@ import Testing
 @testable import EngineCore
 @testable import EngineScene
 @testable import EngineAssets
+@testable import EngineMeshBuild
 @testable import EngineUI
 
 // Sweeps, lofts and deformers through the meshBuild tools and the Mesh Builder form.

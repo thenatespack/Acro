@@ -8,6 +8,7 @@
 @_exported import EnginePhysics
 @_exported import EngineAudio
 @_exported import EngineAssets
+@_exported import EngineMeshBuild
 @_exported import EngineNet
 @_exported import EngineUI
 @_exported import EngineRendering

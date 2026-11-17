@@ -5,6 +5,7 @@ import Testing
 @testable import EngineScene
 @testable import EngineGraphics
 @testable import EngineAssets
+@testable import EngineMeshBuild
 
 // Mesh build looks (generated surface textures), their mapping and baked ambient occlusion.
 

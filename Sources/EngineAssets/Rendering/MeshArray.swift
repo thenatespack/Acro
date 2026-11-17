@@ -155,8 +155,8 @@ public struct MeshArray: Component, Codable, Equatable, Sendable {
 }
 
 /// A small integer hash for deterministic variation (integer-only, so identical everywhere).
-enum Hash32 {
-    static func hash(_ a: Int, _ b: Int, _ c: Int, _ d: Int = 0) -> UInt32 {
+package enum Hash32 {
+    package static func hash(_ a: Int, _ b: Int, _ c: Int, _ d: Int = 0) -> UInt32 {
         var x = UInt32(truncatingIfNeeded: a) &* 0x9E37_79B1
         x ^= UInt32(truncatingIfNeeded: b) &* 0x85EB_CA6B
         x ^= UInt32(truncatingIfNeeded: c) &* 0xC2B2_AE35
@@ -170,7 +170,7 @@ enum Hash32 {
     }
 
     /// In [0, 1).
-    static func unit(_ a: Int, _ b: Int, _ c: Int, _ d: Int = 0) -> Float {
+    package static func unit(_ a: Int, _ b: Int, _ c: Int, _ d: Int = 0) -> Float {
         Float(hash(a, b, c, d) >> 8) / 16_777_216
     }
 }

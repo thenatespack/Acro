@@ -384,7 +384,7 @@ extension PathBuild {
 
 extension MeshGeometry {
     /// `parts` as one mesh (nil when they draw nothing).
-    static func joined(_ parts: [MeshGeometry]) -> MeshGeometry? {
+    package static func joined(_ parts: [MeshGeometry]) -> MeshGeometry? {
         var out = MeshGeometry(vertices: [], indices: [])
         for part in parts where !part.indices.isEmpty {
             let base = UInt32(out.vertices.count)

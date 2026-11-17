@@ -5,6 +5,7 @@ import Testing
 @testable import EngineScene
 @testable import EngineGraphics
 @testable import EngineAssets
+@testable import EngineMeshBuild
 
 // Blending between a sculpt's looks (MeshBuildSculptBlend.swift, MeshBuildImporter+Blends.swift),
 // vertex paint (VertexPaint.swift) and leaf card variation.

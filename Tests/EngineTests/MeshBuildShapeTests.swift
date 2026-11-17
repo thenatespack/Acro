@@ -5,6 +5,7 @@ import Testing
 @testable import EngineScene
 @testable import EngineGraphics
 @testable import EngineAssets
+@testable import EngineMeshBuild
 
 // Mesh build shapes beyond the unit primitives: bevelled boxes and cylinders, lathe and extrude.
 

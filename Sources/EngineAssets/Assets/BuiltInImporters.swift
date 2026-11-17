@@ -174,7 +174,7 @@ public struct MaterialFileImporter: AssetImporter {
 
     /// Resolves the graph's texture settings (paths under `Assets/` or references) to
     /// references, compiles it to report problems, and fills the texture slots.
-    static func compileGraph(_ material: inout MaterialAsset, _ context: inout ImportContext) {
+    package static func compileGraph(_ material: inout MaterialAsset, _ context: inout ImportContext) {
         guard var graph = material.graph else { return }
         let byPath = context.assetsByPath
         func resolve(_ text: String) -> AssetReference? {

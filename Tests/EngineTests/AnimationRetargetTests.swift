@@ -4,6 +4,7 @@ import Testing
 @testable import EngineCore
 @testable import EngineScene
 @testable import EngineAssets
+@testable import EngineMeshBuild
 @testable import EngineRendering
 
 private func near(_ a: Vec3, _ b: Vec3, _ tolerance: Float = 1e-3) -> Bool { length(a - b) < tolerance }

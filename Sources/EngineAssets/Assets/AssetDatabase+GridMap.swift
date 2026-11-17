@@ -21,7 +21,7 @@ extension AssetDatabase {
 
     /// The contents of the `.gridmap` asset `id` (nil if it isn't one or can't be read).
     public func gridMap(of id: AssetID) -> GridMap? {
-        guard record(id)?.importer == GridMapImporter().name, let path = path(of: id),
+        guard record(id)?.importer == BuiltInImporterName.gridMap, let path = path(of: id),
               let data = try? Data(contentsOf: project.url(forAssetPath: path)) else { return nil }
         return try? AssetJSON.decoder().decode(GridMap.self, from: data)
     }

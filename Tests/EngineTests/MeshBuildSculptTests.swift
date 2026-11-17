@@ -5,6 +5,7 @@ import Testing
 @testable import EngineScene
 @testable import EngineGraphics
 @testable import EngineAssets
+@testable import EngineMeshBuild
 
 // Sculpt parts: children combined as signed distance fields and meshed by dual contouring
 // (MeshBuildSculpt.swift).

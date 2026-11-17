@@ -21,7 +21,7 @@ extension AssetDatabase {
 
     /// The contents of the `.character` asset `id` (nil if it isn't one or can't be read).
     public func character(of id: AssetID) -> CharacterBuild? {
-        guard record(id)?.importer == CharacterImporter().name, let path = path(of: id),
+        guard record(id)?.importer == BuiltInImporterName.character, let path = path(of: id),
               let data = try? Data(contentsOf: project.url(forAssetPath: path)) else { return nil }
         return try? AssetJSON.decoder().decode(CharacterBuild.self, from: data)
     }

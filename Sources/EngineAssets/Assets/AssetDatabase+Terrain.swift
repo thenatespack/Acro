@@ -21,7 +21,7 @@ extension AssetDatabase {
 
     /// The contents of the `.terrain` asset `id` (nil if it isn't one or can't be read).
     public func terrain(of id: AssetID) -> Terrain? {
-        guard record(id)?.importer == TerrainImporter().name, let path = path(of: id),
+        guard record(id)?.importer == BuiltInImporterName.terrain, let path = path(of: id),
               let data = try? Data(contentsOf: project.url(forAssetPath: path)) else { return nil }
         return try? AssetJSON.decoder().decode(Terrain.self, from: data)
     }

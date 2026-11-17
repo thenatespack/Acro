@@ -5,6 +5,7 @@ import Testing
 @testable import EngineScene
 @testable import EngineGraphics
 @testable import EngineAssets
+@testable import EngineMeshBuild
 
 // Edge wear on mesh build parts (MeshBuildEdgeWear.swift, `EdgeWear` in Material.swift).
 
