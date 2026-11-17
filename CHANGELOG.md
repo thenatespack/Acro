@@ -4,6 +4,8 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-11-17
+
 ### Changed
 
 - The Mesh Builder's algorithms (shapes, sculpting, looks, foliage, LOD, ambient occlusion) and the importers that run them (mesh builds, terrain, grid maps, paths, characters, procedural textures) moved out of EngineAssets into a new module, EngineMeshBuild, which compiles in parallel with EngineRendering in release builds. Their data types (`MeshBuild`, `MeshBuildPart` and what it holds) stay in EngineAssets. `import Engine` and the `Engine` product are unchanged, and the importers are still in `AssetImporterRegistry.builtIn`.
@@ -184,7 +186,9 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 
 First versioned release. Includes the Metal and Vulkan renderers, entity-component system, editor, MCP server, game modules with hot reload, asset pipeline, physics, audio, networking, packaging, decals, and planar reflections.
 
-[Unreleased]: https://github.com/thenatespack/Acro/compare/v0.14.1...HEAD
+[Unreleased]: https://github.com/thenatespack/Acro/compare/v0.18.1...HEAD
+[0.18.1]: https://github.com/thenatespack/Acro/compare/v0.17.1...v0.18.1
+[0.17.1]: https://github.com/thenatespack/Acro/compare/v0.14.1...v0.17.1
 [0.14.1]: https://github.com/thenatespack/Acro/compare/78f2983...v0.14.1
 [0.8.4]: https://github.com/thenatespack/Acro/commit/78f2983
 [0.8.3]: https://github.com/thenatespack/Acro/commit/e52e5d5
