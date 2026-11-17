@@ -115,7 +115,7 @@ enum MeshBuildEdgeWear {
         var found = [Edge?](repeating: nil, count: bends.count)
         found.withUnsafeMutableBufferPointer { out in
             let slots = out
-            DispatchQueue.concurrentPerform(iterations: bends.count) { k in
+            concurrentPerform(iterations: bends.count) { k in
             let bend = bends[k]
             let axis = bend.b - bend.a
             let len = length(axis)
@@ -203,7 +203,7 @@ enum MeshBuildEdgeWear {
         var result = [Float](repeating: far, count: vertices.count)
         result.withUnsafeMutableBufferPointer { out in
             let slots = out
-            DispatchQueue.concurrentPerform(iterations: (vertices.count + 255) / 256) { chunk in
+            concurrentPerform(iterations: (vertices.count + 255) / 256) { chunk in
                 var candidates: [(Float, Int)] = []
                 for vi in chunk * 256..<min(vertices.count, chunk * 256 + 256) {
                     let p = vertices[vi].position

@@ -238,7 +238,7 @@ extension MeshBuildSculptor {
         surface.positions.withUnsafeBufferPointer { positions in
             vertexGroup.withUnsafeMutableBufferPointer { groupBuffer in
                 let out = groupBuffer
-                DispatchQueue.concurrentPerform(iterations: (vertexCount + chunk - 1) / chunk) { c in
+                concurrentPerform(iterations: (vertexCount + chunk - 1) / chunk) { c in
                     for v in (c * chunk)..<min((c + 1) * chunk, vertexCount) {
                         let p = positions[v]
                         out[v] = owner(at: p, list: list(at: p, active: active, origin: origin, cell: cell))
@@ -270,7 +270,7 @@ extension MeshBuildSculptor {
             cutPoints.withUnsafeMutableBufferPointer { pointBuffer in
                 cutNormals.withUnsafeMutableBufferPointer { normalBuffer in
                     let points = pointBuffer, normals = normalBuffer
-                    DispatchQueue.concurrentPerform(iterations: (cutEdges.count + chunk - 1) / chunk) { c in
+                    concurrentPerform(iterations: (cutEdges.count + chunk - 1) / chunk) { c in
                         for e in (c * chunk)..<min((c + 1) * chunk, cutEdges.count) {
                             let a = Int(cutEdges[e].x), b = Int(cutEdges[e].y)
                             let pa = positions[a], pb = positions[b]

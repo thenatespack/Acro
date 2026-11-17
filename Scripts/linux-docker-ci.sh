@@ -2,11 +2,13 @@
 # Runs the steps of .github/workflows/linux.yml locally in Docker (arm64 on Apple silicon,
 # amd64 elsewhere): debug build, release build, swift test, and the lavapipe render step.
 #
-#   Scripts/linux-docker-ci.sh [step...]        steps: build release test render export shell
+#   Scripts/linux-docker-ci.sh [step...]        steps: build release test render export package shell
 #                                               (default: build release test render)
 #
 # export: Build Game for EXPORT_PROJECT (default Projects/SampleGame) with the Linux toolchain;
 # the game folder lands in .build/linux-ci/export/<Name>/ (run Scripts/linux-play-export.sh on it).
+# package: Scripts/package-release.sh as the Release workflow runs it; the archive lands in
+# .build/linux-ci/release/.
 #
 # SWIFT_IMAGE (default: the workflow's image) picks the toolchain; PLATFORM=linux/amd64 runs
 # x86_64 under emulation (slow). The checkout is copied (without .build / .git) into a Docker
@@ -70,6 +72,9 @@ for step in $STEPS; do
         export)  rm -rf /out/export
                  run export swift run -c release Editor --build-game "$EXPORT_PROJECT" --out /out/export
                  tail -8 /out/export.log ;;
+        package) rm -rf /out/release
+                 run package Scripts/package-release.sh /out/release
+                 tail -1 /out/package.log ;;
         shell)   bash ;;
         *)       echo "unknown step $step"; status=1 ;;
     esac

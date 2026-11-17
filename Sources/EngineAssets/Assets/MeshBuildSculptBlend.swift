@@ -81,7 +81,7 @@ extension MeshBuildSculptor {
         let chunk = 256
         halfWidth.withUnsafeMutableBufferPointer { buffer in
             let out = buffer
-            DispatchQueue.concurrentPerform(iterations: (cuts + chunk - 1) / chunk) { c in
+            concurrentPerform(iterations: (cuts + chunk - 1) / chunk) { c in
                 for e in (c * chunk)..<min((c + 1) * chunk, cuts) {
                     let edge = split.cutEdges[e]
                     let ga = split.vertexGroup[Int(edge.x)], gb = split.vertexGroup[Int(edge.y)]

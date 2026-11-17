@@ -900,7 +900,7 @@ struct MeshBuildSculptor {
             near.withUnsafeMutableBufferPointer { nearBuffer in
                 lists.withUnsafeMutableBufferPointer { listBuffer in
                     let coarsePointer = coarseBuffer, nearPointer = nearBuffer, listPointer = listBuffer
-                    DispatchQueue.concurrentPerform(iterations: blocks.z) { bz in
+                    concurrentPerform(iterations: blocks.z) { bz in
                         for by in 0..<blocks.y {
                             for bx in 0..<blocks.x {
                                 let corner = origin + Vec3(Float(bx * b), Float(by * b), Float(bz * b)) * cell
@@ -931,7 +931,7 @@ struct MeshBuildSculptor {
         let ox = origin.x, oy = origin.y, oz = origin.z
         values.withUnsafeMutableBufferPointer { buffer in
             let pointer = buffer
-            DispatchQueue.concurrentPerform(iterations: n.z) { z in
+            concurrentPerform(iterations: n.z) { z in
                 let bz0 = min(z / b, blocks.z - 1), bz1 = z % b == 0 && z > 0 ? z / b - 1 : bz0
                 for y in 0..<n.y {
                     let by0 = min(y / b, blocks.y - 1), by1 = y % b == 0 && y > 0 ? y / b - 1 : by0
@@ -966,7 +966,7 @@ struct MeshBuildSculptor {
         values.withUnsafeBufferPointer { v in
             slices.withUnsafeMutableBufferPointer { sliceBuffer in
                 let slicePointer = sliceBuffer
-                DispatchQueue.concurrentPerform(iterations: nz - 2) { k in
+                concurrentPerform(iterations: nz - 2) { k in
                     let z = k + 1
                     var found: [SIMD2<Int32>] = []
                     for y in 1..<ny - 1 {
@@ -1025,7 +1025,7 @@ struct MeshBuildSculptor {
         crossingPoints.withUnsafeMutableBufferPointer { pointBuffer in
             crossingNormals.withUnsafeMutableBufferPointer { normalBuffer in
                 let pointPointer = pointBuffer, normalPointer = normalBuffer
-                DispatchQueue.concurrentPerform(iterations: (crossings.count + chunk - 1) / chunk) { c in
+                concurrentPerform(iterations: (crossings.count + chunk - 1) / chunk) { c in
                     for e in (c * chunk)..<min((c + 1) * chunk, crossings.count) {
                         let i = Int(crossings[e].x), axis = Int(crossings[e].y)
                         let x = i % nx, y = i / nx % ny, z = i / (nx * ny)
@@ -1047,7 +1047,7 @@ struct MeshBuildSculptor {
         positions.withUnsafeMutableBufferPointer { positionBuffer in
             normals.withUnsafeMutableBufferPointer { normalBuffer in
                 let positionPointer = positionBuffer, normalPointer = normalBuffer
-                DispatchQueue.concurrentPerform(iterations: (surfaceCells.count + chunk - 1) / chunk) { c in
+                concurrentPerform(iterations: (surfaceCells.count + chunk - 1) / chunk) { c in
                     var points: [Vec3] = [], planeNormals: [Vec3] = []
                     points.reserveCapacity(12)
                     planeNormals.reserveCapacity(12)
