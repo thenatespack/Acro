@@ -97,7 +97,7 @@ For example, to add it to Claude Code:
 claude mcp add acro -- swift run -c release Editor --mcp
 ```
 
-New projects come with this already set up: a `.mcp.json` at the project root that starts the editor on the project, and a `CLAUDE.md` describing the project layout, the builders and how to reload game code. Run `claude` in the project folder to use them.
+New projects come with this already set up: a `.mcp.json` at the project root that starts the editor on the project, and a `CLAUDE.md` describing the project layout, the builders and how to reload game code. Run `claude` in the project folder to use them. If the editor already has the project open, `Editor --mcp` attaches to it through its HTTP server instead of opening a second window (`--mcp-new-editor` opens one anyway).
 
 The [MCP tool reference](docs/MCPTools.md) lists every tool with its parameters.
 

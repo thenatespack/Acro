@@ -8,7 +8,7 @@ import Foundation
 
 let usage = """
     Usage: Editor [scene.json] [--project <folder>] [--launcher] [--game <target | module.dylib>] [--game-watch]
-                  [--backend metal|vulkan] [--mcp] [--headless] [--mcp-port <port>] [--mcp-http | --no-mcp-http] [--mcp-read-only]
+                  [--backend metal|vulkan] [--mcp [--mcp-new-editor]] [--headless] [--mcp-port <port>] [--mcp-http | --no-mcp-http] [--mcp-read-only]
            Editor --mcp-tool-docs
            Editor --cook <project> [...] | --build-game <project> [...]   (see Editor --cook --help)
 
@@ -29,7 +29,9 @@ let usage = """
     127.0.0.1:7333 (--mcp-port, EDITOR_MCP_PORT; the next free port if taken) with a bearer token
     written to <project>/Library/mcp.json; --no-mcp-http or EDITOR_MCP_HTTP=0 turns it off.
     --mcp serves a client on stdin/stdout instead (`claude mcp add acro -- swift run Editor --mcp`);
-    add --mcp-http to serve HTTP too. --headless runs without a window (needs --mcp or --mcp-http).
+    add --mcp-http to serve HTTP too. With --project, --mcp attaches to an editor that already has
+    that project open (relaying to its HTTP server) instead of opening another; --mcp-new-editor
+    opens one anyway. --headless runs without a window (needs --mcp or --mcp-http).
     --mcp-read-only exposes only read-only tools. --mcp-tool-docs prints the tool reference
     (docs/MCPTools.md) generated from the command registry.
     """
@@ -53,6 +55,7 @@ var scenePath: String?
 var projectPath: String?
 var mcpStdio = false
 var headless = false
+var mcpNewEditor = false
 var mcpHTTP: Bool?
 var mcpPort: UInt16?
 var mcpReadOnly = false
@@ -95,6 +98,8 @@ while !arguments.isEmpty {
         mcpStdio = true
     case "--headless":
         headless = true
+    case "--mcp-new-editor":
+        mcpNewEditor = true
     case "--mcp-http":
         mcpHTTP = true
     case "--no-mcp-http":
@@ -131,6 +136,12 @@ if launcher {
     options.launcher = .always
 } else if scenePath == nil, projectPath == nil, !headless, !mcpStdio, !options.deterministic {
     options.launcher = .auto
+}
+
+// --mcp on a project an editor already has open: attach to that editor (over its HTTP server)
+// rather than opening a second window. --mcp-new-editor always starts one.
+if mcpStdio, !headless, !mcpNewEditor, let projectPath, let code = EditorMCP.attachToRunningEditor(projectPath: projectPath) {
+    exit(code)
 }
 
 if headless {

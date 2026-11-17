@@ -125,6 +125,18 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
         stdio = MCPStdioTransport.start(inbox: server.inbox)
     }
 
+    /// `Editor --mcp --project <folder>` when an editor already has that project open with
+    /// HTTP on (its `Library/mcp.json` names a live host): relays the stdio client to it until
+    /// the client disconnects, and returns the exit code. Nil when there is none, so this
+    /// process should be the editor itself. Keeps a project's `.mcp.json` from opening a
+    /// second window next to the one the user launched the IDE and the agent from.
+    nonisolated public static func attachToRunningEditor(projectPath: String) -> Int32? {
+        let config = URL(fileURLWithPath: projectPath).standardizedFileURL
+            .appendingPathComponent(Project.libraryFolder).appendingPathComponent("mcp.json")
+        guard let host = MCPStdioRelay.liveHost(configAt: config) else { return nil }
+        return MCPStdioRelay.run(config: host)
+    }
+
     /// The stdio client closed its end: the editor should quit.
     public var stdioClientDisconnected: Bool { stdio?.isClosed ?? false }
 
@@ -149,8 +161,19 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
 
     /// Stops the HTTP server (the AI settings turned it off); `startHTTP` starts it again.
     public func stopHTTP() {
+        if let http {
+            let config = MCPConfigFile(url: http.url, token: http.token, serverName: Self.serverName)
+            for url in writtenConfigURLs { detachConfig(at: url, config) }
+        }
         http?.stop()
         http = nil
+    }
+
+    private func detachConfig(at url: URL, _ config: MCPConfigFile) {
+        writtenConfigURLs.remove(url)
+        var detached = config
+        detached.pid = 0
+        try? detached.write(to: url)
     }
 
     /// Where `mcp.json` is written: the open project's `Library/`, and the prefs folder.
@@ -164,6 +187,11 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
     private func writeConfig() {
         guard let http else { return }
         let config = MCPConfigFile(url: http.url, token: http.token, serverName: Self.serverName)
+        // A project this editor left: pid 0 says nobody serves it (`Editor --mcp` there starts
+        // an editor instead of attaching to this one); the token stays for the next host.
+        for url in writtenConfigURLs where !configURLs.contains(url) {
+            detachConfig(at: url, config)
+        }
         for url in configURLs where !writtenConfigURLs.contains(url) {
             do {
                 try config.write(to: url)
