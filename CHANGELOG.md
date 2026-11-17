@@ -12,6 +12,8 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 - Text layout kerns faster: a font's GPOS pair-kerning coverage and classes are expanded into per-glyph tables when it loads, instead of scanning their glyph ranges for every pair. Laying out the editor's panels took about a quarter of the time in the layout tests.
 - Mesh builds import faster in debug builds (sculpts, look textures, ambient occlusion, edge wear): their per-sample loops avoid the generic range iterators and tuples that debug builds run slowly (`forEachIndex`).
 - The Windows workflow exports and starts a game only when packaging, the sample game, `Package.swift`, `Windows/` or the workflow change, nightly, and when run by hand: the export compiles the engine a second time (about 15 minutes).
+- The builder tabs moved out of `EditorCore` into five modules that compile in parallel (`EditorBuildersMesh`, `EditorBuildersWorld`, `EditorBuilders2D`, `EditorBuildersAnimation`, `EditorBuildersLogic`), registered through `EditorBuilderModule` (`EditorBuilders.registerAll()`; found automatically on first use). EditorCore went from 54k to 27k lines; with `EngineMeshBuild`, a clean release build of every product took 165 s instead of 190 s on a 10-core Mac.
+- CI: Linux and macOS run the release build and the tests as parallel jobs; the test jobs and the Windows build keep `.build` in the Actions cache (`Scripts/restore-mtimes.pl` sets each file's time to its last commit so unchanged modules aren't rebuilt); the Windows workflow builds in debug.
 
 ## [0.17.1] - 2026-11-16
 
