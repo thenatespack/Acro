@@ -1,6 +1,7 @@
 name: macOS
 
-# Builds and runs the tests. Demo scenes aren't rendered in CI; check rendering changes locally
+# Builds and runs the tests, as two jobs in parallel; the test job keeps its .build folder in the
+# Actions cache between runs (see linux.yml). Demo scenes aren't rendered in CI; check rendering changes locally
 # with Scripts/render-scenes.sh.
 # Runs on pushes to main and on pull requests, not on every branch or tag push: a pushed
 # branch is tested through its PR, and a release tag points at a commit main already tested.
@@ -17,11 +18,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
+  # The optimized build compiles (whole-module optimization can fail where a debug build doesn't).
+  build:
     # Xcode 27 (Swift 6.4), the toolchain the engine is developed with; macos-latest has Xcode 26.
     runs-on: xcode-27
-    env:
-      ENGINE_CRASH_DIR: crashes
     steps:
       - uses: actions/checkout@v4
 
@@ -30,6 +30,28 @@ jobs:
 
       - name: Build
         run: swift build -c release --product Demo
+
+  test:
+    runs-on: xcode-27
+    env:
+      ENGINE_CRASH_DIR: crashes
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # restore-mtimes.pl reads every file's last commit
+
+      - name: Install Vulkan (MoltenVK), GLFW and shader tools
+        run: brew install vulkan-loader vulkan-headers molten-vk glfw shaderc pkgconf
+
+      - name: Restore source times
+        run: perl Scripts/restore-mtimes.pl
+
+      - name: Restore the build folder
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: macos-swift6.4-debug-${{ hashFiles('Package.swift') }}-${{ github.sha }}
+          restore-keys: macos-swift6.4-debug-${{ hashFiles('Package.swift') }}-
 
       - name: Test
         run: swift test

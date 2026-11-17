@@ -1,7 +1,9 @@
 name: Linux
 
 # Builds and runs the tests on the Vulkan backend with lavapipe (Mesa's software Vulkan) under a
-# virtual X display. Demo scenes aren't rendered in CI; check rendering changes locally with
+# virtual X display. The release build and the tests (a debug build) run as two jobs in parallel;
+# the test job keeps its .build folder in the Actions cache between runs, with the sources' times
+# set to their last commits (Scripts/restore-mtimes.pl), so only changed modules are rebuilt. Demo scenes aren't rendered in CI; check rendering changes locally with
 # Scripts/render-scenes.sh.
 # Runs on pushes to main and on pull requests, not on every branch or tag push: a pushed
 # branch is tested through its PR, and a release tag points at a commit main already tested.
@@ -18,16 +20,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
+  # The optimized build compiles (whole-module optimization can fail where a debug build doesn't).
+  build:
     runs-on: ubuntu-24.04
     container:
       # The toolchain the engine is developed with: 6.0 can't type-check Package.swift's
       # target list or compile EngineMCP's stdio code (Scripts/linux-docker-ci.sh runs this locally).
       image: swift:6.4-noble
-    env:
-      VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
-      LIBGL_ALWAYS_SOFTWARE: "1"
-      ENGINE_CRASH_DIR: crashes
     steps:
       - uses: actions/checkout@v4
 
@@ -35,11 +34,42 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            libvulkan-dev libglfw3-dev zlib1g-dev pkg-config glslc \
-            mesa-vulkan-drivers xvfb xauth libasound2-dev ca-certificates
+            libvulkan-dev libglfw3-dev zlib1g-dev pkg-config glslc libasound2-dev ca-certificates
 
       - name: Build
         run: swift build -c release --product Demo
+
+  test:
+    runs-on: ubuntu-24.04
+    container:
+      image: swift:6.4-noble
+    env:
+      VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      ENGINE_CRASH_DIR: crashes
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # restore-mtimes.pl reads every file's last commit
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            libvulkan-dev libglfw3-dev zlib1g-dev pkg-config glslc \
+            mesa-vulkan-drivers xvfb xauth libasound2-dev ca-certificates zstd
+
+      - name: Restore source times
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          perl Scripts/restore-mtimes.pl
+
+      - name: Restore the build folder
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: linux-swift6.4-debug-${{ hashFiles('Package.swift') }}-${{ github.sha }}
+          restore-keys: linux-swift6.4-debug-${{ hashFiles('Package.swift') }}-
 
       - name: Test
         # Under a virtual display: the GPU tests (ComputeTests, FSR3Tests, ...) open a GLFW

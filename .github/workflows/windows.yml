@@ -1,11 +1,15 @@
 name: Windows
 
-# Builds everything; there is no GPU on the hosted runner, so the only things run are a game
+# Builds everything in debug (the Release workflow builds the optimized editor: whole-module
+# optimization of the big modules took this job 24 minutes); there is no GPU on the hosted
+# runner, so the only things run are a game
 # module load check (GameRunner --check: build, link against GameRunner.lib, LoadLibraryW)
 # and an exported game started without Swift on Path (its DLLs must all be in its folder).
 # Exporting compiles the whole engine a second time (the player links it statically, in its
 # own build folder: ~15 minutes), so it runs only when packaging, the sample game, the package
-# manifest or this workflow change, nightly, and when run by hand.
+# manifest or this workflow change, nightly, and when run by hand. The .build folder is kept in
+# the Actions cache between runs, with the sources' times set to their last commits
+# (Scripts/restore-mtimes.pl), so only changed modules are rebuilt.
 # Runs on pushes to main and on pull requests, not on every branch or tag push: a pushed
 # branch is tested through its PR, and a release tag points at a commit main already tested.
 # Run it by hand on any branch from the Actions tab. A newer push to the same branch or PR
@@ -87,18 +91,29 @@ jobs:
           "ZLIB_DIR=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "$dir\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
 
+      - name: Restore source times
+        shell: bash
+        run: perl Scripts/restore-mtimes.pl
+
+      - name: Restore the build folder
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: windows-swift6.4-debug-${{ hashFiles('Package.swift') }}-${{ github.sha }}
+          restore-keys: windows-swift6.4-debug-${{ hashFiles('Package.swift') }}-
+
       - name: Build
         shell: cmd
-        run: swift build -c release
+        run: swift build
 
       - name: Load a game module
         shell: cmd
         run: |
-          dir .build\release\GameRunner.exe .build\release\GameRunner.lib
-          .build\release\GameRunner.exe SampleGame --check
+          dir .build\debug\GameRunner.exe .build\debug\GameRunner.lib
+          .build\debug\GameRunner.exe SampleGame --check
           if errorlevel 1 (
             echo Libraries the SampleGame objects ask for:
-            for %%f in (.build\release\SampleGame.objlib\*.o .build\release\SampleGame.build\*.o) do llvm-readobj --coff-directives "%%f"
+            for %%f in (.build\debug\SampleGame.objlib\*.o .build\debug\SampleGame.build\*.o) do llvm-readobj --coff-directives "%%f"
             exit /b 1
           )
 
@@ -106,7 +121,8 @@ jobs:
       - name: Export a game
         if: steps.export.outputs.run == 'true'
         shell: cmd
-        run: swift run -c release Editor --build-game Projects\SampleGame --out "%RUNNER_TEMP%\export"
+        # The debug editor from the Build step; the game itself is still built optimized.
+        run: swift run Editor --build-game Projects\SampleGame --out "%RUNNER_TEMP%\export"
 
       # As on a player's PC: no Swift, vcpkg or Vulkan SDK on Path, so every DLL the .exe imports
       # has to be in its folder (or System32). --version exits before opening a window (no GPU here).
