@@ -134,8 +134,12 @@ extension MeshBuildImporter {
         for i in parts.indices {
             guard var g = geometries[i], !g.indices.isEmpty else { continue }
             // Foliage cards keep their four corners (splitting them only adds triangles); painted sculpt
-            // pieces and their blend layers keep their triangles, which must stay alike.
-            if occlusion && parts[i].shape != .foliage && g.paint == nil { g = g.tessellated(maxEdge: scale.edge, maxTriangles: budget) }
+            // pieces and their blend layers keep their triangles, which must stay alike. Without
+            // occlusion only edge-worn parts are split: their wear band needs vertices away from the
+            // edges (MeshBuildEdgeWear.swift), and everything else keeps its few triangles.
+            if (occlusion || wearsEdges(parts[i])) && parts[i].shape != .foliage && g.paint == nil {
+                g = g.tessellated(maxEdge: scale.edge, maxTriangles: budget)
+            }
             if parts[i].resolvedLook != nil && parts[i].material.trimmingCharacters(in: .whitespaces).isEmpty {
                 g = parts[layers[i]?.piece ?? i].applyingLookUVs(to: g)
             }

@@ -534,7 +534,9 @@ public struct MeshBuildAnimation: Codable, Equatable, Sendable {
 public struct MeshBuild: Codable, Equatable, Sendable {
     public var parts: [MeshBuildPart]
     public var animations: [MeshBuildAnimation]
-    /// Baked ambient occlusion: parts darken where they meet (MeshBuildAO.swift). nil is on.
+    /// Baked ambient occlusion: parts darken where they meet (MeshBuildAO.swift). nil is off:
+    /// baking tessellates every mesh first (to about 30k triangles a model), too heavy for simple
+    /// pieces such as GridMap tiles.
     public var ao: Bool?
     /// Detail levels and an impostor (MeshBuildLOD.swift). nil: on for builds with foliage.
     public var lod: Bool?
@@ -842,11 +844,11 @@ public struct MeshBuildImporter: AssetImporter {
 
     public var name: String { "meshbuild" }
     public var fileExtensions: [String] { ["meshbuild"] }
-    public var version: Int { 11 }  // 2: mirror and repeat, 3: sculpt, 4: sweep, loft and deform, 5: looks and baked occlusion,
+    public var version: Int { 12 }  // 2: mirror and repeat, 3: sculpt, 4: sweep, loft and deform, 5: looks and baked occlusion,
                                    // 6: sculpt children's looks, sweeps / lofts / deformers in sculpts, 7: edge wear,
                                    // 8: foliage, ribbons, leaf looks, noise budget, 9: edge wear noise in object space,
                                    // 10: sculpt look blending, leaf card variation,
-                                   // 11: plant wind, detail levels, impostors
+                                   // 11: plant wind, detail levels, impostors, 12: baked occlusion off by default
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         let file: MeshBuild
@@ -891,7 +893,7 @@ public struct MeshBuildImporter: AssetImporter {
             for warning in shapeWarnings { context.warn("part '\(part.name)': \(warning)") }
             return geometry
         }
-        Self.finishSurfaces(build, &geometries, occlusion: file.ao ?? true, firstIndex: firstIndex, layers: pieces.layerSurfaces)
+        Self.finishSurfaces(build, &geometries, occlusion: file.ao ?? false, firstIndex: firstIndex, layers: pieces.layerSurfaces)
         Self.finishEdgeWear(build, &geometries, skipping: pieces.layers)
         for warning in file.plantFieldWarnings { context.warn(warning) }
         // Plants sway and get detail levels (MeshBuildLOD.swift).

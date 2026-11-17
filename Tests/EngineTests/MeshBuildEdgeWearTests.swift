@@ -139,13 +139,15 @@ private func unpack(_ packed: (Float, Float)) -> (color: Vec3, roughness: Float,
         #expect(!faceMiddle.isEmpty && faceMiddle.allSatisfy { edgeCoordinate($0) < -3 })
     }
 
-    @MainActor @Test func importerWearsLookEdgesAndLeavesOtherPartsAlone() throws {
-        let build = MeshBuild(parts: [
+    /// With and without baked occlusion: worn parts are tessellated for their wear band either way.
+    @MainActor @Test(arguments: [false, true]) func importerWearsLookEdgesAndLeavesOtherPartsAlone(occlusion: Bool) throws {
+        var build = MeshBuild(parts: [
             MeshBuildPart(name: "Crate", position: Vec3(0, 0.2, 0), size: Vec3(0.4, 0.4, 0.4), look: "paintedMetal", wear: 1),
             MeshBuildPart(name: "Clean", position: Vec3(1, 0.2, 0), size: Vec3(0.4, 0.4, 0.4), look: "paintedMetal"),
             MeshBuildPart(name: "Plain", position: Vec3(-1, 0.2, 0), size: Vec3(0.4, 0.4, 0.4), wear: 1),
             MeshBuildPart(name: "Glass", position: Vec3(0, 0.2, 1), size: Vec3(0.4, 0.4, 0.4), look: "glass", wear: 1),
         ])
+        build.ao = occlusion ? true : nil
         try importEdgeBuild(build) { database, id in
             let prefab = try #require(database.prefab(AssetReference(id)))
             @MainActor func part(_ name: String) throws -> (MeshGeometry, MaterialAsset) {
@@ -157,12 +159,20 @@ private func unpack(_ packed: (Float, Float)) -> (color: Vec3, roughness: Float,
             #expect(wear.metallic == 1 && wear.crisp == 1, "painted metal chips to bare metal")
             #expect(crate.vertices.contains { edgeCoordinate($0) > 1.3 } && crate.vertices.contains { edgeCoordinate($0) < -3 })
             #expect(crate.vertices.allSatisfy { abs($0.tangent.w) <= 1 && abs($0.tangent.w) > 0 }, "occlusion still in w")
+            if !occlusion {
+                // Unworn parts aren't split without occlusion: a box keeps its 12 triangles.
+                let clean = try part("Clean").0, plain = try part("Plain").0
+                #expect(clean.indices.count == 36 && plain.indices.count == 36)
+            }
             for name in ["Clean", "Plain", "Glass"] {
                 let (mesh, material) = try part(name)
                 #expect(material.edgeWear == nil, "\(name)")
-                // Their tangents are as before: unit length, perpendicular to the normal.
+                // Their tangents are as before: unit length, perpendicular to the normal (the occlusion
+                // bake generates them); without occlusion they are left unset (all zero) for
+                // SceneRenderer.registerMesh to generate.
                 #expect(mesh.vertices.allSatisfy { v in
                     let t = Vec3(v.tangent.x, v.tangent.y, v.tangent.z)
+                    if !occlusion { return v.tangent == Vec4(0, 0, 0, 0) }
                     return abs(dot(t, normalize(v.normal))) < 1e-4 && abs(length(t) - 1) < 1e-4
                 }, "\(name)")
             }

@@ -13,8 +13,16 @@ public struct MeshBuildExample: Codable, Equatable, Sendable {
 }
 
 public enum MeshBuildExamples {
+    /// The examples bake ambient occlusion (`"ao": true`; it is off by default): they are
+    /// finished props, and the builds agents copy should show the switch.
     public static var all: [MeshBuildExample] {
-        [streetLamp, cart, turret, crate, bench, armchair, stoneArch, teapot, mossyStone, sailboat, gnarledTree, deskLamp] + plants  // MeshBuildExamples+Plants.swift
+        let examples = [streetLamp, cart, turret, crate, bench, armchair, stoneArch, teapot, mossyStone, sailboat, gnarledTree, deskLamp]
+            + plants  // MeshBuildExamples+Plants.swift
+        return examples.map { example in
+            var example = example
+            if example.build.ao == nil { example.build.ao = true }
+            return example
+        }
     }
 
     /// Dark green-black paint for street furniture.

@@ -59,7 +59,22 @@ public enum JSONValue: Hashable, Sendable, Codable {
 
     /// Encodes `value` (outside a scene file, so entities stay live handles).
     package static func encoding<T: Encodable>(_ value: T) throws -> JSONValue {
-        try SceneCoder.decoder().decode(JSONValue.self, from: SceneCoder.encoder().encode(value))
+        try parse(SceneCoder.encoder().encode(value))
+    }
+
+    /// The value of the JSON text `data`, as `SceneCoder.decoder()` decodes a `JSONValue` from it
+    /// outside a scene file (the strings "inf", "-inf" and "nan" are doubles; `{"$entity":
+    /// [index, generation]}` is an entity), without going through `init(from:)`: a `Decoder`
+    /// can only find a value's type by trying each one, and every miss throws. Prefab sync and
+    /// undo turn whole components into `JSONValue`s this way, many times per edit.
+    package static func parse(_ data: Data) throws -> JSONValue {
+        try data.withUnsafeBytes { raw in
+            var parser = JSONValueParser(bytes: raw.bindMemory(to: UInt8.self))
+            let value = try parser.value()
+            parser.skipWhitespace()
+            guard parser.atEnd else { throw parser.error("unexpected text after the value") }
+            return value
+        }
     }
 
     /// Decodes a `T` from this value (outside a scene file).

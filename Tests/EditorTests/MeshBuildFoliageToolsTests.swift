@@ -26,14 +26,17 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
 
 @MainActor
 @Suite(.serialized) struct MeshBuildFoliageToolsTests {
-    @Test func plantExamplesAreLightAndQuiet() throws {
+    @Test func plantExamplesAreLightAndQuiet() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("MeshBuildFoliageToolsTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
         let session = makeSession()
         try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
         // Triangle targets: a whole tree well under 15k (the old noise-blob tree was about 100k).
         let targets: [String: Int] = ["Gnarled Tree": 12_000, "Shrub": 6_000, "Potted Fern": 10_000, "Small Pine": 14_000]
+        // Each example takes seconds in a debug build: yield the main actor between them, so the
+        // other @MainActor tests (and their timeouts) aren't held up for the whole loop.
         for (name, limit) in targets {
+            await Task.yield()
             let example = try #require(MeshBuildExamples.all.first { $0.name == name }, "\(name)")
             #expect(example.build.parts.contains { $0.shape == MeshBuildShape.foliage || $0.isRibbon }, "\(name) uses plants")
             let listed = try call(session, "meshBuild.examples", ["name": name])

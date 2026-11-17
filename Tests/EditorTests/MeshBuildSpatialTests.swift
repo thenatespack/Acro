@@ -168,7 +168,7 @@ private func box(_ name: String, _ position: Vec3, _ size: Vec3 = Vec3(1, 1, 1),
 
     // MARK: Examples
 
-    @Test func examplesImportWithoutWarnings() throws {
+    @Test func examplesImportWithoutWarnings() async throws {
         let folder = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: folder) }
         let session = makeSession()
@@ -176,7 +176,10 @@ private func box(_ name: String, _ position: Vec3, _ size: Vec3 = Vec3(1, 1, 1),
         let listed = try call(session, "meshBuild.examples")
         let examples = try #require(listed["examples"] as? [[String: Any]])
         #expect(examples.count == MeshBuildExamples.all.count && examples.count == 15)
+        // Each example takes seconds in a debug build: yield the main actor between them, so the
+        // other @MainActor tests (and their timeouts) aren't held up for the whole loop.
         for example in examples {
+            await Task.yield()
             let name = try #require(example["name"] as? String)
             let build = try #require(MeshBuildExamples.all.first { $0.name == name }?.build)
             #expect(build.parts.count >= 5, "\(name) reads")

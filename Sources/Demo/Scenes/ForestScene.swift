@@ -175,6 +175,6 @@ final class ForestScene: DemoScene {
           {"name":"Twig Top","shape":"sweep","parent":"Leader","look":"bark","radius":0.045,"segments":8,"path":[[0.1,4.3,0.2],[0.55,4.6,0.35],[0.9,4.75,0.55]],"radii":[1,0.6,0.15]},
           {"name":"Leaves","shape":"foliage","parent":"Trunk","look":"oakLeaves","on":["Branch East","Branch West","Branch Front","Branch Back","Leader","Twig East","Twig West","Twig Front","Twig Top"],"along":[0.4,1],"cardSize":0.6,"density":1.3},
           {"name":"Crown","shape":"foliage","parent":"Trunk","look":"oakLeaves","position":[0.05,4.0,0.05],"size":[3.6,2.4,3.0],"cardSize":0.65,"density":0.9,"seed":2}
-        ]}
+        ], "ao": true}
         """#
 }

@@ -51,7 +51,8 @@ public enum EditorMeshBuildCommands {
         rusty and plain metal; sharp and bevelled edges count, smooth round sides don't; chips wrap around edges and \
         corners); grain x|y|z: the \
         part axis wood grain, planks and brushing run along (default: y on round shapes, else the longest side). The \
-        file's ao (default true) bakes ambient occlusion, darkening parts where they meet. Use looks for anything meant \
+        file's ao (default false; the examples set true) bakes ambient occlusion, darkening parts where they meet; it \
+        tessellates every mesh (to about 30k triangles a model), so leave it off for simple or repeated pieces. Use looks for anything meant \
         to look real. Example: {"name": "Lid", "shape": "box", "size": [0.8, 0.05, 0.6], "look": "planks", "wear": 0.4}, \
         {"name": "Hinge", "look": "paintedMetal", "color": [0.1, 0.1, 0.1], "wear": 0.6}.
         """

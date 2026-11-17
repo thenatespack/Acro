@@ -167,7 +167,7 @@ private func node(_ name: String, in nodes: [PrefabNode]) -> PrefabNode? {
         let build = MeshBuild(parts: [
             MeshBuildPart(name: "Slab", position: Vec3(0, 0.05, 0), size: Vec3(2, 0.1, 2)),
             MeshBuildPart(name: "Block", parent: "Slab", position: Vec3(0, 0.25, 0), size: Vec3(0.4, 0.4, 0.4)),
-        ])
+        ], ao: true)
         try importBuild(build) { database, id in
             let prefab = try #require(database.prefab(AssetReference(id)))
             let slab = try #require(node("Slab", in: prefab.roots)?.mesh.flatMap { database.mesh($0) })

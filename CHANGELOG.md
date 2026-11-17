@@ -4,6 +4,11 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Changed
+
+- Mesh builds bake ambient occlusion only when the file sets `"ao": true` (it was on by default). Baking tessellates every mesh first, which took simple pieces from 12 to thousands of triangles; GridMap levels made of such pieces carried all of it. The examples set `"ao": true`. Edge-worn parts are still tessellated for their wear band.
+- Prefab sync and undo turn components into `JSONValue`s faster (`JSONValue.parse`).
+
 ## [0.17.1] - 2026-11-16
 
 ### Added

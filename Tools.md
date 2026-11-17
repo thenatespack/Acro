@@ -135,7 +135,8 @@ stone, brick, fabric, glass, ground…), `lookScale` (m per tile), `wear` (0-1) 
 ORM (occlusion/roughness/metal, linear), generated on all cores (~25 ms per 512 px set in
 release, ~0.3-1 s in debug), cached per look/wear level/resolution per process and stored with
 the import. Look UVs are in meters: round shapes wrap around Y in whole tiles, others get
-per-triangle box projection. File-level `ao` (default on) bakes per-vertex ambient occlusion
+per-triangle box projection. File-level `ao` (off by default since importer version 12: its tessellation took GridMap
+starter pieces from 12 to 2-9k triangles each; the examples set it) bakes per-vertex ambient occlusion
 from the whole model (voxel ray march on tessellated meshes) into `MeshVertex.tangent.w`'s
 magnitude, which mesh_surface.glsl multiplies into the ambient term (Metal and Vulkan from one
 GLSL source). `.proctex` gained fbm, ridged, voronoi, cells, woodRings, streaks and a

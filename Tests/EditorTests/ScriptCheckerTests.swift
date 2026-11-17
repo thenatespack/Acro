@@ -145,6 +145,10 @@ private struct TinyPackage {
                 if !checker.isBusy { return }
                 try await Task.sleep(nanoseconds: 20_000_000)
             } while Date() < deadline
+            // The sleep can outlast the deadline when other tests hold the main actor (heavy
+            // imports run on it), while the check runs on its own thread: look once more.
+            checker.poll()
+            if !checker.isBusy { return }
             Issue.record("the check didn't finish")
         }
 

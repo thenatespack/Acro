@@ -85,9 +85,9 @@ extension MeshBuilderView {
 
     /// The model-wide switch for baked ambient occlusion.
     func addOcclusionToggle() {
-        let box = Checkbox("Ambient occlusion", isOn: build.ao ?? true, name: "meshBuildAO") { [unowned self] on in
+        let box = Checkbox("Ambient occlusion", isOn: build.ao ?? false, name: "meshBuildAO") { [unowned self] on in
             var edited = build
-            edited.ao = on ? nil : false
+            edited.ao = on ? true : nil
             guard edited != build else { return }
             apply(edited, label: on ? "Bake Occlusion" : "No Occlusion", select: selectedPart)
         }
