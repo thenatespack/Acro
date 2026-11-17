@@ -32,7 +32,8 @@ out=.build/linux-ci
 mkdir -p "$out"
 
 # The workflow's "Install dependencies" step, plus rsync for copying the checkout in.
-packages=$(awk '/apt-get install/{f=1} f{print} f&&!/\\$/{exit}' .github/workflows/linux.yml \
+# The test job's list (the one with xvfb): it is a superset of the build job's.
+packages=$(awk '/apt-get install/{f=1; block=""} f{block=block $0 "\n"} f&&!/\\$/{f=0; if (block ~ /xvfb/) {printf "%s", block; exit}}' .github/workflows/linux.yml \
     | sed -e 's/.*--no-install-recommends//' -e 's/\\//g' | tr -s ' \n' ' ')
 docker build ${platform:+--platform "$platform"} -t "$tag" - >"$out/docker-build.log" 2>&1 <<EOF || { tail -30 "$out/docker-build.log"; exit 1; }
 FROM $image
