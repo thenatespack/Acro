@@ -7,8 +7,9 @@ import Testing
 @testable import EngineGraphics
 @testable import EngineAssets
 
-// Plants through the tools: the plant examples stay light and quiet, results report triangles,
-// and the Mesh Builder offers foliage.
+// Plants through the tools: the plant examples use plants (their triangle counts and detail levels
+// are checked where every example is imported, in MeshBuildSpatialTests), and the Mesh Builder
+// offers foliage.
 
 @MainActor private func makeSession() -> EditorSession {
     let log = EditorLog()
@@ -26,31 +27,15 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
 
 @MainActor
 @Suite(.serialized) struct MeshBuildFoliageToolsTests {
-    @Test func plantExamplesAreLightAndQuiet() async throws {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("MeshBuildFoliageToolsTests-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: folder) }
-        let session = makeSession()
-        try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
-        // Triangle targets: a whole tree well under 15k (the old noise-blob tree was about 100k).
-        let targets: [String: Int] = ["Gnarled Tree": 12_000, "Shrub": 6_000, "Potted Fern": 10_000, "Small Pine": 14_000]
-        // Each example takes seconds in a debug build: yield the main actor between them, so the
-        // other @MainActor tests (and their timeouts) aren't held up for the whole loop.
-        for (name, limit) in targets {
-            await Task.yield()
+    /// Triangle limits for the plant examples: a whole tree well under 15k (the old noise-blob
+    /// tree was about 100k). MeshBuildSpatialTests.examplesImportWithoutWarnings imports every
+    /// example once and checks these, with their detail levels, on the same import.
+    static let plantTriangleLimits: [String: Int] = ["Gnarled Tree": 12_000, "Shrub": 6_000, "Potted Fern": 10_000, "Small Pine": 14_000]
+
+    @Test func plantExamplesUsePlants() throws {
+        for name in Self.plantTriangleLimits.keys {
             let example = try #require(MeshBuildExamples.all.first { $0.name == name }, "\(name)")
             #expect(example.build.parts.contains { $0.shape == MeshBuildShape.foliage || $0.isRibbon }, "\(name) uses plants")
-            let listed = try call(session, "meshBuild.examples", ["name": name])
-            let build = try #require((listed["examples"] as? [[String: Any]])?.first?["build"])
-            let created = try call(session, "meshBuild.new", ["name": name, "build": build])
-            #expect((created["warnings"] as? [String]) == [], "\(name): \(created["warnings"] ?? "")")
-            let triangles = try #require(created["triangles"] as? Int, "\(name) reports its triangles")
-            #expect(triangles > 1000 && triangles < limit, "\(name): \(triangles) triangles (limit \(limit))")
-            #expect((created["bounds"] as? [String: Any])?["base"] as? Double == 0, "\(name) stands on y=0")
-            // Plants get detail levels down to a 6-triangle impostor (MeshBuildLOD.swift).
-            let levels = try #require(created["lodTriangles"] as? [Int], "\(name) reports its detail levels")
-            #expect(levels.count == 4 && levels[0] == triangles && levels[3] == 6, "\(name): \(levels)")
-            #expect(levels[1] < triangles * 2 / 3 && levels[2] < levels[1], "\(name): \(levels)")
-            #expect((created["lodDistances"] as? [Double])?.count == 3)
         }
     }
 

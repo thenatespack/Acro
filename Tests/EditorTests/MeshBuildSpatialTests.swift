@@ -189,6 +189,15 @@ private func box(_ name: String, _ position: Vec3, _ size: Vec3 = Vec3(1, 1, 1),
             #expect((created["warnings"] as? [String]) == [], "\(name): \(created["warnings"] ?? "")")
             let bounds = try #require(created["bounds"] as? [String: Any])
             #expect(bounds["base"] as? Double == 0, "\(name) stands on y=0")
+            if let limit = MeshBuildFoliageToolsTests.plantTriangleLimits[name] {
+                // Plants stay light, and get detail levels down to a 6-triangle impostor (MeshBuildLOD.swift).
+                let triangles = try #require(created["triangles"] as? Int, "\(name) reports its triangles")
+                #expect(triangles > 1000 && triangles < limit, "\(name): \(triangles) triangles (limit \(limit))")
+                let levels = try #require(created["lodTriangles"] as? [Int], "\(name) reports its detail levels")
+                #expect(levels.count == 4 && levels[0] == triangles && levels[3] == 6, "\(name): \(levels)")
+                #expect(levels[1] < triangles * 2 / 3 && levels[2] < levels[1], "\(name): \(levels)")
+                #expect((created["lodDistances"] as? [Double])?.count == 3)
+            }
             #expect(bounds["parts"] == nil, "meshBuild.new keeps its result short")
             let got = try call(session, "meshBuild.get", ["path": "\(name).meshbuild"])
             #expect(((got["bounds"] as? [String: Any])?["parts"] as? [Any])?.isEmpty == false)

@@ -20,7 +20,7 @@ public final class Font {
     /// Font units to em: multiply a font-unit value by this.
     private let perEm: Float
     /// Pair kerning from GPOS, which stb_truetype can't read for most modern fonts (see `GPOSKerning`).
-    private let gposKerning: GPOSKerning?
+    let gposKerning: GPOSKerning?
 
     /// Distance from the baseline to the top of the line (positive).
     public let ascent: Float

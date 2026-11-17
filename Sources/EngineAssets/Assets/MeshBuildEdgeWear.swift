@@ -167,6 +167,12 @@ enum MeshBuildEdgeWear {
         return length(p - (a + ab * t))
     }
 
+    /// An edge near a vertex and the vertex's edge coordinate from it.
+    struct Candidate {
+        var e: Float
+        var edge: Int
+    }
+
     /// Every vertex's edge coordinate (see the notes at the top of this file) for edges of band `width`.
     static func coordinates(_ geometry: MeshGeometry, edges: [Edge], width: Float) -> [Float] {
         let far = EdgeWear.minimum
@@ -204,8 +210,10 @@ enum MeshBuildEdgeWear {
         result.withUnsafeMutableBufferPointer { out in
             let slots = out
             concurrentPerform(iterations: (vertices.count + 255) / 256) { chunk in
-                var candidates: [(Float, Int)] = []
-                for vi in chunk * 256..<min(vertices.count, chunk * 256 + 256) {
+                // A struct, not a tuple, and counted loops: this runs per vertex, and debug builds
+                // pay for tuples and range iterators in generic code (ForEachIndex.swift).
+                var candidates: [Candidate] = []
+                forEachIndex(chunk * 256..<min(vertices.count, chunk * 256 + 256)) { vi in
                     let p = vertices[vi].position
                     var best = far, bestEdge = -1
                     candidates.removeAll(keepingCapacity: true)
@@ -213,16 +221,19 @@ enum MeshBuildEdgeWear {
                         let edge = edges[i]
                         let e = edge.strength - distance(p, edge.a, edge.b) / width
                         guard e > far else { return }
-                        candidates.append((e, i))
+                        candidates.append(Candidate(e: e, edge: i))
                         if e > best { best = e; bestEdge = i }
                     }
-                    for i in grid[cellOf(p)] ?? [] { consider(i) }
-                    for i in always { consider(i) }
+                    if let near = grid[cellOf(p)] { forEachIndex(0..<near.count) { consider(near[$0]) } }
+                    forEachIndex(0..<always.count) { consider(always[$0]) }
                     // Corners: the best edge running another way adds a third.
                     var second = far
                     if bestEdge >= 0 {
                         let bestDir = directions[bestEdge]
-                        for (e, i) in candidates where abs(dot(directions[i], bestDir)) < 0.7 { second = max(second, e) }
+                        forEachIndex(0..<candidates.count) { k in
+                            let c = candidates[k]
+                            if abs(dot(directions[c.edge], bestDir)) < 0.7 { second = max(second, c.e) }
+                        }
                     }
                     slots[vi] = min(max(best + max(second, 0) / 3, far), EdgeWear.maximum)
                 }

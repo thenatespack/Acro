@@ -170,21 +170,15 @@ final class MeshDistanceField: @unchecked Sendable {
         var best = Float.greatestFiniteMagnitude
         var bestDX: Float = 0, bestDY: Float = 0, bestDZ: Float = 0
         var bestTriangle = 0, bestFeature = 0
-        // A fixed stack: the tree's depth is about log2(triangles / 4) + 1.
-        var stack: (Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32,
-                    Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32,
-                    Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32,
-                    Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32)
-            = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-        return withUnsafeMutableBytes(of: &stack) { raw -> Float in
-            let stack = raw.baseAddress!.assumingMemoryBound(to: Int32.self)
+        // A fixed stack: the tree's depth is about log2(triangles / 4) + 1. (A temporary allocation
+        // rather than a 64-element tuple, whose type metadata debug builds look up on every query.)
+        return withUnsafeTemporaryAllocation(of: Int32.self, capacity: 64) { stack -> Float in
             var top = 0
             var node = 0
             while true {
                 let first = Int(nodeLinks[node * 2]), count = Int(nodeLinks[node * 2 + 1])
                 if count >= 0 {
-                    for t in first..<(first + count) {
+                    forEachIndex(first..<(first + count)) { t in
                         let (d2, dx, dy, dz, feature) = closest(t, x, y, z)
                         if d2 < best {
                             best = d2

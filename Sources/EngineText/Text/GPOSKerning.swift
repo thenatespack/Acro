@@ -11,7 +11,20 @@ struct GPOSKerning {
     private let bytes: [UInt8]
     /// Offset of the GPOS table.
     private let gpos: Int
-    private var subtables: [(format: Int, offset: Int)] = []
+    private var subtables: [Subtable] = []
+
+    /// A pair adjustment subtable, with its coverage and class definitions expanded into
+    /// per-glyph arrays when the font loads: looking them up in the table means a linear scan of
+    /// its glyph ranges (hundreds in fonts such as Inter) twice per glyph pair, every layout.
+    private struct Subtable {
+        var format: Int
+        var offset: Int
+        /// Glyph → coverage index, -1 when not covered (glyphs past the end aren't covered).
+        var coverage: [Int32]
+        /// Glyph → class for the first and second glyph (format 2; glyphs past the end are class 0).
+        var classes1: [UInt16] = []
+        var classes2: [UInt16] = []
+    }
 
     /// nil when the font has no GPOS `kern` feature.
     init?(font bytes: [UInt8]) {
@@ -37,15 +50,112 @@ struct GPOSKerning {
                     type = u16(subtable + 2)
                     subtable += u32(subtable + 4)
                 }
-                if type == 2 { subtables.append((u16(subtable), subtable)) }
+                if type == 2 { subtables.append(expanded(format: u16(subtable), subtable)) }
             }
         }
         if subtables.isEmpty { return nil }
     }
 
+    /// `table`'s coverage and classes as per-glyph arrays.
+    private func expanded(format: Int, _ table: Int) -> Subtable {
+        var subtable = Subtable(format: format, offset: table, coverage: denseCoverage(table + u16(table + 2)))
+        if format == 2 {
+            subtable.classes1 = denseClasses(table + u16(table + 8))
+            subtable.classes2 = denseClasses(table + u16(table + 10))
+        }
+        return subtable
+    }
+
+    private func denseCoverage(_ table: Int) -> [Int32] {
+        var map: [Int32] = []
+        func set(_ glyph: Int, _ index: Int) {
+            guard glyph >= 0, glyph < 65_536 else { return }
+            if glyph >= map.count { map.append(contentsOf: repeatElement(-1, count: glyph + 1 - map.count)) }
+            map[glyph] = Int32(index)
+        }
+        switch u16(table) {
+        case 1:
+            for i in 0..<u16(table + 2) { set(u16(table + 4 + i * 2), i) }
+        case 2:
+            // Earlier ranges win where they overlap, as the scan finds them first.
+            for i in (0..<u16(table + 2)).reversed() {
+                let range = table + 4 + i * 6
+                let first = u16(range), last = u16(range + 2), start = u16(range + 4)
+                if first <= last { for glyph in first...last { set(glyph, start + glyph - first) } }
+            }
+        default: break
+        }
+        return map
+    }
+
+    private func denseClasses(_ table: Int) -> [UInt16] {
+        var map: [UInt16] = []
+        func set(_ glyph: Int, _ value: Int) {
+            guard glyph >= 0, glyph < 65_536 else { return }
+            if glyph >= map.count { map.append(contentsOf: repeatElement(0, count: glyph + 1 - map.count)) }
+            map[glyph] = UInt16(truncatingIfNeeded: value)
+        }
+        switch u16(table) {
+        case 1:
+            let first = u16(table + 2)
+            for i in 0..<u16(table + 4) { set(first + i, u16(table + 6 + i * 2)) }
+        case 2:
+            for i in (0..<u16(table + 2)).reversed() {
+                let range = table + 4 + i * 6
+                let first = u16(range), last = u16(range + 2), value = u16(range + 4)
+                if first <= last { for glyph in first...last { set(glyph, value) } }
+            }
+        default: break
+        }
+        return map
+    }
+
     /// Adjustment in font units to add to the advance of `left` when `right` follows.
     func adjustment(_ left: Int, _ right: Int) -> Int {
-        for (format, table) in subtables {
+        var k = 0
+        while k < subtables.count {  // counted loops: this runs per glyph pair (ForEachIndex.swift)
+            let subtable = subtables[k]
+            k += 1
+            let table = subtable.offset
+            guard left >= 0, left < subtable.coverage.count else { continue }
+            let coverage = Int(subtable.coverage[left])
+            guard coverage >= 0 else { continue }
+            let format1 = u16(table + 4), format2 = u16(table + 6)
+            let size1 = Self.valueSize(format1), size2 = Self.valueSize(format2)
+            // The x advance follows the x/y placement values when present.
+            let advanceOffset = (format1 & 1 != 0 ? 2 : 0) + (format1 & 2 != 0 ? 2 : 0)
+            guard format1 & 4 != 0 else { continue }
+            if subtable.format == 1 {
+                // Pair value records are sorted by the second glyph; take the first match, as a scan would.
+                let set = table + u16(table + 10 + coverage * 2)
+                let record = 2 + size1 + size2
+                var low = 0, high = u16(set)
+                while low < high {
+                    let mid = (low + high) / 2
+                    if u16(set + 2 + mid * record) < right { low = mid + 1 } else { high = mid }
+                }
+                if low < u16(set), u16(set + 2 + low * record) == right { return i16(set + 2 + low * record + 2 + advanceOffset) }
+                // Out-of-order records (a malformed font): fall back to the scan.
+                var i = 0
+                while i < u16(set) {
+                    if u16(set + 2 + i * record) == right { return i16(set + 2 + i * record + 2 + advanceOffset) }
+                    i += 1
+                }
+            } else if subtable.format == 2 {
+                let class1 = left < subtable.classes1.count ? Int(subtable.classes1[left]) : 0
+                let class2 = right >= 0 && right < subtable.classes2.count ? Int(subtable.classes2[right]) : 0
+                guard class1 < u16(table + 12), class2 < u16(table + 14) else { return 0 }
+                return i16(table + 16 + (class1 * u16(table + 14) + class2) * (size1 + size2) + advanceOffset)
+            }
+        }
+        return 0
+    }
+
+    /// `adjustment` read straight from the tables, scanning them as the spec describes: the
+    /// reference the expanded lookups are tested against (TextTests).
+    func scannedAdjustment(_ left: Int, _ right: Int) -> Int {
+        for subtable in subtables {
+            let format = subtable.format, table = subtable.offset
             guard let coverage = coverageIndex(table + u16(table + 2), left) else { continue }
             let format1 = u16(table + 4), format2 = u16(table + 6)
             let size1 = Self.valueSize(format1), size2 = Self.valueSize(format2)

@@ -8,6 +8,9 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 
 - Mesh builds bake ambient occlusion only when the file sets `"ao": true` (it was on by default). Baking tessellates every mesh first, which took simple pieces from 12 to thousands of triangles; GridMap levels made of such pieces carried all of it. The examples set `"ao": true`. Edge-worn parts are still tessellated for their wear band.
 - Prefab sync and undo turn components into `JSONValue`s faster (`JSONValue.parse`).
+- Text layout kerns faster: a font's GPOS pair-kerning coverage and classes are expanded into per-glyph tables when it loads, instead of scanning their glyph ranges for every pair. Laying out the editor's panels took about a quarter of the time in the layout tests.
+- Mesh builds import faster in debug builds (sculpts, look textures, ambient occlusion, edge wear): their per-sample loops avoid the generic range iterators and tuples that debug builds run slowly (`forEachIndex`).
+- The Windows workflow exports and starts a game only when packaging, the sample game, `Package.swift`, `Windows/` or the workflow change, nightly, and when run by hand: the export compiles the engine a second time (about 15 minutes).
 
 ## [0.17.1] - 2026-11-16
 

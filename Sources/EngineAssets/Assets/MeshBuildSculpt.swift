@@ -543,7 +543,7 @@ struct SculptPrimitive: Sendable {
         var d = Float.greatestFiniteMagnitude
         var sign: Float = 1
         var j = n - 1
-        for i in 0..<n {
+        forEachIndex(0..<n) { i in
             let vix = v[2 * i], viy = v[2 * i + 1], vjx = v[2 * j], vjy = v[2 * j + 1]
             let ex = vjx - vix, ey = vjy - viy, wx = px - vix, wy = py - viy
             if !(skippingAxis && vix == 0 && vjx == 0) {
@@ -764,10 +764,19 @@ struct MeshBuildSculptor {
                 if !empty { d = Self.intersect(d, b, primitive.smooth) }
             }
         }
+        // Counted loops, and no closure: a closure here would copy this whole struct (its arrays
+        // retained) on every one of the millions of calls a sculpt makes (ForEachIndex.swift).
+        var k = 0
         if let active {
-            for i in active { combine(primitives[Int(i)]) }
+            while k < active.count {
+                combine(primitives[Int(active[k])])
+                k += 1
+            }
         } else {
-            for i in primitives.indices { combine(primitives[i]) }
+            while k < primitives.count {
+                combine(primitives[k])
+                k += 1
+            }
         }
         return d
     }
@@ -796,7 +805,7 @@ struct MeshBuildSculptor {
     /// Fractal gradient noise in about -1...1 (three octaves).
     static func fbm(_ p: Vec3, seed: Int) -> Float {
         var sum: Float = 0, amplitude: Float = 0.6, q = p
-        for octave in 0..<3 {
+        forEachIndex(0..<3) { octave in
             sum += amplitude * gradientNoise(q, seed: seed &+ octave &* 1013)
             q = q * 2.03 + Vec3(17.1, 31.7, 7.3)
             amplitude *= 0.5
@@ -933,15 +942,18 @@ struct MeshBuildSculptor {
             let pointer = buffer
             concurrentPerform(iterations: n.z) { z in
                 let bz0 = min(z / b, blocks.z - 1), bz1 = z % b == 0 && z > 0 ? z / b - 1 : bz0
-                for y in 0..<n.y {
+                // Counted loops (forEachIndex): this runs per grid point, and debug builds' range iterators are slow.
+                forEachIndex(0..<n.y) { y in
                     let by0 = min(y / b, blocks.y - 1), by1 = y % b == 0 && y > 0 ? y / b - 1 : by0
-                    for x in 0..<n.x {
+                    forEachIndex(0..<n.x) { x in
                         let bx0 = min(x / b, blocks.x - 1), bx1 = x % b == 0 && x > 0 ? x / b - 1 : bx0
                         // The point is near the surface if any block it belongs to is.
                         var isNear = false
-                        for bz in bz1...bz0 {
-                            for by in by1...by0 {
-                                for bx in bx1...bx0 where near[(bz * blocks.y + by) * blocks.x + bx] { isNear = true }
+                        forEachIndex(bz1...bz0) { bz in
+                            forEachIndex(by1...by0) { by in
+                                forEachIndex(bx1...bx0) { bx in
+                                    if near[(bz * blocks.y + by) * blocks.x + bx] { isNear = true }
+                                }
                             }
                         }
                         let index = (z * n.y + y) * n.x + x
@@ -969,9 +981,9 @@ struct MeshBuildSculptor {
                 concurrentPerform(iterations: nz - 2) { k in
                     let z = k + 1
                     var found: [SIMD2<Int32>] = []
-                    for y in 1..<ny - 1 {
+                    forEachIndex(1..<ny - 1) { y in
                         var i = (z * ny + y) * nx + 1
-                        for _ in 1..<nx - 1 {
+                        forEachIndex(1..<nx - 1) { _ in
                             let inside = v[i] < 0
                             if inside != (v[i + 1] < 0) { found.append(SIMD2(Int32(i), 0)) }
                             if inside != (v[i + nx] < 0) { found.append(SIMD2(Int32(i), 1)) }

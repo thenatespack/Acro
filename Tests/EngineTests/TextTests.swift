@@ -52,6 +52,35 @@ nonisolated(unsafe) private let font = try! Font.bundledUI()
     #expect(pair.glyphs[1].x < font.advance(of: a) * 100)
 }
 
+/// The per-glyph lookup arrays GPOSKerning builds when the font loads give exactly what scanning
+/// its tables gives: every pair of the glyphs for printable ASCII and common punctuation, and a
+/// spread of other pairs across the whole font. (The scan is the slow part of this test.)
+@Test func expandedKerningMatchesScanningTheTables() throws {
+    let kerning = try #require(font.gposKerning, "the UI font kerns through GPOS")
+    var glyphs = (0x20...0x7E).compactMap(Unicode.Scalar.init).map { Int(font.glyph(for: $0)) }
+    glyphs += (0x2013...0x201E).compactMap(Unicode.Scalar.init).map { Int(font.glyph(for: $0)) }
+    glyphs = Array(Set(glyphs)).sorted()
+    var mismatches: [String] = [], kerned = 0
+    for left in glyphs {
+        for right in glyphs {
+            let expected = kerning.scannedAdjustment(left, right)
+            if expected != 0 { kerned += 1 }
+            if kerning.adjustment(left, right) != expected, mismatches.count < 5 { mismatches.append("\(left)-\(right)") }
+        }
+    }
+    // Other glyphs, including ids past every table's end.
+    var state: UInt64 = 0x9E37_79B9_7F4A_7C15
+    for _ in 0..<5_000 {
+        state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+        let left = Int(state >> 33) % 4000, right = Int(state >> 13) % 4000
+        if kerning.adjustment(left, right) != kerning.scannedAdjustment(left, right), mismatches.count < 5 {
+            mismatches.append("\(left)-\(right)")
+        }
+    }
+    #expect(mismatches.isEmpty, "\(mismatches)")
+    #expect(kerned > 300, "\(kerned) kerned pairs")
+}
+
 @Test func newlinesStartLines() {
     let layout = TextLayout("a\nb\r\n\nc", font: font, size: 16)
     #expect(layout.lines.count == 4)

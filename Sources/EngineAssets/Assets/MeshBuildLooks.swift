@@ -246,8 +246,8 @@ public struct MeshBuildLookTextures: Sendable {
         lock.unlock()
         let n = 64
         var sum = (r: 0.0, g: 0.0, b: 0.0, rough: 0.0)
-        for y in 0..<n {
-            for x in 0..<n {
+        forEachIndex(0..<n) { y in
+            forEachIndex(0..<n) { x in
                 let t = MeshBuildLookSampler.sample(look, (Float(x) + 0.5) / Float(n), (Float(y) + 0.5) / Float(n), wear: 0)
                 sum.r += Double(t.r); sum.g += Double(t.g); sum.b += Double(t.b); sum.rough += Double(t.rough)
             }
@@ -269,14 +269,15 @@ public struct MeshBuildLookTextures: Sendable {
         // Pass 1: every texel's surface, 6 floats each.
         let texels = TileNoise.parallelRows(n, n * 6, initial: Float(0)) { y, out in
             let v = (Float(y) + 0.5) / Float(n)
-            for x in 0..<n {
+            // Counted loops here and below: they run per texel (ForEachIndex.swift).
+            forEachIndex(0..<n) { x in
                 let t = MeshBuildLookSampler.sample(look, (Float(x) + 0.5) / Float(n), v, wear: wear)
                 out[x * 6] = t.r; out[x * 6 + 1] = t.g; out[x * 6 + 2] = t.b
                 out[x * 6 + 3] = t.h; out[x * 6 + 4] = t.rough; out[x * 6 + 5] = t.metal
             }
         }
         var height = [Float](repeating: 0, count: n * n)
-        for i in 0..<(n * n) { height[i] = texels[i * 6 + 3] }
+        forEachIndex(0..<(n * n)) { i in height[i] = texels[i * 6 + 3] }
         // Cavities: how far below its blurred surroundings each texel is.
         let blurred = TileNoise.blur(height, width: n, height: n, radius: max(n / 64, 1))
         let cavityGain: Float = look == .cobblestone || look == .brick || look == .bark || look == .planks ? 2.2 : 1.4
@@ -285,7 +286,7 @@ public struct MeshBuildLookTextures: Sendable {
         let albedo = texels.withUnsafeBufferPointer { t in
             let t = SharedPointer(t.baseAddress!)
             return TileNoise.parallelRows(n, n * 4, initial: UInt8(255)) { y, out in
-                for x in 0..<n {
+                forEachIndex(0..<n) { x in
                     let i = (y * n + x) * 6
                     out[x * 4] = srgbByte(t[i] * scale.r)
                     out[x * 4 + 1] = srgbByte(t[i + 1] * scale.g)
@@ -297,7 +298,7 @@ public struct MeshBuildLookTextures: Sendable {
             blurred.withUnsafeBufferPointer { b in
                 let t = SharedPointer(t.baseAddress!), b = SharedPointer(b.baseAddress!)
                 return TileNoise.parallelRows(n, n * 4, initial: UInt8(255)) { y, out in
-                    for x in 0..<n {
+                    forEachIndex(0..<n) { x in
                         let p = y * n + x, i = p * 6
                         let cavity = max(b[p] - t[i + 3], 0) * cavityGain
                         out[x * 4] = TileNoise.unitByte(1 - min(cavity, 0.75))
@@ -369,13 +370,25 @@ enum MeshBuildLookSampler {
     @inline(__always) static func fract(_ x: Float) -> Float { TileNoise.fract(x) }
 
     static func seed(_ look: MeshBuildLook, _ k: Int) -> Int {
-        (MeshBuildLook.allCases.firstIndex(of: look) ?? 0) &* 7919 &+ k &* 104_729 &+ 17
+        seedBase(look) &+ k &* 104_729
     }
+
+    /// `seed(look, 0)`.
+    static func seedBase(_ look: MeshBuildLook) -> Int {
+        (lookOrder[look] ?? 0) &* 7919 &+ 17
+    }
+
+    /// Each look's position in `allCases` (its seeds' base): looked up per texel, where building
+    /// `allCases` and searching it each time cost more than the noise.
+    private static let lookOrder: [MeshBuildLook: Int] =
+        Dictionary(uniqueKeysWithValues: MeshBuildLook.allCases.enumerated().map { ($0.element, $0.offset) })
 
     // MARK: Looks
 
     static func sample(_ look: MeshBuildLook, _ u: Float, _ v: Float, wear: Float) -> MeshBuildLookTexel {
-        let s = { (k: Int) in seed(look, k) }
+        // The look's seeds, from one lookup of its position per texel.
+        let base = seedBase(look)
+        let s = { (k: Int) in base &+ k &* 104_729 }
         var t: MeshBuildLookTexel
         switch look {
         case .wood:
@@ -489,7 +502,7 @@ enum MeshBuildLookSampler {
         guard look.wearKind != .rough else { return }
         // Scratches: thin lines where sheared noise crosses zero, thinned out by a mask.
         var line: Float = 0
-        for k in 0..<3 {
+        forEachIndex(0..<3) { k in
             let n = perlin(u + v * Float(k == 1 ? 1 : 0), v + u * Float(k == 2 ? 1 : 0), 6 + k * 3, 40 + k * 17, seed: seed &+ 11 &+ k)
             let mask = smoothstep(0.35 - wear * 0.25, 0.6 - wear * 0.25, perlin(u, v, 4, 4, seed: seed &+ 21 &+ k) * 0.5 + 0.5)
             line = max(line, (1 - smoothstep(0.0, 0.035, abs(n))) * mask)
@@ -715,7 +728,7 @@ enum MeshBuildLookSampler {
     static func grass(_ u: Float, _ v: Float, seed: Int) -> MeshBuildLookTexel {
         var blade: Float = 0
         // Sheared, stretched noise: whole-tile shears keep it tileable.
-        for k in 0..<4 {
+        forEachIndex(0..<4) { k in
             let su = u + (k == 1 ? v : k == 2 ? -v : 0), sv = v + (k == 3 ? u : 0)
             let n = perlin(su, sv, k & 1 == 0 ? 90 : 12, k & 1 == 0 ? 12 : 90, seed: seed &+ k)
             blade = max(blade, 1 - smoothstep(0.0, 0.3, abs(n)))

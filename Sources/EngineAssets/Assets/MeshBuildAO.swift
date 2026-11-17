@@ -58,14 +58,21 @@ enum MeshBuildAO {
         return lifted
     }
 
+    /// A vertex in model space. A struct, not a tuple: debug builds look up a tuple's type metadata
+    /// on every access through generic code (arrays, pointers), and the bake reads these per ray.
+    struct Point {
+        var p: Vec3
+        var n: Vec3
+    }
+
     /// Per vertex of each placed mesh, its occlusion factor (1: open sky, toward 0: enclosed).
     static func bake(_ parts: [Placed], scale: Scale) -> [[Float]] {
         // Model-space positions and normals.
-        var world: [[(p: Vec3, n: Vec3)]] = []
+        var world: [[Point]] = []
         var lo = Vec3(repeating: .infinity), hi = Vec3(repeating: -.infinity)
         for part in parts {
             let placed = part.geometry.vertices.map { v in
-                (p: part.rotation * v.position + part.translation, n: part.rotation * v.normal)
+                Point(p: part.rotation * v.position + part.translation, n: part.rotation * v.normal)
             }
             for v in placed {
                 lo = pointwiseMin(lo, v.p)
@@ -92,8 +99,9 @@ enum MeshBuildAO {
                 let a = placed[Int(indices[t])].p, b = placed[Int(indices[t + 1])].p, c = placed[Int(indices[t + 2])].p
                 let longest = max(length(b - a), length(c - a), length(c - b))
                 let k = min(max(Int((longest / (cell * 0.5)).rounded(.up)), 1), 2048)
-                for i in 0...k {
-                    for j in 0...(k - i) {
+                // Counted loops here and in the rays: they run per sample (ForEachIndex.swift).
+                forEachIndex(0...k) { i in
+                    forEachIndex(0...(k - i)) { j in
                         let p = a + (b - a) * (Float(i) / Float(k)) + (c - a) * (Float(j) / Float(k))
                         if let g = index(p) { grid[g] = 1 }
                     }
@@ -119,7 +127,7 @@ enum MeshBuildAO {
                 let values: [Float] = placed.withUnsafeBufferPointer { buffer in
                     let vertices = SharedPointer(buffer.baseAddress!)
                     return TileNoise.parallelRows(chunks, chunk, initial: Float(1)) { c, out in
-                        for k in 0..<min(chunk, count - c * chunk) {
+                        forEachIndex(0..<min(chunk, count - c * chunk)) { k in
                             out[k] = occlusionAt(vertices[c * chunk + k], occupied, dims3, lo3, cell: cell, reach: reach,
                                                  step: step, start: start, steps: steps, creases: creases)
                         }
@@ -149,16 +157,20 @@ enum MeshBuildAO {
     }
 
     /// The occlusion factor at one vertex (model space) from the surface grid.
-    private static func occlusionAt(_ v: (p: Vec3, n: Vec3), _ occupied: SharedPointer<UInt8>, _ dims: SIMD3<Int>, _ lo: Vec3,
+    private static func occlusionAt(_ v: Point, _ occupied: SharedPointer<UInt8>, _ dims: SIMD3<Int>, _ lo: Vec3,
                                     cell: Float, reach: Float, step: Float, start: Float, steps: Int, creases: Float) -> Float {
         let n = length(v.n) > 1e-6 ? normalize(v.n) : Vec3(0, 1, 0)
         let t = normalize(cross(n, abs(n.x) < 0.9 ? Vec3(1, 0, 0) : Vec3(0, 1, 0)))
         let b = cross(n, t)
         let origin = v.p + n * start
         var occlusion: Float = 0
-        for d in directions {
+        let directions = Self.directions
+        forEachIndex(0..<directions.count) { di in
+            let d = directions[di]
             let dir = t * d.x + b * d.y + n * d.z
-            for s in 0..<steps {
+            // March until the ray leaves the grid or hits a surface (a counted loop: see ForEachIndex.swift).
+            var s = 0
+            while s < steps {
                 let distance = Float(s) * step
                 let p = origin + dir * distance
                 let fx = (p.x - lo.x) / cell, fy = (p.y - lo.y) / cell, fz = (p.z - lo.z) / cell
@@ -170,6 +182,7 @@ enum MeshBuildAO {
                     occlusion += 0.35 + 0.65 * max(f, 0)
                     break
                 }
+                s += 1
             }
         }
         let open = 1 - occlusion / Float(directions.count)

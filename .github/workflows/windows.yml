@@ -3,6 +3,9 @@ name: Windows
 # Builds everything; there is no GPU on the hosted runner, so the only things run are a game
 # module load check (GameRunner --check: build, link against GameRunner.lib, LoadLibraryW)
 # and an exported game started without Swift on Path (its DLLs must all be in its folder).
+# Exporting compiles the whole engine a second time (the player links it statically, in its
+# own build folder: ~15 minutes), so it runs only when packaging, the sample game, the package
+# manifest or this workflow change, nightly, and when run by hand.
 # Runs on pushes to main and on pull requests, not on every branch or tag push: a pushed
 # branch is tested through its PR, and a release tag points at a commit main already tested.
 # Run it by hand on any branch from the Actions tab. A newer push to the same branch or PR
@@ -12,6 +15,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: '17 6 * * *'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -22,6 +27,27 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # to see which files a push or pull request changed
+
+      # Whether to run the export steps (see the top of this file).
+      - name: Decide whether to export a game
+        id: export
+        shell: bash
+        run: |
+          case "${{ github.event_name }}" in
+            schedule|workflow_dispatch) echo "run=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
+            pull_request) base="${{ github.event.pull_request.base.sha }}" ;;
+            *) base="${{ github.event.before }}" ;;
+          esac
+          if ! git cat-file -e "$base^{commit}" 2>/dev/null; then echo "run=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          changed=$(git diff --name-only "$base" "${{ github.sha }}")
+          echo "$changed"
+          if echo "$changed" | grep -qE '^(Sources/Engine/Packaging/|Sources/EditorCore/(EditorBuildGame|EditorPackagingCLI|ExportDialog)\.swift|Projects/SampleGame/|Windows/|Package\.swift|\.github/workflows/windows\.yml)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: compnerd/gha-setup-swift@main
         with:
@@ -78,6 +104,7 @@ jobs:
 
       # Build Game for Windows: cook SampleGame and build it into a folder with its .exe, pack and DLLs.
       - name: Export a game
+        if: steps.export.outputs.run == 'true'
         shell: cmd
         run: swift run -c release Editor --build-game Projects\SampleGame --out "%RUNNER_TEMP%\export"
 
@@ -85,6 +112,7 @@ jobs:
       # has to be in its folder (or System32). --version exits before opening a window (no GPU here).
       # A missing DLL fails with 0xC0000135 (-1073741515).
       - name: Start the exported game without Swift on Path
+        if: steps.export.outputs.run == 'true'
         shell: pwsh
         run: |
           $game = Join-Path $env:RUNNER_TEMP 'export\SampleGame'

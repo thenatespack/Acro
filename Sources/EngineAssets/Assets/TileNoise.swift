@@ -70,7 +70,7 @@ enum TileNoise {
     static func fbm(_ u: Float, _ v: Float, _ fx: Int, _ fy: Int, octaves: Int, seed: Int, gain: Float = 0.5) -> Float {
         var sum: Float = 0, amplitude: Float = 1, total: Float = 0
         var px = max(fx, 1), py = max(fy, 1)
-        for o in 0..<max(octaves, 1) {
+        forEachIndex(0..<max(octaves, 1)) { o in  // counted loop: this runs per texel (ForEachIndex.swift)
             sum += amplitude * perlin(u, v, px, py, seed: seed &+ o &* 101)
             total += amplitude
             amplitude *= gain
@@ -85,7 +85,7 @@ enum TileNoise {
     static func ridged(_ u: Float, _ v: Float, _ fx: Int, _ fy: Int, octaves: Int, seed: Int, gain: Float = 0.5) -> Float {
         var sum: Float = 0, amplitude: Float = 1, total: Float = 0, weight: Float = 1
         var px = max(fx, 1), py = max(fy, 1)
-        for o in 0..<max(octaves, 1) {
+        forEachIndex(0..<max(octaves, 1)) { o in
             var r = 1 - abs(perlin(u, v, px, py, seed: seed &+ o &* 131))
             r *= r
             sum += amplitude * r * weight
@@ -109,8 +109,8 @@ enum TileNoise {
         let s = UInt32(truncatingIfNeeded: seed) &* 0x165667B1 ^ 0x2C1B3C6D
         var f1: Float = 9, f2: Float = 9
         var id: UInt32 = 0
-        for dj in -1...1 {
-            for di in -1...1 {
+        forEachIndex(-1...1) { dj in
+            forEachIndex(-1...1) { di in
                 let ci = wrap(i + di, fx), cj = wrap(j + dj, fy)
                 let h = latticeHash(s, ci, cj)
                 let ox = 0.5 + jitter * (Float(h & 0xFFFF) / 65_535 - 0.5)
@@ -146,7 +146,7 @@ enum TileNoise {
             let h = SharedPointer(h.baseAddress!)
             return parallelRows(rows, width * 4, initial: 255 as UInt8) { y, out in
                 let up = wrap(y - 1, rows) * width, down = wrap(y + 1, rows) * width, row = y * width
-                for x in 0..<width {
+                forEachIndex(0..<width) { x in
                     let left = wrap(x - 1, width), right = wrap(x + 1, width)
                     let dhdu = (h[row + right] - h[row + left]) * sx
                     let dhdv = (h[down + x] - h[up + x]) * sy
@@ -184,20 +184,20 @@ enum TileNoise {
         let scale = 1 / Float(2 * radius + 1)
         for _ in 0..<2 {
             // Rows.
-            for y in 0..<height {
+            forEachIndex(0..<height) { y in
                 let row = y * width
                 var sum: Float = 0
-                for k in -radius...radius { sum += a[row + wrap(k, width)] }
-                for x in 0..<width {
+                forEachIndex(-radius...radius) { k in sum += a[row + wrap(k, width)] }
+                forEachIndex(0..<width) { x in
                     b[row + x] = sum * scale
                     sum += a[row + wrap(x + radius + 1, width)] - a[row + wrap(x - radius, width)]
                 }
             }
             // Columns.
-            for x in 0..<width {
+            forEachIndex(0..<width) { x in
                 var sum: Float = 0
-                for k in -radius...radius { sum += b[wrap(k, height) * width + x] }
-                for y in 0..<height {
+                forEachIndex(-radius...radius) { k in sum += b[wrap(k, height) * width + x] }
+                forEachIndex(0..<height) { y in
                     a[y * width + x] = sum * scale
                     sum += b[wrap(y + radius + 1, height) * width + x] - b[wrap(y - radius, height) * width + x]
                 }
