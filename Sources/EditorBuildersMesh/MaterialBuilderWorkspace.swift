@@ -307,7 +307,7 @@ public final class MaterialBuilderWorkspace {
     public var device: RenderDevice?
     public var quality = RenderQuality.high
 
-    let viewportWidget = ViewportWidget(name: "materialViewport", label: "Material preview")
+    package let viewportWidget = ViewportWidget(name: "materialViewport", label: "Material preview")
     let canvas = MaterialGraphCanvas()
     private let title = Label("Material Builder", role: .heading, name: "materialTitle")
     private let sidebar = VStack(spacing: 6, padding: EdgeInsets(top: 8, left: 10, bottom: 8, right: 10), name: "materialSidebar")

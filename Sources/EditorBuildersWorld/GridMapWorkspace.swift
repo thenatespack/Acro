@@ -134,7 +134,7 @@ public final class GridMapWorkspace {
     /// The opacity of floors below the edited one.
     public var fadedOpacity: Float = 0.3
 
-    let viewportWidget = ViewportWidget(name: "gridMapBuilderViewport", label: "GridMap Builder viewport")
+    package let viewportWidget = ViewportWidget(name: "gridMapBuilderViewport", label: "GridMap Builder viewport")
     private let undo: UndoStack
     private let title = Label("GridMap Builder", role: .heading, name: "gridMapBuilderTitle")
     private let sidebar = VStack(spacing: 6, padding: EdgeInsets(top: 8, left: 10, bottom: 8, right: 10), name: "gridMapBuilderSidebar")

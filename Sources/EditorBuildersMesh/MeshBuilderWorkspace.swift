@@ -37,7 +37,7 @@ public final class MeshBuilderWorkspace {
     public var device: RenderDevice?
     public var quality = RenderQuality.high
 
-    let viewportWidget = ViewportWidget(name: "meshBuilderViewport", label: "Mesh Builder viewport")
+    package let viewportWidget = ViewportWidget(name: "meshBuilderViewport", label: "Mesh Builder viewport")
     private let undo: UndoStack
     private let title = Label("Mesh Builder", role: .heading, name: "meshBuilderTitle")
     private let sidebar = VStack(spacing: 6, padding: EdgeInsets(top: 8, left: 10, bottom: 8, right: 10), name: "meshBuilderSidebar")

@@ -42,7 +42,7 @@ public final class PostFXWorkspace {
     public var device: RenderDevice?
     public var quality = RenderQuality.high
 
-    let viewportWidget = ViewportWidget(name: "postFXViewport", label: "Post-FX viewport")
+    package let viewportWidget = ViewportWidget(name: "postFXViewport", label: "Post-FX viewport")
     private let title = Label("Post-FX", role: .heading, name: "postFXTitle")
     private let sidebar = VStack(spacing: 6, padding: EdgeInsets(top: 8, left: 10, bottom: 8, right: 10), name: "postFXSidebar")
     private let splitToggle = Checkbox("Split", kind: .toggleSwitch, name: "postFXSplit")

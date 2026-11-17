@@ -108,7 +108,7 @@ public final class PathBuilderWorkspace {
     public var device: RenderDevice?
     public var quality = RenderQuality.high
 
-    let viewportWidget = ViewportWidget(name: "pathBuilderViewport", label: "Path Builder viewport")
+    package let viewportWidget = ViewportWidget(name: "pathBuilderViewport", label: "Path Builder viewport")
     private let undo: UndoStack
     private let title = Label("Path Builder", role: .heading, name: "pathBuilderTitle")
     private let sidebar = VStack(spacing: 6, padding: EdgeInsets(top: 8, left: 10, bottom: 8, right: 10), name: "pathBuilderSidebar")

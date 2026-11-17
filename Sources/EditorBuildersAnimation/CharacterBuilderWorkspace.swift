@@ -29,7 +29,7 @@ public final class CharacterBuilderWorkspace {
     public private(set) var isPaused = false
     public private(set) var showsSkeleton = false
 
-    let viewportWidget = ViewportWidget(name: "characterBuilderViewport", label: "Character Builder viewport")
+    package let viewportWidget = ViewportWidget(name: "characterBuilderViewport", label: "Character Builder viewport")
     private let title = Label("Character Builder", role: .heading, name: "characterBuilderTitle")
     private let sidebar = VStack(spacing: 6, padding: EdgeInsets(top: 8, left: 10, bottom: 8, right: 10), name: "characterBuilderSidebar")
     private let pauseToggle = Checkbox("Pause", kind: .toggleSwitch, name: "characterPause")

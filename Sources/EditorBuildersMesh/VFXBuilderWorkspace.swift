@@ -31,7 +31,7 @@ public final class VFXBuilderWorkspace {
     public var device: RenderDevice?
     public var quality = RenderQuality.high
 
-    let viewportWidget = ViewportWidget(name: "vfxViewport", label: "VFX Builder viewport")
+    package let viewportWidget = ViewportWidget(name: "vfxViewport", label: "VFX Builder viewport")
     private let title = Label("VFX Builder", role: .heading, name: "vfxTitle")
     private let sidebar = VStack(spacing: 6, padding: EdgeInsets(top: 8, left: 10, bottom: 8, right: 10), name: "vfxSidebar")
     private let loopToggle = Checkbox("Loop", kind: .toggleSwitch, name: "vfxLoop")

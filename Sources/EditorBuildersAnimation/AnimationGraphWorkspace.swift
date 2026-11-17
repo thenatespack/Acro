@@ -30,7 +30,7 @@ public final class AnimationGraphWorkspace {
     public var device: RenderDevice?
     public var quality = RenderQuality.high
 
-    let viewportWidget = ViewportWidget(name: "animGraphViewport", label: "Animation Graph Builder preview")
+    package let viewportWidget = ViewportWidget(name: "animGraphViewport", label: "Animation Graph Builder preview")
     private let title = Label("Animation Graph Builder", role: .heading, name: "animGraphTitle")
     private let sidebar = VStack(spacing: 6, padding: EdgeInsets(top: 8, left: 10, bottom: 8, right: 10), name: "animGraphSidebar")
     private let canvasHolder = VStack(spacing: 0, name: "animGraphCanvasHolder")

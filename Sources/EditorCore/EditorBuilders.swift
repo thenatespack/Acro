@@ -113,11 +113,27 @@ package struct EditorBuilderTab {
     package static func viewport<W: EditorViewportBuilder>(_ workspace: W, app: EditorApp, connect: (@MainActor () -> Void)? = nil) -> EditorBuilderTab {
         workspace.device = app.builderDevice
         if let quality = app.builderQuality { workspace.quality = quality }
+        passPointerThrough(to: workspace.viewportWidget, in: workspace.view)
         return EditorBuilderTab(workspace: workspace, view: workspace.view,
                                 update: { [unowned workspace] input, dt in workspace.update(input: input, dt: dt) },
                                 prepareFrame: { [unowned workspace] scale in workspace.prepareFrame(pixelScale: scale) },
                                 render: { [unowned workspace] frame in workspace.render(frame: frame) },
                                 connect: connect)
+    }
+
+    /// Makes the containers around `viewport` (up to `root`: stacks, and plain `Widget`s that
+    /// hold the view and its overlays) transparent to the pointer, as the viewport itself is.
+    /// Otherwise a click or drag over the 3D view hits a container, the UI claims the pointer
+    /// (`UIContext.wantsPointer`) and the view never orbits, pans or zooms. They are layout
+    /// only, with no events of their own; their other children (the sidebar, an overlay) still
+    /// get the pointer.
+    static func passPointerThrough(to viewport: Widget, in root: Widget) {
+        var node = viewport.parent
+        while let container = node, container is Stack || type(of: container) == Widget.self {
+            container.isHitTestable = false
+            if container === root { break }
+            node = container.parent
+        }
     }
 }
 
@@ -125,6 +141,8 @@ package struct EditorBuilderTab {
 @MainActor
 package protocol EditorViewportBuilder: AnyObject {
     var view: VStack { get }
+    /// The 3D view inside `view`.
+    var viewportWidget: ViewportWidget { get }
     var device: RenderDevice? { get set }
     var quality: RenderQuality { get set }
     func update(input: ViewportInput?, dt: Float)

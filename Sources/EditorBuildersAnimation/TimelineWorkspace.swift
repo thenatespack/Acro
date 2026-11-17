@@ -208,7 +208,7 @@ public final class TimelineWorkspace {
     public var device: RenderDevice?
     public var quality = RenderQuality.high
 
-    let viewportWidget = ViewportWidget(name: "timelineViewport", label: "Timeline viewport")
+    package let viewportWidget = ViewportWidget(name: "timelineViewport", label: "Timeline viewport")
     private let fadeOverlay = TimelineFadeOverlay()
     /// Shows the preview's conversations (dialogue tracks).
     let dialogueBox = DialogueBox(name: "timelineDialogueBox")
