@@ -5,6 +5,7 @@ import Testing
 @testable import EngineCore
 @testable import EngineScene
 @testable import EngineAssets
+@testable import EngineMeshBuild
 @testable import EngineUI
 
 // Sculpt parts through the meshBuild tools, the spatial checks and the Mesh Builder form.

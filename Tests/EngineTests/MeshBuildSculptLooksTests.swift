@@ -5,6 +5,7 @@ import Testing
 @testable import EngineScene
 @testable import EngineGraphics
 @testable import EngineAssets
+@testable import EngineMeshBuild
 
 // Sculpt children's looks (MeshBuildSculptLooks.swift) and sweeps, lofts and deformed shapes in
 // sculpts through the mesh distance field (MeshBuildMeshSDF.swift).

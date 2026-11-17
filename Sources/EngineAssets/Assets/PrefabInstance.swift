@@ -307,7 +307,7 @@ extension World {
     }
 
     /// A 128-bit hash of `path` (two 64-bit FNV-1a variants, finalized).
-    nonisolated static func stableID(_ path: String) -> EntityID {
+    package nonisolated static func stableID(_ path: String) -> EntityID {
         var a: UInt64 = 0xcbf2_9ce4_8422_2325, b: UInt64 = 0x6c62_272e_07bb_0142
         for byte in path.utf8 {
             a = (a ^ UInt64(byte)) &* 0x0000_0100_0000_01b3
@@ -784,7 +784,7 @@ extension JSONValue {
     /// Like `replace(at:with:)`, also understanding `@key` segments, and appending when the last
     /// segment names an element past the end (an index equal to the count) or a key not in the
     /// array (an element the instance added).
-    mutating func prefabSet(at keys: ArraySlice<String>, to value: JSONValue) -> Bool {
+    package mutating func prefabSet(at keys: ArraySlice<String>, to value: JSONValue) -> Bool {
         guard let key = keys.first else {
             self = value
             return true
@@ -812,7 +812,7 @@ extension JSONValue {
     }
 
     /// Removes the array element `keys` names.
-    mutating func prefabRemoveElement(at keys: ArraySlice<String>) -> Bool {
+    package mutating func prefabRemoveElement(at keys: ArraySlice<String>) -> Bool {
         guard let key = keys.first else { return false }
         switch self {
         case .object(var object):

@@ -239,6 +239,7 @@ CI doesn't render the demo scenes. Check rendering changes locally with `Scripts
 | `Sources/EngineScene/` | Scene/ECS, jobs, and persistence |
 | `Sources/EngineGraphics/`, `Sources/EngineBackends/` | The graphics device API, and the Metal and Vulkan backends and windows |
 | `Sources/EngineAssets/` | Asset database, importers, and the component data prefabs hold |
+| `Sources/EngineMeshBuild/` | The Mesh Builder's algorithms (shapes, sculpting, looks, foliage, LOD) and the importers that run them (mesh builds, terrain, grid maps, paths, characters, procedural textures) |
 | `Sources/EngineRendering/` | Scene renderer, animation, particles, and sprites |
 | `Sources/EnginePhysics/`, `Sources/EngineAudio/`, `Sources/EngineNet/`, `Sources/EngineUI/`, `Sources/EngineText/` | Physics (3D and 2D), audio, networking, UI widgets, and text |
 | `Sources/EditorCore/`, `Sources/Editor/` | Editor implementation and executable |

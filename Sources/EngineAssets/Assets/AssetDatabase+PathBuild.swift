@@ -22,14 +22,14 @@ extension AssetDatabase {
     /// The contents of the `.path` asset `id` (nil if it isn't one or can't be read). Works in a
     /// cooked pack too (the cooker keeps `.path` sources: `AssetCooker.keepsSource`).
     public func pathBuild(of id: AssetID) -> PathBuild? {
-        guard record(id)?.importer == PathBuildImporter().name, let data = try? fileData(of: id) else { return nil }
+        guard record(id)?.importer == BuiltInImporterName.pathBuild, let data = try? fileData(of: id) else { return nil }
         return try? AssetJSON.decoder().decode(PathBuild.self, from: data)
     }
 
     /// The `.path` asset a key names: "asset:<id>" or a path under `Assets/` (a leading `Assets/` is allowed).
     public func pathBuildID(forKey key: String) -> AssetID? {
         guard let id = assetID(forTableValue: key.trimmingCharacters(in: .whitespaces)),
-              record(id)?.importer == PathBuildImporter().name else { return nil }
+              record(id)?.importer == BuiltInImporterName.pathBuild else { return nil }
         return id
     }
 

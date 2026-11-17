@@ -6,6 +6,7 @@ import Testing
 @testable import EngineScene
 @testable import EngineGraphics
 @testable import EngineAssets
+@testable import EngineMeshBuild
 
 // Plants through the tools: the plant examples use plants (their triangle counts and detail levels
 // are checked where every example is imported, in MeshBuildSpatialTests), and the Mesh Builder

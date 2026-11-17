@@ -5,6 +5,7 @@ import Testing
 @testable import EngineCore
 @testable import EngineScene
 @testable import EngineAssets
+@testable import EngineMeshBuild
 @testable import EngineUI
 
 // Bevels and the profile shapes (lathe, extrude) through the meshBuild tools and the Mesh Builder form.

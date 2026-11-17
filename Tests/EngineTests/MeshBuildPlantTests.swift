@@ -5,6 +5,7 @@ import Testing
 @testable import EngineScene
 @testable import EngineGraphics
 @testable import EngineAssets
+@testable import EngineMeshBuild
 @testable import EngineRendering
 
 // Game-ready plants (MeshBuildLOD.swift, MeshBuildImpostor.swift, Wind.swift): wind on plant

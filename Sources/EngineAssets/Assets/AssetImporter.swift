@@ -100,7 +100,7 @@ public struct ImportContext: Sendable {
     /// Problems that didn't stop the import; they show up in the scan report.
     public var warnings: [String] = []
     /// Every asset in the project at the time of the import, by path relative to `Assets/`.
-    let assetsByPath: [String: AssetID]
+    package let assetsByPath: [String: AssetID]
     /// The files `readDependency` read. Shared by copies of the context.
     package let dependencyLog = DependencyLog()
 
@@ -177,7 +177,7 @@ package final class DependencyLog: @unchecked Sendable {
     private let lock = NSLock()
     private var entries: [String: LibraryIndex.Dependency] = [:]
 
-    func record(_ dependency: LibraryIndex.Dependency) {
+    package func record(_ dependency: LibraryIndex.Dependency) {
         lock.lock()
         entries[dependency.path] = dependency
         lock.unlock()
@@ -207,25 +207,21 @@ public struct AssetImporterRegistry: Sendable {
         registry.register(TextureImporter())
         registry.register(GLTFImporter())
         registry.register(AudioImporter())
-        registry.register(ProceduralTextureImporter())
-        registry.register(MeshBuildImporter())
         registry.register(VFXBuildImporter())
         registry.register(SoundBuildImporter())
         registry.register(PostFXImporter())
         registry.register(LUTImporter())
         registry.register(DataTableImporter())
         registry.register(VisualScriptImporter())
-        registry.register(TerrainImporter())
         registry.register(PixelSpriteImporter())
         registry.register(TilemapImporter())
-        registry.register(GridMapImporter())
-        registry.register(PathBuildImporter())
         registry.register(BehaviorTreeImporter())
         registry.register(UIBuildImporter())
         registry.register(DialogueImporter())
         registry.register(TimelineImporter())
         registry.register(AnimationGraphImporter())
-        registry.register(CharacterImporter())
+        // ProceduralTextureImporter, MeshBuildImporter, TerrainImporter, GridMapImporter, PathBuildImporter, CharacterImporter.
+        registerMeshBuildImporters(&registry)
         return registry
     }
 
@@ -308,3 +304,23 @@ extension AssetJSON {
         return (settings, json)
     }
 }
+
+/// The names of the built-in importers that live in EngineMeshBuild (it depends on this module,
+/// so code here can't name their types). Each importer's `name` returns its constant.
+package enum BuiltInImporterName {
+    package static let meshBuild = "meshbuild"
+    package static let terrain = "terrain"
+    package static let gridMap = "gridmap"
+    package static let pathBuild = "path"
+    package static let character = "character"
+}
+
+/// Adds the built-in importers that live in EngineMeshBuild (the Mesh Builder and the importers
+/// that run it: `ProceduralTextureImporter`, `MeshBuildImporter`, `TerrainImporter`, `GridMapImporter`, `PathBuildImporter`,
+/// `CharacterImporter`) to `registry`. That module is above this one (so it compiles in parallel
+/// with EngineRendering, see Package.swift), so this is only declared here and defined there
+/// (EngineMeshBuild/MeshBuildRegistration.swift); the linker connects the two. Every product
+/// links all engine modules (the Engine library), so the definition is always present and
+/// `builtIn` is complete without a startup call.
+@_silgen_name("acro_engineMeshBuild_registerImporters")
+func registerMeshBuildImporters(_ registry: inout AssetImporterRegistry)

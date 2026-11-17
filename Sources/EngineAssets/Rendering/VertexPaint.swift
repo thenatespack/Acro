@@ -34,7 +34,7 @@ public struct VertexPaint: Equatable, Sendable, BitwiseCopyable {
 extension MeshGeometry {
     /// Appends `vertex` with the paint halfway between vertices `a` and `b` (when painted): for
     /// steps that split edges.
-    mutating func appendMidpoint(_ vertex: MeshVertex, between a: Int, _ b: Int) {
+    package mutating func appendMidpoint(_ vertex: MeshVertex, between a: Int, _ b: Int) {
         vertices.append(vertex)
         if paint != nil {
             let pa = paint![a], pb = paint![b]
@@ -43,7 +43,7 @@ extension MeshGeometry {
     }
 
     /// Appends source vertex `i` of `source` (vertex and paint): for steps that rebuild a mesh.
-    mutating func append(vertex: MeshVertex, from source: MeshGeometry, _ i: Int) {
+    package mutating func append(vertex: MeshVertex, from source: MeshGeometry, _ i: Int) {
         vertices.append(vertex)
         if let sourcePaint = source.paint {
             if paint == nil { paint = [] }

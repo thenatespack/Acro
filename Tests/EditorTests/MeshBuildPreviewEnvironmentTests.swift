@@ -6,6 +6,7 @@ import Testing
 @testable import EngineScene
 @testable import EngineGraphics
 @testable import EngineAssets
+@testable import EngineMeshBuild
 
 // The light mesh builds are previewed in (MeshBuildPreviewEnvironment.swift): the studio map and
 // the environments of the preview world and the Mesh Builder tab.

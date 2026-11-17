@@ -6,6 +6,7 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 
 ### Changed
 
+- The Mesh Builder's algorithms (shapes, sculpting, looks, foliage, LOD, ambient occlusion) and the importers that run them (mesh builds, terrain, grid maps, paths, characters, procedural textures) moved out of EngineAssets into a new module, EngineMeshBuild, which compiles in parallel with EngineRendering in release builds. Their data types (`MeshBuild`, `MeshBuildPart` and what it holds) stay in EngineAssets. `import Engine` and the `Engine` product are unchanged, and the importers are still in `AssetImporterRegistry.builtIn`.
 - Mesh builds bake ambient occlusion only when the file sets `"ao": true` (it was on by default). Baking tessellates every mesh first, which took simple pieces from 12 to thousands of triangles; GridMap levels made of such pieces carried all of it. The examples set `"ao": true`. Edge-worn parts are still tessellated for their wear band.
 - Prefab sync and undo turn components into `JSONValue`s faster (`JSONValue.parse`).
 - Text layout kerns faster: a font's GPOS pair-kerning coverage and classes are expanded into per-glyph tables when it loads, instead of scanning their glyph ranges for every pair. Laying out the editor's panels took about a quarter of the time in the layout tests.

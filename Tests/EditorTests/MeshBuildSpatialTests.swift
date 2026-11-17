@@ -6,6 +6,7 @@ import Testing
 @testable import EngineScene
 @testable import EngineGraphics
 @testable import EngineAssets
+@testable import EngineMeshBuild
 
 // The mesh build spatial checks (bounds and warnings in every meshBuild.* result), the examples
 // and the preview's headless parts (posing, framing, tiling).

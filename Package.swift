@@ -23,8 +23,9 @@ let vulkanEnabled = true
 // up: EngineCore (math, input, logging, resources) → EngineScene (ECS, jobs, persistence) and
 // EngineGraphics (the device API) → EngineBackends (Metal/Vulkan, windows), EngineText,
 // EnginePhysics, EngineAudio → EngineAssets (database, importers, prefab component data),
-// EngineNet, EngineUI → EngineRendering → Engine (the Engine class, packaging, game modules,
-// editor tools).
+// EngineNet, EngineUI → EngineRendering, and beside it EngineMeshBuild (the Mesh Builder's
+// algorithms and the importers that run them) → Engine (the Engine class, packaging, game
+// modules, editor tools).
 var backendDependencies: [Target.Dependency] = []
 var engineSwiftSettings: [SwiftSetting] = []
 var vulkanTargets: [Target] = []
@@ -125,7 +126,7 @@ let engineProductType: Product.Library.LibraryType? = nil
 // Every engine module is in the Engine product, so on Windows (a .dynamic product) all of them
 // are compiled with their public symbols exported.
 let engineModules = ["EngineCore", "EngineScene", "EngineGraphics", "EngineBackends", "EngineText", "EnginePhysics", "EngineAudio",
-                     "EngineAssets", "EngineNet", "EngineUI", "EngineRendering", "Engine"]
+                     "EngineAssets", "EngineMeshBuild", "EngineNet", "EngineUI", "EngineRendering", "Engine"]
 
 let package = Package(
     name: "Acro",
@@ -177,6 +178,10 @@ let package = Package(
                 linkerSettings: windowsLinkerSettings),
         .target(name: "EngineAssets", dependencies: ["EnginePhysics", "EngineAudio"], swiftSettings: engineSwiftSettings,
                 linkerSettings: windowsLinkerSettings),
+        // The Mesh Builder's algorithms (sculpting, looks, AO, LOD, foliage...) and the importers
+        // that run them. Nothing below Engine depends on it, so it compiles alongside EngineRendering.
+        .target(name: "EngineMeshBuild", dependencies: ["EngineAssets"], swiftSettings: engineSwiftSettings,
+                linkerSettings: windowsLinkerSettings),
         .target(name: "EngineNet", dependencies: ["EnginePhysics", "CZlib"], swiftSettings: engineSwiftSettings,
                 linkerSettings: windowsLinkerSettings),
         .target(name: "EngineUI", dependencies: ["EngineText", "EngineBackends", "EnginePhysics"], swiftSettings: engineSwiftSettings,
@@ -186,7 +191,7 @@ let package = Package(
         // EngineMCP (Foundation only) lets any game host an MCP server (`EngineConfig.mcp`).
         .target(
             name: "Engine",
-            dependencies: ["EngineRendering", "EngineUI", "EngineNet", "EngineBackends", "EngineAudio", "EngineMCP"] + backendDependencies,
+            dependencies: ["EngineRendering", "EngineMeshBuild", "EngineUI", "EngineNet", "EngineBackends", "EngineAudio", "EngineMCP"] + backendDependencies,
             swiftSettings: engineSwiftSettings,
             linkerSettings: windowsLinkerSettings
         ),

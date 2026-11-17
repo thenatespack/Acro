@@ -5,6 +5,7 @@ import Testing
 @testable import EngineScene
 @testable import EngineGraphics
 @testable import EngineAssets
+@testable import EngineMeshBuild
 
 // Mesh build plants: foliage cards, leaf looks, ribbons and the deformers' triangle budget.
 

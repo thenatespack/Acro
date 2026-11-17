@@ -21,7 +21,7 @@ extension AssetDatabase {
 
     /// The contents of the `.meshbuild` asset `id` (nil if it isn't one or can't be read).
     public func meshBuild(of id: AssetID) -> MeshBuild? {
-        guard record(id)?.importer == MeshBuildImporter().name, let path = path(of: id),
+        guard record(id)?.importer == BuiltInImporterName.meshBuild, let path = path(of: id),
               let data = try? Data(contentsOf: project.url(forAssetPath: path)) else { return nil }
         return try? AssetJSON.decoder().decode(MeshBuild.self, from: data)
     }

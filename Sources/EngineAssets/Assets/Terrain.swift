@@ -581,7 +581,7 @@ extension Terrain {
     }
 
     /// The grid sample range [first, last] chunk `(cx, cz)` covers.
-    func chunkRange(_ cx: Int, _ cz: Int) -> (x: ClosedRange<Int>, z: ClosedRange<Int>) {
+    package func chunkRange(_ cx: Int, _ cz: Int) -> (x: ClosedRange<Int>, z: ClosedRange<Int>) {
         let c = min(max(chunkCells, 2), 256)
         return (cx * c...min((cx + 1) * c, cells), cz * c...min((cz + 1) * c, cells))
     }

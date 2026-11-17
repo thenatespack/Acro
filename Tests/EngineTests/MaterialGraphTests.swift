@@ -9,6 +9,7 @@ import Testing
 @testable import EnginePhysics
 @testable import EngineAudio
 @testable import EngineAssets
+@testable import EngineMeshBuild
 @testable import EngineNet
 @testable import EngineUI
 @testable import EngineRendering

@@ -19,7 +19,7 @@ import EngineScene
 ///
 /// A cached entry counts only while every file it read is unchanged (same size and mtime, or
 /// the same contents), so a changed `.bin` or texture of a model is imported again.
-final class GridMapPieceCache {
+package final class GridMapPieceCache {
     /// `Library/Artifacts/<map>/cache/pieces/`.
     let directory: URL
     /// `Library/`.
@@ -46,7 +46,7 @@ final class GridMapPieceCache {
     static let importFolder = "import"
 
     /// nil outside an asset database (no cache folder).
-    init?(context: ImportContext, assetsRoot: URL) {
+    package init?(context: ImportContext, assetsRoot: URL) {
         guard let cache = context.cacheDirectory else { return nil }
         directory = cache.appendingPathComponent("pieces", isDirectory: true)
         // cache → Artifacts/<id> → Artifacts → Library.
@@ -64,7 +64,7 @@ final class GridMapPieceCache {
 
     /// The cached import of piece `id` (at `path`) when one is still valid; records the files it
     /// read in `log` (the map's dependencies).
-    func read(id: AssetID, path: String, importer: AnyAssetImporter, settings: String, log: DependencyLog) -> ImportedAsset? {
+    package func read(id: AssetID, path: String, importer: AnyAssetImporter, settings: String, log: DependencyLog) -> ImportedAsset? {
         used.insert(id.description)
         if let asset = readOwn(id: id, importer: importer, settings: settings, log: log) {
             hits += 1
@@ -120,7 +120,7 @@ final class GridMapPieceCache {
 
     /// Stores a fresh import of piece `id`: `source` is the piece file as read, `dependencies`
     /// the other files its importer read.
-    func write(_ asset: ImportedAsset, id: AssetID, importer: AnyAssetImporter, settings: String, source: LibraryIndex.Dependency,
+    package func write(_ asset: ImportedAsset, id: AssetID, importer: AnyAssetImporter, settings: String, source: LibraryIndex.Dependency,
                dependencies: [LibraryIndex.Dependency]) {
         used.insert(id.description)
         let folder = directory.appendingPathComponent(id.description, isDirectory: true)
@@ -136,7 +136,7 @@ final class GridMapPieceCache {
     }
 
     /// Removes the entries of pieces this import didn't use.
-    func removeUnused() {
+    package func removeUnused() {
         let fm = FileManager.default
         for name in (try? fm.contentsOfDirectory(atPath: directory.path)) ?? [] where !used.contains(name) {
             try? fm.removeItem(at: directory.appendingPathComponent(name))
