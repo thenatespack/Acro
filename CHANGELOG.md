@@ -4,10 +4,17 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
-## [0.16.0] - 2026-11-15
+## [0.16.2] - 2026-11-16
 
 ### Added
 
+- Mesh Builder:
+  - Part shapes: rounded boxes and cylinders (bevel), lathe, extrude, sweep (along a Catmull-Rom path) and loft; deformers (taper, bend, twist, noise); `mirror` and `repeat` part keys.
+  - Sculpt parts: a subtree combined as signed distance fields (add, subtract, intersect, smooth blend) and meshed by dual contouring. Sculpt children can keep their own looks, which blend across their boundary. Sculpts work in terrain scatter and character attachments.
+  - Looks: generated surface textures with wear, worn convex edges (`EdgeWear`), and baked ambient occlusion; new proctex noise kinds (fbm, ridged, voronoi, cells, wood rings, streaks).
+  - Plants: `foliage` leaf cards and tufts, eight generated leaf looks, ribbons, translucent materials, wind sway (`Wind`, matching on Metal and Vulkan), and detail levels down to an impostor (`MeshLOD`). New `forest` demo scene.
+  - `meshBuild.preview` renders a tiled PNG of a build in a studio light. Every result reports bounds, triangle counts and spatial warnings (floating, buried, hidden or out-of-scale parts). `meshBuild.examples` returns sample builds.
+  - Meshes can carry an optional per-vertex paint stream (`MeshGeometry.paint`).
 - Builder gap-fill: the "not done" lists of fifteen builders (see `Tools.md`), among them:
   - Pixel Sprite: selections and copy/paste, PNG sheet import (`sprite.importSheet`), tag frame events, blend modes, canvas shortcuts; the Scene and Game views draw `Sprite` components.
   - Tilemap: `.sprite` tile sets, `TilemapMotion` (animated tiles and parallax in placed maps), one-way platforms that follow rotation, canvas shortcuts.
@@ -36,6 +43,7 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 - The editor finishes background asset loads every frame, so a load started while a builder tab covers the Scene and Game views no longer stalls (and no longer holds MCP replies).
 - Visual Script calls of pure functions computed nothing.
 - Nil asset handles (such as `Decal.texture`) can be set through the inspector and `setField`.
+- Build Game for Windows copies `Engine.dll`, the Swift runtime and `zlib1.dll` next to the game's `.exe`, so an exported game starts on a PC without Swift. Windows CI exports and runs SampleGame.
 
 ## [0.14.1] - 2026-11-15
 
