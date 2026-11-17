@@ -552,25 +552,10 @@ public final class AssetBrowserPanel {
             ("New Folder", AssetNewFolderCommand.id, { [unowned self] in model.newFolder(); sync() }),
             ("New Material", AssetNewMaterialCommand.id, { [unowned self] in model.newMaterial(); sync() }),
             ("New Procedural Texture", AssetNewProceduralTextureCommand.id, { [unowned self] in model.newProceduralTexture(); sync() }),
-            ("New Mesh Build", MeshBuildNewCommand.id, { [unowned self] in model.newMeshBuild(); sync() }),
-            ("New VFX", VFXNewCommand.id, { [unowned self] in model.newVFX(); sync() }),
-            ("New Sound", SoundBuildNewCommand.id, { [unowned self] in model.newSoundBuild(); sync() }),
-            ("New Post-FX", PostFXNewCommand.id, { [unowned self] in model.newPostFX(); sync() }),
-            ("New Data Table", TableNewCommand.id, { [unowned self] in model.newDataTable(); sync() }),
-            ("New Visual Script", VScriptNewCommand.id, { [unowned self] in model.newVisualScript(); sync() }),
-            ("New Terrain", TerrainNewCommand.id, { [unowned self] in model.newTerrain(); sync() }),
-            ("New Sprite", PixelSpriteNewCommand.id, { [unowned self] in model.newPixelSprite(); sync() }),
-            ("New Tilemap", TilemapNewCommand.id, { [unowned self] in model.newTilemap(); sync() }),
-            ("New GridMap", GridMapNewCommand.id, { [unowned self] in model.newGridMap(); sync() }),
-            ("New Path", PathNewCommand.id, { [unowned self] in model.newPathBuild(); sync() }),
-            ("New Behavior Tree", BehaviorNewCommand.id, { [unowned self] in model.newBehaviorTree(); sync() }),
-            ("New UI Layout", UINewCommand.id, { [unowned self] in model.newUILayout(); sync() }),
-            ("New Dialogue", DialogueNewCommand.id, { [unowned self] in model.newDialogue(); sync() }),
-            ("New Timeline", TimelineNewCommand.id, { [unowned self] in model.newTimeline(); sync() }),
-            ("New Animation Graph", AnimGraphNewCommand.id, { [unowned self] in model.newAnimationGraph(); sync() }),
-            ("New Character", CharacterNewCommand.id, { [unowned self] in model.newCharacter(); sync() }),
-            ("New Material Graph", MaterialGraphNewCommand.id, { [unowned self] in model.newMaterialGraph(); sync() }),
         ]
+        for asset in EditorBuilderRegistry.modules.compactMap(\.asset) {
+            items.append((asset.newTitle, asset.newCommand, { [unowned self] in model.newBuilderAsset(asset); sync() }))
+        }
         if let entry {
             if case .folder = entry.item {
                 items.append(("Open", AssetListCommand.id, { [unowned self] in model.activate(entry); sync() }))

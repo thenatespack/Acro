@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import EditorBuilders
 @testable import EditorCore
 @testable import Engine
 @testable import EngineCore
@@ -55,6 +56,14 @@ private func temporaryDirectory() -> URL {
 }
 
 @MainActor @Suite struct CommandRegistryTests {
+    /// The builder modules register themselves in hosts that don't call `EditorBuilders.registerAll()`
+    /// (these tests): EditorCore finds `EditorBuilders` by its mangled name.
+    @Test func builderModulesAreFoundWithoutRegistering() {
+        #expect(_mangledTypeName(EditorBuilders.self) == EditorBuilderRegistry.providerTypeName)
+        #expect(EditorBuilderRegistry.modules.map(\.panelID) == EditorBuilderRegistry.panelOrder)
+        #expect(BuiltinCommands.all.contains { $0.id == "meshBuild.new" })
+    }
+
     @Test func listsEveryCommandWithUniqueIDsAndDocs() {
         let session = makeSession()
         let all = session.commands.all

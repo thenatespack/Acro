@@ -1,3 +1,4 @@
+import EditorBuilders
 import EditorCore
 import Engine
 import Foundation
@@ -35,6 +36,8 @@ let usage = """
 
 // Double-clicked on Windows, the console closes on exit: show errors and crashes in a message box.
 StartupErrors.install(title: "Editor")
+// The builder tabs (Mesh Builder, Terrain Builder…) live in modules of their own; hand them to EditorCore.
+MainActor.assumeIsolated { EditorBuilders.registerAll() }
 
 var config = EngineConfig(title: "Editor", width: 1440, height: 900, showDebugOverlay: false)
 config.icon = EditorAppIcon.image()

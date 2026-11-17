@@ -58,7 +58,7 @@ extension EditorSession {
     }
 
     /// The asset `reference` or `path` names (one of them is required).
-    func resolveAsset(_ reference: AssetReference?, path: String?, _ title: String) throws -> AssetID {
+    package func resolveAsset(_ reference: AssetReference?, path: String?, _ title: String) throws -> AssetID {
         guard let assets else { throw CommandError.failed(noProjectReason) }
         if let reference {
             guard assets.record(reference.asset) != nil else { throw CommandError.failed("No asset \(reference)") }

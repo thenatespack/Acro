@@ -478,13 +478,13 @@ public final class CommandRegistry {
     /// For commands built on session methods that log their failures and return false / nil:
     /// throws `CommandError.failed` with the newest warning or error logged since the running
     /// command started when `succeeded` is false.
-    func check(_ succeeded: Bool, _ title: String) throws {
+    package func check(_ succeeded: Bool, _ title: String) throws {
         guard !succeeded else { return }
         throw CommandError.failed(logMarks.last.flatMap { session.log.problem(since: $0) } ?? "\(title) failed")
     }
 
     /// `value`, or throws like `check(false, title)` when it is nil.
-    func require<T>(_ value: T?, _ title: String) throws -> T {
+    package func require<T>(_ value: T?, _ title: String) throws -> T {
         try check(value != nil, title)
         return value!
     }

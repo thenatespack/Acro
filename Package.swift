@@ -127,6 +127,9 @@ let engineProductType: Product.Library.LibraryType? = nil
 let engineModules = ["EngineCore", "EngineScene", "EngineGraphics", "EngineBackends", "EngineText", "EnginePhysics", "EngineAudio",
                      "EngineAssets", "EngineNet", "EngineUI", "EngineRendering", "Engine"]
 
+// The builder tabs' modules (see the EditorBuilders target).
+let editorBuilderModules = ["EditorBuildersMesh", "EditorBuildersWorld", "EditorBuilders2D", "EditorBuildersAnimation", "EditorBuildersLogic"]
+
 let package = Package(
     name: "Acro",
     platforms: [.macOS(.v14)],
@@ -199,10 +202,19 @@ let package = Package(
         // A Model Context Protocol server (JSON-RPC, stdio and Streamable HTTP transports, JSON
         // Schemas from Codable types). Foundation only, so games can embed it too.
         .target(name: "EngineMCP"),
-        // The in-engine editor: all logic in EditorCore (unit-tested by EditorTests), and a
-        // thin executable that runs it (`swift run Editor [scene.json]`).
+        // The in-engine editor: its logic in EditorCore and the builder tabs' modules (unit-tested
+        // by EditorTests), and a thin executable that runs it (`swift run Editor [scene.json]`).
         .target(name: "EditorCore", dependencies: ["Engine", "EngineMCP"], linkerSettings: windowsLinkerSettings),
-        .executableTarget(name: "Editor", dependencies: ["EditorCore", "Engine"], linkerSettings: windowsLinkerSettings + exportsSymbols),
+        // The builder tabs, in modules that depend only on EditorCore so release builds compile
+        // them in parallel (EditorCore/EditorBuilders.swift). EditorBuilders registers them all.
+        .target(name: "EditorBuildersMesh", dependencies: ["EditorCore", "Engine"], linkerSettings: windowsLinkerSettings),
+        .target(name: "EditorBuildersWorld", dependencies: ["EditorCore", "Engine"], linkerSettings: windowsLinkerSettings),
+        .target(name: "EditorBuilders2D", dependencies: ["EditorCore", "Engine", "EngineMCP"], linkerSettings: windowsLinkerSettings),
+        .target(name: "EditorBuildersAnimation", dependencies: ["EditorCore", "Engine"], linkerSettings: windowsLinkerSettings),
+        .target(name: "EditorBuildersLogic", dependencies: ["EditorCore", "Engine"], linkerSettings: windowsLinkerSettings),
+        .target(name: "EditorBuilders", dependencies: editorBuilderModules.map { .target(name: $0) } + ["EditorCore"],
+                linkerSettings: windowsLinkerSettings),
+        .executableTarget(name: "Editor", dependencies: ["EditorCore", "EditorBuilders", "Engine"], linkerSettings: windowsLinkerSettings + exportsSymbols),
         // A game as a game module: built as a target (not a product: a `.dynamic` product would
         // link its own copy of Engine) and linked into a shared library by GameModuleBuilder,
         // which the editor (`--game SampleGame`) and GameRunner load. See README "Game modules".
@@ -219,7 +231,8 @@ let package = Package(
         // ENGINE_VULKAN lets GPU tests (ComputeTests) run on the Vulkan backend too.
         .testTarget(name: "EngineTests", dependencies: ["Engine", "CZlib"], resources: [.copy("Resources")],
                     swiftSettings: vulkanEnabled ? [.define("ENGINE_VULKAN")] : []),
-        .testTarget(name: "EditorTests", dependencies: ["EditorCore", "Engine", "EngineMCP"], linkerSettings: exportsSymbols),
+        .testTarget(name: "EditorTests", dependencies: ["EditorCore", "EditorBuilders", "Engine", "EngineMCP"] + editorBuilderModules.map { .target(name: $0) },
+                    linkerSettings: exportsSymbols),
         .testTarget(name: "EngineMCPTests", dependencies: ["EngineMCP"]),
     ] as [Target])
 )

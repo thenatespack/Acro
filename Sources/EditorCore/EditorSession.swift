@@ -196,7 +196,7 @@ public final class EditorSession {
     /// A visual script node with a breakpoint ran: play pauses after this frame.
     var visualScriptBreakPending = false
     /// Paused at a visual script breakpoint: the step of the runtime's trace shown (`vscript.step`).
-    public internal(set) var visualScriptStep: Int?
+    public package(set) var visualScriptStep: Int?
 
     /// Keeps the scene's prefab instances in step with their prefabs (see EditorSession+Prefabs.swift).
     public let prefabs = PrefabSync()
@@ -1032,7 +1032,7 @@ public final class EditorSession {
         return true
     }
 
-    func changed() { onChange?() }
+    package func changed() { onChange?() }
 }
 
 /// Turns `PropertyGrid` edits into undo steps: one step per gesture. `.began` opens an undo

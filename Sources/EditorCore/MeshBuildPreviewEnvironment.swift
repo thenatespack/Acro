@@ -27,7 +27,7 @@ public enum MeshBuildPreviewEnvironment: String, Codable, CaseIterable, Sendable
     static let studioSize = (width: 512, height: 256)
 
     /// The scene's `SceneEnvironment` for this light.
-    var sceneEnvironment: SceneEnvironment {
+    package var sceneEnvironment: SceneEnvironment {
         switch self {
         case .studio:
             SceneEnvironment(ambientIntensity: 0.6, fogDensity: 0, sky: .map, environmentMap: TextureHandle(Self.studioTextureKey))
@@ -39,7 +39,7 @@ public enum MeshBuildPreviewEnvironment: String, Codable, CaseIterable, Sendable
     }
 
     /// Uploads the studio map to `renderer` (call once per renderer).
-    @MainActor static func registerStudio(in renderer: SceneRenderer) {
+    @MainActor package static func registerStudio(in renderer: SceneRenderer) {
         do {
             renderer.registerTexture(try renderer.device.makeTexture(image: studioImage), key: studioTextureKey)
         } catch {

@@ -129,47 +129,18 @@ public final class AssetBrowserModel {
         case .folder(let path):
             folder = path
             search = ""
-        case .asset(let id) where session.isMeshBuildFile(id):
-            session.run(MeshBuildOpenCommand.self, .init(asset: AssetReference(id)))
-        case .asset(let id) where session.isVFXFile(id):
-            session.run(VFXOpenCommand.self, .init(asset: AssetReference(id)))
-        case .asset(let id) where session.isSoundBuildFile(id):
-            session.run(SoundBuildOpenCommand.self, .init(asset: AssetReference(id)))
-        case .asset(let id) where session.isPostFXFile(id):
-            session.run(PostFXOpenCommand.self, .init(asset: AssetReference(id)))
-        case .asset(let id) where session.isTableFile(id):
-            session.run(TableOpenCommand.self, .init(asset: AssetReference(id)))
-        case .asset(let id) where session.isVisualScriptFile(id):
-            session.run(VScriptOpenCommand.self, .init(asset: AssetReference(id)))
-        case .asset(let id) where session.isTerrainFile(id):
-            session.run(TerrainOpenCommand.self, .init(asset: AssetReference(id)))
-        case .asset(let id) where session.isPixelSpriteFile(id):
-            session.run(PixelSpriteOpenCommand.self, .init(asset: AssetReference(id)))
-        case .asset(let id) where session.isTilemapFile(id):
-            session.run(TilemapOpenCommand.self, .init(asset: AssetReference(id)))
-        case .asset(let id) where session.isGridMapFile(id):
-            session.run(GridMapOpenCommand.self, .init(asset: AssetReference(id)))
-        case .asset(let id) where session.isPathBuildFile(id):
-            session.run(PathOpenCommand.self, .init(asset: AssetReference(id)))
-        case .asset(let id) where session.isBehaviorFile(id):
-            session.run(BehaviorOpenCommand.self, .init(asset: AssetReference(id)))
-        case .asset(let id) where session.isUIBuildFile(id):
-            session.run(UIOpenCommand.self, .init(asset: AssetReference(id)))
-        case .asset(let id) where session.isDialogueFile(id):
-            session.run(DialogueOpenCommand.self, .init(asset: AssetReference(id)))
-        case .asset(let id) where session.isTimelineFile(id):
-            session.run(TimelineOpenCommand.self, .init(asset: AssetReference(id)))
-        case .asset(let id) where session.isAnimationGraphFile(id):
-            session.run(AnimGraphOpenCommand.self, .init(asset: AssetReference(id)))
-        case .asset(let id) where session.isCharacterFile(id):
-            session.run(CharacterOpenCommand.self, .init(asset: AssetReference(id)))
-        case .asset(let id) where session.isMaterialFile(id):
-            session.run(MaterialGraphOpenCommand.self, .init(asset: AssetReference(id)))
+        case .asset(let id) where builderAsset(of: id) != nil:
+            builderAsset(of: id)?.open(session, id)
         case .asset(let id) where entry.isExpandable:
             toggleExpanded(id)
         default:
             break
         }
+    }
+
+    /// The builder whose file `id` is (it opens in that builder's tab).
+    private func builderAsset(of id: AssetID) -> EditorBuilderAsset? {
+        EditorBuilderRegistry.modules.lazy.compactMap(\.asset).first { $0.isFile(self.session, id) }
     }
 
     /// Shows the item at `path` (relative to `Assets/`): a folder is opened, a file selected in
@@ -239,100 +210,6 @@ public final class AssetBrowserModel {
         return id
     }
 
-    /// Creates a pixel sprite in the current folder (`sprite.new`) and selects it.
-    @discardableResult
-    public func newPixelSprite() -> AssetID? {
-        guard let id = session.run(PixelSpriteNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
-        invalidate()
-        selection = .asset(id)
-        return id
-    }
-    /// Creates a grid map (with the starter pieces) in the current folder (`gridMap.new`) and selects it.
-    @discardableResult
-    public func newGridMap() -> AssetID? {
-        guard let id = session.run(GridMapNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
-        invalidate()
-        selection = .asset(id)
-        return id
-    }
-    /// Creates a path (a road) in the current folder (`path.new`) and selects it.
-    @discardableResult
-    public func newPathBuild() -> AssetID? {
-        guard let id = session.run(PathNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
-        invalidate()
-        selection = .asset(id)
-        return id
-    }
-    /// Creates an animation graph in the current folder (`animGraph.new`) and selects it.
-    @discardableResult
-    public func newAnimationGraph() -> AssetID? {
-        guard let id = session.run(AnimGraphNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
-        invalidate()
-        selection = .asset(id)
-        return id
-    }
-    /// Creates a character in the current folder (`character.new`) and selects it.
-    @discardableResult
-    public func newCharacter() -> AssetID? {
-        guard let id = session.run(CharacterNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
-        invalidate()
-        selection = .asset(id)
-        return id
-    }
-    /// Creates a material with a node graph in the current folder (`materialGraph.new`) and selects it.
-    @discardableResult
-    public func newMaterialGraph() -> AssetID? {
-        guard let id = session.run(MaterialGraphNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
-        invalidate()
-        selection = .asset(id)
-        return id
-    }
-
-    /// Creates a terrain in the current folder (`terrain.new`) and selects it.
-    @discardableResult
-    public func newTerrain() -> AssetID? {
-        guard let id = session.run(TerrainNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
-        invalidate()
-        selection = .asset(id)
-        return id
-    }
-
-    /// Creates a tilemap (with the starter tile set) in the current folder (`tilemap.new`) and selects it.
-    @discardableResult
-    public func newTilemap() -> AssetID? {
-        guard let id = session.run(TilemapNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
-        invalidate()
-        selection = .asset(id)
-        return id
-    }
-    /// Creates a timeline in the current folder (`timeline.new`) and selects it.
-    @discardableResult
-    public func newTimeline() -> AssetID? {
-        guard let id = session.run(TimelineNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
-        invalidate()
-        selection = .asset(id)
-        return id
-    }
-
-    /// Creates a mesh build in the current folder (`meshBuild.new`) and selects it, so the
-    /// inspector shows the Mesh Builder.
-    @discardableResult
-    public func newMeshBuild() -> AssetID? {
-        guard let id = session.run(MeshBuildNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
-        invalidate()
-        selection = .asset(id)
-        return id
-    }
-
-    /// Creates a VFX effect in the current folder (`vfx.new`) and selects it.
-    @discardableResult
-    public func newVFX() -> AssetID? {
-        guard let id = session.run(VFXNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
-        invalidate()
-        selection = .asset(id)
-        return id
-    }
-
     /// Creates a sound build in the current folder (`sfx.new`) and selects it.
     @discardableResult
     public func newSoundBuild() -> AssetID? {
@@ -351,31 +228,6 @@ public final class AssetBrowserModel {
         return id
     }
 
-    /// Creates a behavior tree in the current folder (`behavior.new`) and selects it.
-    @discardableResult
-    public func newBehaviorTree() -> AssetID? {
-        guard let id = session.run(BehaviorNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
-        invalidate()
-        selection = .asset(id)
-        return id
-    }
-    /// Creates a dialogue in the current folder (`dialogue.new`) and selects it.
-    @discardableResult
-    public func newDialogue() -> AssetID? {
-        guard let id = session.run(DialogueNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
-        invalidate()
-        selection = .asset(id)
-        return id
-    }
-    /// Creates a visual script in the current folder (`vscript.new`) and selects it.
-    @discardableResult
-    public func newVisualScript() -> AssetID? {
-        guard let id = session.run(VScriptNewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
-        invalidate()
-        selection = .asset(id)
-        return id
-    }
-
     /// Creates a data table in the current folder (`table.new`) and selects it.
     @discardableResult
     public func newDataTable() -> AssetID? {
@@ -385,10 +237,10 @@ public final class AssetBrowserModel {
         return id
     }
 
-    /// Creates a UI layout (a starter HUD) in the current folder (`uiLayout.new`) and selects it.
+    /// Creates a builder's asset in the current folder (its "New …" command) and selects it.
     @discardableResult
-    public func newUILayout() -> AssetID? {
-        guard let id = session.run(UINewCommand.self, .init(folder: targetFolder))?.asset else { return nil }
+    package func newBuilderAsset(_ asset: EditorBuilderAsset) -> AssetID? {
+        guard let id = asset.create(session, targetFolder) else { return nil }
         invalidate()
         selection = .asset(id)
         return id
