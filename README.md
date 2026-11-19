@@ -265,6 +265,7 @@ Other guides in this repository:
 - [Networking design and implementation](docs/Networking.md)
 - [Scripting options and measurements](docs/Scripting.md)
 - [Cross-platform notes](docs/cross-plat.md)
+- [Engine roadmap](Roadmap.md)
 - [Builder roadmap](Tools.md)
 - [Contributing](CONTRIBUTING.md)
 - [Changelog](CHANGELOG.md)
