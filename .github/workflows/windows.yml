@@ -99,7 +99,12 @@ jobs:
         id: build-cache
         uses: actions/cache/restore@v4
         with:
-          path: .build
+          # .build\debug is a symlink to the triple folder; the cache stores it as a plain folder,
+          # and then swift build can't relink it and the products land out of its reach.
+          path: |
+            .build
+            !.build/debug
+            !.build/release
           key: windows-swift6.4-debug-${{ hashFiles('Package.swift') }}-${{ github.sha }}
           restore-keys: windows-swift6.4-debug-${{ hashFiles('Package.swift') }}-
 
@@ -115,17 +120,21 @@ jobs:
         if: steps.build-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: .build
+          path: |
+            .build
+            !.build/debug
+            !.build/release
           key: ${{ steps.build-cache.outputs.cache-primary-key }}
 
       - name: Load a game module
         shell: cmd
         run: |
-          dir .build\debug\GameRunner.exe .build\debug\GameRunner.lib
-          .build\debug\GameRunner.exe SampleGame --check
+          for /f "delims=" %%b in ('swift build --show-bin-path') do set BIN=%%b
+          dir "%BIN%\GameRunner.exe" "%BIN%\GameRunner.lib"
+          "%BIN%\GameRunner.exe" SampleGame --check
           if errorlevel 1 (
             echo Libraries the SampleGame objects ask for:
-            for %%f in (.build\debug\SampleGame.objlib\*.o .build\debug\SampleGame.build\*.o) do llvm-readobj --coff-directives "%%f"
+            for %%f in ("%BIN%\SampleGame.objlib\*.o" "%BIN%\SampleGame.build\*.o") do llvm-readobj --coff-directives "%%f"
             exit /b 1
           )
 
