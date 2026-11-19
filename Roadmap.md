@@ -361,6 +361,16 @@ All built on the existing networking (docs/Networking.md).
 
 ### Editor experience
 
+- **Editor camera: return to origin and go to object:**
+  - *Return to origin* (`view.home`, Home key, View menu): resets the Scene view's
+    `EditorCamera` to its default view of the origin (pivot `(0, 0.5, 0)`, default yaw, pitch
+    and distance). Optional `pivot`/`distance` arguments let it aim somewhere else.
+  - *Go to object* (`view.goTo`, Cmd/Ctrl+G): a search popup that filters scene entities by
+    name as you type. Picking one selects it and frames it, using `view.frameSelection`'s
+    bounds logic. Over MCP it takes `entity` or `name`; an ambiguous name returns the
+    candidates as an error.
+  - Double-clicking a Hierarchy row frames that entity as well.
+
 - **Snapping and align tools:** vertex, edge and surface snapping for the move gizmo, align and
   distribute, drop to ground, and pivot snapping. Includes `scene.align`/`scene.snap` MCP tools
   so agent-placed props sit flush.
