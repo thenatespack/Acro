@@ -64,6 +64,7 @@ extension World {
         var animators: [Animator] = []
         var clips: [[AnimationClipHandle: AnimationClip]] = []
         var poses: [AnimationPose] = []
+        let ik = AnimationIKState()
         addSystem(name, stage: stage) { world in
             guard world.count(of: Animator.self) > 0 else { return }
             library.assets = assets()
@@ -125,7 +126,10 @@ extension World {
             // Main thread, in order: poses, components, events.
             var fired: [(Entity, FiredAnimationEvent)] = []
             for i in 0..<count {
-                let entity = entities[i], animator = animators[i], pose = poses[i]
+                let entity = entities[i], animator = animators[i]
+                var pose = poses[i]
+                // IK after the pose, before it reaches the bones (and skinning).
+                if animator.ik != nil { world.applyIK(animator, on: entity, pose: &pose, state: ik) }
                 for t in 0..<min(pose.count, animator.targets.count) where pose.animated[t] {
                     world.modify(Transform.self, for: animator.targets[t]) { $0 = pose.transforms[t] }
                 }
@@ -133,6 +137,7 @@ extension World {
                 world.modify(Animator.self, for: entity) { $0 = animator }
             }
             clipCache.keepOnly(Set(entities))
+            ik.keepOnly(Set(entities))
             if let onEvent { for (entity, event) in fired { onEvent(entity, event) } }
         }
         return library
@@ -159,6 +164,7 @@ extension Animator {
     public mutating func apply(_ graph: AnimationGraph) {
         replaceGraph(graph.stateMachine, parameters: graph.parameterDefaults, layers: graph.additiveLayers)
         retarget = graph.retarget
+        replaceIK(graph.ik)
     }
 
     /// An animator playing `graph` on `root`'s subtree (`World.animationRig(of:)`), with
@@ -169,6 +175,7 @@ extension Animator {
                   parameters: graph.parameterDefaults, layers: graph.additiveLayers)
         self.graph = reference
         retarget = graph.retarget
+        if !graph.ik.isEmpty { ik = graph.ik }
     }
 }
 

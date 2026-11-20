@@ -359,6 +359,65 @@ struct AnimGraphLayerComponent: Component {
     var referenceTime: Float
 }
 
+/// An IK node's settings (bones as comma-separated names; legs as "hip, knee, ankle; …").
+struct AnimGraphIKComponent: Component {
+    static var componentName: String { "AnimGraphIK" }
+    static var fieldHints: [String: FieldHints] {
+        ["weight": FieldHints(range: 0...1, step: 0.01),
+         "weightParameter": FieldHints(tooltip: "A float parameter multiplying the weight (empty: none)"),
+         "bones": FieldHints(tooltip: "Bone names, root to tip, separated by commas (twoBoneIK: root, middle, end)"),
+         "targetEntity": FieldHints(tooltip: "Follow the first entity with this Name (empty: the target point, or one set at run time)"),
+         "target": FieldHints(tooltip: "World-space point when no target entity is set"),
+         "pole": FieldHints(tooltip: "twoBoneIK and footPlacement: the way the middle joint bends, in the character's space (zero: keep the animated bend)"),
+         "aimAxis": FieldHints(tooltip: "aim: the last bone's axis that points at the target"),
+         "maxAngle": FieldHints(range: 0...180, step: 1, tooltip: "aim: the most each bone turns, degrees"),
+         "legs": FieldHints(tooltip: "footPlacement: hip, knee, ankle per leg; legs separated by semicolons"),
+         "pelvis": FieldHints(tooltip: "footPlacement: the bone that drops so the lower foot reaches")]
+    }
+    var name: String
+    var weight: Float
+    var weightParameter: String
+    var bones: String
+    var targetEntity: String
+    var target: Vec3
+    var pole: Vec3
+    var aimAxis: Vec3
+    var maxAngle: Float
+    var legs: String
+    var pelvis: String
+
+    init(_ node: AnimationIKNode) {
+        name = node.name
+        weight = node.weight
+        weightParameter = node.weightParameter ?? ""
+        bones = node.bones.joined(separator: ", ")
+        targetEntity = node.targetEntity ?? ""
+        target = node.target ?? .zero
+        pole = node.pole ?? .zero
+        aimAxis = node.aimAxis
+        maxAngle = node.maxAngle
+        legs = node.legs.map { $0.joined(separator: ", ") }.joined(separator: "; ")
+        pelvis = node.pelvis ?? ""
+    }
+
+    /// `node` with these settings.
+    func applied(to node: AnimationIKNode) -> AnimationIKNode {
+        func names(_ text: String) -> [String] { text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
+        var n = node
+        n.weight = min(max(weight, 0), 1)
+        n.weightParameter = weightParameter.isEmpty ? nil : weightParameter
+        n.bones = names(bones)
+        n.targetEntity = targetEntity.isEmpty ? nil : targetEntity
+        n.target = target == .zero && node.target == nil ? nil : target
+        n.pole = pole == .zero ? nil : pole
+        n.aimAxis = aimAxis
+        n.maxAngle = maxAngle
+        n.legs = legs.split(separator: ";").map { names(String($0)) }.filter { !$0.isEmpty }
+        n.pelvis = pelvis.isEmpty ? nil : pelvis
+        return n
+    }
+}
+
 // MARK: - Sidebar
 
 @MainActor
@@ -377,6 +436,9 @@ public final class AnimationGraphView {
     /// The selected parameter (its name and default grid).
     public private(set) var selectedParameter: String?
     public private(set) var selectedLayer: String?
+    /// The IK node whose settings show.
+    public private(set) var selectedIK: String?
+    private var newIKType = 0
     public let canvas = AnimGraphCanvas()
 
     /// Live parameter values for the preview (not saved).
@@ -605,6 +667,8 @@ public final class AnimationGraphView {
         addSelectionSection()
         view.addChild(Separator())
         addLayersSection()
+        view.addChild(Separator())
+        addIKSection()
         let problems = session.animationGraphProblems(fileGraph)
         if !problems.isEmpty {
             view.addChild(Separator())
@@ -1251,6 +1315,61 @@ public final class AnimationGraphView {
         add.command = AnimGraphEditCommand.id.rawValue
         add.tooltip = "Add a clip on top of the states (additive: its difference from its first frame is added; override: it replaces the bones it animates)"
         view.addChild(HStack(spacing: 6, [add, Spacer()]))
+    }
+
+    // MARK: IK
+
+    /// The graph's IK nodes (run after the states and layers): pick one to edit, add, remove.
+    private func addIKSection() {
+        view.addChild(Label("IK", role: .secondary))
+        if graph.ik.isEmpty {
+            view.addChild(note("No IK. Add two-bone (arms, legs), aim (look at), chain (FABRIK: tails) or foot placement nodes; they run after the states and layers, in order."))
+        }
+        for node in graph.ik {
+            let name = Button(node.name, role: selectedIK == node.name ? .primary : .normal, name: "animGraphIKName") { [unowned self] in
+                selectedIK = selectedIK == node.name ? nil : node.name
+                layout()
+            }
+            let remove = Button("✕", name: "animGraphIKRemove") { [unowned self] in
+                var edited = graph
+                edited.ik.removeAll { $0.name == node.name }
+                apply(edited, label: "Remove IK")
+            }
+            remove.tooltip = "Remove this IK node"
+            view.addChild(HStack(spacing: 4, [name, Label(node.type.rawValue, role: .caption), Spacer(), remove]))
+            if selectedIK == node.name {
+                addGrid(AnimGraphIKComponent(node), name: "animGraphIKGrid") { [unowned self] value in
+                    var edited = graph
+                    guard let i = edited.ik.firstIndex(where: { $0.name == node.name }) else { return }
+                    edited.ik[i] = value.applied(to: edited.ik[i])
+                    let newName = value.name.trimmingCharacters(in: .whitespaces)
+                    if !newName.isEmpty, newName != node.name, !edited.ik.contains(where: { $0.name == newName }) {
+                        edited.ik[i].name = newName
+                        selectedIK = newName
+                    }
+                    apply(edited, label: "Edit IK")
+                }
+            }
+        }
+        let types = AnimationIKType.allCases
+        let type = Dropdown(options: types.map(\.rawValue), selectedIndex: min(newIKType, types.count - 1), name: "animGraphIKType") { [unowned self] i in
+            newIKType = i
+        }
+        type.tooltip = "twoBoneIK: an arm or leg reaches a point; aim: a chain turns to look; chainIK: FABRIK for tails; footPlacement: feet on uneven ground"
+        let add = Button("Add IK", name: "animGraphAddIK") { [unowned self] in
+            let kind = types[min(newIKType, types.count - 1)]
+            var edited = graph
+            let name = edited.uniqueIKName(kind == .footPlacement ? "Feet" : kind == .aim ? "Look" : kind.rawValue)
+            var node = kind == .footPlacement ? AnimationIKNode.humanoidFeet(name: name) : AnimationIKNode(name: name, type: kind)
+            if kind == .aim { node.bones = ["spine", "chest", "neck", "head"] }
+            if kind == .twoBoneIK { node.bones = ["upperArm.R", "lowerArm.R", "hand.R"] }
+            edited.ik.append(node)
+            selectedIK = name
+            apply(edited, label: "Add IK")
+        }
+        add.command = AnimGraphEditCommand.id.rawValue
+        add.tooltip = "Add an IK node (bones default to a Character Builder humanoid's; edit them for other rigs)"
+        view.addChild(HStack(spacing: 6, [type, add, Spacer()]))
     }
 
     private func editLayer(_ name: String, _ label: String, _ change: (inout AnimationGraphLayer) -> Void) {

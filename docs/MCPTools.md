@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 257 tools.
+named by its id (see README › Use the editor › AI control). 259 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -17,7 +17,7 @@ optional arguments.
 | `animGraph` | [`animGraph.assign`](#animgraphassign), [`animGraph.bones`](#animgraphbones), [`animGraph.clipEvents`](#animgraphclipevents), [`animGraph.edit`](#animgraphedit), [`animGraph.get`](#animgraphget), [`animGraph.new`](#animgraphnew), [`animGraph.open`](#animgraphopen), [`animGraph.set`](#animgraphset), [`animGraph.setClipEvents`](#animgraphsetclipevents) |
 | `asset` | [`asset.applySettings`](#assetapplysettings), [`asset.assign`](#assetassign), [`asset.delete`](#assetdelete), [`asset.extractMaterials`](#assetextractmaterials), [`asset.get`](#assetget), [`asset.import`](#assetimport), [`asset.instantiate`](#assetinstantiate), [`asset.list`](#assetlist), [`asset.move`](#assetmove), [`asset.newFolder`](#assetnewfolder), [`asset.newMaterial`](#assetnewmaterial), [`asset.newProceduralTexture`](#assetnewproceduraltexture), [`asset.reimport`](#assetreimport), [`asset.rename`](#assetrename), [`asset.select`](#assetselect), [`asset.setProceduralTexture`](#assetsetproceduraltexture), [`asset.waitForImports`](#assetwaitforimports) |
 | `behavior` | [`behavior.assign`](#behaviorassign), [`behavior.debug`](#behaviordebug), [`behavior.edit`](#behavioredit), [`behavior.get`](#behaviorget), [`behavior.navigation`](#behaviornavigation), [`behavior.new`](#behaviornew), [`behavior.open`](#behavioropen), [`behavior.set`](#behaviorset) |
-| `character` | [`character.bones`](#characterbones), [`character.edit`](#characteredit), [`character.get`](#characterget), [`character.new`](#characternew), [`character.open`](#characteropen), [`character.set`](#characterset) |
+| `character` | [`character.bones`](#characterbones), [`character.edit`](#characteredit), [`character.get`](#characterget), [`character.ik`](#characterik), [`character.new`](#characternew), [`character.open`](#characteropen), [`character.ragdoll`](#characterragdoll), [`character.set`](#characterset) |
 | `component` | [`component.add`](#componentadd), [`component.remove`](#componentremove), [`component.setField`](#componentsetfield), [`component.types`](#componenttypes) |
 | `diagnostics` | [`diagnostics.get`](#diagnosticsget) |
 | `dialogue` | [`dialogue.edit`](#dialogueedit), [`dialogue.get`](#dialogueget), [`dialogue.new`](#dialoguenew), [`dialogue.open`](#dialogueopen), [`dialogue.play`](#dialogueplay), [`dialogue.set`](#dialogueset) |
@@ -184,10 +184,11 @@ Result:
 
 **Edit Animation Graph** · _undoable_
 
-Changes part of an .animgraph file in one undoable step, in this order: removeTransitions (indices), removeStates, removeParameters, removeLayers, parameters (add or replace by name), addStates, updateStates (name → fields; "name" renames everywhere), addTransitions, updateTransitions (index → fields), addLayers, updateLayers, initialState, preview, retarget / removeRetarget. With `level` (a sub-state machine's path, e.g. "Combat"), the state and transition edits and initialState apply inside that machine, and its transitions may also go to states of enclosing levels (by name). Clip paths become asset references. Returns the states, numbered transitions, parameters and problems. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `retarget` {boneMap {source bone: target bone}, matchNames (default true), rotation world|local|copy, translation root|none|all, rootScale, sampleRate} (plays clips made for another skeleton by matching bones by name; see animGraph.bones), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space; add parameterY (a second float) and give each clip a `y` for a 2D one, e.g. moveX / moveY for strafing), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` [{name, clip, weight, speed, referenceTime, blend additive|override (override replaces the bones the clip animates), mask [bone names: the layer only touches their subtrees]}], `initialState`. A state with `machine` {states, transitions, initialState} instead of a clip is a sub-state machine: entering it enters its initial state, its own transitions leave from any state inside, and transitions inside may go to states outside it by name (edit inside with animGraph.edit `level`). Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes. Undoable (one step; edit.undo reverts it).
+Changes part of an .animgraph file in one undoable step, in this order: removeTransitions (indices), removeStates, removeParameters, removeLayers, parameters (add or replace by name), addStates, updateStates (name → fields; "name" renames everywhere), addTransitions, updateTransitions (index → fields), addLayers, updateLayers, initialState, preview, retarget / removeRetarget, removeIK, addIK, updateIK (name → fields). With `level` (a sub-state machine's path, e.g. "Combat"), the state and transition edits and initialState apply inside that machine, and its transitions may also go to states of enclosing levels (by name). Clip paths become asset references. Returns the states, numbered transitions, parameters and problems. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `retarget` {boneMap {source bone: target bone}, matchNames (default true), rotation world|local|copy, translation root|none|all, rootScale, sampleRate} (plays clips made for another skeleton by matching bones by name; see animGraph.bones), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space; add parameterY (a second float) and give each clip a `y` for a 2D one, e.g. moveX / moveY for strafing), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` [{name, clip, weight, speed, referenceTime, blend additive|override (override replaces the bones the clip animates), mask [bone names: the layer only touches their subtrees]}], `initialState`, `ik` [{name, type twoBoneIK|aim|chainIK|footPlacement, bones (twoBoneIK: root, middle, end; aim and chainIK: root to tip), weight 0-1, weightParameter (a float multiplying the weight), target [x,y,z] (world) or targetEntity (an entity's Name), pole [x,y,z] (twoBoneIK: the way the middle joint bends, character space), aimAxis (aim: the last bone's axis that points, default [0,0,1]), maxAngle (aim, degrees per bone), iterations / tolerance (chainIK), legs [[hip, knee, ankle]…] and pelvis (footPlacement: rays against physics, the pelvis drops, feet align and lock), rayHeight, maxStep, alignFeet, lockFeet}] run in order after the states and layers. A state with `machine` {states, transitions, initialState} instead of a clip is a sub-state machine: entering it enters its initial state, its own transitions leave from any state inside, and transitions inside may go to states outside it by name (edit inside with animGraph.edit `level`). Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes. Undoable (one step; edit.undo reverts it).
 
 Arguments:
 
+- `addIK?`: [{aimAxis?: number[3], alignFeet?: boolean, bones?: [string], iterations?: integer, legs?: [[string]], lockFeet?: boolean, mask?: integer, maxAngle?: number, maxStep?: number, name?: string, pelvis?: string, plantHeight?: number, pole?: number[3], rayHeight?: number, target?: number[3], targetEntity?: string, tolerance?: number, type?: "twoBoneIK" \| "aim" \| "chainIK" \| "footPlacement", weight?: number, weightParameter?: string}]
 - `addLayers?`: [{blend?: "additive" \| "override", clip?: string, mask?: [string], name?: string, referenceTime?: number, speed?: number, weight?: number}]
 - `addStates?`: [{blend?: object, clip?: string, loops?: boolean, machine?: object, name?: string, position?: number[2], speed?: number, speedParameter?: string}]
 - `addTransitions?`: [{canTransitionToSelf?: boolean, conditions?: [object], duration?: number, exitTime?: number, from?: string, to?: string}]
@@ -197,12 +198,14 @@ Arguments:
 - `parameters?`: [{default?: boolean, name?: string, type?: "float" \| "bool" \| "trigger"}]
 - `path?`: string
 - `preview?`: string
+- `removeIK?`: [string]
 - `removeLayers?`: [string]
 - `removeParameters?`: [string]
 - `removeRetarget?`: boolean
 - `removeStates?`: [string]
 - `removeTransitions?`: [integer]
 - `retarget?`: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}
+- `updateIK?`: object
 - `updateLayers?`: object
 - `updateStates?`: object
 - `updateTransitions?`: object
@@ -210,6 +213,7 @@ Arguments:
 Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `ik?`: [string]
 - `initialState?`: string
 - `layers`: [string]
 - `level?`: string
@@ -235,7 +239,7 @@ Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `clips`: [string]
-- `graph`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
+- `graph`: {anyStatePosition?: number[2], ik?: [object], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
 - `path`: string
 - `warnings`: [string]
 
@@ -243,18 +247,19 @@ Result:
 
 **New Animation Graph**
 
-Writes an .animgraph file in `folder` (default: the Assets root) and imports it: `graph` contents, or a starter (Idle, plus Move on a `speed` parameter when the `preview` model has two clips or more, using its clips). Returns the states, transitions, parameters and warnings. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `retarget` {boneMap {source bone: target bone}, matchNames (default true), rotation world|local|copy, translation root|none|all, rootScale, sampleRate} (plays clips made for another skeleton by matching bones by name; see animGraph.bones), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space; add parameterY (a second float) and give each clip a `y` for a 2D one, e.g. moveX / moveY for strafing), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` [{name, clip, weight, speed, referenceTime, blend additive|override (override replaces the bones the clip animates), mask [bone names: the layer only touches their subtrees]}], `initialState`. A state with `machine` {states, transitions, initialState} instead of a clip is a sub-state machine: entering it enters its initial state, its own transitions leave from any state inside, and transitions inside may go to states outside it by name (edit inside with animGraph.edit `level`). Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes.
+Writes an .animgraph file in `folder` (default: the Assets root) and imports it: `graph` contents, or a starter (Idle, plus Move on a `speed` parameter when the `preview` model has two clips or more, using its clips). Returns the states, transitions, parameters and warnings. An animation graph (.animgraph) is an Animator state machine; every key is optional: `preview` (the model prefab the builder previews on, an asset reference or path), `retarget` {boneMap {source bone: target bone}, matchNames (default true), rotation world|local|copy, translation root|none|all, rootScale, sampleRate} (plays clips made for another skeleton by matching bones by name; see animGraph.bones), `parameters` [{name, type float|bool|trigger, default}], `states` [{name, clip (one clip) or blend {parameter (a float), clips [{clip, position}]} (a 1D blend space; add parameterY (a second float) and give each clip a `y` for a 2D one, e.g. moveX / moveY for strafing), speed, speedParameter (a float multiplying speed), loops, position [x,y] (node position in the editor)}], `transitions` [{from (a state; omit or "*" for any state), to, conditions [{parameter, test greater|less|isTrue|isFalse|triggered, value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] (checked in order, the first that applies fires), `layers` [{name, clip, weight, speed, referenceTime, blend additive|override (override replaces the bones the clip animates), mask [bone names: the layer only touches their subtrees]}], `initialState`, `ik` [{name, type twoBoneIK|aim|chainIK|footPlacement, bones (twoBoneIK: root, middle, end; aim and chainIK: root to tip), weight 0-1, weightParameter (a float multiplying the weight), target [x,y,z] (world) or targetEntity (an entity's Name), pole [x,y,z] (twoBoneIK: the way the middle joint bends, character space), aimAxis (aim: the last bone's axis that points, default [0,0,1]), maxAngle (aim, degrees per bone), iterations / tolerance (chainIK), legs [[hip, knee, ankle]…] and pelvis (footPlacement: rays against physics, the pelvis drops, feet align and lock), rayHeight, maxStep, alignFeet, lockFeet}] run in order after the states and layers. A state with `machine` {states, transitions, initialState} instead of a clip is a sub-state machine: entering it enters its initial state, its own transitions leave from any state inside, and transitions inside may go to states outside it by name (edit inside with animGraph.edit `level`). Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes.
 
 Arguments:
 
 - `folder?`: string
-- `graph?`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
+- `graph?`: {anyStatePosition?: number[2], ik?: [object], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
 - `name?`: string
 - `preview?`: string
 
 Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `ik?`: [string]
 - `initialState?`: string
 - `layers`: [string]
 - `level?`: string
@@ -289,12 +294,13 @@ Replaces an .animgraph file's whole contents and reimports it; animators using i
 Arguments:
 
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
-- `graph`: {anyStatePosition?: number[2], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
+- `graph`: {anyStatePosition?: number[2], ik?: [object], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
 - `path?`: string
 
 Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `ik?`: [string]
 - `initialState?`: string
 - `layers`: [string]
 - `level?`: string
@@ -836,10 +842,34 @@ Arguments:
 Result:
 
 - `bones`: [{name: string, parent?: string, position: number[3]}]
-- `character`: {attachments?: [object], clips?: [string], colors?: {accent?: number[3], body?: number[3], eyes?: number[3], legs?: number[3], skin?: number[3]}, defaultClip?: string, proportions?: {arms?: number, head?: number, height?: number, legs?: number, neck?: number, tail?: number, torso?: number, width?: number}, segments?: integer, smooth?: boolean, template?: "humanoid" \| "quadruped" \| "bird" \| "blob"}
+- `character`: {attachments?: [object], clips?: [string], colors?: {accent?: number[3], body?: number[3], eyes?: number[3], legs?: number[3], skin?: number[3]}, defaultClip?: string, ik?: {footPlacement?: boolean, handIK?: boolean, lookAt?: boolean, lookTarget?: string}, proportions?: {arms?: number, head?: number, height?: number, legs?: number, neck?: number, tail?: number, torso?: number, width?: number}, ragdoll?: {blendTime?: number, bones?: [object], enabled?: boolean, mass?: number, strength?: number}, segments?: integer, smooth?: boolean, template?: "humanoid" \| "quadruped" \| "bird" \| "blob"}
 - `clips`: [{clip: string, duration: number, events: [string], loops: boolean, name: string, source?: string}]
 - `colors`: object
 - `summary`: {asset: asset id, attachments: [string], bones: [string], clips: [string], entities?: [entity id], height: number, parameters: [string], path: string, prefab: asset id, template: "humanoid" \| "quadruped" \| "bird" \| "blob", warnings: [string]}
+
+### `character.ik`
+
+**Character IK** · _undoable_
+
+Reads or changes a .character file's inverse kinematics, which the importer turns into Animator IK nodes run after the animation: `footPlacement` (node "Feet": rays against physics find the ground under each foot, the pelvis drops, feet turn to the slope and planted feet lock), `lookAt` (node "Look": the spine, chest, neck and head turn toward the entity named `lookTarget`, or a point set at run time), `handIK` (humanoids, nodes "Hand.L" / "Hand.R": two-bone arms reach points set at run time). Returns the nodes. Set targets and weights at run time with the Visual Script nodes ik.setTarget / ik.setWeight or Animator.setIKTarget / setIKWeight. One undo step. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `footPlacement?`: boolean
+- `handIK?`: boolean
+- `lookAt?`: boolean
+- `lookTarget?`: string
+- `path?`: string
+- `remove?`: boolean
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `ik?`: {footPlacement?: boolean, handIK?: boolean, lookAt?: boolean, lookTarget?: string}
+- `nodes`: [{aimAxis?: number[3], alignFeet?: boolean, bones?: [string], iterations?: integer, legs?: [[string]], lockFeet?: boolean, mask?: integer, maxAngle?: number, maxStep?: number, name?: string, pelvis?: string, plantHeight?: number, pole?: number[3], rayHeight?: number, target?: number[3], targetEntity?: string, tolerance?: number, type?: "twoBoneIK" \| "aim" \| "chainIK" \| "footPlacement", weight?: number, weightParameter?: string}]
+- `path`: string
+- `warnings`: [string]
 
 ### `character.new`
 
@@ -888,6 +918,36 @@ Result:
 
 - `path`: string
 
+### `character.ragdoll`
+
+**Character Ragdoll** · _undoable_
+
+Reads or changes a .character file's ragdoll: capsule bodies sized automatically from the body shapes (humanoid: hips, spine, head, upper and lower arms and legs), ball joints with swing and twist limits at shoulders, hips, spine and neck, hinges at elbows and knees. With no changes it lists the bodies (bone, end bone, radius, parent, joint, limits in degrees, mass). `enabled` adds or switches it, `bones` merges per-bone changes {bone, radius, swing, minAngle, maxAngle, mass}, `resetBones` drops them, `remove` deletes the section; one undo step. The prefab gets a Ragdoll component: Visual Script ragdoll.enable / ragdoll.applyImpulse or Ragdoll.goLimp / hit / getUp in code. `test` opens the Character Builder and drops the preview (false stands it up). Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `blendTime?`: number
+- `bones?`: [{bone?: string, mass?: number, maxAngle?: number, minAngle?: number, radius?: number, swing?: number}]
+- `enabled?`: boolean
+- `mass?`: number
+- `path?`: string
+- `remove?`: boolean
+- `resetBones?`: [string]
+- `strength?`: number
+- `test?`: boolean
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `bodies`: [{bone: string, edited: boolean, end?: string, joint: "fixed" \| "ball" \| "hinge" \| "distance", length?: number, mass: number, maxAngle: number, minAngle: number, parent?: string, radius: number, swing?: number}]
+- `enabled`: boolean
+- `mass`: number
+- `path`: string
+- `ragdoll?`: {blendTime?: number, bones?: [object], enabled?: boolean, mass?: number, strength?: number}
+- `tested?`: boolean
+- `warnings`: [string]
+
 ### `character.set`
 
 **Set Character** · _undoable_, _idempotent_
@@ -897,7 +957,7 @@ Replaces a .character file's whole contents and reimports it; placed copies upda
 Arguments:
 
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
-- `character`: {attachments?: [object], clips?: [string], colors?: {accent?: number[3], body?: number[3], eyes?: number[3], legs?: number[3], skin?: number[3]}, defaultClip?: string, proportions?: {arms?: number, head?: number, height?: number, legs?: number, neck?: number, tail?: number, torso?: number, width?: number}, segments?: integer, smooth?: boolean, template?: "humanoid" \| "quadruped" \| "bird" \| "blob"}
+- `character`: {attachments?: [object], clips?: [string], colors?: {accent?: number[3], body?: number[3], eyes?: number[3], legs?: number[3], skin?: number[3]}, defaultClip?: string, ik?: {footPlacement?: boolean, handIK?: boolean, lookAt?: boolean, lookTarget?: string}, proportions?: {arms?: number, head?: number, height?: number, legs?: number, neck?: number, tail?: number, torso?: number, width?: number}, ragdoll?: {blendTime?: number, bones?: [object], enabled?: boolean, mass?: number, strength?: number}, segments?: integer, smooth?: boolean, template?: "humanoid" \| "quadruped" \| "bird" \| "blob"}
 - `path?`: string
 
 Result:

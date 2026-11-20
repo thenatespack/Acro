@@ -48,14 +48,43 @@ extension World {
         addSystem("physics.interpolate", stage: .update, after: "physics.events") { world in
             physics.applyInterpolation(in: world)
         }
+        addRagdollSystems(physics)
+        PhysicsAttachment.set(physics, for: self)
     }
 
-    /// The systems `addPhysics` adds.
-    public static let physicsSystemNames = ["physics.restore", "character", "physics", "physics.events", "physics.interpolate"]
+    /// The systems `addPhysics` adds ("ragdoll" and "ragdoll.pose" drive `Ragdoll`s, see Ragdoll.swift).
+    public static let physicsSystemNames = ["physics.restore", "character", "physics", "physics.events", "physics.interpolate",
+                                            "ragdoll", "ragdoll.pose"]
 
     /// Removes the systems added by `addPhysics` (the components stay).
     public func removePhysics() {
         for name in Self.physicsSystemNames { removeSystem(named: name) }
+        PhysicsAttachment.set(nil, for: self)
+    }
+
+    /// The physics world `addPhysics` attached (nil after `removePhysics`): engine systems that
+    /// query physics without being handed it use this (foot placement IK).
+    public var attachedPhysics: PhysicsWorld? { PhysicsAttachment.physics(for: self) }
+}
+
+/// Which physics world each `World` runs (weak both ways).
+@MainActor
+enum PhysicsAttachment {
+    private struct Entry {
+        weak var world: World?
+        weak var physics: PhysicsWorld?
+    }
+
+    private static var entries: [ObjectIdentifier: Entry] = [:]
+
+    static func set(_ physics: PhysicsWorld?, for world: World) {
+        entries = entries.filter { $0.value.world != nil && $0.value.physics != nil }
+        entries[ObjectIdentifier(world)] = physics.map { Entry(world: world, physics: $0) }
+    }
+
+    static func physics(for world: World) -> PhysicsWorld? {
+        guard let entry = entries[ObjectIdentifier(world)], entry.world === world else { return nil }
+        return entry.physics
     }
 }
 
@@ -74,6 +103,7 @@ extension PhysicsWorld {
 
     /// Removes every body and joint (e.g. before rebuilding a scene).
     public func removeAll() {
+        ragdolls.rigs.removeAll()
         for i in bodies.indices.dropFirst() where bodies[i].isAlive { removeBody(at: i) }
         clearEvents()
         accumulator = 0
@@ -105,7 +135,7 @@ extension PhysicsWorld {
             planned.insert(root)
         }
 
-        for i in bodies.indices.dropFirst() where bodies[i].isAlive {
+        for i in bodies.indices.dropFirst() where bodies[i].isAlive && !bodies[i].isExternal {
             guard let e = bodies[i].entity else { continue }
             if !world.isAlive(e) || !planned.contains(e) || bodyForEntity[e] != i { removeBody(at: i) }
         }
@@ -179,7 +209,8 @@ extension PhysicsWorld {
             }
             guard let joint = addJoint(JointDescriptor(kind: component.kind, bodyA: a, bodyB: b, anchor: anchor, anchorB: anchorB,
                                                        axis: poseA.rotation * component.axis,
-                                                       collideConnected: component.collideConnected, entity: e)) else { continue }
+                                                       collideConnected: component.collideConnected, limits: component.limits,
+                                                       entity: e)) else { continue }
             jointForEntity[e] = Int(joint.index)
             joints[Int(joint.index)].source = component
         }
@@ -187,7 +218,7 @@ extension PhysicsWorld {
 
     /// Physics -> ECS (step 3 above).
     public func syncToWorld(_ world: World) {
-        for i in bodies.indices.dropFirst() where bodies[i].isAlive && bodies[i].motion == .dynamic {
+        for i in bodies.indices.dropFirst() where bodies[i].isAlive && bodies[i].motion == .dynamic && !bodies[i].isExternal {
             guard let e = bodies[i].entity, world.isAlive(e) else { continue }
             let body = bodies[i]
             if var rb = world.get(RigidBody.self, for: e),

@@ -22,14 +22,15 @@ import EngineAssets
 /// The `Animator` has one state per clip (named after it, looping for idle, walk and run), plus a
 /// `locomotion` 1D blend of idle, walk and run on the float parameter `speed` (meters per second),
 /// starting in `defaultClip`. Triggers `jump`, `attack` and `die` play those clips from any state;
-/// jump and attack then return to locomotion. Its clip handles are the clips' reference text
+/// jump and attack then return to locomotion. With `ik`, the Animator gets the IK nodes
+/// (`CharacterRig.ikNodes`); with an enabled `ragdoll`, the root gets a `Ragdoll`. Its clip handles are the clips' reference text
 /// ("asset:<id>#animation/walk"), which `World.addSceneAnimationSystem` loads from the asset database.
 public struct CharacterImporter: AssetImporter {
     public init() {}
 
     public var name: String { BuiltInImporterName.character }
     public var fileExtensions: [String] { ["character"] }
-    public var version: Int { 1 }
+    public var version: Int { 2 }
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         let build: CharacterBuild
@@ -99,8 +100,15 @@ public struct CharacterImporter: AssetImporter {
             asset.add(id, name: external.name, .animation(clip))
             clipKeys[external.name] = context.reference(id).description
         }
-        scene.records[root].components["Animator"] = try Self.animatorJSON(
-            Self.animator(build: build, rig: rig, clipKeys: clipKeys), targets: boneIDs)
+        var animator = Self.animator(build: build, rig: rig, clipKeys: clipKeys)
+        if let ik = build.ik {
+            let nodes = rig.ikNodes(ik)
+            if !nodes.isEmpty { animator.ik = nodes }
+        }
+        scene.records[root].components["Animator"] = try Self.animatorJSON(animator, targets: boneIDs)
+        if let ragdoll = build.ragdoll, ragdoll.enabled {
+            scene.records[root].components["Ragdoll"] = try AssetJSON.value(rig.ragdoll(ragdoll))
+        }
 
         let prefabID = namer.id(kind: "prefab", name: stem, index: 0)
         asset.add(prefabID, name: stem, .prefab(PrefabAsset(scene: try scene.data())))

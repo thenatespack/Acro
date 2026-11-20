@@ -7,6 +7,7 @@
 // positions but leaves no velocity behind.
 // (A rigid Baumgarte bias, which the warm start then reapplied, fed energy into the chain
 // demo: an out-of-plane wobble grew until hinges and the chain flailed.)
+import Foundation
 import EngineCore
 import EngineGraphics
 import EngineScene
@@ -21,6 +22,34 @@ public enum JointKind: String, Codable, Sendable, CaseIterable {
     case hinge
     /// A rigid rod between two anchors; free rotation at both ends.
     case distance
+}
+
+/// Angle limits of a `ball` or `hinge` joint, in radians, measured from the pose the joint was
+/// made in (so a joint made at rest limits motion away from rest). Every limit is optional.
+///
+/// - `swing` (ball): the most the connected body's copy of the joint axis may tilt away from
+///   the first body's (a cone around the axis).
+/// - `minAngle` / `maxAngle`: rotation about the axis (a ball's twist, a hinge's angle), right
+///   hand rule, from -π to π.
+///
+/// Ragdolls (`Ragdoll`) use them for shoulders, hips and necks (ball with swing and twist) and
+/// elbows and knees (hinges that bend one way).
+public struct JointLimits: Codable, Equatable, Sendable {
+    public var swing: Float?
+    public var minAngle: Float?
+    public var maxAngle: Float?
+
+    public init(swing: Float? = nil, minAngle: Float? = nil, maxAngle: Float? = nil) {
+        self.swing = swing
+        self.minAngle = minAngle
+        self.maxAngle = maxAngle
+    }
+
+    /// Limits given in degrees.
+    public static func degrees(swing: Float? = nil, min: Float? = nil, max: Float? = nil) -> JointLimits {
+        let r = Float.pi / 180
+        return JointLimits(swing: swing.map { $0 * r }, minAngle: min.map { $0 * r }, maxAngle: max.map { $0 * r })
+    }
 }
 
 /// A handle to a joint in a `PhysicsWorld`.
@@ -44,10 +73,12 @@ public struct JointDescriptor: Sendable {
     public var axis: Vec3
     /// Whether the two bodies still collide with each other.
     public var collideConnected: Bool
+    /// Angle limits (`ball` and `hinge` only; `axis` is the twist or hinge axis).
+    public var limits: JointLimits?
     public var entity: Entity?
 
     public init(kind: JointKind, bodyA: BodyID, bodyB: BodyID? = nil, anchor: Vec3, anchorB: Vec3? = nil,
-                axis: Vec3 = Vec3(0, 1, 0), collideConnected: Bool = false, entity: Entity? = nil) {
+                axis: Vec3 = Vec3(0, 1, 0), collideConnected: Bool = false, limits: JointLimits? = nil, entity: Entity? = nil) {
         self.kind = kind
         self.bodyA = bodyA
         self.bodyB = bodyB
@@ -55,6 +86,7 @@ public struct JointDescriptor: Sendable {
         self.anchorB = anchorB
         self.axis = axis
         self.collideConnected = collideConnected
+        self.limits = limits
         self.entity = entity
     }
 }
@@ -71,6 +103,7 @@ struct JointData {
     var relativeRotation = Quat.identity
     var length: Float = 0
     var collideConnected = false
+    var limits: JointLimits?
     var entity: Entity?
     /// The component it was made from (ECS joints).
     var source: Joint?
@@ -90,6 +123,15 @@ struct JointData {
     var linearImpulse = Vec3.zero, angularImpulse = Vec3.zero
     var hingeImpulse = Vec2.zero
     var axialImpulse: Float = 0
+    // Limits: the swing row (axis, error past the cone, mass, impulse) and the twist rows.
+    var swingAxis = Vec3.zero
+    var swingError: Float = -.infinity
+    var swingMass: Float = 0
+    var swingImpulse: Float = 0
+    var twistAxis = Vec3.zero
+    var twistAngle: Float = 0
+    var twistMass: Float = 0
+    var lowerImpulse: Float = 0, upperImpulse: Float = 0
 }
 
 extension SolverIsland {
@@ -135,6 +177,30 @@ extension SolverIsland {
                 if q.w < 0 { q = Quat(vector: -q.vector) }
                 joint.angularError = q.imaginary * 2
             }
+            if let limits = joint.limits, joint.kind == .ball || joint.kind == .hinge {
+                let axisA = qA * joint.localAxisA, axisB = qB * joint.localAxisB
+                if joint.kind == .ball, let swing = limits.swing {
+                    let angle = acosf(min(max(dot(axisA, axisB), -1), 1))
+                    let n = cross(axisA, axisB)
+                    let len = length(n)
+                    joint.swingAxis = len > 1e-6 ? n / len : tangentBasis(axisA).0
+                    joint.swingError = angle - max(swing, 0)
+                    let k = dot(joint.swingAxis, angular * joint.swingAxis)
+                    joint.swingMass = k > 0 ? 1 / k : 0
+                } else {
+                    joint.swingError = -.infinity
+                    joint.swingImpulse = 0
+                }
+                if limits.minAngle != nil || limits.maxAngle != nil {
+                    // The rotation since the joint was made, in A's frame, and its twist about the axis.
+                    var deviation = qA.conjugate * qB * joint.relativeRotation.conjugate
+                    if deviation.w < 0 { deviation = Quat(vector: -deviation.vector) }
+                    joint.twistAngle = 2 * atan2f(dot(deviation.imaginary, joint.localAxisA), deviation.w)
+                    joint.twistAxis = axisA
+                    let k = dot(axisA, angular * axisA)
+                    joint.twistMass = k > 0 ? 1 / k : 0
+                }
+            }
             joints[j] = joint
         }
     }
@@ -145,6 +211,9 @@ extension SolverIsland {
             guard bodies[joint.a].isSolverActive || bodies[joint.b].isSolverActive else { continue }
             var angular = joint.angularImpulse
             if joint.kind == .hinge { angular = joint.perpendicular1 * joint.hingeImpulse.x + joint.perpendicular2 * joint.hingeImpulse.y }
+            if joint.limits != nil {
+                angular += joint.swingAxis * joint.swingImpulse + joint.twistAxis * (joint.upperImpulse - joint.lowerImpulse)
+            }
             let linear = joint.kind == .distance ? joint.axis * joint.axialImpulse : joint.linearImpulse
             applyJointImpulse(joint, linear: linear, angular: angular)
         }
@@ -174,6 +243,20 @@ extension SolverIsland {
                 joint.angularImpulse += lambda
                 applyJointImpulse(joint, linear: .zero, angular: lambda)
             }
+            if let limits = joint.limits, joint.kind == .ball || joint.kind == .hinge {
+                if joint.swingError > -.infinity {
+                    solveLimit(&joint, axis: joint.swingAxis, error: joint.swingError, mass: joint.swingMass, impulse: \.swingImpulse,
+                               softness: softness, useBias: useBias)
+                }
+                if let upper = limits.maxAngle {
+                    solveLimit(&joint, axis: joint.twistAxis, error: joint.twistAngle - upper, mass: joint.twistMass, impulse: \.upperImpulse,
+                               softness: softness, useBias: useBias)
+                }
+                if let lower = limits.minAngle {
+                    solveLimit(&joint, axis: -joint.twistAxis, error: lower - joint.twistAngle, mass: joint.twistMass, impulse: \.lowerImpulse,
+                               softness: softness, useBias: useBias)
+                }
+            }
             let va = bodies[joint.a], vb = bodies[joint.b]
             let dv = vb.linearVelocity + cross(vb.angularVelocity, joint.rB) - va.linearVelocity - cross(va.angularVelocity, joint.rA)
             if joint.kind == .distance {
@@ -187,6 +270,29 @@ extension SolverIsland {
             }
             joints[j] = joint
         }
+    }
+
+    /// One side of an angle limit: B's rotation relative to A's along `axis` may not grow past
+    /// the limit (`error` is how far past it is; negative: short of it). Short of the limit the
+    /// row is speculative (it lets the bodies close the gap in this substep but no further);
+    /// past it, a soft spring pushes back (rigid in the relax pass). The impulse only pushes.
+    private mutating func solveLimit(_ joint: inout JointData, axis: Vec3, error: Float, mass: Float, impulse: WritableKeyPath<JointData, Float>,
+                                     softness: Softness, useBias: Bool) {
+        let a = bodies[joint.a], b = bodies[joint.b]
+        let cdot = dot(b.angularVelocity - a.angularVelocity, axis)
+        var bias: Float = 0, massScale: Float = 1, impulseScale: Float = 0
+        if error < 0 {
+            bias = error / settings.h
+        } else if useBias {
+            bias = error * softness.biasRate
+            massScale = softness.massScale
+            impulseScale = softness.impulseScale
+        }
+        let old = joint[keyPath: impulse]
+        let lambda = -mass * massScale * (cdot + bias) - impulseScale * old
+        let total = min(old + lambda, 0)
+        joint[keyPath: impulse] = total
+        applyJointImpulse(joint, linear: .zero, angular: axis * (total - old))
     }
 
     /// Applies `linear` at the anchors (+ to B, − to A) and a pure `angular` impulse.

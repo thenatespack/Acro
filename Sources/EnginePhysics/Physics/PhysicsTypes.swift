@@ -74,12 +74,15 @@ public struct BodyDescriptor: Sendable {
     public var startsAsleep: Bool
     /// The entity the body belongs to (set by the ECS integration; reported in hits and events).
     public var entity: Entity?
+    /// Bodies with the same nonzero group never collide with each other (a ragdoll's limbs).
+    public var group: UInt32
 
     public init(motion: MotionType = .dynamic, pose: Pose = .identity, shape: ColliderShape? = nil,
                 shapeOffset: Pose = .identity, scale: Vec3 = .one, material: ColliderMaterial = ColliderMaterial(),
                 isTrigger: Bool = false, layer: UInt32 = 1, mask: UInt32 = .max, linearVelocity: Vec3 = .zero,
                 angularVelocity: Vec3 = .zero, linearDamping: Float = 0.05, angularDamping: Float = 0.1,
-                gravityScale: Float = 1, allowSleep: Bool = true, startsAsleep: Bool = false, entity: Entity? = nil) {
+                gravityScale: Float = 1, allowSleep: Bool = true, startsAsleep: Bool = false, entity: Entity? = nil,
+                group: UInt32 = 0) {
         self.motion = motion
         self.pose = pose
         self.shape = shape
@@ -97,6 +100,7 @@ public struct BodyDescriptor: Sendable {
         self.allowSleep = allowSleep
         self.startsAsleep = startsAsleep
         self.entity = entity
+        self.group = group
     }
 }
 

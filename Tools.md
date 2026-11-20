@@ -543,6 +543,27 @@ clips are retargeted with it. Still not done: events of non-glTF clips (a `.char
 be edited; renaming an outer state doesn't update inner transitions that exit to it; no MCP tool
 for the tab's level or selection, so the 2D plot, events and mask panels were only checked by
 tests.
+IK (roadmap 1B): graphs have an `ik` list run after the states and layers, before the pose
+reaches the bones (`Animator.ik`, AnimationIK.swift): `twoBoneIK` (root, middle, end; `pole` in
+the character's space or the animated bend), `aim` (a chain turns so the last bone's `aimAxis`
+points at the target, shared along the chain, `maxAngle` per bone), `chainIK` (FABRIK, tails and
+tentacles) and `footPlacement` (`legs`, `pelvis`: a ray down from above each foot against
+physics (`World.attachedPhysics`), the pelvis drops so the lower foot reaches, feet align to the
+normal up to 40 degrees, planted feet lock until they lift or slide 0.25 m). Every node has a
+`weight` times its float `weightParameter`; targets are world points (`target`,
+`Animator.setIKTarget`) or an entity followed by `Name` (`targetEntity`). Both animation systems
+run it on the main thread after the parallel sampling. A graph's nodes replace the animator's
+(run-time targets kept by name). The tab lists nodes with a settings grid (bones as
+comma-separated names) and an Add IK menu; `animGraph.edit` `addIK` / `updateIK` / `removeIK`;
+problems for bone counts, duplicate names, weight parameters and (with a preview) unknown bones.
+Not done: no IK gizmos or target handles in the viewport (targets are typed or follow entities);
+the aim's shared turn isn't exactly `weight` of the way for chains (it converges at weight 1);
+two-bone and FABRIK keep bones' twist by shortest-arc turns only (no twist distribution, no
+per-joint limits in FABRIK); foot placement uses one ray per foot (no toe/heel rays, so feet over
+an edge use the ankle's ground), doesn't raise the pelvis for ground above the base, and its
+locks snap instead of blending out; the preview has no physics, so foot placement does nothing
+in the graph tab; bones IK moves that no clip drives start from the rest pose each frame (a game
+moving them by hand is overwritten).
 
 ### Character Builder (`.character`)
 
@@ -567,6 +588,34 @@ editor (color fields fixed to convert sRGB). `Animator.swift` moved to
 clips are retargeted (`AnimationClip.retargeted`: rest poses corrected, both rigs should rest
 alike, glTF translations dropped). Still not done: edit-mode animation propagates transforms twice per frame;
 skeleton editing and authored clip curves.
+Ragdoll and IK (roadmap 1B): `ragdoll` {enabled, mass, strength, blendTime, bones: [{bone,
+radius, swing, minAngle, maxAngle, mass}]} puts a `Ragdoll` on the prefab: bodies sized from the
+body shapes per template (`CharacterRig.ragdollBones`; humanoid: hips, spine, head, upper and lower
+arms and legs; ball joints with swing and twist at shoulders, hips, spine and neck, hinges at elbows
+and knees), the file's entries changing single values. `ik` {footPlacement, lookAt, lookTarget,
+handIK} puts IK nodes on the Animator ("Feet", "Look", "Hand.L" / "Hand.R";
+`CharacterRig.ikNodes`). Importer version 2. The tab has a Ragdoll section (settings, a body
+picker with its radius, limits and mass, Automatic to drop a change, Test Ragdoll / Get Up on a
+physics floor in the preview, automatic bodies when the file has none) and an IK grid. Tools:
+`character.ragdoll` (lists bodies with parents, limits and masses; enabled, mass, strength,
+blendTime, bones merged by name, resetBones, remove; `test` drops the open tab's preview) and
+`character.ik`. The `Ragdoll` component (EnginePhysics, Ragdoll.swift) works on any skeleton
+with named bones: `animated` (kinematic hit boxes following the animation; ray hits report the
+bone), `partial` (`hit`: dynamic bodies pulled back to the animation, `weight` of their pose shown
+for `duration`), `full` (`goLimp`) and back (`getUp`: blends from the frozen physics pose over
+`blendTime`, moving the root under the pelvis onto the ground). Bodies of one ragdoll never
+collide (`BodyDescriptor.group`), the ECS sync leaves them alone, and a `CharacterController` on
+the same entity ignores them. `Joint` / `JointDescriptor` gained `limits` (`JointLimits`: swing
+cone, twist or hinge range) solved as one-sided soft rows. Visual Script nodes `ik.setTarget`,
+`ik.setWeight`, `ragdoll.enable`, `ragdoll.applyImpulse`, `ragdoll.state`. Demo scene `ik`.
+Not done: no viewport gizmos for ragdoll capsules or joint limits (the physics debug view shows
+the bodies only in demos; the tab draws none); partial ragdolls drive bodies by velocity, not
+joint motors, so strong hits on light limbs snap back quickly; no get-up animation (the pose
+blends straight back, the root keeps its yaw rather than facing where the body lies); getting up
+doesn't check that the spot under the pelvis is free; ragdoll state isn't networked or saved
+mid-fall (the component saves its mode, not the bodies); the Test Ragdoll push is fixed (backwards,
+0.6 m/s); quadruped, bird and blob ragdolls are rough (blob arms are spheres; bird wings have no
+lift); `character.ragdoll {test}` needs the editor window.
 
 ### Material Builder (`.material` graphs)
 

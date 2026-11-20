@@ -86,6 +86,8 @@ public final class PhysicsWorld {
     // ECS bookkeeping (PhysicsECS.swift).
     var bodyForEntity: [Entity: Int] = [:]
     var jointForEntity: [Entity: Int] = [:]
+    /// Ragdoll bodies and joints (Ragdoll.swift).
+    let ragdolls = RagdollRuntime()
 
     /// Fat boxes are this much larger than their shape.
     static let aabbMargin: Float = 0.08
@@ -125,6 +127,7 @@ public final class PhysicsWorld {
         body.gravityScale = d.gravityScale
         body.allowSleep = d.allowSleep
         body.entity = d.entity
+        body.group = d.group
         body.previousPose = body.pose
         bodies[index] = body
         setShape(index, d.shape, offset: d.shapeOffset, scale: d.scale, material: d.material, isTrigger: d.isTrigger,
@@ -385,6 +388,7 @@ public final class PhysicsWorld {
         joint.b = b
         joint.entity = d.entity
         joint.collideConnected = d.collideConnected
+        joint.limits = d.limits
         let bodyA = bodies[a], bodyB = bodies[b]
         let anchorB = d.kind == .distance ? (d.anchorB ?? d.anchor) : d.anchor
         joint.localAnchorA = bodyA.pose.rotation.conjugate * (d.anchor - bodyA.center)
@@ -551,6 +555,7 @@ public final class PhysicsWorld {
             if a.motion == .static && b.motion == .static { return false }
         }
         if a.shape!.isMesh && b.shape!.isMesh { return false }
+        if a.group != 0 && a.group == b.group { return false }
         if jointPairs[pairKey(i, j)] != nil { return false }
         return true
     }
@@ -786,6 +791,11 @@ struct Body {
     var isTrigger = false
     var layer: UInt32 = 1
     var mask: UInt32 = .max
+    /// Bodies with the same nonzero group never collide (a ragdoll's limbs).
+    var group: UInt32 = 0
+    /// Made by an engine system other than the ECS sync (ragdolls): the sync leaves it alone
+    /// although it names an entity.
+    var isExternal = false
     var proxy: Int?
     var fatBox = AABB(min: .zero, max: .zero)
 

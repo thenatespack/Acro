@@ -3,7 +3,8 @@ import Engine
 import Foundation
 
 // The Character Builder form for a `.character` file: template, proportion sliders, region
-// colors, attachments (mesh builds on bones) and the clips. Every change is written to the file as
+// colors, attachments (mesh builds on bones), the clips, the ragdoll (automatic bodies with
+// editable sizes and joint limits, Test Ragdoll) and IK switches. Every change is written to the file as
 // one undo step (`EditorSession.applyCharacter`), so the prefab reimports and placed copies update.
 
 /// The proxy component for the body: proportions plus mesh settings.
@@ -109,6 +110,82 @@ struct CharacterAttachmentComponent: Component {
     }
 }
 
+/// The proxy component for the ragdoll's settings.
+struct CharacterRagdollSettingsComponent: Component {
+    static var componentName: String { "RagdollSettings" }
+    static var fieldHints: [String: FieldHints] {
+        ["enabled": FieldHints(tooltip: "Put a Ragdoll on the prefab (off keeps the settings)"),
+         "mass": FieldHints(range: 0.1...1000, step: 0.5, tooltip: "Total kg, shared by the bodies by volume"),
+         "strength": FieldHints(range: 0...60, step: 0.5, tooltip: "Hit reactions: how fast the bodies are pulled back to the animation (1/s)"),
+         "blendTime": FieldHints(range: 0...5, step: 0.05, tooltip: "Seconds to blend back to the animation after going limp")]
+    }
+
+    var enabled: Bool
+    var mass: Float
+    var strength: Float
+    var blendTime: Float
+
+    init(_ c: CharacterBuild) {
+        let defaults = Ragdoll()
+        enabled = c.ragdoll?.enabled ?? false
+        mass = c.ragdoll?.mass ?? c.rig.ragdollMass
+        strength = c.ragdoll?.strength ?? defaults.strength
+        blendTime = c.ragdoll?.blendTime ?? defaults.blendTime
+    }
+}
+
+/// The proxy component for one ragdoll body (its automatic values until edited).
+struct CharacterRagdollBodyComponent: Component {
+    static var componentName: String { "RagdollBody" }
+    static var fieldHints: [String: FieldHints] {
+        ["radius": FieldHints(range: 0.005...1, step: 0.005, tooltip: "Capsule radius, meters"),
+         "swing": FieldHints(range: 0...180, step: 1, tooltip: "Ball joints: how far the bone may tilt from rest, degrees"),
+         "minAngle": FieldHints(range: -180...180, step: 1, tooltip: "Twist (ball) or bend (hinge) limit, degrees"),
+         "maxAngle": FieldHints(range: -180...180, step: 1, tooltip: "Twist (ball) or bend (hinge) limit, degrees"),
+         "mass": FieldHints(range: 0...500, step: 0.1, tooltip: "kg; 0: its share of the total by volume"),
+         "joint": FieldHints(readOnly: true, tooltip: "Ball: shoulders, hips, spine, neck. Hinge: elbows, knees")]
+    }
+
+    var joint: String
+    var radius: Float
+    var swing: Float
+    var minAngle: Float
+    var maxAngle: Float
+    var mass: Float
+
+    init(_ bone: RagdollBone) {
+        joint = bone.joint.rawValue
+        radius = bone.radius
+        swing = bone.swing
+        minAngle = bone.minAngle
+        maxAngle = bone.maxAngle
+        mass = bone.mass ?? 0
+    }
+}
+
+/// The proxy component for the IK switches.
+struct CharacterIKComponent: Component {
+    static var componentName: String { "CharacterIK" }
+    static var fieldHints: [String: FieldHints] {
+        ["footPlacement": FieldHints(tooltip: "Feet follow uneven ground (needs physics colliders), the pelvis drops, planted feet lock (node Feet)"),
+         "lookAt": FieldHints(tooltip: "The head and chest turn toward Look Target or a run-time target (node Look)"),
+         "lookTarget": FieldHints(tooltip: "The Name of the entity to look at"),
+         "handIK": FieldHints(tooltip: "Arms reach run-time targets (nodes Hand.L, Hand.R; humanoids)")]
+    }
+
+    var footPlacement: Bool
+    var lookAt: Bool
+    var lookTarget: String
+    var handIK: Bool
+
+    init(_ c: CharacterBuild) {
+        footPlacement = c.ik?.footPlacement ?? false
+        lookAt = c.ik?.lookAt ?? false
+        lookTarget = c.ik?.lookTarget ?? ""
+        handIK = c.ik?.handIK ?? false
+    }
+}
+
 @MainActor
 public final class CharacterBuilderView {
     public let session: EditorSession
@@ -120,6 +197,11 @@ public final class CharacterBuilderView {
     var onPlayClip: ((String) -> Void)?
     /// The clip the preview plays (for highlighting).
     var playingClip: () -> String? = { nil }
+    /// Drops the preview as a ragdoll or stands it up (set by the workspace).
+    var onTestRagdoll: (() -> Void)?
+    var isRagdollTesting: () -> Bool = { false }
+    /// The ragdoll body shown in the form.
+    public private(set) var selectedRagdollBone: String?
     let attachmentList = ListView(items: [], name: "characterAttachments")
     private var grids: [PropertyGrid] = []
     private let gridWorld = World()
@@ -287,6 +369,9 @@ public final class CharacterBuilderView {
             addPartColors(attachment)
         }
 
+        layOutRagdoll()
+        layOutIK()
+
         let problems = character.problems + CharacterCheck.problems(character, in: session)
         if !problems.isEmpty {
             view.addChild(Separator())
@@ -295,6 +380,86 @@ public final class CharacterBuilderView {
         }
         view.addChild(note("Imported as a skinned prefab with an Animator: states per clip plus \"locomotion\" (idle, walk and run blended by the "
                            + "float parameter speed, m/s); triggers jump, attack and die. Placed copies animate in play mode, and in the Scene view with View > Animate in Scene View."))
+    }
+
+    /// The ragdoll section: on / off, mass and blending, one body's size and limits, Test Ragdoll.
+    private func layOutRagdoll() {
+        view.addChild(Separator())
+        view.addChild(Label("Ragdoll", role: .secondary))
+        let testing = isRagdollTesting()
+        let test = Button(testing ? "Get Up" : "Test Ragdoll", role: testing ? .primary : .normal, name: "characterTestRagdoll") { [unowned self] in
+            onTestRagdoll?()
+        }
+        test.tooltip = testing ? "Blend the preview back to its animation" : "Drop the preview as a ragdoll with a push (the file's settings, or automatic ones)"
+        view.addChild(HStack(spacing: 6, [test, Spacer()]))
+        addGrid(CharacterRagdollSettingsComponent(character), name: "characterRagdollGrid") { [unowned self] (proxy: CharacterRagdollSettingsComponent) in
+            var edited = character
+            var ragdoll = edited.ragdoll ?? CharacterRagdoll()
+            let before = CharacterRagdollSettingsComponent(character)
+            ragdoll.enabled = proxy.enabled
+            if proxy.mass != before.mass { ragdoll.mass = proxy.mass > 0 ? proxy.mass : nil }
+            if proxy.strength != before.strength { ragdoll.strength = max(proxy.strength, 0) }
+            if proxy.blendTime != before.blendTime { ragdoll.blendTime = max(proxy.blendTime, 0) }
+            edited.ragdoll = ragdoll
+            apply(edited, label: "Edit Ragdoll")
+        }
+        let automatic = character.rig.ragdollBones()
+        let bodies = character.rig.ragdollBones(character.ragdoll)
+        guard !bodies.isEmpty else { return }
+        let names = bodies.map(\.bone)
+        if selectedRagdollBone == nil || !names.contains(selectedRagdollBone!) { selectedRagdollBone = names.first }
+        let picker = Dropdown(options: names.map { name in character.ragdoll?.override(name).map { $0.isEmpty ? name : name + " *" } ?? name },
+                              selectedIndex: names.firstIndex(of: selectedRagdollBone ?? "") ?? 0, name: "characterRagdollBone") { [unowned self] i in
+            guard names.indices.contains(i) else { return }
+            selectedRagdollBone = names[i]
+            layout()
+        }
+        picker.tooltip = "The body to size and limit (* edited)"
+        var row: [Widget] = [Label("Body", role: .caption), picker]
+        if let name = selectedRagdollBone, character.ragdoll?.override(name).map({ !$0.isEmpty }) ?? false {
+            let reset = Button("Automatic", name: "characterRagdollReset") { [unowned self] in
+                var edited = character
+                edited.ragdoll?.bones.removeAll { $0.bone == name }
+                apply(edited, label: "Reset Ragdoll Body")
+            }
+            reset.tooltip = "Back to the size and limits worked out from the body shapes"
+            row.append(reset)
+        }
+        view.addChild(HStack(spacing: 6, row))
+        guard let name = selectedRagdollBone, let body = bodies.first(where: { $0.bone == name }),
+              let auto = automatic.first(where: { $0.bone == name }) else { return }
+        addGrid(CharacterRagdollBodyComponent(body), name: "characterRagdollBodyGrid") { [unowned self] (proxy: CharacterRagdollBodyComponent) in
+            var edited = character
+            var ragdoll = edited.ragdoll ?? CharacterRagdoll()
+            var change = CharacterRagdollBone(bone: name)
+            if abs(proxy.radius - auto.radius) > 1e-5 { change.radius = max(proxy.radius, 0.005) }
+            if proxy.swing != auto.swing { change.swing = proxy.swing }
+            if proxy.minAngle != auto.minAngle { change.minAngle = proxy.minAngle }
+            if proxy.maxAngle != auto.maxAngle { change.maxAngle = proxy.maxAngle }
+            if proxy.mass > 0 { change.mass = proxy.mass }
+            ragdoll.bones.removeAll { $0.bone == name }
+            if !change.isEmpty { ragdoll.bones.append(change) }
+            edited.ragdoll = ragdoll
+            apply(edited, label: "Edit Ragdoll Body")
+        }
+    }
+
+    /// The IK section: foot placement, look at, hand reach.
+    private func layOutIK() {
+        view.addChild(Label("IK", role: .secondary))
+        addGrid(CharacterIKComponent(character), name: "characterIKGrid") { [unowned self] (proxy: CharacterIKComponent) in
+            var edited = character
+            let any = proxy.footPlacement || proxy.lookAt || proxy.handIK || !proxy.lookTarget.isEmpty
+            edited.ik = any ? CharacterIK(footPlacement: proxy.footPlacement, lookAt: proxy.lookAt,
+                                          lookTarget: proxy.lookTarget.isEmpty ? nil : proxy.lookTarget, handIK: proxy.handIK) : nil
+            apply(edited, label: "Edit IK")
+        }
+        if let ik = character.ik {
+            let nodes = character.rig.ikNodes(ik).map(\.name)
+            if !nodes.isEmpty {
+                view.addChild(note("Animator IK nodes: \(nodes.joined(separator: ", ")). Set targets and weights while playing with the Visual Script nodes Set IK Target / Set IK Weight."))
+            }
+        }
     }
 
     private func addGrid<C: Component>(_ proxy: C, name: String, onCommit: @escaping (C) -> Void) {

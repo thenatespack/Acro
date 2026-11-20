@@ -4,6 +4,14 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Added
+- Inverse kinematics on animators (`Animator.ik`, `.animgraph` `ik`): two-bone IK with a pole (arms, legs), aim chains (head, spine, weapon), FABRIK chains (tails, tentacles) and foot placement (rays against physics, pelvis drop, feet aligned to the ground's normal, planted feet locked). Nodes run after the states and layers and before the pose reaches the bones; each weight can follow a float parameter; targets are world points (`Animator.setIKTarget`) or entities followed by name. Solvers are public in `IKSolver`.
+- Ragdolls: a `Ragdoll` component builds capsule bodies and limited joints from a skeleton's bones. Bodies follow the animation as kinematic hit boxes, take hits while the animation pulls them back (`hit`, partial), go limp (`goLimp`) and blend back to the animation (`getUp`), standing the character up under the pelvis. `world.addPhysics` runs them.
+- Joint limits (`JointLimits` on `Joint` and `JointDescriptor`): a ball joint's swing cone and twist range, a hinge's angle range.
+- Character Builder: a Ragdoll section (automatic body sizes from the body shapes, editable radii, limits and masses, Test Ragdoll) and IK switches (foot placement, look at, hand reach); `.character` keys `ragdoll` and `ik`; tools `character.ragdoll` and `character.ik`. The Animation Graph Builder lists, adds and edits IK nodes; `animGraph.edit` has `addIK`, `updateIK`, `removeIK`.
+- Visual Script nodes Set IK Target, Set IK Weight, Enable Ragdoll, Apply Impulse to Bone and Ragdoll State.
+- Demo scene `ik`: a character standing across uneven stairs, one aiming at and reaching for a moving target, and a ragdoll pushed off a crate that gets up again.
+
 ### Changed
 - The Windows workflow exports and starts a game on every push to main and when run by hand, and no longer on pull requests or nightly. Its build cache leaves out the `.build/debug` symlink, which came back from the cache as a plain folder and hid the new `GameRunner.exe`.
 

@@ -24,14 +24,17 @@ import EngineScene
 //   ],
 //   "layers": [{"name": "Breathe", "clip": "asset:<id>#animation/Breathe", "weight": 0.5},
 //              {"name": "Wave", "clip": "asset:<id>#animation/Wave", "blend": "override", "mask": ["Spine"]}],
-//   "retarget": {"boneMap": {"mixamorig:Spine1": "chest"}, "rotation": "world", "translation": "root"}
+//   "retarget": {"boneMap": {"mixamorig:Spine1": "chest"}, "rotation": "world", "translation": "root"},
+//   "ik": [{"name": "Look", "type": "aim", "bones": ["chest", "neck", "head"], "targetEntity": "Target", "weightParameter": "look"}]
 // }
 // ```
 //
 // Every key is optional. Clips are `AnimationClipHandle` keys: asset references to imported clips
 // (a glTF file's `animation/<name>` sub-assets) or keys registered in code. The importer makes an
 // `.animationGraph` object; `Animator.graph` points at it and the scene animation system applies
-// it (EngineRendering's `AnimationGraph.stateMachine`), again after every reimport.
+// it (EngineRendering's `AnimationGraph.stateMachine`), again after every reimport. `ik` lists
+// inverse kinematics nodes (twoBoneIK, aim, chainIK, footPlacement) run on the pose after the
+// states and layers (AnimationIK.swift); each weight can follow a float parameter.
 
 /// The kind of an `AnimationGraphParameter`.
 public enum AnimationGraphParameterType: String, Codable, Sendable, CaseIterable {
@@ -319,10 +322,13 @@ public struct AnimationGraph: Codable, Equatable, Sendable {
     /// Retargets clips made for another skeleton onto the rig the graph plays on, matching bones
     /// by name (`Animator.retarget`); nil plays clips by target index as they are.
     public var retarget: AnimationRetargetOptions?
+    /// Inverse kinematics nodes run on the pose after the states and layers, in order
+    /// (`Animator.ik`; AnimationIK.swift).
+    public var ik: [AnimationIKNode]
 
     public init(preview: String? = nil, parameters: [AnimationGraphParameter] = [], states: [AnimationGraphState] = [],
                 transitions: [AnimationGraphTransition] = [], layers: [AnimationGraphLayer] = [], initialState: String? = nil,
-                anyStatePosition: Vec2 = Vec2(0, -120), retarget: AnimationRetargetOptions? = nil) {
+                anyStatePosition: Vec2 = Vec2(0, -120), retarget: AnimationRetargetOptions? = nil, ik: [AnimationIKNode] = []) {
         self.preview = preview
         self.parameters = parameters
         self.states = states
@@ -331,9 +337,10 @@ public struct AnimationGraph: Codable, Equatable, Sendable {
         self.initialState = initialState
         self.anyStatePosition = anyStatePosition
         self.retarget = retarget
+        self.ik = ik
     }
 
-    private enum CodingKeys: String, CodingKey { case preview, parameters, states, transitions, layers, initialState, anyStatePosition, retarget }
+    private enum CodingKeys: String, CodingKey { case preview, parameters, states, transitions, layers, initialState, anyStatePosition, retarget, ik }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -345,6 +352,26 @@ public struct AnimationGraph: Codable, Equatable, Sendable {
         initialState = try c.decodeIfPresent(String.self, forKey: .initialState)
         anyStatePosition = try c.decodeIfPresent(Vec2.self, forKey: .anyStatePosition) ?? Vec2(0, -120)
         retarget = try c.decodeIfPresent(AnimationRetargetOptions.self, forKey: .retarget)
+        ik = try c.decodeIfPresent([AnimationIKNode].self, forKey: .ik) ?? []
+    }
+
+    /// Leaves `ik` out when there are no nodes (files from before IK stay as they were).
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(preview, forKey: .preview)
+        try c.encode(parameters, forKey: .parameters)
+        try c.encode(states, forKey: .states)
+        try c.encode(transitions, forKey: .transitions)
+        try c.encode(layers, forKey: .layers)
+        try c.encodeIfPresent(initialState, forKey: .initialState)
+        try c.encode(anyStatePosition, forKey: .anyStatePosition)
+        try c.encodeIfPresent(retarget, forKey: .retarget)
+        if !ik.isEmpty { try c.encode(ik, forKey: .ik) }
+    }
+
+    /// `base`, or `base 2`, `base 3`… so it is unused among the IK node names.
+    public func uniqueIKName(_ base: String) -> String {
+        Self.unique(base.isEmpty ? "IK" : base, taken: Set(ik.map(\.name)))
     }
 
     public func fileData() throws -> Data { try AssetJSON.encode(self) }
@@ -509,6 +536,13 @@ public enum AnimationGraphCheck {
         }
         checkLevel(graph.states, graph.transitions, initial: graph.initialState, path: [], outer: [])
         for layer in graph.layers where layer.clip.isEmpty { problems.append("layer '\(layer.name)' has no clip") }
+        var ikNames = Set<String>()
+        var kinds: [String: AnimationGraphParameterType] = [:]
+        for parameter in graph.parameters { kinds[parameter.name] = parameter.type }
+        for node in graph.ik {
+            if !ikNames.insert(node.name).inserted { problems.append("two IK nodes are named '\(node.name)'") }
+            problems += node.problems(parameters: kinds)
+        }
         if let clipExists {
             for key in graph.clipKeys where !clipExists(key) { problems.append("clip '\(key)' doesn't exist") }
         }
