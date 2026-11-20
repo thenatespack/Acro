@@ -25,7 +25,7 @@ struct VFXSettingsComponent: Component {
     static var componentName: String { "Effect" }
     static var fieldHints: [String: FieldHints] {
         ["duration": FieldHints(range: 0.1...120, step: 0.1, tooltip: "Seconds one run lasts: the preview restarts after this when looping"),
-         "background": FieldHints(color: true, tooltip: "Preview background color (not saved into placed copies)"),
+         "background": FieldHints(color: true, srgb: true, tooltip: "Preview background color (not saved into placed copies)"),
          "ground": FieldHints(tooltip: "Show a ground plane in the preview")]
     }
 

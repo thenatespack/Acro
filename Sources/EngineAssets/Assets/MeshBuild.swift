@@ -201,7 +201,7 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
          "position": FieldHints(step: 0.05, tooltip: "Meters, in the parent's space"),
          "segments": FieldHints(range: 3...128, step: 1, tooltip: "Smoothness of round shapes"),
          "thickness": FieldHints(range: 0.001...100, step: 0.01, tooltip: "Tube wall thickness"),
-         "color": FieldHints(color: true), "glow": FieldHints(color: true, tooltip: "Emitted light color (black: none)"),
+         "color": FieldHints(color: true, srgb: true), "glow": FieldHints(color: true, srgb: true, tooltip: "Emitted light color (black: none)"),
          "opacity": FieldHints(range: 0...1, step: 0.01), "metallic": FieldHints(range: 0...1, step: 0.01),
          "roughness": FieldHints(range: 0...1, step: 0.01), "glowStrength": FieldHints(range: 0...100, step: 0.1),
          "textureScale": FieldHints(step: 0.1, tooltip: "Texture repeats (per meter with World UV)"),

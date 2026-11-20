@@ -73,7 +73,7 @@ struct TimelineKeyComponent: Component {
          "duration": FieldHints(range: 0...600, step: 0.1, tooltip: "Seconds before it is stopped"),
          "effect": FieldHints(tooltip: "A .vfx file (or another prefab)"),
          "amount": FieldHints(range: 0...1, step: 0.01, tooltip: "0 clear, 1 solid color"),
-         "color": FieldHints(color: true),
+         "color": FieldHints(color: true, srgb: true),
          "name": FieldHints(tooltip: "The event's name"),
          "value": FieldHints(tooltip: "The event's payload"),
          "dialogue": FieldHints(tooltip: "A .dialogue file to play (empty: the target's DialoguePlayer)"),

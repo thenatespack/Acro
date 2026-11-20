@@ -123,7 +123,7 @@ public struct PathProfile: Codable, Equatable, Sendable {
          "points": FieldHints(tooltip: "Custom outline: [right, up] meters, counter-clockwise seen along the path"),
          "closedShape": FieldHints(tooltip: "Join a custom outline's last point to its first"),
          "sag": FieldHints(range: 0...50, step: 0.05, tooltip: "How far each span between control points hangs (cables)"),
-         "color": FieldHints(color: true), "glow": FieldHints(color: true, tooltip: "Emitted light color (black: none)"),
+         "color": FieldHints(color: true, srgb: true), "glow": FieldHints(color: true, srgb: true, tooltip: "Emitted light color (black: none)"),
          "opacity": FieldHints(range: 0...1, step: 0.01), "metallic": FieldHints(range: 0...1, step: 0.01),
          "roughness": FieldHints(range: 0...1, step: 0.01),
          "texture": FieldHints(tooltip: "An image or .proctex under Assets/"),
@@ -242,7 +242,7 @@ public struct PathPiece: Codable, Equatable, Sendable {
     public static var fieldHints: [String: FieldHints] {
         ["asset": FieldHints(tooltip: "A .meshbuild, or asset:<id>#mesh/<name> (blank: the shape below)"),
          "size": FieldHints(step: 0.05, tooltip: "Meters: the box the shape fills"),
-         "color": FieldHints(color: true), "metallic": FieldHints(range: 0...1, step: 0.01),
+         "color": FieldHints(color: true, srgb: true), "metallic": FieldHints(range: 0...1, step: 0.01),
          "roughness": FieldHints(range: 0...1, step: 0.01),
          "spacing": FieldHints(range: 0.05...1000, step: 0.1, tooltip: "Meters between pieces"),
          "start": FieldHints(range: 0...10000, step: 0.1, tooltip: "Meters before the first piece"),

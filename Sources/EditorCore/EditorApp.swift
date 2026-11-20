@@ -1052,7 +1052,9 @@ public final class EditorApp: Game, EditorHost {
             if !overlayBefore { for event in input.keyPresses { _ = launcher.handleShortcut(event) } }
         } else {
             let claimer = ui.focusedWidget as? EditorShortcutClaiming
-            let presses = claimer.map { c in input.keyPresses.filter { !c.claimsShortcut($0) } } ?? input.keyPresses
+            var presses = claimer.map { c in input.keyPresses.filter { !c.claimsShortcut($0) } } ?? input.keyPresses
+            // A focused list or tree (the Hierarchy, the Assets panel) moves to its first row on Home.
+            if ui.focusedWidget is RowListView { presses.removeAll { $0.key == .home } }
             for command in shortcuts.actions(for: presses, focus: focus) { invoke(command) }
             if !focus.textEditing, !focus.overlayOpen {
                 for tab in builderTabs { tab.handleKeys?(input.keyPresses, uiPoint(input.mousePosition)) }
@@ -1114,6 +1116,7 @@ public final class EditorApp: Game, EditorHost {
         case .delete: confirmDeleteSelection()
         case .importAsset: assetBrowser.beginImport()
         case .settings: showSettings()
+        case .goToObject: showGoToObject()
         case .clearSelection:
             // Esc first cancels a gizmo drag, then clears the selection.
             if transformTool?.cancelDrag(world: session.world) != true { session.run(SelectionClearCommand.self) }
@@ -1209,6 +1212,29 @@ public final class EditorApp: Game, EditorHost {
         }
         guard lo.x <= hi.x else { return }
         viewport.frame(Bounds(center: (lo + hi) / 2, halfExtent: (hi - lo) / 2))
+    }
+
+    /// The Scene view's camera (`EditorHost`).
+    public var viewCamera: EditorCamera? { viewport.camera }
+
+    /// Return to Origin (`view.home`, Home): the camera's default view of the origin, or of `pivot` at `distance`.
+    public func returnHome(pivot: Vec3?, distance: Float?) -> EditorCamera? {
+        viewport.cancelGesture()
+        viewport.camera.returnHome(pivot: pivot, distance: distance)
+        return viewport.camera
+    }
+
+    /// The Go to Object search (Cmd/Ctrl+G, the View menu): picking an entity runs `view.goTo`.
+    @discardableResult
+    public func showGoToObject() -> Bool {
+        guard let ui, ui.overlays.isEmpty, !isLauncherShown else { return false }
+        let dialog = GoToObjectDialog(candidates: ViewGoToCommand.candidates(in: session))
+        dialog.onPick = { [unowned self] match in
+            session.run(ViewGoToCommand.self, .init(entity: match.id))
+            if dock.isOpen(EditorLayout.viewport) { dock.focusPanel(EditorLayout.viewport) }
+        }
+        dialog.present(in: ui)
+        return true
     }
 
     // MARK: Viewport
@@ -2127,49 +2153,65 @@ final class Toolbar {
 
     /// The View menu: every panel (open ones checked; picking one opens a closed panel where the
     /// default layout has it, or brings an open one to the front), then Settings…, Reset Layout,
-    /// Animate in Scene View, the themes (`EditorApp.menuThemes`), the zooms and the Scene view's
-    /// post-fx modes (`view.scenePostFX`), the current ones checked.
+    /// Return to Origin, Go to Object…, Animate in Scene View, the themes (`EditorApp.menuThemes`),
+    /// the zooms and the Scene view's post-fx modes (`view.scenePostFX`), the current ones checked.
     func showViewMenu() {
         guard let context = view.context else { return }
         let panels = menuPanels
-        let themes = EditorApp.menuThemes, zooms = EditorApp.menuZooms
-        let settingsTitle = "Settings… (\(app.shortcuts.shortcutText(for: .settings)))"
-        let postFXModes = ScenePostFXSettings.Mode.allCases
-        let options = [settingsTitle, "Reset Layout", ViewAnimateInEditModeCommand.title] + themes.map { "\($0) Theme" }
-            + zooms.map { "Zoom \(Int(($0 * 100).rounded()))%" } + postFXModes.map { "Scene Post-FX: \($0.rawValue.capitalized)" }
-        let menu = PopupMenu(items: panels.map(\.title) + options, anchor: viewButton, name: "viewMenu")
-        menu.itemCommandIDs = panels.map { _ in PanelOpenCommand.id.rawValue }
-            + [SettingsGetCommand.id.rawValue, LayoutResetCommand.id.rawValue, ViewAnimateInEditModeCommand.id.rawValue]
-            + options.dropFirst(3).dropLast(postFXModes.count).map { _ in ViewAppearanceCommand.id.rawValue }
-            + postFXModes.map { _ in ViewScenePostFXCommand.id.rawValue }
-        menu.itemIcons = panels.map { EditorIcons.panelIconNames[$0.id].map(EditorIcons.named) }
-            + [EditorIcons.named("sliders-horizontal"), EditorIcons.named("layout-dashboard"), EditorIcons.named("person-standing")]
-        let first = panels.count
-        var checked = Set(panels.indices.filter { app.dock.isOpen(panels[$0].id) })
-        if app.session.editAnimation.isEnabled { checked.insert(first + 2) }
-        if let theme = themes.firstIndex(of: context.theme.name) { checked.insert(first + 3 + theme) }
-        if let zoom = zooms.firstIndex(of: app.preferredUIScale) { checked.insert(first + 3 + themes.count + zoom) }
-        // The Scene view's post-fx mode is checked while it's on (On or Split).
-        if app.session.scenePostFX.mode != .off, let mode = postFXModes.firstIndex(of: app.session.scenePostFX.mode) {
-            checked.insert(first + 3 + themes.count + zooms.count + mode)
-        }
-        menu.checkedIndices = checked
         let session = app.session
-        menu.onSelect = { [unowned app] index in
-            if index < first {
-                session.run(PanelOpenCommand.self, .init(panel: panels[index].id))
-                return
+        let shortcuts = app.shortcuts
+        struct Entry {
+            var title: String
+            var command: CommandID
+            var icon: String?
+            var checked = false
+            var run: () -> Void
+        }
+        var entries = panels.map { panel in
+            Entry(title: panel.title, command: PanelOpenCommand.id, icon: EditorIcons.panelIconNames[panel.id], checked: app.dock.isOpen(panel.id)) {
+                session.run(PanelOpenCommand.self, .init(panel: panel.id))
             }
-            let index = index - first
-            switch index {
-            case 0: app.showSettings()
-            case 1: app.resetLayout()
-            case 2: session.run(ViewAnimateInEditModeCommand.self, .init())
-            case 3...(themes.count + 2): session.run(ViewAppearanceCommand.self, .init(theme: themes[index - 3]))
-            case (3 + themes.count + zooms.count)...:
-                session.run(ViewScenePostFXCommand.self, .init(mode: postFXModes[index - 3 - themes.count - zooms.count]))
-            default: session.run(ViewAppearanceCommand.self, .init(uiScale: zooms[index - 3 - themes.count]))
+        }
+        entries += [
+            Entry(title: "Settings… (\(shortcuts.shortcutText(for: .settings)))", command: SettingsGetCommand.id, icon: "sliders-horizontal") { [unowned app] in
+                app.showSettings()
+            },
+            Entry(title: "Reset Layout", command: LayoutResetCommand.id, icon: "layout-dashboard") { [unowned app] in app.resetLayout() },
+            Entry(title: "\(ViewHomeCommand.title) (\(shortcuts.shortcutText(for: .returnHome)))", command: ViewHomeCommand.id, icon: "orbit") {
+                session.run(ViewHomeCommand.self, .init())
+            },
+            Entry(title: "\(ViewGoToCommand.title)… (\(shortcuts.shortcutText(for: .goToObject)))", command: ViewGoToCommand.id, icon: "search") { [unowned app] in
+                app.showGoToObject()
+            },
+            Entry(title: ViewAnimateInEditModeCommand.title, command: ViewAnimateInEditModeCommand.id, icon: "person-standing",
+                  checked: session.editAnimation.isEnabled) {
+                session.run(ViewAnimateInEditModeCommand.self, .init())
+            },
+        ]
+        entries += EditorApp.menuThemes.map { theme in
+            Entry(title: "\(theme) Theme", command: ViewAppearanceCommand.id, checked: context.theme.name == theme) {
+                session.run(ViewAppearanceCommand.self, .init(theme: theme))
             }
+        }
+        entries += EditorApp.menuZooms.map { zoom in
+            Entry(title: "Zoom \(Int((zoom * 100).rounded()))%", command: ViewAppearanceCommand.id, checked: app.preferredUIScale == zoom) {
+                session.run(ViewAppearanceCommand.self, .init(uiScale: zoom))
+            }
+        }
+        // The Scene view's post-fx mode is checked while it's on (On or Split).
+        entries += ScenePostFXSettings.Mode.allCases.map { mode in
+            Entry(title: "Scene Post-FX: \(mode.rawValue.capitalized)", command: ViewScenePostFXCommand.id,
+                  checked: mode != .off && session.scenePostFX.mode == mode) {
+                session.run(ViewScenePostFXCommand.self, .init(mode: mode))
+            }
+        }
+        let menu = PopupMenu(items: entries.map(\.title), anchor: viewButton, name: "viewMenu")
+        menu.itemCommandIDs = entries.map(\.command.rawValue)
+        menu.itemIcons = entries.map { $0.icon.map(EditorIcons.named) }
+        menu.checkedIndices = Set(entries.indices.filter { entries[$0].checked })
+        menu.onSelect = { index in
+            guard entries.indices.contains(index) else { return }
+            entries[index].run()
         }
         context.presentOverlay(menu)
     }

@@ -36,7 +36,7 @@ public struct PropertyEdit: Equatable, Sendable {
 /// | `bool` | `Checkbox` |
 /// | `int` / `float` | `NumberField` (range / step hints; with `usesSlidersForRanges`, a `Slider` beside it when a finite range is hinted) |
 /// | `string` | `TextField` (commits on Enter or focus loss, Esc reverts); a `Dropdown` when `stringChoices` lists options for the field (e.g. mesh / material keys; for an optional, nil or "" shows as the "" option and picking "" sets nil) |
-/// | `vec2` / `vec3` / `vec4` | `VectorField`; `vec3` / `vec4` with the `color` hint: `ColorSwatch` (linear RGB, opens a `ColorPicker`; alpha is kept; HDR values above 1 are clamped by the picker) |
+/// | `vec2` / `vec3` / `vec4` | `VectorField`; `vec3` / `vec4` with the `color` hint: `ColorSwatch` (linear RGB, or sRGB with the `srgb` hint; opens a `ColorPicker`; alpha is kept; HDR values above 1 are clamped by the picker) |
 /// | `quat` | `VectorField` of Euler degrees (`Quat.eulerDegrees`) |
 /// | `enumeration` | `Dropdown` |
 /// | `entity` | a read-only label with the entity's name (`entityName`) or index. A picker is future work |
@@ -567,17 +567,20 @@ public final class PropertyGrid: Stack {
     }
 
     private func colorEditor(_ field: FieldDescriptor, binding b: Binding, name: String) -> Widget {
+        // Linear fields convert to and from the picker's sRGB; `srgb` fields are shown as they are.
+        let srgb = field.hints.srgb
         func color(_ value: FieldValue?) -> UIColor {
             switch value {
-            case .vec3(let v)?: UIColor(linearRGB: v)
-            case .vec4(let v)?: UIColor(linearRGB: Vec3(v.x, v.y, v.z), alpha: min(max(v.w, 0), 1))
+            case .vec3(let v)?: srgb ? UIColor(v.x, v.y, v.z) : UIColor(linearRGB: v)
+            case .vec4(let v)?:
+                srgb ? UIColor(v.x, v.y, v.z, min(max(v.w, 0), 1)) : UIColor(linearRGB: Vec3(v.x, v.y, v.z), alpha: min(max(v.w, 0), 1))
             default: .white
             }
         }
         func value(_ c: UIColor) -> FieldValue {
-            let linear = c.linearRGB
-            if case .vec4(let old)? = b.current { return .vec4(Vec4(linear.x, linear.y, linear.z, old.w)) }
-            return .vec3(linear)
+            let rgb = srgb ? Vec3(c.r, c.g, c.b) : c.linearRGB
+            if case .vec4(let old)? = b.current { return .vec4(Vec4(rgb.x, rgb.y, rgb.z, old.w)) }
+            return .vec3(rgb)
         }
         let swatch = ColorSwatch(color: color(field.value), name: name)
         swatch.onEditBegan = { [weak self, weak b] _ in if let self, let b { self.beginEdit(b) } }

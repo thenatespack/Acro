@@ -425,12 +425,12 @@ Terrain's "scatter '<name>'" wording; the tab not yet tried in the running edito
 above done: `PathFollower` component (loop / ping-pong, orient, events; play mode, exports,
 GameRunner), click to add or insert points, `path.flattenTerrain` (flatten, carve, raise)
 writing the `.terrain`, T and X junctions (`junctions`, `addJunctions`), miter correction,
-"piece" wording, tab checked in the running editor. `AssetCooker.keepsSource` is now `sprite`, `tilemap`, `path`, `terrain`. Still not done: `PathFollower.path` as a plain file path needs `--include` (use
-`asset:<id>`); terrain shaping ignores banking and shapes each path alone; junctions of three
+"piece" wording, tab checked in the running editor. `AssetCooker.keepsSource` is now `sprite`, `tilemap`, `path`, `terrain`. Still not done: terrain shaping ignores banking and shapes each path alone; junctions of three
 or more roads aren't merged, no roundabouts; a faint seam where a patch meets a box road's edge
 and the main road's center line runs through the junction; cut-back assumes straight roads
 at the crossing; `path.get` doesn't report junctions; side-offset pieces (lamps, posts) aren't
-mitered.
+mitered. 0.19 follow-up: the cooker follows `PathFollower.path` given as a plain file path; Visual
+Script nodes drive followers (`pathFollower.*`, On Path Follower Event).
 
 ### Behavior Tree Builder (`.behavior`)
 
@@ -473,8 +473,9 @@ in the Game view, GameRunner and exports; `uiLayout.place`), layout images cooke
 slider / toggle / text field widgets bound to keys, show / hide transitions and tweens,
 gamepad navigation order, color pickers. Tab checked in the running editor. Still not done: the
 editor preview's Interact mode doesn't pass typing to text fields; a focused `TextField` keeps
-all four arrow keys, so a gamepad can't leave it; a `UILayoutPlayer` naming its layout by path
-isn't followed by the cooker; transitions only step while the layout is drawn.
+all four arrow keys, so a gamepad can't leave it; transitions only step while the layout is drawn.
+0.19 follow-up: the cooker follows a `UILayoutPlayer`'s layout named by path; Visual Script nodes for the
+game UI layer (`gameUI.*`, On Game UI Event).
 
 ### Dialogue Builder (`.dialogue`)
 
@@ -495,9 +496,10 @@ or the file's `uiLayout`; "dialogue" preset in `uiLayout.new`), portraits loaded
 clicks over the Game view checked in the running editor. Out-of-scope fix: the editor now pumps
 asset loads every frame (loads stalled while a builder tab covered the Scene and Game views,
 holding MCP replies up to 300 s). With no host presenter, `ScenePlayback` puts a `DialogueView`
-on the game UI layer, so GameRunner and exported games show conversations. Still not done: the cooker
-doesn't follow `.dialogue` references (portraits, `uiLayout`), and how `.dialogue` files ship
-at all needs a look; the layout preview draws at about 0.26 scale in a small window;
+on the game UI layer, so GameRunner and exported games show conversations. 0.19 follow-up: `.dialogue`
+files ship as written (they had no data in a pack) with the portraits and `uiLayout` they name, and a
+`DialoguePlayer`'s dialogue and layout named by path are followed; `dialogue.setLayout` / `dialogue.layout`
+nodes. Still not done: the layout preview draws at about 0.26 scale in a small window;
 `DialogueGraphView` re-lays out node text every frame (about 64 ms in debug); Space and Enter
 reach game input while the box has focus.
 
@@ -517,8 +519,9 @@ above done: dialogue track (with `wait`), world-space camera keys through parent
 ships files named by path for every `followsReferences` importer (incl. `vscript`), the preview
 plays clips, sounds and conversations, `holdFade` (off by default clears the fade at the end),
 tab checked in the running editor. Still not done: no step button in the preview to get past a held
-`wait` key without clicking through the conversation; preview sound only covered in code, not
-listened to.
+`wait` key without clicking through the conversation (graphs can, with `timeline.releaseDialogue`);
+preview sound only covered in code, not listened to. 0.19 follow-up: `timeline.clearFade` (and
+`TimelinePlayer.clearFade()`) lets a `holdFade` timeline's fade go; `timeline.dialogue` reports `wait` keys.
 
 ### Animation Graph Builder (`.animgraph`) and glTF clip import
 
@@ -541,8 +544,7 @@ events (`animGraph.clipEvents` / `.setClipEvents`), preview auto-frame, parallel
 (`addSceneAnimationSystem(jobs:)`, identical results on 1 and 4 threads). `.character` external
 clips are retargeted with it. Still not done: events of non-glTF clips (a `.character`'s generated clips) can't
 be edited; renaming an outer state doesn't update inner transitions that exit to it; no MCP tool
-for the tab's level or selection, so the 2D plot, events and mask panels were only checked by
-tests.
+for the tab's level (`builder.select` now sets the selection: states, transitions, parameters, layers).
 
 ### Character Builder (`.character`)
 
@@ -618,17 +620,17 @@ editing function pins, collapse with no exec wire out, main-actor checks on back
 editor. Out-of-scope fix: calls of pure functions now compute their outputs. Still not done: groups
 don't work inside functions; reroutes and macro-inlined nodes don't glow or show live values;
 a breakpoint in fixed update can miss its recording. `ui.show` uses `world.gameUI`, so it works
-in GameRunner and exported games. Nodes worth adding: `PathFollower`,
-`world.gameUI`, `world.findPath`, timeline `holdFade` and dialogue keys,
-`DialoguePlayer.uiLayout`.
+in GameRunner and exported games. 0.19 follow-up: nodes for `PathFollower`, `world.findPath` /
+`bakeNavigation`, `world.gameUI`, timeline `holdFade` and `wait` dialogue keys, and
+`DialoguePlayer.uiLayout` (Sources/Engine/VisualScript/VisualScriptBuilderLinkNodes.swift).
 
 ## Follow-ups
 
 Connections between builders: all of the 0.15.0 list is done in 0.16.0 (`.sprite` tile sets,
 `.ui` dialogue boxes, a Timeline dialogue track, Visual Script nodes for the builders, graph
 materials on terrain layers and decals, retargeted glTF character clips and one clip loader).
-Still open: Visual Script nodes for `PathFollower`, `world.gameUI`, `world.findPath`, timeline
-`holdFade` and dialogue keys, and `DialoguePlayer.uiLayout`.
+The Visual Script nodes still open after 0.16.0 (`PathFollower`, `world.gameUI`, `world.findPath`,
+timeline `holdFade` and dialogue keys, `DialoguePlayer.uiLayout`) were added in 0.19.
 
 Agent playtesting (docs/Playtesting.md) checks builders' demo scenes and templates: record a
 session with `playtest.start` … `playtest.save`, commit the `.playtest.json` next to the project
@@ -645,17 +647,21 @@ Engine gaps the builders ran into:
   when game code adds them. Added in 0.16.0 (`world.gameUI`).
 - The cooker misses files referenced by path: layout images, timeline sounds and effects by
   path, and tilemap JSON. Fixed in 0.16.0 (`CookPlan.pathReferences`, `keepsSource`), except
-  `.dialogue` references and components naming a layout or path by plain path.
+  `.dialogue` references and components naming a layout or path by plain path, fixed in 0.19
+  (`.dialogue` ships as written and follows references; scenes and prefabs follow plain paths).
 - No navigation mesh (0.16.0 adds a grid navigator, `world.findPath`); the Tag component is
   added in 0.16.0.
-- `asset.import` over MCP stdio hangs on its reply when the source file is inside the project
-  folder (the import itself succeeds). Possibly the stalled asset loads fixed in 0.16.0 (the editor
-  now pumps loads every frame); recheck.
-- Other builders' color fields may show sRGB file colors as linear (Character fixed its own;
-  the Mesh Builder's part colors look affected).
-- Failing on main, unrelated to the builders: `ParityTests.everyUIElementRunsACommandThatIsATool`
-  (the console's `consoleCopy` button has no command); `MCPToolSchemaTests.subscribedResourcesReportUpdates`
-  is timing-sensitive and fails now and then in combined runs.
-- Every builder tab was checked in the running editor in 0.16.0. There is no MCP tool to select
-  inside a tab, so panels behind a selection (e.g. Animation Graph's 2D plot, events and masks)
-  were checked by tests only.
+- `asset.import` over MCP stdio hung on its reply when the source file was inside the project
+  folder. Rechecked in 0.19 (stdio, headless and windowed): replies in under half a second; the
+  0.16.0 per-frame load pump fixed it.
+- Builder color fields showed sRGB file colors as linear. Fixed in 0.19 with `FieldHints.srgb`
+  (Mesh Builder part color and glow, Path profiles and pieces, terrain layers, procedural textures,
+  Timeline fade keys, Tilemap and VFX backgrounds, character recolors); Character's proxy
+  conversion stays.
+- Failing on main: `ParityTests.everyUIElementRunsACommandThatIsATool` (fixed in 0.17: the
+  console's Copy button runs `log.read`); `MCPToolSchemaTests.subscribedResourcesReportUpdates`
+  depended on the wall-clock resource-check throttle and is deterministic since 0.19
+  (`EditorMCP.resourceCheckInterval`).
+- Every builder tab was checked in the running editor in 0.16.0; panels behind a selection were
+  checked by tests only. `builder.select` (0.19) selects inside the Mesh Builder, Animation Graph,
+  Behavior Tree, Dialogue and Visual Script tabs; the other tabs don't take part yet.
