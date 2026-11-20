@@ -4,6 +4,15 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Added
+- Agent playtesting ([docs/Playtesting.md](docs/Playtesting.md)). New editor MCP tools: `input.action` presses input actions by name (tap, hold, press / release, analog `value`), `input.gamepad` drives a virtual gamepad, and `input.actions` lists the actions the scene's visual scripts and the playtest define. `playtest.assert` checks the world and records pass or fail: an entity, a component field, a visual script variable, a world position, or a count of entities. `playtest.start`, `playtest.result`, `playtest.save`, `playtest.stop` and `playtest.run` record a session as a `.playtest.json` file and replay it with its assertions checked again.
+- `GameRunner <module | none> --playtest <file | folder> [--report out.json]` replays playtests headless at a fixed time step and exits 1 when an assertion fails (2 when one can't run). `GameRunner <module> <scene> --mcp` serves the scene headless to an MCP client with the same tools.
+- Engine: `Playtest` (the file format), `PlaytestDriver` (runs, checks and records steps against any host), `PlaytestHeadlessHost` (a scene played without a window) and `PlaytestMCP`.
+- SampleGame: a Player that walks with input actions (`Scripts/Player.vscript`) and a playtest for it (`Projects/SampleGame/Playtests/PlayerMoves.playtest.json`).
+
+### Fixed
+- GameRunner loads the `VisualScript` components of the first scene it plays. They were registered only once play systems started, so scripts in that scene didn't run.
+
 ### Changed
 - The Windows workflow exports and starts a game on every push to main and when run by hand, and no longer on pull requests or nightly. Its build cache leaves out the `.build/debug` symlink, which came back from the cache as a plain folder and hid the new `GameRunner.exe`.
 

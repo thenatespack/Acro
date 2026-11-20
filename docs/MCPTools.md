@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 257 tools.
+named by its id (see README › Use the editor › AI control). 266 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -27,7 +27,7 @@ optional arguments.
 | `files` | [`files.list`](#fileslist), [`files.newScene`](#filesnewscene), [`files.open`](#filesopen) |
 | `game` | [`game.build`](#gamebuild), [`game.info`](#gameinfo), [`game.load`](#gameload), [`game.reload`](#gamereload), [`game.unload`](#gameunload) |
 | `gridMap` | [`gridMap.edit`](#gridmapedit), [`gridMap.erase`](#gridmaperase), [`gridMap.fill`](#gridmapfill), [`gridMap.get`](#gridmapget), [`gridMap.new`](#gridmapnew), [`gridMap.open`](#gridmapopen), [`gridMap.paint`](#gridmappaint), [`gridMap.set`](#gridmapset) |
-| `input` | [`input.clear`](#inputclear), [`input.inject`](#inputinject), [`input.state`](#inputstate) |
+| `input` | [`input.action`](#inputaction), [`input.actions`](#inputactions), [`input.clear`](#inputclear), [`input.gamepad`](#inputgamepad), [`input.inject`](#inputinject), [`input.state`](#inputstate) |
 | `launcher` | [`launcher.dismiss`](#launcherdismiss), [`launcher.settings`](#launchersettings), [`launcher.show`](#launchershow) |
 | `layout` | [`layout.reset`](#layoutreset) |
 | `log` | [`log.clear`](#logclear), [`log.read`](#logread) |
@@ -38,6 +38,7 @@ optional arguments.
 | `panel` | [`panel.close`](#panelclose), [`panel.dock`](#paneldock), [`panel.focus`](#panelfocus), [`panel.list`](#panellist), [`panel.open`](#panelopen) |
 | `path` | [`path.edit`](#pathedit), [`path.flattenTerrain`](#pathflattenterrain), [`path.get`](#pathget), [`path.new`](#pathnew), [`path.open`](#pathopen), [`path.sample`](#pathsample), [`path.set`](#pathset) |
 | `play` | [`play.pause`](#playpause), [`play.setTimeScale`](#playsettimescale), [`play.start`](#playstart), [`play.state`](#playstate), [`play.step`](#playstep), [`play.stop`](#playstop), [`play.toggle`](#playtoggle) |
+| `playtest` | [`playtest.assert`](#playtestassert), [`playtest.result`](#playtestresult), [`playtest.run`](#playtestrun), [`playtest.save`](#playtestsave), [`playtest.start`](#playteststart), [`playtest.stop`](#playteststop) |
 | `postfx` | [`postfx.assign`](#postfxassign), [`postfx.edit`](#postfxedit), [`postfx.get`](#postfxget), [`postfx.new`](#postfxnew), [`postfx.open`](#postfxopen), [`postfx.set`](#postfxset) |
 | `prefab` | [`prefab.apply`](#prefabapply), [`prefab.create`](#prefabcreate), [`prefab.createVariant`](#prefabcreatevariant), [`prefab.overrides`](#prefaboverrides), [`prefab.revert`](#prefabrevert), [`prefab.unpack`](#prefabunpack) |
 | `project` | [`project.close`](#projectclose), [`project.new`](#projectnew), [`project.open`](#projectopen), [`project.recent.list`](#projectrecentlist), [`project.recent.locate`](#projectrecentlocate), [`project.recent.pin`](#projectrecentpin), [`project.recent.remove`](#projectrecentremove), [`project.recent.reveal`](#projectrecentreveal) |
@@ -1749,11 +1750,41 @@ Result:
 
 ## input
 
+### `input.action`
+
+**Input Action**
+
+Presses an input action by name (play mode), from the next game frame: tapped (down one frame), held `duration` seconds, pressed (`down`: true) or released (false). `value` (-1…1) sets an analog source instead (a gamepad axis such as "axis.leftStickX+"); a key or button counts as pressed at |value| ≥ 0.5. Actions come from the scene's visual scripts (known once they started: step a frame first) and playtest.start's `actions`; input.actions lists them. Paused, it waits: play.step runs it. Recorded while a playtest records.
+
+Arguments:
+
+- `action`: string
+- `down?`: boolean
+- `duration?`: number
+- `value?`: number
+
+Result:
+
+- `actionInputPending`: integer
+- `state`: {buttons: ["left" \| "right" \| "middle"], frame: integer, gameCamera: boolean, inputPending: integer, inputSeconds: number, keys: [string (74 cases)], paused: boolean, physics: boolean, playing: boolean, reason?: string, stepped?: integer, time: number, timeScale: number}
+
+### `input.actions`
+
+**Input Actions** · _read-only_, _idempotent_
+
+Lists the input actions input.action can press, with their sources ("key.space", "pad.south", "axis.leftStickX+") and origin: "playtest" (playtest.start's `actions`) or "script" (a visual script running in the scene, so known once play ran a frame).
+
+Arguments: none.
+
+Result:
+
+- `actions`: [{name: string, origin: string, sources: [string]}]
+
 ### `input.clear`
 
 **Clear Input** · _idempotent_
 
-Drops scheduled input and releases every injected key and button.
+Drops scheduled input (input.inject's, input.action's and input.gamepad's) and releases every injected key and button and the virtual gamepad.
 
 Arguments: none.
 
@@ -1772,6 +1803,25 @@ Result:
 - `stepped?`: integer
 - `time`: number
 - `timeScale`: number
+
+### `input.gamepad`
+
+**Gamepad Input**
+
+Drives a virtual gamepad in the game's input (play mode), from the next game frame: a `button` ("south", "east", "dpadUp", "start"…) tapped, held `duration` seconds or pressed / released (`down`), or an `axis` ("leftStickX", "leftStickY", "rightStickX", "rightStickY" -1…1, "leftTrigger", "rightTrigger" 0…1) set to `value` for `duration` seconds or until set again. Game code sees it in `Input.gamepads` like a real pad. Recorded while a playtest records.
+
+Arguments:
+
+- `axis?`: "leftStickX" \| "leftStickY" \| "rightStickX" \| "rightStickY" \| "leftTrigger" \| "rightTrigger"
+- `button?`: "south" \| "east" \| "west" \| "north" \| "leftShoulder" \| "rightShoulder" \| "leftStickClick" \| "rightStickClick" \| "dpadUp" \| "dpadDown" \| "dpadLeft" \| "dpadRight" \| "start" \| "back" \| "guide"
+- `down?`: boolean
+- `duration?`: number
+- `value?`: number
+
+Result:
+
+- `actionInputPending`: integer
+- `state`: {buttons: ["left" \| "right" \| "middle"], frame: integer, gameCamera: boolean, inputPending: integer, inputSeconds: number, keys: [string (74 cases)], paused: boolean, physics: boolean, playing: boolean, reason?: string, stepped?: integer, time: number, timeScale: number}
 
 ### `input.inject`
 
@@ -2750,6 +2800,153 @@ Arguments: none.
 Play when editing, Stop when playing.
 
 Arguments: none.
+
+## playtest
+
+### `playtest.assert`
+
+**Assert**
+
+Checks the world now and records pass / fail in the playtest session (made if there is none). The value: `entity` (a name, a path "Level/Door" or an id) alone checks it exists; with `component` and `field` a component field ("position.x", "linearVelocity"); with `variable` a visual script variable; with only `field` its world transform ("position", "position.y", "rotation", "scale"); or `count` {name?, component?} of entities. Compared with `exists`, `equals` (numbers within `tolerance`, default 1e-4), `min` / `max`, or `near` [x, y, z] within `tolerance` (default 0.01). Returns the check: passed, message, the actual value. A failing assertion is a result, not a tool error.
+
+Arguments:
+
+- `component?`: string
+- `count?`: {component?: string, name?: string}
+- `entity?`: string
+- `equals?`: any — Any JSON value.
+- `exists?`: boolean
+- `field?`: string
+- `label?`: string
+- `max?`: number
+- `min?`: number
+- `near?`: [number]
+- `tolerance?`: number
+- `variable?`: string
+
+Result:
+
+- `actual?`: any — Any JSON value.
+- `frame`: integer
+- `label`: string
+- `message`: string
+- `passed`: boolean
+- `step?`: integer
+- `time`: number
+
+### `playtest.result`
+
+**Playtest Result** · _read-only_, _idempotent_
+
+Returns the playtest session's result: every assertion so far (label, passed, message, actual value, frame), `passed` (none failed and no step errored), step errors, frames run and how many steps are recorded. Still readable after playtest.stop.
+
+Arguments: none.
+
+Result:
+
+- `checks`: [{actual?: any, frame: integer, label: string, message: string, passed: boolean, step?: integer, time: number}]
+- `errors`: [string]
+- `failedCount`: integer
+- `frames`: integer
+- `name?`: string
+- `passed`: boolean
+- `passedCount`: integer
+- `recordedSteps`: integer
+- `recording`: boolean
+- `time`: number
+
+### `playtest.run`
+
+**Run Playtest**
+
+Replays a playtest (`path` to a .playtest.json file, or the `playtest` itself) in play mode: opens its `scene` when another one is open (refused while that one has unsaved changes), plays from the start paused, runs every step at the fixed dt and checks its assertions, then stops (`keepPlaying` keeps the end state). Returns the result; `passed` is false when an assertion failed or a step couldn't run.
+
+Arguments:
+
+- `keepPlaying?`: boolean
+- `path?`: string
+- `playtest?`: {actions?: object, dt?: number, format?: string, name?: string, scene?: string, steps?: [object], version?: integer}
+
+Result:
+
+- `checks`: [{actual?: any, frame: integer, label: string, message: string, passed: boolean, step?: integer, time: number}]
+- `errors`: [string]
+- `failedCount`: integer
+- `frames`: integer
+- `name?`: string
+- `passed`: boolean
+- `passedCount`: integer
+- `recordedSteps`: integer
+- `recording`: boolean
+- `time`: number
+
+### `playtest.save`
+
+**Save Playtest**
+
+Writes what the playtest session recorded since playtest.start (input, frames and assertions, with the scene) as a playtest JSON file: `path` relative to the project folder (".playtest.json" added when missing). Replay it with playtest.run, or headless with `GameRunner <module> --playtest <file>` (exit code 1 when an assertion fails). Overwrites an existing file. Works during play and after playtest.stop.
+
+Arguments:
+
+- `path`: string
+
+Result:
+
+- `assertions`: integer
+- `frames`: integer
+- `path`: string
+- `steps`: integer
+
+### `playtest.start`
+
+**Start Playtest**
+
+Starts a playtest session: Play from the scene as saved in the editor (stopping play first if it runs), paused at frame 0, recording (unless `record` is false) every input.action, input.gamepad, input.inject, input.clear, play.step and playtest.assert for playtest.save. `actions` adds input actions (name → sources such as "key.space", "pad.south", "axis.leftStickX") to the scene's visual scripts' ones. Assertions collect in playtest.result.
+
+Arguments:
+
+- `actions?`: object
+- `name?`: string
+- `record?`: boolean
+
+Result:
+
+- `buttons`: ["left" \| "right" \| "middle"]
+- `frame`: integer
+- `gameCamera`: boolean
+- `inputPending`: integer
+- `inputSeconds`: number
+- `keys`: [string (74 cases)]
+- `paused`: boolean
+- `physics`: boolean
+- `playing`: boolean
+- `reason?`: string
+- `stepped?`: integer
+- `time`: number
+- `timeScale`: number
+
+### `playtest.stop`
+
+**Stop Playtest**
+
+Ends the playtest session's recording and stops play mode (the scene is restored; `keepPlaying` keeps it running). Returns the session's result; playtest.save still saves the recording.
+
+Arguments:
+
+- `keepPlaying?`: boolean
+
+Result:
+
+- `checks`: [{actual?: any, frame: integer, label: string, message: string, passed: boolean, step?: integer, time: number}]
+- `errors`: [string]
+- `failedCount`: integer
+- `frames`: integer
+- `name?`: string
+- `passed`: boolean
+- `passedCount`: integer
+- `recordedSteps`: integer
+- `recording`: boolean
+- `time`: number
 
 ## postfx
 
