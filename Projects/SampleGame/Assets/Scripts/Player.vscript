@@ -1,0 +1,49 @@
+{
+  "actions" : {
+    "jump" : ["key.space", "pad.south"],
+    "left" : ["key.a", "key.left", "axis.leftStickX-"],
+    "right" : ["key.d", "key.right", "axis.leftStickX+"]
+  },
+  "links" : [
+    ["update.out", "each.in"],
+    ["each.out0", "goRight.in"],
+    ["each.out1", "goLeft.in"],
+    ["right.down", "goRight.condition"],
+    ["goRight.true", "moveRight.in"],
+    ["left.down", "goLeft.condition"],
+    ["goLeft.true", "moveLeft.in"],
+    ["speed.value", "step.a"],
+    ["update.dt", "step.b"],
+    ["step.result", "rightOffset.x"],
+    ["rightOffset.vector", "moveRight.offset"],
+    ["step.result", "back.value"],
+    ["back.result", "leftOffset.x"],
+    ["leftOffset.vector", "moveLeft.offset"],
+    ["jumpPressed.out", "countJump.in"],
+    ["jumps.value", "plusOne.a"],
+    ["plusOne.result", "countJump.value"]
+  ],
+  "nodes" : [
+    {"id" : "update", "type" : "event.update", "x" : 0, "y" : 0},
+    {"id" : "each", "type" : "flow.sequence", "x" : 200, "y" : 0},
+    {"id" : "right", "type" : "input.actionDown", "x" : 0, "y" : 160, "config" : {"action" : "right"}},
+    {"id" : "left", "type" : "input.actionDown", "x" : 0, "y" : 260, "config" : {"action" : "left"}},
+    {"id" : "speed", "type" : "var.get", "x" : 0, "y" : 360, "config" : {"variable" : "speed"}},
+    {"id" : "step", "type" : "math.multiply", "x" : 200, "y" : 360},
+    {"id" : "back", "type" : "math.negate", "x" : 380, "y" : 440},
+    {"id" : "rightOffset", "type" : "vec3.make", "x" : 560, "y" : 300},
+    {"id" : "leftOffset", "type" : "vec3.make", "x" : 560, "y" : 440},
+    {"id" : "goRight", "type" : "flow.branch", "x" : 400, "y" : -60},
+    {"id" : "moveRight", "type" : "transform.translate", "x" : 760, "y" : -60},
+    {"id" : "goLeft", "type" : "flow.branch", "x" : 400, "y" : 100},
+    {"id" : "moveLeft", "type" : "transform.translate", "x" : 760, "y" : 100},
+    {"id" : "jumpPressed", "type" : "event.actionPressed", "x" : 0, "y" : 560, "config" : {"action" : "jump"}},
+    {"id" : "jumps", "type" : "var.get", "x" : 0, "y" : 680, "config" : {"variable" : "jumps"}},
+    {"id" : "plusOne", "type" : "math.add", "x" : 200, "y" : 680, "inputs" : {"b" : 1}},
+    {"id" : "countJump", "type" : "var.set", "x" : 400, "y" : 560, "config" : {"variable" : "jumps"}}
+  ],
+  "variables" : [
+    {"name" : "speed", "type" : "float", "default" : 2, "exposed" : true, "tooltip" : "Meters per second"},
+    {"name" : "jumps", "type" : "int", "default" : 0, "tooltip" : "Times jump was pressed"}
+  ]
+}

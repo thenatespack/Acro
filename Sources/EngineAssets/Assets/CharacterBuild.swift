@@ -282,7 +282,7 @@ public struct CharacterAttachment: Codable, Equatable, Sendable {
          "position": FieldHints(step: 0.01, tooltip: "Meters in the bone's space (+Y up, +Z forward)"),
          "rotation": FieldHints(step: 1, tooltip: "Degrees"),
          "scale": FieldHints(range: 0.01...100, step: 0.01),
-         "color": FieldHints(color: true, tooltip: "Recolors every part (unset keeps the model's colors)"),
+         "color": FieldHints(color: true, srgb: true, tooltip: "Recolors every part (unset keeps the model's colors)"),
          "partColors": FieldHints(tooltip: "Part name → color, over Color")]
     }
 

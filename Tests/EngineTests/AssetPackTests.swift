@@ -298,6 +298,36 @@ private struct TestProject {
         #expect(CookPlan.pathReferences(in: Data("not json".utf8), assetsByPath: paths).isEmpty)
     }
 
+    /// Components that name files by plain path (a DialoguePlayer's dialogue and layout, a
+    /// PathFollower's path, a UILayoutPlayer's layout) ship them, and a dialogue ships as written
+    /// with the layout and portraits it names.
+    @Test func dialoguesAndComponentPathsShip() throws {
+        let project = try TestProject()
+        let db = project.database
+        let box = try db.createUIBuild(UIBuild(), at: "UI/box.ui")
+        let hud = try db.createUIBuild(UIBuild(), at: "UI/hud.ui")
+        let dialogue = try db.createDialogue(try DialogueAsset.decode(Data("""
+            {"start": "hi", "uiLayout": "UI/box.ui", "speakers": [{"id": "guard", "portrait": "Textures/unused.png"}],
+             "nodes": [{"id": "hi", "type": "line", "speaker": "guard", "text": "Halt"}]}
+            """.utf8)), at: "Talk/guard.dialogue")
+        let road = try db.createPathBuild(PathBuild(points: [PathPoint(Vec3(0, 0, 0)), PathPoint(Vec3(0, 0, -10))]), at: "Roads/road.path")
+        let world = World()
+        world.spawn(Name("AssetPackTestsGuard"), Transform(), DialoguePlayer(dialogue: "Talk/guard.dialogue"))
+        world.spawn(Name("AssetPackTestsBus"), Transform(), PathFollower(path: "Assets/Roads/road.path"))
+        world.spawn(Name("AssetPackTestsHUD"), Transform(), UILayoutPlayer(layout: "UI/hud.ui"))
+        try write(try world.save(), to: db.project.url(forAssetPath: "Scenes/Talk.scene"))
+        db.scan()
+        let report = try project.cook(CookOptions(scenes: ["Scenes/Talk.scene"]))
+        let pack = try AssetPack(url: URL(fileURLWithPath: report.packPath))
+        #expect(pack.contains(dialogue) && pack.contains(road) && pack.contains(hud), "named by path in the scene")
+        #expect(pack.contains(box) && pack.contains(project.unused), "the dialogue's layout and portrait")
+        #expect(!pack.contains(project.texture), "only what is named")
+        // The dialogue reads back from the pack as written.
+        let mounted = AssetDatabase(mounting: pack)
+        #expect(mounted.dialogue(path: "Talk/guard.dialogue")?.uiLayout == "UI/box.ui")
+        #expect(report.warnings.isEmpty, "\(report.warnings)")
+    }
+
     @Test func shippingTextureSettings() {
         let importer = AnyAssetImporter(TextureImporter())
         func shipped(_ compression: TextureCompression, _ family: TextureFamily, _ mode: TextureCookMode = .compress) -> String? {

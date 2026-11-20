@@ -15,7 +15,7 @@ struct TilemapSettingsProxy: Component, Codable, Equatable {
          "tileWidth": FieldHints(range: 1...1024, step: 1), "tileHeight": FieldHints(range: 1...1024, step: 1),
          "pixelsPerUnit": FieldHints(range: 0...4096, step: 1, tooltip: "0: one tile is one world unit wide"),
          "chunkSize": FieldHints(range: 1...256, step: 1, tooltip: "Cells per chunk mesh / culling unit"),
-         "background": FieldHints(color: true, tooltip: "Shown behind the map here (alpha 0: none)"),
+         "background": FieldHints(color: true, srgb: true, tooltip: "Shown behind the map here (alpha 0: none)"),
          "filter": FieldHints(tooltip: "nearest keeps pixel art crisp")]
     }
     var columns = 40, rows = 22, tileWidth = 16, tileHeight = 16

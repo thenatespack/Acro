@@ -88,6 +88,8 @@ public struct TimelinePlayer: Component, Equatable, Sendable {
     var dialogues: [Entity] = []
     /// The entity whose conversation a `wait` dialogue key is holding the timeline for.
     var waitingOn: Entity?
+    /// `clearFade()` was called since the timeline last started: a finished `holdFade` timeline lets its fade go.
+    var fadeCleared = false
 
     enum Request: Equatable, Sendable {
         case play(from: Float?)
@@ -113,6 +115,10 @@ public struct TimelinePlayer: Component, Equatable, Sendable {
     public var isPlaying: Bool { state == .playing }
     /// True while a dialogue key with `wait` holds the timeline until its conversation ends.
     public var isWaitingForDialogue: Bool { waitingOn != nil }
+    /// The entity whose conversation a `wait` dialogue key holds the timeline for (nil: none).
+    public var waitingDialogue: Entity? { waitingOn }
+    /// The entities whose conversations this run's dialogue keys started (newest last).
+    public var startedDialogues: [Entity] { dialogues }
 
     /// Plays from `time` seconds (nil: from the start when stopped or finished, else carries on).
     /// Starting over (a time, or from stopped / finished) ends the sounds, effects and
@@ -127,6 +133,8 @@ public struct TimelinePlayer: Component, Equatable, Sendable {
     /// Moves the playhead without firing the keys in between (a stopped or finished player
     /// pauses there, posing the scene: scrubbing). Sounds, effects and conversations the timeline started stop.
     public mutating func seek(to time: Float) { request = .seek(time) }
+    /// Lets go of the fade a finished timeline holds (its file's `holdFade`); the next run fades again.
+    public mutating func clearFade() { fadeCleared = true }
 
     private enum CodingKeys: String, CodingKey { case timeline, playOnStart, speed, loop }
 
@@ -411,6 +419,7 @@ public final class TimelinePlayerSystem {
             p.request = nil
             switch request {
             case .play(let from):
+                p.fadeCleared = false
                 if from != nil || p.state == .stopped || p.state == .finished {
                     stopDialogues(&p)
                     despawnAll(&p)
@@ -482,7 +491,7 @@ public final class TimelinePlayerSystem {
         }
         if p.state != .stopped {
             // A finished timeline clears its fade unless the file says to hold it.
-            let clearsFade = p.state == .finished && !timeline.holdFade
+            let clearsFade = p.state == .finished && (!timeline.holdFade || p.fadeCleared)
             if clearsFade { world.remove(ScreenFade.self, from: entity) }
             TimelineEvaluator.pose(timeline, at: p.time, in: world, owner: entity, resolve: resolve, fades: !clearsFade)
         }

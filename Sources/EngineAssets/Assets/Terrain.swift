@@ -56,7 +56,7 @@ public struct TerrainLayer: Codable, Equatable, Sendable {
     public var material: String
 
     public static var fieldHints: [String: FieldHints] {
-        ["color": FieldHints(color: true), "texture": FieldHints(tooltip: "An image or .proctex under Assets/"),
+        ["color": FieldHints(color: true, srgb: true), "texture": FieldHints(tooltip: "An image or .proctex under Assets/"),
          "tileSize": FieldHints(range: 0.1...1000, step: 0.1, tooltip: "Meters per texture repeat"),
          "normalMap": FieldHints(tooltip: "A tangent-space normal map image or .proctex under Assets/"),
          "material": FieldHints(tooltip: "A graph .material under Assets/ drawn instead of the texture")]

@@ -117,10 +117,13 @@ public final class TreeView: RowListView {
     public var onSelect: ((TreeNode?) -> Void)?
     /// Called on double click / Enter on a leaf.
     public var onActivate: ((TreeNode) -> Void)?
+    /// When set, a double click on any row (after selecting it) calls this instead of renaming
+    /// or activating it; F2 and Enter still rename (the editor's hierarchy frames the entity).
+    public var onDoubleClick: ((TreeNode) -> Void)?
 
     /// Cmd/ctrl-click, shift-click and shift+arrows select several rows.
     public var allowsMultipleSelection = false
-    /// F2 / Enter / double click rename the selected row in place.
+    /// F2 / Enter / double click (unless `onDoubleClick` is set) rename the selected row in place.
     public var allowsRename = false
     /// Rows can be dragged to reparent or reorder them.
     public var allowsDragAndDrop = false
@@ -388,7 +391,7 @@ public final class TreeView: RowListView {
         press = nil
         if event.clickCount >= 2 && !additive && !ranged {
             applySelection([node], primary: node, anchor: node)
-            if allowsRename { beginRename(node) } else { rowActivated(row) }
+            if let onDoubleClick { onDoubleClick(node) } else if allowsRename { beginRename(node) } else { rowActivated(row) }
             return true
         }
         var collapseOnRelease = false

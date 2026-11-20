@@ -485,7 +485,7 @@ public enum UIClickCommand: EditorCommand {
 
     public static let id: CommandID = "ui.click"
     public static let title = "Click"
-    public static let doc = "Clicks a UI element (by `path`, `label` with optional `role` / `index`, or a `point`) as the user would: `button` right opens context menus, `count` 2 double-clicks (rename a tree row, open a folder), `modifiers` [\"shift\"] / [\"mod\"] extend selections. Returns the element, the focused element and any popup it opened with its items. A point on the 3D viewport picks like a click there."
+    public static let doc = "Clicks a UI element (by `path`, `label` with optional `role` / `index`, or a `point`) as the user would: `button` right opens context menus, `count` 2 double-clicks (frame a Hierarchy row's entity, open a folder), `modifiers` [\"shift\"] / [\"mod\"] extend selections. Returns the element, the focused element and any popup it opened with its items. A point on the 3D viewport picks like a click there."
     public static func isAvailable(in session: EditorSession) -> Bool { session.uiApp != nil }
     public static func unavailableReason(in session: EditorSession) -> String? { noUIReason }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> UIActionResult {

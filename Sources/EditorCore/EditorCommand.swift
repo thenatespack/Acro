@@ -255,6 +255,13 @@ public protocol EditorHost: AnyObject {
     /// Sets the UI theme (a `UITheme` preset name) and / or zoom when given, saves them to the
     /// prefs, and returns the appearance; nil when this host has no UI.
     func appearance(theme: String?, uiScale: Float?) throws -> EditorAppearance?
+    /// The Scene view's camera, or nil without a viewport.
+    var viewCamera: EditorCamera? { get }
+    /// Return to Origin (`view.home`): points the Scene view's camera at `pivot` (default: the
+    /// origin's home pivot) from the default angle and `distance`, and returns it; nil without a viewport.
+    func returnHome(pivot: Vec3?, distance: Float?) -> EditorCamera?
+    /// Opens the Go to Object search over the window (Cmd/Ctrl+G); false when this host has no UI.
+    func showGoToObject() -> Bool
 }
 
 /// The editor UI's theme and zoom (`view.appearance`).
@@ -278,6 +285,9 @@ extension EditorHost {
     public var frameStats: EditorStatsSnapshot? { nil }
     public func capture(_ request: ScreenshotRequest) -> CommandFuture<Image>? { nil }
     public func capture(world: World, views: [WorldCaptureView]) -> CommandFuture<[Image]>? { nil }
+    public var viewCamera: EditorCamera? { nil }
+    public func returnHome(pivot: Vec3?, distance: Float?) -> EditorCamera? { nil }
+    public func showGoToObject() -> Bool { false }
 }
 
 /// One picture for `EditorHost.capture(world:views:)`.

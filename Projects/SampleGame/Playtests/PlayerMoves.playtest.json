@@ -1,0 +1,25 @@
+{
+  "format" : "Acro.Playtest",
+  "name" : "Player walks with the keyboard and the gamepad, and jumps",
+  "scene" : "Scenes/Main.scene",
+  "steps" : [
+    {"note" : "One frame so the Player's visual script starts (its input actions are known from then on)."},
+    {"frames" : 1},
+    {"assert" : {"label" : "the player is in the scene", "entity" : "Player", "exists" : true}},
+    {"assert" : {"label" : "the player starts at the origin of its lane", "entity" : "Player", "field" : "position", "near" : [0, 0.3, 2]}},
+    {"assert" : {"label" : "no jumps yet", "entity" : "Player", "variable" : "jumps", "equals" : 0}},
+    {"note" : "Hold right (the D key) for a second at 2 m/s while tapping jump."},
+    {"action" : "right", "duration" : 1},
+    {"action" : "jump"},
+    {"frames" : 90},
+    {"assert" : {"label" : "walked about two meters right", "entity" : "Player", "field" : "position.x", "min" : 1.9, "max" : 2.1}},
+    {"assert" : {"label" : "jump counted once", "entity" : "Player", "variable" : "jumps", "equals" : 1}},
+    {"note" : "Push the virtual gamepad's left stick fully left for half a second: about one meter back."},
+    {"action" : "left", "value" : 1, "duration" : 0.5},
+    {"frames" : 60},
+    {"assert" : {"label" : "came back about a meter with the stick", "entity" : "Player", "field" : "position.x", "near" : [1], "tolerance" : 0.1}},
+    {"assert" : {"label" : "stayed in its lane", "entity" : "Player", "field" : "position.z", "near" : [2]}},
+    {"assert" : {"label" : "one scripted entity", "count" : {"component" : "VisualScript"}, "equals" : 1}}
+  ],
+  "version" : 1
+}

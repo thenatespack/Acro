@@ -18,9 +18,12 @@ public enum BuiltinCommands {
         PlayStartCommand.self, PlayStopCommand.self, PlayToggleCommand.self, PlayPauseCommand.self, PlayStepCommand.self,
         PlaySetTimeScaleCommand.self, PlayStateCommand.self, ViewGameCameraCommand.self,
         InputInjectCommand.self, InputClearCommand.self, InputStateCommand.self,
+        InputActionCommand.self, InputGamepadCommand.self, InputActionsCommand.self,
+        PlaytestStartCommand.self, PlaytestAssertCommand.self, PlaytestResultCommand.self, PlaytestSaveCommand.self,
+        PlaytestStopCommand.self, PlaytestRunCommand.self,
         ToolSetCommand.self, ToolSnappingCommand.self,
         ProjectOpenCommand.self, ProjectNewCommand.self, ProjectCloseCommand.self,
-        LayoutResetCommand.self, ViewAppearanceCommand.self, ViewFrameSelectionCommand.self,
+        LayoutResetCommand.self, ViewAppearanceCommand.self, ViewFrameSelectionCommand.self, ViewHomeCommand.self, ViewGoToCommand.self,
         ViewScreenshotCommand.self, ViewPickCommand.self, SceneRaycastCommand.self,
         SelectionSetCommand.self, SelectionClearCommand.self, SelectionGetCommand.self,
         SceneHierarchyCommand.self, EntityFindCommand.self, EntityGetCommand.self,
@@ -31,7 +34,7 @@ public enum BuiltinCommands {
         AssetMoveCommand.self, AssetDeleteCommand.self, AssetExtractMaterialsCommand.self, AssetApplySettingsCommand.self,
         AssetInstantiateCommand.self, AssetAssignCommand.self, MaterialSetCommand.self,
         AssetListCommand.self, AssetGetCommand.self, AssetReimportCommand.self, AssetWaitForImportsCommand.self,
-        AssetSelectCommand.self, MaterialGetCommand.self,
+        AssetSelectCommand.self, MaterialGetCommand.self, BuilderSelectCommand.self,
         PrefabCreateCommand.self, PrefabOverridesCommand.self, PrefabApplyCommand.self, PrefabRevertCommand.self,
         PrefabUnpackCommand.self, PrefabCreateVariantCommand.self,
         LogReadCommand.self, StatsGetCommand.self, DiagnosticsGetCommand.self,
@@ -51,6 +54,8 @@ extension CommandID {
     public static let duplicate: CommandID = "entity.duplicate"
     public static let delete: CommandID = "entity.delete"
     public static let focusSelection: CommandID = "view.frameSelection"
+    public static let returnHome: CommandID = "view.home"
+    public static let goToObject: CommandID = "view.goTo"
     public static let clearSelection: CommandID = "selection.clear"
     public static let togglePlay: CommandID = "play.toggle"
     public static let togglePause: CommandID = "play.pause"
@@ -917,7 +922,7 @@ package func hasProject(_ session: EditorSession) -> Bool { session.assets != ni
 // Why commands are unavailable (`EditorCommand.unavailableReason(in:)`).
 package let noProjectReason = "no project is open (run project.open or project.new first)"
 let noSelectionReason = "nothing is selected (run selection.set first)"
-private let noWindowReason = "it needs the editor window (the editor is running headless)"
+let noWindowReason = "it needs the editor window (the editor is running headless)"
 
 public enum AssetImportCommand: EditorCommand {
     public struct Arguments: Codable, Equatable, Sendable {

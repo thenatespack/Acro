@@ -262,6 +262,9 @@ public final class EditorSession {
     public let gameInput = Input()
     /// Scripted input for `gameInput`, over game time; a new one each play session.
     public private(set) var inputPlayer = InputPlayer()
+    /// The playtest session (EditorPlaytestCommands.swift): input actions and the virtual
+    /// gamepad, assertions and the recording. Play drops it; `playtest.start` makes one.
+    public internal(set) var playtest: PlaytestDriver?
     private var forwardedInput: [InputEvent] = []
     /// Whether play happens in the Game view (`view.gameCamera`): Play brings the Game tab to the
     /// front and the game gets the keyboard and mouse; off, the Scene view keeps them. On by default.
@@ -606,6 +609,7 @@ public final class EditorSession {
         gameInput.reset()
         inputPlayer = InputPlayer()
         forwardedInput.removeAll()
+        playtest = nil
         gameModule.context.scene = document.url.map { project?.assetPath(for: $0) ?? $0.path }
         _ = gameModule.context.takePendingScene()
         addPlaySystems()
@@ -616,6 +620,8 @@ public final class EditorSession {
     public func stop() {
         guard isPlaying, let snapshot = playSnapshot else { return }
         onWillReplaceWorld?()
+        playtest?.stopRecording()
+        playtest?.discardScheduledInput()
         endNetPlay(reason: nil)
         removePlaySystems()
         world.restore(snapshot)
@@ -689,6 +695,7 @@ public final class EditorSession {
         for event in forwardedInput { gameInput.inject(event) }
         forwardedInput.removeAll()
         inputPlayer.apply(to: gameInput)
+        playtest?.applyFrameInput(to: gameInput)
         gameInput.endEvents()
         visualScriptStep = nil
         world.update(dt: dt)

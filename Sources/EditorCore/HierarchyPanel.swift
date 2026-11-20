@@ -2,8 +2,8 @@ import Engine
 
 /// The hierarchy panel: a `TreeView` mirroring the world's entity tree (roots in `world.roots`
 /// order, children in sibling order, titled by `Name` or "Entity <id>"), bound to the
-/// `EditorSelection` in both directions (`selection.set`). Rename in place (F2 / double click)
-/// runs `entity.rename`; drag and drop runs `entity.reparent`, which keeps world transforms; the
+/// `EditorSelection` in both directions (`selection.set`). Double-clicking a row frames that
+/// entity in the Scene view (`view.frameSelection`); rename in place (F2) runs `entity.rename`; drag and drop runs `entity.reparent`, which keeps world transforms; the
 /// buttons run `entity.create`, `entity.duplicate` and `entity.delete`, enabled by their availability.
 /// With a project open and an entity selected, the Create menu also has the prefab actions for
 /// the primary selection: Create Prefab (`prefab.create`), and for an entity of a prefab instance
@@ -64,7 +64,7 @@ public final class HierarchyPanel {
         createButton.command = EntityCreateCommand.id.rawValue
         duplicateButton.command = EntityDuplicateCommand.id.rawValue
         deleteButton.command = EntityDeleteCommand.id.rawValue
-        // Rows select (rename: F2 or a double click, entity.rename; drag: entity.reparent);
+        // Rows select (double click: frame it, view.frameSelection; rename: F2, entity.rename; drag: entity.reparent);
         // the triangles only show or hide children.
         tree.itemCommands = ["row": SelectionSetCommand.id.rawValue, "toggle": SceneHierarchyCommand.id.rawValue]
         tree.command = EntityRenameCommand.id.rawValue  // its rename field
@@ -81,6 +81,11 @@ public final class HierarchyPanel {
         view.addChildren([buttons, tree])
 
         tree.onSelectionChange = { [unowned self] _ in pushSelectionFromTree() }
+        tree.onDoubleClick = { [unowned self] node in
+            guard let id = node.userData as? EntityID else { return }
+            pushSelectionFromTree()
+            session.run(ViewFrameSelectionCommand.self, .init(entities: [id]))
+        }
         tree.onSelect = { [unowned self] _ in pushSelectionFromTree() }
         tree.onRename = { [unowned session] node, title in
             guard let id = node.userData as? EntityID else { return false }

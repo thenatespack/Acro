@@ -110,6 +110,7 @@ enum VisualScriptEngineNodes {
         VisualScriptTimelineNodes.register()
         VisualScriptBehaviorNodes.register()
         VisualScriptUINodes.register()
+        VisualScriptBuilderLinkNodes.register()
         VisualScriptNodes.addProvider("engine.sprites") {
             VisualScriptNodes.register(VisualScriptNodeDefinition(
                 id: "event.spriteEvent", title: "On Sprite Event", category: "Events",
@@ -141,6 +142,7 @@ enum VisualScriptEngineNodes {
         VisualScriptTimelineNodes.addEventSource(to: runtime)
         VisualScriptBehaviorNodes.addEventSource(to: runtime)
         VisualScriptUINodes.addEventSource(to: runtime)
+        VisualScriptBuilderLinkNodes.addEventSource(to: runtime)
         runtime.addEventSource("engine.sprites") { runtime in
             guard runtime.world.count(of: SpriteAnimator.self) > 0 else { return }
             var fired: [(Entity, [String], String?)] = []
