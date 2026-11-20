@@ -630,6 +630,13 @@ materials on terrain layers and decals, retargeted glTF character clips and one 
 Still open: Visual Script nodes for `PathFollower`, `world.gameUI`, `world.findPath`, timeline
 `holdFade` and dialogue keys, and `DialoguePlayer.uiLayout`.
 
+Agent playtesting (docs/Playtesting.md) checks builders' demo scenes and templates: record a
+session with `playtest.start` … `playtest.save`, commit the `.playtest.json` next to the project
+and run `GameRunner <module | none> --playtest <folder>` in CI. `input.action` presses the input
+actions visual script graphs declare (`actions`), so graphs that read input should declare them
+rather than read keys directly. Not done yet: screenshots in headless runs (nothing renders), image
+assertions, and recording edits made to the live world (`component.setField`).
+
 Engine gaps the builders ran into:
 
 - 2D physics reads each collider's own `Transform` and ignores parents, so a placed tilemap

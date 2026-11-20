@@ -14,6 +14,9 @@ import Foundation
 // view.screenshot {source: "game"}
 // play.stop                                             // the scene is back, byte for byte
 // ```
+//
+// Input actions by name, a virtual gamepad, assertions and recorded playtests are in
+// EditorPlaytestCommands.swift (`input.action`, `input.gamepad`, `playtest.*`).
 
 /// Play mode's state, which the play and input commands return.
 public struct PlayStateResult: Codable, Equatable, Sendable {
@@ -111,6 +114,9 @@ public enum PlayStepCommand: EditorCommand {
     public static func unavailableReason(in session: EditorSession) -> String? { notPlaying }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> PlayStateResult {
         if let dt = arguments.dt, !(dt > 0 && dt <= 1) { throw CommandError.failed("`dt` must be in (0, 1] seconds") }
+        // A recording playtest gets the frames that ran before (real time) and these, at their dt.
+        session.playtest?.syncFrames()
+        defer { session.playtest?.noteFrames(dt: arguments.dt) }
         guard let condition = arguments.until else {
             if arguments.maxFrames != nil { throw CommandError.failed("`maxFrames` goes with `until`; use `frames`") }
             let frames = arguments.frames ?? 1
@@ -243,6 +249,7 @@ public enum InputInjectCommand: EditorCommand {
         }
         do {
             let seconds = try session.inputPlayer.enqueue(arguments.steps)
+            session.playtest?.record(PlaytestStep(input: arguments.steps, replace: arguments.replace))
             return Result(seconds: seconds, state: session.playStateResult)
         } catch {
             throw CommandError.failed("Inject Input: \(error)")
@@ -253,12 +260,16 @@ public enum InputInjectCommand: EditorCommand {
 public enum InputClearCommand: EditorCommand {
     public static let id: CommandID = "input.clear"
     public static let title = "Clear Input"
-    public static let doc = "Drops scheduled input and releases every injected key and button."
+    public static let doc = "Drops scheduled input (input.inject's, input.action's and input.gamepad's) and releases every injected key and button and the virtual gamepad."
     public static let isIdempotent = true
     public static func unavailableReason(in session: EditorSession) -> String? { nil }
     public static func run(_ arguments: NoArguments, in session: EditorSession) throws -> PlayStateResult {
         session.inputPlayer.clear()
         session.gameInput.releaseInjected()
+        if let playtest = session.playtest, session.isPlaying {
+            playtest.clearScheduledInput()
+            playtest.record(PlaytestStep(clearInput: true))
+        }
         return session.playStateResult
     }
 }

@@ -9,12 +9,16 @@ import Foundation
 // assets: placed models, characters and their clips, animation graphs). `--server` runs it headless as a UDP server
 // and `--connect host:port` as a client of one (NetRun.swift). `--check` only loads it and
 // checks that it shares this process's Engine, then exits (no window: CI uses it).
+// `--playtest <file | folder>` replays recorded playtests headless and exits non-zero when one
+// fails; `--mcp` serves the scene headless to an MCP client for agent playtesting (Playtest.swift).
 
 let usage = """
     Usage: GameRunner <target | module.dylib> [scene.json] [--package <folder>] [--no-build] [--backend metal|vulkan]
            GameRunner <target | module.dylib> [scene.json] --server [--port 7777] [--host 0.0.0.0]
            GameRunner <target | module.dylib> [scene.json] --connect <host:port> [--headless]
            GameRunner <target | module.dylib> --check
+           GameRunner <target | module.dylib | none> [scene.json] --playtest <file.playtest.json | folder> [--playtest …] [--report <out.json>]
+           GameRunner <target | module.dylib | none> <scene.json> --mcp
       Networked runs: [--duration <seconds>] [--replicate auto|all|marked]
            GameRunner --version
     """
@@ -38,6 +42,9 @@ var headless = false
 var check = false
 var duration: Double?
 var replication = "auto"
+var playtests: [String] = []
+var reportPath: String?
+var mcp = false
 var arguments = Array(CommandLine.arguments.dropFirst())
 @MainActor func value(_ option: String) -> String {
     guard !arguments.isEmpty else { fail("\(option) needs a value") }
@@ -78,6 +85,12 @@ while !arguments.isEmpty {
     case "--replicate":
         replication = value("--replicate")
         guard ["auto", "all", "marked"].contains(replication) else { fail("--replicate is auto, all or marked") }
+    case "--playtest":
+        playtests.append(value("--playtest"))
+    case "--report":
+        reportPath = value("--report")
+    case "--mcp":
+        mcp = true
     case "--version":
         print(EngineVersion.displayName)
         exit(0)
@@ -93,6 +106,12 @@ guard let moduleArgument = positional.first else { fail(usage) }
 let scenePath = positional.dropFirst().first
 if server && connect != nil { fail("--server and --connect exclude each other") }
 if headless && connect == nil { fail("--headless goes with --connect (--server is always headless)") }
+if (mcp || !playtests.isEmpty) && (server || connect != nil || check) { fail("--playtest and --mcp run alone (not with --server, --connect or --check)") }
+if mcp && !playtests.isEmpty { fail("--mcp and --playtest exclude each other") }
+if mcp && scenePath == nil { fail("--mcp needs a scene file") }
+if reportPath != nil && playtests.isEmpty { fail("--report goes with --playtest") }
+// The MCP client reads standard output: claim it before anything prints.
+let mcpOutput = mcp ? PlaytestMCP.claimStandardOutput() : nil
 
 /// Loads the module: builds and links a target, or loads a library file.
 @MainActor func loadModule() throws -> LoadedGameModule {
@@ -134,22 +153,7 @@ if headless && connect == nil { fail("--headless goes with --connect (--server i
 
     /// The file for a scene path game code asked for.
     static func resolve(_ path: String, from start: URL) -> URL {
-        let fm = FileManager.default
-        let expanded = (path as NSString).expandingTildeInPath
-        if expanded.hasPrefix("/") || fm.fileExists(atPath: expanded) { return URL(fileURLWithPath: expanded) }
-        var candidates: [URL] = []
-        var folder = start.deletingLastPathComponent().standardizedFileURL
-        candidates.append(folder.appendingPathComponent(path))
-        // Up to the project: "Scenes/Level2.scene" is relative to Assets/, "Assets/…" to its parent.
-        while folder.path != "/" {
-            if folder.lastPathComponent == "Assets" {
-                candidates.append(folder.appendingPathComponent(path))
-                candidates.append(folder.deletingLastPathComponent().appendingPathComponent(path))
-                break
-            }
-            folder = folder.deletingLastPathComponent()
-        }
-        return candidates.first { fm.fileExists(atPath: $0.path) } ?? candidates[0]
+        PlaytestHeadlessHost.resolve(path, from: start)
     }
 
     func setup(engine: Engine) throws {
@@ -188,11 +192,14 @@ if headless && connect == nil { fail("--headless goes with --connect (--server i
 
 MainActor.assumeIsolated {
     do {
-        let loaded = try loadModule()
-        let module = loaded.module
+        // "none": no game code, only the engine's play systems (visual scripts, physics…).
+        let loaded = moduleArgument == "none" ? nil : try loadModule()
+        let module = loaded?.module ?? GameModule()
+        if loaded == nil { module.name = "none" }
         // Scenes name components by their registered names.
         for component in module.components { ComponentRegistry.register(component.type) }
-        ComponentRegistry.register(Spin.self, FieldAnimator.self, LightFlicker.self, CameraPath.self, TimelinePlayer.self, TilemapMotion.self, PathFollower.self, UILayoutPlayer.self)
+        ComponentRegistry.register(Spin.self, FieldAnimator.self, LightFlicker.self, CameraPath.self, TimelinePlayer.self, TilemapMotion.self, PathFollower.self, UILayoutPlayer.self,
+                                   VisualScript.self)
         SkeletalAnimation.registerComponents()  // MeshRenderer, Skin, Animator: placed models and characters
         print("Loaded \(module.name): \(module.componentNames.joined(separator: ", "))")
         if check {
@@ -213,7 +220,14 @@ MainActor.assumeIsolated {
                 }
             }
             guard problems.isEmpty else { fail("Check failed:\n" + problems.joined(separator: "\n")) }
-            print("Check passed: \(module.components.count) components, ABI \(GameModuleABI.version).\(module.abiMinorVersion), loaded from \(loaded.loadedURL.lastPathComponent)")
+            print("Check passed: \(module.components.count) components, ABI \(GameModuleABI.version).\(module.abiMinorVersion), loaded from \(loaded?.loadedURL.lastPathComponent ?? "nothing")")
+            exit(0)
+        }
+        if !playtests.isEmpty {
+            exit(PlaytestRun.run(module: module, scenePath: scenePath, playtests: playtests, reportPath: reportPath))
+        }
+        if let mcpOutput, let scenePath {
+            try PlaytestRun.serve(module: module, sceneURL: URL(fileURLWithPath: scenePath), output: mcpOutput)
             exit(0)
         }
         let sceneURL = scenePath.map { URL(fileURLWithPath: $0) }

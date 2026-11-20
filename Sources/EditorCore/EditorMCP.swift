@@ -111,7 +111,11 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
         asset thumbnail) and point at it with view.pick (a pixel of a screenshot) or scene.raycast. Playtest with \
         play.start {paused: true}, input.inject (keys, mouse, text over game time; the KeyboardMover component \
         walks with WASD), play.step {frames} (deterministic), view.screenshot {source: "game"} and play.stop, which \
-        restores the scene; while playing the entity tools read and edit the live world. Entities are \
+        restores the scene; while playing the entity tools read and edit the live world. For a playtest that \
+        can be checked again: playtest.start (plays paused from frame 0, recording), input.action by input action \
+        name (input.actions lists them) or input.gamepad, playtest.assert (pass / fail collected in \
+        playtest.result), playtest.save {path} (a .playtest.json file), then playtest.run or \
+        `GameRunner <module> --playtest <file>` replays it with its assertions. Entities are \
         named by 32-hex-digit ids, assets by "asset:<id>[#<object>]" references or paths under Assets/; vectors \
         are [x, y, z] arrays and rotations quaternions [x, y, z, w].
         """

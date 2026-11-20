@@ -233,6 +233,33 @@
       },
       "id" : 7,
       "uid" : "119cbe94557081759d91b5bfaca2ba51"
+    },
+    {
+      "components" : {
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "isVisible" : true,
+          "material" : "asset:490953ec4cc876c0e12e146c9e9bc49c#material",
+          "mesh" : "cube",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [1, 0.55, 0.2]
+        },
+        "Name" : {
+          "value" : "Player"
+        },
+        "Transform" : {
+          "position" : [0, 0.3, 2],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [0.4, 0.4, 0.4]
+        },
+        "VisualScript" : {
+          "enabled" : true,
+          "graph" : "Scripts/Player.vscript"
+        }
+      },
+      "id" : 8,
+      "uid" : "7a1c3e9b52d84f06a9e1b2c3d4e5f601"
     }
   ],
   "format" : "Acro.Scene",

@@ -101,6 +101,8 @@ New projects come with this already set up: a `.mcp.json` at the project root th
 
 The [MCP tool reference](docs/MCPTools.md) lists every tool with its parameters.
 
+An agent can also playtest the game: press input actions, step frames, check the world and save the session as a playtest file that replays in the editor or headless in CI (`GameRunner <module> --playtest <file>`). See [Playtesting with an agent](docs/Playtesting.md).
+
 ## Make a game
 
 A game is a type that conforms to `Game`. The engine calls `setup` once, `update` every frame, and `render` to record the screen pass. Use `renderOffscreen` for work such as shadow maps.
@@ -262,6 +264,7 @@ Other guides in this repository:
 
 - [Builder tools](docs/Builders.md)
 - [Editor MCP tools](docs/MCPTools.md)
+- [Playtesting with an agent](docs/Playtesting.md)
 - [Networking design and implementation](docs/Networking.md)
 - [Scripting options and measurements](docs/Scripting.md)
 - [Cross-platform notes](docs/cross-plat.md)
