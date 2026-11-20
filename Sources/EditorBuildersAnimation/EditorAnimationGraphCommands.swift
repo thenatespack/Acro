@@ -31,7 +31,12 @@ public enum EditorAnimationGraphCommands {
         value}], exitTime (normalized time of the source state, e.g. 0.9), duration (crossfade seconds), canTransitionToSelf}] \
         (checked in order, the first that applies fires), `layers` [{name, clip, weight, speed, referenceTime, blend additive|override \
         (override replaces the bones the clip animates), mask [bone names: the layer only touches their subtrees]}], \
-        `initialState`. A state with `machine` {states, transitions, initialState} instead of a clip is a sub-state machine: \
+        `initialState`, `ik` [{name, type twoBoneIK|aim|chainIK|footPlacement, bones (twoBoneIK: root, middle, end; aim and \
+        chainIK: root to tip), weight 0-1, weightParameter (a float multiplying the weight), target [x,y,z] (world) or \
+        targetEntity (an entity's Name), pole [x,y,z] (twoBoneIK: the way the middle joint bends, character space), aimAxis \
+        (aim: the last bone's axis that points, default [0,0,1]), maxAngle (aim, degrees per bone), iterations / tolerance \
+        (chainIK), legs [[hip, knee, ankle]…] and pelvis (footPlacement: rays against physics, the pelvis drops, feet align \
+        and lock), rayHeight, maxStep, alignFeet, lockFeet}] run in order after the states and layers. A state with `machine` {states, transitions, initialState} instead of a clip is a sub-state machine: \
         entering it enters its initial state, its own transitions leave from any state inside, and transitions inside may go to \
         states outside it by name (edit inside with animGraph.edit `level`). Clips are imported glTF clips: "asset:<id>#animation/<name>" or "Models/hero.glb#animation/Walk" (paths \
         are turned into references). Put it on a model with animGraph.assign; scene animators follow the file when it changes.
@@ -87,6 +92,13 @@ extension EditorSession {
             for layer in graph.layers {
                 for bone in layer.mask ?? [] where Animator.maskTargets([bone], in: skeleton).isEmpty {
                     problems.append("layer '\(layer.name)' masks bone '\(bone)', which the preview model doesn't have")
+                }
+            }
+            // IK bones the preview model doesn't have.
+            let names = Set(skeleton.names)
+            for node in graph.ik {
+                for bone in node.allBones where !names.contains(bone) {
+                    problems.append("IK node '\(node.name)' uses bone '\(bone)', which the preview model doesn't have")
                 }
             }
         }
@@ -191,6 +203,8 @@ public struct AnimGraphResult: Codable, Equatable, Sendable {
     public var transitions: [String]
     public var parameters: [String]
     public var layers: [String]
+    /// IK node names, in order (nil: none).
+    public var ik: [String]?
     public var initialState: String?
     /// Problems: unknown states or parameters, wrong parameter types, missing clips…
     public var warnings: [String]
@@ -208,6 +222,7 @@ extension AnimGraphResult {
         self.init(asset: id, path: session.assets?.path(of: id) ?? "", states: shown.states.map(\.name),
                   transitions: shown.transitions.enumerated().map { "\($0.offset): \($0.element.from ?? "*") -> \($0.element.to)" },
                   parameters: graph.parameters.map { "\($0.name) (\($0.type.rawValue))" }, layers: graph.layers.map(\.name),
+                  ik: graph.ik.isEmpty ? nil : graph.ik.map { "\($0.name) (\($0.type.rawValue))" },
                   initialState: shown.initialState ?? shown.states.first?.name,
                   warnings: session.animationGraphProblems(graph) + (record?.importError.map { ["import failed: \($0)"] } ?? []),
                   machines: machines.isEmpty ? nil : machines,
@@ -360,12 +375,22 @@ public enum AnimGraphEditCommand: EditorCommand {
         /// The sub-state machine whose states, transitions and initial state the edits address, as a path of
         /// state names ("Combat", "Combat/Ranged"); default the top level.
         public var level: String?
+        /// IK nodes to remove by name.
+        public var removeIK: [String]?
+        /// IK nodes to add (appended; a taken name gets " 2"…): {name, type, bones, weight, weightParameter, target, …}.
+        public var addIK: [AnimationIKNode]?
+        /// Changes to IK nodes: name → fields.
+        public var updateIK: [String: JSONValue]?
         public init(asset: AssetReference? = nil, path: String? = nil, removeTransitions: [Int]? = nil, removeStates: [String]? = nil,
                     removeParameters: [String]? = nil, removeLayers: [String]? = nil, parameters: [AnimationGraphParameter]? = nil,
                     addStates: [AnimationGraphState]? = nil, updateStates: [String: JSONValue]? = nil,
                     addTransitions: [AnimationGraphTransition]? = nil, updateTransitions: [String: JSONValue]? = nil,
                     addLayers: [AnimationGraphLayer]? = nil, updateLayers: [String: JSONValue]? = nil, initialState: String? = nil,
-                    preview: String? = nil, retarget: AnimationRetargetOptions? = nil, removeRetarget: Bool? = nil, level: String? = nil) {
+                    preview: String? = nil, retarget: AnimationRetargetOptions? = nil, removeRetarget: Bool? = nil, level: String? = nil,
+                    removeIK: [String]? = nil, addIK: [AnimationIKNode]? = nil, updateIK: [String: JSONValue]? = nil) {
+            self.removeIK = removeIK
+            self.addIK = addIK
+            self.updateIK = updateIK
             self.asset = asset
             self.path = path
             self.removeTransitions = removeTransitions
@@ -389,7 +414,7 @@ public enum AnimGraphEditCommand: EditorCommand {
 
     public static let id: CommandID = "animGraph.edit"
     public static let title = "Edit Animation Graph"
-    public static let doc = "Changes part of an .animgraph file in one undoable step, in this order: removeTransitions (indices), removeStates, removeParameters, removeLayers, parameters (add or replace by name), addStates, updateStates (name → fields; \"name\" renames everywhere), addTransitions, updateTransitions (index → fields), addLayers, updateLayers, initialState, preview, retarget / removeRetarget. With `level` (a sub-state machine's path, e.g. \"Combat\"), the state and transition edits and initialState apply inside that machine, and its transitions may also go to states of enclosing levels (by name). Clip paths become asset references. Returns the states, numbered transitions, parameters and problems. " + EditorAnimationGraphCommands.formatDoc
+    public static let doc = "Changes part of an .animgraph file in one undoable step, in this order: removeTransitions (indices), removeStates, removeParameters, removeLayers, parameters (add or replace by name), addStates, updateStates (name → fields; \"name\" renames everywhere), addTransitions, updateTransitions (index → fields), addLayers, updateLayers, initialState, preview, retarget / removeRetarget, removeIK, addIK, updateIK (name → fields). With `level` (a sub-state machine's path, e.g. \"Combat\"), the state and transition edits and initialState apply inside that machine, and its transitions may also go to states of enclosing levels (by name). Clip paths become asset references. Returns the states, numbered transitions, parameters and problems. " + EditorAnimationGraphCommands.formatDoc
     public static let isUndoable = true
     public static func isAvailable(in session: EditorSession) -> Bool { hasProject(session) }
     public static func unavailableReason(in session: EditorSession) -> String? { noProjectReason }
@@ -494,6 +519,22 @@ public enum AnimGraphEditCommand: EditorCommand {
         if let preview = arguments.preview { graph.preview = preview.isEmpty ? nil : preview }
         if arguments.removeRetarget == true { graph.retarget = nil }
         if let retarget = arguments.retarget { graph.retarget = retarget }
+        for name in arguments.removeIK ?? [] {
+            guard graph.ik.contains(where: { $0.name == name }) else { throw CommandError.failed("No IK node named \(name)") }
+            graph.ik.removeAll { $0.name == name }
+        }
+        for var node in arguments.addIK ?? [] {
+            node.name = graph.uniqueIKName(node.name)
+            graph.ik.append(node)
+        }
+        for (name, changes) in (arguments.updateIK ?? [:]).sorted(by: { $0.key < $1.key }) {
+            guard let index = graph.ik.firstIndex(where: { $0.name == name }) else { throw CommandError.failed("No IK node named \(name)") }
+            let updated = try merged(graph.ik[index], with: changes, "updateIK[\(name)]")
+            if updated.name != name, graph.ik.contains(where: { $0.name == updated.name }) {
+                throw CommandError.failed("An IK node is already named \(updated.name)")
+            }
+            graph.ik[index] = updated
+        }
         return graph
     }
 }

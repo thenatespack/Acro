@@ -16,7 +16,9 @@ import EngineScene
 //   "colors": {"body": [0.8, 0.2, 0.2], "legs": [0.2, 0.2, 0.25]},
 //   "attachments": [
 //     {"name": "Sword", "bone": "hand.R", "asset": "Models/Sword.meshbuild", "rotation": [90, 0, 0]}
-//   ]
+//   ],
+//   "ragdoll": {"bones": [{"bone": "lowerLeg.L", "maxAngle": 120}]},
+//   "ik": {"footPlacement": true, "lookAt": true, "lookTarget": "Player"}
 // }
 // ```
 //
@@ -371,11 +373,15 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
     public var smooth: Bool
     /// Slices around the round body shapes (6...32): lower is chunkier and lighter.
     public var segments: Int
+    /// A `Ragdoll` on the prefab (bodies sized from the body shapes; CharacterRagdoll.swift); nil: none.
+    public var ragdoll: CharacterRagdoll?
+    /// IK nodes on the `Animator` (foot placement, look at, hand reach); nil: none.
+    public var ik: CharacterIK?
 
     public init(template: CharacterTemplate = .humanoid, proportions: CharacterProportions = CharacterProportions(),
                 colors: CharacterColors = CharacterColors(), attachments: [CharacterAttachment] = [],
                 clips: [String] = CharacterClips.stockNames, externalClips: [CharacterExternalClip] = [], defaultClip: String = "idle",
-                smooth: Bool = true, segments: Int = 12) {
+                smooth: Bool = true, segments: Int = 12, ragdoll: CharacterRagdoll? = nil, ik: CharacterIK? = nil) {
         self.template = template
         self.proportions = proportions
         self.colors = colors
@@ -385,9 +391,11 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
         self.defaultClip = defaultClip
         self.smooth = smooth
         self.segments = segments
+        self.ragdoll = ragdoll
+        self.ik = ik
     }
 
-    private enum CodingKeys: String, CodingKey { case template, proportions, colors, attachments, clips, defaultClip, smooth, segments }
+    private enum CodingKeys: String, CodingKey { case template, proportions, colors, attachments, clips, defaultClip, smooth, segments, ragdoll, ik }
 
     /// A `clips` entry: a stock name, or a clip from another asset.
     private enum ClipEntry: Decodable {
@@ -415,7 +423,9 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
                   externalClips: entries.map { $0.compactMap { if case .external(let clip) = $0 { clip } else { nil } } } ?? [],
                   defaultClip: try c.decodeIfPresent(String.self, forKey: .defaultClip) ?? d.defaultClip,
                   smooth: try c.decodeIfPresent(Bool.self, forKey: .smooth) ?? d.smooth,
-                  segments: try c.decodeIfPresent(Int.self, forKey: .segments) ?? d.segments)
+                  segments: try c.decodeIfPresent(Int.self, forKey: .segments) ?? d.segments,
+                  ragdoll: try c.decodeIfPresent(CharacterRagdoll.self, forKey: .ragdoll),
+                  ik: try c.decodeIfPresent(CharacterIK.self, forKey: .ik))
     }
 
     /// `clips` holds the stock names, then the external clips' objects.
@@ -431,6 +441,8 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
         try c.encode(defaultClip, forKey: .defaultClip)
         try c.encode(smooth, forKey: .smooth)
         try c.encode(segments, forKey: .segments)
+        try c.encodeIfPresent(ragdoll, forKey: .ragdoll)
+        try c.encodeIfPresent(ik, forKey: .ik)
     }
 
     public func fileData() throws -> Data { try AssetJSON.encode(self) }
@@ -497,6 +509,24 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
         }
         if !clipNames.isEmpty && !clipNames.contains(defaultClip) {
             problems.append("defaultClip '\(defaultClip)' isn't one of the clips; the Animator starts in '\(clipNames[0])'")
+        }
+        if let ragdoll {
+            let bodies = Set(rig.ragdollBones().map(\.bone))
+            var seenBones = Set<String>()
+            for o in ragdoll.bones {
+                if !seenBones.insert(o.bone).inserted { problems.append("ragdoll: two entries for bone '\(o.bone)'") }
+                if !bodies.contains(o.bone) {
+                    problems.append("ragdoll: '\(o.bone)' has no body (bodies: \(rig.ragdollBones().map(\.bone).joined(separator: ", ")))")
+                }
+                if let r = o.radius, !(r > 0) { problems.append("ragdoll '\(o.bone)': radius must be above 0") }
+                if let lo = o.minAngle, let hi = o.maxAngle, lo > hi { problems.append("ragdoll '\(o.bone)': minAngle \(lo) is above maxAngle \(hi)") }
+                if let swing = o.swing, !(0...180).contains(swing) { problems.append("ragdoll '\(o.bone)': swing \(swing) is outside 0...180") }
+            }
+            if let m = ragdoll.mass, !(m > 0) { problems.append("ragdoll: mass must be above 0") }
+        }
+        if let ik {
+            if ik.footPlacement && rig.ikLegs == nil { problems.append("ik: the \(template.rawValue) template has no legs for footPlacement") }
+            if ik.handIK && rig.ikArms.isEmpty { problems.append("ik: the \(template.rawValue) template has no arms for handIK") }
         }
         let p = proportions
         for name in CharacterProportions.names {

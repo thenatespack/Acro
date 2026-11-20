@@ -61,7 +61,7 @@ public enum BuilderSelectCommand: EditorCommand {
         (check them with ui.snapshot or view.screenshot): `panel` names the tab (panel id or title; default: the builder tab \
         in front), `item` what to select ("" clears; leave it out to just read). Returns the selection and every selectable \
         item. Items: Mesh Builder parts by name; Animation Graph "state:<name>", "transition:<index>", "anyState", \
-        "parameter:<name>", "layer:<name>"; Behavior Tree, Dialogue and Visual Script nodes by id. Open the file first \
+        "parameter:<name>", "layer:<name>", "ik:<name>"; Behavior Tree, Dialogue and Visual Script nodes by id. Open the file first \
         (meshBuild.open, animGraph.open…). Needs the editor window.
         """
     public static func isAvailable(in session: EditorSession) -> Bool { session.host is EditorApp }

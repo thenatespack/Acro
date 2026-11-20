@@ -125,15 +125,18 @@ public struct Joint: Component, Codable, Equatable, Sendable {
     /// is none). Nil uses the point that coincides with `anchor`.
     public var connectedAnchor: Vec3?
     public var collideConnected: Bool
+    /// Angle limits for `ball` and `hinge` joints (radians, about `axis`; see `JointLimits`).
+    public var limits: JointLimits?
 
     public init(_ kind: JointKind, connectedTo connectedBody: Entity? = nil, anchor: Vec3 = .zero, axis: Vec3 = Vec3(0, 1, 0),
-                connectedAnchor: Vec3? = nil, collideConnected: Bool = false) {
+                connectedAnchor: Vec3? = nil, collideConnected: Bool = false, limits: JointLimits? = nil) {
         self.kind = kind
         self.connectedBody = connectedBody
         self.anchor = anchor
         self.axis = axis
         self.connectedAnchor = connectedAnchor
         self.collideConnected = collideConnected
+        self.limits = limits
     }
 }
 
@@ -150,6 +153,6 @@ extension PhysicsWorld {
     /// Registers the physics components with `ComponentRegistry` (done by `addPhysics`, and
     /// needed before loading scene files that use them into a world that hasn't seen them).
     public static func registerComponents() {
-        ComponentRegistry.register(RigidBody.self, Collider.self, Joint.self, CharacterController.self)
+        ComponentRegistry.register(RigidBody.self, Collider.self, Joint.self, CharacterController.self, Ragdoll.self)
     }
 }

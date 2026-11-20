@@ -114,4 +114,5 @@ extension DemoScene {
     FogScene.self,
     ReflectionsScene.self,
     ForestScene.self,
+    IKScene.self,
 ]

@@ -105,6 +105,7 @@ extension VisualScriptNodes {
 enum VisualScriptEngineNodes {
     static func register() {
         VisualScriptAnimationNodes.register()
+        VisualScriptIKNodes.register()
         VisualScriptDialogueNodes.register()
         VisualScriptTimelineNodes.register()
         VisualScriptBehaviorNodes.register()

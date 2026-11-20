@@ -8,6 +8,9 @@ import Foundation
 //
 // The file is the truth: every edit is written as one undo step of the editor (Ctrl+Z), the
 // character reimports and the workspace rebuilds its copy (also after edits from MCP or other panels).
+//
+// The preview world runs physics (a ground collider), so Test Ragdoll drops the character as a
+// ragdoll (with the file's settings, or automatic ones when it has none) and stands it up again.
 
 @MainActor
 public final class CharacterBuilderWorkspace {
@@ -44,18 +47,62 @@ public final class CharacterBuilderWorkspace {
     private var sizer = ViewportTargetSizer()
     private var currentView: SceneView?
     private let gizmos = DebugDraw()
+    /// Runs the preview's ragdoll (Test Ragdoll).
+    public let physics = PhysicsWorld()
 
     public init(session: EditorSession) {
         self.session = session
         world.spawn(Transform(rotation: Quat(eulerDegrees: Vec3(-50, 30, 0))), Name("Light"),
                     DirectionalLight(intensity: 2.2, castsShadows: true))
         world.spawn(Name("Environment"), SceneEnvironment(ambientIntensity: 0.6, fogDensity: 0))
-        world.spawn(Transform(scale: Vec3(8, 1, 8)), Name("Ground"), MeshRenderer(mesh: .plane, material: MaterialHandle("characterGround")))
+        world.spawn(Transform(scale: Vec3(8, 1, 8)), Name("Ground"), MeshRenderer(mesh: .plane, material: MaterialHandle("characterGround")),
+                    Collider(.box(halfExtents: Vec3(0.5, 0.05, 0.5)), offset: Vec3(0, -0.05, 0), friction: 0.8))
         // The play-mode system (SceneAnimation.swift), so the tab previews exactly what plays in games.
         world.addSceneAnimationSystem(assets: { [weak session] in session?.assets }, name: "characterBuilder.animation")
+        world.addPhysics(physics)
         view = VStack(spacing: 0, name: "characterBuilderWorkspace")
         layOutChrome()
         showEmpty()
+        Self.workspaces[ObjectIdentifier(session)] = WeakWorkspace(workspace: self)
+    }
+
+    private struct WeakWorkspace { weak var workspace: CharacterBuilderWorkspace? }
+    private static var workspaces: [ObjectIdentifier: WeakWorkspace] = [:]
+
+    /// The Character Builder of `session`'s editor window, if it has one (`character.ragdoll {test}`).
+    public static func active(for session: EditorSession) -> CharacterBuilderWorkspace? {
+        guard let workspace = workspaces[ObjectIdentifier(session)]?.workspace, workspace.session === session else { return nil }
+        return workspace
+    }
+
+    // MARK: Ragdoll
+
+    /// Whether the preview is limp (Test Ragdoll).
+    public var isRagdollTesting: Bool {
+        root.flatMap { world.get(Ragdoll.self, for: $0) }?.mode == .full
+    }
+
+    /// Drops the preview character as a ragdoll with a little push (`on`), or stands it back up.
+    /// A character without a ragdoll gets the automatic one for the test. Returns whether it is limp.
+    @discardableResult
+    public func testRagdoll(_ on: Bool) -> Bool {
+        guard let root, let character = builder?.character else { return false }
+        if on {
+            if !world.has(Ragdoll.self, for: root) {
+                world.add(character.rig.ragdoll(character.ragdoll ?? CharacterRagdoll()), to: root)
+            }
+            let chest = character.rig.ragdollBones().dropFirst().first?.bone ?? character.rig.bones[0].name
+            let mass = character.ragdoll?.mass ?? character.rig.ragdollMass
+            world.modify(Ragdoll.self, for: root) {
+                $0.goLimp()
+                $0.applyImpulse(bone: chest, impulse: Vec3(0, 0, -0.6 * mass))
+            }
+            setPaused(false)
+        } else {
+            world.modify(Ragdoll.self, for: root) { $0.getUp() }
+        }
+        builder?.layout()
+        return isRagdollTesting
     }
 
     // MARK: Opening
@@ -70,6 +117,8 @@ public final class CharacterBuilderWorkspace {
             self.builder = builder
             builder.onPlayClip = { [unowned self] name in play(name) }
             builder.playingClip = { [unowned self] in clip }
+            builder.onTestRagdoll = { [unowned self] in testRagdoll(!isRagdollTesting) }
+            builder.isRagdollTesting = { [unowned self] in isRagdollTesting }
             clip = nil
             shownRevision = -1
             needsFraming = true
@@ -99,6 +148,7 @@ public final class CharacterBuilderWorkspace {
     /// Plays `name` (a clip of the character) from its start.
     public func play(_ name: String) {
         clip = name
+        if isRagdollTesting { testRagdoll(false) }
         if let root {
             world.modify(Animator.self, for: root) { $0.play(name, fade: 0) }
         }
@@ -233,6 +283,8 @@ public final class CharacterBuilderWorkspace {
         if let root { world.despawn(root) }
         root = nil
         guard let prefab = assets.prefab(AssetReference(asset)), let newRoot = world.instantiate(prefab).first else { return }
+        // The preview drops only when asked (Test Ragdoll).
+        world.modify(Ragdoll.self, for: newRoot) { $0.getUp(); $0.blend = 0 }
         root = newRoot
         if let clip, let animator = world.get(Animator.self, for: newRoot), animator.stateMachine.index(of: clip) != nil {
             world.modify(Animator.self, for: newRoot) { $0.play(clip, fade: 0) }

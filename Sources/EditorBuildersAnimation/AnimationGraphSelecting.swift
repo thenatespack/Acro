@@ -3,7 +3,7 @@ import Engine
 
 // `builder.select` in the Animation Graph tab (EditorCore/EditorBuilderSelect.swift), at the
 // level shown: "state:<name>", "transition:<index>", "anyState", and the sidebar's
-// "parameter:<name>" and "layer:<name>" (their editors open below them).
+// "parameter:<name>", "layer:<name>" and "ik:<name>" (their editors open below them).
 
 extension AnimationGraphWorkspace: EditorBuilderSelecting {
     package var selectionAsset: AssetID? { asset }
@@ -12,6 +12,7 @@ extension AnimationGraphWorkspace: EditorBuilderSelecting {
         guard let graph = form?.graph else { return [] }
         return graph.states.map { "state:\($0.name)" } + graph.transitions.indices.map { "transition:\($0)" } + ["anyState"]
             + graph.parameters.map { "parameter:\($0.name)" } + graph.layers.map { "layer:\($0.name)" }
+            + graph.ik.map { "ik:\($0.name)" }
     }
 
     package var selectedItems: [String] {
@@ -25,6 +26,7 @@ extension AnimationGraphWorkspace: EditorBuilderSelecting {
         }
         if let parameter = form.selectedParameter { items.append("parameter:\(parameter)") }
         if let layer = form.selectedLayer { items.append("layer:\(layer)") }
+        if let ik = form.selectedIK { items.append("ik:\(ik)") }
         return items
     }
 
@@ -34,6 +36,7 @@ extension AnimationGraphWorkspace: EditorBuilderSelecting {
             form.select(.none)
             form.selectParameter(nil)
             form.selectLayer(nil)
+            form.selectIK(nil)
             return
         }
         guard selectableItems.contains(item) else { throw unknownItem(item) }
@@ -45,6 +48,7 @@ extension AnimationGraphWorkspace: EditorBuilderSelecting {
         case "transition": form.select(.transition(Int(value) ?? 0))
         case "parameter": form.selectParameter(value)
         case "layer": form.selectLayer(value)
+        case "ik": form.selectIK(value)
         default: throw unknownItem(item)
         }
     }

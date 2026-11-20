@@ -226,7 +226,8 @@ public struct Animator: Component, Equatable, Sendable {
          "restPose": FieldHints(hidden: true), "playbacks": FieldHints(hidden: true), "events": FieldHints(hidden: true),
          "fadeDuration": FieldHints(hidden: true), "fadeElapsed": FieldHints(hidden: true),
          "graph": FieldHints(tooltip: "An .animgraph asset: its states, transitions, parameters and layers replace this animator's (hot reloaded)"),
-         "retarget": FieldHints(hidden: true)]
+         "retarget": FieldHints(hidden: true),
+         "ik": FieldHints(tooltip: "IK nodes run after the animation: twoBoneIK, aim, chainIK, footPlacement (targets are world-space points)")]
     }
 
     /// The entity each channel `target` index drives (for imported clips, by glTF node index;
@@ -250,6 +251,10 @@ public struct Animator: Component, Equatable, Sendable {
     /// `Name`s) onto them (`AnimationClip.retargeted(to:options:)`). Nil plays clips as they
     /// are, by target index. A graph's `retarget` replaces it.
     public var retarget: AnimationRetargetOptions?
+    /// Inverse kinematics run on the pose after the states and layers, before it is written to
+    /// the bones (AnimationIK.swift): two-bone, aim, chain (FABRIK) and foot placement nodes. A
+    /// graph's `ik` replaces them.
+    public var ik: [AnimationIKNode]?
 
     /// The current state last, states fading out before it.
     public private(set) var playbacks: [AnimationPlayback] = []
@@ -499,6 +504,7 @@ extension World {
         var animators: [Animator] = []
         var poses: [AnimationPose] = []
         var missing: [[String]] = []
+        let ik = AnimationIKState()
         addSystem(name, stage: stage) { world in
             let dt = world.time.delta
             animators.removeAll(keepingCapacity: true)
@@ -523,9 +529,14 @@ extension World {
             }
             var fired: [(Entity, FiredAnimationEvent)] = []
             var index = 0
+            var alive = Set<Entity>()
             world.queryMutating(Animator.self) { entity, animator in
                 animator = animators[index]
-                let pose = poses[index]
+                var pose = poses[index]
+                if animator.ik != nil {
+                    world.applyIK(animator, on: entity, pose: &pose, state: ik)
+                    alive.insert(entity)
+                }
                 for key in missing[index] where reported.insert(key).inserted {
                     EngineLog.warning("no animation clip registered as '\(key)'", category: .animation)
                 }
@@ -535,6 +546,7 @@ extension World {
                 }
                 for event in animator.events { fired.append((entity, event)) }
             }
+            ik.keepOnly(alive)
             if let onEvent { for (entity, event) in fired { onEvent(entity, event) } }
         }
     }

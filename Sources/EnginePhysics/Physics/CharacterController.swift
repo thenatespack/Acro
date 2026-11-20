@@ -282,7 +282,9 @@ private struct CharacterSweep {
         c = controller
         shape = controller.colliderShape
         baked = Shape(shape)
-        filter = QueryFilter(mask: controller.collisionMask, excluding: body.map { [$0] } ?? [])
+        // Its own ragdoll's hit boxes (a `Ragdoll` on the same entity) don't block it.
+        let ragdoll = body.flatMap { world.entity(of: $0) }.map { world.ragdollBodies(of: $0) } ?? []
+        filter = QueryFilter(mask: controller.collisionMask, excluding: (body.map { [$0] } ?? []) + ragdoll)
         walkable = cosf(min(max(controller.maxSlopeAngle, 0), 89.9) * .pi / 180)
     }
 
