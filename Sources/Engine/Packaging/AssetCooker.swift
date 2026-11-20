@@ -136,11 +136,12 @@ public enum CookError: Error, Equatable, CustomStringConvertible {
 
 public enum AssetCooker {
     /// Importers whose source files ship unchanged: audio is streamed, and builder files that
-    /// game code reads as written at run time (data tables, behavior trees, UI layouts…).
-    public static let shippedAsWritten: Set<String> = ["audio", "table", "behavior", "ui", "timeline", "vscript"]
+    /// game code reads as written at run time (data tables, behavior trees, UI layouts, dialogues…).
+    public static let shippedAsWritten: Set<String> = ["audio", "table", "behavior", "ui", "timeline", "vscript", "dialogue"]
     /// Of those, the ones whose references are cooked along with them: `asset:<id>`s, and string
-    /// values naming a file by its path under `Assets/` (see `pathReferences`).
-    public static let followsReferences: Set<String> = ["timeline", "vscript", "ui"]
+    /// values naming a file by its path under `Assets/` (see `pathReferences`): a dialogue's
+    /// portraits and `uiLayout`, a timeline's sounds and effects, a layout's images…
+    public static let followsReferences: Set<String> = ["timeline", "vscript", "ui", "dialogue"]
     /// Imported assets that also ship their source, which games read at run time: sprite frames
     /// and tags, tilemaps (`assets.tilemap(path:)`), path curves (`PathFollower`) and the terrain
     /// heights paths follow.
@@ -276,7 +277,9 @@ public struct CookPlan: Sendable {
         for scene in scenes {
             let data = try Data(contentsOf: scene.url)
             sceneData.append((scene, data))
-            queue += Self.references(in: data)
+            // Components name assets by id, or by path under Assets/ (a PathFollower's `.path`, a
+            // UILayoutPlayer's layout, a DialoguePlayer's dialogue and layout, a TimelinePlayer's timeline).
+            queue += Self.references(in: data) + Self.pathReferences(in: data, assetsByPath: assetsByPath)
         }
         // Breadth first; each level's assets cook in parallel.
         var cooked: [AssetID: Cooked] = [:]
@@ -393,7 +396,9 @@ public struct CookPlan: Sendable {
             entry.main = manifest.main
             entry.objects = manifest.objects
             let text = (try? AssetJSON.encode(manifest.objects.filter { $0.material != nil || $0.prefab != nil || $0.animationGraph != nil })) ?? Data()
-            var references = Self.unique(Self.references(in: text)).filter { $0 != source.id }
+            // Prefabs' components name assets by id or by path, as scenes' do.
+            var references = Self.unique(Self.references(in: text) + Self.pathReferences(in: text, assetsByPath: assetsByPath))
+                .filter { $0 != source.id }
             // A `.path` that follows a terrain ships it: `PathFollower` rides the same ground.
             if importer.name == "path", let terrain = pathTerrain(source), !references.contains(terrain) { references.append(terrain) }
             // Sources in `keepsSource` ship too: games read sprite frames and tags (AssetDatabase.spriteSheet),
@@ -486,13 +491,18 @@ public struct CookPlan: Sendable {
     }
 
     /// The assets that string values of the JSON `data` name by path under `Assets/` ("Audio/hit.wav",
-    /// also with an "Assets/" prefix), in order. Strings that aren't a project file's path are ignored.
+    /// also with an "Assets/" prefix), in order. Strings that aren't a project file's path are ignored;
+    /// strings holding JSON themselves (a prefab's scene data) are searched too.
     static func pathReferences(in data: Data, assetsByPath: [String: AssetID]) -> [AssetID] {
         guard !assetsByPath.isEmpty, let json = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else { return [] }
         var ids: [AssetID] = []
         func walk(_ value: Any) {
             switch value {
             case let text as String:
+                if text.hasPrefix("{") || text.hasPrefix("["),
+                   let nested = try? JSONSerialization.jsonObject(with: Data(text.utf8), options: [.fragmentsAllowed]) {
+                    return walk(nested)
+                }
                 guard text.contains("."), !text.hasPrefix(AssetReference.scheme) else { return }
                 let path = text.hasPrefix("Assets/") ? String(text.dropFirst("Assets/".count)) : text
                 if let id = assetsByPath[path] { ids.append(id) }

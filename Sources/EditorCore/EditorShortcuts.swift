@@ -14,6 +14,8 @@ import Engine
 /// | Shift+Cmd/Ctrl+I | `asset.import` (into the current assets folder) |
 /// | Delete or Backspace (also with Cmd/Ctrl) | `entity.delete` |
 /// | F | `view.frameSelection` |
+/// | Home | `view.home` (Return to Origin; not while a list or tree has focus) |
+/// | Cmd/Ctrl+G | `view.goTo` (opens the Go to Object search) |
 /// | Esc | `selection.clear` |
 /// | Cmd/Ctrl+, | `settings.get` (opens the Settings window) |
 ///
@@ -48,6 +50,8 @@ public struct EditorShortcuts: Sendable {
         case .i where shortcut && shift: action = .importAsset
         case .delete, .backspace: action = plain || mods == shortcutModifier ? .delete : nil
         case .f where plain: action = .focusSelection
+        case .home where plain: action = .returnHome
+        case .g where mods == shortcutModifier: action = .goToObject
         case .escape where plain: action = .clearSelection
         case .comma where mods == shortcutModifier: action = .settings
         default: action = nil
@@ -60,7 +64,7 @@ public struct EditorShortcuts: Sendable {
     /// Every command with a shortcut.
     public static let boundCommands: [CommandID] = [
         .undo, .redo, .save, .duplicate, .delete, .focusSelection, .clearSelection, .togglePlay, .importAsset,
-        .togglePause, .step, .settings,
+        .togglePause, .step, .settings, .returnHome, .goToObject,
     ]
 
     /// The key press that runs `command` (its first binding), for showing in tooltips; nil when
@@ -79,6 +83,8 @@ public struct EditorShortcuts: Sendable {
         case .focusSelection: KeyEvent(key: .f)
         case .clearSelection: KeyEvent(key: .escape)
         case .settings: KeyEvent(key: .comma, modifiers: shortcutModifier)
+        case .returnHome: KeyEvent(key: .home)
+        case .goToObject: KeyEvent(key: .g, modifiers: shortcutModifier)
         default: nil
         }
     }
@@ -92,6 +98,7 @@ public struct EditorShortcuts: Sendable {
         case .delete: key = "Delete"
         case .escape: key = "Esc"
         case .comma: key = ","
+        case .home: key = "Home"
         default: key = String(describing: event.key).uppercased()
         }
         let mods = event.modifiers

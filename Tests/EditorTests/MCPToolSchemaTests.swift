@@ -266,25 +266,32 @@ private enum GreetCommand: EditorCommand {
     }
 
     @Test func subscribedResourcesReportUpdates() throws {
+        // Resource checks are throttled by wall-clock time (5 a second), so whether one ran in a
+        // given pump depended on how long the calls took: on a busy machine the update came with
+        // the tool's reply, on a quiet one only in a later pump. Checking in every pump makes it
+        // deterministic: the subscribe's pump records what the client has seen, and the pump that
+        // runs the change reports it with its reply.
         let client = Client()
+        client.mcp.resourceCheckInterval = .zero
         client.call("resources/subscribe", ["uri": "editor://scene"])
-        client.mcp.pump()  // Baseline (checks are throttled to 5 per second).
-        Thread.sleep(forTimeInterval: 0.25)
         client.mcp.pump()
-        _ = client.connection.output.take()
-        client.notifications = []
+        #expect(client.notifications.isEmpty && client.connection.output.take().isEmpty, "nothing changed")
         client.tool("entity.create", ["template": "cube"])
-        // Checks are throttled (5 a second), so the update may come with the tool's reply (when the
-        // call takes longer than the throttle) or a later pump: look at both, for up to 3 s.
         let update: JSON = ["jsonrpc": "2.0", "method": "notifications/resources/updated", "params": ["uri": "editor://scene"]]
-        var received = client.notifications.contains(update)
-        let deadline = Date().addingTimeInterval(3)
-        while !received && Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.05)
-            client.mcp.pump()
-            received = client.connection.output.take().contains(update)
-        }
-        #expect(received)
+        #expect(client.notifications == [update])
+        client.notifications = []
+        client.mcp.pump()
+        #expect(client.connection.output.take().isEmpty, "reported once")
+        // Read-only calls change nothing.
+        client.tool("scene.hierarchy")
+        #expect(client.notifications.isEmpty)
+        // With the default throttle a check waits for the interval, then reports what changed since.
+        client.mcp.resourceCheckInterval = .seconds(3600)
+        client.tool("entity.create", ["template": "sphere"])
+        #expect(client.notifications.isEmpty, "throttled")
+        client.mcp.resourceCheckInterval = .zero
+        client.mcp.pump()
+        #expect(client.connection.output.take() == [update])
     }
 }
 

@@ -24,6 +24,19 @@ public struct EditorCamera: Equatable, Sendable {
         self.distance = distance
     }
 
+    /// The view a new Scene view starts with: the origin from the default angle and distance.
+    public static let home = EditorCamera()
+
+    /// Return to Origin (`view.home`): the default yaw, pitch and distance around `pivot`
+    /// (default: the home pivot), at `distance` when given. Lens settings stay.
+    public mutating func returnHome(pivot: Vec3? = nil, distance: Float? = nil) {
+        let home = Self.home
+        self.pivot = pivot ?? home.pivot
+        yaw = home.yaw
+        pitch = home.pitch
+        self.distance = min(max(distance ?? home.distance, Self.distanceRange.lowerBound), Self.distanceRange.upperBound)
+    }
+
     /// The camera position.
     public var eye: Vec3 { pivot - forward * distance }
 

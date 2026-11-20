@@ -73,9 +73,9 @@ public struct ProceduralTexture: Codable, Equatable, Sendable {
 
     public static var fieldHints: [String: FieldHints] {
         ["width": FieldHints(range: 1...Double(maxSize), step: 1), "height": FieldHints(range: 1...Double(maxSize), step: 1),
-         "colorA": FieldHints(color: true, tooltip: "windowGrid: frame. checker/gradient/noise: first color. bricks: brick. stripes: stripe"),
-         "colorB": FieldHints(color: true, tooltip: "windowGrid: lit window. bricks: mortar. Otherwise the second color"),
-         "colorC": FieldHints(color: true, tooltip: "windowGrid: unlit glass"),
+         "colorA": FieldHints(color: true, srgb: true, tooltip: "windowGrid: frame. checker/gradient/noise: first color. bricks: brick. stripes: stripe"),
+         "colorB": FieldHints(color: true, srgb: true, tooltip: "windowGrid: lit window. bricks: mortar. Otherwise the second color"),
+         "colorC": FieldHints(color: true, srgb: true, tooltip: "windowGrid: unlit glass"),
          "columns": FieldHints(range: 1...512, step: 1), "rows": FieldHints(range: 1...512, step: 1),
          "margin": FieldHints(range: 0...0.5, step: 0.01, tooltip: "windowGrid: frame width, bricks: mortar width (fraction of a cell)"),
          "fraction": FieldHints(range: 0...1, step: 0.01, tooltip: "windowGrid: lit fraction. stripes: width of colorA"),

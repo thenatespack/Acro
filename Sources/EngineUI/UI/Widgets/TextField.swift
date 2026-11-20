@@ -186,6 +186,9 @@ public final class TextField: Widget {
     public var onSubmit: ((String) -> Void)?
     /// Called when the field loses focus.
     public var onEndEditing: ((String) -> Void)?
+    /// Sees each key before the field does; returning true keeps it from the field (a search
+    /// field's Up / Down moving through its results).
+    public var onKey: ((KeyEvent) -> Bool)?
     /// Minimum width when measured (points).
     public var preferredWidth: Float = 160 { didSet { setNeedsLayout() } }
     /// The most characters the user can type (nil: no limit).
@@ -346,6 +349,7 @@ public final class TextField: Widget {
     }
 
     private func handleKey(_ e: KeyEvent) -> Bool {
+        if let onKey, onKey(e) { return true }
         let mods = e.modifiers
         let shift = mods.contains(.shift)
         #if os(macOS)

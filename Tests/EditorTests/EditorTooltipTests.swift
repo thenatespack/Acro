@@ -47,13 +47,15 @@ import Testing
     #expect(mac.shortcutText(for: .togglePlay) == "⌘P" && other.shortcutText(for: .togglePlay) == "Ctrl+P")
     #expect(mac.shortcutText(for: .delete) == "Delete" && mac.shortcutText(for: .focusSelection) == "F")
     #expect(mac.shortcutText(for: .settings) == "⌘," && other.shortcutText(for: .settings) == "Ctrl+,")
+    #expect(mac.shortcutText(for: .returnHome) == "Home" && other.shortcutText(for: .returnHome) == "Home")
+    #expect(mac.shortcutText(for: .goToObject) == "⌘G" && other.shortcutText(for: .goToObject) == "Ctrl+G")
     #expect(mac.tooltip("Undo Rename", for: .undo) == "Undo Rename (⌘Z)")
     #expect(other.tooltip("Undo Rename", for: .undo) == "Undo Rename (Ctrl+Z)")
 }
 
 @Test func shownBindingsAreTheRealBindings() {
     let all: [CommandID] = [.undo, .redo, .save, .duplicate, .delete, .focusSelection, .clearSelection, .togglePlay, .importAsset,
-                            .togglePause, .step, .settings]
+                            .togglePause, .step, .settings, .returnHome, .goToObject]
     #expect(EditorShortcuts.boundCommands == all)
     for shortcuts in [EditorShortcuts(shortcutModifier: .command), EditorShortcuts(shortcutModifier: .control)] {
         for action in all { #expect(shortcuts.action(for: shortcuts.binding(for: action)!) == action) }

@@ -521,6 +521,18 @@ public final class AnimationGraphView {
         layout()
     }
 
+    /// Opens parameter `name`'s editor in the sidebar (nil closes it), as clicking its name does.
+    public func selectParameter(_ name: String?) {
+        selectedParameter = name
+        layout()
+    }
+
+    /// Opens layer `name`'s editor (weight, mask…) in the sidebar (nil closes it), as clicking its name does.
+    public func selectLayer(_ name: String?) {
+        selectedLayer = name
+        layout()
+    }
+
     func moveNode(_ name: String?, to p: Vec2) {
         var edited = graph
         if let name, let i = edited.states.firstIndex(where: { $0.name == name }) {

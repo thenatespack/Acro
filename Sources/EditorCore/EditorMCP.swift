@@ -70,6 +70,9 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
     private var toolsKey: ToolsKey?
     private var resourceSnapshots: [String: String] = [:]
     private var lastResourceCheck = ContinuousClock.now
+    /// How often subscribed resources are compared with what clients last saw (5 times a second
+    /// by default; tests set 0 so every `pump` checks and an update comes with the reply that caused it).
+    public var resourceCheckInterval: Duration = .milliseconds(200)
     private var writtenConfigURLs: Set<URL> = []
 
     private struct ToolsKey: Equatable {
@@ -223,7 +226,7 @@ public final class EditorMCP: MCPToolProvider, MCPResourceProvider {
     private func notifyResourceChanges() {
         let subscribed = server.subscribedResources
         resourceSnapshots = resourceSnapshots.filter { subscribed.contains($0.key) }
-        guard !subscribed.isEmpty, ContinuousClock.now - lastResourceCheck > .milliseconds(200) else { return }
+        guard !subscribed.isEmpty, resourceCheckInterval <= .zero || ContinuousClock.now - lastResourceCheck > resourceCheckInterval else { return }
         lastResourceCheck = .now
         for uri in subscribed.sorted() {
             let text = readResource(uri)?.map(\.text).joined() ?? ""

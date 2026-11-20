@@ -117,20 +117,24 @@ public struct FieldHints: Equatable, Sendable {
     public var readOnly: Bool
     /// Don't show the field.
     public var hidden: Bool
-    /// Edit a `vec3` / `vec4` with a color picker (linear RGB(A)).
+    /// Edit a `vec3` / `vec4` with a color picker (linear RGB(A), unless `srgb`).
     public var color: Bool
+    /// With `color`: the field holds display (sRGB) values 0...1, as builder files and screen
+    /// fades do, so the picker shows them as they are instead of converting from linear.
+    public var srgb: Bool
     /// Label to show instead of the field name.
     public var displayName: String?
     /// Help text.
     public var tooltip: String?
 
     public init(range: ClosedRange<Double>? = nil, step: Double? = nil, readOnly: Bool = false, hidden: Bool = false,
-                color: Bool = false, displayName: String? = nil, tooltip: String? = nil) {
+                color: Bool = false, srgb: Bool = false, displayName: String? = nil, tooltip: String? = nil) {
         self.range = range
         self.step = step
         self.readOnly = readOnly
         self.hidden = hidden
         self.color = color
+        self.srgb = srgb
         self.displayName = displayName
         self.tooltip = tooltip
     }

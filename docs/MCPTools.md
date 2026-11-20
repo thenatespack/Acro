@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 257 tools.
+named by its id (see README › Use the editor › AI control). 260 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -17,6 +17,7 @@ optional arguments.
 | `animGraph` | [`animGraph.assign`](#animgraphassign), [`animGraph.bones`](#animgraphbones), [`animGraph.clipEvents`](#animgraphclipevents), [`animGraph.edit`](#animgraphedit), [`animGraph.get`](#animgraphget), [`animGraph.new`](#animgraphnew), [`animGraph.open`](#animgraphopen), [`animGraph.set`](#animgraphset), [`animGraph.setClipEvents`](#animgraphsetclipevents) |
 | `asset` | [`asset.applySettings`](#assetapplysettings), [`asset.assign`](#assetassign), [`asset.delete`](#assetdelete), [`asset.extractMaterials`](#assetextractmaterials), [`asset.get`](#assetget), [`asset.import`](#assetimport), [`asset.instantiate`](#assetinstantiate), [`asset.list`](#assetlist), [`asset.move`](#assetmove), [`asset.newFolder`](#assetnewfolder), [`asset.newMaterial`](#assetnewmaterial), [`asset.newProceduralTexture`](#assetnewproceduraltexture), [`asset.reimport`](#assetreimport), [`asset.rename`](#assetrename), [`asset.select`](#assetselect), [`asset.setProceduralTexture`](#assetsetproceduraltexture), [`asset.waitForImports`](#assetwaitforimports) |
 | `behavior` | [`behavior.assign`](#behaviorassign), [`behavior.debug`](#behaviordebug), [`behavior.edit`](#behavioredit), [`behavior.get`](#behaviorget), [`behavior.navigation`](#behaviornavigation), [`behavior.new`](#behaviornew), [`behavior.open`](#behavioropen), [`behavior.set`](#behaviorset) |
+| `builder` | [`builder.select`](#builderselect) |
 | `character` | [`character.bones`](#characterbones), [`character.edit`](#characteredit), [`character.get`](#characterget), [`character.new`](#characternew), [`character.open`](#characteropen), [`character.set`](#characterset) |
 | `component` | [`component.add`](#componentadd), [`component.remove`](#componentremove), [`component.setField`](#componentsetfield), [`component.types`](#componenttypes) |
 | `diagnostics` | [`diagnostics.get`](#diagnosticsget) |
@@ -57,7 +58,7 @@ optional arguments.
 | `ui` | [`ui.click`](#uiclick), [`ui.drag`](#uidrag), [`ui.find`](#uifind), [`ui.hover`](#uihover), [`ui.key`](#uikey), [`ui.scroll`](#uiscroll), [`ui.snapshot`](#uisnapshot), [`ui.type`](#uitype) |
 | `uiLayout` | [`uiLayout.edit`](#uilayoutedit), [`uiLayout.get`](#uilayoutget), [`uiLayout.new`](#uilayoutnew), [`uiLayout.open`](#uilayoutopen), [`uiLayout.place`](#uilayoutplace), [`uiLayout.set`](#uilayoutset) |
 | `vfx` | [`vfx.edit`](#vfxedit), [`vfx.get`](#vfxget), [`vfx.new`](#vfxnew), [`vfx.open`](#vfxopen), [`vfx.set`](#vfxset) |
-| `view` | [`view.animateInEditMode`](#viewanimateineditmode), [`view.appearance`](#viewappearance), [`view.frameSelection`](#viewframeselection), [`view.gameCamera`](#viewgamecamera), [`view.pick`](#viewpick), [`view.scenePostFX`](#viewscenepostfx), [`view.screenshot`](#viewscreenshot) |
+| `view` | [`view.animateInEditMode`](#viewanimateineditmode), [`view.appearance`](#viewappearance), [`view.frameSelection`](#viewframeselection), [`view.gameCamera`](#viewgamecamera), [`view.goTo`](#viewgoto), [`view.home`](#viewhome), [`view.pick`](#viewpick), [`view.scenePostFX`](#viewscenepostfx), [`view.screenshot`](#viewscreenshot) |
 | `vscript` | [`vscript.attach`](#vscriptattach), [`vscript.edit`](#vscriptedit), [`vscript.get`](#vscriptget), [`vscript.new`](#vscriptnew), [`vscript.nodes`](#vscriptnodes), [`vscript.open`](#vscriptopen), [`vscript.set`](#vscriptset), [`vscript.step`](#vscriptstep), [`vscript.validate`](#vscriptvalidate) |
 
 ## activity
@@ -763,6 +764,26 @@ Result:
 - `path`: string
 - `root`: string
 - `warnings`: [string]
+
+## builder
+
+### `builder.select`
+
+**Select in Builder Tab**
+
+Selects something inside a builder tab as a click there does, bringing up the panels that only show for a selection (check them with ui.snapshot or view.screenshot): `panel` names the tab (panel id or title; default: the builder tab in front), `item` what to select ("" clears; leave it out to just read). Returns the selection and every selectable item. Items: Mesh Builder parts by name; Animation Graph "state:<name>", "transition:<index>", "anyState", "parameter:<name>", "layer:<name>"; Behavior Tree, Dialogue and Visual Script nodes by id. Open the file first (meshBuild.open, animGraph.open…). Needs the editor window.
+
+Arguments:
+
+- `item?`: string
+- `panel?`: string
+
+Result:
+
+- `asset?`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `items`: [string]
+- `panel`: string
+- `selected`: [string]
 
 ## character
 
@@ -4709,7 +4730,7 @@ Arguments:
 
 **Click**
 
-Clicks a UI element (by `path`, `label` with optional `role` / `index`, or a `point`) as the user would: `button` right opens context menus, `count` 2 double-clicks (rename a tree row, open a folder), `modifiers` ["shift"] / ["mod"] extend selections. Returns the element, the focused element and any popup it opened with its items. A point on the 3D viewport picks like a click there.
+Clicks a UI element (by `path`, `label` with optional `role` / `index`, or a `point`) as the user would: `button` right opens context menus, `count` 2 double-clicks (frame a Hierarchy row's entity, open a folder), `modifiers` ["shift"] / ["mod"] extend selections. Returns the element, the focused element and any popup it opened with its items. A point on the 3D viewport picks like a click there.
 
 Arguments:
 
@@ -5193,6 +5214,43 @@ Arguments:
 Result:
 
 - `enabled`: boolean
+
+### `view.goTo`
+
+**Go to Object**
+
+Selects an entity and frames it in the Scene view, as Frame Selection does (in the editor, Cmd/Ctrl+G opens a search that filters the scene's entities by name as you type). Give `entity`, or `name`: matched without regard to case against whole names and "Parent/Child" paths first, then as part of a name. A name that matches more than one entity fails and lists the candidates with their ids; pass one as `entity`. Needs the editor window.
+
+Arguments:
+
+- `entity?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `name?`: string
+
+Result:
+
+- `camera?`: {distance: number, eye: number[3], pitch: number, pivot: number[3], yaw: number}
+- `entity`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `name`: string
+- `path`: string
+
+### `view.home`
+
+**Return to Origin** · _idempotent_
+
+Puts the Scene view's camera back on its default view of the origin (Home key, View menu): pivot [0, 0.5, 0], the default yaw and pitch, 15 m away. `pivot` and `distance` aim it elsewhere from the same angle. Returns the camera. Needs the editor window.
+
+Arguments:
+
+- `distance?`: number
+- `pivot?`: number[3] — [x, y, z]
+
+Result:
+
+- `distance`: number
+- `eye`: number[3] — [x, y, z]
+- `pitch`: number
+- `pivot`: number[3] — [x, y, z]
+- `yaw`: number
 
 ### `view.pick`
 

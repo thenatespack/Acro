@@ -4,6 +4,19 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Added
+- Return to Origin (`view.home`, the Home key, the View menu) puts the Scene view's camera back on its default view of the origin; `pivot` and `distance` aim it elsewhere from the same angle.
+- Go to Object (`view.goTo`, Cmd/Ctrl+G, the View menu): a search over the scene's entities that filters by name as you type (Up / Down, Enter or a click picks one), then selects and frames it as Frame Selection does. Over MCP it takes `entity` or `name` (whole names and "Parent/Child" paths first, then part of a name); a name that matches several entities fails and lists them with their ids.
+- Double-clicking a Hierarchy row frames that entity in the Scene view (F2 still renames). `TreeView.onDoubleClick`.
+- `builder.select`: selects inside a builder tab as a click there does (Mesh Builder parts; Animation Graph states, transitions, Any State, parameters and layers; Behavior Tree, Dialogue and Visual Script nodes), so an MCP client can check the panels that only show for a selection. Workspaces take part through `EditorBuilderSelecting`.
+- Visual Script nodes for more builder pieces: path followers (`pathFollower.play`, `.pause`, `.resume`, `.stop`, `.seek`, `.state`, On Path Follower Event), grid navigation (`navigation.findPath`, which bakes the grid on first use, and `navigation.bake`), the game UI layer (`gameUI.setValue`, `.getValue`, `.layout`, `.hideAll`, On Game UI Event), timelines (`timeline.clearFade` for `holdFade` timelines, `timeline.dialogue` and `timeline.releaseDialogue` for `wait` dialogue keys) and dialogue layouts (`dialogue.setLayout`, `dialogue.layout`). `TimelinePlayer.clearFade()`, `waitingDialogue` and `startedDialogues`.
+- `FieldHints.srgb`: a color field that holds display (sRGB) values; the property grid shows and writes them as they are. `TextField.onKey` sees keys before the field does.
+
+### Fixed
+- Builder color fields stored as sRGB (Mesh Builder part color and glow, Path Builder profile and piece colors, terrain layers, procedural textures, Timeline fade keys, the Tilemap and VFX backgrounds, character recolors) showed in the property grid as if linear, lighter than the file's color, and wrote linear values back.
+- Cooked games ship `.dialogue` files (they had no data in the pack) and what they name by path or id (portraits, `uiLayout`), and the files scene and prefab components name by plain path: a `PathFollower`'s `.path`, a `UILayoutPlayer`'s layout, a `DialoguePlayer`'s dialogue and layout, a `TimelinePlayer`'s timeline. Paths inside JSON held in strings (a prefab's scene data) are followed too.
+- `MCPToolSchemaTests.subscribedResourcesReportUpdates` no longer depends on how long a call takes: `EditorMCP.resourceCheckInterval` (default 200 ms) can be 0 to check subscribed resources on every pump.
+
 ### Changed
 - The Windows workflow exports and starts a game on every push to main and when run by hand, and no longer on pull requests or nightly. Its build cache leaves out the `.build/debug` symlink, which came back from the cache as a plain folder and hid the new `GameRunner.exe`.
 
