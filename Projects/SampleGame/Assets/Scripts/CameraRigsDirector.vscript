@@ -1,0 +1,14 @@
+{
+  "actions" : {
+    "switchRig" : ["key.v", "pad.back"]
+  },
+  "links" : [
+    ["switchPressed.out", "activate.in"],
+    ["topRig.entity", "activate.rig"]
+  ],
+  "nodes" : [
+    {"id" : "switchPressed", "type" : "event.actionPressed", "x" : 0, "y" : 0, "config" : {"action" : "switchRig"}},
+    {"id" : "topRig", "type" : "world.findByName", "x" : 0, "y" : 140, "inputs" : {"name" : "Top Rig"}},
+    {"id" : "activate", "type" : "cameraRig.activate", "x" : 300, "y" : 0}
+  ]
+}

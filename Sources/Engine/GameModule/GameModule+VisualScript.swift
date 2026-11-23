@@ -108,6 +108,7 @@ enum VisualScriptEngineNodes {
         VisualScriptIKNodes.register()
         VisualScriptCombatNodes.register()
         VisualScriptCharacterNodes.register()
+        VisualScriptCameraNodes.register()
         VisualScriptDialogueNodes.register()
         VisualScriptTimelineNodes.register()
         VisualScriptBehaviorNodes.register()

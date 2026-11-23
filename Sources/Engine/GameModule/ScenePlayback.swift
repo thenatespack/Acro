@@ -162,6 +162,8 @@ public final class ScenePlayback {
         pathFollowers = world.addPathFollowers(assets: assets)
         // Interaction, combat (hitboxes, damage, hit effects) and game feel (Gameplay/).
         world.addGameplay(input: context.input, assets: assets, physics: { [weak self] in self?.physics })
+        // Camera rigs move the camera after gameplay (orbit, zoom and recenter from the game's input).
+        world.addCameraRigs(input: context.input)
         for warning in module.addSystems(to: world, context: context) { log(warning) }
         visualScripts = world.addVisualScripts(context: context, assets: assets, physics: { [weak self] in self?.physics },
                                                physics2D: { [weak self] in self?.physics2D })
@@ -191,6 +193,7 @@ public final class ScenePlayback {
         pathFollowers?.remove()
         pathFollowers = nil
         world.removeGameplay()
+        world.removeCameraRigs()
         world.removeVisualScripts(visualScripts)
         visualScripts = nil
         module.removeSystems(from: world)

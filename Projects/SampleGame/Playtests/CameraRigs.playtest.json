@@ -1,0 +1,28 @@
+{
+  "format" : "Acro.Playtest",
+  "name" : "Camera rigs: the orbit camera stays in front of the wall behind the player, and switching to the top-down rig blends",
+  "scene" : "Scenes/CameraRigs.scene",
+  "steps" : [
+    {"note" : "The player stands with its back to a wall (front face at z = -2); the orbit rig wants the camera 4 m behind it."},
+    {"frames" : 10},
+    {"assert" : {"label" : "the orbit rig is live", "entity" : "Orbit Rig", "component" : "CameraRig", "field" : "isLive", "equals" : true}},
+    {"assert" : {"label" : "the wall pulled the camera in", "entity" : "Orbit Rig", "component" : "CameraRig", "field" : "probeHit", "equals" : true}},
+    {"assert" : {"label" : "the camera is in front of the wall", "entity" : "Main Camera", "field" : "position.z", "min" : -2, "max" : -1.2}},
+    {"note" : "Walk right along the wall: the camera follows and stays in front of it."},
+    {"action" : "right", "duration" : 1},
+    {"frames" : 70},
+    {"assert" : {"label" : "the player walked right", "entity" : "Player", "field" : "position.x", "min" : 2}},
+    {"assert" : {"label" : "the camera followed", "entity" : "Main Camera", "field" : "position.x", "min" : 1.5}},
+    {"assert" : {"label" : "still in front of the wall", "entity" : "Main Camera", "field" : "position.z", "min" : -2, "max" : -1.2}},
+    {"note" : "The Director's visual script switches to the top-down rig (Activate Camera Rig): a 1 s linear blend."},
+    {"action" : "switchRig"},
+    {"frames" : 31},
+    {"assert" : {"label" : "the top-down rig is live", "entity" : "Top Rig", "component" : "CameraRig", "field" : "isLive", "equals" : true}},
+    {"assert" : {"label" : "half way through the blend", "entity" : "Top Rig", "component" : "CameraRig", "field" : "blendWeight", "min" : 0.35, "max" : 0.65}},
+    {"assert" : {"label" : "the camera is between the two rigs", "entity" : "Main Camera", "field" : "position.y", "min" : 5, "max" : 11}},
+    {"frames" : 40},
+    {"assert" : {"label" : "the blend finished", "entity" : "Top Rig", "component" : "CameraRig", "field" : "blendWeight", "equals" : 1}},
+    {"assert" : {"label" : "the camera looks down from the top-down rig", "entity" : "Main Camera", "field" : "position.y", "min" : 13}}
+  ],
+  "version" : 1
+}
