@@ -88,6 +88,8 @@ public final class PhysicsWorld {
     var jointForEntity: [Entity: Int] = [:]
     /// Ragdoll bodies and joints (Ragdoll.swift).
     let ragdolls = RagdollRuntime()
+    /// Physics materials by name (PhysicsMaterial.swift): `PhysicsSurface` components name them.
+    public let materials = PhysicsMaterialLibrary()
 
     /// Fat boxes are this much larger than their shape.
     static let aabbMargin: Float = 0.08
@@ -128,6 +130,7 @@ public final class PhysicsWorld {
         body.allowSleep = d.allowSleep
         body.entity = d.entity
         body.group = d.group
+        body.continuous = d.continuous
         body.previousPose = body.pose
         bodies[index] = body
         setShape(index, d.shape, offset: d.shapeOffset, scale: d.scale, material: d.material, isTrigger: d.isTrigger,
@@ -498,6 +501,7 @@ public final class PhysicsWorld {
         updateContacts(dt)
         Profiler.scope("islands") { buildIslandsAndWake() }
         Profiler.scope("solver") { solve(dt) }
+        Profiler.scope("continuous") { sweepContinuousBodies() }
         Profiler.scope("sleep update") { updateSleep(dt) }
         // Kinematic bodies fall asleep after every step (their target is spent) but did move.
         for i in bodies.indices where bodies[i].isAlive && (bodies[i].isAwake || bodies[i].motion == .kinematic) && bodies[i].motion != .static {
@@ -644,13 +648,22 @@ public final class PhysicsWorld {
                     c.tangentImpulse = .zero
                     c.twistImpulse = 0
                 }
+                // How fast they close along the normal (before this step's solve). Speculative points
+                // usually stop a body at the surface the step before it touches, so the impact
+                // speed is the larger of that step's and this one's.
+                var closing: Float = 0
+                if let deepest = points.min(by: { $0.separation < $1.separation }) {
+                    closing = max(dot(Self.pointVelocity(a, deepest.position) - Self.pointVelocity(b, deepest.position), deepest.normal), 0)
+                }
                 if c.touching && !wasTouching {
                     let deepest = points.min { $0.separation < $1.separation }!
                     newEvents.append(PhysicsEvent(kind: .collisionBegan, bodyA: id(c.a), bodyB: id(c.b), entityA: a.entity,
-                                                  entityB: b.entity, point: deepest.position, normal: deepest.normal))
+                                                  entityB: b.entity, point: deepest.position, normal: deepest.normal,
+                                                  speed: max(closing, c.closingSpeed)))
                 } else if wasTouching && !c.touching {
                     newEvents.append(endEvent(c))
                 }
+                c.closingSpeed = c.touching ? 0 : closing
             }
             kept.append(c)
         }
@@ -793,6 +806,10 @@ struct Body {
     var mask: UInt32 = .max
     /// Bodies with the same nonzero group never collide (a ragdoll's limbs).
     var group: UInt32 = 0
+    /// Swept against other bodies after each step so it can't pass through them (`RigidBody.continuous`).
+    var continuous = false
+    /// The `PhysicsSurface` that names its material (set by the ECS sync).
+    var surface: PhysicsSurface?
     /// Made by an engine system other than the ECS sync (ragdolls): the sync leaves it alone
     /// although it names an entity.
     var isExternal = false
@@ -861,6 +878,8 @@ struct Contact {
     /// Friction impulses at the manifold center (warm starting).
     var tangentImpulse = Vec2.zero
     var twistImpulse: Float = 0
+    /// While not touching: how fast the bodies were closing at the last narrowphase (impact speed).
+    var closingSpeed: Float = 0
 
     init(a: Int, b: Int, key: UInt64, isTrigger: Bool, friction: Float, restitution: Float) {
         self.a = a

@@ -64,7 +64,7 @@ extension PhysicsWorld {
     }
 
     /// Casts `moving` against `target` (a compound's parts one by one), reporting each hit.
-    private func castAgainst(_ target: Shape, _ targetPose: Pose, _ moving: WorldConvex, _ translation: Vec3, _ swept: AABB,
+    func castAgainst(_ target: Shape, _ targetPose: Pose, _ moving: WorldConvex, _ translation: Vec3, _ swept: AABB,
                              _ found: ((fraction: Float, point: Vec3, normal: Vec3, triangle: Int?)) -> Void) {
         switch target.kind {
         case .compound(let parts):

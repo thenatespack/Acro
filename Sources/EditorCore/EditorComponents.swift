@@ -23,7 +23,7 @@ public struct KeyboardMover: Component, Equatable, Sendable {
 ///
 /// Built in: Transform, Camera, the lights, SceneEnvironment, PostProcess, PlanarReflection, MeshRenderer (a cube),
 /// the physics components (a unit box Collider, a dynamic RigidBody, a ball Joint to the world,
-/// a CharacterController, a Ragdoll with a humanoid character's bodies), AudioListener and AudioEmitter (no sound until one is picked), the 2D physics components (a dynamic RigidBody2D, a unit
+/// a CharacterController, a Ragdoll with a humanoid character's bodies, a wood PhysicsSurface), AudioListener and AudioEmitter (no sound until one is picked), the 2D physics components (a dynamic RigidBody2D, a unit
 /// box Collider2D, a revolute Joint2D to the world), ParticleEmitter, TextMesh ("Neon", emissive 4), Sprite (atlas "sprites", frame 0), SpriteAnimator (one looping "idle" clip), Saveable, Tag (no tags), Spin, TilemapMotion (parallax 0.5) and
 /// KeyboardMover. `Name` is left out on purpose: the inspector header edits it. Games register their own
 /// with `register(_:make:)`, or `register(_:)` for types with a no-argument initializer.
@@ -71,6 +71,8 @@ public enum EditorComponentCatalog {
         register(CharacterController.self) { CharacterController() }
         // Bodies for a Character Builder humanoid's bones (edit them, or set the character's ragdoll in its .character file).
         register(Ragdoll.self) { Ragdoll(bones: CharacterRig(template: .humanoid).ragdollBones()) }
+        // What the entity is made of: a built-in material (edit the name, or a .physmat path).
+        register(PhysicsSurface.self) { PhysicsSurface(material: "wood") }
         AudioSystem.registerComponents()
         register(AudioListener.self) { AudioListener() }
         register(AudioEmitter.self) { AudioEmitter() }

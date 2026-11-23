@@ -54,12 +54,16 @@ public struct TerrainLayer: Codable, Equatable, Sendable {
     /// A `.material` file with a node graph (a path under `Assets/`) drawn where this layer is
     /// painted instead of `texture` (see TerrainGraphLayers.swift); its UVs repeat every `tileSize`.
     public var material: String
+    /// The physics material where this layer is painted most (a built-in name such as "grass",
+    /// or a `.physmat` path): footsteps and the chunk colliders' friction use it. "" for none.
+    public var physicsMaterial: String = ""
 
     public static var fieldHints: [String: FieldHints] {
         ["color": FieldHints(color: true, srgb: true), "texture": FieldHints(tooltip: "An image or .proctex under Assets/"),
          "tileSize": FieldHints(range: 0.1...1000, step: 0.1, tooltip: "Meters per texture repeat"),
          "normalMap": FieldHints(tooltip: "A tangent-space normal map image or .proctex under Assets/"),
-         "material": FieldHints(tooltip: "A graph .material under Assets/ drawn instead of the texture")]
+         "material": FieldHints(tooltip: "A graph .material under Assets/ drawn instead of the texture"),
+         "physicsMaterial": FieldHints(tooltip: "A physics material (grass, dirt, stone, …, or a .physmat) for where this layer is painted most")]
     }
 
     public init(name: String = "Layer", color: Vec3 = Vec3(0.4, 0.4, 0.4), texture: String = "", tileSize: Float = 4,
@@ -72,7 +76,7 @@ public struct TerrainLayer: Codable, Equatable, Sendable {
         self.material = material
     }
 
-    private enum CodingKeys: String, CodingKey { case name, color, texture, tileSize, normalMap, material }
+    private enum CodingKeys: String, CodingKey { case name, color, texture, tileSize, normalMap, material, physicsMaterial }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -83,6 +87,7 @@ public struct TerrainLayer: Codable, Equatable, Sendable {
                   tileSize: try c.decodeIfPresent(Float.self, forKey: .tileSize) ?? d.tileSize,
                   normalMap: try c.decodeIfPresent(String.self, forKey: .normalMap) ?? d.normalMap,
                   material: try c.decodeIfPresent(String.self, forKey: .material) ?? d.material)
+        physicsMaterial = (try? c.decodeIfPresent(String.self, forKey: .physicsMaterial)) ?? ""
     }
 
     /// Writes `normalMap` and `material` only when set.
@@ -94,6 +99,7 @@ public struct TerrainLayer: Codable, Equatable, Sendable {
         try c.encode(tileSize, forKey: .tileSize)
         if !normalMap.isEmpty { try c.encode(normalMap, forKey: .normalMap) }
         if !material.isEmpty { try c.encode(material, forKey: .material) }
+        if !physicsMaterial.isEmpty { try c.encode(physicsMaterial, forKey: .physicsMaterial) }
     }
 }
 
@@ -331,7 +337,7 @@ public struct Terrain: Codable, Equatable, Sendable {
     /// The resolution clamped to the supported range.
     public var res: Int { min(max(resolution, Self.minResolution), Self.maxResolution) }
     var cells: Int { res - 1 }
-    var cellSize: Vec2 { Vec2(max(size.x, 0.001), max(size.y, 0.001)) / Float(cells) }
+    package var cellSize: Vec2 { Vec2(max(size.x, 0.001), max(size.y, 0.001)) / Float(cells) }
 
     /// Makes `heightData` and `splatData` the size `resolution` and `layers` call for (padding
     /// with flat ground, and the first layer where nothing is painted).

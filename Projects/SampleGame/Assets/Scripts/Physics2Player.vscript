@@ -1,0 +1,56 @@
+{
+  "actions" : {
+    "crouch" : ["key.c", "pad.east"],
+    "grab" : ["key.e", "pad.west"],
+    "jump" : ["key.space", "pad.south"],
+    "left" : ["key.a", "key.left", "axis.leftStickX-"],
+    "mantle" : ["key.w", "pad.north"],
+    "right" : ["key.d", "key.right", "axis.leftStickX+"]
+  },
+  "links" : [
+    ["update.out", "each.in"],
+    ["each.out0", "goRight.in"],
+    ["right.down", "goRight.condition"],
+    ["goRight.true", "moveRight.in"],
+    ["goRight.false", "goLeft.in"],
+    ["left.down", "goLeft.condition"],
+    ["goLeft.true", "moveLeft.in"],
+    ["goLeft.false", "stop.in"],
+    ["speed.value", "rightVelocity.x"],
+    ["rightVelocity.vector", "moveRight.value"],
+    ["speed.value", "back.value"],
+    ["back.result", "leftVelocity.x"],
+    ["leftVelocity.vector", "moveLeft.value"],
+    ["each.out1", "setCrouch.in"],
+    ["crouchHeld.down", "setCrouch.value"],
+    ["jumpPressed.out", "setJump.in"],
+    ["mantlePressed.out", "doMantle.in"],
+    ["grabPressed.out", "doGrab.in"]
+  ],
+  "nodes" : [
+    {"id" : "update", "type" : "event.update", "x" : 0, "y" : 0},
+    {"id" : "each", "type" : "flow.sequence", "x" : 200, "y" : 0},
+    {"id" : "right", "type" : "input.actionDown", "x" : 0, "y" : 160, "config" : {"action" : "right"}},
+    {"id" : "left", "type" : "input.actionDown", "x" : 0, "y" : 260, "config" : {"action" : "left"}},
+    {"id" : "speed", "type" : "var.get", "x" : 0, "y" : 360, "config" : {"variable" : "speed"}},
+    {"id" : "back", "type" : "math.negate", "x" : 200, "y" : 440},
+    {"id" : "rightVelocity", "type" : "vec3.make", "x" : 400, "y" : 300},
+    {"id" : "leftVelocity", "type" : "vec3.make", "x" : 400, "y" : 440},
+    {"id" : "goRight", "type" : "flow.branch", "x" : 400, "y" : -60},
+    {"id" : "moveRight", "type" : "component.set", "x" : 760, "y" : -120, "config" : {"component" : "CharacterController", "field" : "moveVelocity"}},
+    {"id" : "goLeft", "type" : "flow.branch", "x" : 600, "y" : 60},
+    {"id" : "moveLeft", "type" : "component.set", "x" : 900, "y" : 0, "config" : {"component" : "CharacterController", "field" : "moveVelocity"}},
+    {"id" : "stop", "type" : "component.set", "x" : 900, "y" : 140, "config" : {"component" : "CharacterController", "field" : "moveVelocity"}, "inputs" : {"value" : [0, 0, 0]}},
+    {"id" : "crouchHeld", "type" : "input.actionDown", "x" : 0, "y" : 560, "config" : {"action" : "crouch"}},
+    {"id" : "setCrouch", "type" : "component.set", "x" : 400, "y" : 560, "config" : {"component" : "CharacterController", "field" : "crouch"}},
+    {"id" : "jumpPressed", "type" : "event.actionPressed", "x" : 0, "y" : 680, "config" : {"action" : "jump"}},
+    {"id" : "setJump", "type" : "component.set", "x" : 400, "y" : 680, "config" : {"component" : "CharacterController", "field" : "jump"}, "inputs" : {"value" : true}},
+    {"id" : "mantlePressed", "type" : "event.actionPressed", "x" : 0, "y" : 800, "config" : {"action" : "mantle"}},
+    {"id" : "doMantle", "type" : "character.mantle", "x" : 400, "y" : 800},
+    {"id" : "grabPressed", "type" : "event.actionPressed", "x" : 0, "y" : 920, "config" : {"action" : "grab"}},
+    {"id" : "doGrab", "type" : "character.grabLedge", "x" : 400, "y" : 920}
+  ],
+  "variables" : [
+    {"name" : "speed", "type" : "float", "default" : 2.5, "exposed" : true, "tooltip" : "Meters per second"}
+  ]
+}
