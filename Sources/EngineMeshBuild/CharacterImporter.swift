@@ -72,7 +72,11 @@ public struct CharacterImporter: AssetImporter {
             "joints": .array(boneIDs.map { CharacterScene.entity($0) }),
             "inverseBindMatrices": try AssetJSON.value(rig.inverseBindMatrices),
         ])
-        for (region, geometry) in rig.bodyMeshes(segments: build.segments, smooth: build.smooth) {
+        let bodyMeshes = rig.bodyMeshes(segments: build.segments, smooth: build.smooth)
+        for region in build.grooms.keys.sorted() where CharacterRegion(rawValue: region).map({ r in !bodyMeshes.contains { $0.0 == r } }) ?? false {
+            context.warn("grooms: the \(build.template.rawValue) template has no '\(region)' region")
+        }
+        for (region, geometry) in bodyMeshes {
             let label = "body \(region.rawValue)"
             let meshID = namer.id(kind: "mesh", name: label, index: 0)
             asset.add(meshID, name: label, .mesh(geometry))
@@ -81,8 +85,13 @@ public struct CharacterImporter: AssetImporter {
             asset.add(materialID, name: label, .material(MaterialAsset(
                 shading: .pbr, baseColor: Vec4(color.x, color.y, color.z, 1), metallic: 0, roughness: region == .eyes ? 0.2 : 0.75)))
             let renderer = MeshRenderer(mesh: MeshHandle(context.reference(meshID)), material: MaterialHandle(context.reference(materialID)))
+            var components: [String: JSONValue] = ["MeshRenderer": try AssetJSON.value(renderer), "Skin": skin]
+            // Fur on the region: skinned with it (GroomBuild.swift).
+            if let value = build.grooms[region.rawValue], let groom = Self.groom(value, owner: "grooms[\(region.rawValue)]", &context) {
+                components[GroomRenderer.componentName] = try AssetJSON.value(GroomRenderer(groom: groom.material))
+            }
             scene.add(name: "Body \(region.rawValue.capitalized)", transform: Transform(), parent: root, path: stem + "/" + label,
-                      components: ["MeshRenderer": try AssetJSON.value(renderer), "Skin": skin])
+                      components: components)
         }
 
         // Clips and the Animator.
@@ -138,6 +147,11 @@ public struct CharacterImporter: AssetImporter {
             return world(p, depth + 1) * local
         }
         var drew = false
+        let groom = attachment.groom.flatMap { Self.groom($0, owner: "attachment '\(attachment.name)'", &context) }
+        if let groom, !groom.build.mask.parts.isEmpty,
+           !build.parts.contains(where: { groom.build.mask.parts.contains($0.name) }) {
+            context.warn("attachment '\(attachment.name)': the groom's mask.parts names no part of '\(attachment.asset)': the mask covers nothing")
+        }
         for (i, part) in build.parts.enumerated() where !sculpting.sculpted.contains(i) {
             guard let geometry = pieces.geometry(i), !geometry.indices.isEmpty else { continue }
             let label = "\(attachment.name) \(part.name)"
@@ -161,8 +175,16 @@ public struct CharacterImporter: AssetImporter {
                 material = context.reference(materialID)
             }
             let renderer = MeshRenderer(mesh: MeshHandle(context.reference(meshID)), material: material.map { MaterialHandle($0) } ?? .default)
+            var components: [String: JSONValue] = ["MeshRenderer": (try? AssetJSON.value(renderer)) ?? .null]
+            // Fur: the part's own groom, else the attachment's where its mask.parts allows.
+            let source = build.parts[owner].name
+            var fur = part.groom.flatMap { Self.groom($0, owner: "attachment '\(attachment.name)', part '\(part.name)'", &context) }
+            if fur == nil, let groom, groom.build.mask.parts.isEmpty || groom.build.mask.parts.contains(where: { $0 == part.name || $0 == source }) {
+                fur = groom
+            }
+            if let fur { components[GroomRenderer.componentName] = (try? AssetJSON.value(GroomRenderer(groom: fur.material))) ?? .null }
             scene.add(name: part.name, transform: Transform(matrix: world(i)), parent: node, path: nodePath + "/" + part.name + "#\(i)",
-                      components: ["MeshRenderer": (try? AssetJSON.value(renderer)) ?? .null])
+                      components: components)
             drew = true
         }
         if !drew { context.warn("attachment '\(attachment.name)': '\(attachment.asset)' has no shapes") }
@@ -170,6 +192,26 @@ public struct CharacterImporter: AssetImporter {
         for part in attachment.partColors.keys.sorted() where !parts.contains(part) {
             context.warn("attachment '\(attachment.name)': partColors names no part '\(part)' in '\(attachment.asset)'")
         }
+    }
+
+    /// The `.groom` `value` names (a path under `Assets/` or "asset:<id>"), read as a dependency (for
+    /// its mask parts) with its fur material; nil (warned) when it isn't one.
+    static func groom(_ value: String, owner: String, _ context: inout ImportContext) -> (material: MaterialHandle, build: GroomBuild)? {
+        let value = value.trimmingCharacters(in: .whitespaces)
+        guard !value.isEmpty else { return nil }
+        var path = value.hasPrefix("Assets/") ? String(value.dropFirst("Assets/".count)) : value
+        if value.hasPrefix(AssetReference.scheme), let reference = AssetReference(value),
+           let found = context.assetsByPath.first(where: { $0.value == reference.asset })?.key {
+            path = found
+        }
+        let depth = context.assetPath.split(separator: "/").count - 1
+        guard let id = context.assetsByPath[path], path.lowercased().hasSuffix(".groom"),
+              let data = try? context.readDependency(relativePath: String(repeating: "../", count: depth) + path),
+              let build = try? AssetJSON.decoder().decode(GroomBuild.self, from: data) else {
+            context.warn("\(owner): '\(value)' isn't a readable .groom file")
+            return nil
+        }
+        return (GroomRenderer.material(ofGroom: id), build)
     }
 
     /// The asset `value` names: "asset:<id>[#object]" or a path under `Assets/`; a file gets `kind` as its object.

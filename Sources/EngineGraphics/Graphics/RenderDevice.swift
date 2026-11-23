@@ -206,6 +206,10 @@ public struct PipelineDescriptor: Sendable {
     /// For `.depthOnly` pipelines: also run the shader's fragment stage. It has no color
     /// outputs; use it to `discard` (alpha-tested shadow casters). Costs early depth testing.
     public var depthOnlyFragment: Bool = false
+    /// For `.screen` targets: the fragment's output alpha also decides which MSAA samples it
+    /// covers (alpha-to-coverage), so alpha-tested edges (hair cards) are smoothed by the
+    /// multisampling. With one sample it acts as an alpha test at one half.
+    public var alphaToCoverage: Bool = false
 
     public init(shader: ShaderSource, vertexLayout: VertexLayout, instanceLayout: VertexLayout? = nil) {
         self.shader = shader

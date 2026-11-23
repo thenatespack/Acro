@@ -230,6 +230,8 @@ public struct CharacterAttachment: Codable, Equatable, Sendable {
     /// the parts' own looks. Mirror / repeat copies ("Right Arm", "Leg 2") can be named, and
     /// otherwise take their source part's entry.
     public var partColors: [String: Vec3]
+    /// A `.groom` file grown on the model's parts (those its `mask.parts` names, or all of them).
+    public var groom: String?
 
     public init(name: String = "Part", bone: String = "head", asset: String = "", position: Vec3 = .zero, rotation: Vec3 = .zero,
                 scale: Float = 1, color: Vec3? = nil, partColors: [String: Vec3] = [:]) {
@@ -243,7 +245,7 @@ public struct CharacterAttachment: Codable, Equatable, Sendable {
         self.partColors = partColors
     }
 
-    private enum CodingKeys: String, CodingKey { case name, bone, asset, position, rotation, scale, color, partColors }
+    private enum CodingKeys: String, CodingKey { case name, bone, asset, position, rotation, scale, color, partColors, groom }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -256,6 +258,7 @@ public struct CharacterAttachment: Codable, Equatable, Sendable {
                   scale: try c.decodeIfPresent(Float.self, forKey: .scale) ?? d.scale,
                   color: try c.decodeIfPresent(Vec3.self, forKey: .color),
                   partColors: try c.decodeIfPresent([String: Vec3].self, forKey: .partColors) ?? [:])
+        groom = try c.decodeIfPresent(String.self, forKey: .groom)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -268,6 +271,7 @@ public struct CharacterAttachment: Codable, Equatable, Sendable {
         try c.encode(scale, forKey: .scale)
         try c.encodeIfPresent(color, forKey: .color)
         if !partColors.isEmpty { try c.encode(partColors, forKey: .partColors) }
+        try c.encodeIfPresent(groom, forKey: .groom)
     }
 
     /// The color `part` gets: its entry in `partColors`, else (for a mirror / repeat copy) the
@@ -283,7 +287,8 @@ public struct CharacterAttachment: Codable, Equatable, Sendable {
          "rotation": FieldHints(step: 1, tooltip: "Degrees"),
          "scale": FieldHints(range: 0.01...100, step: 0.01),
          "color": FieldHints(color: true, srgb: true, tooltip: "Recolors every part (unset keeps the model's colors)"),
-         "partColors": FieldHints(tooltip: "Part name → color, over Color")]
+         "partColors": FieldHints(tooltip: "Part name → color, over Color"),
+         "groom": FieldHints(tooltip: "A .groom file: fur or hair on the model's parts")]
     }
 
     public var transform: Transform {
@@ -377,6 +382,10 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
     public var ragdoll: CharacterRagdoll?
     /// IK nodes on the `Animator` (foot placement, look at, hand reach); nil: none.
     public var ik: CharacterIK?
+    /// Fur or hair on body regions: region name ("skin", "body", "legs", "accent", "eyes") → a
+    /// `.groom` file (path under `Assets/` or "asset:<id>"). Skinned with the body, so it follows
+    /// the animation. Not in `init`'s parameters: set it after.
+    public var grooms: [String: String] = [:]
 
     public init(template: CharacterTemplate = .humanoid, proportions: CharacterProportions = CharacterProportions(),
                 colors: CharacterColors = CharacterColors(), attachments: [CharacterAttachment] = [],
@@ -395,7 +404,7 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
         self.ik = ik
     }
 
-    private enum CodingKeys: String, CodingKey { case template, proportions, colors, attachments, clips, defaultClip, smooth, segments, ragdoll, ik }
+    private enum CodingKeys: String, CodingKey { case template, proportions, colors, attachments, clips, defaultClip, smooth, segments, ragdoll, ik, grooms }
 
     /// A `clips` entry: a stock name, or a clip from another asset.
     private enum ClipEntry: Decodable {
@@ -426,6 +435,7 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
                   segments: try c.decodeIfPresent(Int.self, forKey: .segments) ?? d.segments,
                   ragdoll: try c.decodeIfPresent(CharacterRagdoll.self, forKey: .ragdoll),
                   ik: try c.decodeIfPresent(CharacterIK.self, forKey: .ik))
+        grooms = try c.decodeIfPresent([String: String].self, forKey: .grooms) ?? [:]
     }
 
     /// `clips` holds the stock names, then the external clips' objects.
@@ -443,6 +453,7 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
         try c.encode(segments, forKey: .segments)
         try c.encodeIfPresent(ragdoll, forKey: .ragdoll)
         try c.encodeIfPresent(ik, forKey: .ik)
+        if !grooms.isEmpty { try c.encode(grooms, forKey: .grooms) }
     }
 
     public func fileData() throws -> Data { try AssetJSON.encode(self) }
@@ -506,6 +517,9 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
             for (source, bone) in clip.boneMap.sorted(by: { $0.key < $1.key }) where !bones.contains(bone) {
                 problems.append("clip \(label): boneMap '\(source)' → no bone '\(bone)' in the \(template.rawValue) template")
             }
+        }
+        for region in grooms.keys.sorted() where CharacterRegion(rawValue: region) == nil {
+            problems.append("grooms: '\(region)' isn't a body region (\(CharacterRegion.allCases.map(\.rawValue).joined(separator: ", ")))")
         }
         if !clipNames.isEmpty && !clipNames.contains(defaultClip) {
             problems.append("defaultClip '\(defaultClip)' isn't one of the clips; the Animator starts in '\(clipNames[0])'")

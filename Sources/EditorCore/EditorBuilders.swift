@@ -160,7 +160,7 @@ package enum EditorBuilderRegistry {
         EditorLayout.dataTable, EditorLayout.visualScript, EditorLayout.terrainBuilder, EditorLayout.spriteBuilder,
         EditorLayout.tilemapBuilder, EditorLayout.gridMapBuilder, EditorLayout.pathBuilder, EditorLayout.behaviorTree,
         EditorLayout.uiBuilder, EditorLayout.dialogueBuilder, EditorLayout.timeline, EditorLayout.animationGraph,
-        EditorLayout.characterBuilder, EditorLayout.materialBuilder,
+        EditorLayout.characterBuilder, EditorLayout.materialBuilder, EditorLayout.groomBuilder,
     ]
 
     private static var registered: [EditorBuilderModule] = EditorCoreBuilders.modules

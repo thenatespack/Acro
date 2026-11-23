@@ -24,7 +24,7 @@ public struct KeyboardMover: Component, Equatable, Sendable {
 /// Built in: Transform, Camera, the lights, SceneEnvironment, PostProcess, PlanarReflection, MeshRenderer (a cube),
 /// the physics components (a unit box Collider, a dynamic RigidBody, a ball Joint to the world,
 /// a CharacterController, a Ragdoll with a humanoid character's bodies), AudioListener and AudioEmitter (no sound until one is picked), the 2D physics components (a dynamic RigidBody2D, a unit
-/// box Collider2D, a revolute Joint2D to the world), ParticleEmitter, TextMesh ("Neon", emissive 4), Sprite (atlas "sprites", frame 0), SpriteAnimator (one looping "idle" clip), Saveable, Tag (no tags), Spin, TilemapMotion (parallax 0.5) and
+/// box Collider2D, a revolute Joint2D to the world), ParticleEmitter, TextMesh ("Neon", emissive 4), Sprite (atlas "sprites", frame 0), SpriteAnimator (one looping "idle" clip), GroomRenderer (no groom until one is picked), Saveable, Tag (no tags), Spin, TilemapMotion (parallax 0.5) and
 /// KeyboardMover. `Name` is left out on purpose: the inspector header edits it. Games register their own
 /// with `register(_:make:)`, or `register(_:)` for types with a no-argument initializer.
 @MainActor
@@ -64,6 +64,7 @@ public enum EditorComponentCatalog {
         register(LineRenderer.self) { LineRenderer() }
         register(MeshArray.self) { MeshArray(countX: 4, countY: 4, spacing: Vec3(1.5, 1.5, 1.5)) }
         register(MeshLOD.self) { MeshLOD() }
+        register(GroomRenderer.self) { GroomRenderer() }
         PhysicsWorld.registerComponents()
         register(Collider.self) { Collider(.box(halfExtents: Vec3(0.5, 0.5, 0.5))) }
         register(RigidBody.self) { RigidBody(.dynamic) }

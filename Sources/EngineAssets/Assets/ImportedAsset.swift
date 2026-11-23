@@ -158,6 +158,8 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
     public var edgeWear: EdgeWear?
     /// Sways in the scene's wind (see `MaterialWind`; mesh build plants set it). Not written when nil.
     public var wind: MaterialWind?
+    /// Draws fur (see `MaterialFur`; the `.groom` importer sets it). Not written when nil.
+    public var fur: MaterialFur?
 
     public init(shading: ShadingModel = .pbr, baseColor: Vec4 = Vec4(0.8, 0.8, 0.8, 1), texture: AssetReference? = nil,
                 filter: SamplerFilter = .linear, mipFilter: SamplerMipFilter = .linear, addressMode: SamplerAddressMode = .repeat,
@@ -225,6 +227,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
             alphaMode: alphaMode, alphaCutoff: alphaCutoff, doubleSided: doubleSided)
         material.edgeWear = edgeWear
         material.wind = wind
+        material.fur = fur
         material.translucency = min(max(translucency, 0), 1)
         if graph == nil, let terrain {
             // Drawn by the material graph path with the terrain shader; the textures stay in their slots.
@@ -257,7 +260,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         case shading, baseColor, texture, filter, mipFilter, addressMode, uvScale, uvOffset, uvRotation, checker, emissive
         case specular, shininess, metallic, roughness, metallicRoughnessTexture, normalTexture, normalScale
         case occlusionTexture, occlusionStrength, emissiveColor, emissiveTexture, emissiveStrength, alphaMode, alphaCutoff
-        case doubleSided, isTransparent, graph, terrain, edgeWear, translucency, wind
+        case doubleSided, isTransparent, graph, terrain, edgeWear, translucency, wind, fur
     }
 
     public init(from decoder: any Decoder) throws {
@@ -304,6 +307,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         terrain = try c.decodeIfPresent(TerrainSplat.self, forKey: .terrain)
         edgeWear = try c.decodeIfPresent(EdgeWear.self, forKey: .edgeWear)
         wind = try c.decodeIfPresent(MaterialWind.self, forKey: .wind)
+        fur = try c.decodeIfPresent(MaterialFur.self, forKey: .fur)
     }
 
     /// Writes every key except unset textures. `alphaMode` is written as "opaque", "mask" or "blend".
@@ -342,6 +346,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         try c.encodeIfPresent(terrain, forKey: .terrain)
         try c.encodeIfPresent(edgeWear, forKey: .edgeWear)
         try c.encodeIfPresent(wind, forKey: .wind)
+        try c.encodeIfPresent(fur, forKey: .fur)
     }
 }
 
@@ -555,6 +560,8 @@ public struct PrefabNode: Equatable, Sendable, Codable {
     public var tilemapMotion: TilemapMotion?
     /// Coarser meshes by camera distance (instantiating adds the `MeshLOD`); terrains use it for their chunks.
     public var lod: MeshLOD?
+    /// Fur grown on the node's mesh (instantiating adds the `GroomRenderer`); mesh builds, terrain scatter and grooms use it.
+    public var groom: GroomRenderer?
     public var children: [PrefabNode]
 
     public init(name: String, transform: Transform = Transform(), mesh: AssetReference? = nil,
@@ -622,6 +629,7 @@ extension World {
             if let collider2D = node.collider2D { add(collider2D, to: entity) }
             if let motion = node.tilemapMotion { add(motion, to: entity) }
             if let lod = node.lod { add(lod, to: entity) }
+            if let groom = node.groom { add(groom, to: entity) }
             if let skin = node.skin { skinned.append((entity, skin)) }
             if let parent { setParent(entity, to: parent) }
             for child in node.children { _ = spawn(child, parent: entity) }

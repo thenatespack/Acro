@@ -1158,6 +1158,7 @@ package final class VulkanRenderDevice: RenderDevice {
         var multisample = VkPipelineMultisampleStateCreateInfo()
         multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO
         multisample.rasterizationSamples = multisampled ? samples : VK_SAMPLE_COUNT_1_BIT
+        if descriptor.alphaToCoverage, case .screen = descriptor.target { multisample.alphaToCoverageEnable = VkBool32(VK_TRUE) }
 
         var depthStencil = VkPipelineDepthStencilStateCreateInfo()
         depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO

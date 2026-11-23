@@ -148,12 +148,27 @@ public struct TerrainImporter: AssetImporter {
             }
             budget -= instances.count
             let single = prop.count == 1 && prop[0].transform == Transform()
+            // Fur on the props (moss, lawn tufts): on the parts the groom's mask.parts names, or all.
+            let groom = rule.groom.isEmpty ? nil : CharacterImporter.groom(rule.groom, owner: "scatter '\(rule.name)'", &context)
+            func furred(_ part: PropPart) -> GroomRenderer? {
+                guard let groom, groom.build.mask.parts.isEmpty || groom.build.mask.parts.contains(part.name) else { return nil }
+                return GroomRenderer(groom: groom.material)
+            }
+            if let groom, !groom.build.mask.parts.isEmpty, !prop.contains(where: { groom.build.mask.parts.contains($0.name) }) {
+                context.warn("scatter '\(rule.name)': the groom's mask.parts names none of the prop's parts: the mask covers nothing")
+            }
             let nodes = instances.enumerated().map { i, instance -> PrefabNode in
                 let transform = Transform(position: instance.position, rotation: instance.rotation,
                                           scale: Vec3(repeating: instance.scale))
-                if single { return PrefabNode(name: "\(rule.name) \(i)", transform: transform, mesh: prop[0].mesh, material: prop[0].material) }
+                if single {
+                    var node = PrefabNode(name: "\(rule.name) \(i)", transform: transform, mesh: prop[0].mesh, material: prop[0].material)
+                    node.groom = furred(prop[0])
+                    return node
+                }
                 return PrefabNode(name: "\(rule.name) \(i)", transform: transform, children: prop.map {
-                    PrefabNode(name: $0.name, transform: $0.transform, mesh: $0.mesh, material: $0.material)
+                    var node = PrefabNode(name: $0.name, transform: $0.transform, mesh: $0.mesh, material: $0.material)
+                    node.groom = furred($0)
+                    return node
                 })
             }
             scatterNodes.append(PrefabNode(name: rule.name, children: nodes))

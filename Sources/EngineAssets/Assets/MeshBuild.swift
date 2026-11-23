@@ -193,6 +193,9 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
     public var foliageContextWarnings: [String] = []
     /// Not in the file: how much farther apart a sweep's rings are than usual (detail levels, MeshBuildLOD.swift).
     package var curveRingStep: Float = 1
+    /// A `.groom` file (path under `Assets/` or "asset:<id>"): fur or hair grown on this part's
+    /// mesh (GroomBuild.swift). Not in `init`'s parameters: set it after.
+    public var groom: String? = nil
 
     public static var fieldHints: [String: FieldHints] {
         ["parent": FieldHints(tooltip: "The part this one is attached to (moves with it)"),
@@ -225,7 +228,8 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
          // Foliage and ribbons: edited in the Mesh Builder's own Foliage rows.
          "cardSize": FieldHints(hidden: true), "count": FieldHints(hidden: true), "density": FieldHints(hidden: true),
          "seed": FieldHints(hidden: true), "on": FieldHints(hidden: true), "along": FieldHints(hidden: true),
-         "open": FieldHints(hidden: true), "ribbon": FieldHints(hidden: true)]
+         "open": FieldHints(hidden: true), "ribbon": FieldHints(hidden: true),
+         "groom": FieldHints(tooltip: "A .groom file: fur or hair grown on this part")]
     }
 
     public init(name: String = "Part", shape: MeshBuildShape = .box, parent: String = "", position: Vec3 = .zero,
@@ -289,6 +293,8 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
         case look, lookScale, wear, grain
         // Foliage and ribbons.
         case cardSize, count, density, seed, on, along, open, ribbon
+        // Fur and hair (GroomBuild.swift).
+        case groom
     }
 
     /// Every key is optional.
@@ -347,6 +353,7 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
         along = (try? c.decodeIfPresent(Vec2.self, forKey: .along)) ?? nil
         open = (try? c.decodeIfPresent(Bool.self, forKey: .open)) ?? nil
         ribbon = (try? c.decodeIfPresent(Float.self, forKey: .ribbon)) ?? nil
+        groom = (try? c.decodeIfPresent(String.self, forKey: .groom)) ?? nil
     }
 
     /// The part's local transform (its size is in the mesh, not the scale).

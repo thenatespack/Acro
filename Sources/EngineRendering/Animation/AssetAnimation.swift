@@ -18,7 +18,7 @@ import EngineScene
 
 /// Registration of the skeletal animation components.
 public enum SkeletalAnimation {
-    /// Registers `MeshRenderer`, `Skin` and `Animator` with `ComponentRegistry`, so scene files and scene-file
+    /// Registers `MeshRenderer`, `Skin`, `Animator` and `GroomRenderer` with `ComponentRegistry`, so scene files and scene-file
     /// prefabs (a `.character`'s) that hold them load. Idempotent.
-    @MainActor public static func registerComponents() { ComponentRegistry.register(MeshRenderer.self, Skin.self, Animator.self) }
+    @MainActor public static func registerComponents() { ComponentRegistry.register(MeshRenderer.self, Skin.self, Animator.self, GroomRenderer.self) }
 }

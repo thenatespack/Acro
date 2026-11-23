@@ -123,14 +123,14 @@ public struct RenderPrep {
     public var skinHistory = SkinHistory()
     /// Poses skinned meshes in parallel (the result doesn't depend on its thread count).
     public var jobs = JobSystem.shared
-    public private(set) var items: [RenderItem] = []
+    public internal(set) var items: [RenderItem] = []
     /// The joint matrices of this frame's skinned items (`RenderItem.skin`).
     public private(set) var skins: [SkinPose] = []
     /// Keys entities referenced that aren't registered (reported once by the renderer).
-    public private(set) var missingKeys: Set<String> = []
+    public internal(set) var missingKeys: Set<String> = []
     /// The same, split by what the entity wanted the key for.
     public private(set) var missingMeshKeys: Set<String> = []
-    public private(set) var missingMaterialKeys: Set<String> = []
+    public internal(set) var missingMaterialKeys: Set<String> = []
     /// Where `MeshLOD` distances are measured from (the camera); nil draws every entity's level 0.
     public var lodViewpoint: Vec3?
     /// Draws `MeshLOD.lowQualityMaterial`s instead of the renderers' materials.
@@ -138,6 +138,14 @@ public struct RenderPrep {
     /// The `MeshLOD` level each entity drew last (for hysteresis) and the frame it was seen.
     private var lodLevels: [Entity: (level: Int, frame: Int)] = [:]
     private var lodFrame = 0
+    /// Fur (RenderPrep+Fur.swift): this gather's fur items per entity, the springs by entity, the
+    /// skinned springs by `RenderItem.skin` (world-space lags, one per joint), and the clock.
+    var furGroups: [FurGroup] = []
+    var furSpringState: [Entity: FurSprings] = [:]
+    public internal(set) var furSkinSprings: [Int: [Vec4]] = [:]
+    var furFrame = 0
+    /// Seconds the fur's springs run by (`SceneRenderer` sets it each frame).
+    public var furTime: Float = 0
 
     public init() {}
 
@@ -193,6 +201,9 @@ public struct RenderPrep {
         skins.removeAll(keepingCapacity: true)
         let hasArrays = world.existingStore(MeshArray.self) != nil
         let hasLODs = world.existingStore(MeshLOD.self) != nil
+        let hasGrooms = world.existingStore(GroomRenderer.self) != nil
+        furGroups.removeAll(keepingCapacity: true)
+        furSkinSprings.removeAll(keepingCapacity: true)
         lodFrame += 1
         var lodSeen = 0
         world.query(GlobalTransform.self, MeshRenderer.self) { entity, transform, renderer in
@@ -255,10 +266,14 @@ public struct RenderPrep {
                 transparent: renderer.opacity < 1 || materials[material].blends,
                 alphaTested: materials[material].alphaTested,
                 skin: skin))
+            if hasGrooms, let groom = world.get(GroomRenderer.self, for: entity), groom.isVisible {
+                appendFur(groom, base: items.count - 1, meshKey: renderer.mesh.key, entity: entity)
+            }
         }
         if lodLevels.count > 2 * lodSeen + 64 { lodLevels = lodLevels.filter { $0.value.frame == lodFrame } }
         gatherLines(world: world)
         poseSkins(world: world)
+        finishFur(world: world)
     }
 
     /// Adds an item for every visible `LineRenderer` whose generated mesh is registered under
@@ -479,6 +494,7 @@ public struct RenderList {
 
         // Classify and count, in item order. `count` of each batch is used as a counter here.
         var lastKey = Int.min, lastSlot = -1
+        var lastSkinned: (skin: Int, mesh: Int, material: Int)?
         for (i, item) in items.enumerated() {
             if shadows != nil, item.castsShadows {
                 if visibility[i] & 2 != 0 {
@@ -514,6 +530,9 @@ public struct RenderList {
             let slot: Int
             if key == lastKey && item.skin < 0 {
                 slot = lastSlot
+            } else if item.skin >= 0, let last = lastSkinned, last == (item.skin, item.mesh, item.material) {
+                // Instances of one posed mesh (a skinned entity's fur shells) share its batch and pose.
+                slot = lastSlot
             } else if item.skin < 0, let existing = opaqueSlots[key] {
                 slot = existing
             } else {
@@ -523,6 +542,7 @@ public struct RenderList {
             }
             lastKey = key
             lastSlot = slot
+            lastSkinned = item.skin >= 0 ? (item.skin, item.mesh, item.material) : nil
             opaque[slot].count += 1
             slotOfItem[i] = Int32(slot)
         }

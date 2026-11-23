@@ -28,6 +28,7 @@ public enum EditorIcons {
         LineRenderer.componentName: "cable",
         MeshArray.componentName: "layout-grid",
         MeshLOD.componentName: "layers",
+        GroomRenderer.componentName: "brush",
         Collider.componentName: "square-dashed",
         RigidBody.componentName: "weight",
         Joint.componentName: "link",
@@ -319,6 +320,7 @@ public enum EditorIcons {
         case "sprite": return .texture
         case "cube": return .texture
         case "material": return .material
+        case "groom": return .material
         case "postfx": return .material
         case "prefab": return .prefab
         case "scene": return .scene
@@ -395,6 +397,7 @@ public enum EditorIcons {
         EditorLayout.characterBuilder: "person-standing",
         EditorLayout.materialBuilder: "palette",
         EditorLayout.visualScript: "network",
+        EditorLayout.groomBuilder: "brush",
     ]
 
     /// Console lines by level.

@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 271 tools.
+named by its id (see README › Use the editor › AI control). 280 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -28,6 +28,7 @@ optional arguments.
 | `files` | [`files.list`](#fileslist), [`files.newScene`](#filesnewscene), [`files.open`](#filesopen) |
 | `game` | [`game.build`](#gamebuild), [`game.info`](#gameinfo), [`game.load`](#gameload), [`game.reload`](#gamereload), [`game.unload`](#gameunload) |
 | `gridMap` | [`gridMap.edit`](#gridmapedit), [`gridMap.erase`](#gridmaperase), [`gridMap.fill`](#gridmapfill), [`gridMap.get`](#gridmapget), [`gridMap.new`](#gridmapnew), [`gridMap.open`](#gridmapopen), [`gridMap.paint`](#gridmappaint), [`gridMap.set`](#gridmapset) |
+| `groom` | [`groom.apply`](#groomapply), [`groom.edit`](#groomedit), [`groom.examples`](#groomexamples), [`groom.get`](#groomget), [`groom.new`](#groomnew), [`groom.open`](#groomopen), [`groom.presets`](#groompresets), [`groom.preview`](#groompreview), [`groom.set`](#groomset) |
 | `input` | [`input.action`](#inputaction), [`input.actions`](#inputactions), [`input.clear`](#inputclear), [`input.gamepad`](#inputgamepad), [`input.inject`](#inputinject), [`input.state`](#inputstate) |
 | `launcher` | [`launcher.dismiss`](#launcherdismiss), [`launcher.settings`](#launchersettings), [`launcher.show`](#launchershow) |
 | `layout` | [`layout.reset`](#layoutreset) |
@@ -489,7 +490,7 @@ Writes a .material file in `folder` (default parameters, or `material`). Returns
 Arguments:
 
 - `folder?`: string
-- `material?`: {addressMode?: "repeat" \| "clampToEdge" \| "mirrorRepeat", alphaCutoff?: number, alphaMode?: "opaque" \| "mask" \| "blend", baseColor?: number[4], checker?: boolean, doubleSided?: boolean, edgeWear?: {color: number[3], crisp: number, metallic: number, noiseFrequency: number, roughness: number}, emissive?: number, emissiveColor?: number[3], emissiveStrength?: number, emissiveTexture?: asset id, filter?: "linear" \| "nearest", metallic?: number, metallicRoughnessTexture?: asset id, mipFilter?: "linear" \| "nearest" \| "none", normalScale?: number, normalTexture?: asset id, occlusionStrength?: number, occlusionTexture?: asset id, roughness?: number, shading?: "pbr" \| "blinnPhong", shininess?: number, specular?: number, texture?: asset id, translucency?: number, uvOffset?: number[2], uvRotation?: number, uvScale?: number[2], wind?: {bend?: number, flutter?: number, height?: number, origin?: number[3], up?: number[3]}}
+- `material?`: {addressMode?: "repeat" \| "clampToEdge" \| "mirrorRepeat", alphaCutoff?: number, alphaMode?: "opaque" \| "mask" \| "blend", baseColor?: number[4], checker?: boolean, doubleSided?: boolean, edgeWear?: {color: number[3], crisp: number, metallic: number, noiseFrequency: number, roughness: number}, emissive?: number, emissiveColor?: number[3], emissiveStrength?: number, emissiveTexture?: asset id, filter?: "linear" \| "nearest", fur?: {flowImage?: object, groom?: object, maskImage?: object}, metallic?: number, metallicRoughnessTexture?: asset id, mipFilter?: "linear" \| "nearest" \| "none", normalScale?: number, normalTexture?: asset id, occlusionStrength?: number, occlusionTexture?: asset id, roughness?: number, shading?: "pbr" \| "blinnPhong", shininess?: number, specular?: number, texture?: asset id, translucency?: number, uvOffset?: number[2], uvRotation?: number, uvScale?: number[2], wind?: {bend?: number, flutter?: number, height?: number, origin?: number[3], up?: number[3]}}
 - `name?`: string
 
 Result:
@@ -822,7 +823,7 @@ Arguments:
 
 - `addClips?`: [string]
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
-- `attach?`: [{asset?: string, bone?: string, color?: number[3], name?: string, partColors?: object, position?: number[3], rotation?: number[3], scale?: number}]
+- `attach?`: [{asset?: string, bone?: string, color?: number[3], groom?: string, name?: string, partColors?: object, position?: number[3], rotation?: number[3], scale?: number}]
 - `clips?`: [string]
 - `colors?`: object
 - `defaultClip?`: string
@@ -864,7 +865,7 @@ Arguments:
 Result:
 
 - `bones`: [{name: string, parent?: string, position: number[3]}]
-- `character`: {attachments?: [object], clips?: [string], colors?: {accent?: number[3], body?: number[3], eyes?: number[3], legs?: number[3], skin?: number[3]}, defaultClip?: string, ik?: {footPlacement?: boolean, handIK?: boolean, lookAt?: boolean, lookTarget?: string}, proportions?: {arms?: number, head?: number, height?: number, legs?: number, neck?: number, tail?: number, torso?: number, width?: number}, ragdoll?: {blendTime?: number, bones?: [object], enabled?: boolean, mass?: number, strength?: number}, segments?: integer, smooth?: boolean, template?: "humanoid" \| "quadruped" \| "bird" \| "blob"}
+- `character`: {attachments?: [object], clips?: [string], colors?: {accent?: number[3], body?: number[3], eyes?: number[3], legs?: number[3], skin?: number[3]}, defaultClip?: string, grooms?: object, ik?: {footPlacement?: boolean, handIK?: boolean, lookAt?: boolean, lookTarget?: string}, proportions?: {arms?: number, head?: number, height?: number, legs?: number, neck?: number, tail?: number, torso?: number, width?: number}, ragdoll?: {blendTime?: number, bones?: [object], enabled?: boolean, mass?: number, strength?: number}, segments?: integer, smooth?: boolean, template?: "humanoid" \| "quadruped" \| "bird" \| "blob"}
 - `clips`: [{clip: string, duration: number, events: [string], loops: boolean, name: string, source?: string}]
 - `colors`: object
 - `summary`: {asset: asset id, attachments: [string], bones: [string], clips: [string], entities?: [entity id], height: number, parameters: [string], path: string, prefab: asset id, template: "humanoid" \| "quadruped" \| "bird" \| "blob", warnings: [string]}
@@ -901,7 +902,7 @@ Writes a .character file in `folder` (default: the Assets root) from a body temp
 
 Arguments:
 
-- `attachments?`: [{asset?: string, bone?: string, color?: number[3], name?: string, partColors?: object, position?: number[3], rotation?: number[3], scale?: number}]
+- `attachments?`: [{asset?: string, bone?: string, color?: number[3], groom?: string, name?: string, partColors?: object, position?: number[3], rotation?: number[3], scale?: number}]
 - `colors?`: object
 - `folder?`: string
 - `name?`: string
@@ -979,7 +980,7 @@ Replaces a .character file's whole contents and reimports it; placed copies upda
 Arguments:
 
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
-- `character`: {attachments?: [object], clips?: [string], colors?: {accent?: number[3], body?: number[3], eyes?: number[3], legs?: number[3], skin?: number[3]}, defaultClip?: string, ik?: {footPlacement?: boolean, handIK?: boolean, lookAt?: boolean, lookTarget?: string}, proportions?: {arms?: number, head?: number, height?: number, legs?: number, neck?: number, tail?: number, torso?: number, width?: number}, ragdoll?: {blendTime?: number, bones?: [object], enabled?: boolean, mass?: number, strength?: number}, segments?: integer, smooth?: boolean, template?: "humanoid" \| "quadruped" \| "bird" \| "blob"}
+- `character`: {attachments?: [object], clips?: [string], colors?: {accent?: number[3], body?: number[3], eyes?: number[3], legs?: number[3], skin?: number[3]}, defaultClip?: string, grooms?: object, ik?: {footPlacement?: boolean, handIK?: boolean, lookAt?: boolean, lookTarget?: string}, proportions?: {arms?: number, head?: number, height?: number, legs?: number, neck?: number, tail?: number, torso?: number, width?: number}, ragdoll?: {blendTime?: number, bones?: [object], enabled?: boolean, mass?: number, strength?: number}, segments?: integer, smooth?: boolean, template?: "humanoid" \| "quadruped" \| "bird" \| "blob"}
 - `path?`: string
 
 Result:
@@ -1829,6 +1830,173 @@ Result:
 - `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `warnings`: [string]
 
+## groom
+
+### `groom.apply`
+
+**Apply Groom** · _undoable_
+
+Grows a .groom's fur on a mesh in one undoable step. `target`: {entity} (a scene entity with a MeshRenderer, or a placed model whose parts get it: those the groom's mask.parts names, or all), {character, part} (a .character body region skin|body|legs|accent|eyes, skinned with the body so it follows the animation, or an attachment's name: its parts), or {meshBuild, part} (a .meshbuild part's `groom` key). `remove: true` takes it off. Warns about meshes without UVs, fur too dense for the triangle count and masks that cover nothing. The fur draws in the editor views (needs the groom imported). Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `groom`: string
+- `remove?`: boolean
+- `target`: {character?: string, entity?: entity id, meshBuild?: string, part?: string}
+
+Result:
+
+- `applied`: [string]
+- `furTriangles`: integer
+- `warnings`: [string]
+
+### `groom.edit`
+
+**Edit Groom** · _undoable_
+
+Changes part of a .groom file in one undoable step, in this order: clearStrokes, changes (top-level fields; nested objects such as mask or lod are replaced whole), addComb, addCut. Strokes are spheres in the mesh's space: comb {center [x,y,z], radius, direction [x,y,z], strength} turns strands toward a direction; cut {center, radius, length 0 (bald) … 1 (full) … 2, strength} sets the length (a mask). Fur using the groom updates. Returns detail levels and warnings. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `addComb?`: [{center?: number[3], direction?: number[3], radius?: number, strength?: number}]
+- `addCut?`: [{center?: number[3], length?: number, radius?: number, strength?: number}]
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `changes?`: any — Any JSON value.
+- `clearStrokes?`: boolean
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `levels`: [number]
+- `material`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `style`: "shell" \| "cards" \| "strands"
+- `warnings`: [string]
+
+### `groom.examples`
+
+**Groom Examples** · _read-only_, _idempotent_
+
+Returns three warning-free .groom files to copy or adapt: fur with comb and cut strokes, long hair cards, and moss. Pass `name` for one.
+
+Arguments:
+
+- `name?`: string
+
+Result:
+
+- `examples`: [{about: string, groom: object, name: string}]
+
+### `groom.get`
+
+**Get Groom** · _read-only_, _idempotent_
+
+Reads a .groom file: every field (defaults included), its fur material and preview prefab, detail levels and problems found.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `groom`: {cardSegments?: integer, cardWidth?: number, clumping?: number, colorNoise?: number, comb?: [object], combDirection?: string, combStrength?: number, curl?: number, cut?: [object], density?: number, flowTexture?: string, frizz?: number, gravity?: number, length?: number, lengthVariation?: number, lod?: {cards?: [number], distances?: [number], shells?: [integer]}, mask?: {invert?: boolean, parts?: [string], texture?: string, vertexPaint?: string}, previewMesh?: string, rootColor?: number[3], seed?: integer, shells?: integer, specular?: number, stiffness?: number, strandsPerCard?: integer, style?: "shell" \| "cards" \| "strands", thickness?: number[2], tipColor?: number[3], wind?: number}
+- `summary`: {asset: asset id, levels: [number], material: asset id, path: string, prefab: asset id, style: "shell" \| "cards" \| "strands", warnings: [string]}
+
+### `groom.new`
+
+**New Groom**
+
+Writes a .groom file in `folder` (default: the Assets root) from a `preset` (or `groom` contents) and imports it as a fur material and a preview prefab. Returns the asset, its fur material, the preview prefab, detail levels and warnings. Put it on a mesh with groom.apply; edit it with groom.edit or groom.set (fur using it updates). A .groom file is fur or hair any mesh can wear (every key optional): style shell (short fur, moss, velvet: instanced shells) | cards (longer hair, manes, feathers: ribbon cards along guide curves) | strands (reserved, draws as cards); length (m), lengthVariation 0-1, density (strands per cm² for shells, cards per cm² for cards), thickness [root, tip] (0-1 of the strand spacing), clumping, curl, frizz, gravity, stiffness (0-1), rootColor / tipColor ([r,g,b] 0-1 sRGB), colorNoise, specular (0-1), mask {texture (red scales the length), vertexPaint "r"|"g"|"b"|"a", parts [Mesh Builder part / entity names], invert}, combDirection "normal" | "followSurface" | [x,y,z] (mesh space) with combStrength 0-1 (1 lies flat), flowTexture (red/green: a direction in UV space), wind (scales the scene's wind; 0 still), shells (2-64 at full detail), cardWidth (m), cardSegments (2-16), strandsPerCard (1-32), lod {shells [per level], cards [fraction per level], distances [m where levels 1, 2… start; past the last only a fur-colored undercoat is drawn]}, comb [{center [x,y,z], radius, direction [x,y,z], strength}] and cut [{center, radius, length (0 bald, 1 full, up to 2), strength}] strokes in the mesh's space, applied in order, seed, previewMesh (sphere, cube, capsule, plane or a .meshbuild path). Presets: shortFur, shaggyFur, velvet, moss, tufts, straightHair, ponytail, mane, feathers (groom.presets). Put it on a mesh with groom.apply (an entity, a .character body region or attachment, or a .meshbuild part).
+
+Arguments:
+
+- `folder?`: string
+- `groom?`: {cardSegments?: integer, cardWidth?: number, clumping?: number, colorNoise?: number, comb?: [object], combDirection?: string, combStrength?: number, curl?: number, cut?: [object], density?: number, flowTexture?: string, frizz?: number, gravity?: number, length?: number, lengthVariation?: number, lod?: {cards?: [number], distances?: [number], shells?: [integer]}, mask?: {invert?: boolean, parts?: [string], texture?: string, vertexPaint?: string}, previewMesh?: string, rootColor?: number[3], seed?: integer, shells?: integer, specular?: number, stiffness?: number, strandsPerCard?: integer, style?: "shell" \| "cards" \| "strands", thickness?: number[2], tipColor?: number[3], wind?: number}
+- `name?`: string
+- `preset?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `levels`: [number]
+- `material`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `style`: "shell" \| "cards" \| "strands"
+- `warnings`: [string]
+
+### `groom.open`
+
+**Open in Groom Builder** · _idempotent_
+
+Opens a .groom file in the editor's Groom Builder tab (the fur growing live on its previewMesh in a light breeze, the settings form, and Mask / Restore / Length / Comb brushes that paint cut and comb strokes into the file) and brings the tab to the front. view.screenshot {source: "panel", panel: "groomBuilder"} shows it.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `path`: string
+
+### `groom.presets`
+
+**Groom Presets** · _read-only_, _idempotent_
+
+Lists the built-in grooms (short fur, shaggy fur, velvet, moss, grass-like tufts, straight hair, ponytail, mane, feathers) with what each is for, its GPU budget and its full contents. groom.new {preset} makes a file from one.
+
+Arguments: none.
+
+Result:
+
+- `presets`: [{about: string, groom: object, name: string, style: "shell" \| "cards" \| "strands"}]
+
+### `groom.preview`
+
+**Preview Groom** · _read-only_, _idempotent_, _deferred_
+
+Returns one PNG of a .groom's fur grown on its previewMesh (a sphere by default, or a .meshbuild's parts): a 3/4 view from the front right and (closeUp, default true) a close-up of the surface, studio-lit (`environment` studio|outdoor|flat) in still air. `size`: tile pixels (default 384). Also returns a summary (style, length, detail levels, fur triangles on the preview mesh) and warnings. Read-only: shown in a world of its own. Finishes after a few frames. Needs the editor window.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `closeUp?`: boolean
+- `environment?`: "studio" \| "outdoor" \| "flat"
+- `path?`: string
+- `size?`: integer
+
+Result:
+
+- `image`: {data?: string, height: integer, mimeType: string, width: integer}
+- `summary`: string
+- `warnings`: [string]
+
+### `groom.set`
+
+**Set Groom** · _undoable_, _idempotent_
+
+Replaces a .groom file's whole contents and reimports it; fur using it updates. Undoable. For a few changes, groom.edit is shorter. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `groom`: {cardSegments?: integer, cardWidth?: number, clumping?: number, colorNoise?: number, comb?: [object], combDirection?: string, combStrength?: number, curl?: number, cut?: [object], density?: number, flowTexture?: string, frizz?: number, gravity?: number, length?: number, lengthVariation?: number, lod?: {cards?: [number], distances?: [number], shells?: [integer]}, mask?: {invert?: boolean, parts?: [string], texture?: string, vertexPaint?: string}, previewMesh?: string, rootColor?: number[3], seed?: integer, shells?: integer, specular?: number, stiffness?: number, strandsPerCard?: integer, style?: "shell" \| "cards" \| "strands", thickness?: number[2], tipColor?: number[3], wind?: number}
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `levels`: [number]
+- `material`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path`: string
+- `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `style`: "shell" \| "cards" \| "strands"
+- `warnings`: [string]
+
 ## input
 
 ### `input.action`
@@ -2030,7 +2198,7 @@ Arguments:
 Result:
 
 - `editable`: boolean
-- `material`: {addressMode?: "repeat" \| "clampToEdge" \| "mirrorRepeat", alphaCutoff?: number, alphaMode?: "opaque" \| "mask" \| "blend", baseColor?: number[4], checker?: boolean, doubleSided?: boolean, edgeWear?: {color: number[3], crisp: number, metallic: number, noiseFrequency: number, roughness: number}, emissive?: number, emissiveColor?: number[3], emissiveStrength?: number, emissiveTexture?: asset id, filter?: "linear" \| "nearest", metallic?: number, metallicRoughnessTexture?: asset id, mipFilter?: "linear" \| "nearest" \| "none", normalScale?: number, normalTexture?: asset id, occlusionStrength?: number, occlusionTexture?: asset id, roughness?: number, shading?: "pbr" \| "blinnPhong", shininess?: number, specular?: number, texture?: asset id, translucency?: number, uvOffset?: number[2], uvRotation?: number, uvScale?: number[2], wind?: {bend?: number, flutter?: number, height?: number, origin?: number[3], up?: number[3]}}
+- `material`: {addressMode?: "repeat" \| "clampToEdge" \| "mirrorRepeat", alphaCutoff?: number, alphaMode?: "opaque" \| "mask" \| "blend", baseColor?: number[4], checker?: boolean, doubleSided?: boolean, edgeWear?: {color: number[3], crisp: number, metallic: number, noiseFrequency: number, roughness: number}, emissive?: number, emissiveColor?: number[3], emissiveStrength?: number, emissiveTexture?: asset id, filter?: "linear" \| "nearest", fur?: {flowImage?: object, groom?: object, maskImage?: object}, metallic?: number, metallicRoughnessTexture?: asset id, mipFilter?: "linear" \| "nearest" \| "none", normalScale?: number, normalTexture?: asset id, occlusionStrength?: number, occlusionTexture?: asset id, roughness?: number, shading?: "pbr" \| "blinnPhong", shininess?: number, specular?: number, texture?: asset id, translucency?: number, uvOffset?: number[2], uvRotation?: number, uvScale?: number[2], wind?: {bend?: number, flutter?: number, height?: number, origin?: number[3], up?: number[3]}}
 
 ### `material.set`
 
@@ -2042,8 +2210,8 @@ Arguments:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `label?`: string
-- `material`: {addressMode?: "repeat" \| "clampToEdge" \| "mirrorRepeat", alphaCutoff?: number, alphaMode?: "opaque" \| "mask" \| "blend", baseColor?: number[4], checker?: boolean, doubleSided?: boolean, edgeWear?: {color: number[3], crisp: number, metallic: number, noiseFrequency: number, roughness: number}, emissive?: number, emissiveColor?: number[3], emissiveStrength?: number, emissiveTexture?: asset id, filter?: "linear" \| "nearest", metallic?: number, metallicRoughnessTexture?: asset id, mipFilter?: "linear" \| "nearest" \| "none", normalScale?: number, normalTexture?: asset id, occlusionStrength?: number, occlusionTexture?: asset id, roughness?: number, shading?: "pbr" \| "blinnPhong", shininess?: number, specular?: number, texture?: asset id, translucency?: number, uvOffset?: number[2], uvRotation?: number, uvScale?: number[2], wind?: {bend?: number, flutter?: number, height?: number, origin?: number[3], up?: number[3]}}
-- `previous?`: {addressMode?: "repeat" \| "clampToEdge" \| "mirrorRepeat", alphaCutoff?: number, alphaMode?: "opaque" \| "mask" \| "blend", baseColor?: number[4], checker?: boolean, doubleSided?: boolean, edgeWear?: {color: number[3], crisp: number, metallic: number, noiseFrequency: number, roughness: number}, emissive?: number, emissiveColor?: number[3], emissiveStrength?: number, emissiveTexture?: asset id, filter?: "linear" \| "nearest", metallic?: number, metallicRoughnessTexture?: asset id, mipFilter?: "linear" \| "nearest" \| "none", normalScale?: number, normalTexture?: asset id, occlusionStrength?: number, occlusionTexture?: asset id, roughness?: number, shading?: "pbr" \| "blinnPhong", shininess?: number, specular?: number, texture?: asset id, translucency?: number, uvOffset?: number[2], uvRotation?: number, uvScale?: number[2], wind?: {bend?: number, flutter?: number, height?: number, origin?: number[3], up?: number[3]}}
+- `material`: {addressMode?: "repeat" \| "clampToEdge" \| "mirrorRepeat", alphaCutoff?: number, alphaMode?: "opaque" \| "mask" \| "blend", baseColor?: number[4], checker?: boolean, doubleSided?: boolean, edgeWear?: {color: number[3], crisp: number, metallic: number, noiseFrequency: number, roughness: number}, emissive?: number, emissiveColor?: number[3], emissiveStrength?: number, emissiveTexture?: asset id, filter?: "linear" \| "nearest", fur?: {flowImage?: object, groom?: object, maskImage?: object}, metallic?: number, metallicRoughnessTexture?: asset id, mipFilter?: "linear" \| "nearest" \| "none", normalScale?: number, normalTexture?: asset id, occlusionStrength?: number, occlusionTexture?: asset id, roughness?: number, shading?: "pbr" \| "blinnPhong", shininess?: number, specular?: number, texture?: asset id, translucency?: number, uvOffset?: number[2], uvRotation?: number, uvScale?: number[2], wind?: {bend?: number, flutter?: number, height?: number, origin?: number[3], up?: number[3]}}
+- `previous?`: {addressMode?: "repeat" \| "clampToEdge" \| "mirrorRepeat", alphaCutoff?: number, alphaMode?: "opaque" \| "mask" \| "blend", baseColor?: number[4], checker?: boolean, doubleSided?: boolean, edgeWear?: {color: number[3], crisp: number, metallic: number, noiseFrequency: number, roughness: number}, emissive?: number, emissiveColor?: number[3], emissiveStrength?: number, emissiveTexture?: asset id, filter?: "linear" \| "nearest", fur?: {flowImage?: object, groom?: object, maskImage?: object}, metallic?: number, metallicRoughnessTexture?: asset id, mipFilter?: "linear" \| "nearest" \| "none", normalScale?: number, normalTexture?: asset id, occlusionStrength?: number, occlusionTexture?: asset id, roughness?: number, shading?: "pbr" \| "blinnPhong", shininess?: number, specular?: number, texture?: asset id, translucency?: number, uvOffset?: number[2], uvRotation?: number, uvScale?: number[2], wind?: {bend?: number, flutter?: number, height?: number, origin?: number[3], up?: number[3]}}
 - `reset?`: boolean
 - `transient?`: boolean
 
@@ -2221,7 +2389,7 @@ Arguments:
 
 - `addAnimations?`: [{autoplay?: boolean, loop?: "once" \| "loop" \| "pingPong", motions?: [object], name?: string, speed?: number, tracks?: [object]}]
 - `addMotions?`: [{amount?: number, axis?: "x" \| "y" \| "z", kind?: "spin" \| "bob" \| "swing" \| "pulse" \| "shake", part?: string, period?: number}]
-- `addParts?`: [{along?: number[2], axis?: "x" \| "y" \| "z", bevel?: number, blend?: "add" \| "subtract" \| "intersect", cardSize?: number, closed?: boolean, color?: number[3], count?: integer, deform?: [object], density?: number, glow?: number[3], glowStrength?: number, grain?: "x" \| "y" \| "z", look?: string, lookScale?: number, material?: string, metallic?: number, mirror?: "x" \| "y" \| "z" \| ["x" \| "y" \| "z"], name?: string, noise?: object, on?: [string], opacity?: number, open?: boolean, parent?: string, path?: [number[3]], position?: number[3], profile?: [number[2]], radii?: [number], radius?: number, repeat?: object, resolution?: integer, ribbon?: number, rotation?: number[3], roughness?: number, sections?: [object], seed?: integer, segments?: integer, shape?: string (18 cases), size?: number[3], smooth?: number, straight?: boolean, subdivide?: integer, texture?: string, textureScale?: number[2], thickness?: number, wear?: number, worldUV?: boolean}]
+- `addParts?`: [{along?: number[2], axis?: "x" \| "y" \| "z", bevel?: number, blend?: "add" \| "subtract" \| "intersect", cardSize?: number, closed?: boolean, color?: number[3], count?: integer, deform?: [object], density?: number, glow?: number[3], glowStrength?: number, grain?: "x" \| "y" \| "z", groom?: string, look?: string, lookScale?: number, material?: string, metallic?: number, mirror?: "x" \| "y" \| "z" \| ["x" \| "y" \| "z"], name?: string, noise?: object, on?: [string], opacity?: number, open?: boolean, parent?: string, path?: [number[3]], position?: number[3], profile?: [number[2]], radii?: [number], radius?: number, repeat?: object, resolution?: integer, ribbon?: number, rotation?: number[3], roughness?: number, sections?: [object], seed?: integer, segments?: integer, shape?: string (18 cases), size?: number[3], smooth?: number, straight?: boolean, subdivide?: integer, texture?: string, textureScale?: number[2], thickness?: number, wear?: number, worldUV?: boolean}]
 - `addTracks?`: [{interpolation?: "linear" \| "step" \| "hermite", keys?: [object], part?: string, property?: "position" \| "rotation" \| "scale"}]
 - `animation?`: string
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
@@ -4285,7 +4453,7 @@ Changes a .terrain file's settings, layers or scatter rules in one undoable step
 Arguments:
 
 - `addLayers?`: [{color?: number[3], material?: string, name?: string, normalMap?: string, texture?: string, tileSize?: number}]
-- `addScatter?`: [{alignToNormal?: boolean, asset?: string, density?: number, layer?: string, material?: string, maxCount?: integer, maxHeight?: number, maxScale?: number, maxSlope?: number, minHeight?: number, minScale?: number, minSlope?: number, name?: string, seed?: integer}]
+- `addScatter?`: [{alignToNormal?: boolean, asset?: string, density?: number, groom?: string, layer?: string, material?: string, maxCount?: integer, maxHeight?: number, maxScale?: number, maxSlope?: number, minHeight?: number, minScale?: number, minSlope?: number, name?: string, seed?: integer}]
 - `albedoSize?`: integer
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `chunkCells?`: integer
@@ -4344,7 +4512,7 @@ Result:
 - `lodDistance`: number
 - `lods`: integer
 - `resolution`: integer
-- `scatter`: [{alignToNormal?: boolean, asset?: string, density?: number, layer?: string, material?: string, maxCount?: integer, maxHeight?: number, maxScale?: number, maxSlope?: number, minHeight?: number, minScale?: number, minSlope?: number, name?: string, seed?: integer}]
+- `scatter`: [{alignToNormal?: boolean, asset?: string, density?: number, groom?: string, layer?: string, material?: string, maxCount?: integer, maxHeight?: number, maxScale?: number, maxSlope?: number, minHeight?: number, minScale?: number, minSlope?: number, name?: string, seed?: integer}]
 - `seed`: integer
 - `size`: number[2] — [x, y]
 - `summary`: {asset: asset id, chunks: integer, entities?: [entity id], heightRange: number, layers: [string], maxHeight: number, minHeight: number, path: string, prefab: asset id, resolution: integer, scatter: [string], scatterCounts: [integer], size: number[2], warnings: [string]}
