@@ -229,6 +229,7 @@ private final class Box { var value: Float = 0 }
 }
 
 private struct Health: Component, Equatable {
+    static let componentName = "TweenTestsHealth"  // not the engine's Health
     var hp: Float
     var offset: Vec2
 }

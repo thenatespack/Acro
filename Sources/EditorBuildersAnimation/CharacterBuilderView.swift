@@ -186,6 +186,45 @@ struct CharacterIKComponent: Component {
     }
 }
 
+/// The proxy component for the combat settings.
+struct CharacterCombatComponent: Component {
+    static var componentName: String { "CharacterCombat" }
+    static var fieldHints: [String: FieldHints] {
+        ["enabled": FieldHints(tooltip: "Give the prefab a Health, hurtboxes on its bones and its attack hitbox"),
+         "health": FieldHints(range: 1...10_000, step: 1),
+         "team": FieldHints(tooltip: "Hitboxes don't hurt their own team"),
+         "hurtboxes": FieldHints(tooltip: "Capsules over the ragdoll bodies where it can be hit"),
+         "headMultiplier": FieldHints(range: 0...10, step: 0.05, tooltip: "Damage multiplier of head hits"),
+         "torsoMultiplier": FieldHints(range: 0...10, step: 0.05),
+         "limbMultiplier": FieldHints(range: 0...10, step: 0.05, tooltip: "Arms and legs"),
+         "attackHitbox": FieldHints(tooltip: "The template's attack hitbox (humanoid: the right hand during the attack clip's swing)"),
+         "removeAfter": FieldHints(range: 0...600, step: 0.5, tooltip: "Seconds after death until it is removed (0: it stays)")]
+    }
+
+    var enabled: Bool
+    var health: Float
+    var team: String
+    var hurtboxes: Bool
+    var headMultiplier: Float
+    var torsoMultiplier: Float
+    var limbMultiplier: Float
+    var attackHitbox: Bool
+    var removeAfter: Float
+
+    init(_ c: CharacterBuild) {
+        let combat = c.combat ?? CharacterCombat()
+        enabled = c.combat != nil
+        health = combat.health ?? 100
+        team = combat.team ?? ""
+        hurtboxes = combat.hurtboxes
+        headMultiplier = combat.multiplier("head")
+        torsoMultiplier = combat.multiplier("torso")
+        limbMultiplier = combat.multiplier("arm")
+        attackHitbox = combat.hitboxes.map { !$0.isEmpty } ?? true
+        removeAfter = combat.removeAfter ?? 0
+    }
+}
+
 @MainActor
 public final class CharacterBuilderView {
     public let session: EditorSession
@@ -371,6 +410,7 @@ public final class CharacterBuilderView {
 
         layOutRagdoll()
         layOutIK()
+        layOutCombat()
 
         let problems = character.problems + CharacterCheck.problems(character, in: session)
         if !problems.isEmpty {
@@ -459,6 +499,34 @@ public final class CharacterBuilderView {
             if !nodes.isEmpty {
                 view.addChild(note("Animator IK nodes: \(nodes.joined(separator: ", ")). Set targets and weights while playing with the Visual Script nodes Set IK Target / Set IK Weight."))
             }
+        }
+    }
+
+    /// The combat section: health, team, hurtboxes and the attack hitbox (CharacterCombat.swift).
+    private func layOutCombat() {
+        view.addChild(Label("Combat", role: .secondary))
+        addGrid(CharacterCombatComponent(character), name: "characterCombatGrid") { [unowned self] (proxy: CharacterCombatComponent) in
+            var edited = character
+            guard proxy.enabled else {
+                edited.combat = nil
+                return apply(edited, label: "Edit Combat")
+            }
+            var combat = edited.combat ?? CharacterCombat()
+            combat.health = proxy.health > 0 && proxy.health != 100 ? proxy.health : nil
+            combat.team = proxy.team.isEmpty ? nil : proxy.team
+            combat.hurtboxes = proxy.hurtboxes
+            for (region, value) in [("head", proxy.headMultiplier), ("torso", proxy.torsoMultiplier), ("arm", proxy.limbMultiplier), ("leg", proxy.limbMultiplier)] {
+                combat.regions[region] = value == CharacterCombat.defaultRegions[region] ? nil : max(value, 0)
+            }
+            if !proxy.attackHitbox { combat.hitboxes = [] } else if combat.hitboxes?.isEmpty == true { combat.hitboxes = nil }
+            combat.removeAfter = proxy.removeAfter > 0 ? proxy.removeAfter : nil
+            edited.combat = combat
+            apply(edited, label: "Edit Combat")
+        }
+        if let combat = character.combat {
+            let rig = character.rig
+            let hitboxes = rig.hitboxes(combat).map { "\($0.name) on \($0.bone) in \($0.state ?? $0.clip ?? "?") \(String(format: "%.2f–%.2f", $0.start, $0.end))" }
+            view.addChild(note("\(rig.hurtboxes(combat).count) hurtboxes on the bones. Hitboxes: \(hitboxes.isEmpty ? "none" : hitboxes.joined(separator: "; ")). Edit tracks with character.combat {hitboxes}; show them in the Scene view with combat.overlay."))
         }
     }
 

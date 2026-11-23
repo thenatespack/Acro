@@ -66,6 +66,15 @@ public enum EditorIcons {
         TimelinePlayer.componentName: "clapperboard",
         PathFollower.componentName: "route",
         UILayoutPlayer.componentName: "layout-dashboard",
+        Health.componentName: "health",
+        Hurtbox.componentName: "hurtbox",
+        Hitbox.componentName: "hitbox",
+        Interactable.componentName: "interactable",
+        Interactor.componentName: "interactor",
+        Door.componentName: "door",
+        Lever.componentName: "lever",
+        Container.componentName: "chest",
+        Pickup.componentName: "pickup",
         "Pulse": "gauge",
     ]
 
@@ -102,6 +111,24 @@ public enum EditorIcons {
         "ragdoll": #"<circle cx="7" cy="5" r="2.5"/><path d="m9 8 5 6"/><path d="m14 14 6-1"/><path d="m14 14 1 7"/><path d="m11 10-6 3"/><path d="m11 10 6-5"/>"#,
         // A ball resting on a hatched surface: the PhysicsSurface component (what a surface is made of).
         "physics-surface": #"<circle cx="12" cy="9" r="5"/><path d="M2 15h20"/><path d="m4 21 3-5"/><path d="m10 21 3-5"/><path d="m16 21 3-5"/>"#,
+        // A heart: the Health component.
+        "health": #"<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/><path d="M3.5 12h4l2-3 3 6 2-3h6"/>"#,
+        // A shield with a target ring: the Hurtbox component (where it can be hit).
+        "hurtbox": #"<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><circle cx="12" cy="11" r="3"/>"#,
+        // A blade with a burst at its tip: the Hitbox component (what hurts).
+        "hitbox": #"<path d="M4 20 15 9"/><path d="m3 17 4 4"/><path d="M15 9l2-2"/><path d="M19 3l2 2"/><path d="M19 9h3"/><path d="M15 2v3"/><path d="m21 13-2-1"/>"#,
+        // A hand pointing at a dot: the Interactable component.
+        "interactable": #"<circle cx="17" cy="5" r="2"/><path d="M9 11V5a1.5 1.5 0 0 1 3 0v5"/><path d="M12 10a1.5 1.5 0 0 1 3 0v1"/><path d="M15 11a1.5 1.5 0 0 1 3 0v3a7 7 0 0 1-7 7h-1a6 6 0 0 1-5-3l-2-4a1.5 1.5 0 0 1 2.6-1.5L9 15"/>"#,
+        // An eye looking at a hand: the Interactor component (the player side).
+        "interactor": #"<path d="M2 9s3.5-5 10-5 10 5 10 5-3.5 5-10 5S2 9 2 9Z"/><circle cx="12" cy="9" r="2"/><path d="M7 22v-3a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v3"/>"#,
+        // An open door in its frame: the Door component.
+        "door": #"<path d="M4 21V3h11"/><path d="M15 3v1"/><path d="M8 21h13"/><path d="M15 4l5 2v15l-5-2Z"/><circle cx="17" cy="13" r=".5" fill="currentColor"/>"#,
+        // A lever tilted on its base: the Lever component.
+        "lever": #"<path d="M4 20h16"/><path d="M8 20a4 4 0 0 1 8 0"/><path d="m12 16 5-11"/><circle cx="17.5" cy="4" r="2"/>"#,
+        // A chest with an open lid: the Container component.
+        "chest": #"<path d="M3 11h18v9H3Z"/><path d="M3 11 5 4h14l2 7"/><path d="M10 11v3h4v-3"/>"#,
+        // A coin with a lift arrow: the Pickup component.
+        "pickup": #"<circle cx="12" cy="15" r="6"/><path d="M12 13v4"/><path d="M12 2v5"/><path d="m9 4 3-3 3 3"/>"#,
         prefabIconName: #"<path d="M12 2.5 15.5 6 12 9.5 8.5 6Z"/><path d="M6 8.5 9.5 12 6 15.5 2.5 12Z"/><path d="M18 8.5 21.5 12 18 15.5 14.5 12Z"/><path d="M12 14.5 15.5 18 12 21.5 8.5 18Z"/>"#,
         // A ball with its front equator and a meridian.
         "mesh-sphere": #"<circle cx="12" cy="12" r="10"/><path d="M2 12a10 3.5 0 0 0 20 0"/><path d="M12 2a3.5 10 0 0 0 0 20"/>"#,

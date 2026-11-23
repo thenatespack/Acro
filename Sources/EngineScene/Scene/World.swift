@@ -119,6 +119,14 @@ public final class World {
     /// (whole steps only, so `time.alpha` stays continuous), so a slow frame can't snowball
     /// into ever more steps (the "spiral of death").
     public var maxFixedStepsPerFrame = 8
+    /// Multiplies every dt `update(dt:)` is given (slow motion; 0 pauses game time while
+    /// systems still run). `hitStop` lowers it further for a moment.
+    public var timeScale: Double = 1 {
+        didSet { if !(timeScale >= 0) || !timeScale.isFinite { timeScale = 1 } }
+    }
+    /// Real seconds of hit stop left, and the scale it applies (see `hitStop(_:scale:)`).
+    public internal(set) var hitStopRemaining: Double = 0
+    var hitStopScale: Double = 0
 
     public init() {}
 

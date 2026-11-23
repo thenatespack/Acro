@@ -1,0 +1,102 @@
+{
+  "format": "Acro.Playtest",
+  "version": 1,
+  "name": "Swing a sword hitbox at a dummy three times: 25 damage a swing, dead on the third",
+  "scene": "Scenes/Combat.scene",
+  "steps": [
+    {
+      "frames": 1
+    },
+    {
+      "assert": {
+        "label": "the dummy starts at full health",
+        "entity": "Dummy",
+        "component": "Health",
+        "field": "current",
+        "equals": 60
+      }
+    },
+    {
+      "note": "Attack (J): the script switches the sword's hitbox on for a quarter second."
+    },
+    {
+      "action": "attack"
+    },
+    {
+      "frames": 30
+    },
+    {
+      "assert": {
+        "label": "one hit for 25",
+        "entity": "Dummy",
+        "component": "Health",
+        "field": "current",
+        "equals": 35
+      }
+    },
+    {
+      "assert": {
+        "label": "the swing is over",
+        "entity": "Sword",
+        "component": "Hitbox",
+        "field": "active",
+        "equals": false
+      }
+    },
+    {
+      "assert": {
+        "label": "the script heard the hit",
+        "entity": "Player",
+        "variable": "hits",
+        "equals": 1
+      }
+    },
+    {
+      "action": "attack"
+    },
+    {
+      "frames": 30
+    },
+    {
+      "assert": {
+        "label": "a second swing hits again",
+        "entity": "Dummy",
+        "component": "Health",
+        "field": "current",
+        "equals": 10
+      }
+    },
+    {
+      "action": "attack"
+    },
+    {
+      "frames": 30
+    },
+    {
+      "assert": {
+        "label": "the third swing kills it",
+        "entity": "Dummy",
+        "component": "Health",
+        "field": "dead",
+        "equals": true
+      }
+    },
+    {
+      "assert": {
+        "label": "health stops at 0",
+        "entity": "Dummy",
+        "component": "Health",
+        "field": "current",
+        "equals": 0
+      }
+    },
+    {
+      "assert": {
+        "label": "three hits landed",
+        "entity": "Player",
+        "variable": "hits",
+        "equals": 3
+      }
+    }
+  ]
+}

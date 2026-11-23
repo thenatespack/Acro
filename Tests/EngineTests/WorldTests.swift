@@ -15,7 +15,10 @@ import Testing
 
 private struct Position: Component, Equatable { var value: Vec3 }
 private struct Velocity: Component, Equatable { var value: Vec3 }
-private struct Health: Component, Equatable { var points: Int }
+private struct Health: Component, Equatable {
+    static let componentName = "WorldTestsHealth"  // not the engine's Health
+    var points: Int
+}
 private struct Tag: Component {}
 
 private func approx(_ a: Vec3, _ b: Vec3, _ eps: Float = 1e-4) -> Bool { length(a - b) < eps }
