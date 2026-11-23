@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 291 tools.
+named by its id (see README › Use the editor › AI control). 298 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -14,11 +14,12 @@ optional arguments.
 |---|---|
 | `activity` | [`activity.clear`](#activityclear), [`activity.list`](#activitylist), [`activity.revert`](#activityrevert) |
 | `ai` | [`ai.settings`](#aisettings) |
-| `animGraph` | [`animGraph.assign`](#animgraphassign), [`animGraph.bones`](#animgraphbones), [`animGraph.clipEvents`](#animgraphclipevents), [`animGraph.edit`](#animgraphedit), [`animGraph.get`](#animgraphget), [`animGraph.new`](#animgraphnew), [`animGraph.open`](#animgraphopen), [`animGraph.set`](#animgraphset), [`animGraph.setClipEvents`](#animgraphsetclipevents) |
+| `animGraph` | [`animGraph.assign`](#animgraphassign), [`animGraph.bones`](#animgraphbones), [`animGraph.clipEvents`](#animgraphclipevents), [`animGraph.edit`](#animgraphedit), [`animGraph.get`](#animgraphget), [`animGraph.hitboxes`](#animgraphhitboxes), [`animGraph.new`](#animgraphnew), [`animGraph.open`](#animgraphopen), [`animGraph.set`](#animgraphset), [`animGraph.setClipEvents`](#animgraphsetclipevents) |
 | `asset` | [`asset.applySettings`](#assetapplysettings), [`asset.assign`](#assetassign), [`asset.delete`](#assetdelete), [`asset.extractMaterials`](#assetextractmaterials), [`asset.get`](#assetget), [`asset.import`](#assetimport), [`asset.instantiate`](#assetinstantiate), [`asset.list`](#assetlist), [`asset.move`](#assetmove), [`asset.newFolder`](#assetnewfolder), [`asset.newMaterial`](#assetnewmaterial), [`asset.newProceduralTexture`](#assetnewproceduraltexture), [`asset.reimport`](#assetreimport), [`asset.rename`](#assetrename), [`asset.select`](#assetselect), [`asset.setProceduralTexture`](#assetsetproceduraltexture), [`asset.waitForImports`](#assetwaitforimports) |
 | `behavior` | [`behavior.assign`](#behaviorassign), [`behavior.debug`](#behaviordebug), [`behavior.edit`](#behavioredit), [`behavior.get`](#behaviorget), [`behavior.navigation`](#behaviornavigation), [`behavior.new`](#behaviornew), [`behavior.open`](#behavioropen), [`behavior.set`](#behaviorset) |
 | `builder` | [`builder.select`](#builderselect) |
-| `character` | [`character.action`](#characteraction), [`character.bones`](#characterbones), [`character.edit`](#characteredit), [`character.get`](#characterget), [`character.ik`](#characterik), [`character.new`](#characternew), [`character.open`](#characteropen), [`character.ragdoll`](#characterragdoll), [`character.set`](#characterset), [`character.state`](#characterstate) |
+| `character` | [`character.action`](#characteraction), [`character.bones`](#characterbones), [`character.combat`](#charactercombat), [`character.edit`](#characteredit), [`character.get`](#characterget), [`character.ik`](#characterik), [`character.new`](#characternew), [`character.open`](#characteropen), [`character.ragdoll`](#characterragdoll), [`character.set`](#characterset), [`character.state`](#characterstate) |
+| `combat` | [`combat.inspect`](#combatinspect), [`combat.overlay`](#combatoverlay), [`combat.simulateHit`](#combatsimulatehit) |
 | `component` | [`component.add`](#componentadd), [`component.remove`](#componentremove), [`component.setField`](#componentsetfield), [`component.types`](#componenttypes) |
 | `diagnostics` | [`diagnostics.get`](#diagnosticsget) |
 | `dialogue` | [`dialogue.edit`](#dialogueedit), [`dialogue.get`](#dialogueget), [`dialogue.new`](#dialoguenew), [`dialogue.open`](#dialogueopen), [`dialogue.play`](#dialogueplay), [`dialogue.set`](#dialogueset) |
@@ -30,6 +31,7 @@ optional arguments.
 | `gridMap` | [`gridMap.edit`](#gridmapedit), [`gridMap.erase`](#gridmaperase), [`gridMap.fill`](#gridmapfill), [`gridMap.get`](#gridmapget), [`gridMap.new`](#gridmapnew), [`gridMap.open`](#gridmapopen), [`gridMap.paint`](#gridmappaint), [`gridMap.set`](#gridmapset) |
 | `groom` | [`groom.apply`](#groomapply), [`groom.edit`](#groomedit), [`groom.examples`](#groomexamples), [`groom.get`](#groomget), [`groom.new`](#groomnew), [`groom.open`](#groomopen), [`groom.presets`](#groompresets), [`groom.preview`](#groompreview), [`groom.set`](#groomset) |
 | `input` | [`input.action`](#inputaction), [`input.actions`](#inputactions), [`input.clear`](#inputclear), [`input.gamepad`](#inputgamepad), [`input.inject`](#inputinject), [`input.state`](#inputstate) |
+| `interaction` | [`interaction.list`](#interactionlist), [`interaction.use`](#interactionuse) |
 | `launcher` | [`launcher.dismiss`](#launcherdismiss), [`launcher.settings`](#launchersettings), [`launcher.show`](#launchershow) |
 | `layout` | [`layout.reset`](#layoutreset) |
 | `log` | [`log.clear`](#logclear), [`log.read`](#logread) |
@@ -245,8 +247,30 @@ Result:
 
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `clips`: [string]
-- `graph`: {anyStatePosition?: number[2], ik?: [object], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
+- `graph`: {anyStatePosition?: number[2], hitboxes?: [object], ik?: [object], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
 - `path`: string
+- `warnings`: [string]
+
+### `animGraph.hitboxes`
+
+**Animation Graph Hitboxes** · _undoable_
+
+Reads or edits an .animgraph file's hitboxes: shapes on bones that deal damage while a state plays inside a window of its cycle (a swing). Each is {name, state (sub-machine states by path, "Combat/Slash"), clip (instead of state), bone, shape {kind: sphere | capsule | box, radius, from, to, size}, start, end (fractions 0...1 of the cycle), damage {amount, type, knockback}}. `set` replaces them all; `add` adds new ones or changes the named ones (only the keys given); `remove` deletes by name; one undo step. Animators playing the graph get them (Animator.hitboxes): in play mode each swing hits a victim's hurtboxes once. With no changes it lists them with the graph's states. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `add?`: [any]
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+- `remove?`: [string]
+- `set?`: [{bone?: string, clip?: string, damage?: object, end?: number, name?: string, shape?: object, start?: number, state?: string}]
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `hitboxes`: [{bone?: string, clip?: string, damage?: object, end?: number, name?: string, shape?: object, start?: number, state?: string}]
+- `path`: string
+- `states`: [string]
 - `warnings`: [string]
 
 ### `animGraph.new`
@@ -258,7 +282,7 @@ Writes an .animgraph file in `folder` (default: the Assets root) and imports it:
 Arguments:
 
 - `folder?`: string
-- `graph?`: {anyStatePosition?: number[2], ik?: [object], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
+- `graph?`: {anyStatePosition?: number[2], hitboxes?: [object], ik?: [object], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
 - `name?`: string
 - `preview?`: string
 
@@ -300,7 +324,7 @@ Replaces an .animgraph file's whole contents and reimports it; animators using i
 Arguments:
 
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
-- `graph`: {anyStatePosition?: number[2], ik?: [object], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
+- `graph`: {anyStatePosition?: number[2], hitboxes?: [object], ik?: [object], initialState?: string, layers?: [object], parameters?: [object], preview?: string, retarget?: {boneMap?: object, matchNames?: boolean, rootScale?: number, rotation?: "copy" \| "local" \| "world", sampleRate?: number, translation?: "none" \| "root" \| "all"}, states?: [object], transitions?: [object]}
 - `path?`: string
 
 Result:
@@ -844,6 +868,35 @@ Result:
 - `handBone`: string
 - `template`: "humanoid" \| "quadruped" \| "bird" \| "blob"
 
+### `character.combat`
+
+**Character Combat** · _undoable_
+
+Reads or changes a .character file's combat settings. With them the prefab's root gets a Health (`health`, `team`, `resistances` per damage type, `removeAfter` death), its bones Hurtboxes (capsules over the ragdoll bodies, a little fatter; damage multipliers per body region: head 2, torso 1, arm and leg 0.75 unless `regions` changes them) and its Animator hitbox tracks (`hitboxes`, by default the template's attack: the right hand during the attack clip's swing for a humanoid). Any argument adds the section; `remove` deletes it; one undo step. With no changes it lists the hurtboxes and hitboxes the importer makes. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `defaultHitboxes?`: boolean
+- `health?`: number
+- `hitboxes?`: [{bone?: string, clip?: string, damage?: object, end?: number, name?: string, shape?: object, start?: number, state?: string}]
+- `hurtboxes?`: boolean
+- `path?`: string
+- `regions?`: object
+- `remove?`: boolean
+- `removeAfter?`: number
+- `resistances?`: object
+- `team?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `combat?`: {health?: number, hitboxes?: [object], hurtboxes?: boolean, regions?: object, removeAfter?: number, resistances?: object, team?: string}
+- `hitboxes`: [{bone?: string, clip?: string, damage?: object, end?: number, name?: string, shape?: object, start?: number, state?: string}]
+- `hurtboxes`: [{bone: string, multiplier: number, region: string, shape: object}]
+- `path`: string
+- `warnings`: [string]
+
 ### `character.edit`
 
 **Edit Character** · _undoable_
@@ -896,7 +949,7 @@ Arguments:
 Result:
 
 - `bones`: [{name: string, parent?: string, position: number[3]}]
-- `character`: {attachments?: [object], clips?: [string], colors?: {accent?: number[3], body?: number[3], eyes?: number[3], legs?: number[3], skin?: number[3]}, defaultClip?: string, grooms?: object, ik?: {footPlacement?: boolean, handIK?: boolean, lookAt?: boolean, lookTarget?: string}, proportions?: {arms?: number, head?: number, height?: number, legs?: number, neck?: number, tail?: number, torso?: number, width?: number}, ragdoll?: {blendTime?: number, bones?: [object], enabled?: boolean, mass?: number, strength?: number}, segments?: integer, smooth?: boolean, template?: "humanoid" \| "quadruped" \| "bird" \| "blob"}
+- `character`: {attachments?: [object], clips?: [string], colors?: {accent?: number[3], body?: number[3], eyes?: number[3], legs?: number[3], skin?: number[3]}, combat?: {health?: number, hitboxes?: [object], hurtboxes?: boolean, regions?: object, removeAfter?: number, resistances?: object, team?: string}, defaultClip?: string, grooms?: object, ik?: {footPlacement?: boolean, handIK?: boolean, lookAt?: boolean, lookTarget?: string}, proportions?: {arms?: number, head?: number, height?: number, legs?: number, neck?: number, tail?: number, torso?: number, width?: number}, ragdoll?: {blendTime?: number, bones?: [object], enabled?: boolean, mass?: number, strength?: number}, segments?: integer, smooth?: boolean, template?: "humanoid" \| "quadruped" \| "bird" \| "blob"}
 - `clips`: [{clip: string, duration: number, events: [string], loops: boolean, name: string, source?: string}]
 - `colors`: object
 - `summary`: {asset: asset id, attachments: [string], bones: [string], clips: [string], entities?: [entity id], height: number, parameters: [string], path: string, prefab: asset id, template: "humanoid" \| "quadruped" \| "bird" \| "blob", warnings: [string]}
@@ -1011,7 +1064,7 @@ Replaces a .character file's whole contents and reimports it; placed copies upda
 Arguments:
 
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
-- `character`: {attachments?: [object], clips?: [string], colors?: {accent?: number[3], body?: number[3], eyes?: number[3], legs?: number[3], skin?: number[3]}, defaultClip?: string, grooms?: object, ik?: {footPlacement?: boolean, handIK?: boolean, lookAt?: boolean, lookTarget?: string}, proportions?: {arms?: number, head?: number, height?: number, legs?: number, neck?: number, tail?: number, torso?: number, width?: number}, ragdoll?: {blendTime?: number, bones?: [object], enabled?: boolean, mass?: number, strength?: number}, segments?: integer, smooth?: boolean, template?: "humanoid" \| "quadruped" \| "bird" \| "blob"}
+- `character`: {attachments?: [object], clips?: [string], colors?: {accent?: number[3], body?: number[3], eyes?: number[3], legs?: number[3], skin?: number[3]}, combat?: {health?: number, hitboxes?: [object], hurtboxes?: boolean, regions?: object, removeAfter?: number, resistances?: object, team?: string}, defaultClip?: string, grooms?: object, ik?: {footPlacement?: boolean, handIK?: boolean, lookAt?: boolean, lookTarget?: string}, proportions?: {arms?: number, head?: number, height?: number, legs?: number, neck?: number, tail?: number, torso?: number, width?: number}, ragdoll?: {blendTime?: number, bones?: [object], enabled?: boolean, mass?: number, strength?: number}, segments?: integer, smooth?: boolean, template?: "humanoid" \| "quadruped" \| "bird" \| "blob"}
 - `path?`: string
 
 Result:
@@ -1053,6 +1106,66 @@ Result:
 - `sliding`: boolean
 - `verticalVelocity`: number
 - `wallNormal?`: number[3] — [x, y, z]
+
+## combat
+
+### `combat.inspect`
+
+**Inspect Combat** · _read-only_, _idempotent_
+
+Lists the scene's damageable entities (Health: current, max, dead, team, resistances), hitboxes (Hitbox components and animator hitbox tracks: world-space shape, whether active now, damage) and hurtboxes (shape, region, multiplier), and the latest hits. `entity` limits it to one entity's subtree. Hitbox tracks are active only while playing (their state's window). See combat.overlay to draw them.
+
+Arguments:
+
+- `activeOnly?`: boolean
+- `entity?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+
+Result:
+
+- `health`: [{current: number, dead: boolean, entity?: entity id, max: number, name: string, resistances: object, team: string}]
+- `hitboxes`: [{active?: boolean, bone: string, damage?: object, entity?: entity id, from: number[3], halfExtents?: number[3], kind: string, multiplier?: number, name: string, owner?: entity id, radius: number, region?: string, to: number[3]}]
+- `hurtboxes`: [{active?: boolean, bone: string, damage?: object, entity?: entity id, from: number[3], halfExtents?: number[3], kind: string, multiplier?: number, name: string, owner?: entity id, radius: number, region?: string, to: number[3]}]
+- `playing`: boolean
+- `recentHits`: [{attacker?: entity id, bone: string, damage: number, health: number, hitbox: string, killed: boolean, normal: number[3], point: number[3], region: string, sequence: integer, type: string, victim?: entity id, victimName: string}]
+
+### `combat.overlay`
+
+**Show Hitboxes** · _idempotent_
+
+Shows or hides hitboxes and hurtboxes in the Scene view, drawn over the scene: hurtboxes blue (gray once dead), hitboxes dim yellow, active ones bright red and thicker, and arrows along the normals of the latest hits. While playing it follows the animation (hitbox tracks light up during their window). view.screenshot shows it with gizmos on.
+
+Arguments:
+
+- `show?`: boolean
+
+Result:
+
+- `hitboxes`: integer
+- `hurtboxes`: integer
+- `shown`: boolean
+
+### `combat.simulateHit`
+
+**Simulate Hit**
+
+While playing, hits `victim` as a hitbox would: `damage` of `type` from `attacker` at `bone` (its hurtbox's region multiplier applies) or `point`, then steps `frames` (default 1) so the combat system runs the effects: hit flash, hit stop, camera shake, VFX and sound, a partial ragdoll hit reaction, a full ragdoll on death, On Hit / On Death in visual scripts. Returns the hit (damage dealt after multipliers and resistances, killed), the victim's health and ragdoll mode.
+
+Arguments:
+
+- `attacker?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `bone?`: string
+- `damage?`: number
+- `frames?`: integer
+- `knockback?`: number
+- `point?`: number[3] — [x, y, z]
+- `type?`: string
+- `victim`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+
+Result:
+
+- `health?`: {current: number, dead: boolean, entity?: entity id, max: number, name: string, resistances: object, team: string}
+- `hit?`: {attacker?: entity id, bone: string, damage: number, health: number, hitbox: string, killed: boolean, normal: number[3], point: number[3], region: string, sequence: integer, type: string, victim?: entity id, victimName: string}
+- `ragdoll?`: string
 
 ## component
 
@@ -2161,6 +2274,40 @@ Result:
 - `mouse`: number[2] — [x, y]
 - `mouseDelta`: number[2] — [x, y]
 - `pending`: integer
+
+## interaction
+
+### `interaction.list`
+
+**List Interactables** · _read-only_, _idempotent_
+
+Lists the scene's interactables (verb its prompt shows, use or pick-up action, enabled, door / lever / container state, times used) and interactors (what each focuses while playing, the prompt with the action's current input glyph, items carried).
+
+Arguments: none.
+
+Result:
+
+- `glyphs`: object
+- `interactables`: [{action: "use" \| "pickUp", enabled: boolean, entity?: entity id, kind: string, name: string, state?: boolean, uses: integer, verb: string}]
+- `interactors`: [{entity?: entity id, focus?: entity id, items: object, name: string, prompt?: string}]
+- `playing`: boolean
+
+### `interaction.use`
+
+**Use Interactable**
+
+While playing, makes an interactor use an interactable as if it pressed the action: a door opens or closes (a locked one needs its key item), a lever flips and toggles its target, a container opens and hands over its items, a pickup joins the interactor's items. Defaults: the first Interactor and what it focuses. Not recorded in playtests (press the use action there: input.action {action: "use"}).
+
+Arguments:
+
+- `interactor?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `target?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+
+Result:
+
+- `items`: object
+- `result`: string
+- `verb`: string
 
 ## launcher
 

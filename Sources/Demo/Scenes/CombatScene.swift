@@ -101,7 +101,7 @@ final class CombatScene: DemoScene {
         world.modify(Animator.self, for: fighter) {
             $0.hitboxes = [HitboxTrack(name: "Sword", state: "attack", bone: "hand.R",
                                        shape: .capsule(from: Vec3(0, -0.08, 0), to: Vec3(0, -0.78, 0), radius: 0.07),
-                                       start: 0.3, end: 0.6, damage: HitDamage(amount: 25, type: "slash", knockback: 6))]
+                                       start: 0.3, end: 0.6, damage: HitDamage(amount: 30, type: "slash", knockback: 10))]
         }
 
         dummy = spawnCharacter("Dummy", at: Vec3(-1.6, 0, 0.55), yaw: .pi, shirt: Vec3(0.8, 0.65, 0.35))
