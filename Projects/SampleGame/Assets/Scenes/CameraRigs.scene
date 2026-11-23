@@ -1,0 +1,679 @@
+{
+  "entities": [
+    {
+      "components": {
+        "Camera": {
+          "clearColor": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "far": 500,
+          "fovY": 1.0471975,
+          "isActive": true,
+          "near": 0.1,
+          "postFX": "",
+          "reversedZ": false
+        },
+        "Name": {
+          "value": "Main Camera"
+        },
+        "Transform": {
+          "position": [
+            0,
+            6,
+            12
+          ],
+          "rotation": [
+            -0.20106587,
+            0,
+            0,
+            0.9795777
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "id": 0
+    },
+    {
+      "components": {
+        "DirectionalLight": {
+          "cascadeBlend": 0.1,
+          "cascadeSplitLambda": 0.75,
+          "castsShadows": true,
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 1.4,
+          "shadowBias": 0.0005,
+          "shadowDistance": 60,
+          "shadowExtent": 16,
+          "shadowNormalOffset": 1
+        },
+        "Name": {
+          "value": "Sun"
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            -0.43328112,
+            0.28848478,
+            0.14866214,
+            0.8407994
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "id": 1
+    },
+    {
+      "components": {
+        "Name": {
+          "value": "Environment"
+        },
+        "SceneEnvironment": {
+          "ambientIntensity": 0.3,
+          "environmentIntensity": 1,
+          "environmentRotation": 0,
+          "fogBaseHeight": 0,
+          "fogColor": [
+            0.62,
+            0.7,
+            0.82
+          ],
+          "fogDensity": 0,
+          "fogHeightFalloff": 0,
+          "groundColor": [
+            0.12,
+            0.1,
+            0.09
+          ],
+          "imageBasedLighting": true,
+          "proceduralSky": {
+            "groundColor": [
+              0.13,
+              0.12,
+              0.11
+            ],
+            "horizonColor": [
+              0.55,
+              0.62,
+              0.74
+            ],
+            "sunGlow": 0.5,
+            "sunIntensity": 40,
+            "sunSize": 0.012,
+            "zenithColor": [
+              0.12,
+              0.26,
+              0.62
+            ]
+          },
+          "sky": "color",
+          "skyColor": [
+            0.55,
+            0.65,
+            0.85
+          ],
+          "volumetricFog": {
+            "anisotropy": 0.5,
+            "enabled": false,
+            "intensity": 1,
+            "localLights": true,
+            "maxDistance": 100,
+            "steps": 32
+          },
+          "wind": {
+            "direction": [
+              1,
+              0,
+              0.35
+            ],
+            "gustiness": 0.5,
+            "strength": 0.5
+          }
+        }
+      },
+      "id": 2
+    },
+    {
+      "components": {
+        "Collider": {
+          "density": 1000,
+          "friction": 0.5,
+          "isTrigger": false,
+          "layer": 1,
+          "mask": 4294967295,
+          "offset": [
+            0,
+            -0.5,
+            0
+          ],
+          "restitution": 0,
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "shape": {
+            "box": {
+              "halfExtents": [
+                30,
+                0.5,
+                30
+              ]
+            }
+          }
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "emissiveStrength": 1,
+          "emissiveTint": [
+            1,
+            1,
+            1
+          ],
+          "isVisible": true,
+          "material": "default",
+          "mesh": "cube",
+          "opacity": 1,
+          "receivesShadows": true,
+          "tint": [
+            0.4,
+            0.42,
+            0.4
+          ]
+        },
+        "Name": {
+          "value": "Floor"
+        },
+        "PhysicsSurface": {
+          "material": "concrete"
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "id": 3
+    },
+    {
+      "components": {
+        "Collider": {
+          "density": 1000,
+          "friction": 0.5,
+          "isTrigger": false,
+          "layer": 1,
+          "mask": 4294967295,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "restitution": 0,
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "shape": {
+            "box": {
+              "halfExtents": [
+                0.5,
+                0.5,
+                0.5
+              ]
+            }
+          }
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "emissiveStrength": 1,
+          "emissiveTint": [
+            1,
+            1,
+            1
+          ],
+          "isVisible": true,
+          "material": "default",
+          "mesh": "cube",
+          "opacity": 1,
+          "receivesShadows": true,
+          "tint": [
+            0.72,
+            0.68,
+            0.6
+          ]
+        },
+        "Name": {
+          "value": "Back Wall"
+        },
+        "PhysicsSurface": {
+          "material": "stone"
+        },
+        "Transform": {
+          "position": [
+            0,
+            1.5,
+            -2.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            14,
+            3,
+            1
+          ]
+        }
+      },
+      "id": 4
+    },
+    {
+      "components": {
+        "Collider": {
+          "density": 1000,
+          "friction": 0.5,
+          "isTrigger": false,
+          "layer": 1,
+          "mask": 4294967295,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "restitution": 0,
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "shape": {
+            "box": {
+              "halfExtents": [
+                0.5,
+                0.5,
+                0.5
+              ]
+            }
+          }
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "emissiveStrength": 1,
+          "emissiveTint": [
+            1,
+            1,
+            1
+          ],
+          "isVisible": true,
+          "material": "default",
+          "mesh": "cube",
+          "opacity": 1,
+          "receivesShadows": true,
+          "tint": [
+            0.8,
+            0.55,
+            0.3
+          ]
+        },
+        "Name": {
+          "value": "Crate"
+        },
+        "PhysicsSurface": {
+          "material": "wood"
+        },
+        "Transform": {
+          "position": [
+            -3,
+            0.4,
+            2
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        }
+      },
+      "id": 5
+    },
+    {
+      "components": {
+        "CharacterController": {
+          "climbSpeed": 2,
+          "collisionMask": 4294967295,
+          "crouch": false,
+          "crouchHeight": 1,
+          "crouchSpeedScale": 0.5,
+          "drop": false,
+          "grabLedge": false,
+          "grabLedges": true,
+          "gravityScale": 1,
+          "groundNormal": [
+            0,
+            1,
+            0
+          ],
+          "groundVelocity": [
+            0,
+            0,
+            0
+          ],
+          "height": 1.8,
+          "isCrouching": false,
+          "isGrounded": false,
+          "isSliding": false,
+          "jump": false,
+          "jumpSpeed": 5.5,
+          "launchVelocity": [
+            0,
+            0,
+            0
+          ],
+          "ledgeNormal": [
+            0,
+            0,
+            0
+          ],
+          "ledgePoint": [
+            0,
+            0,
+            0
+          ],
+          "mantle": false,
+          "mantleFrom": [
+            0,
+            0,
+            0
+          ],
+          "mantleProgress": 0,
+          "mantleTime": 0.45,
+          "mantleTo": [
+            0,
+            0,
+            0
+          ],
+          "maxIterations": 4,
+          "maxSlopeAngle": 45,
+          "mode": "walking",
+          "moveVelocity": [
+            0,
+            0,
+            0
+          ],
+          "pushForce": 400,
+          "radius": 0.3,
+          "skinWidth": 0.02,
+          "stepHeight": 0.35,
+          "verticalVelocity": 0
+        },
+        "Collider": {
+          "density": 1000,
+          "friction": 0.5,
+          "isTrigger": false,
+          "layer": 2,
+          "mask": 0,
+          "offset": [
+            0,
+            0.9,
+            0
+          ],
+          "restitution": 0,
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "shape": {
+            "capsule": {
+              "halfHeight": 0.59999996,
+              "radius": 0.3
+            }
+          }
+        },
+        "Name": {
+          "value": "Player"
+        },
+        "RigidBody": {
+          "allowSleep": true,
+          "angularDamping": 0.1,
+          "angularVelocity": [
+            0,
+            0,
+            0
+          ],
+          "continuous": false,
+          "gravityScale": 1,
+          "interpolation": "inherit",
+          "linearDamping": 0.05,
+          "linearVelocity": [
+            0,
+            0,
+            0
+          ],
+          "motion": "kinematic",
+          "startsAsleep": false
+        },
+        "Transform": {
+          "position": [
+            0,
+            0.02,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "VisualScript": {
+          "enabled": true,
+          "graph": "Scripts/Physics2Player.vscript",
+          "variables": {}
+        }
+      },
+      "id": 6,
+      "uid": "6a3c0e2f9b1d4c7e8a5f0b2d4c6e8a01"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "emissiveStrength": 1,
+          "emissiveTint": [
+            1,
+            1,
+            1
+          ],
+          "isVisible": true,
+          "material": "default",
+          "mesh": "sphere",
+          "opacity": 1,
+          "receivesShadows": true,
+          "tint": [
+            0.95,
+            0.55,
+            0.15
+          ]
+        },
+        "Name": {
+          "value": "Body"
+        },
+        "Transform": {
+          "position": [
+            0,
+            0.9,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            0.6,
+            0.9,
+            0.6
+          ]
+        }
+      },
+      "id": 7,
+      "parent": 6
+    },
+    {
+      "components": {
+        "CameraRig": {
+          "blendCurve": "linear",
+          "blendTime": 1,
+          "mode": "thirdPerson",
+          "pitch": 10,
+          "priority": 1,
+          "target": {
+            "$ref": "6a3c0e2f9b1d4c7e8a5f0b2d4c6e8a01"
+          }
+        },
+        "Name": {
+          "value": "Orbit Rig"
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "id": 8
+    },
+    {
+      "components": {
+        "CameraRig": {
+          "blendCurve": "linear",
+          "blendTime": 1,
+          "distance": 14,
+          "mode": "topDown",
+          "pitch": 60,
+          "target": {
+            "$ref": "6a3c0e2f9b1d4c7e8a5f0b2d4c6e8a01"
+          }
+        },
+        "Name": {
+          "value": "Top Rig"
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "id": 9
+    },
+    {
+      "components": {
+        "Name": {
+          "value": "Director"
+        },
+        "Transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "VisualScript": {
+          "enabled": true,
+          "graph": "Scripts/CameraRigsDirector.vscript",
+          "variables": {}
+        }
+      },
+      "id": 10
+    }
+  ],
+  "format": "Acro.Scene",
+  "version": 2
+}
