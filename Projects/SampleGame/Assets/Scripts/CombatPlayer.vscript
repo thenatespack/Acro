@@ -1,0 +1,138 @@
+{
+  "actions": {
+    "attack": [
+      "key.j",
+      "pad.west"
+    ]
+  },
+  "links": [
+    [
+      "attack.out",
+      "on.in"
+    ],
+    [
+      "sword.entity",
+      "on.entity"
+    ],
+    [
+      "on.out",
+      "wait.in"
+    ],
+    [
+      "wait.out",
+      "off.in"
+    ],
+    [
+      "sword.entity",
+      "off.entity"
+    ],
+    [
+      "hit.out",
+      "countHit.in"
+    ],
+    [
+      "count.value",
+      "plusOne.a"
+    ],
+    [
+      "plusOne.result",
+      "countHit.value"
+    ]
+  ],
+  "nodes": [
+    {
+      "config": {
+        "action": "attack"
+      },
+      "id": "attack",
+      "type": "event.actionPressed",
+      "x": 0,
+      "y": 0
+    },
+    {
+      "id": "sword",
+      "inputs": {
+        "name": "Sword"
+      },
+      "type": "world.findByName",
+      "x": 0,
+      "y": 140
+    },
+    {
+      "config": {
+        "component": "Hitbox",
+        "field": "active"
+      },
+      "id": "on",
+      "inputs": {
+        "value": true
+      },
+      "type": "component.set",
+      "x": 240,
+      "y": 0
+    },
+    {
+      "id": "wait",
+      "inputs": {
+        "seconds": 0.25
+      },
+      "type": "flow.delay",
+      "x": 480,
+      "y": 0
+    },
+    {
+      "config": {
+        "component": "Hitbox",
+        "field": "active"
+      },
+      "id": "off",
+      "inputs": {
+        "value": false
+      },
+      "type": "component.set",
+      "x": 720,
+      "y": 0
+    },
+    {
+      "id": "hit",
+      "type": "event.hitDealt",
+      "x": 0,
+      "y": 300
+    },
+    {
+      "config": {
+        "variable": "hits"
+      },
+      "id": "count",
+      "type": "var.get",
+      "x": 0,
+      "y": 420
+    },
+    {
+      "id": "plusOne",
+      "inputs": {
+        "b": 1
+      },
+      "type": "math.add",
+      "x": 200,
+      "y": 420
+    },
+    {
+      "config": {
+        "variable": "hits"
+      },
+      "id": "countHit",
+      "type": "var.set",
+      "x": 400,
+      "y": 300
+    }
+  ],
+  "variables": [
+    {
+      "default": 0,
+      "name": "hits",
+      "tooltip": "Hits the sword landed",
+      "type": "int"
+    }
+  ]
+}

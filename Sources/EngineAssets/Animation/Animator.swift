@@ -227,7 +227,8 @@ public struct Animator: Component, Equatable, Sendable {
          "fadeDuration": FieldHints(hidden: true), "fadeElapsed": FieldHints(hidden: true),
          "graph": FieldHints(tooltip: "An .animgraph asset: its states, transitions, parameters and layers replace this animator's (hot reloaded)"),
          "retarget": FieldHints(hidden: true),
-         "ik": FieldHints(tooltip: "IK nodes run after the animation: twoBoneIK, aim, chainIK, footPlacement (targets are world-space points)")]
+         "ik": FieldHints(tooltip: "IK nodes run after the animation: twoBoneIK, aim, chainIK, footPlacement (targets are world-space points)"),
+         "hitboxes": FieldHints(tooltip: "Hitboxes on bones, active during part of a state's cycle (start...end): the damage of attacks")]
     }
 
     /// The entity each channel `target` index drives (for imported clips, by glTF node index;
@@ -255,6 +256,9 @@ public struct Animator: Component, Equatable, Sendable {
     /// the bones (AnimationIK.swift): two-bone, aim, chain (FABRIK) and foot placement nodes. A
     /// graph's `ik` replaces them.
     public var ik: [AnimationIKNode]?
+    /// Hitboxes on bones switched on during part of a state (a swing): the play-mode combat
+    /// system deals their damage (Gameplay/Combat.swift in Engine). A graph's `hitboxes` replace them.
+    public var hitboxes: [HitboxTrack]?
 
     /// The current state last, states fading out before it.
     public private(set) var playbacks: [AnimationPlayback] = []

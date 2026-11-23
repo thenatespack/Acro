@@ -15,6 +15,12 @@ public enum EditorCharacterCommands {
         CharacterBonesCommand.self,
         CharacterRagdollCommand.self,
         CharacterIKCommand.self,
+        CharacterCombatCommand.self,
+        CombatInspectCommand.self,
+        CombatSimulateHitCommand.self,
+        CombatOverlayCommand.self,
+        InteractionListCommand.self,
+        InteractionUseCommand.self,
     ]
 
     /// What the tool docs say about the file format, shared by the tools.

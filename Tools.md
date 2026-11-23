@@ -803,6 +803,40 @@ path (start and end are checked); crouch, ledge and climb inputs aren't in `NetC
 stride is a constant fraction of height, no animation-driven foot contacts; IK hand points are
 exposed but nothing sets IK targets automatically.
 
+### Combat and interaction (roadmap 3B)
+
+Components in EngineScene (Gameplay/: Damage.swift, HitShapes.swift, Interaction.swift; every key
+optional, registered by `GameplayComponents.register()`): `Health`, `Hurtbox`, `Hitbox`,
+`Interactable`, `Interactor`, `Door`, `Lever`, `Container`, `Pickup`; `HitboxTrack` on
+`Animator.hitboxes`. `World.applyDamage` / `heal` / `combat` (hit log, damage types),
+`World.timeScale` / `hitStop`. Play systems in Engine (Gameplay/: `world.addGameplay`, added by the
+editor's play mode and `ScenePlayback`): "interaction" and "interaction.devices" (`.update`),
+"combat" and "gameFeel" (`.lateUpdate`). `.animgraph` `hitboxes` (the Animation Graph tab's
+Hitboxes section, `animGraph.hitboxes`); `.character` `combat` (Character Builder Combat section,
+`character.combat`; importer version 3). Tools `combat.inspect`, `combat.simulateHit`,
+`combat.overlay`, `interaction.list`, `interaction.use`. Visual Script nodes in
+VisualScriptCombatNodes.swift. Demo scene `combat`; SampleGame `Interact.scene` / `Combat.scene`
+with playtests. The editor Game view outlines the focused interactable with a second
+`SelectionOutlineRenderer` (`World.interactionFocus`).
+Not done: damage types are code or per-world data (`World.combat.damageTypes`), not a project
+file; `Health.resistances` and `Interactor.items` are dictionaries the inspector can edit but not
+add keys to (scene files and `component.setField` can); hitbox tracks are keyed to a state's
+normalized cycle, not to clip frames or events, and there is no hitbox gizmo or timeline strip in
+the Animation Graph tab's preview (the Scene view overlay draws them while playing); fast swings
+are tested once per frame with no sweep, so a thin blade can skip a small hurtbox at low frame
+rates; the `.character` default hitbox is a fist sphere (no weapon attachment hitboxes); hit
+stop freezes the whole world (no per-entity time scale); camera shake moves the active camera
+entity and assumes nothing else edits it after `.lateUpdate` (3C's camera rigs should call or
+replace `GameFeel` rather than fight it); hit flashes and the focus highlight both multiply
+`MeshRenderer.tint`, so an entity flashed while highlighted can keep a wrong tint until its
+highlight ends; exported games and GameRunner get the tint highlight and the prompt text but no
+outline (`SceneRenderer.renderOffscreen` in EngineRendering has no hook for it); prompts are a
+billboard `TextMesh` (no icon glyphs, no UI-layer prompt); the glyph is the action's first
+keyboard or gamepad binding, switching on the last device pressed; doors swing their transform
+only (a door with a static `Collider` doesn't move its body: make the panel kinematic); levers
+toggle one target by name; containers hand over everything at once (no inventory UI);
+`interaction.use` and `combat.simulateHit` aren't recorded in playtests (press input actions).
+
 ## Follow-ups
 
 Connections between builders: all of the 0.15.0 list is done in 0.16.0 (`.sprite` tile sets,

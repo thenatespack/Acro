@@ -111,6 +111,7 @@ public enum GamePlayer {
         ParticleSystem.registerComponents()
         TextMeshComponents.registerComponents()
         SkeletalAnimation.registerComponents()
+        GameplayComponents.register()
     }
 
     /// Calls a statically linked module's entry point (`GameModuleABI.entryPoint`) and checks

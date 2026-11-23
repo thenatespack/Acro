@@ -106,6 +106,8 @@ public final class EditorApp: Game, EditorHost {
     private let toolDraw = DebugDraw()
     private var toolDrawRenderer: DebugDrawRenderer!
     private var outline: SelectionOutlineRenderer!
+    /// Outlines the interactable the player focuses in the Game view (`World.interactionFocus`).
+    private var interactionOutline: SelectionOutlineRenderer?
     /// Draws `Sprite` components in the Scene and Game views.
     private var sceneSprites: SceneSpriteDrawer!
     /// Selection and gizmos in the viewport (set up with the renderer, which it picks against).
@@ -1561,8 +1563,14 @@ public final class EditorApp: Game, EditorHost {
         if let game = gameCurrentView, gameSizer.width > 0, gameWidget.isEffectivelyVisible {
             sceneRenderer.beginViews(world: session.gameWorld, frame: frame, shadowFocus: game)
             sceneSprites.prepare(world: session.gameWorld, assets: session.assets, reversedZ: game.reversedZ)
-            sceneRenderer.renderView(game, into: gameTarget, frame: frame, debugDraw: gameDraw) { [unowned self] pass in
+            let sprites: (RenderPass) -> Void = { [unowned self] pass in
                 sceneSprites.render(into: pass, viewProjection: game.viewProjection, reversedZ: game.reversedZ)
+            }
+            if session.isPlaying, let focus = session.gameWorld.interactionFocus(), let outliner = gameInteractionOutline() {
+                outliner.renderView(game, sceneRenderer: sceneRenderer, world: session.gameWorld, selection: [focus], primary: focus,
+                                    into: gameTarget, pixelScale: ui.scale, frame: frame, debugDraw: gameDraw, overlay: sprites)
+            } else {
+                sceneRenderer.renderView(game, into: gameTarget, frame: frame, debugDraw: gameDraw, overlay: sprites)
             }
         }
         guard let view = currentView, sizer.width > 0, viewportWidget.isEffectivelyVisible else { return }
@@ -1582,6 +1590,16 @@ public final class EditorApp: Game, EditorHost {
     }
 
     public func render(engine: Engine, pass: RenderPass) {}
+
+    /// The Game view's interaction outline renderer (made on first use): a warm, thin outline.
+    private func gameInteractionOutline() -> SelectionOutlineRenderer? {
+        if let interactionOutline { return interactionOutline }
+        guard let made = try? SelectionOutlineRenderer(device: sceneRenderer.device, maskLabel: "interaction outline mask") else { return nil }
+        made.style = SelectionOutlineStyle(width: 2.5, primaryColor: Vec4(1, 0.92, 0.55, 1), secondaryColor: Vec4(1, 0.92, 0.55, 1),
+                                           hiddenOpacity: 0.25, includesDescendants: true)
+        interactionOutline = made
+        return made
+    }
 }
 
 // MARK: - Dragging assets from the browser

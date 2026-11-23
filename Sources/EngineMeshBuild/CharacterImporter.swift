@@ -23,14 +23,15 @@ import EngineAssets
 /// `locomotion` 1D blend of idle, walk and run on the float parameter `speed` (meters per second),
 /// starting in `defaultClip`. Triggers `jump`, `attack` and `die` play those clips from any state;
 /// jump and attack then return to locomotion. With `ik`, the Animator gets the IK nodes
-/// (`CharacterRig.ikNodes`); with an enabled `ragdoll`, the root gets a `Ragdoll`. Its clip handles are the clips' reference text
+/// (`CharacterRig.ikNodes`); with an enabled `ragdoll`, the root gets a `Ragdoll`. With `combat`, the
+/// root gets a `Health`, the bones `Hurtbox`es and the Animator hitbox tracks (CharacterCombat.swift). Its clip handles are the clips' reference text
 /// ("asset:<id>#animation/walk"), which `World.addSceneAnimationSystem` loads from the asset database.
 public struct CharacterImporter: AssetImporter {
     public init() {}
 
     public var name: String { BuiltInImporterName.character }
     public var fileExtensions: [String] { ["character"] }
-    public var version: Int { 2 }
+    public var version: Int { 3 }
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         let build: CharacterBuild
@@ -113,6 +114,15 @@ public struct CharacterImporter: AssetImporter {
         if let ik = build.ik {
             let nodes = rig.ikNodes(ik)
             if !nodes.isEmpty { animator.ik = nodes }
+        }
+        if let combat = build.combat {
+            let tracks = rig.hitboxes(combat)
+            if !tracks.isEmpty { animator.hitboxes = tracks }
+            scene.records[root].components[Health.componentName] = try AssetJSON.value(combat.healthComponent)
+            for hurtbox in rig.hurtboxes(combat) {
+                guard let i = rig.index(of: hurtbox.bone) else { continue }
+                scene.records[boneIDs[i]].components[Hurtbox.componentName] = try AssetJSON.value(hurtbox.hurtbox)
+            }
         }
         scene.records[root].components["Animator"] = try Self.animatorJSON(animator, targets: boneIDs)
         if let ragdoll = build.ragdoll, ragdoll.enabled {

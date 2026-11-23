@@ -418,6 +418,67 @@ struct AnimGraphIKComponent: Component {
     }
 }
 
+/// A hitbox track's settings in the sidebar grid (state or clip empty: none).
+struct AnimGraphHitboxComponent: Component {
+    static var componentName: String { "AnimGraphHitbox" }
+    static var fieldHints: [String: FieldHints] {
+        ["state": FieldHints(tooltip: "The state it belongs to (sub-machine states by path, Combat/Slash)"),
+         "clip": FieldHints(tooltip: "A clip key instead of a state (any state playing it)"),
+         "bone": FieldHints(tooltip: "The bone (entity name) the shape is attached to"),
+         "kind": FieldHints(tooltip: "sphere at from, capsule from from to to, box centered on from with half extents size"),
+         "radius": FieldHints(range: 0...5, step: 0.005),
+         "start": FieldHints(range: 0...1, step: 0.01, tooltip: "Fraction of the state's cycle where it switches on"),
+         "end": FieldHints(range: 0...1, step: 0.01, tooltip: "Fraction where it switches off"),
+         "damage": FieldHints(range: 0...10_000, step: 1),
+         "type": FieldHints(tooltip: "Damage type: physical, slash, blunt, pierce, fire, ice, electric, poison, or a game's"),
+         "knockback": FieldHints(range: 0...100, step: 0.1, tooltip: "Impulse pushing the victim, N·s")]
+    }
+    var name: String
+    var state: String
+    var clip: String
+    var bone: String
+    var kind: HitShapeKind
+    var radius: Float
+    var from: Vec3
+    var to: Vec3
+    var size: Vec3
+    var start: Float
+    var end: Float
+    var damage: Float
+    var type: String
+    var knockback: Float
+
+    init(_ track: HitboxTrack) {
+        name = track.name
+        state = track.state ?? ""
+        clip = track.clip ?? ""
+        bone = track.bone
+        kind = track.shape.kind
+        radius = track.shape.radius
+        from = track.shape.from
+        to = track.shape.to
+        size = track.shape.size
+        start = track.start
+        end = track.end
+        damage = track.damage.amount
+        type = track.damage.type
+        knockback = track.damage.knockback
+    }
+
+    /// `track` with these settings.
+    func applied(to track: HitboxTrack) -> HitboxTrack {
+        var t = track
+        t.state = state.isEmpty ? nil : state
+        t.clip = clip.isEmpty ? nil : clip
+        t.bone = bone.trimmingCharacters(in: .whitespaces)
+        t.shape = HitShape(kind: kind, radius: max(radius, 0), from: from, to: kind == .sphere ? from : to, size: size)
+        t.start = min(max(start, 0), 1)
+        t.end = min(max(end, t.start), 1)
+        t.damage = HitDamage(amount: damage, type: type.isEmpty ? "physical" : type, knockback: max(knockback, 0))
+        return t
+    }
+}
+
 // MARK: - Sidebar
 
 @MainActor
@@ -438,6 +499,8 @@ public final class AnimationGraphView {
     public private(set) var selectedLayer: String?
     /// The IK node whose settings show.
     public private(set) var selectedIK: String?
+    /// The hitbox whose settings show.
+    public private(set) var selectedHitbox: String?
     private var newIKType = 0
     public let canvas = AnimGraphCanvas()
 
@@ -601,6 +664,12 @@ public final class AnimationGraphView {
         layout()
     }
 
+    /// Shows the hitbox `name`'s settings (nil: none).
+    public func selectHitbox(_ name: String?) {
+        selectedHitbox = name
+        layout()
+    }
+
     func moveNode(_ name: String?, to p: Vec2) {
         var edited = graph
         if let name, let i = edited.states.firstIndex(where: { $0.name == name }) {
@@ -687,6 +756,8 @@ public final class AnimationGraphView {
         addLayersSection()
         view.addChild(Separator())
         addIKSection()
+        view.addChild(Separator())
+        addHitboxSection()
         let problems = session.animationGraphProblems(fileGraph)
         if !problems.isEmpty {
             view.addChild(Separator())
@@ -1388,6 +1459,59 @@ public final class AnimationGraphView {
         add.command = AnimGraphEditCommand.id.rawValue
         add.tooltip = "Add an IK node (bones default to a Character Builder humanoid's; edit them for other rigs)"
         view.addChild(HStack(spacing: 6, [type, add, Spacer()]))
+    }
+
+    // MARK: Hitboxes
+
+    /// The graph's hitboxes (shapes on bones active during part of a state): pick one to edit, add, remove.
+    private func addHitboxSection() {
+        view.addChild(Label("Hitboxes", role: .secondary))
+        if graph.hitboxes.isEmpty {
+            view.addChild(note("No hitboxes. Add one to deal damage while a state plays (a swing): a shape on a bone, active from start to end of the state's cycle."))
+        }
+        for track in graph.hitboxes {
+            let name = Button(track.name, role: selectedHitbox == track.name ? .primary : .normal, name: "animGraphHitboxName") { [unowned self] in
+                selectedHitbox = selectedHitbox == track.name ? nil : track.name
+                layout()
+            }
+            let remove = Button("✕", name: "animGraphHitboxRemove") { [unowned self] in
+                var edited = graph
+                edited.hitboxes.removeAll { $0.name == track.name }
+                apply(edited, label: "Remove Hitbox")
+            }
+            remove.command = AnimGraphHitboxesCommand.id.rawValue
+            remove.tooltip = "Remove this hitbox"
+            let window = String(format: "%@ %.2f–%.2f", track.state ?? track.clip ?? "", track.start, track.end)
+            view.addChild(HStack(spacing: 4, [name, Label(window, role: .caption), Spacer(), remove]))
+            if selectedHitbox == track.name {
+                addGrid(AnimGraphHitboxComponent(track), name: "animGraphHitboxGrid") { [unowned self] value in
+                    var edited = graph
+                    guard let i = edited.hitboxes.firstIndex(where: { $0.name == track.name }) else { return }
+                    edited.hitboxes[i] = value.applied(to: edited.hitboxes[i])
+                    let newName = value.name.trimmingCharacters(in: .whitespaces)
+                    if !newName.isEmpty, newName != track.name, !edited.hitboxes.contains(where: { $0.name == newName }) {
+                        edited.hitboxes[i].name = newName
+                        selectedHitbox = newName
+                    } else {
+                        edited.hitboxes[i].name = track.name
+                    }
+                    apply(edited, label: "Edit Hitbox")
+                }
+            }
+        }
+        let add = Button("Add Hitbox", name: "animGraphAddHitbox") { [unowned self] in
+            var edited = graph
+            let name = edited.uniqueHitboxName("Hit")
+            var picked: String?
+            if case .state(let n) = selection { picked = n }
+            let state = (picked ?? edited.states.first?.name).map { (path + [$0]).joined(separator: "/") }
+            edited.hitboxes.append(HitboxTrack(name: name, state: state, bone: "hand.R", shape: .sphere(radius: 0.12)))
+            selectedHitbox = name
+            apply(edited, label: "Add Hitbox")
+        }
+        add.command = AnimGraphHitboxesCommand.id.rawValue
+        add.tooltip = "Add a hitbox on the selected state (the bone defaults to a Character Builder humanoid's right hand; edit it for other rigs)"
+        view.addChild(HStack(spacing: 6, [add, Spacer()]))
     }
 
     private func editLayer(_ name: String, _ label: String, _ change: (inout AnimationGraphLayer) -> Void) {

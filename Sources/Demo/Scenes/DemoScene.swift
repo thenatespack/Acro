@@ -118,4 +118,5 @@ extension DemoScene {
     Physics2Scene.self,
     NavMeshScene.self,
     FurScene.self,
+    CombatScene.self,
 ]

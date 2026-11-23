@@ -81,7 +81,7 @@ extension AnimationGraph {
 
     /// This graph with the sub-state machine at `path` replaced by `level`'s states,
     /// transitions, initial state and Any State position, and the graph-wide settings
-    /// (parameters, layers, preview, retarget, ik) taken from `level`. Nil when `path` names no
+    /// (parameters, layers, preview, retarget, ik, hitboxes) taken from `level`. Nil when `path` names no
     /// sub-machine.
     public func replacingLevel(at path: [String], with level: AnimationGraph) -> AnimationGraph? {
         guard !path.isEmpty else { return level }
@@ -91,6 +91,7 @@ extension AnimationGraph {
         graph.preview = level.preview
         graph.retarget = level.retarget
         graph.ik = level.ik
+        graph.hitboxes = level.hitboxes
         let machine = AnimationGraphMachine(states: level.states, transitions: level.transitions, initialState: level.initialState,
                                             anyStatePosition: level.anyStatePosition)
         func replace(_ states: inout [AnimationGraphState], _ path: ArraySlice<String>) -> Bool {

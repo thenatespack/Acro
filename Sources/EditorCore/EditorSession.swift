@@ -799,6 +799,8 @@ public final class EditorSession {
         world.addGameUI(assets: { [weak self] in self?.assets }, in: gameUIRoot).images = gameUIImages
         timelinePlayers = world.addTimelinePlayers(assets: { [weak self] in self?.assets })
         pathFollowers = world.addPathFollowers(assets: { [weak self] in self?.assets })
+        // Interaction, combat (hitboxes, damage, hit effects) and game feel (GameFeel.swift).
+        world.addGameplay(input: gameInput, assets: { [weak self] in self?.assets }, physics: { [weak self] in self?.physics })
         gameModule.addSystems()
         let scripts = world.addVisualScripts(context: gameModule.context, assets: { [weak self] in self?.assets },
                                              physics: { [weak self] in self?.physics }, physics2D: { [weak self] in self?.physics2D },
@@ -838,6 +840,7 @@ public final class EditorSession {
         timelinePlayers = nil
         pathFollowers?.remove()
         pathFollowers = nil
+        world.removeGameplay()
         tweens = nil
         world.removeVisualScripts()
         visualScriptBreakPending = false

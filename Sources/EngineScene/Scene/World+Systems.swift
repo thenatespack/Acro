@@ -31,6 +31,8 @@ public struct WorldTime: Sendable {
     public package(set) var fixedStepsThisFrame = 0
     /// Total fixed steps run.
     public package(set) var fixedStepCount = 0
+    /// The frame's dt before `World.timeScale` and hit stop (real time: camera shake, UI).
+    public package(set) var unscaledDelta: Float = 0
     /// Frames (`update(dt:)` calls) completed before this one.
     public package(set) var frame = 0
     /// Whole fixed steps dropped by `maxFixedStepsPerFrame`, in total.
@@ -85,9 +87,16 @@ extension World {
     /// frames) covers, up to `maxFixedStepsPerFrame`; then `.update`, `.lateUpdate`,
     /// `propagateTransforms()` and `.renderPrep`. `Engine` calls this after `Game.update` when
     /// `engine.world` is set. With a fixed dt (as in screenshot mode) the step sequence is
-    /// deterministic.
-    public func update(dt: Double) {
+    /// deterministic. `dt` is scaled by `timeScale` and any hit stop (`time.unscaledDelta` keeps it).
+    public func update(dt realDt: Double) {
         precondition(!isIterating, "World.update can't run inside a query")
+        var scale = timeScale
+        if hitStopRemaining > 0 {
+            scale *= hitStopScale
+            hitStopRemaining = max(hitStopRemaining - max(realDt, 0), 0)
+        }
+        let dt = realDt * scale
+        time.unscaledDelta = Float(realDt)
         time.elapsed += dt
         time.fixedStepsThisFrame = 0
         fixedAccumulator += max(dt, 0)
@@ -114,6 +123,21 @@ extension World {
         Profiler.scope("propagateTransforms") { propagateTransforms() }
         run(.renderPrep)
         time.frame += 1
+    }
+
+    /// Freezes game time for `seconds` of real time (hit stop: the frame of impact lingers):
+    /// dt is multiplied by `scale` (0: frozen) on top of `timeScale` until then. A longer stop
+    /// already running wins; the slower scale wins.
+    public func hitStop(_ seconds: Double, scale: Double = 0) {
+        guard seconds > 0, seconds.isFinite else { return }
+        hitStopScale = hitStopRemaining > 0 ? min(hitStopScale, max(scale, 0)) : max(scale, 0)
+        hitStopRemaining = max(hitStopRemaining, seconds)
+    }
+
+    /// Ends any hit stop and sets `timeScale` back to 1.
+    public func resetTimeScale() {
+        hitStopRemaining = 0
+        timeScale = 1
     }
 
     /// Runs `stage`'s systems once with the current `time`. `update(dt:)` does this for
