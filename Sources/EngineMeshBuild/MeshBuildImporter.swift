@@ -307,6 +307,14 @@ public struct MeshBuildImporter: AssetImporter {
                     node.material = context.reference(materialID)
                 }
             }
+            // Fur or hair on the part (GroomBuild.swift): its fur material, grown at run time.
+            if let groom = part.groom?.trimmingCharacters(in: .whitespaces), !groom.isEmpty {
+                if node.mesh == nil {
+                    context.warn("part '\(part.name)': groom '\(groom)' needs a part with a mesh")
+                } else if let fur = resolve(groom, kind: GroomRenderer.furSubAsset, part: part.name, &context) {
+                    node.groom = GroomRenderer(groom: MaterialHandle(AssetReference(fur.asset, subAsset: GroomRenderer.furSubAsset)))
+                }
+            }
             if firstIndex[part.name] == i {
                 let tracks = build.animatorTracks(for: part.name)
                 if !tracks.isEmpty { node.animator = FieldAnimator(tracks: tracks) }

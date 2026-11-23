@@ -161,6 +161,11 @@ public final class SceneRenderer {
     var windState = WindState()
     /// Depth pipelines for swaying casters, created on first use.
     var windDepthPipelines: [WindDepthKey: RenderPipeline] = [:]
+    /// Fur (SceneRenderer+Fur.swift): the fur meshes built per fur material and base mesh, the
+    /// fur shaders (by skinned) and scratch for the fur block.
+    var furMeshes: [String: FurMeshes] = [:]
+    var furShaders: [Bool: ShaderSource] = [:]
+    var furBlockScratch: [Vec4] = []
     /// The shadow atlas: every cascade, spot-light map and point-light face of the frame in
     /// one depth texture (`ShadowAtlasLayout`). Recreated when the layout's size changes.
     public private(set) var shadowMap: GPUTexture
@@ -386,12 +391,15 @@ public final class SceneRenderer {
         var painted: Bool = false
         /// The swaying vertex shader (mesh_wind.vert, or mesh_paint_wind.vert with `painted`; `Material.sways`).
         var wind: Bool = false
+        /// The fur shaders (mesh_fur(_skinned).vert, mesh_fur.frag; `Material.fur`), for shells or
+        /// cards (double-sided, alpha-to-coverage).
+        var fur: GroomStyle? = nil
     }
 
     /// The pipeline variant a batch of `material` draws with, in the transparent pass when `blending`.
     static func pipelineKey(for material: Material, blending: Bool, reversedZ: Bool) -> PipelineKey {
         PipelineKey(blending: blending, doubleSided: material.doubleSided, reversedZ: reversedZ, alphaTested: material.alphaTested,
-                    graph: material.graph?.key, wind: material.sways)
+                    graph: material.graph?.key, wind: material.sways, fur: material.fur?.groom.drawnStyle)
     }
 
     /// Also draws `engine.debugDraw` in the screen pass.
@@ -483,7 +491,8 @@ public final class SceneRenderer {
     public func registerMaterial(_ material: Material, key: String) throws -> MaterialHandle {
         let entry = (material, try device.makeSampler(material.sampler))
         let graphBuffer = try material.graph.map { try device.makeBuffer($0.values, usage: .storage) }
-        let id = prep.materials.register(MaterialTraits(blends: material.blends, alphaTested: material.masksDepth || material.sways),
+        let id = prep.materials.register(MaterialTraits(blends: material.blends, alphaTested: material.masksDepth || material.sways,
+                                                        fur: material.fur?.traits),
                                          key: key)
         if id == materials.count { materials.append(entry) } else { materials[id] = entry }
         graphBuffers[id] = graphBuffer
@@ -659,7 +668,9 @@ public final class SceneRenderer {
                           wind: RenderPrep.findEnvironment(in: world).wind)
         syncAssets()
         syncLineMeshes(world)
-        if world.existingStore(MeshLOD.self) != nil {
+        syncGroomMeshes(world)
+        prep.furTime = windState.time
+        if world.existingStore(MeshLOD.self) != nil || world.existingStore(GroomRenderer.self) != nil {
             prep.lodViewpoint = viewpoint
                 ?? RenderPrep.findCamera(in: world, preferred: camera).map { Vec3($0.world.c3.x, $0.world.c3.y, $0.world.c3.z) }
         }
@@ -1038,7 +1049,8 @@ public final class SceneRenderer {
                             eye: Vec3, reversedZ: Bool, frame: Frame) {
         let variant = DepthVariant.prepass(reversedZ: reversedZ)
         // Depth-only batches have no material, alpha-tested ones keep theirs (as for shadows).
-        let batches = list.opaque.map { batch -> RenderBatch in
+        // Fur is left out: its shells would occlude as solid layers.
+        let batches = list.opaque.filter { materials[$0.material].material.fur == nil }.map { batch -> RenderBatch in
             var batch = batch
             let material = materials[batch.material].material
             if !material.masksDepth && !material.sways { batch.material = -1 }
@@ -1125,7 +1137,9 @@ public final class SceneRenderer {
             pass.setStorageBuffer(buffer, index: 0, stage: .fragment)
             pass.setPushConstants(Vec4(graphTime, material.alphaMode == .mask ? 1 : 0, material.alphaCutoff, 0))
         }
-        if skin >= 0 {
+        if material.fur != nil {
+            bindFur(material, skin: skin, in: pass)
+        } else if skin >= 0 {
             bindSkin(skin, material: index, in: pass)
         } else if material.sways, let wind = material.wind {
             bindWind(MaterialUniforms(material, reflected: reflected), wind: wind, in: pass)
@@ -1239,6 +1253,10 @@ public final class SceneRenderer {
             guard let windShader = windShader(painted: key.painted, alphaTested: key.alphaTested) else { return nil }
             shader = windShader
         }
+        if key.fur != nil {
+            guard let furShader = furShader(skinned: key.skinned) else { return nil }
+            shader = furShader
+        }
         if let graph = key.graph {
             // The material graph's fragment stage (MaterialGraphCompiler) after the usual vertex stage.
             guard let program = graphPrograms[graph] else { return nil }
@@ -1248,7 +1266,8 @@ public final class SceneRenderer {
         }
         var descriptor = PipelineDescriptor(shader: shader, vertexLayout: key.skinned ? SkinnedMeshVertex.layout : MeshVertex.layout,
                                             instanceLayout: MeshInstance.layout)
-        descriptor.cullMode = key.doubleSided ? .none : .back
+        descriptor.cullMode = key.doubleSided || key.fur == .cards ? .none : .back
+        descriptor.alphaToCoverage = key.fur == .cards
         descriptor.alphaBlending = key.blending
         descriptor.depthWrite = !key.blending
         descriptor.depthCompare = key.reversedZ ? .greater : .less

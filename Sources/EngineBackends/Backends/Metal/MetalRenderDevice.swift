@@ -631,6 +631,7 @@ package final class MetalRenderDevice: RenderDevice {
             pipelineDescriptor.fragmentFunction = functions.color0Fragment ?? functions.fragment
             pipelineDescriptor.depthAttachmentPixelFormat = screenDepthFormat
             pipelineDescriptor.rasterSampleCount = sampleCount
+            pipelineDescriptor.isAlphaToCoverageEnabled = descriptor.alphaToCoverage
             let color = pipelineDescriptor.colorAttachments[0]!
             color.pixelFormat = layer.pixelFormat
             color.writeMask = descriptor.colorWrites ? .all : []

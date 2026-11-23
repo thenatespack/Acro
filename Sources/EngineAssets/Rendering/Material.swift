@@ -88,6 +88,9 @@ public struct Material {
     /// Sways in the scene's wind (`SceneEnvironment.wind`, see Wind.swift): drawn with the wind
     /// vertex shaders in every pass. nil (the default) draws as before; not used by material graphs.
     public var wind: MaterialWind?
+    /// Draws fur on the mesh of an entity's `GroomRenderer` (see Groom.swift); nil for every other
+    /// material. Fur materials draw only through `GroomRenderer`s (mesh_fur shaders).
+    public var fur: MaterialFur?
 
     public init(shading: ShadingModel = .pbr, baseColor: Vec4 = Vec4(0.8, 0.8, 0.8, 1), texture: GPUTexture? = nil,
                 sampler: SamplerDescriptor = SamplerDescriptor(minFilter: .linear, magFilter: .linear, mipFilter: .linear, addressMode: .repeat),
@@ -270,10 +273,13 @@ public struct MaterialTraits: Equatable, Sendable {
     /// shadow pass samples its base color alpha. `SceneRenderer` also sets it for materials that
     /// sway in the wind (`Material.sways`), whose depth passes need their material too.
     public var alphaTested: Bool
+    /// A fur material's detail levels (`Material.fur`), nil for others.
+    public var fur: FurTraits?
 
-    public init(blends: Bool = false, alphaTested: Bool = false) {
+    public init(blends: Bool = false, alphaTested: Bool = false, fur: FurTraits? = nil) {
         self.blends = blends
         self.alphaTested = alphaTested
+        self.fur = fur
     }
 }
 

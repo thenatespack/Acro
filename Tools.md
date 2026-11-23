@@ -689,6 +689,80 @@ in GameRunner and exported games. 0.19 follow-up: nodes for `PathFollower`, `wor
 `bakeNavigation`, `world.gameUI`, timeline `holdFade` and `wait` dialogue keys, and
 `DialoguePlayer.uiLayout` (Sources/Engine/VisualScript/VisualScriptBuilderLinkNodes.swift).
 
+### Groom Builder (`.groom`)
+
+Fur and hair any mesh can wear. The file (GroomBuild.swift, every key optional): `style` shell
+(short fur, moss, velvet) | cards (hair, manes, feathers) | strands (reserved, draws as cards),
+`length`, `lengthVariation`, `density` (strands or cards per cm²), `thickness` [root, tip],
+`clumping`, `curl`, `frizz`, `gravity`, `stiffness`, `rootColor` / `tipColor` (sRGB, `FieldHints(srgb:)`),
+`colorNoise`, `specular`, `mask` {texture, vertexPaint channel, parts, invert}, `combDirection`
+("normal" | "followSurface" | [x,y,z]) with `combStrength`, `flowTexture`, `wind`, `shells`,
+`cardWidth`, `cardSegments`, `strandsPerCard`, `lod` {shells, cards, distances}, `comb` and `cut`
+strokes (spheres in the mesh's space, applied in order: what the brushes and agents write), `seed`,
+`previewMesh`. Presets: shortFur, shaggyFur, velvet, moss, tufts (grass-like), straightHair,
+ponytail, mane, feathers, each with a GPU budget in `groom.presets`.
+How it draws: `GroomImporter` (EngineMeshBuild) makes `material/fur`, a `MaterialAsset` whose new
+`fur` (`MaterialFur`) carries the whole groom plus its mask and flow maps downsampled to 128 px
+(so fur geometry can be built anywhere), the full mask texture in the metallic-roughness slot, and
+a preview prefab. A new `GroomRenderer` component (next to a `MeshRenderer`; EditorIcons "brush",
+Add Component entry, registered by `SkeletalAnimation.registerComponents` and GamePlayer) names that
+material. `SceneRenderer.syncGroomMeshes` builds the fur meshes from the entity's mesh the first
+time a (mesh, groom) pair draws, keyed by a hash of the groom's geometry fields (GroomGeometry.swift):
+a shell mesh (furry triangles; comb vector and length factor in the tangent; skin kept) and, for
+cards, guide curves grown from area-weighted random roots (comb, gravity, curl, frizz, clumps
+toward leaders) turned into strips, one mesh per card detail level. `RenderPrep` adds the fur
+items after the entity's own: one instance per shell (its height in `params.y`), all copies of
+one mesh and groom batching into one instanced draw (checked by GroomTests: 3 furry entities x 9
+shells = one draw of 27 instances), plus an opaque undercoat shell in the root color that is all
+that draws past the last `lod.distances` entry (the fur-tinted far look). Skinned fur shares its
+entity's pose: `RenderList` now merges consecutive skinned items with the same skin, mesh and
+material into one batch. Shaders (Metal and Vulkan from one GLSL source, the `fur` scene renders
+byte-identical): `fur.glsl` in mesh_fur.vert / mesh_fur_skinned.vert (shells pushed out along the
+normal, leaning by the comb, drooping by gravity, bent by wind and the springs; cards bent toward
+their tips) and mesh_fur.frag (strands from a 3D cell grid on the bind-pose surface position, so
+they stay put on animated meshes and need no UVs; clumping, curl, frizz, random lengths, the mask
+texture's length per pixel; card strands with soft edges through alpha-to-coverage; wrapped diffuse
+and two shifted Kajiya-Kay highlights, sun shadows, ambient or image-based light, clustered point
+and spot lights, fog). Fur is left out of shadows and the depth prepass. Secondary motion: a damped
+spring per joint (skinned) or per entity (rigid) pulled toward a lag behind its velocity
+(RenderPrep+Fur.swift), plus `SceneEnvironment.wind` x the groom's `wind`.
+Hooks: Mesh Builder parts take `groom`; `.character` files take `grooms` {region: groom} (skinned
+with the body) and attachments take `groom` (its `mask.parts` picks the attachment's parts; a part's
+own `groom` wins); terrain scatter rules take `groom` (every prop wears it; shell fur batches across
+props). Shared changes: `PrefabNode.groom`, `Material.fur` / `MaterialAsset.fur`,
+`MaterialTraits.fur`, `PipelineKey.fur`, `PipelineDescriptor.alphaToCoverage` (Metal
+`isAlphaToCoverageEnabled`, Vulkan `alphaToCoverageEnable`), `RenderPrep.items` / `missingKeys`
+settable inside EngineRendering, a "brush" Lucide icon.
+Tools: `groom.new`, `.get`, `.set`, `.edit` (changes, addComb, addCut, clearStrokes), `.open`,
+`.preview` (3/4 view and a close-up PNG), `.examples` (fox fur with strokes, long hair, moss patch),
+`.presets`, `.apply` {groom, target: {entity} | {character, part} | {meshBuild, part}, remove}
+(one undo step; warns about meshes without UVs, fur too dense for the triangle count and masks
+that cover nothing, and reports the fur triangles). The Groom Builder tab grows the fur live on the
+preview mesh in a breeze, with preset, comb direction, settings, mask and detail-level forms and
+Mask / Restore / Length / Comb brushes that write `cut` / `comb` strokes (one undo step per drag).
+Demo scene `fur`: a shaggy walking quadruped (skinned shells), a humanoid with hair cards on a scalp
+riding its head bone (combed down, cut from the face) and three mossy rocks in the wind
+(`FUR_VIEW=hair|creature|moss` close-ups, `FUR_OFF=1`, `FUR_WIND=0`).
+Performance (M5, release, 1440p high, `ENGINE_SCREENSHOT_FRAME=200 ENGINE_VSYNC=0`, scene pass GPU
+time with and without fur): the whole `fur` scene 2.75 -> 4.56 ms
+(+1.8 ms, 5 more draws for 3 furry entities and 3 rocks: every shell of every rock is one draw);
+creature close-up (filling most of the view, 32 shells) 2.77 -> 7.42 ms; hair close-up 2.57 -> 4.65 ms;
+moss close-up 3.69 -> 5.53 ms (other builds were running, so take these as upper bounds). Preset
+budgets (`groom.presets`) are set from these: shell fur costs about shells x covered pixels, so
+fewer shells (`lod`) or shorter fur are the levers.
+Gaps: the springs are per bone (skinned) or per entity (rigid), not per guide, and rigid springs
+move only in X and Z; fur casts no shadows and doesn't shadow itself beyond darker roots; no
+strand rendering (`strands` draws cards); the flow texture and mask texture shape the geometry per
+vertex (128 px copies), the mask also cuts per pixel but the flow doesn't; mask textures go
+through the texture importer's color space (an sRGB mask reads a little darker); card hair can
+pass through the body (guides only stay above their root's tangent plane, no collision); shells on
+low-poly or hard-edged meshes split at the edges (warned under 48 triangles); `MeshArray` copies
+get no fur; a groom on a sculpt with several looks grows on each look's mesh separately; fur meshes
+are built on the main thread the first frame they're used (a 5k-triangle character with cards takes
+a few ms in release) and an edited groom rebuilds them; picking and the selection outline use the
+base mesh; `groom.preview` shows the preview mesh only (not an arbitrary target); the brushes paint
+only on the preview mesh, not on a character in the tab; the editor tab wasn't checked in the
+running editor (tests drive the workspace).
 ### Physics Material (`.physmat`) and Physics v2
 
 What a surface is made of: `friction`, `bounce`, `density`, `climbable`, `footstep` / `impact` /

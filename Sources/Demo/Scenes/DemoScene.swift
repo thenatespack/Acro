@@ -117,4 +117,5 @@ extension DemoScene {
     IKScene.self,
     Physics2Scene.self,
     NavMeshScene.self,
+    FurScene.self,
 ]

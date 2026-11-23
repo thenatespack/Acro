@@ -314,11 +314,12 @@ package enum BuiltInImporterName {
     package static let gridMap = "gridmap"
     package static let pathBuild = "path"
     package static let character = "character"
+    package static let groom = "groom"
 }
 
 /// Adds the built-in importers that live in EngineMeshBuild (the Mesh Builder and the importers
 /// that run it: `ProceduralTextureImporter`, `MeshBuildImporter`, `TerrainImporter`, `GridMapImporter`, `PathBuildImporter`,
-/// `CharacterImporter`) to `registry`. That module is above this one (so it compiles in parallel
+/// `CharacterImporter`, `GroomImporter`) to `registry`. That module is above this one (so it compiles in parallel
 /// with EngineRendering, see Package.swift), so this is only declared here and defined there
 /// (EngineMeshBuild/MeshBuildRegistration.swift); the linker connects the two. Every product
 /// links all engine modules (the Engine library), so the definition is always present and

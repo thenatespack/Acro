@@ -131,6 +131,9 @@ public struct TerrainScatter: Codable, Equatable, Sendable {
     public var seed: Int
     /// A cap on instances of this rule.
     public var maxCount: Int
+    /// A `.groom` file grown on every placed prop (moss on rocks, tufts on lawn patches): shell fur
+    /// batches across all of them. Not in `init`'s parameters: set it after ("" none).
+    public var groom: String = ""
 
     public static var fieldHints: [String: FieldHints] {
         ["density": FieldHints(range: 0...1000, step: 0.5, tooltip: "Candidate spots per 100 m²"),
@@ -138,7 +141,8 @@ public struct TerrainScatter: Codable, Equatable, Sendable {
          "minScale": FieldHints(range: 0.01...100, step: 0.05), "maxScale": FieldHints(range: 0.01...100, step: 0.05),
          "asset": FieldHints(tooltip: "A .meshbuild path, or asset:<id>#mesh/<name>"),
          "layer": FieldHints(tooltip: "Only where this layer is painted (blank: anywhere)"),
-         "maxCount": FieldHints(range: 0...20000, step: 100)]
+         "maxCount": FieldHints(range: 0...20000, step: 100),
+         "groom": FieldHints(tooltip: "A .groom file grown on every prop (blank: none)")]
     }
 
     public init(name: String = "Scatter", asset: String = "", material: String = "", density: Float = 5, minSlope: Float = 0,
@@ -162,6 +166,7 @@ public struct TerrainScatter: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case name, asset, material, density, minSlope, maxSlope, minHeight, maxHeight, minScale, maxScale, layer, alignToNormal, seed, maxCount
+        case groom
     }
 
     public init(from decoder: any Decoder) throws {
@@ -181,6 +186,7 @@ public struct TerrainScatter: Codable, Equatable, Sendable {
                   alignToNormal: try c.decodeIfPresent(Bool.self, forKey: .alignToNormal) ?? d.alignToNormal,
                   seed: try c.decodeIfPresent(Int.self, forKey: .seed) ?? d.seed,
                   maxCount: try c.decodeIfPresent(Int.self, forKey: .maxCount) ?? d.maxCount)
+        groom = try c.decodeIfPresent(String.self, forKey: .groom) ?? ""
     }
 }
 

@@ -11,4 +11,5 @@ package func registerMeshBuildImporters(_ registry: inout AssetImporterRegistry)
     registry.register(GridMapImporter())
     registry.register(PathBuildImporter())
     registry.register(CharacterImporter())
+    registry.register(GroomImporter())
 }

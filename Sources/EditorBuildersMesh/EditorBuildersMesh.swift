@@ -2,10 +2,10 @@ import EditorCore
 import Engine
 import Foundation
 
-/// The builder tabs of this module: the Mesh Builder, the VFX Builder and the Material Builder (see EditorCore/EditorBuilders.swift).
+/// The builder tabs of this module: the Mesh Builder, the VFX Builder, the Material Builder and the Groom Builder (see EditorCore/EditorBuilders.swift).
 @MainActor
 package enum EditorBuildersMesh {
-    package static var modules: [EditorBuilderModule] { [meshBuild, vfx, material] }
+    package static var modules: [EditorBuilderModule] { [meshBuild, vfx, material, groom] }
 
     static let meshBuildAsset = EditorBuilderAsset(isFile: { $0.isMeshBuildFile($1) }, newTitle: "New Mesh Build", newCommand: MeshBuildNewCommand.id,
                                              create: { $0.run(MeshBuildNewCommand.self, .init(folder: $1))?.asset },
@@ -92,10 +92,39 @@ package enum EditorBuildersMesh {
             }
         }
     }
+
+    static let groomAsset = EditorBuilderAsset(isFile: { $0.isGroomFile($1) }, newTitle: "New Groom", newCommand: GroomNewCommand.id,
+                                               create: { $0.run(GroomNewCommand.self, .init(folder: $1))?.asset },
+                                               open: { $0.run(GroomOpenCommand.self, .init(asset: AssetReference($1))) })
+
+    static var groom: EditorBuilderModule {
+        EditorBuilderModule(panelID: EditorLayout.groomBuilder, title: "Groom Builder", passesPointerThrough: true, commands: EditorGroomCommands.all,
+                            asset: groomAsset, inspector: { context in
+            let session = context.session, id = context.asset
+            guard session.isGroomFile(id) else { return nil }
+            let open = Button("Open in Groom Builder", role: .primary, name: "openGroomBuilder") { [unowned session] in
+                session.run(GroomOpenCommand.self, .init(asset: AssetReference(id)))
+            }
+            open.command = GroomOpenCommand.id.rawValue
+            open.tooltip = "Edit this fur or hair in the Groom Builder tab (or double-click it in the Assets panel)"
+            let style = session.assets?.groom(of: id)?.drawnStyle == .cards ? "Hair cards" : "Shell fur"
+            return [HStack(spacing: 6, [open, Spacer()]),
+                    context.note("\(style) any mesh can wear: groom.apply puts it on an entity, a Character Builder region or attachment, or a Mesh Builder part.")]
+        }) { app in
+            let workspace = GroomBuilderWorkspace(session: app.session)
+            return .viewport(workspace, app: app) { [unowned app, unowned workspace] in
+                app.session.onOpenGroom = { [unowned app, unowned workspace] id in
+                    guard workspace.open(id) else { return }
+                    app.showBuilderPanel(EditorLayout.groomBuilder)
+                }
+            }
+        }
+    }
 }
 
 extension MeshBuilderWorkspace: EditorViewportBuilder {}
 extension VFXBuilderWorkspace: EditorViewportBuilder {}
+extension GroomBuilderWorkspace: EditorViewportBuilder {}
 extension MaterialBuilderWorkspace: EditorViewportBuilder {}
 
 extension EditorApp {
@@ -105,6 +134,8 @@ extension EditorApp {
     public var vfxWorkspace: VFXBuilderWorkspace! { builderWorkspace(VFXBuilderWorkspace.self) }
     /// The Material Builder tab (MaterialBuilderWorkspace.swift).
     public var materialWorkspace: MaterialBuilderWorkspace! { builderWorkspace(MaterialBuilderWorkspace.self) }
+    /// The Groom Builder tab (GroomBuilderWorkspace.swift).
+    public var groomWorkspace: GroomBuilderWorkspace! { builderWorkspace(GroomBuilderWorkspace.self) }
 }
 
 extension AssetBrowserModel {
@@ -120,4 +151,8 @@ extension AssetBrowserModel {
     /// Creates a material with a node graph in the current folder (`materialGraph.new`) and selects it.
     @discardableResult
     public func newMaterialGraph() -> AssetID? { newBuilderAsset(EditorBuildersMesh.materialAsset) }
+
+    /// Creates a groom (short fur) in the current folder (`groom.new`) and selects it.
+    @discardableResult
+    public func newGroom() -> AssetID? { newBuilderAsset(EditorBuildersMesh.groomAsset) }
 }

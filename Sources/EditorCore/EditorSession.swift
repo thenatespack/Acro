@@ -125,6 +125,9 @@ public final class EditorSession {
     /// The effect open in the VFX Builder tab (`vfx.open`), and how the app shows it.
     public var openVFX: AssetID?
     public var onOpenVFX: ((AssetID) -> Void)?
+    /// The groom open in the Groom Builder tab (`groom.open`), and how the app shows it.
+    public var openGroom: AssetID?
+    public var onOpenGroom: ((AssetID) -> Void)?
     /// The sound build open in the Sound Builder tab (`sfx.open`), and how the app shows it.
     public var openSoundBuild: AssetID?
     public var onOpenSoundBuild: ((AssetID) -> Void)?
