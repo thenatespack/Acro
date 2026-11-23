@@ -929,7 +929,7 @@ both components. Demo scene `probes`: a 12 x 3.6 x 10 m room lit through a 3 x 2
 `PROBES_VIEW=irradiance|window`, `PROBES_DEBUG=1`, `PROBES_BAKE_EACH_FRAME=1`; keys P, I, G, B).
 Performance (M5, release, 1440p high, 4x MSAA, `ENGINE_SCREENSHOT_FRAME=300 ENGINE_VSYNC=0`, other
 agents' builds running, so noisy): scene pass of `probes` 2.6-3.7 ms without probes, 7.9-9.5 ms
-with them (about 1.5-3 ms the reflection probe, 4-5 ms the volume's eight-probe lookup; one probe
+with them (a later, busier run: 4.8-5.0 ms against 14.2-14.8 ms) (about 1.5-3 ms the reflection probe, 4-5 ms the volume's eight-probe lookup; one probe
 instead of eight costs almost nothing, so it is the per-pixel storage-buffer reads, not the math).
 The bake of the scene (90 irradiance probes x 2 bounces + 1 reflection probe, about 1,700 passes):
 0.3-3.5 s from request to read-back (the first includes pipeline creation); per capture face
@@ -937,7 +937,11 @@ The bake of the scene (90 irradiance probes x 2 bounces + 1 reflection probe, ab
 Gaps: no texture slot was free in the mesh shaders, so probes live in a storage buffer and are read
 with manual bilinear filtering (that's the per-pixel cost above; a texture atlas, or fewer SH
 reads, e.g. per-vertex or per-object SH for small objects, would be cheaper); fur, particles and
-decals still use the sky's ambient light, not the probes; captures include every mesh (dynamic
+decals, material graphs and terrains still use the sky's ambient light, not the probes (the
+probe shading lives in separate fragment variants, mesh(_paint)(_mask)_probes.frag, used only
+while a frame has probes, because adding any code to the mesh shader made Metal's fast math move
+a few pixels of existing scenes by one level; graph materials would need the same variants from
+MaterialGraphCompiler); captures include every mesh (dynamic
 objects too) and no particles; reflection probe resolution is fixed (128 px faces), bakes are
 uncompressed (~350 KB per reflection probe, 64 bytes per irradiance probe); no realtime / per-frame
 probe updates (bake again, or `PROBES_BAKE_EACH_FRAME`-style requests); the probe key doesn't

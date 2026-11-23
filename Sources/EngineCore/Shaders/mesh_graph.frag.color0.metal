@@ -1,6 +1,6 @@
 // Generated from mesh_graph.frag by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
-// spirv-fnv1a64: 3dc19c25f182291a
+// spirv-fnv1a64: 62bc8e7f643170fb
 // glsl-fnv1a64: 1e784319ea196fd3
 
 #pragma clang diagnostic ignored "-Wmissing-prototypes"
@@ -81,13 +81,6 @@ static inline depthcube_array<T> spvDepthCast(texturecube_array<T> t)
     return reinterpret_cast<thread const depthcube_array<T> &>(t);
 }
 
-struct ProbeBasis
-{
-    float4 a;
-    float4 b;
-    float c;
-};
-
 struct MaterialGraphValues
 {
     float4 values[1];
@@ -132,11 +125,6 @@ struct Frame
     float4 probes;
 };
 
-struct ProbeData
-{
-    uint4 words[1];
-};
-
 struct LightPositions
 {
     float4 data[1024];
@@ -178,11 +166,16 @@ struct MaterialData
     float4 flags;
 };
 
-constant spvUnsafeArray<float3, 4> _743 = spvUnsafeArray<float3, 4>({ float3(1.0, 0.449999988079071044921875, 0.449999988079071044921875), float3(0.449999988079071044921875, 1.0, 0.449999988079071044921875), float3(0.5, 0.60000002384185791015625, 1.0), float3(1.0, 1.0, 0.4000000059604644775390625) });
-constant spvUnsafeArray<float3, 6> _1047 = spvUnsafeArray<float3, 6>({ float3(0.0, 0.0, 1.0), float3(0.0, 0.0, -1.0), float3(-1.0, 0.0, 0.0), float3(-1.0, 0.0, 0.0), float3(-1.0, 0.0, 0.0), float3(1.0, 0.0, 0.0) });
-constant spvUnsafeArray<float3, 6> _1056 = spvUnsafeArray<float3, 6>({ float3(0.0, 1.0, 0.0), float3(0.0, 1.0, 0.0), float3(0.0, 0.0, -1.0), float3(0.0, 0.0, 1.0), float3(0.0, 1.0, 0.0), float3(0.0, 1.0, 0.0) });
-constant spvUnsafeArray<int3, 6> _1438 = spvUnsafeArray<int3, 6>({ int3(0, 256, 128), int3(32768, 128, 64), int3(40960, 64, 32), int3(43008, 32, 16), int3(43520, 16, 8), int3(43648, 8, 4) });
-constant spvUnsafeArray<int4, 6> _2672 = spvUnsafeArray<int4, 6>({ int4(0, 0, 512, 256), int4(0, 256, 256, 128), int4(256, 256, 128, 64), int4(384, 256, 64, 32), int4(448, 256, 32, 16), int4(480, 256, 16, 8) });
+struct ProbeData
+{
+    uint4 words[1];
+};
+
+constant spvUnsafeArray<float3, 4> _652 = spvUnsafeArray<float3, 4>({ float3(1.0, 0.449999988079071044921875, 0.449999988079071044921875), float3(0.449999988079071044921875, 1.0, 0.449999988079071044921875), float3(0.5, 0.60000002384185791015625, 1.0), float3(1.0, 1.0, 0.4000000059604644775390625) });
+constant spvUnsafeArray<float3, 6> _956 = spvUnsafeArray<float3, 6>({ float3(0.0, 0.0, 1.0), float3(0.0, 0.0, -1.0), float3(-1.0, 0.0, 0.0), float3(-1.0, 0.0, 0.0), float3(-1.0, 0.0, 0.0), float3(1.0, 0.0, 0.0) });
+constant spvUnsafeArray<float3, 6> _965 = spvUnsafeArray<float3, 6>({ float3(0.0, 1.0, 0.0), float3(0.0, 1.0, 0.0), float3(0.0, 0.0, -1.0), float3(0.0, 0.0, 1.0), float3(0.0, 1.0, 0.0), float3(0.0, 1.0, 0.0) });
+constant spvUnsafeArray<int4, 6> _1373 = spvUnsafeArray<int4, 6>({ int4(0, 0, 512, 256), int4(0, 256, 256, 128), int4(256, 256, 128, 64), int4(384, 256, 64, 32), int4(448, 256, 32, 16), int4(480, 256, 16, 8) });
+constant spvUnsafeArray<int3, 6> _2756 = spvUnsafeArray<int3, 6>({ int3(0, 256, 128), int3(32768, 128, 64), int3(40960, 64, 32), int3(43008, 32, 16), int3(43520, 16, 8), int3(43648, 8, 4) });
 
 struct fragment_main_out
 {
@@ -226,8 +219,8 @@ float shadowPCF(thread const float2& uv, thread const float& ref, thread const f
     int radius = int(frame.shadowAtlas.z);
     if (radius <= 0)
     {
-        float3 _404 = float3(fast::clamp(uv, bounds.xy, bounds.zw), ref);
-        return spvDepthCast(shadowMap).sample_compare(shadowMapSmplr, _404.xy, _404.z);
+        float3 _313 = float3(fast::clamp(uv, bounds.xy, bounds.zw), ref);
+        return spvDepthCast(shadowMap).sample_compare(shadowMapSmplr, _313.xy, _313.z);
     }
     float2 p = uv / texel;
     float2 base = floor(p + float2(0.5));
@@ -263,8 +256,8 @@ float shadowPCF(thread const float2& uv, thread const float& ref, thread const f
         for (int i = 0; i < n; i++)
         {
             float2 tap = fast::clamp(base + (float2(o[i].x, o[j].y) * texel), bounds.xy, bounds.zw);
-            float3 _557 = float3(tap, ref);
-            sum += ((w[i].x * w[j].y) * spvDepthCast(shadowMap).sample_compare(shadowMapSmplr, _557.xy, _557.z));
+            float3 _466 = float3(tap, ref);
+            sum += ((w[i].x * w[j].y) * spvDepthCast(shadowMap).sample_compare(shadowMapSmplr, _466.xy, _466.z));
         }
     }
     return sum * norm;
@@ -284,35 +277,35 @@ static inline __attribute__((always_inline))
 float cascadeShadow(thread const int& c, thread const float3& p, constant Frame& frame, texture2d<float> shadowMap, sampler shadowMapSmplr)
 {
     float3 local = (frame.cascadeMatrices[c] * float4(p, 1.0)).xyz;
-    bool _617 = local.x < 0.0;
-    bool _624;
-    if (!_617)
+    bool _526 = local.x < 0.0;
+    bool _533;
+    if (!_526)
     {
-        _624 = local.x > 1.0;
+        _533 = local.x > 1.0;
     }
     else
     {
-        _624 = _617;
+        _533 = _526;
     }
-    bool _631;
-    if (!_624)
+    bool _540;
+    if (!_533)
     {
-        _631 = local.y < 0.0;
+        _540 = local.y < 0.0;
     }
     else
     {
-        _631 = _624;
+        _540 = _533;
     }
-    bool _638;
-    if (!_631)
+    bool _547;
+    if (!_540)
     {
-        _638 = local.y > 1.0;
+        _547 = local.y > 1.0;
     }
     else
     {
-        _638 = _631;
+        _547 = _540;
     }
-    if (_638)
+    if (_547)
     {
         return 1.0;
     }
@@ -333,17 +326,17 @@ float directionalShadow(thread const float3& p, thread const float3& ng, thread 
     int c = 0;
     for (;;)
     {
-        bool _701 = c < (count - 1);
-        bool _710;
-        if (_701)
+        bool _610 = c < (count - 1);
+        bool _619;
+        if (_610)
         {
-            _710 = depth > frame.cascadeSplits[c];
+            _619 = depth > frame.cascadeSplits[c];
         }
         else
         {
-            _710 = _701;
+            _619 = _610;
         }
-        if (_710)
+        if (_619)
         {
             c++;
             continue;
@@ -360,7 +353,7 @@ float directionalShadow(thread const float3& p, thread const float3& ng, thread 
     int param = c;
     float3 param_1 = p + (ng * frame.cascadeNormalOffsets[c]);
     float s = cascadeShadow(param, param_1, frame, shadowMap, shadowMapSmplr);
-    float3 t = _743[c];
+    float3 t = _652[c];
     float start = frame.cascadeBlendStarts[c];
     if (depth > start)
     {
@@ -370,7 +363,7 @@ float directionalShadow(thread const float3& p, thread const float3& ng, thread 
             int param_2 = c + 1;
             float3 param_3 = p + (ng * frame.cascadeNormalOffsets[c + 1]);
             s = mix(s, cascadeShadow(param_2, param_3, frame, shadowMap, shadowMapSmplr), f);
-            t = mix(t, _743[c + 1], float3(f));
+            t = mix(t, _652[c + 1], float3(f));
         }
         else
         {
@@ -428,251 +421,6 @@ float3 hemisphere(thread const float3& d, constant Frame& frame)
 }
 
 static inline __attribute__((always_inline))
-float4 probeVec4(thread const int& i, const device ProbeData& probeData)
-{
-    return as_type<float4>(probeData.words[i]);
-}
-
-static inline __attribute__((always_inline))
-float3 probeLocal(thread const int& record, thread const float3& p, const device ProbeData& probeData)
-{
-    int param = record;
-    float4 r0 = probeVec4(param, probeData);
-    int param_1 = record + 1;
-    float4 r1 = probeVec4(param_1, probeData);
-    int param_2 = record + 2;
-    float4 r2 = probeVec4(param_2, probeData);
-    return float3(dot(r0.xyz, p) + r0.w, dot(r1.xyz, p) + r1.w, dot(r2.xyz, p) + r2.w);
-}
-
-static inline __attribute__((always_inline))
-float probeInfluence(thread const float3& q, thread const float3& halfExtents, thread const float& blend)
-{
-    float3 d = halfExtents - abs(q);
-    float inside = fast::min(d.x, fast::min(d.y, d.z));
-    if (inside <= 0.0)
-    {
-        return 0.0;
-    }
-    if (blend <= 0.0)
-    {
-        return 1.0;
-    }
-    float t = fast::min(inside / blend, 1.0);
-    return (t * t) * (3.0 - (2.0 * t));
-}
-
-static inline __attribute__((always_inline))
-int probeInt(thread const int& i, const device ProbeData& probeData)
-{
-    return int(((device uint*)&probeData.words[i])[0u]);
-}
-
-static inline __attribute__((always_inline))
-float3 probeLocalDirection(thread const int& record, thread const float3& d, const device ProbeData& probeData)
-{
-    int param = record;
-    int param_1 = record + 1;
-    int param_2 = record + 2;
-    return float3(dot(probeVec4(param, probeData).xyz, d), dot(probeVec4(param_1, probeData).xyz, d), dot(probeVec4(param_2, probeData).xyz, d));
-}
-
-static inline __attribute__((always_inline))
-ProbeBasis probeBasis(thread const float3& d)
-{
-    ProbeBasis y;
-    y.a = float4(0.2820949852466583251953125, 0.48860299587249755859375 * d.y, 0.48860299587249755859375 * d.z, 0.48860299587249755859375 * d.x);
-    y.b = float4((1.09254801273345947265625 * d.x) * d.y, (1.09254801273345947265625 * d.y) * d.z, 0.3153919875621795654296875 * (((3.0 * d.z) * d.z) - 1.0), (1.09254801273345947265625 * d.x) * d.z);
-    y.c = 0.546274006366729736328125 * ((d.x * d.x) - (d.y * d.y));
-    return y;
-}
-
-static inline __attribute__((always_inline))
-bool probeValid(thread const int& first, const device ProbeData& probeData)
-{
-    return float2(as_type<half2>(((device uint*)&probeData.words[first + 3])[1u])).y > 0.5;
-}
-
-static inline __attribute__((always_inline))
-float3 probeSHDot(thread const int& first, thread const ProbeBasis& y, const device ProbeData& probeData)
-{
-    uint4 a = probeData.words[first];
-    uint4 b = probeData.words[first + 1];
-    uint4 d = probeData.words[first + 2];
-    uint4 e = probeData.words[first + 3];
-    float2 h0 = float2(as_type<half2>(a.x));
-    float2 h1 = float2(as_type<half2>(a.y));
-    float2 h2 = float2(as_type<half2>(a.z));
-    float2 h3 = float2(as_type<half2>(a.w));
-    float2 h4 = float2(as_type<half2>(b.x));
-    float2 h5 = float2(as_type<half2>(b.y));
-    float2 h6 = float2(as_type<half2>(b.z));
-    float2 h7 = float2(as_type<half2>(b.w));
-    float2 h8 = float2(as_type<half2>(d.x));
-    float2 h9 = float2(as_type<half2>(d.y));
-    float2 h10 = float2(as_type<half2>(d.z));
-    float2 h11 = float2(as_type<half2>(d.w));
-    float2 h12 = float2(as_type<half2>(e.x));
-    float2 h13 = float2(as_type<half2>(e.y));
-    float3 _2118 = (((((((float3(h0, h1.x) * y.a.x) + (float3(h1.y, h2) * y.a.y)) + (float3(h3, h4.x) * y.a.z)) + (float3(h4.y, h5) * y.a.w)) + (float3(h6, h7.x) * y.b.x)) + (float3(h7.y, h8) * y.b.y)) + (float3(h9, h10.x) * y.b.z)) + (float3(h10.y, h11) * y.b.w);
-    return _2118 + (float3(h12, h13.x) * y.c);
-}
-
-static inline __attribute__((always_inline))
-float4 probeCorner(thread const int3& o, thread const int3& g0, thread const int3& nc, thread const float3& f, thread const float3& cells, thread const float3& halfExtents, thread const float3& q, thread const float3& nl, thread const int& shFirst, thread const ProbeBasis& y, const device ProbeData& probeData)
-{
-    int3 cell = min((g0 + o), (nc - int3(1)));
-    int sh = shFirst + ((cell.x + (nc.x * (cell.y + (nc.y * cell.z)))) * 4);
-    float3 t = mix(float3(1.0) - f, f, float3(o));
-    float3 toProbe = ((-halfExtents) + ((((float3(cell) + float3(0.5)) / cells) * halfExtents) * 2.0)) - q;
-    float b = (dot(toProbe * rsqrt(fast::max(dot(toProbe, toProbe), 1.0000000133514319600180897396058e-10)), nl) + 1.0) * 0.5;
-    int param = sh;
-    float weight = (((t.x * t.y) * t.z) * ((b * b) + 0.20000000298023223876953125)) * float(probeValid(param, probeData));
-    int param_1 = sh;
-    ProbeBasis param_2 = y;
-    return float4(probeSHDot(param_1, param_2, probeData) * weight, weight);
-}
-
-static inline __attribute__((always_inline))
-float3 probeIrradiance(thread const float3& fallback, thread const float3& p, thread const float3& n, thread const float3& v, constant Frame& frame, const device ProbeData& probeData)
-{
-    int volumes = int(frame.probes.y);
-    int firstRecord = int(frame.probes.x) * 8;
-    float3 result = fallback;
-    for (int j = 0; j < volumes; j++)
-    {
-        int record = firstRecord + (j * 8);
-        int param = record + 3;
-        float4 box = probeVec4(param, probeData);
-        int param_1 = record;
-        float3 param_2 = p;
-        float3 q = probeLocal(param_1, param_2, probeData);
-        float3 param_3 = q;
-        float3 param_4 = box.xyz;
-        float param_5 = box.w;
-        float w = probeInfluence(param_3, param_4, param_5);
-        if (w <= 0.0)
-        {
-            continue;
-        }
-        int param_6 = record + 4;
-        float3 cells = probeVec4(param_6, probeData).xyz;
-        int param_7 = record + 5;
-        float4 bias0 = probeVec4(param_7, probeData);
-        int param_8 = record + 6;
-        int shFirst = probeInt(param_8, probeData);
-        int param_9 = record;
-        float3 param_10 = n;
-        float3 nl = probeLocalDirection(param_9, param_10, probeData);
-        int param_11 = record;
-        float3 param_12 = (p + (n * bias0.x)) + (v * bias0.y);
-        float3 qb = probeLocal(param_11, param_12, probeData);
-        float3 g = fast::clamp((((qb + box.xyz) / fast::max(box.xyz * 2.0, float3(9.9999999747524270787835121154785e-07))) * cells) - float3(0.5), float3(0.0), cells - float3(1.0));
-        int3 nc = int3(cells);
-        int3 g0 = min(int3(g), max((nc - int3(2)), int3(0)));
-        float3 f = g - float3(g0);
-        float3 param_13 = nl;
-        ProbeBasis y = probeBasis(param_13);
-        float4 acc = float4(0.0);
-        int3 param_14 = int3(0);
-        int3 param_15 = g0;
-        int3 param_16 = nc;
-        float3 param_17 = f;
-        float3 param_18 = cells;
-        float3 param_19 = box.xyz;
-        float3 param_20 = q;
-        float3 param_21 = nl;
-        int param_22 = shFirst;
-        ProbeBasis param_23 = y;
-        acc += probeCorner(param_14, param_15, param_16, param_17, param_18, param_19, param_20, param_21, param_22, param_23, probeData);
-        int3 param_24 = int3(1, 0, 0);
-        int3 param_25 = g0;
-        int3 param_26 = nc;
-        float3 param_27 = f;
-        float3 param_28 = cells;
-        float3 param_29 = box.xyz;
-        float3 param_30 = q;
-        float3 param_31 = nl;
-        int param_32 = shFirst;
-        ProbeBasis param_33 = y;
-        acc += probeCorner(param_24, param_25, param_26, param_27, param_28, param_29, param_30, param_31, param_32, param_33, probeData);
-        int3 param_34 = int3(0, 1, 0);
-        int3 param_35 = g0;
-        int3 param_36 = nc;
-        float3 param_37 = f;
-        float3 param_38 = cells;
-        float3 param_39 = box.xyz;
-        float3 param_40 = q;
-        float3 param_41 = nl;
-        int param_42 = shFirst;
-        ProbeBasis param_43 = y;
-        acc += probeCorner(param_34, param_35, param_36, param_37, param_38, param_39, param_40, param_41, param_42, param_43, probeData);
-        int3 param_44 = int3(1, 1, 0);
-        int3 param_45 = g0;
-        int3 param_46 = nc;
-        float3 param_47 = f;
-        float3 param_48 = cells;
-        float3 param_49 = box.xyz;
-        float3 param_50 = q;
-        float3 param_51 = nl;
-        int param_52 = shFirst;
-        ProbeBasis param_53 = y;
-        acc += probeCorner(param_44, param_45, param_46, param_47, param_48, param_49, param_50, param_51, param_52, param_53, probeData);
-        int3 param_54 = int3(0, 0, 1);
-        int3 param_55 = g0;
-        int3 param_56 = nc;
-        float3 param_57 = f;
-        float3 param_58 = cells;
-        float3 param_59 = box.xyz;
-        float3 param_60 = q;
-        float3 param_61 = nl;
-        int param_62 = shFirst;
-        ProbeBasis param_63 = y;
-        acc += probeCorner(param_54, param_55, param_56, param_57, param_58, param_59, param_60, param_61, param_62, param_63, probeData);
-        int3 param_64 = int3(1, 0, 1);
-        int3 param_65 = g0;
-        int3 param_66 = nc;
-        float3 param_67 = f;
-        float3 param_68 = cells;
-        float3 param_69 = box.xyz;
-        float3 param_70 = q;
-        float3 param_71 = nl;
-        int param_72 = shFirst;
-        ProbeBasis param_73 = y;
-        acc += probeCorner(param_64, param_65, param_66, param_67, param_68, param_69, param_70, param_71, param_72, param_73, probeData);
-        int3 param_74 = int3(0, 1, 1);
-        int3 param_75 = g0;
-        int3 param_76 = nc;
-        float3 param_77 = f;
-        float3 param_78 = cells;
-        float3 param_79 = box.xyz;
-        float3 param_80 = q;
-        float3 param_81 = nl;
-        int param_82 = shFirst;
-        ProbeBasis param_83 = y;
-        acc += probeCorner(param_74, param_75, param_76, param_77, param_78, param_79, param_80, param_81, param_82, param_83, probeData);
-        int3 param_84 = int3(1);
-        int3 param_85 = g0;
-        int3 param_86 = nc;
-        float3 param_87 = f;
-        float3 param_88 = cells;
-        float3 param_89 = box.xyz;
-        float3 param_90 = q;
-        float3 param_91 = nl;
-        int param_92 = shFirst;
-        ProbeBasis param_93 = y;
-        acc += probeCorner(param_84, param_85, param_86, param_87, param_88, param_89, param_90, param_91, param_92, param_93, probeData);
-        float3 sum = acc.xyz;
-        float total = acc.w;
-        if (total > 9.9999997473787516355514526367188e-06)
-        {
-            result = mix(result, (fast::max(sum, float3(0.0)) / float3(total)) * bias0.z, float3(w));
-        }
-    }
-    return result;
-}
-
-static inline __attribute__((always_inline))
 uint2 clusterLights(constant Frame& frame, thread float3& vWorldPos, thread float4& gl_FragCoord, constant LightCells& lightCells)
 {
     float depth = dot(frame.viewDepth.xyz, vWorldPos) + frame.viewDepth.w;
@@ -721,44 +469,44 @@ float localShadow(thread const uint& index, thread const float3& p, thread const
             return 1.0;
         }
         float3 local = clip.xyz / float3(clip.w);
-        bool _887 = local.x < 0.0;
-        bool _894;
-        if (!_887)
+        bool _796 = local.x < 0.0;
+        bool _803;
+        if (!_796)
         {
-            _894 = local.x > 1.0;
+            _803 = local.x > 1.0;
         }
         else
         {
-            _894 = _887;
+            _803 = _796;
         }
-        bool _901;
-        if (!_894)
+        bool _810;
+        if (!_803)
         {
-            _901 = local.y < 0.0;
+            _810 = local.y < 0.0;
         }
         else
         {
-            _901 = _894;
+            _810 = _803;
         }
-        bool _908;
-        if (!_901)
+        bool _817;
+        if (!_810)
         {
-            _908 = local.y > 1.0;
+            _817 = local.y > 1.0;
         }
         else
         {
-            _908 = _901;
+            _817 = _810;
         }
-        bool _915;
-        if (!_908)
+        bool _824;
+        if (!_817)
         {
-            _915 = local.z > 1.0;
+            _824 = local.z > 1.0;
         }
         else
         {
-            _915 = _908;
+            _824 = _817;
         }
-        if (_915)
+        if (_824)
         {
             return 1.0;
         }
@@ -778,19 +526,19 @@ float localShadow(thread const uint& index, thread const float3& p, thread const
     float texel_1 = position.w * length(p - position.xyz);
     float3 d = ((p + (ng * (texel_1 * frame.shadowLocal.x))) + (l * (texel_1 * frame.shadowLocal.y))) - position.xyz;
     float3 a = abs(d);
-    bool _991 = a.x >= a.y;
-    bool _999;
-    if (_991)
+    bool _900 = a.x >= a.y;
+    bool _908;
+    if (_900)
     {
-        _999 = a.x >= a.z;
+        _908 = a.x >= a.z;
     }
     else
     {
-        _999 = _991;
+        _908 = _900;
     }
     int face;
     float m;
-    if (_999)
+    if (_908)
     {
         face = (d.x > 0.0) ? 0 : 1;
         m = a.x;
@@ -812,7 +560,7 @@ float localShadow(thread const uint& index, thread const float3& p, thread const
     {
         return 1.0;
     }
-    float2 st = float2(dot(d, _1047[face]), dot(d, _1056[face])) / float2(m * frame.shadowFaces.z);
+    float2 st = float2(dot(d, _956[face]), dot(d, _965[face])) / float2(m * frame.shadowFaces.z);
     float ref = params_1.z + (params_1.w / m);
     if (ref > 1.0)
     {
@@ -879,16 +627,16 @@ float3 sampleEquirect(texture2d<float> image, sampler s, thread const int4& regi
     {
         x0 -= region.z;
     }
-    int _1212;
+    int _1121;
     if ((x0 + 1) == region.z)
     {
-        _1212 = 0;
+        _1121 = 0;
     }
     else
     {
-        _1212 = x0 + 1;
+        _1121 = x0 + 1;
     }
-    int x1 = _1212;
+    int x1 = _1121;
     int y1 = min((y0 + 1), (region.w - 1));
     y0 = max(y0, 0);
     float3 a = image.read(uint2((region.xy + int2(x0, y0))), 0).xyz;
@@ -907,10 +655,10 @@ float3 environmentRadiance(thread const float3& d, thread const float& roughness
     float2 uv = equirectUV(param_2);
     float level0 = roughness * 5.0;
     int i = min(int(level0), 4);
-    int4 param_3 = _2672[i];
+    int4 param_3 = _1373[i];
     float2 param_4 = uv;
     float3 a = sampleEquirect(environmentAtlas, materialSampler, param_3, param_4);
-    int4 param_5 = _2672[i + 1];
+    int4 param_5 = _1373[i + 1];
     float2 param_6 = uv;
     float3 b = sampleEquirect(environmentAtlas, materialSampler, param_5, param_6);
     return mix(a, b, float3(level0 - float(i))) * frame.environment.y;
@@ -922,173 +670,6 @@ float2 environmentBRDF(thread const float& NoV, thread const float& roughness)
     float4 r = (float4(-1.0, -0.0274999998509883880615234375, -0.572000026702880859375, 0.02199999988079071044921875) * roughness) + float4(1.0, 0.0425000004470348358154296875, 1.03999996185302734375, -0.039999999105930328369140625);
     float a004 = (fast::min(r.x * r.x, exp2((-9.27999973297119140625) * NoV)) * r.x) + r.y;
     return (float2(-1.03999996185302734375, 1.03999996185302734375) * a004) + r.zw;
-}
-
-static inline __attribute__((always_inline))
-float3 probeBoxProjected(thread const float3& q, thread const float3& r, thread const float3& halfExtents, thread const float3& capture)
-{
-    float3 o = fast::clamp(q, -halfExtents, halfExtents);
-    float3 planes = mix(-halfExtents, halfExtents, step(float3(0.0), r));
-    float3 safe = mix(float3(9.9999999747524270787835121154785e-07), r, step(float3(9.9999999747524270787835121154785e-07), abs(r)));
-    float3 ts = mix(float3(1000000015047466219876688855040.0), (planes - o) / safe, step(float3(9.9999999747524270787835121154785e-07), abs(r)));
-    float t = fast::max(fast::min(ts.x, fast::min(ts.y, ts.z)), 0.0);
-    float3 d = (o + (r * t)) - capture;
-    float3 _1765;
-    if (dot(d, d) > 9.9999999600419720025001879548654e-13)
-    {
-        _1765 = fast::normalize(d);
-    }
-    else
-    {
-        _1765 = r;
-    }
-    return _1765;
-}
-
-static inline __attribute__((always_inline))
-float3 probeTexel(thread const int& first, thread const int& x, thread const int& y, thread const int& width, const device ProbeData& probeData)
-{
-    int t = (first + (y * width)) + x;
-    uint4 pair = probeData.words[t >> 1];
-    uint2 _1400;
-    if ((t & 1) == 0)
-    {
-        _1400 = pair.xy;
-    }
-    else
-    {
-        _1400 = pair.zw;
-    }
-    uint2 texel = _1400;
-    return float3(float2(as_type<half2>(texel.x)), float2(as_type<half2>(texel.y)).x);
-}
-
-static inline __attribute__((always_inline))
-float3 sampleProbeLevel(thread const int& image, thread const int& level0, thread const float2& uv, const device ProbeData& probeData)
-{
-    int3 l = _1438[level0];
-    int first = image + l.x;
-    float2 p = (uv * float2(l.yz)) - float2(0.5);
-    float2 f = floor(p);
-    float2 t = p - f;
-    int x0 = int(f.x);
-    int y0 = int(f.y);
-    if (x0 < 0)
-    {
-        x0 += l.y;
-    }
-    if (x0 >= l.y)
-    {
-        x0 -= l.y;
-    }
-    int _1496;
-    if ((x0 + 1) == l.y)
-    {
-        _1496 = 0;
-    }
-    else
-    {
-        _1496 = x0 + 1;
-    }
-    int x1 = _1496;
-    int y1 = min((y0 + 1), (l.z - 1));
-    y0 = max(y0, 0);
-    int param = first;
-    int param_1 = x0;
-    int param_2 = y0;
-    int param_3 = l.y;
-    float3 a = probeTexel(param, param_1, param_2, param_3, probeData);
-    int param_4 = first;
-    int param_5 = x1;
-    int param_6 = y0;
-    int param_7 = l.y;
-    float3 b = probeTexel(param_4, param_5, param_6, param_7, probeData);
-    int param_8 = first;
-    int param_9 = x0;
-    int param_10 = y1;
-    int param_11 = l.y;
-    float3 c = probeTexel(param_8, param_9, param_10, param_11, probeData);
-    int param_12 = first;
-    int param_13 = x1;
-    int param_14 = y1;
-    int param_15 = l.y;
-    float3 d = probeTexel(param_12, param_13, param_14, param_15, probeData);
-    return mix(mix(a, b, float3(t.x)), mix(c, d, float3(t.x)), float3(t.y));
-}
-
-static inline __attribute__((always_inline))
-float3 probeImageRadiance(thread const int& image, thread const float3& d, thread const float& roughness, const device ProbeData& probeData)
-{
-    float3 param = d;
-    float2 uv = equirectUV(param);
-    float level0 = roughness * 5.0;
-    int i = min(int(level0), 4);
-    int param_1 = image;
-    int param_2 = i;
-    float2 param_3 = uv;
-    int param_4 = image;
-    int param_5 = i + 1;
-    float2 param_6 = uv;
-    return mix(sampleProbeLevel(param_1, param_2, param_3, probeData), sampleProbeLevel(param_4, param_5, param_6, probeData), float3(level0 - float(i)));
-}
-
-static inline __attribute__((always_inline))
-float3 probeReflection(thread const float3& fallback, thread const float3& p, thread const float3& r, thread const float& roughness, constant Frame& frame, const device ProbeData& probeData)
-{
-    int count = int(frame.probes.x);
-    float3 sum = float3(0.0);
-    float total = 0.0;
-    float3 _1846;
-    for (int i = 0; i < count; i++)
-    {
-        if (total > 0.999000012874603271484375)
-        {
-            break;
-        }
-        int record = i * 8;
-        int param = record;
-        float3 param_1 = p;
-        float3 q = probeLocal(param, param_1, probeData);
-        int param_2 = record + 3;
-        float4 influence = probeVec4(param_2, probeData);
-        float3 param_3 = q;
-        float3 param_4 = influence.xyz;
-        float param_5 = influence.w;
-        float w = probeInfluence(param_3, param_4, param_5);
-        if (w <= 0.0)
-        {
-            continue;
-        }
-        int param_6 = record + 4;
-        float4 projection = probeVec4(param_6, probeData);
-        int param_7 = record + 5;
-        float4 capture = probeVec4(param_7, probeData);
-        int param_8 = record;
-        float3 param_9 = r;
-        float3 rl = probeLocalDirection(param_8, param_9, probeData);
-        if (projection.w > 0.5)
-        {
-            float3 param_10 = q;
-            float3 param_11 = rl;
-            float3 param_12 = projection.xyz;
-            float3 param_13 = capture.xyz;
-            _1846 = probeBoxProjected(param_10, param_11, param_12, param_13);
-        }
-        else
-        {
-            _1846 = rl;
-        }
-        float3 d = _1846;
-        int param_14 = record + 6;
-        int param_15 = probeInt(param_14, probeData);
-        float3 param_16 = d;
-        float param_17 = roughness;
-        float3 c = probeImageRadiance(param_15, param_16, param_17, probeData) * capture.w;
-        float a = w * (1.0 - total);
-        sum += (c * a);
-        total += a;
-    }
-    return sum + (fallback * (1.0 - total));
 }
 
 static inline __attribute__((always_inline))
@@ -1135,7 +716,7 @@ float2 motionVector(thread const float4& current, thread const float4& previous)
     return ((previous.xy / float2(previous.w)) - (current.xy / float2(current.w))) * float2(0.5, -0.5);
 }
 
-fragment fragment_main_out fragment_main(fragment_main_in in [[stage_in]], constant MaterialData& material [[buffer(2)]], constant LightPositions& lightPositions [[buffer(3)]], constant LightColors& lightColors [[buffer(4)]], constant LightDirections& lightDirections [[buffer(5)]], constant LightCells& lightCells [[buffer(6)]], constant LightIndices& lightIndices [[buffer(7)]], constant Frame& frame [[buffer(15)]], constant MaterialGraphPush& graphPush [[buffer(16)]], const device MaterialGraphValues& graphValues [[buffer(20)]], const device ProbeData& probeData [[buffer(21)]], texture2d<float> shadowMap [[texture(0)]], texture2d<float> baseColorMap [[texture(1)]], texture2d<float> metallicRoughnessMap [[texture(2)]], texture2d<float> normalMap [[texture(3)]], texture2d<float> occlusionMap [[texture(4)]], texture2d<float> emissiveMap [[texture(5)]], texture2d<float> environmentAtlas [[texture(6)]], texture2d<float> brdfTable [[texture(7)]], sampler shadowMapSmplr [[sampler(0)]], sampler materialSampler [[sampler(1)]], sampler brdfSampler [[sampler(7)]], float4 gl_FragCoord [[position]], bool gl_FrontFacing [[front_facing]])
+fragment fragment_main_out fragment_main(fragment_main_in in [[stage_in]], constant MaterialData& material [[buffer(2)]], constant LightPositions& lightPositions [[buffer(3)]], constant LightColors& lightColors [[buffer(4)]], constant LightDirections& lightDirections [[buffer(5)]], constant LightCells& lightCells [[buffer(6)]], constant LightIndices& lightIndices [[buffer(7)]], constant Frame& frame [[buffer(15)]], constant MaterialGraphPush& graphPush [[buffer(16)]], const device MaterialGraphValues& graphValues [[buffer(20)]], texture2d<float> shadowMap [[texture(0)]], texture2d<float> baseColorMap [[texture(1)]], texture2d<float> metallicRoughnessMap [[texture(2)]], texture2d<float> normalMap [[texture(3)]], texture2d<float> occlusionMap [[texture(4)]], texture2d<float> emissiveMap [[texture(5)]], texture2d<float> environmentAtlas [[texture(6)]], texture2d<float> brdfTable [[texture(7)]], sampler shadowMapSmplr [[sampler(0)]], sampler materialSampler [[sampler(1)]], sampler brdfSampler [[sampler(7)]], float4 gl_FragCoord [[position]], bool gl_FrontFacing [[front_facing]])
 {
     float2 outMotion;
     fragment_main_out out = {};
@@ -1165,17 +746,17 @@ fragment fragment_main_out fragment_main(fragment_main_in in [[stage_in]], const
     }
     float3 n = fast::normalize(in.vNormal);
     float3 gt = in.vTangent.xyz - (n * dot(n, in.vTangent.xyz));
-    bool _3275 = dot(gt, gt) > 9.9999999600419720025001879548654e-13;
-    bool _3282;
-    if (_3275)
+    bool _1980 = dot(gt, gt) > 9.9999999600419720025001879548654e-13;
+    bool _1987;
+    if (_1980)
     {
-        _3282 = dot(gNormalTS, gNormalTS) > 9.9999999600419720025001879548654e-13;
+        _1987 = dot(gNormalTS, gNormalTS) > 9.9999999600419720025001879548654e-13;
     }
     else
     {
-        _3282 = _3275;
+        _1987 = _1980;
     }
-    if (_3282)
+    if (_1987)
     {
         gt = fast::normalize(gt);
         float3 gb = cross(n, gt) * ((in.vTangent.w < 0.0) ? (-1.0) : 1.0);
@@ -1183,26 +764,26 @@ fragment fragment_main_out fragment_main(fragment_main_in in [[stage_in]], const
         n = fast::normalize(((gt * m.x) + (gb * m.y)) + (n * m.z));
     }
     bool pbr = material.emissive.w > 0.5;
-    float _3324;
+    float _2029;
     if (pbr)
     {
-        _3324 = fast::clamp(material.params.z, 0.0, 1.0);
+        _2029 = fast::clamp(material.params.z, 0.0, 1.0);
     }
     else
     {
-        _3324 = 0.0;
+        _2029 = 0.0;
     }
-    float translucency = _3324;
-    bool _3339;
+    float translucency = _2029;
+    bool _2044;
     if (pbr)
     {
-        _3339 = !gl_FrontFacing;
+        _2044 = !gl_FrontFacing;
     }
     else
     {
-        _3339 = pbr;
+        _2044 = pbr;
     }
-    if (_3339 && (translucency <= 0.0))
+    if (_2044 && (translucency <= 0.0))
     {
         n = -n;
     }
@@ -1217,9 +798,9 @@ fragment fragment_main_out fragment_main(fragment_main_in in [[stage_in]], const
         float3 param = in.vWorldPos;
         float3 param_1 = ng;
         float3 param_2;
-        float _3389 = directionalShadow(param, param_1, param_2, frame, shadowMap, shadowMapSmplr);
+        float _2094 = directionalShadow(param, param_1, param_2, frame, shadowMap, shadowMapSmplr);
         float3 cascadeTint = param_2;
-        shadow = _3389;
+        shadow = _2094;
         albedo *= cascadeTint;
     }
     float3 light = frame.lightColor.xyz * frame.lightDir.w;
@@ -1229,54 +810,44 @@ fragment fragment_main_out fragment_main(fragment_main_in in [[stage_in]], const
     {
         ao *= fast::min(vertexAO, 1.0);
     }
-    float3 indirect;
     float3 color;
     if (!pbr)
     {
         float ndotl = dot(n, l);
         float3 diffuse = light * fast::max(ndotl, 0.0);
         float3 specular = light * ((powr(fast::max(dot(n, h), 0.0), material.params.w) * material.params.z) * step(0.0, ndotl));
-        float3 _3449;
+        float3 _2154;
         if (frame.environment.x > 0.5)
         {
             float3 param_3 = n;
-            _3449 = environmentIrradiance(param_3, materialSampler, frame, environmentAtlas);
+            _2154 = environmentIrradiance(param_3, materialSampler, frame, environmentAtlas);
         }
         else
         {
             float3 param_4 = n;
-            _3449 = hemisphere(param_4, frame);
+            _2154 = hemisphere(param_4, frame);
         }
-        indirect = _3449;
-        if (frame.probes.y > 0.5)
-        {
-            float3 param_5 = indirect;
-            float3 param_6 = in.vWorldPos;
-            float3 param_7 = n;
-            float3 param_8 = v;
-            indirect = probeIrradiance(param_5, param_6, param_7, param_8, frame, probeData);
-        }
-        float3 ambient = indirect * ao;
+        float3 ambient = _2154 * ao;
         color = (albedo * (ambient + (diffuse * shadow))) + (specular * shadow);
         if (frame.clusterGrid.w > 0.5)
         {
             uint2 cell = clusterLights(frame, in.vWorldPos, gl_FragCoord, lightCells);
-            float3 param_11;
+            float3 param_7;
             for (uint i = cell.x; i < (cell.x + cell.y); i++)
             {
-                uint param_9 = i;
-                uint li = lightIndex(param_9, lightIndices);
-                uint param_10 = li;
-                float3 _3521 = punctualRadiance(param_10, param_11, lightPositions, in.vWorldPos, lightColors, lightDirections);
-                float3 pl = param_11;
-                float3 radiance = _3521;
+                uint param_5 = i;
+                uint li = lightIndex(param_5, lightIndices);
+                uint param_6 = li;
+                float3 _2211 = punctualRadiance(param_6, param_7, lightPositions, in.vWorldPos, lightColors, lightDirections);
+                float3 pl = param_7;
+                float3 radiance = _2211;
                 if (receivesShadows)
                 {
-                    uint param_12 = li;
-                    float3 param_13 = in.vWorldPos;
-                    float3 param_14 = ng;
-                    float3 param_15 = pl;
-                    radiance *= localShadow(param_12, param_13, param_14, param_15, frame, shadowMap, shadowMapSmplr);
+                    uint param_8 = li;
+                    float3 param_9 = in.vWorldPos;
+                    float3 param_10 = ng;
+                    float3 param_11 = pl;
+                    radiance *= localShadow(param_8, param_9, param_10, param_11, frame, shadowMap, shadowMapSmplr);
                 }
                 float pndotl = dot(n, pl);
                 float3 ph = fast::normalize(pl + v);
@@ -1310,15 +881,15 @@ fragment fragment_main_out fragment_main(fragment_main_in in [[stage_in]], const
             NoV = fast::max(NoV, 0.5);
             VoH = fast::max(VoH, 0.5);
         }
-        float3 param_16 = f0;
-        float param_17 = VoH;
-        float3 F = fresnelSchlick(param_16, param_17);
-        float param_18 = NoH;
-        float param_19 = a;
-        float param_20 = NoV;
-        float param_21 = sNoL;
-        float param_22 = a;
-        float3 specular_1 = (F * (distributionGGX(param_18, param_19) * visibilitySmithGGXCorrelated(param_20, param_21, param_22))) * 3.1415927410125732421875;
+        float3 param_12 = f0;
+        float param_13 = VoH;
+        float3 F = fresnelSchlick(param_12, param_13);
+        float param_14 = NoH;
+        float param_15 = a;
+        float param_16 = NoV;
+        float param_17 = sNoL;
+        float param_18 = a;
+        float3 specular_1 = (F * (distributionGGX(param_14, param_15) * visibilitySmithGGXCorrelated(param_16, param_17, param_18))) * 3.1415927410125732421875;
         float3 direct = (((((float3(1.0) - F) * diffuseColor) * NoL) + (specular_1 * sNoL)) * light) * shadow;
         if (translucency > 0.0)
         {
@@ -1331,59 +902,42 @@ fragment fragment_main_out fragment_main(fragment_main_in in [[stage_in]], const
         float3 reflected;
         if (frame.environment.x > 0.5)
         {
-            float param_23 = NoV;
-            float param_24 = roughness;
-            dfg = environmentBRDFTable(param_23, param_24, brdfTable, brdfSampler);
-            float3 param_25 = n;
-            irradiance = environmentIrradiance(param_25, materialSampler, frame, environmentAtlas);
-            float3 param_26 = reflect(-v, sn);
-            float param_27 = roughness;
-            reflected = environmentRadiance(param_26, param_27, materialSampler, frame, environmentAtlas);
+            float param_19 = NoV;
+            float param_20 = roughness;
+            dfg = environmentBRDFTable(param_19, param_20, brdfTable, brdfSampler);
+            float3 param_21 = n;
+            irradiance = environmentIrradiance(param_21, materialSampler, frame, environmentAtlas);
+            float3 param_22 = reflect(-v, sn);
+            float param_23 = roughness;
+            reflected = environmentRadiance(param_22, param_23, materialSampler, frame, environmentAtlas);
         }
         else
         {
-            float param_28 = NoV;
-            float param_29 = roughness;
-            dfg = environmentBRDF(param_28, param_29);
-            float3 param_30 = n;
-            irradiance = hemisphere(param_30, frame);
-            float3 param_31 = reflect(-v, sn);
-            reflected = mix(hemisphere(param_31, frame), irradiance, float3(roughness));
+            float param_24 = NoV;
+            float param_25 = roughness;
+            dfg = environmentBRDF(param_24, param_25);
+            float3 param_26 = n;
+            irradiance = hemisphere(param_26, frame);
+            float3 param_27 = reflect(-v, sn);
+            reflected = mix(hemisphere(param_27, frame), irradiance, float3(roughness));
         }
-        if (frame.probes.y > 0.5)
+        bool _2468 = material.flags.w > 0.5;
+        bool _2474;
+        if (_2468)
         {
-            float3 param_32 = irradiance;
-            float3 param_33 = in.vWorldPos;
-            float3 param_34 = n;
-            float3 param_35 = v;
-            irradiance = probeIrradiance(param_32, param_33, param_34, param_35, frame, probeData);
-        }
-        if (frame.probes.x > 0.5)
-        {
-            float3 param_36 = reflected;
-            float3 param_37 = in.vWorldPos;
-            float3 param_38 = reflect(-v, sn);
-            float param_39 = roughness;
-            reflected = probeReflection(param_36, param_37, param_38, param_39, frame, probeData);
-        }
-        indirect = irradiance;
-        bool _3810 = material.flags.w > 0.5;
-        bool _3816;
-        if (_3810)
-        {
-            _3816 = frame.reflectionExtra.z > 0.5;
+            _2474 = frame.reflectionExtra.z > 0.5;
         }
         else
         {
-            _3816 = _3810;
+            _2474 = _2468;
         }
-        if (_3816)
+        if (_2474)
         {
-            float3 param_40 = reflected;
-            float3 param_41 = n;
-            float3 param_42 = ng;
-            float param_43 = roughness;
-            reflected = planarReflected(param_40, param_41, param_42, param_43, materialSampler, occlusionMap, frame, in.vWorldPos);
+            float3 param_28 = reflected;
+            float3 param_29 = n;
+            float3 param_30 = ng;
+            float param_31 = roughness;
+            reflected = planarReflected(param_28, param_29, param_30, param_31, materialSampler, occlusionMap, frame, in.vWorldPos);
         }
         float3 specularAmbient = (f0 * dfg.x) + float3(dfg.y);
         float3 ambient_1 = ((((float3(1.0) - specularAmbient) * diffuseColor) * irradiance) + (specularAmbient * reflected)) * ao;
@@ -1391,35 +945,35 @@ fragment fragment_main_out fragment_main(fragment_main_in in [[stage_in]], const
         if (frame.clusterGrid.w > 0.5)
         {
             uint2 cell_1 = clusterLights(frame, in.vWorldPos, gl_FragCoord, lightCells);
-            float3 param_46;
+            float3 param_34;
             for (uint i_1 = cell_1.x; i_1 < (cell_1.x + cell_1.y); i_1++)
             {
-                uint param_44 = i_1;
-                uint li_1 = lightIndex(param_44, lightIndices);
-                uint param_45 = li_1;
-                float3 _3884 = punctualRadiance(param_45, param_46, lightPositions, in.vWorldPos, lightColors, lightDirections);
-                float3 pl_1 = param_46;
-                float3 radiance_1 = _3884;
+                uint param_32 = i_1;
+                uint li_1 = lightIndex(param_32, lightIndices);
+                uint param_33 = li_1;
+                float3 _2542 = punctualRadiance(param_33, param_34, lightPositions, in.vWorldPos, lightColors, lightDirections);
+                float3 pl_1 = param_34;
+                float3 radiance_1 = _2542;
                 if (receivesShadows)
                 {
-                    uint param_47 = li_1;
-                    float3 param_48 = in.vWorldPos;
-                    float3 param_49 = ng;
-                    float3 param_50 = pl_1;
-                    radiance_1 *= localShadow(param_47, param_48, param_49, param_50, frame, shadowMap, shadowMapSmplr);
+                    uint param_35 = li_1;
+                    float3 param_36 = in.vWorldPos;
+                    float3 param_37 = ng;
+                    float3 param_38 = pl_1;
+                    radiance_1 *= localShadow(param_35, param_36, param_37, param_38, frame, shadowMap, shadowMapSmplr);
                 }
                 float3 ph_1 = fast::normalize(pl_1 + v);
                 float pNoL = fast::clamp(dot(n, pl_1), 0.0, 1.0);
                 float pNoH = fast::clamp(dot(n, ph_1), 0.0, 1.0);
-                float3 param_51 = f0;
-                float param_52 = fast::clamp(dot(v, ph_1), 0.0, 1.0);
-                float3 pF = fresnelSchlick(param_51, param_52);
-                float param_53 = pNoH;
-                float param_54 = a;
-                float param_55 = NoV;
-                float param_56 = pNoL;
-                float param_57 = a;
-                float3 pSpecular = (pF * (distributionGGX(param_53, param_54) * visibilitySmithGGXCorrelated(param_55, param_56, param_57))) * 3.1415927410125732421875;
+                float3 param_39 = f0;
+                float param_40 = fast::clamp(dot(v, ph_1), 0.0, 1.0);
+                float3 pF = fresnelSchlick(param_39, param_40);
+                float param_41 = pNoH;
+                float param_42 = a;
+                float param_43 = NoV;
+                float param_44 = pNoL;
+                float param_45 = a;
+                float3 pSpecular = (pF * (distributionGGX(param_41, param_42) * visibilitySmithGGXCorrelated(param_43, param_44, param_45))) * 3.1415927410125732421875;
                 color += (((((float3(1.0) - pF) * diffuseColor) + pSpecular) * pNoL) * radiance_1);
             }
         }
@@ -1433,23 +987,18 @@ fragment fragment_main_out fragment_main(fragment_main_in in [[stage_in]], const
         float k = frame.groundColor.w;
         float3 toEye = in.vWorldPos - frame.cameraPos.xyz;
         float x = k * toEye.y;
-        float _4007;
+        float _2665;
         if (abs(x) < 9.9999997473787516355514526367188e-05)
         {
-            _4007 = 1.0 - (0.5 * x);
+            _2665 = 1.0 - (0.5 * x);
         }
         else
         {
-            _4007 = (1.0 - exp(fast::min(-x, 60.0))) / x;
+            _2665 = (1.0 - exp(fast::min(-x, 60.0))) / x;
         }
-        float span = _4007;
+        float span = _2665;
         float atEye = frame.fogColor.w * exp(fast::min((-k) * (frame.cameraPos.y - frame.cameraPos.w), 30.0));
         fog = 1.0 - exp(((-dist) * atEye) * span);
-    }
-    if (frame.probes.z > 0.5)
-    {
-        color = indirect * ao;
-        fog = 0.0;
     }
     float3 rgb = mix(color, frame.fogColor.xyz, float3(fog));
     if (frame.reflectionExtra.w > 0.5)
@@ -1457,9 +1006,9 @@ fragment fragment_main_out fragment_main(fragment_main_in in [[stage_in]], const
         rgb /= (float3(1.0) + rgb);
     }
     out.outColor = float4(rgb, opacity);
-    float4 param_58 = in.vCurrentClip;
-    float4 param_59 = in.vPreviousClip;
-    outMotion = motionVector(param_58, param_59);
+    float4 param_46 = in.vCurrentClip;
+    float4 param_47 = in.vPreviousClip;
+    outMotion = motionVector(param_46, param_47);
     return out;
 }
 

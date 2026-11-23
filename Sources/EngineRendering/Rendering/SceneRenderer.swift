@@ -398,6 +398,9 @@ public final class SceneRenderer {
         /// The fur shaders (mesh_fur(_skinned).vert, mesh_fur.frag; `Material.fur`), for shells or
         /// cards (double-sided, alpha-to-coverage).
         var fur: GroomStyle? = nil
+        /// The light probe fragment variants (mesh*_probes.frag), while the frame has probes. Never
+        /// with `graph` or `fur`.
+        var probes: Bool = false
     }
 
     /// The pipeline variant a batch of `material` draws with, in the transparent pass when `blending`.
@@ -1199,6 +1202,7 @@ public final class SceneRenderer {
                 var key = Self.pipelineKey(for: materials[batch.material].material, blending: blending, reversedZ: reversedZ)
                 key.skinned = batch.skin >= 0
                 key.painted = !key.skinned && key.graph == nil && !paintUnavailable && meshes[batch.mesh].paintBuffer != nil
+                key.probes = uniforms.probes != .zero && key.graph == nil && key.fur == nil
                 if current?.pipeline != key {
                     var made = pipeline(key)
                     if made == nil && key.painted {
@@ -1274,6 +1278,12 @@ public final class SceneRenderer {
         if key.fur != nil {
             guard let furShader = furShader(skinned: key.skinned) else { return nil }
             shader = furShader
+        }
+        if key.probes {
+            guard let probeFragment = probeFragmentShader(painted: key.painted, alphaTested: key.alphaTested) else { return nil }
+            shader.metalFragmentSource = probeFragment.metalFragmentSource
+            shader.metalFragmentColor0Source = probeFragment.metalFragmentColor0Source
+            shader.spirvFragment = probeFragment.spirvFragment
         }
         if let graph = key.graph {
             // The material graph's fragment stage (MaterialGraphCompiler) after the usual vertex stage.

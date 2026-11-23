@@ -224,6 +224,7 @@ final class ProbeState {
     var lightData = LightClusters.GPUData()
     var casters = ShadowCasterBatches()
     var spherePipelines: [Bool: RenderPipeline] = [:]
+    var fragmentShaders: [String: ShaderSource] = [:]
     var failed = false
 
     init(device: RenderDevice) throws {
@@ -407,6 +408,20 @@ extension SceneRenderer {
     /// Binds the probe buffer (storage buffer 1) for the mesh shaders.
     func bindProbes(in pass: RenderPass) {
         pass.setStorageBuffer(probes.buffer ?? probes.emptyBuffer, offset: 0, index: 1, stage: .fragment)
+    }
+
+    /// The light probe variant of the mesh fragment shader (mesh(_paint)(_mask)_probes.frag), loaded on first use.
+    func probeFragmentShader(painted: Bool, alphaTested: Bool) -> ShaderSource? {
+        let name = "mesh" + (painted ? "_paint" : "") + (alphaTested ? "_mask" : "") + "_probes"
+        if let shader = probes.fragmentShaders[name] { return shader }
+        do {
+            let shader = try ShaderSource.load(vertex: "mesh", fragment: name, bundle: .engineResources)
+            probes.fragmentShaders[name] = shader
+            return shader
+        } catch {
+            print("SceneRenderer: light probe shader \(name) unavailable: \(error)")
+            return nil
+        }
     }
 
     // MARK: - Debug spheres
