@@ -96,6 +96,7 @@ public enum EditorComponentCatalog {
         register(CameraPath.self) { CameraPath() }
         register(BehaviorTreeRunner.self) { BehaviorTreeRunner() }
         register(NavigationArea.self) { NavigationArea() }
+        register(NavigationLink.self) { NavigationLink() }
         register(DialoguePlayer.self) { DialoguePlayer() }
         register(UILayoutPlayer.self) { UILayoutPlayer() }
         register(TimelinePlayer.self) { TimelinePlayer() }

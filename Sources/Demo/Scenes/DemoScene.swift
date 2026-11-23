@@ -115,4 +115,5 @@ extension DemoScene {
     ReflectionsScene.self,
     ForestScene.self,
     IKScene.self,
+    NavMeshScene.self,
 ]

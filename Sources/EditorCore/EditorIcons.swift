@@ -58,6 +58,7 @@ public enum EditorIcons {
         CameraPath.componentName: "orbit",
         BehaviorTreeRunner.componentName: "bot",
         NavigationArea.componentName: "route",
+        NavigationLink.componentName: "redo-2",
         DialoguePlayer.componentName: "file-text",
         VisualScript.componentName: "network",
         TimelinePlayer.componentName: "clapperboard",

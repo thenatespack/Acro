@@ -8,7 +8,7 @@ import EngineUI
 // Visual script nodes that link graphs to more of the builders' runtime pieces:
 // - path followers (`PathFollower` on a `.path`): play, pause, resume, stop, seek, read where it
 //   is, and an event for the ends of the path;
-// - grid navigation (`world.findPath`, `world.bakeNavigation`);
+// - navigation (`world.findPath`, `world.bakeNavigation`: the navmesh, else the grid);
 // - the game UI layer (`world.gameUI`, which shows `UILayoutPlayer`s and `ui.show` layouts):
 //   values every layout reads, hiding everything, and an event for any layout's widgets;
 // - timelines: clearing a held fade (`holdFade`) and the conversations dialogue keys start;
@@ -104,8 +104,8 @@ enum VisualScriptBuilderLinkNodes {
         typealias S = VisualScriptEngineSupport
         return [
             S.pure("navigation.findPath", "Find Path", "Navigation",
-                   "A walkable path from `from` to `to` on the world's navigation grid (`world.findPath`; the grid is baked from the "
-                   + "static colliders the first time it is needed). `points` are world positions from start to goal; `found` is false "
+                   "A walkable path from `from` to `to` on the world's navmesh, or its grid without one (`world.findPath`; both are baked "
+                   + "from the static colliders the first time they are needed). `points` are world positions from start to goal; `found` is false "
                    + "when there is no grid or no way through. With `partial`, an unreachable goal gives the path to the nearest reachable cell.",
                    [VisualScriptPin("from", .vec3), VisualScriptPin("to", .vec3), VisualScriptPin("partial", .bool)],
                    [VisualScriptPin("points", .array), VisualScriptPin("found", .bool), VisualScriptPin("length", .float),
@@ -121,7 +121,7 @@ enum VisualScriptBuilderLinkNodes {
                 c.set("count", .int(points.count))
             },
             S.action("navigation.bake", "Bake Navigation", "Navigation",
-                     "Bakes the world's navigation grid again from its static colliders (after the level changed); `baked` is false when there is nothing to bake.",
+                     "Bakes the world's navmesh and navigation grid again from its static colliders (after the level changed); `baked` is false when there is nothing to bake.",
                      [], [VisualScriptPin("baked", .bool)]) { c in
                 c.set("baked", .bool(c.world.bakeNavigation() != nil))
                 return .next
