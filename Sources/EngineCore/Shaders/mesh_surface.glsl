@@ -13,6 +13,13 @@
 //   reflection vector (blurred toward the irradiance with roughness) times Karis' analytic
 //   split-sum DFG approximation, so metals aren't black away from the sun.
 //
+// Light probes (frame.probes, probes.glsl; LIGHT_PROBES, defined by the *_probes.frag variants
+// SceneRenderer draws with while a frame has probes): irradiance volumes replace the ambient
+// diffuse light inside their boxes, reflection probes the environment's reflection (PBR) inside
+// theirs, both added as the difference they make. The variants keep scenes without probes on
+// exactly the shaders they had (Metal's fast math reorders a shader when any code is added).
+// PROBE_DEBUG (probe_debug.frag) draws the probes' debug spheres instead.
+//
 // Image-based lighting (frame.environment.x = 1, see EnvironmentLighting.swift): the ambient
 // light comes from the environment instead of the hemisphere. Diffuse: SH9 irradiance (both
 // models). PBR specular: the prefiltered radiance along the reflection vector, between the two
@@ -74,6 +81,9 @@ layout(set = 0, binding = 0, std140) uniform Frame {
     vec4 reflectionPlane;         // xyz: plane normal, w: offset (dot(normal, p) = offset on the plane)
     vec4 reflectionParams;        // x: strength, y: roughness where it has faded out, z: blur, w: normal distortion
     vec4 reflectionExtra;         // x: receiver tolerance, y: image height / width, z: 1 when receivers sample it, w: 1 in the reflection pass
+    // Light probes (probes.glsl): x reflection probes, y irradiance volumes, z 1 for the
+    // irradiance-only debug view. Zeros without probes.
+    vec4 probes;
 } frame;
 
 // Must match `SceneRenderer.MaterialUniforms` (uniform buffer 2).
@@ -197,6 +207,7 @@ vec2 motionVector(vec4 current, vec4 previous) {
 
 #include "shadows.glsl"
 #include "environment.glsl"
+#include "probes.glsl"
 
 // The hemisphere ambient light arriving from direction d (sky above, ground below).
 vec3 hemisphere(vec3 d) {
@@ -382,6 +393,23 @@ vec3 planarReflected(vec3 fallback, vec3 n, vec3 ng, float roughness) {
 }
 
 void main() {
+#ifdef PROBE_DEBUG
+    // vColor: x 0 a reflection probe (y: its record), 1 an irradiance probe (y: its first SH
+    // vec4, z: its volume's record).
+    vec3 dn = normalize(vNormal);
+    vec3 dv = normalize(frame.cameraPos.xyz - vWorldPos);
+    vec3 shown;
+    if (vColor.x < 0.5) {
+        int record = int(vColor.y + 0.5);
+        shown = probeImageRadiance(probeInt(record + 6), probeLocalDirection(record, reflect(-dv, dn)), 0.0);
+    } else {
+        int sh = int(vColor.y + 0.5);
+        shown = probeValid(sh) ? max(probeSHDot(sh, probeBasis(probeLocalDirection(int(vColor.z + 0.5), dn))), vec3(0.0)) : vec3(0.6, 0.0, 0.0);
+    }
+    outColor = vec4(shown, 1.0);
+    outMotion = motionVector(vCurrentClip, vPreviousClip);
+    return;
+#endif
 #ifdef MATERIAL_GRAPH
     gUV = vUV;
     gPosition = vWorldPos;
@@ -494,6 +522,14 @@ void main() {
         vec3 specular = pow(max(dot(n, h), 0.0), material.params.w) * material.params.z * step(0.0, ndotl) * light;
         vec3 ambient = (frame.environment.x > 0.5 ? environmentIrradiance(n) : hemisphere(n)) * ao;
         color = albedo * (ambient + diffuse * shadow) + specular * shadow;
+        // Probes: the volumes' light instead of the sky's (added as a difference, so scenes
+        // without probes compile and shade exactly as before).
+#ifdef LIGHT_PROBES
+        if (frame.probes.y > 0.5) {
+            vec3 sky = frame.environment.x > 0.5 ? environmentIrradiance(n) : hemisphere(n);
+            color += albedo * (probeIrradiance(sky, vWorldPos, n, v) - sky) * ao;
+        }
+#endif
         if (frame.clusterGrid.w > 0.5) {
             uvec2 cell = clusterLights();
             for (uint i = cell.x; i < cell.x + cell.y; i++) {
@@ -575,6 +611,21 @@ void main() {
         vec3 specularAmbient = f0 * dfg.x + dfg.y;
         vec3 ambient = ((vec3(1.0) - specularAmbient) * diffuseColor * irradiance + specularAmbient * reflected) * ao;
         color = direct + ambient;
+        // Probes: the volumes' light and the reflection probes' reflection instead of the sky's,
+        // added as the difference they make (so scenes without probes shade exactly as before).
+#ifdef LIGHT_PROBES
+        if (frame.probes.x + frame.probes.y > 0.5) {
+            vec3 probeIrr = frame.probes.y > 0.5 ? probeIrradiance(irradiance, vWorldPos, n, v) : irradiance;
+            vec3 probeRefl = reflected;
+            if (frame.probes.x > 0.5) {
+                vec3 sky = frame.environment.x > 0.5 ? environmentRadiance(reflect(-v, sn), roughness)
+                    : mix(hemisphere(reflect(-v, sn)), irradiance, roughness);
+                probeRefl = probeReflection(sky, vWorldPos, reflect(-v, sn), roughness);
+                if (material.flags.w > 0.5 && frame.reflectionExtra.z > 0.5) probeRefl = planarReflected(probeRefl, n, ng, roughness);
+            }
+            color += ((vec3(1.0) - specularAmbient) * diffuseColor * (probeIrr - irradiance) + specularAmbient * (probeRefl - reflected)) * ao;
+        }
+#endif
         if (frame.clusterGrid.w > 0.5) {
             uvec2 cell = clusterLights();
             for (uint i = cell.x; i < cell.x + cell.y; i++) {
@@ -618,6 +669,14 @@ void main() {
         fog = 1.0 - exp(-dist * atEye * span);
     }
     vec3 rgb = mix(color, frame.fogColor.rgb, fog);
+#ifdef LIGHT_PROBES
+    if (frame.probes.z > 0.5) {
+        // The irradiance-only view: the ambient diffuse light of a white surface.
+        vec3 indirect = frame.environment.x > 0.5 ? environmentIrradiance(n) : hemisphere(n);
+        if (frame.probes.y > 0.5) indirect = probeIrradiance(indirect, vWorldPos, n, v);
+        rgb = indirect * ao;
+    }
+#endif
     // The reflection pass stores c / (1 + c): its 8-bit target can't hold HDR values.
     if (frame.reflectionExtra.w > 0.5) rgb /= 1.0 + rgb;
     outColor = vec4(rgb, opacity);

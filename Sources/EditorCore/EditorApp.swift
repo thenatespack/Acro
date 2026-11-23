@@ -241,6 +241,8 @@ public final class EditorApp: Game, EditorHost {
         engine.setAppMenuItems([AppMenuItem(title: "Settings…", keyEquivalent: ",") { [weak self] in self?.showSettings() }])
         session.audioProvider = { [unowned engine] in engine.audio }
         sceneRenderer = try SceneRenderer(device: engine.device, quality: engine.quality)
+        // Probes bake on request (lighting.bake); cached bakes load from the project's Library.
+        sceneRenderer.bakesProbesAutomatically = false
         try sceneRenderer.registerMaterial(Material(shading: .blinnPhong, baseColor: Vec4(0.6, 0.6, 0.58, 1), checker: true, specular: 0.1),
                                            key: StarterScene.checkerMaterial.key)
         target = try RenderTarget(device: engine.device, width: 640, height: 360, label: "viewport")
@@ -1558,6 +1560,7 @@ public final class EditorApp: Game, EditorHost {
     }
 
     private func renderViews(frame: Frame) {
+        sceneRenderer.probeDebug = session.lightProbeDebug
         thumbnails?.render(frame: frame)
         renderCaptures(frame: frame)
         renderWorldCaptures(frame: frame)
@@ -1576,7 +1579,11 @@ public final class EditorApp: Game, EditorHost {
                 sceneRenderer.renderView(game, into: gameTarget, frame: frame, debugDraw: gameDraw, overlay: sprites)
             }
         }
-        guard let view = currentView, sizer.width > 0, viewportWidget.isEffectivelyVisible else { return }
+        guard let view = currentView, sizer.width > 0, viewportWidget.isEffectivelyVisible else {
+            // A light probe bake waits for its world to be gathered: do it without a view.
+            if sceneRenderer.hasProbeBakeRequests { sceneRenderer.beginViews(world: session.world, frame: frame) }
+            return
+        }
         sceneRenderer.beginViews(world: session.world, frame: frame, shadowFocus: view)
         let world = session.world
         let debugView = DebugView(view: view.view, projection: view.projection,
@@ -1738,6 +1745,13 @@ extension EditorApp {
         case .viewport, .game, .camera, .thumbnail:
             captureJobs.append(CaptureJob(request: request, future: future))
         }
+        return future
+    }
+
+    public func bakeLighting(in world: World) -> CommandFuture<LightProbeBakeReport>? {
+        guard engine != nil else { return nil }
+        let future = CommandFuture<LightProbeBakeReport>()
+        sceneRenderer.bakeProbes(in: world) { future.resolve($0) }
         return future
     }
 
@@ -2175,7 +2189,7 @@ final class Toolbar {
 
     /// The View menu: every panel (open ones checked; picking one opens a closed panel where the
     /// default layout has it, or brings an open one to the front), then Settings…, Reset Layout,
-    /// Return to Origin, Go to Object…, Animate in Scene View, the themes (`EditorApp.menuThemes`),
+    /// Return to Origin, Go to Object…, Animate in Scene View, Bake Lighting, Show Light Probes, Irradiance Only, the themes (`EditorApp.menuThemes`),
     /// the zooms and the Scene view's post-fx modes (`view.scenePostFX`), the current ones checked.
     func showViewMenu() {
         guard let context = view.context else { return }
@@ -2208,6 +2222,18 @@ final class Toolbar {
             Entry(title: ViewAnimateInEditModeCommand.title, command: ViewAnimateInEditModeCommand.id, icon: "person-standing",
                   checked: session.editAnimation.isEnabled) {
                 session.run(ViewAnimateInEditModeCommand.self, .init())
+            },
+            // Light probes: bake them, show them (spheres and boxes), the irradiance-only view.
+            Entry(title: LightingBakeCommand.title, command: LightingBakeCommand.id, icon: "irradiance-volume") {
+                _ = try? session.commands.start(LightingBakeCommand.self, .init())
+            },
+            Entry(title: "Show Light Probes", command: LightingDebugCommand.id, icon: "reflection-probe",
+                  checked: session.lightProbeDebug.showsProbes) {
+                let show = !session.lightProbeDebug.showsProbes
+                session.run(LightingDebugCommand.self, .init(probes: show, volumes: show))
+            },
+            Entry(title: "Irradiance Only", command: LightingDebugCommand.id, checked: session.lightProbeDebug.irradianceOnly) {
+                session.run(LightingDebugCommand.self, .init(irradianceOnly: !session.lightProbeDebug.irradianceOnly))
             },
         ]
         entries += EditorApp.menuThemes.map { theme in

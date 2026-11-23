@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 301 tools.
+named by its id (see README › Use the editor › AI control). 303 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -35,6 +35,7 @@ optional arguments.
 | `interaction` | [`interaction.list`](#interactionlist), [`interaction.use`](#interactionuse) |
 | `launcher` | [`launcher.dismiss`](#launcherdismiss), [`launcher.settings`](#launchersettings), [`launcher.show`](#launchershow) |
 | `layout` | [`layout.reset`](#layoutreset) |
+| `lighting` | [`lighting.bake`](#lightingbake), [`lighting.debug`](#lightingdebug) |
 | `log` | [`log.clear`](#logclear), [`log.read`](#logread) |
 | `material` | [`material.get`](#materialget), [`material.set`](#materialset) |
 | `materialGraph` | [`materialGraph.assign`](#materialgraphassign), [`materialGraph.edit`](#materialgraphedit), [`materialGraph.get`](#materialgraphget), [`materialGraph.new`](#materialgraphnew), [`materialGraph.nodes`](#materialgraphnodes), [`materialGraph.open`](#materialgraphopen), [`materialGraph.set`](#materialgraphset) |
@@ -2415,6 +2416,50 @@ Result:
 Restores the default panel layout. Needs the editor window.
 
 Arguments: none.
+
+## lighting
+
+### `lighting.bake`
+
+**Bake Lighting** · _deferred_
+
+Bakes the light probes of the current world (the play world while playing) on the GPU: every ReflectionProbe (a box-projected reflection captured from its point, blended by its influence box with `blendDistance`) and IrradianceVolume (a grid of L2 spherical-harmonic probes giving indirect diffuse light to everything in its box, `bounces` light bounces). Reports the probe counts, the bake time and warnings (irradiance probes inside geometry, which are turned off; volumes with no probes; empty boxes; reflection probes capturing from inside geometry). Bakes are cached in the project's Library/Lighting by what they were baked from and cooked into exported games, which load them instead of baking. Finishes a few frames later. Needs the editor window (GPU). Game code: `SceneRenderer.bakeProbes`.
+
+Arguments:
+
+- `show?`: boolean
+
+Result:
+
+- `bounces`: integer
+- `cacheFiles`: [string]
+- `irradianceProbes`: integer
+- `irradianceVolumes`: integer
+- `milliseconds`: number
+- `probesInsideGeometry`: integer
+- `reflectionProbes`: integer
+- `warnings`: [string]
+
+### `lighting.debug`
+
+**Light Probe Views** · _idempotent_
+
+Shows or hides the light probe debug views in the Scene view (what isn't given stays as it is): `probes` draws a sphere at every baked probe (reflection probes as mirror balls showing their image, irradiance probes shaded by their SH, red inside geometry), `volumes` the reflection probes' influence and projection boxes and the irradiance volumes with their probe points, `irradianceOnly` shades every surface with its indirect diffuse light only. Returns the views' state and the probe counts. view.screenshot shows them (boxes with gizmos on).
+
+Arguments:
+
+- `irradianceOnly?`: boolean
+- `probes?`: boolean
+- `volumes?`: boolean
+
+Result:
+
+- `irradianceOnly`: boolean
+- `irradianceProbes`: integer
+- `irradianceVolumes`: integer
+- `probes`: boolean
+- `reflectionProbes`: integer
+- `volumes`: boolean
 
 ## log
 

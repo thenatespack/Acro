@@ -42,6 +42,7 @@ public enum BuiltinCommands {
       + EditorRecoveryCommands.all + EditorNetCommands.all + EditorLauncherCommands.all + EditorScriptCommands.all + EditorFilesCommands.all
       + EditorProceduralTextureCommands.all + EditorSettingsCommands.all + [ViewAnimateInEditModeCommand.self] + EditorPhysicsCommands.all
       + EditorCameraRigCommands.all
+      + EditorLightingCommands.all
 
     /// Every command: the core's (`core`) and the builder tabs' (`EditorBuilderRegistry`).
     public static var all: [any EditorCommand.Type] { core + EditorBuilderRegistry.commands }

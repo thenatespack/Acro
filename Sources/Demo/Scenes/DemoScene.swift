@@ -120,4 +120,5 @@ extension DemoScene {
     FurScene.self,
     CombatScene.self,
     CameraRigsScene.self,
+    ProbesScene.self,
 ]

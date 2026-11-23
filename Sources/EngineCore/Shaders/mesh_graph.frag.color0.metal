@@ -1,6 +1,6 @@
 // Generated from mesh_graph.frag by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
-// spirv-fnv1a64: 40a09f95ae16bf95
+// spirv-fnv1a64: 62bc8e7f643170fb
 // glsl-fnv1a64: 1e784319ea196fd3
 
 #pragma clang diagnostic ignored "-Wmissing-prototypes"
@@ -122,6 +122,7 @@ struct Frame
     float4 reflectionPlane;
     float4 reflectionParams;
     float4 reflectionExtra;
+    float4 probes;
 };
 
 struct LightPositions
@@ -165,10 +166,16 @@ struct MaterialData
     float4 flags;
 };
 
+struct ProbeData
+{
+    uint4 words[1];
+};
+
 constant spvUnsafeArray<float3, 4> _652 = spvUnsafeArray<float3, 4>({ float3(1.0, 0.449999988079071044921875, 0.449999988079071044921875), float3(0.449999988079071044921875, 1.0, 0.449999988079071044921875), float3(0.5, 0.60000002384185791015625, 1.0), float3(1.0, 1.0, 0.4000000059604644775390625) });
 constant spvUnsafeArray<float3, 6> _956 = spvUnsafeArray<float3, 6>({ float3(0.0, 0.0, 1.0), float3(0.0, 0.0, -1.0), float3(-1.0, 0.0, 0.0), float3(-1.0, 0.0, 0.0), float3(-1.0, 0.0, 0.0), float3(1.0, 0.0, 0.0) });
 constant spvUnsafeArray<float3, 6> _965 = spvUnsafeArray<float3, 6>({ float3(0.0, 1.0, 0.0), float3(0.0, 1.0, 0.0), float3(0.0, 0.0, -1.0), float3(0.0, 0.0, 1.0), float3(0.0, 1.0, 0.0), float3(0.0, 1.0, 0.0) });
 constant spvUnsafeArray<int4, 6> _1373 = spvUnsafeArray<int4, 6>({ int4(0, 0, 512, 256), int4(0, 256, 256, 128), int4(256, 256, 128, 64), int4(384, 256, 64, 32), int4(448, 256, 32, 16), int4(480, 256, 16, 8) });
+constant spvUnsafeArray<int3, 6> _2756 = spvUnsafeArray<int3, 6>({ int3(0, 256, 128), int3(32768, 128, 64), int3(40960, 64, 32), int3(43008, 32, 16), int3(43520, 16, 8), int3(43648, 8, 4) });
 
 struct fragment_main_out
 {

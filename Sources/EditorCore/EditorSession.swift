@@ -171,6 +171,8 @@ public final class EditorSession {
     /// tools add them: `navigation.overlay` draws the navmesh). Each gets the draw list and the
     /// current world (the play world while playing).
     public var sceneOverlays: [String: @MainActor (DebugDraw, World) -> Void] = [:]
+    /// The light probe debug views the Scene view renders with (`lighting.debug`).
+    public var lightProbeDebug = LightProbeDebug()
     /// The layout open in the UI Builder tab (`uiLayout.open`), and how the app shows it.
     public var openUIBuild: AssetID?
     public var onOpenUIBuild: ((AssetID) -> Void)?
