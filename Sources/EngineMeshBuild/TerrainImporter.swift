@@ -18,7 +18,7 @@ public struct TerrainImporter: AssetImporter {
 
     public var name: String { BuiltInImporterName.terrain }
     public var fileExtensions: [String] { ["terrain"] }
-    public var version: Int { 4 }
+    public var version: Int { 5 }  // 5: physics materials of layers
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         var terrain: Terrain
@@ -128,8 +128,10 @@ public struct TerrainImporter: AssetImporter {
                     overlays.append(PrefabNode(name: name, mesh: context.reference(overlayID), material: overlayMaterial,
                                                lod: overlayLevels.isEmpty ? nil : MeshLOD(meshes: overlayLevels, distances: terrain.lodDistances)))
                 }
-                chunks.append(PrefabNode(name: label, mesh: context.reference(meshID), material: material, children: overlays,
-                                         collider: terrain.collider ? terrain.chunkCollider(cx, cz) : nil, lod: lod))
+                var chunk = PrefabNode(name: label, mesh: context.reference(meshID), material: material, children: overlays,
+                                       collider: terrain.collider ? terrain.chunkCollider(cx, cz) : nil, lod: lod)
+                if terrain.collider { chunk.physicsSurface = terrain.chunkPhysicsSurface(cx, cz) }
+                chunks.append(chunk)
                 index += 1
             }
         }

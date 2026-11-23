@@ -555,6 +555,8 @@ public struct PrefabNode: Equatable, Sendable, Codable {
     public var tilemapMotion: TilemapMotion?
     /// Coarser meshes by camera distance (instantiating adds the `MeshLOD`); terrains use it for their chunks.
     public var lod: MeshLOD?
+    /// What the node is made of (instantiating adds the `PhysicsSurface`); mesh builds and terrains set it.
+    public var physicsSurface: PhysicsSurface?
     public var children: [PrefabNode]
 
     public init(name: String, transform: Transform = Transform(), mesh: AssetReference? = nil,
@@ -622,6 +624,7 @@ extension World {
             if let collider2D = node.collider2D { add(collider2D, to: entity) }
             if let motion = node.tilemapMotion { add(motion, to: entity) }
             if let lod = node.lod { add(lod, to: entity) }
+            if let surface = node.physicsSurface { add(surface, to: entity) }
             if let skin = node.skin { skinned.append((entity, skin)) }
             if let parent { setParent(entity, to: parent) }
             for child in node.children { _ = spawn(child, parent: entity) }

@@ -532,7 +532,8 @@ struct QuantizedTransform: Equatable {
 extension CharacterController: NetCustomEncoding {
     /// Every coded field in a fixed order: floats raw (prediction reconciles from them, so they
     /// must be exact), the mask and iteration count as varints, the four flags in one byte:
-    /// 93-97 bytes instead of ~330 through the generic binary coder.
+    /// 93-97 bytes instead of ~330 through the generic binary coder. Version 2 fields (crouch,
+    /// ledges, climbing) follow only when one differs from its default (flag bit 3).
     public func netEncoded() -> [UInt8] {
         var w = ByteWriter()
         for v in [radius, height, skinWidth, maxSlopeAngle, stepHeight, gravityScale, jumpSpeed, pushForce] { w.f32(v) }
@@ -544,7 +545,21 @@ extension CharacterController: NetCustomEncoding {
             w.f32(v.z)
         }
         w.f32(verticalVelocity)
-        w.u8((jump ? 1 : 0) | (isGrounded ? 2 : 0) | (isSliding ? 4 : 0))
+        let d = CharacterController()
+        let v2 = crouchHeight != d.crouchHeight || crouchSpeedScale != d.crouchSpeedScale || grabLedges || climbSpeed != d.climbSpeed
+            || mantleTime != d.mantleTime || crouch || grabLedge || mantle || drop || mode != .walking || isCrouching
+            || ledgePoint != .zero || ledgeNormal != .zero || mantleFrom != .zero || mantleTo != .zero || mantleProgress != 0
+        w.u8((jump ? 1 : 0) | (isGrounded ? 2 : 0) | (isSliding ? 4 : 0) | (v2 ? 8 : 0))
+        guard v2 else { return w.data }
+        for v in [crouchHeight, crouchSpeedScale, climbSpeed, mantleTime, mantleProgress] { w.f32(v) }
+        for v in [ledgePoint, ledgeNormal, mantleFrom, mantleTo] {
+            w.f32(v.x)
+            w.f32(v.y)
+            w.f32(v.z)
+        }
+        let modeIndex = UInt8(CharacterMode.allCases.firstIndex(of: mode) ?? 0)
+        w.u8(modeIndex)
+        w.u8((grabLedges ? 1 : 0) | (crouch ? 2 : 0) | (grabLedge ? 4 : 0) | (mantle ? 8 : 0) | (drop ? 16 : 0) | (isCrouching ? 32 : 0))
         return w.data
     }
 
@@ -566,10 +581,30 @@ extension CharacterController: NetCustomEncoding {
         (c.moveVelocity, c.groundNormal, c.groundVelocity, c.launchVelocity) = (vectors[0], vectors[1], vectors[2], vectors[3])
         c.verticalVelocity = try r.f32()
         let flags = try r.u8()
-        guard flags < 8, r.isAtEnd else { throw NetError.malformed("character flags") }
+        guard flags < 16 else { throw NetError.malformed("character flags") }
         c.jump = flags & 1 != 0
         c.isGrounded = flags & 2 != 0
         c.isSliding = flags & 4 != 0
+        if flags & 8 != 0 {
+            var g: [Float] = []
+            for _ in 0..<5 { g.append(try r.f32()) }
+            (c.crouchHeight, c.crouchSpeedScale, c.climbSpeed, c.mantleTime, c.mantleProgress) = (g[0], g[1], g[2], g[3], g[4])
+            var points: [Vec3] = []
+            for _ in 0..<4 { points.append(Vec3(try r.f32(), try r.f32(), try r.f32())) }
+            (c.ledgePoint, c.ledgeNormal, c.mantleFrom, c.mantleTo) = (points[0], points[1], points[2], points[3])
+            let modeIndex = Int(try r.u8())
+            guard CharacterMode.allCases.indices.contains(modeIndex) else { throw NetError.malformed("character mode") }
+            c.mode = CharacterMode.allCases[modeIndex]
+            let more = try r.u8()
+            guard more < 64 else { throw NetError.malformed("character flags") }
+            c.grabLedges = more & 1 != 0
+            c.crouch = more & 2 != 0
+            c.grabLedge = more & 4 != 0
+            c.mantle = more & 8 != 0
+            c.drop = more & 16 != 0
+            c.isCrouching = more & 32 != 0
+        }
+        guard r.isAtEnd else { throw NetError.malformed("character trailing bytes") }
         return c
     }
 }

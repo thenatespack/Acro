@@ -129,6 +129,8 @@ public final class ScenePlayback {
             let physics = PhysicsWorld()
             runtime.apply(to: physics)
             world.addPhysics(physics)
+            // Physics materials (.physmat files) and their footstep, impact and scrape effects.
+            world.addSurfaceEffects(physics, assets: assets)
             self.physics = physics
         }
         if world.count(of: Collider2D.self) > 0 {

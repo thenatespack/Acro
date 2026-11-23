@@ -106,6 +106,7 @@ enum VisualScriptEngineNodes {
     static func register() {
         VisualScriptAnimationNodes.register()
         VisualScriptIKNodes.register()
+        VisualScriptCharacterNodes.register()
         VisualScriptDialogueNodes.register()
         VisualScriptTimelineNodes.register()
         VisualScriptBehaviorNodes.register()

@@ -26,6 +26,12 @@ import EngineScene
 //    edge's normal (a stair nosing) is replaced by the surface under the capsule's axis.
 // 7. Dynamic bodies it ran into along the way are pushed with `pushForce` (for one step).
 // Everything is a function of the world's state and the inputs, in a fixed order.
+//
+// Version 2 moves (CharacterControllerMoves.swift) run instead of steps 2-6 outside `.walking`:
+// crouching (a shorter capsule, standing up only when there is room), hanging from a ledge
+// (grabbed with `grabLedge`, or caught while falling toward it with `grabLedges`), mantling onto
+// it, and climbing surfaces whose physics material is `climbable`. Platforms carry the
+// character in every mode; jumping off a rising one adds its upward speed.
 
 /// A capsule character: settings, this step's input and the state the controller keeps. As a
 /// component (with a kinematic `Collider` / `RigidBody` on the same entity so triggers see it),
@@ -44,7 +50,18 @@ public struct CharacterController: Component, Codable, Equatable, Sendable {
          "maxIterations": FieldHints(range: 1...8, step: 1),
          "moveVelocity": FieldHints(tooltip: "Wanted m/s in world space (y ignored); set by game code"),
          "jump": FieldHints(tooltip: "Jump on the next step if grounded; cleared by the step"),
-         "verticalVelocity": FieldHints(tooltip: "Written by the controller")]
+         "verticalVelocity": FieldHints(tooltip: "Written by the controller"),
+         "crouchHeight": FieldHints(range: 0.2...4, step: 0.01, tooltip: "Capsule height while crouching (total, caps included)"),
+         "crouchSpeedScale": FieldHints(range: 0...1, step: 0.05, tooltip: "Walking speed multiplier while crouching"),
+         "grabLedges": FieldHints(tooltip: "Catch ledges automatically while falling toward them"),
+         "climbSpeed": FieldHints(range: 0...20, step: 0.1, tooltip: "m/s on climbable surfaces (0: never climbs)"),
+         "mantleTime": FieldHints(range: 0.05...3, step: 0.05, tooltip: "Seconds to pull up onto a ledge"),
+         "crouch": FieldHints(tooltip: "Crouch while set; stands up when cleared and there is room"),
+         "grabLedge": FieldHints(tooltip: "Grab a ledge within reach on the next step; cleared by the step"),
+         "mantle": FieldHints(tooltip: "Pull up onto the ledge it hangs from (or a low wall in front); cleared by the step"),
+         "drop": FieldHints(tooltip: "Let go of a ledge or climbing surface; cleared by the step"),
+         "mode": FieldHints(tooltip: "Written by the controller: walking, hanging, mantling or climbing"),
+         "isCrouching": FieldHints(tooltip: "Written by the controller")]
     }
 
     // Settings.
@@ -87,10 +104,50 @@ public struct CharacterController: Component, Codable, Equatable, Sendable {
     /// what sliding down a steep slope gave it.
     public var launchVelocity: Vec3
 
+    // Version 2 settings.
+    /// Capsule height while crouching (total, caps included).
+    public var crouchHeight: Float
+    /// Multiplies `moveVelocity` while crouching on the ground.
+    public var crouchSpeedScale: Float
+    /// Catch a ledge automatically when falling past one while moving toward it.
+    public var grabLedges: Bool
+    /// Speed on surfaces whose physics material is `climbable` (0: never climbs).
+    public var climbSpeed: Float
+    /// Seconds a mantle (pulling up onto a ledge) takes.
+    public var mantleTime: Float
+
+    // Version 2 input.
+    /// Crouch while set. Clearing it stands up as soon as there is room above.
+    public var crouch: Bool
+    /// Grab a ledge within reach on the next step (cleared by the step).
+    public var grabLedge: Bool
+    /// Pull up onto the ledge it hangs from, or onto a low wall in front while on the ground (cleared by the step).
+    public var mantle: Bool
+    /// Let go of a ledge or a climbing surface (cleared by the step).
+    public var drop: Bool
+
+    // Version 2 state, written by the controller.
+    public var mode: CharacterMode
+    public var isCrouching: Bool
+    /// Hanging, mantling: the ledge's edge, where the hands are. Climbing: where the hands
+    /// touch the wall.
+    public var ledgePoint: Vec3
+    /// The wall's horizontal normal under the ledge (or of the climbed surface).
+    public var ledgeNormal: Vec3
+    /// What it hangs from or climbs (not saved).
+    public var ledgeBody: BodyID?
+    /// Mantling: start, the point above the start at the top's height, and the end on the top.
+    public var mantleFrom: Vec3
+    public var mantleTo: Vec3
+    /// Mantling: 0...1.
+    public var mantleProgress: Float
+
     private enum CodingKeys: String, CodingKey {
         case radius, height, skinWidth, maxSlopeAngle, stepHeight, gravityScale, jumpSpeed, pushForce, collisionMask
         case maxIterations, moveVelocity, jump, verticalVelocity, isGrounded, groundNormal, groundVelocity, isSliding
         case launchVelocity
+        case crouchHeight, crouchSpeedScale, grabLedges, climbSpeed, mantleTime, crouch, grabLedge, mantle, drop, mode, isCrouching
+        case ledgePoint, ledgeNormal, mantleFrom, mantleTo, mantleProgress
     }
 
     public init(radius: Float = 0.3, height: Float = 1.8, skinWidth: Float = 0.02, maxSlopeAngle: Float = 45,
@@ -115,12 +172,77 @@ public struct CharacterController: Component, Codable, Equatable, Sendable {
         isSliding = false
         groundBody = nil
         launchVelocity = .zero
+        crouchHeight = 1
+        crouchSpeedScale = 0.5
+        grabLedges = false
+        climbSpeed = 2
+        mantleTime = 0.45
+        crouch = false
+        grabLedge = false
+        mantle = false
+        drop = false
+        mode = .walking
+        isCrouching = false
+        ledgePoint = .zero
+        ledgeNormal = .zero
+        ledgeBody = nil
+        mantleFrom = .zero
+        mantleTo = .zero
+        mantleProgress = 0
     }
 
+    /// Every key is optional (scenes saved before version 2 lack its keys).
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        func read<T: Decodable>(_ key: CodingKeys, _ value: inout T) throws {
+            if let v = try c.decodeIfPresent(T.self, forKey: key) { value = v }
+        }
+        try read(.radius, &radius); try read(.height, &height); try read(.skinWidth, &skinWidth)
+        try read(.maxSlopeAngle, &maxSlopeAngle); try read(.stepHeight, &stepHeight); try read(.gravityScale, &gravityScale)
+        try read(.jumpSpeed, &jumpSpeed); try read(.pushForce, &pushForce); try read(.collisionMask, &collisionMask)
+        try read(.maxIterations, &maxIterations); try read(.moveVelocity, &moveVelocity); try read(.jump, &jump)
+        try read(.verticalVelocity, &verticalVelocity); try read(.isGrounded, &isGrounded); try read(.groundNormal, &groundNormal)
+        try read(.groundVelocity, &groundVelocity); try read(.isSliding, &isSliding); try read(.launchVelocity, &launchVelocity)
+        try read(.crouchHeight, &crouchHeight); try read(.crouchSpeedScale, &crouchSpeedScale); try read(.grabLedges, &grabLedges)
+        try read(.climbSpeed, &climbSpeed); try read(.mantleTime, &mantleTime); try read(.crouch, &crouch)
+        try read(.grabLedge, &grabLedge); try read(.mantle, &mantle); try read(.drop, &drop); try read(.mode, &mode)
+        try read(.isCrouching, &isCrouching); try read(.ledgePoint, &ledgePoint); try read(.ledgeNormal, &ledgeNormal)
+        try read(.mantleFrom, &mantleFrom); try read(.mantleTo, &mantleTo); try read(.mantleProgress, &mantleProgress)
+    }
+
+    /// The capsule height now: `crouchHeight` while crouching, else `height`.
+    public var currentHeight: Float { isCrouching ? min(max(crouchHeight, radius * 2), height) : height }
+
     /// The capsule's collision shape (to put on the entity's `Collider`, offset up by
-    /// `colliderOffset` so its feet are at the origin).
-    public var colliderShape: ColliderShape { .capsule(radius: radius, halfHeight: max(height / 2 - radius, 0)) }
-    public var colliderOffset: Vec3 { Vec3(0, height / 2, 0) }
+    /// `colliderOffset` so its feet are at the origin). It follows `currentHeight`: the
+    /// "character" system updates a capsule `Collider` on the entity when crouching changes.
+    public var colliderShape: ColliderShape { Self.capsule(radius: radius, height: currentHeight) }
+    public var colliderOffset: Vec3 { Vec3(0, currentHeight / 2, 0) }
+
+    static func capsule(radius: Float, height: Float) -> ColliderShape { .capsule(radius: radius, halfHeight: max(height / 2 - radius, 0)) }
+
+    /// Where the hands go while hanging, mantling or climbing (IK targets: `Animator.setIKTarget`),
+    /// shoulder width apart along the ledge; nil while walking. Left and right as seen by the
+    /// character facing the wall.
+    public var handTargets: (left: Vec3, right: Vec3)? {
+        guard mode != .walking, lengthSquared(ledgeNormal) > 1e-6 else { return nil }
+        let right = normalize(cross(-ledgeNormal, Vec3(0, 1, 0)))
+        let half = max(radius * 0.8, 0.12)
+        return (ledgePoint - right * half, ledgePoint + right * half)
+    }
+}
+
+/// What a `CharacterController` is doing.
+public enum CharacterMode: String, Codable, Sendable, CaseIterable {
+    /// On the ground or in the air (walking, jumping, falling, sliding).
+    case walking
+    /// Hanging from a ledge by the hands.
+    case hanging
+    /// Pulling up onto a ledge (scripted motion over `mantleTime`).
+    case mantling
+    /// On a climbable surface.
+    case climbing
 }
 
 extension PhysicsWorld {
@@ -146,10 +268,32 @@ extension PhysicsWorld {
 
     private func stepCharacter(_ controller: inout CharacterController, from position: Vec3, dt: Float, body: BodyID?, sideEffects: Bool) -> Vec3 {
         guard dt > 0 else { return position }
-        var sweep = CharacterSweep(world: self, controller: controller, body: body)
         var c = controller
         var pos = position
+        updateCrouch(&c, at: pos, body: body)
+        var sweep = CharacterSweep(world: self, controller: c, body: body)
         sweep.depenetrate(&pos)
+        if c.mode != .walking {
+            pos = stepMove(&c, from: pos, dt: dt, sweep: sweep)
+            c.jump = false
+            c.grabLedge = false
+            c.mantle = false
+            c.drop = false
+            controller = c
+            if sideEffects, let body, let current = self.pose(of: body) {
+                moveKinematic(body, to: Pose(position: pos, rotation: current.rotation), dt: dt)
+            }
+            return pos
+        }
+        // Mantle onto a low wall in front, from the ground.
+        if c.mantle && c.isGrounded, startMantle(&c, from: pos, sweep: sweep, fromGround: true) {
+            c.mantle = false
+            c.jump = false
+            c.grabLedge = false
+            c.drop = false
+            controller = c
+            return pos
+        }
 
         // Carry: the ground's own motion, as a sweep (so platforms can't push it through walls).
         c.groundVelocity = .zero
@@ -164,7 +308,8 @@ extension PhysicsWorld {
         let gravityY = gravity.y * c.gravityScale
         var jumped = false
         if wasGrounded && c.jump {
-            c.verticalVelocity = c.jumpSpeed
+            // Off a rising platform the jump keeps its upward speed.
+            c.verticalVelocity = c.jumpSpeed + max(c.groundVelocity.y, 0)
             c.launchVelocity = Vec3(c.groundVelocity.x, 0, c.groundVelocity.z)
             wasGrounded = false
             jumped = true
@@ -176,7 +321,8 @@ extension PhysicsWorld {
         c.jump = false
 
         // Walk.
-        var wanted = Vec3(c.moveVelocity.x, 0, c.moveVelocity.z) * dt
+        let speedScale: Float = c.isCrouching && wasGrounded ? max(c.crouchSpeedScale, 0) : 1
+        var wanted = Vec3(c.moveVelocity.x, 0, c.moveVelocity.z) * (dt * speedScale)
         if !wasGrounded { wanted += Vec3(c.launchVelocity.x, 0, c.launchVelocity.z) * dt }
         let flat = wanted
         if wasGrounded {
@@ -229,6 +375,25 @@ extension PhysicsWorld {
         }
         c.isGrounded = grounded
 
+        // Version 2: start climbing a climbable wall it walked into, or grab a ledge.
+        let hands = c.height * 1.1
+        // Caught automatically only while moving toward it; `grabLedge` looks all around when standing still.
+        let reaching = Vec3(c.moveVelocity.x, 0, c.moveVelocity.z) + c.launchVelocity
+        if c.climbSpeed > 0 && !c.drop && !c.isCrouching, let wall = climbableWall(in: hits, moving: flat, sweep: sweep) {
+            beginClimb(&c, on: wall, at: pos)
+        } else if !grounded || c.grabLedge, !c.isCrouching,
+                  c.grabLedge || (c.grabLedges && c.verticalVelocity <= 1 && lengthSquared(reaching) > 1e-6),
+                  let ledge = sweep.findLedge(from: pos, toward: reaching,
+                                              low: c.grabLedge ? c.height * 0.55 : hands - 0.12,
+                                              high: c.grabLedge ? hands + 0.25 : hands + 0.08 + max(-c.verticalVelocity * dt, 0),
+                                              hangs: true) {
+            hang(&c, from: ledge)
+            pos = ledge.hang
+        }
+        c.grabLedge = false
+        c.mantle = false
+        c.drop = false
+
         // Push what it ran into (once per body), along the way it is walking.
         if sideEffects, c.pushForce > 0, lengthSquared(flat) > 1e-12 {
             let direction = normalize(flat)
@@ -261,13 +426,20 @@ extension PhysicsWorld {
                 world.add(transform, to: e)
             }
             if controller != old { world.add(controller, to: e) }
+            // Crouching changed the capsule: a capsule collider on the entity follows it.
+            if controller.isCrouching != old.isCrouching, var collider = world.get(Collider.self, for: e),
+               case .capsule = collider.shape {
+                collider.shape = controller.colliderShape
+                collider.offset = controller.colliderOffset
+                world.add(collider, to: e)
+            }
         }
     }
 }
 
 /// The capsule and the queries one `moveCharacter` step makes.
 @MainActor
-private struct CharacterSweep {
+struct CharacterSweep {
     let world: PhysicsWorld
     let c: CharacterController
     let shape: ColliderShape

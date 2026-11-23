@@ -214,11 +214,12 @@ public struct MeshBuildImporter: AssetImporter {
 
     public var name: String { BuiltInImporterName.meshBuild }
     public var fileExtensions: [String] { ["meshbuild"] }
-    public var version: Int { 12 }  // 2: mirror and repeat, 3: sculpt, 4: sweep, loft and deform, 5: looks and baked occlusion,
+    public var version: Int { 13 }  // 2: mirror and repeat, 3: sculpt, 4: sweep, loft and deform, 5: looks and baked occlusion,
                                    // 6: sculpt children's looks, sweeps / lofts / deformers in sculpts, 7: edge wear,
                                    // 8: foliage, ribbons, leaf looks, noise budget, 9: edge wear noise in object space,
                                    // 10: sculpt look blending, leaf card variation,
-                                   // 11: plant wind, detail levels, impostors, 12: baked occlusion off by default
+                                   // 11: plant wind, detail levels, impostors, 12: baked occlusion off by default,
+                                   // 13: physics materials
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         let file: MeshBuild
@@ -342,12 +343,14 @@ public struct MeshBuildImporter: AssetImporter {
         for i in build.parts.indices {
             if let p = parentIndex(of: i) { children[p, default: []].append(i) } else { roots.append(i) }
         }
+        let rootSurface = Self.assignPhysicsSurfaces(build, to: &nodes, &context)
         func tree(_ i: Int) -> PrefabNode {
             var node = nodes[i]
             node.children = (children[i] ?? []).map(tree)
             return node
         }
-        let root = PrefabNode(name: stem, children: roots.map(tree))
+        var root = PrefabNode(name: stem, children: roots.map(tree))
+        root.physicsSurface = rootSurface
         let prefab = namer.id(kind: "prefab", name: stem, index: 0)
         asset.add(prefab, name: stem, .prefab(PrefabAsset(roots: [root])))
         asset.main = prefab

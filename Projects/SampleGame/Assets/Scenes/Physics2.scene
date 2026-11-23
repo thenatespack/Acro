@@ -1,0 +1,1010 @@
+{
+  "entities" : [
+    {
+      "components" : {
+        "Camera" : {
+          "clearColor" : [0, 0, 0, 1],
+          "far" : 500,
+          "fovY" : 1.0471975,
+          "isActive" : true,
+          "near" : 0.1,
+          "postFX" : "",
+          "reversedZ" : false
+        },
+        "Name" : {
+          "value" : "Main Camera"
+        },
+        "Transform" : {
+          "position" : [6, 7, 14],
+          "rotation" : [-0.20106587, 0, 0, 0.9795777],
+          "scale" : [1, 1, 1]
+        }
+      },
+      "id" : 0
+    },
+    {
+      "components" : {
+        "DirectionalLight" : {
+          "cascadeBlend" : 0.1,
+          "cascadeSplitLambda" : 0.75,
+          "castsShadows" : true,
+          "color" : [1, 1, 1],
+          "intensity" : 1.4,
+          "shadowBias" : 0.0005,
+          "shadowDistance" : 60,
+          "shadowExtent" : 16,
+          "shadowNormalOffset" : 1
+        },
+        "Name" : {
+          "value" : "Sun"
+        },
+        "Transform" : {
+          "position" : [0, 0, 0],
+          "rotation" : [-0.43328112, 0.28848478, 0.14866214, 0.8407994],
+          "scale" : [1, 1, 1]
+        }
+      },
+      "id" : 1
+    },
+    {
+      "components" : {
+        "Name" : {
+          "value" : "Environment"
+        },
+        "SceneEnvironment" : {
+          "ambientIntensity" : 0.3,
+          "environmentIntensity" : 1,
+          "environmentRotation" : 0,
+          "fogBaseHeight" : 0,
+          "fogColor" : [0.62, 0.7, 0.82],
+          "fogDensity" : 0,
+          "fogHeightFalloff" : 0,
+          "groundColor" : [0.12, 0.1, 0.09],
+          "imageBasedLighting" : true,
+          "proceduralSky" : {
+            "groundColor" : [0.13, 0.12, 0.11],
+            "horizonColor" : [0.55, 0.62, 0.74],
+            "sunGlow" : 0.5,
+            "sunIntensity" : 40,
+            "sunSize" : 0.012,
+            "zenithColor" : [0.12, 0.26, 0.62]
+          },
+          "sky" : "color",
+          "skyColor" : [0.55, 0.65, 0.85],
+          "volumetricFog" : {
+            "anisotropy" : 0.5,
+            "enabled" : false,
+            "intensity" : 1,
+            "localLights" : true,
+            "maxDistance" : 100,
+            "steps" : 32
+          },
+          "wind" : {
+            "direction" : [1, 0, 0.35],
+            "gustiness" : 0.5,
+            "strength" : 0.5
+          }
+        }
+      },
+      "id" : 2
+    },
+    {
+      "components" : {
+        "Collider" : {
+          "density" : 1000,
+          "friction" : 0.5,
+          "isTrigger" : false,
+          "layer" : 1,
+          "mask" : 4294967295,
+          "offset" : [0, -0.5, 0],
+          "restitution" : 0,
+          "rotation" : [0, 0, 0, 1],
+          "shape" : {
+            "box" : {
+              "halfExtents" : [30, 0.5, 30]
+            }
+          }
+        },
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "emissiveStrength" : 1,
+          "emissiveTint" : [1, 1, 1],
+          "isVisible" : true,
+          "material" : "default",
+          "mesh" : "cube",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [0.4, 0.42, 0.4]
+        },
+        "Name" : {
+          "value" : "Floor"
+        },
+        "PhysicsSurface" : {
+          "material" : "concrete"
+        },
+        "Transform" : {
+          "position" : [0, 0, 0],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [1, 1, 1]
+        }
+      },
+      "id" : 3
+    },
+    {
+      "components" : {
+        "Collider" : {
+          "density" : 1000,
+          "friction" : 0.5,
+          "isTrigger" : false,
+          "layer" : 1,
+          "mask" : 4294967295,
+          "offset" : [0, 0, 0],
+          "restitution" : 0,
+          "rotation" : [0, 0, 0, 1],
+          "shape" : {
+            "box" : {
+              "halfExtents" : [0.5, 0.5, 0.5]
+            }
+          }
+        },
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "emissiveStrength" : 1,
+          "emissiveTint" : [1, 1, 1],
+          "isVisible" : true,
+          "material" : "default",
+          "mesh" : "cube",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [0.8, 0.6, 0.4]
+        },
+        "Name" : {
+          "value" : "Step 1"
+        },
+        "PhysicsSurface" : {
+          "material" : "wood"
+        },
+        "Transform" : {
+          "position" : [1.25, 0.125, 0],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [0.5, 0.25, 2]
+        }
+      },
+      "id" : 4
+    },
+    {
+      "components" : {
+        "Collider" : {
+          "density" : 1000,
+          "friction" : 0.5,
+          "isTrigger" : false,
+          "layer" : 1,
+          "mask" : 4294967295,
+          "offset" : [0, 0, 0],
+          "restitution" : 0,
+          "rotation" : [0, 0, 0, 1],
+          "shape" : {
+            "box" : {
+              "halfExtents" : [0.5, 0.5, 0.5]
+            }
+          }
+        },
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "emissiveStrength" : 1,
+          "emissiveTint" : [1, 1, 1],
+          "isVisible" : true,
+          "material" : "default",
+          "mesh" : "cube",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [0.8, 0.6, 0.4]
+        },
+        "Name" : {
+          "value" : "Step 2"
+        },
+        "PhysicsSurface" : {
+          "material" : "wood"
+        },
+        "Transform" : {
+          "position" : [1.75, 0.25, 0],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [0.5, 0.5, 2]
+        }
+      },
+      "id" : 5
+    },
+    {
+      "components" : {
+        "Collider" : {
+          "density" : 1000,
+          "friction" : 0.5,
+          "isTrigger" : false,
+          "layer" : 1,
+          "mask" : 4294967295,
+          "offset" : [0, 0, 0],
+          "restitution" : 0,
+          "rotation" : [0, 0, 0, 1],
+          "shape" : {
+            "box" : {
+              "halfExtents" : [0.5, 0.5, 0.5]
+            }
+          }
+        },
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "emissiveStrength" : 1,
+          "emissiveTint" : [1, 1, 1],
+          "isVisible" : true,
+          "material" : "default",
+          "mesh" : "cube",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [0.8, 0.6, 0.4]
+        },
+        "Name" : {
+          "value" : "Step 3"
+        },
+        "PhysicsSurface" : {
+          "material" : "wood"
+        },
+        "Transform" : {
+          "position" : [2.25, 0.375, 0],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [0.5, 0.75, 2]
+        }
+      },
+      "id" : 6
+    },
+    {
+      "components" : {
+        "Collider" : {
+          "density" : 1000,
+          "friction" : 0.5,
+          "isTrigger" : false,
+          "layer" : 1,
+          "mask" : 4294967295,
+          "offset" : [0, 0, 0],
+          "restitution" : 0,
+          "rotation" : [0, 0, 0, 1],
+          "shape" : {
+            "box" : {
+              "halfExtents" : [0.5, 0.5, 0.5]
+            }
+          }
+        },
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "emissiveStrength" : 1,
+          "emissiveTint" : [1, 1, 1],
+          "isVisible" : true,
+          "material" : "default",
+          "mesh" : "cube",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [0.8, 0.6, 0.4]
+        },
+        "Name" : {
+          "value" : "Step 4"
+        },
+        "PhysicsSurface" : {
+          "material" : "wood"
+        },
+        "Transform" : {
+          "position" : [2.75, 0.5, 0],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [0.5, 1, 2]
+        }
+      },
+      "id" : 7
+    },
+    {
+      "components" : {
+        "Collider" : {
+          "density" : 1000,
+          "friction" : 0.5,
+          "isTrigger" : false,
+          "layer" : 1,
+          "mask" : 4294967295,
+          "offset" : [0, 0, 0],
+          "restitution" : 0,
+          "rotation" : [0, 0, 0, 1],
+          "shape" : {
+            "box" : {
+              "halfExtents" : [0.5, 0.5, 0.5]
+            }
+          }
+        },
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "emissiveStrength" : 1,
+          "emissiveTint" : [1, 1, 1],
+          "isVisible" : true,
+          "material" : "default",
+          "mesh" : "cube",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [0.8, 0.6, 0.4]
+        },
+        "Name" : {
+          "value" : "Step 5"
+        },
+        "PhysicsSurface" : {
+          "material" : "wood"
+        },
+        "Transform" : {
+          "position" : [3.25, 0.625, 0],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [0.5, 1.25, 2]
+        }
+      },
+      "id" : 8
+    },
+    {
+      "components" : {
+        "Collider" : {
+          "density" : 1000,
+          "friction" : 0.5,
+          "isTrigger" : false,
+          "layer" : 1,
+          "mask" : 4294967295,
+          "offset" : [0, 0, 0],
+          "restitution" : 0,
+          "rotation" : [0, 0, 0, 1],
+          "shape" : {
+            "box" : {
+              "halfExtents" : [0.5, 0.5, 0.5]
+            }
+          }
+        },
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "emissiveStrength" : 1,
+          "emissiveTint" : [1, 1, 1],
+          "isVisible" : true,
+          "material" : "default",
+          "mesh" : "cube",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [0.8, 0.65, 0.45]
+        },
+        "Name" : {
+          "value" : "Landing"
+        },
+        "PhysicsSurface" : {
+          "material" : "wood"
+        },
+        "Transform" : {
+          "position" : [4.25, 0.625, 0],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [1.5, 1.25, 2]
+        }
+      },
+      "id" : 9
+    },
+    {
+      "components" : {
+        "Collider" : {
+          "density" : 1000,
+          "friction" : 0.5,
+          "isTrigger" : false,
+          "layer" : 1,
+          "mask" : 4294967295,
+          "offset" : [0, 0, 0],
+          "restitution" : 0,
+          "rotation" : [0, 0, 0, 1],
+          "shape" : {
+            "box" : {
+              "halfExtents" : [0.5, 0.5, 0.5]
+            }
+          }
+        },
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "emissiveStrength" : 1,
+          "emissiveTint" : [1, 1, 1],
+          "isVisible" : true,
+          "material" : "default",
+          "mesh" : "cube",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [0.6, 0.6, 0.58]
+        },
+        "Name" : {
+          "value" : "Ledge Wall"
+        },
+        "PhysicsSurface" : {
+          "material" : "stone"
+        },
+        "Transform" : {
+          "position" : [8.5, 1, 0],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [2, 2, 3]
+        }
+      },
+      "id" : 10
+    },
+    {
+      "components" : {
+        "Collider" : {
+          "density" : 1000,
+          "friction" : 0.5,
+          "isTrigger" : false,
+          "layer" : 1,
+          "mask" : 4294967295,
+          "offset" : [0, 0, 0],
+          "restitution" : 0,
+          "rotation" : [0, 0, 0, 1],
+          "shape" : {
+            "box" : {
+              "halfExtents" : [0.5, 0.5, 0.5]
+            }
+          }
+        },
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "emissiveStrength" : 1,
+          "emissiveTint" : [1, 1, 1],
+          "isVisible" : true,
+          "material" : "default",
+          "mesh" : "cube",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [0.7, 0.5, 0.35]
+        },
+        "Name" : {
+          "value" : "Roof"
+        },
+        "PhysicsSurface" : {
+          "material" : "wood"
+        },
+        "Transform" : {
+          "position" : [9.2, 3.45, 0],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [0.6, 0.3, 3]
+        }
+      },
+      "id" : 11
+    },
+    {
+      "components" : {
+        "Collider" : {
+          "density" : 1000,
+          "friction" : 0.5,
+          "isTrigger" : false,
+          "layer" : 1,
+          "mask" : 4294967295,
+          "offset" : [0, 0, 0],
+          "restitution" : 0,
+          "rotation" : [0, 0, 0, 1],
+          "shape" : {
+            "box" : {
+              "halfExtents" : [0.5, 0.5, 0.5]
+            }
+          }
+        },
+        "FieldAnimator" : {
+          "enabled" : true,
+          "speed" : 1,
+          "tracks" : [
+            {
+              "additive" : true,
+              "amplitude" : 1.5,
+              "curve" : {
+                "keys" : [
+                  {
+                    "interpolation" : "linear",
+                    "time" : 0,
+                    "value" : 0
+                  },
+                  {
+                    "interpolation" : "linear",
+                    "time" : 1,
+                    "value" : 1
+                  }
+                ],
+                "wrap" : "clamp"
+              },
+              "delay" : 0,
+              "duration" : 1,
+              "easing" : "linear",
+              "frequency" : 0.25,
+              "from" : 0,
+              "loop" : "pingPong",
+              "mode" : "wave",
+              "offset" : 0,
+              "phase" : 0,
+              "seed" : 0,
+              "speed" : 1,
+              "target" : "Transform.position.z",
+              "to" : 1,
+              "wave" : "sine"
+            }
+          ]
+        },
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "emissiveStrength" : 1,
+          "emissiveTint" : [1, 1, 1],
+          "isVisible" : true,
+          "material" : "default",
+          "mesh" : "cube",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [0.3, 0.55, 0.95]
+        },
+        "Name" : {
+          "value" : "Platform"
+        },
+        "PhysicsSurface" : {
+          "material" : "metal"
+        },
+        "RigidBody" : {
+          "allowSleep" : true,
+          "angularDamping" : 0.1,
+          "angularVelocity" : [0, 0, 0],
+          "continuous" : false,
+          "gravityScale" : 1,
+          "interpolation" : "inherit",
+          "linearDamping" : 0.05,
+          "linearVelocity" : [0, 0, 0],
+          "motion" : "kinematic",
+          "startsAsleep" : false
+        },
+        "Transform" : {
+          "position" : [1, 0.15, -4],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [2, 0.3, 2]
+        }
+      },
+      "id" : 12
+    },
+    {
+      "components" : {
+        "Collider" : {
+          "density" : 1000,
+          "friction" : 0.5,
+          "isTrigger" : false,
+          "layer" : 1,
+          "mask" : 4294967295,
+          "offset" : [0, 0, 0],
+          "restitution" : 0,
+          "rotation" : [0, 0, 0, 1],
+          "shape" : {
+            "box" : {
+              "halfExtents" : [0.5, 0.5, 0.5]
+            }
+          }
+        },
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "emissiveStrength" : 1,
+          "emissiveTint" : [1, 1, 1],
+          "isVisible" : true,
+          "material" : "default",
+          "mesh" : "cube",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [0.7, 0.5, 0.3]
+        },
+        "Name" : {
+          "value" : "Strip wood"
+        },
+        "PhysicsSurface" : {
+          "material" : "wood"
+        },
+        "Transform" : {
+          "position" : [4, 0.025, -7],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [12, 0.05, 1.2]
+        }
+      },
+      "id" : 13
+    },
+    {
+      "components" : {
+        "Collider" : {
+          "density" : 1000,
+          "friction" : 0.5,
+          "isTrigger" : false,
+          "layer" : 1,
+          "mask" : 4294967295,
+          "offset" : [0, 0, 0],
+          "restitution" : 0,
+          "rotation" : [0, 0, 0, 1],
+          "shape" : {
+            "box" : {
+              "halfExtents" : [0.5, 0.5, 0.5]
+            }
+          }
+        },
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "emissiveStrength" : 1,
+          "emissiveTint" : [1, 1, 1],
+          "isVisible" : true,
+          "material" : "default",
+          "mesh" : "cube",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [0.5, 0.6, 0.9]
+        },
+        "Name" : {
+          "value" : "Crate on wood"
+        },
+        "PhysicsSurface" : {
+          "material" : "wood"
+        },
+        "RigidBody" : {
+          "allowSleep" : true,
+          "angularDamping" : 0.1,
+          "angularVelocity" : [0, 0, 0],
+          "continuous" : false,
+          "gravityScale" : 1,
+          "interpolation" : "inherit",
+          "linearDamping" : 0.05,
+          "linearVelocity" : [5, 0, 0],
+          "motion" : "dynamic",
+          "startsAsleep" : false
+        },
+        "Transform" : {
+          "position" : [-1.5, 0.36, -7],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [0.6, 0.6, 0.6]
+        }
+      },
+      "id" : 14
+    },
+    {
+      "components" : {
+        "Collider" : {
+          "density" : 1000,
+          "friction" : 0.5,
+          "isTrigger" : false,
+          "layer" : 1,
+          "mask" : 4294967295,
+          "offset" : [0, 0, 0],
+          "restitution" : 0,
+          "rotation" : [0, 0, 0, 1],
+          "shape" : {
+            "box" : {
+              "halfExtents" : [0.5, 0.5, 0.5]
+            }
+          }
+        },
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "emissiveStrength" : 1,
+          "emissiveTint" : [1, 1, 1],
+          "isVisible" : true,
+          "material" : "default",
+          "mesh" : "cube",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [0.75, 0.9, 1]
+        },
+        "Name" : {
+          "value" : "Strip ice"
+        },
+        "PhysicsSurface" : {
+          "material" : "ice"
+        },
+        "Transform" : {
+          "position" : [4, 0.025, -8.5],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [12, 0.05, 1.2]
+        }
+      },
+      "id" : 15
+    },
+    {
+      "components" : {
+        "Collider" : {
+          "density" : 1000,
+          "friction" : 0.5,
+          "isTrigger" : false,
+          "layer" : 1,
+          "mask" : 4294967295,
+          "offset" : [0, 0, 0],
+          "restitution" : 0,
+          "rotation" : [0, 0, 0, 1],
+          "shape" : {
+            "box" : {
+              "halfExtents" : [0.5, 0.5, 0.5]
+            }
+          }
+        },
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "emissiveStrength" : 1,
+          "emissiveTint" : [1, 1, 1],
+          "isVisible" : true,
+          "material" : "default",
+          "mesh" : "cube",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [0.5, 0.6, 0.9]
+        },
+        "Name" : {
+          "value" : "Crate on ice"
+        },
+        "PhysicsSurface" : {
+          "material" : "wood"
+        },
+        "RigidBody" : {
+          "allowSleep" : true,
+          "angularDamping" : 0.1,
+          "angularVelocity" : [0, 0, 0],
+          "continuous" : false,
+          "gravityScale" : 1,
+          "interpolation" : "inherit",
+          "linearDamping" : 0.05,
+          "linearVelocity" : [5, 0, 0],
+          "motion" : "dynamic",
+          "startsAsleep" : false
+        },
+        "Transform" : {
+          "position" : [-1.5, 0.36, -8.5],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [0.6, 0.6, 0.6]
+        }
+      },
+      "id" : 16
+    },
+    {
+      "components" : {
+        "Collider" : {
+          "density" : 1000,
+          "friction" : 0.5,
+          "isTrigger" : false,
+          "layer" : 1,
+          "mask" : 4294967295,
+          "offset" : [0, 0, 0],
+          "restitution" : 0,
+          "rotation" : [0, 0, 0, 1],
+          "shape" : {
+            "box" : {
+              "halfExtents" : [0.5, 0.5, 0.5]
+            }
+          }
+        },
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "emissiveStrength" : 1,
+          "emissiveTint" : [1, 1, 1],
+          "isVisible" : true,
+          "material" : "default",
+          "mesh" : "cube",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [0.85, 0.85, 0.9]
+        },
+        "Name" : {
+          "value" : "Thin Wall"
+        },
+        "PhysicsSurface" : {
+          "material" : "glass"
+        },
+        "Transform" : {
+          "position" : [16, 1.5, 4],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [0.04, 3, 3]
+        }
+      },
+      "id" : 17
+    },
+    {
+      "components" : {
+        "Collider" : {
+          "density" : 11000,
+          "friction" : 0.5,
+          "isTrigger" : false,
+          "layer" : 1,
+          "mask" : 4294967295,
+          "offset" : [0, 0, 0],
+          "restitution" : 0,
+          "rotation" : [0, 0, 0, 1],
+          "shape" : {
+            "sphere" : {
+              "radius" : 0.5
+            }
+          }
+        },
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "emissiveStrength" : 1,
+          "emissiveTint" : [1, 1, 1],
+          "isVisible" : true,
+          "material" : "default",
+          "mesh" : "sphere",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [1, 0.3, 0.2]
+        },
+        "Name" : {
+          "value" : "Bullet"
+        },
+        "RigidBody" : {
+          "allowSleep" : false,
+          "angularDamping" : 0.1,
+          "angularVelocity" : [0, 0, 0],
+          "continuous" : false,
+          "gravityScale" : 0,
+          "interpolation" : "inherit",
+          "linearDamping" : 0,
+          "linearVelocity" : [300, 0, 0],
+          "motion" : "dynamic",
+          "startsAsleep" : false
+        },
+        "Transform" : {
+          "position" : [12, 1.2, 3.55],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [0.06, 0.06, 0.06]
+        }
+      },
+      "id" : 18
+    },
+    {
+      "components" : {
+        "Collider" : {
+          "density" : 11000,
+          "friction" : 0.5,
+          "isTrigger" : false,
+          "layer" : 1,
+          "mask" : 4294967295,
+          "offset" : [0, 0, 0],
+          "restitution" : 0,
+          "rotation" : [0, 0, 0, 1],
+          "shape" : {
+            "sphere" : {
+              "radius" : 0.5
+            }
+          }
+        },
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "emissiveStrength" : 1,
+          "emissiveTint" : [1, 1, 1],
+          "isVisible" : true,
+          "material" : "default",
+          "mesh" : "sphere",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [0.2, 1, 0.3]
+        },
+        "Name" : {
+          "value" : "Bullet CCD"
+        },
+        "RigidBody" : {
+          "allowSleep" : false,
+          "angularDamping" : 0.1,
+          "angularVelocity" : [0, 0, 0],
+          "continuous" : true,
+          "gravityScale" : 0,
+          "interpolation" : "inherit",
+          "linearDamping" : 0,
+          "linearVelocity" : [300, 0, 0],
+          "motion" : "dynamic",
+          "startsAsleep" : false
+        },
+        "Transform" : {
+          "position" : [12, 1.2, 4.45],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [0.06, 0.06, 0.06]
+        }
+      },
+      "id" : 19
+    },
+    {
+      "components" : {
+        "CharacterController" : {
+          "climbSpeed" : 2,
+          "collisionMask" : 4294967295,
+          "crouch" : false,
+          "crouchHeight" : 1,
+          "crouchSpeedScale" : 0.5,
+          "drop" : false,
+          "grabLedge" : false,
+          "grabLedges" : true,
+          "gravityScale" : 1,
+          "groundNormal" : [0, 1, 0],
+          "groundVelocity" : [0, 0, 0],
+          "height" : 1.8,
+          "isCrouching" : false,
+          "isGrounded" : false,
+          "isSliding" : false,
+          "jump" : false,
+          "jumpSpeed" : 5.5,
+          "launchVelocity" : [0, 0, 0],
+          "ledgeNormal" : [0, 0, 0],
+          "ledgePoint" : [0, 0, 0],
+          "mantle" : false,
+          "mantleFrom" : [0, 0, 0],
+          "mantleProgress" : 0,
+          "mantleTime" : 0.45,
+          "mantleTo" : [0, 0, 0],
+          "maxIterations" : 4,
+          "maxSlopeAngle" : 45,
+          "mode" : "walking",
+          "moveVelocity" : [0, 0, 0],
+          "pushForce" : 400,
+          "radius" : 0.3,
+          "skinWidth" : 0.02,
+          "stepHeight" : 0.35,
+          "verticalVelocity" : 0
+        },
+        "Collider" : {
+          "density" : 1000,
+          "friction" : 0.5,
+          "isTrigger" : false,
+          "layer" : 2,
+          "mask" : 0,
+          "offset" : [0, 0.9, 0],
+          "restitution" : 0,
+          "rotation" : [0, 0, 0, 1],
+          "shape" : {
+            "capsule" : {
+              "halfHeight" : 0.59999996,
+              "radius" : 0.3
+            }
+          }
+        },
+        "Name" : {
+          "value" : "Player"
+        },
+        "RigidBody" : {
+          "allowSleep" : true,
+          "angularDamping" : 0.1,
+          "angularVelocity" : [0, 0, 0],
+          "continuous" : false,
+          "gravityScale" : 1,
+          "interpolation" : "inherit",
+          "linearDamping" : 0.05,
+          "linearVelocity" : [0, 0, 0],
+          "motion" : "kinematic",
+          "startsAsleep" : false
+        },
+        "Transform" : {
+          "position" : [0, 0.02, 0],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [1, 1, 1]
+        },
+        "VisualScript" : {
+          "enabled" : true,
+          "graph" : "Scripts/Physics2Player.vscript",
+          "variables" : {
+
+          }
+        }
+      },
+      "id" : 20
+    },
+    {
+      "components" : {
+        "MeshRenderer" : {
+          "castsShadows" : true,
+          "emissiveStrength" : 1,
+          "emissiveTint" : [1, 1, 1],
+          "isVisible" : true,
+          "material" : "default",
+          "mesh" : "sphere",
+          "opacity" : 1,
+          "receivesShadows" : true,
+          "tint" : [0.95, 0.55, 0.15]
+        },
+        "Name" : {
+          "value" : "Body"
+        },
+        "Transform" : {
+          "position" : [0, 0.9, 0],
+          "rotation" : [0, 0, 0, 1],
+          "scale" : [0.6, 0.9, 0.6]
+        }
+      },
+      "id" : 21,
+      "parent" : 20
+    }
+  ],
+  "format" : "Acro.Scene",
+  "version" : 2
+}

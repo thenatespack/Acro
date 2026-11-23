@@ -76,13 +76,18 @@ public struct BodyDescriptor: Sendable {
     public var entity: Entity?
     /// Bodies with the same nonzero group never collide with each other (a ragdoll's limbs).
     public var group: UInt32
+    /// Continuous collision: after each step the body is swept from where it was to where it
+    /// went and stopped at the first thing in the way, so fast bodies (bullets, thrown objects)
+    /// can't pass through thin walls. Dynamic bodies with a convex shape.
+    public var continuous: Bool
 
     public init(motion: MotionType = .dynamic, pose: Pose = .identity, shape: ColliderShape? = nil,
                 shapeOffset: Pose = .identity, scale: Vec3 = .one, material: ColliderMaterial = ColliderMaterial(),
                 isTrigger: Bool = false, layer: UInt32 = 1, mask: UInt32 = .max, linearVelocity: Vec3 = .zero,
                 angularVelocity: Vec3 = .zero, linearDamping: Float = 0.05, angularDamping: Float = 0.1,
                 gravityScale: Float = 1, allowSleep: Bool = true, startsAsleep: Bool = false, entity: Entity? = nil,
-                group: UInt32 = 0) {
+                group: UInt32 = 0, continuous: Bool = false) {
+        self.continuous = continuous
         self.motion = motion
         self.pose = pose
         self.shape = shape
@@ -127,6 +132,9 @@ public struct PhysicsEvent: Equatable, Sendable {
     /// World contact point and normal (from A to B), for `collisionBegan`; zero otherwise.
     public var point: Vec3
     public var normal: Vec3
+    /// For `collisionBegan`: how fast the two closed along the normal when they met, m/s
+    /// (impact effects scale with it); zero otherwise.
+    public var speed: Float = 0
 
     /// The other party of an event involving `entity`, if it is one of the two.
     public func other(than entity: Entity) -> Entity? {
