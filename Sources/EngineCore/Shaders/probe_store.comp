@@ -1,0 +1,42 @@
+#version 450
+
+// Light probe baking (SceneRenderer+Probes.swift): copies an image (texture 1) into the probe
+// buffer (storage buffer 0) from word `info.z`: as packed half floats, two words per texel
+// (`info.w` 0: a reflection probe's level), or (`info.w` 1: an irradiance probe's nine-texel SH
+// row, one thread) as 28 half floats, the texels' RGB then `value.x` (its validity), in 16 words.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 2, binding = 9) uniform texture2D source;
+layout(set = 2, binding = 17) uniform sampler pointSampler;
+layout(set = 2, binding = 24, std430) buffer ProbeData {
+    uint words[];
+} probeData;
+
+layout(push_constant) uniform PushConstants {
+    ivec4 info;  // width, height, first word, mode
+    vec4 value;
+} pc;
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (p.x >= pc.info.x || p.y >= pc.info.y) return;
+    vec4 c = texelFetch(sampler2D(source, pointSampler), p, 0);
+    int texel = p.y * pc.info.x + p.x;
+    if (pc.info.w == 0) {
+        int w = pc.info.z + texel * 2;
+        probeData.words[w] = packHalf2x16(c.rg);
+        probeData.words[w + 1] = packHalf2x16(c.ba);
+    } else if (texel == 0) {
+        float h[32];
+        for (int k = 0; k < 9; k++) {
+            vec3 t = texelFetch(sampler2D(source, pointSampler), ivec2(k, 0), 0).rgb;
+            h[k * 3] = t.r;
+            h[k * 3 + 1] = t.g;
+            h[k * 3 + 2] = t.b;
+        }
+        h[27] = pc.value.x;
+        for (int k = 28; k < 32; k++) h[k] = 0.0;
+        for (int k = 0; k < 16; k++) probeData.words[pc.info.z + k] = packHalf2x16(vec2(h[k * 2], h[k * 2 + 1]));
+    }
+}

@@ -803,6 +803,66 @@ path (start and end are checked); crouch, ledge and climb inputs aren't in `NetC
 stride is a constant fraction of height, no animation-driven foot contacts; IK hand points are
 exposed but nothing sets IK targets automatically.
 
+### Light probes (`ReflectionProbe`, `IrradianceVolume`, `lighting.bake`)
+
+Baked indirect light for interiors (LightProbes.swift, SceneRenderer+Probes.swift, probes.glsl).
+`ReflectionProbe` (every key optional): `size` (influence box, centered on the entity and turned with
+it; scale ignored), `blendDistance`, `boxProjection`, `projectionSize` (0: the influence box),
+`captureOffset`, `intensity`, `priority`, `nearClip`, `farClip`. PBR surfaces in the box reflect the
+probe instead of the sky: the reflected ray is intersected with the projection box and the image
+looked up from the capture point; overlapping probes blend (higher priority, then smaller boxes
+first) and fade over `blendDistance`; what no probe covers keeps the sky's (or hemisphere's)
+reflection; planar reflections still win on their plane. `IrradianceVolume`: `size`, `countX/Y/Z`
+(probes at cell centers), `blendDistance`, `normalBias`, `viewBias`, `intensity`, `bounces`. Inside
+the box, diffuse ambient light (Blinn-Phong and PBR, static and dynamic meshes) comes from the eight
+probes around the point instead of the sky: L2 SH, trilinear, a smooth backface weight, probes found
+inside geometry turned off (CPU rays at bake time: more than a quarter of 48 rays leaving through
+back faces).
+Baking is on the GPU, in the offscreen part of a frame, with the device's 2D textures only: six
+90° faces per probe (the normal mesh pass and the sky, LDR c / (1 + c) like the planar pass, real
+lights; the sun's shadows recentered on the probes' bounds), an equirectangular image
+(probe_equirect.frag), then for reflection probes the environment's progressive GGX prefilter
+(256 x 128 image, six roughness levels) and for irradiance probes the environment's SH projection
+(32 px faces, 64 x 32 image), each stored into one storage buffer by probe_store.comp (images as
+half floats, SH as 28 halves per probe). Bounce n is captured with bounce n-1's volumes lighting the
+scene (black in the first); reflection probes are captured last, lit by the finished volumes. The
+frame draws with the new buffer at once; it is read back, split per probe and cached by a key of
+what shapes the bake (transform, box, counts, capture point, bounces; not intensity or biases) in
+`Library/Lighting/*.lightprobe`; the cooker ships them (`AssetPackManifest.lighting`) and games
+load them (`LightProbeBakeCache.forAssets`) instead of baking. `SceneRenderer.bakesProbesAutomatically`
+(default on; off in the editor) bakes probes that have no bake when they appear; a moved probe keeps
+its last bake (stale) until baked again. Metal and Vulkan bake bit-identical data (LightProbeTests)
+and the `probes` scene renders identically.
+Debug: `SceneRenderer.probeDebug` (`showsProbes`: a sphere per probe, mirror balls showing the
+probe image, irradiance probes shaded by their SH, red inside geometry; `irradianceOnly`: every
+surface shaded with its indirect diffuse light only), `LightProbeDebug.drawVolumes` (influence,
+blend and projection boxes, volumes and probe points).
+Tools: `lighting.bake` {show} (deferred, needs the window: probe counts, probes inside geometry,
+bounces, milliseconds, warnings, cache files), `lighting.debug` {probes, volumes, irradianceOnly}.
+View menu: Bake Lighting, Show Light Probes, Irradiance Only. Add Component entries and icons for
+both components. Demo scene `probes`: a 12 x 3.6 x 10 m room lit through a 3 x 2 m window
+(6 x 3 x 5 volume, two bounces, one room-sized reflection probe; `PROBES_OFF=1`,
+`PROBES_VIEW=irradiance|window`, `PROBES_DEBUG=1`, `PROBES_BAKE_EACH_FRAME=1`; keys P, I, G, B).
+Performance (M5, release, 1440p high, 4x MSAA, `ENGINE_SCREENSHOT_FRAME=300 ENGINE_VSYNC=0`, other
+agents' builds running, so noisy): scene pass of `probes` 2.6-3.7 ms without probes, 7.9-9.5 ms
+with them (about 1.5-3 ms the reflection probe, 4-5 ms the volume's eight-probe lookup; one probe
+instead of eight costs almost nothing, so it is the per-pixel storage-buffer reads, not the math).
+The bake of the scene (90 irradiance probes x 2 bounces + 1 reflection probe, about 1,700 passes):
+0.3-3.5 s from request to read-back (the first includes pipeline creation); per capture face
+0.03-0.1 ms GPU (scene pass at 32 or 128 px), equirect / prefilter 0.01-1.3 ms, stores ~0.
+Gaps: no texture slot was free in the mesh shaders, so probes live in a storage buffer and are read
+with manual bilinear filtering (that's the per-pixel cost above; a texture atlas, or fewer SH
+reads, e.g. per-vertex or per-object SH for small objects, would be cheaper); fur, particles and
+decals still use the sky's ambient light, not the probes; captures include every mesh (dynamic
+objects too) and no particles; reflection probe resolution is fixed (128 px faces), bakes are
+uncompressed (~350 KB per reflection probe, 64 bytes per irradiance probe); no realtime / per-frame
+probe updates (bake again, or `PROBES_BAKE_EACH_FRAME`-style requests); the probe key doesn't
+include the scene, so a cached bake stays in use after the room changes until baked again (the
+cooker ships every file in Library/Lighting, stale ones too); the editor bakes the viewport's world
+(play world while playing) and the bake waits until that world is gathered; the inside-geometry
+test needs mesh triangles on the CPU (skinned meshes are ignored); volumes clamp counts to 64 per
+axis; the editor's View menu entries weren't clicked in the running editor (tests drive the commands).
+
 ## Follow-ups
 
 Connections between builders: all of the 0.15.0 list is done in 0.16.0 (`.sprite` tile sets,

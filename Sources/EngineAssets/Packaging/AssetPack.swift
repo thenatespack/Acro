@@ -145,6 +145,9 @@ public struct AssetPackManifest: Codable, Sendable {
     /// Baked navmeshes by bake key (the project's `Library/Navigation` files), which games read
     /// instead of baking; nil when there are none.
     public var navigation: [String: AssetPackBlob]? = nil
+    /// Baked light probes by bake key (the project's `Library/Lighting` files), which games read
+    /// instead of baking; nil when there are none.
+    public var lighting: [String: AssetPackBlob]? = nil
 
     public struct Scene: Codable, Equatable, Sendable {
         package init(path: String, blob: AssetPackBlob) {

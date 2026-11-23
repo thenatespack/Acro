@@ -119,14 +119,14 @@ public final class SceneRenderer {
     public private(set) var prep = RenderPrep()
     public private(set) var list = RenderList()
 
-    private var meshes: [GPUMesh] = []
-    /// The CPU copy of each registered mesh, for picking (`geometry(_:)`).
-    private var geometries: [MeshGeometry] = []
-    private var materials: [(material: Material, sampler: GPUSampler)] = []
+    var meshes: [GPUMesh] = []
+    /// The CPU copy of each registered mesh, for picking (`geometry(_:)`) and probe baking.
+    var geometries: [MeshGeometry] = []
+    var materials: [(material: Material, sampler: GPUSampler)] = []
     /// Textures registered with `registerTexture` (environment maps).
     private var textures: [String: GPUTexture] = [:]
     /// The sky and image-based lighting of `SceneEnvironment`.
-    private let environmentLighting: EnvironmentLighting
+    let environmentLighting: EnvironmentLighting
     /// The view and (jittered) projection `draw` draws the sky for.
     private var skyView: (view: Mat4, projection: Mat4)?
     private let whiteTexture: GPUTexture
@@ -171,7 +171,7 @@ public final class SceneRenderer {
     public private(set) var shadowMap: GPUTexture
     private var shadowMapCleared = false
     /// Casters per atlas tile, for the frame's `ShadowSetup` (from `prepare` / `beginViews`).
-    private var shadowCasters = ShadowCasterBatches()
+    var shadowCasters = ShadowCasterBatches()
     /// Tints each shadow cascade (red, green, blue, yellow) to show where they fall. Also on
     /// with `ENGINE_SHOW_CASCADES=1`.
     public var showsShadowCascades = ProcessInfo.processInfo.environment["ENGINE_SHOW_CASCADES"] == "1"
@@ -183,6 +183,8 @@ public final class SceneRenderer {
     var shadowSetup: ShadowSetup?
     /// The planar reflection (`PlanarReflections.swift`); idle without a `PlanarReflection`.
     var reflections = ReflectionState()
+    /// Light probes (`SceneRenderer+Probes.swift`); idle without `ReflectionProbe`s and `IrradianceVolume`s.
+    let probes: ProbeState
     var uploaded: TransientBuffer?
     private var previousViewProj: Mat4?
     private var reportedMissing: Set<String> = []
@@ -247,7 +249,7 @@ public final class SceneRenderer {
     private var debugView: DebugView?
     private var debugRenderer: DebugDrawRenderer?
     /// Shared by this frame's `renderView` calls (from `beginViews`).
-    private var views: ViewsFrame?
+    var views: ViewsFrame?
     /// Each view's batches (`renderView`).
     var viewList = RenderList()
     /// This frame's point and spot lights (`gather`), binned for the `prepare` camera and for
@@ -285,7 +287,7 @@ public final class SceneRenderer {
     private var shadowEye: Vec3 = .zero
 
     /// The light as `prepare` / `beginViews` set it up, with the frame's shadows.
-    private struct LightSetup {
+    struct LightSetup {
         var toLight: Vec3
         var color: Vec3
         var intensity: Float
@@ -295,7 +297,7 @@ public final class SceneRenderer {
         var sunShadows: Bool { (shadows?.stats.cascades ?? 0) > 0 }
     }
 
-    private struct ViewsFrame {
+    struct ViewsFrame {
         var light: LightSetup
         var environment: SceneEnvironment
     }
@@ -328,6 +330,8 @@ public final class SceneRenderer {
         var reflectionPlane = Vec4.zero
         var reflectionParams = Vec4.zero
         var reflectionExtra = Vec4.zero
+        /// Light probes (probes.glsl): reflection probes, irradiance volumes, the irradiance-only view (1). Zeros without probes.
+        var probes = Vec4.zero
 
         /// Points the shader's cluster lookup at `clusters`, binned for `view` and a target of `size` pixels.
         mutating func setClusters(_ clusters: LightClusters, view: Mat4, size: (width: Int, height: Int)) {
@@ -424,6 +428,7 @@ public final class SceneRenderer {
         whiteTexture = try device.makeTexture(pixels: [255, 255, 255, 255], width: 1, height: 1, format: .rgba8Unorm)
         emptyLightBuffer = try device.makeBuffer([Vec4](repeating: .zero, count: LightClusters.GPUData.entries), usage: .uniform)
         environmentLighting = try EnvironmentLighting(device: device, placeholder: whiteTexture)
+        probes = try ProbeState(device: device)
 
         try registerMesh(.cube(), key: MeshHandle.cube.key)
         try registerMesh(.plane(), key: MeshHandle.plane.key)
@@ -634,6 +639,9 @@ public final class SceneRenderer {
                                 environment: environment)
         prepareEnvironment(environment, light: light)
         uniforms!.environment = environmentLighting.lighting
+        probes.frameLight = light
+        probes.frameEnvironment = environment
+        uniforms!.probes = probes.uniform
         skyView = (view, jitteredProjection)
         let size = engine.renderSize
         // Binned with the projection the pass rasterizes with, so tiles match gl_FragCoord.
@@ -663,6 +671,7 @@ public final class SceneRenderer {
 
     /// `viewpoint` is where `MeshLOD` levels are measured from (default: the camera `prepare` uses).
     func gather(_ world: World, viewpoint: Vec3? = nil) {
+        defer { findProbes(in: world) }
         graphTime = Float(world.time.elapsed.truncatingRemainder(dividingBy: 3600))
         windState.advance(to: windClock.map { $0.truncatingRemainder(dividingBy: 3600) } ?? graphTime,
                           wind: RenderPrep.findEnvironment(in: world).wind)
@@ -715,7 +724,7 @@ public final class SceneRenderer {
         stats.list.drawCalls += shadowCasters.batches.count
     }
 
-    private func makeUniforms(viewProj: Mat4, current: Mat4, previous: Mat4, eye: Vec3, light: LightSetup,
+    func makeUniforms(viewProj: Mat4, current: Mat4, previous: Mat4, eye: Vec3, light: LightSetup,
                               environment: SceneEnvironment) -> FrameUniforms {
         FrameUniforms(
             viewProj: viewProj,
@@ -731,7 +740,7 @@ public final class SceneRenderer {
             shadowParams: Vec4(1 / Float(shadowMap.width), light.bias, Float(quality.shadowFilterRadius), 0))
     }
 
-    private static func seconds(since start: ContinuousClock.Instant) -> Double {
+    static func seconds(since start: ContinuousClock.Instant) -> Double {
         let (s, attoseconds) = (ContinuousClock.now - start).components
         return Double(s) + Double(attoseconds) * 1e-18
     }
@@ -763,6 +772,7 @@ public final class SceneRenderer {
         guard uniforms != nil else { return }
         uploaded = list.instances.isEmpty ? nil : frame.upload(list.instances)
         environmentLighting.render()
+        if renderProbeBake(frame: frame) { uniforms?.probes = probes.uniform }
         renderShadowAtlas(shadowsActive ? shadowSetup : nil, frame: frame)
         renderReflection(frame: frame)
         renderParticleDepth(frame: frame)
@@ -773,7 +783,8 @@ public final class SceneRenderer {
 
     /// Renders every tile of `shadows` into the atlas in one depth pass (resizing the atlas to
     /// its layout first). Without shadows, only clears the atlas once, so it's valid to bind.
-    private func renderShadowAtlas(_ shadows: ShadowSetup?, frame: Frame) {
+    func renderShadowAtlas(_ shadows: ShadowSetup?, frame: Frame, casters: ShadowCasterBatches? = nil) {
+        let shadowCasters = casters ?? self.shadowCasters
         if let layout = shadows?.layout, layout.width != shadowMap.width || layout.height != shadowMap.height {
             do {
                 shadowMap = try device.makeTexture(TextureDescriptor(width: layout.width, height: layout.height, format: .depth32Float))
@@ -846,6 +857,9 @@ public final class SceneRenderer {
         prepareEnvironment(environment, light: light)
         environmentLighting.render()
         buildShadowCasters(light.shadows)
+        probes.frameLight = light
+        probes.frameEnvironment = environment
+        renderProbeBake(frame: frame)
         renderShadowAtlas(light.shadows, frame: frame)
         prepareParticles(world: world, cameraPosition: shadowFocus?.eye ?? Vec3(focus.view.inverse.c3.x, focus.view.inverse.c3.y,
                                                                                 focus.view.inverse.c3.z))
@@ -874,6 +888,7 @@ public final class SceneRenderer {
         uniforms.setClusters(viewClusters, view: view.view, size: (target.width, target.height))
         if let shadows = views.light.shadows { uniforms.shadows = shadows.uniforms(for: viewClusters) }
         uniforms.environment = environmentLighting.lighting
+        uniforms.probes = probes.uniform
         let lights = viewClusters.isEmpty ? nil : lightData
         let particleDepth = renderViewParticleDepth(list: viewList, instances: instances, view: view,
                                                     size: (target.width, target.height), frame: frame)
@@ -1165,8 +1180,10 @@ public final class SceneRenderer {
         pass.setTexture(shadowMap)
         bindLights(lights, in: pass)
         environmentLighting.bindLighting(in: pass)
+        bindProbes(in: pass)
         var current: (pipeline: PipelineKey, material: Int, skin: Int)?
         for (batches, blending) in [(list.opaque, false), (list.transparent, true)] {
+            if blending, drawProbeSpheres(in: pass, reversedZ: reversedZ, encoded: encodesSky) { current = nil }
             if blending {
                 // Decals paint the opaque surfaces only: after them, before the sky and glass.
                 if drawDecals(in: pass, uniforms: uniforms, reversedZ: reversedZ, depth: particleDepth) { current = nil }
@@ -1174,6 +1191,7 @@ public final class SceneRenderer {
             if blending, let sky {
                 environmentLighting.drawSky(in: pass, view: sky.view, projection: sky.projection, reversedZ: reversedZ,
                                             encoded: encodesSky)
+                bindProbes(in: pass)
                 current = nil  // the sky replaced the pipeline and the material's bindings
             }
             guard let uploaded else { continue }

@@ -24,6 +24,8 @@ public enum EditorIcons {
         PostProcessSettings.componentName: "aperture",
         PostFXVolume.componentName: "aperture",
         PlanarReflection.componentName: "reflection",
+        ReflectionProbe.componentName: "reflection-probe",
+        IrradianceVolume.componentName: "irradiance-volume",
         MeshRenderer.componentName: "box",
         LineRenderer.componentName: "cable",
         MeshArray.componentName: "layout-grid",
@@ -114,6 +116,10 @@ public enum EditorIcons {
         "overflow": #"<path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/>"#,
         // A triangle above a dashed line and its mirror image below: PlanarReflection.
         "reflection": #"<path d="M12 3 18 10H6Z"/><path d="M12 21 18 14H6Z"/><path d="M2 12h2"/><path d="M8 12h2"/><path d="M14 12h2"/><path d="M20 12h2"/>"#,
+        // A mirror ball in a box (its influence): ReflectionProbe.
+        "reflection-probe": #"<rect x="2" y="2" width="20" height="20" rx="2" stroke-dasharray="3 2"/><circle cx="12" cy="12" r="5.5"/><path d="M9.5 10a3 3 0 0 1 3-2.5"/>"#,
+        // A box with a grid of probe points: IrradianceVolume.
+        "irradiance-volume": #"<rect x="2" y="2" width="20" height="20" rx="2"/><circle cx="7" cy="7" r="1.5"/><circle cx="17" cy="7" r="1.5"/><circle cx="7" cy="17" r="1.5"/><circle cx="17" cy="17" r="1.5"/><circle cx="12" cy="12" r="1.5"/>"#,
         // A subdivided triangle: any other mesh (imported models, meshes games register).
         "mesh-custom": #"<path d="M12 3.5 21 19.5H3Z"/><path d="M7.5 11.5h9"/><path d="m7.5 11.5 4.5 8"/><path d="m16.5 11.5-4.5 8"/>"#,
     ]
@@ -245,6 +251,8 @@ public enum EditorIcons {
         if world.has(PostProcessSettings.self, for: entity) { return (.postProcess, PostProcessSettings.componentName) }
         if world.has(PostFXVolume.self, for: entity) { return (.postProcess, PostFXVolume.componentName) }
         if world.has(PlanarReflection.self, for: entity) { return (.postProcess, PlanarReflection.componentName) }
+        if world.has(ReflectionProbe.self, for: entity) { return (.postProcess, ReflectionProbe.componentName) }
+        if world.has(IrradianceVolume.self, for: entity) { return (.postProcess, IrradianceVolume.componentName) }
         if !registered.isEmpty {
             for type in world.componentTypes(of: entity) where registered[type.componentName] != nil {
                 return (.game, type.componentName)

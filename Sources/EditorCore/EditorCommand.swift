@@ -252,6 +252,10 @@ public protocol EditorHost: AnyObject {
     /// Renders `views` of `world` (a world apart from the scene, such as a model preview) and
     /// returns one image per view, or nil when this host can't render. Keeps `world` alive until done.
     func capture(world: World, views: [WorldCaptureView]) -> CommandFuture<[Image]>?
+    /// Bakes `world`'s light probes with the host's renderer (`SceneRenderer.bakeProbes`) and
+    /// returns the report's future (finished once the bake was read back and cached), or nil when
+    /// this host can't render.
+    func bakeLighting(in world: World) -> CommandFuture<LightProbeBakeReport>?
     /// Sets the UI theme (a `UITheme` preset name) and / or zoom when given, saves them to the
     /// prefs, and returns the appearance; nil when this host has no UI.
     func appearance(theme: String?, uiScale: Float?) throws -> EditorAppearance?
@@ -285,6 +289,7 @@ extension EditorHost {
     public var frameStats: EditorStatsSnapshot? { nil }
     public func capture(_ request: ScreenshotRequest) -> CommandFuture<Image>? { nil }
     public func capture(world: World, views: [WorldCaptureView]) -> CommandFuture<[Image]>? { nil }
+    public func bakeLighting(in world: World) -> CommandFuture<LightProbeBakeReport>? { nil }
     public var viewCamera: EditorCamera? { nil }
     public func returnHome(pivot: Vec3?, distance: Float?) -> EditorCamera? { nil }
     public func showGoToObject() -> Bool { false }
