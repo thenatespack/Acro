@@ -58,6 +58,7 @@ public enum EditorIcons {
         LightFlicker.componentName: "gauge",
         TilemapMotion.componentName: "layers",
         CameraPath.componentName: "orbit",
+        CameraRig.componentName: "camera-rig",
         BehaviorTreeRunner.componentName: "bot",
         NavigationArea.componentName: "route",
         NavigationLink.componentName: "redo-2",
@@ -100,6 +101,8 @@ public enum EditorIcons {
         "tags": #"<path d="m15 5 6.3 6.3a2.4 2.4 0 0 1 0 3.4L17 19"/><path d="M9.586 5.586A2 2 0 0 0 8.172 5H3a1 1 0 0 0-1 1v5.172a2 2 0 0 0 .586 1.414L8.29 18.29a2.426 2.426 0 0 0 3.42 0l3.58-3.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="6.5" cy="9.5" r=".5" fill="currentColor"/>"#,
         // A figure falling backward, limbs loose: the Ragdoll component.
         "ragdoll": #"<circle cx="7" cy="5" r="2.5"/><path d="m9 8 5 6"/><path d="m14 14 6-1"/><path d="m14 14 1 7"/><path d="m11 10-6 3"/><path d="m11 10 6-5"/>"#,
+        // A video camera on a boom arm reaching from a pivot: the CameraRig component.
+        "camera-rig": #"<rect x="11" y="3" width="10" height="7" rx="1.5"/><path d="m21 5.5 2-1v4l-2-1"/><path d="M14 10 5 18"/><circle cx="4" cy="19" r="2"/><path d="M2 22h4"/>"#,
         // A ball resting on a hatched surface: the PhysicsSurface component (what a surface is made of).
         "physics-surface": #"<circle cx="12" cy="9" r="5"/><path d="M2 15h20"/><path d="m4 21 3-5"/><path d="m10 21 3-5"/><path d="m16 21 3-5"/>"#,
         prefabIconName: #"<path d="M12 2.5 15.5 6 12 9.5 8.5 6Z"/><path d="M6 8.5 9.5 12 6 15.5 2.5 12Z"/><path d="M18 8.5 21.5 12 18 15.5 14.5 12Z"/><path d="M12 14.5 15.5 18 12 21.5 8.5 18Z"/>"#,
@@ -223,6 +226,7 @@ public enum EditorIcons {
     /// post-processing, a component with a registered (game) icon; else a group (has children) or empty.
     public static func entityKind(_ entity: Entity, in world: World) -> (kind: EntityKind, component: String?) {
         if world.has(Camera.self, for: entity) { return (.camera, Camera.componentName) }
+        if world.has(CameraRig.self, for: entity) { return (.camera, CameraRig.componentName) }
         if world.has(DirectionalLight.self, for: entity) { return (.directionalLight, DirectionalLight.componentName) }
         if world.has(SpotLight.self, for: entity) { return (.spotLight, SpotLight.componentName) }
         if world.has(PointLight.self, for: entity) { return (.pointLight, PointLight.componentName) }

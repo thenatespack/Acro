@@ -1272,7 +1272,9 @@ public final class EditorApp: Game, EditorHost {
         guard let camera = RenderPrep.findCamera(in: world)?.entity else { return "No camera" }
         let source = session.netPlay.map { $0.viewedClient.map { "Client \($0) · " } ?? "Server · " } ?? ""
         let name = world === session.world ? session.displayName(of: camera) : world.get(Name.self, for: camera)?.value ?? "Camera"
-        return "\(source)\(name)" + (playState().map { " · \($0)" } ?? "")
+        // The camera rig driving it while playing.
+        let rig = session.isPlaying ? world.liveCameraRig.map { " · " + (world.get(Name.self, for: $0)?.value ?? "Camera Rig") } ?? "" : ""
+        return "\(source)\(name)\(rig)" + (playState().map { " · \($0)" } ?? "")
     }
 
     /// The scene's Camera entity's view (the game world's while playing) at `aspect`, nil without one.
@@ -1543,6 +1545,7 @@ public final class EditorApp: Game, EditorHost {
             let matrix = world.get(GlobalTransform.self, for: entity)?.matrix ?? world.worldMatrix(of: entity)
             draw.axes(matrix, length: 0.6, style: DebugDraw.Style(width: 2, depth: .onTop))
         }
+        CameraRigGizmos.draw(into: draw, session: session, labelPosition: labelPosition, labelSize: labelSize, labelShadow: labelShadow)
         for name in session.sceneOverlays.keys.sorted() { session.sceneOverlays[name]?(draw, world) }
     }
 

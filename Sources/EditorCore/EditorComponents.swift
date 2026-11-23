@@ -24,7 +24,7 @@ public struct KeyboardMover: Component, Equatable, Sendable {
 /// Built in: Transform, Camera, the lights, SceneEnvironment, PostProcess, PlanarReflection, MeshRenderer (a cube),
 /// the physics components (a unit box Collider, a dynamic RigidBody, a ball Joint to the world,
 /// a CharacterController, a Ragdoll with a humanoid character's bodies, a wood PhysicsSurface), AudioListener and AudioEmitter (no sound until one is picked), the 2D physics components (a dynamic RigidBody2D, a unit
-/// box Collider2D, a revolute Joint2D to the world), ParticleEmitter, TextMesh ("Neon", emissive 4), Sprite (atlas "sprites", frame 0), SpriteAnimator (one looping "idle" clip), GroomRenderer (no groom until one is picked), Saveable, Tag (no tags), Spin, TilemapMotion (parallax 0.5) and
+/// box Collider2D, a revolute Joint2D to the world), ParticleEmitter, TextMesh ("Neon", emissive 4), Sprite (atlas "sprites", frame 0), SpriteAnimator (one looping "idle" clip), GroomRenderer (no groom until one is picked), CameraRig (third person, no target yet), Saveable, Tag (no tags), Spin, TilemapMotion (parallax 0.5) and
 /// KeyboardMover. `Name` is left out on purpose: the inspector header edits it. Games register their own
 /// with `register(_:make:)`, or `register(_:)` for types with a no-argument initializer.
 @MainActor
@@ -97,6 +97,8 @@ public enum EditorComponentCatalog {
         register(LightFlicker.self) { LightFlicker() }
         register(TilemapMotion.self) { TilemapMotion(parallax: Vec2(0.5, 0.5)) }
         register(CameraPath.self) { CameraPath() }
+        // A third-person rig; pick its target (it follows its own entity until then).
+        register(CameraRig.self) { CameraRig() }
         register(BehaviorTreeRunner.self) { BehaviorTreeRunner() }
         register(NavigationArea.self) { NavigationArea() }
         register(NavigationLink.self) { NavigationLink() }

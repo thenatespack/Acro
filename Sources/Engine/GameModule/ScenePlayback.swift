@@ -160,6 +160,8 @@ public final class ScenePlayback {
         }
         timelines = world.addTimelinePlayers(assets: assets)
         pathFollowers = world.addPathFollowers(assets: assets)
+        // Camera rigs move the camera after gameplay (orbit, zoom and recenter from the game's input).
+        world.addCameraRigs(input: context.input)
         for warning in module.addSystems(to: world, context: context) { log(warning) }
         visualScripts = world.addVisualScripts(context: context, assets: assets, physics: { [weak self] in self?.physics },
                                                physics2D: { [weak self] in self?.physics2D })
@@ -188,6 +190,7 @@ public final class ScenePlayback {
         timelines = nil
         pathFollowers?.remove()
         pathFollowers = nil
+        world.removeCameraRigs()
         world.removeVisualScripts(visualScripts)
         visualScripts = nil
         module.removeSystems(from: world)

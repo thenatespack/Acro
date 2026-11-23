@@ -106,6 +106,7 @@ public enum GamePlayer {
                                    Sprite.self, SpriteAnimator.self, PrefabInstance.self, Spin.self, FieldAnimator.self, LightFlicker.self,
                                    CameraPath.self, TimelinePlayer.self, PathFollower.self, Animator.self, TilemapMotion.self, UILayoutPlayer.self, GroomRenderer.self)
         PhysicsWorld.registerComponents()
+        CameraRig.register()
         PhysicsWorld2D.registerComponents()
         AudioSystem.registerComponents()
         ParticleSystem.registerComponents()

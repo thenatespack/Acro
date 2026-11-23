@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 291 tools.
+named by its id (see README › Use the editor › AI control). 294 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -18,6 +18,7 @@ optional arguments.
 | `asset` | [`asset.applySettings`](#assetapplysettings), [`asset.assign`](#assetassign), [`asset.delete`](#assetdelete), [`asset.extractMaterials`](#assetextractmaterials), [`asset.get`](#assetget), [`asset.import`](#assetimport), [`asset.instantiate`](#assetinstantiate), [`asset.list`](#assetlist), [`asset.move`](#assetmove), [`asset.newFolder`](#assetnewfolder), [`asset.newMaterial`](#assetnewmaterial), [`asset.newProceduralTexture`](#assetnewproceduraltexture), [`asset.reimport`](#assetreimport), [`asset.rename`](#assetrename), [`asset.select`](#assetselect), [`asset.setProceduralTexture`](#assetsetproceduraltexture), [`asset.waitForImports`](#assetwaitforimports) |
 | `behavior` | [`behavior.assign`](#behaviorassign), [`behavior.debug`](#behaviordebug), [`behavior.edit`](#behavioredit), [`behavior.get`](#behaviorget), [`behavior.navigation`](#behaviornavigation), [`behavior.new`](#behaviornew), [`behavior.open`](#behavioropen), [`behavior.set`](#behaviorset) |
 | `builder` | [`builder.select`](#builderselect) |
+| `cameraRig` | [`cameraRig.activate`](#camerarigactivate), [`cameraRig.setTarget`](#camerarigsettarget), [`cameraRig.state`](#camerarigstate) |
 | `character` | [`character.action`](#characteraction), [`character.bones`](#characterbones), [`character.edit`](#characteredit), [`character.get`](#characterget), [`character.ik`](#characterik), [`character.new`](#characternew), [`character.open`](#characteropen), [`character.ragdoll`](#characterragdoll), [`character.set`](#characterset), [`character.state`](#characterstate) |
 | `component` | [`component.add`](#componentadd), [`component.remove`](#componentremove), [`component.setField`](#componentsetfield), [`component.types`](#componenttypes) |
 | `diagnostics` | [`diagnostics.get`](#diagnosticsget) |
@@ -796,6 +797,62 @@ Result:
 - `items`: [string]
 - `panel`: string
 - `selected`: [string]
+
+## cameraRig
+
+### `cameraRig.activate`
+
+**Activate Camera Rig**
+
+Makes a CameraRig the live rig: enables it and raises its priority above every other rig's. While playing the camera blends to it over blendTime seconds (default the rig's own; 0 cuts): step the game (play.step) and read cameraRig.state or view.screenshot {source: "game"}. When editing it changes the saved priority (one undo step), so the scene starts on it.
+
+Arguments:
+
+- `blendTime?`: number
+- `entity`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+
+Result:
+
+- `blending`: boolean
+- `camera?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `live?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `playing`: boolean
+- `rigs`: [{blendWeight: number, cameraPosition?: number[3], collisionHit: boolean, desiredPosition?: number[3], enabled: boolean, entity: entity id, live: boolean, mode: string, name: string, priority: integer, target?: entity id}]
+
+### `cameraRig.setTarget`
+
+**Set Camera Rig Target**
+
+Points a CameraRig at a target entity (what it follows: a character, a vehicle); no target makes it follow its own entity. While playing it changes the running rig (it glides to the new target with its damping); when editing it is one undo step.
+
+Arguments:
+
+- `entity`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `target?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+
+Result:
+
+- `blending`: boolean
+- `camera?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `live?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `playing`: boolean
+- `rigs`: [{blendWeight: number, cameraPosition?: number[3], collisionHit: boolean, desiredPosition?: number[3], enabled: boolean, entity: entity id, live: boolean, mode: string, name: string, priority: integer, target?: entity id}]
+
+### `cameraRig.state`
+
+**Camera Rig State** · _read-only_, _idempotent_
+
+Lists the scene's CameraRig components (mode, enabled, priority, target, where each puts its camera and where it wants to be, whether a wall pulled it in) and which rig is live, the camera it moves and whether a blend between rigs is running. While playing it reports the running rigs; when editing, the live rig is the enabled one with the highest priority and positions are the settled poses (no collision). Switch rigs with cameraRig.activate.
+
+Arguments: none.
+
+Result:
+
+- `blending`: boolean
+- `camera?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `live?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `playing`: boolean
+- `rigs`: [{blendWeight: number, cameraPosition?: number[3], collisionHit: boolean, desiredPosition?: number[3], enabled: boolean, entity: entity id, live: boolean, mode: string, name: string, priority: integer, target?: entity id}]
 
 ## character
 
