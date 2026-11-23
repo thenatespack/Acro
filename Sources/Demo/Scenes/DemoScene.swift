@@ -116,4 +116,5 @@ extension DemoScene {
     ForestScene.self,
     FurScene.self,
     IKScene.self,
+    Physics2Scene.self,
 ]

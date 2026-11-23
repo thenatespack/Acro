@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 280 tools.
+named by its id (see README › Use the editor › AI control). 288 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -18,7 +18,7 @@ optional arguments.
 | `asset` | [`asset.applySettings`](#assetapplysettings), [`asset.assign`](#assetassign), [`asset.delete`](#assetdelete), [`asset.extractMaterials`](#assetextractmaterials), [`asset.get`](#assetget), [`asset.import`](#assetimport), [`asset.instantiate`](#assetinstantiate), [`asset.list`](#assetlist), [`asset.move`](#assetmove), [`asset.newFolder`](#assetnewfolder), [`asset.newMaterial`](#assetnewmaterial), [`asset.newProceduralTexture`](#assetnewproceduraltexture), [`asset.reimport`](#assetreimport), [`asset.rename`](#assetrename), [`asset.select`](#assetselect), [`asset.setProceduralTexture`](#assetsetproceduraltexture), [`asset.waitForImports`](#assetwaitforimports) |
 | `behavior` | [`behavior.assign`](#behaviorassign), [`behavior.debug`](#behaviordebug), [`behavior.edit`](#behavioredit), [`behavior.get`](#behaviorget), [`behavior.navigation`](#behaviornavigation), [`behavior.new`](#behaviornew), [`behavior.open`](#behavioropen), [`behavior.set`](#behaviorset) |
 | `builder` | [`builder.select`](#builderselect) |
-| `character` | [`character.bones`](#characterbones), [`character.edit`](#characteredit), [`character.get`](#characterget), [`character.ik`](#characterik), [`character.new`](#characternew), [`character.open`](#characteropen), [`character.ragdoll`](#characterragdoll), [`character.set`](#characterset) |
+| `character` | [`character.action`](#characteraction), [`character.bones`](#characterbones), [`character.edit`](#characteredit), [`character.get`](#characterget), [`character.ik`](#characterik), [`character.new`](#characternew), [`character.open`](#characteropen), [`character.ragdoll`](#characterragdoll), [`character.set`](#characterset), [`character.state`](#characterstate) |
 | `component` | [`component.add`](#componentadd), [`component.remove`](#componentremove), [`component.setField`](#componentsetfield), [`component.types`](#componenttypes) |
 | `diagnostics` | [`diagnostics.get`](#diagnosticsget) |
 | `dialogue` | [`dialogue.edit`](#dialogueedit), [`dialogue.get`](#dialogueget), [`dialogue.new`](#dialoguenew), [`dialogue.open`](#dialogueopen), [`dialogue.play`](#dialogueplay), [`dialogue.set`](#dialogueset) |
@@ -39,6 +39,8 @@ optional arguments.
 | `net` | [`net.overlay`](#netoverlay), [`net.setConditions`](#netsetconditions), [`net.start`](#netstart), [`net.stats`](#netstats), [`net.stop`](#netstop), [`net.view`](#netview) |
 | `panel` | [`panel.close`](#panelclose), [`panel.dock`](#paneldock), [`panel.focus`](#panelfocus), [`panel.list`](#panellist), [`panel.open`](#panelopen) |
 | `path` | [`path.edit`](#pathedit), [`path.flattenTerrain`](#pathflattenterrain), [`path.get`](#pathget), [`path.new`](#pathnew), [`path.open`](#pathopen), [`path.sample`](#pathsample), [`path.set`](#pathset) |
+| `physics` | [`physics.materialAt`](#physicsmaterialat) |
+| `physicsMaterial` | [`physicsMaterial.edit`](#physicsmaterialedit), [`physicsMaterial.get`](#physicsmaterialget), [`physicsMaterial.list`](#physicsmateriallist), [`physicsMaterial.new`](#physicsmaterialnew), [`physicsMaterial.set`](#physicsmaterialset) |
 | `play` | [`play.pause`](#playpause), [`play.setTimeScale`](#playsettimescale), [`play.start`](#playstart), [`play.state`](#playstate), [`play.step`](#playstep), [`play.stop`](#playstop), [`play.toggle`](#playtoggle) |
 | `playtest` | [`playtest.assert`](#playtestassert), [`playtest.result`](#playtestresult), [`playtest.run`](#playtestrun), [`playtest.save`](#playtestsave), [`playtest.start`](#playteststart), [`playtest.stop`](#playteststop) |
 | `postfx` | [`postfx.assign`](#postfxassign), [`postfx.edit`](#postfxedit), [`postfx.get`](#postfxget), [`postfx.new`](#postfxnew), [`postfx.open`](#postfxopen), [`postfx.set`](#postfxset) |
@@ -795,6 +797,33 @@ Result:
 
 ## character
 
+### `character.action`
+
+**Character Action**
+
+While playing, sets an input of an entity's CharacterController for its next step: crouch / stand (held until changed; it stands only with room above), grabLedge (grab a ledge within reach), mantle (pull up onto the ledge it hangs from or a low wall it walks toward), drop (let go of a ledge or climbing wall), jump. Step the game (play.step) and read character.state to see the result. Not recorded in playtests: drive characters there through input actions.
+
+Arguments:
+
+- `action`: "crouch" \| "stand" \| "grabLedge" \| "mantle" \| "drop" \| "jump"
+- `entity`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+
+Result:
+
+- `canStand`: boolean
+- `crouching`: boolean
+- `entity`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `ground?`: string
+- `grounded`: boolean
+- `ledgePoint?`: number[3] — [x, y, z]
+- `leftHand?`: number[3] — [x, y, z]
+- `mode`: string
+- `position`: number[3] — [x, y, z]
+- `rightHand?`: number[3] — [x, y, z]
+- `sliding`: boolean
+- `verticalVelocity`: number
+- `wallNormal?`: number[3] — [x, y, z]
+
 ### `character.bones`
 
 **Character Bones** · _read-only_, _idempotent_
@@ -996,6 +1025,32 @@ Result:
 - `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `template`: "humanoid" \| "quadruped" \| "bird" \| "blob"
 - `warnings`: [string]
+
+### `character.state`
+
+**Character State** · _read-only_, _idempotent_
+
+Returns an entity's CharacterController state: mode (walking, hanging, mantling, climbing), grounded, sliding, crouching and whether it has room to stand, the ledge point and wall normal, hand points for IK, and the physics material under its feet.
+
+Arguments:
+
+- `entity`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+
+Result:
+
+- `canStand`: boolean
+- `crouching`: boolean
+- `entity`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `ground?`: string
+- `grounded`: boolean
+- `ledgePoint?`: number[3] — [x, y, z]
+- `leftHand?`: number[3] — [x, y, z]
+- `mode`: string
+- `position`: number[3] — [x, y, z]
+- `rightHand?`: number[3] — [x, y, z]
+- `sliding`: boolean
+- `verticalVelocity`: number
+- `wallNormal?`: number[3] — [x, y, z]
 
 ## component
 
@@ -2389,7 +2444,7 @@ Arguments:
 
 - `addAnimations?`: [{autoplay?: boolean, loop?: "once" \| "loop" \| "pingPong", motions?: [object], name?: string, speed?: number, tracks?: [object]}]
 - `addMotions?`: [{amount?: number, axis?: "x" \| "y" \| "z", kind?: "spin" \| "bob" \| "swing" \| "pulse" \| "shake", part?: string, period?: number}]
-- `addParts?`: [{along?: number[2], axis?: "x" \| "y" \| "z", bevel?: number, blend?: "add" \| "subtract" \| "intersect", cardSize?: number, closed?: boolean, color?: number[3], count?: integer, deform?: [object], density?: number, glow?: number[3], glowStrength?: number, grain?: "x" \| "y" \| "z", groom?: string, look?: string, lookScale?: number, material?: string, metallic?: number, mirror?: "x" \| "y" \| "z" \| ["x" \| "y" \| "z"], name?: string, noise?: object, on?: [string], opacity?: number, open?: boolean, parent?: string, path?: [number[3]], position?: number[3], profile?: [number[2]], radii?: [number], radius?: number, repeat?: object, resolution?: integer, ribbon?: number, rotation?: number[3], roughness?: number, sections?: [object], seed?: integer, segments?: integer, shape?: string (18 cases), size?: number[3], smooth?: number, straight?: boolean, subdivide?: integer, texture?: string, textureScale?: number[2], thickness?: number, wear?: number, worldUV?: boolean}]
+- `addParts?`: [{along?: number[2], axis?: "x" \| "y" \| "z", bevel?: number, blend?: "add" \| "subtract" \| "intersect", cardSize?: number, closed?: boolean, color?: number[3], count?: integer, deform?: [object], density?: number, glow?: number[3], glowStrength?: number, grain?: "x" \| "y" \| "z", groom?: string, look?: string, lookScale?: number, material?: string, metallic?: number, mirror?: "x" \| "y" \| "z" \| ["x" \| "y" \| "z"], name?: string, noise?: object, on?: [string], opacity?: number, open?: boolean, parent?: string, path?: [number[3]], physicsMaterial?: string, position?: number[3], profile?: [number[2]], radii?: [number], radius?: number, repeat?: object, resolution?: integer, ribbon?: number, rotation?: number[3], roughness?: number, sections?: [object], seed?: integer, segments?: integer, shape?: string (18 cases), size?: number[3], smooth?: number, straight?: boolean, subdivide?: integer, texture?: string, textureScale?: number[2], thickness?: number, wear?: number, worldUV?: boolean}]
 - `addTracks?`: [{interpolation?: "linear" \| "step" \| "hermite", keys?: [object], part?: string, property?: "position" \| "rotation" \| "scale"}]
 - `animation?`: string
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
@@ -2899,6 +2954,136 @@ Result:
 - `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `profiles`: [string]
 - `terrain?`: string
+- `warnings`: [string]
+
+## physics
+
+### `physics.materialAt`
+
+**Material Under Point** · _read-only_, _idempotent_
+
+Returns the physics material of the collider under `point` (a ray straight down up to `distance`, default 2 m): its name, friction, bounce and whether characters climb it, the entity and the surface point. Terrain colliders answer per painted layer. Works while playing and while editing (then from the scene's colliders as they are).
+
+Arguments:
+
+- `distance?`: number
+- `point`: number[3] — [x, y, z]
+
+Result:
+
+- `bounce?`: number
+- `climbable?`: boolean
+- `entity?`: entity id — An entity id: 32 lowercase hex digits (see the editor://scene resource).
+- `friction?`: number
+- `hit`: boolean
+- `material?`: string
+- `normal?`: number[3] — [x, y, z]
+- `point?`: number[3] — [x, y, z]
+
+## physicsMaterial
+
+### `physicsMaterial.edit`
+
+**Edit Physics Material** · _undoable_
+
+Changes some keys of a .physmat file in one undoable step (`changes`: key → new value, null to unset it; whole objects replace, e.g. `impact`). Returns the new contents, the numbers colliders get and warnings. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `changes`: any — Any JSON value.
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `bounce`: number
+- `density`: number
+- `friction`: number
+- `material`: {bounce?: number, climbable?: boolean, density?: number, footstep?: {pitch?: number, sound?: string, vfx?: string, volume?: number}, friction?: number, impact?: {pitch?: number, sound?: string, vfx?: string, volume?: number}, minImpactSpeed?: number, minScrapeSpeed?: number, pairs?: object, scrape?: {pitch?: number, sound?: string, vfx?: string, volume?: number}}
+- `name`: string
+- `path`: string
+- `warnings`: [string]
+
+### `physicsMaterial.get`
+
+**Get Physics Material** · _read-only_, _idempotent_
+
+Reads a .physmat file: its keys, the friction, bounce and density colliders get, and warnings.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `bounce`: number
+- `density`: number
+- `friction`: number
+- `material`: {bounce?: number, climbable?: boolean, density?: number, footstep?: {pitch?: number, sound?: string, vfx?: string, volume?: number}, friction?: number, impact?: {pitch?: number, sound?: string, vfx?: string, volume?: number}, minImpactSpeed?: number, minScrapeSpeed?: number, pairs?: object, scrape?: {pitch?: number, sound?: string, vfx?: string, volume?: number}}
+- `name`: string
+- `path`: string
+- `warnings`: [string]
+
+### `physicsMaterial.list`
+
+**List Physics Materials** · _read-only_, _idempotent_
+
+Lists the physics materials a PhysicsSurface can name: the built-ins and the project's .physmat files, with friction, bounce, density, climbable and which effects each has.
+
+Arguments: none.
+
+Result:
+
+- `materials`: [{bounce?: number, builtIn: boolean, climbable?: boolean, density?: number, effects: [string], friction?: number, name: string, pairs: integer}]
+
+### `physicsMaterial.new`
+
+**New Physics Material**
+
+Writes a .physmat file in `folder` (default: the Assets root) from `preset` (a built-in's friction, bounce and density) or `material`. Returns the asset, the name to put in a PhysicsSurface, the effective numbers and warnings (out-of-range values, sounds or effects that don't exist, unknown pair materials). A physics material (.physmat, every key optional) says what a surface is made of: friction (Coulomb, a pair uses the geometric mean; ice 0.03, rubber 1), bounce (restitution 0-1, a pair uses the larger), density (kg/m³, for dynamic bodies), climbable (characters climb walls of it), footstep / impact / scrape effects ({sound, vfx, volume, pitch}: sound an audio file or .sfx path, vfx a .vfx or prefab path), minImpactSpeed (m/s, default 1.5), minScrapeSpeed (default 0.5) and pairs ({"<other material>": {impact: {...}, scrape: {...}, footstep: {...}}}, used instead of either material's own effects). Unset friction, bounce or density keep the Collider's own. Use it by adding a PhysicsSurface component {material: "<path or built-in>"} to an entity with a Collider (or an ancestor of one), a Mesh Builder part's `physicsMaterial` or a terrain layer's `physicsMaterial`. Built-ins: brick, ceramic, climbingWall, concrete, default, dirt, fabric, glass, grass, ice, metal, mud, plastic, rubber, sand, stone, wood.
+
+Arguments:
+
+- `folder?`: string
+- `material?`: {bounce?: number, climbable?: boolean, density?: number, footstep?: {pitch?: number, sound?: string, vfx?: string, volume?: number}, friction?: number, impact?: {pitch?: number, sound?: string, vfx?: string, volume?: number}, minImpactSpeed?: number, minScrapeSpeed?: number, pairs?: object, scrape?: {pitch?: number, sound?: string, vfx?: string, volume?: number}}
+- `name?`: string
+- `preset?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `bounce`: number
+- `density`: number
+- `friction`: number
+- `material`: {bounce?: number, climbable?: boolean, density?: number, footstep?: {pitch?: number, sound?: string, vfx?: string, volume?: number}, friction?: number, impact?: {pitch?: number, sound?: string, vfx?: string, volume?: number}, minImpactSpeed?: number, minScrapeSpeed?: number, pairs?: object, scrape?: {pitch?: number, sound?: string, vfx?: string, volume?: number}}
+- `name`: string
+- `path`: string
+- `warnings`: [string]
+
+### `physicsMaterial.set`
+
+**Set Physics Material** · _undoable_, _idempotent_
+
+Replaces a .physmat file's whole contents and reimports it. Undoable. While playing, bodies pick the change up on their next sync. For a few changes, physicsMaterial.edit is shorter. Undoable (one step; edit.undo reverts it).
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `material`: {bounce?: number, climbable?: boolean, density?: number, footstep?: {pitch?: number, sound?: string, vfx?: string, volume?: number}, friction?: number, impact?: {pitch?: number, sound?: string, vfx?: string, volume?: number}, minImpactSpeed?: number, minScrapeSpeed?: number, pairs?: object, scrape?: {pitch?: number, sound?: string, vfx?: string, volume?: number}}
+- `path?`: string
+
+Result:
+
+- `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
+- `bounce`: number
+- `density`: number
+- `friction`: number
+- `material`: {bounce?: number, climbable?: boolean, density?: number, footstep?: {pitch?: number, sound?: string, vfx?: string, volume?: number}, friction?: number, impact?: {pitch?: number, sound?: string, vfx?: string, volume?: number}, minImpactSpeed?: number, minScrapeSpeed?: number, pairs?: object, scrape?: {pitch?: number, sound?: string, vfx?: string, volume?: number}}
+- `name`: string
+- `path`: string
 - `warnings`: [string]
 
 ## play
@@ -4452,7 +4637,7 @@ Changes a .terrain file's settings, layers or scatter rules in one undoable step
 
 Arguments:
 
-- `addLayers?`: [{color?: number[3], material?: string, name?: string, normalMap?: string, texture?: string, tileSize?: number}]
+- `addLayers?`: [{color?: number[3], material?: string, name?: string, normalMap?: string, physicsMaterial?: string, texture?: string, tileSize?: number}]
 - `addScatter?`: [{alignToNormal?: boolean, asset?: string, density?: number, groom?: string, layer?: string, material?: string, maxCount?: integer, maxHeight?: number, maxScale?: number, maxSlope?: number, minHeight?: number, minScale?: number, minSlope?: number, name?: string, seed?: integer}]
 - `albedoSize?`: integer
 - `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
@@ -4508,7 +4693,7 @@ Result:
 - `colliderLod`: integer
 - `heightRange`: number
 - `heights?`: [[number]]
-- `layers`: [{color?: number[3], material?: string, name?: string, normalMap?: string, texture?: string, tileSize?: number}]
+- `layers`: [{color?: number[3], material?: string, name?: string, normalMap?: string, physicsMaterial?: string, texture?: string, tileSize?: number}]
 - `lodDistance`: number
 - `lods`: integer
 - `resolution`: integer

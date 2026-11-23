@@ -747,6 +747,45 @@ a few ms in release) and an edited groom rebuilds them; picking and the selectio
 base mesh; `groom.preview` shows the preview mesh only (not an arbitrary target); the brushes paint
 only on the preview mesh, not on a character in the tab; the editor tab wasn't checked in the
 running editor (tests drive the workspace).
+### Physics Material (`.physmat`) and Physics v2
+
+What a surface is made of: `friction`, `bounce`, `density`, `climbable`, `footstep` / `impact` /
+`scrape` effects (`{sound, vfx, volume, pitch}`), `minImpactSpeed`, `minScrapeSpeed` and `pairs`
+(effects against another material, used instead of either one's own); every key optional, unset
+numbers keep the `Collider`'s. 17 built-ins (default, wood, metal, stone, concrete, brick, dirt,
+grass, sand, mud, ice, rubber, glass, plastic, fabric, ceramic, climbingWall). The importer warns
+about out-of-range values, effects naming nothing, missing sounds / VFX and unknown pair
+materials. A `PhysicsSurface` component names a material on a collider's entity or an ancestor;
+the ECS sync applies it, `physics.materialUnder` / `surfaceMaterialName(of:at:)` answer queries,
+and play mode's "physics.surfaceEffects" system (EngineAssets, PhysicsSurfaceEffects.swift) plays
+impacts (`PhysicsEvent.speed`), scrapes (`slidingContacts`) and footsteps (every 0.42 × height
+walked, and on landing). Mesh Builder parts take `physicsMaterial` (else their `look` implies
+one; importer version 13), terrain layers take `physicsMaterial` (chunk colliders get a per-cell
+`PhysicsSurfaceGrid`; terrain importer version 5). Tools: `physicsMaterial.new`, `.get`, `.set`,
+`.edit`, `.list`, `physics.materialAt`, `character.state`, `character.action`.
+Physics v2 in EnginePhysics (CharacterControllerMoves.swift, PhysicsContinuous.swift): character
+crouch / ledge grab / hang and shimmy / mantle / climb (`CharacterController.mode`,
+`handTargets` for arm IK), jumps off rising platforms keep its speed, `RigidBody.continuous`
+(swept after the solve; stops at the first surface, bounces by the pair's restitution).
+Visual Script nodes `character.crouch`, `.grabLedge`, `.mantle`, `.drop`, `.state`,
+`physics.materialAt`. Demo scene `physics2`; SampleGame `Physics2.scene` with a playtest.
+Not done: no editor tab for `.physmat` (inspector `PhysicsSurface` and the tools only; no
+`physicsMaterial.open`); pair overrides change only effects, not friction or bounce; per-area
+materials only on the collider's own entity (terrain chunks), so a mesh build with several
+materials under one root `Collider` uses the root's (most common) one; surfaces are found once
+per sync, so a `.physmat` edited while playing applies after `physics.materials.reload()` (the
+edit tools do it); continuous collision sweeps translation only with the start rotation, ignores
+triangle-mesh moving bodies and sweeps against other bodies where they ended the step (two
+fast bodies can pass each other); ledge detection uses rays (a ledge narrower than the probe spacing,
+about 0.1 m vertically, can be missed; round tops and ledges at the very end of a wall may not
+be found); the hang pose is fixed (hands at height × 1.1); auto-grab on a 2 m wall catches only
+near the ground (the hang height); climbing has no ledge-to-climb or climb-to-hang transition,
+no stamina, and works only on near-vertical walls; mantling moves without collision along its
+path (start and end are checked); crouch, ledge and climb inputs aren't in `NetCharacterInput`
+(the state is replicated, the input command still carries only move and jump);
+`character.action` isn't recorded in playtests (drive characters with input actions); footstep
+stride is a constant fraction of height, no animation-driven foot contacts; IK hand points are
+exposed but nothing sets IK targets automatically.
 
 ## Follow-ups
 

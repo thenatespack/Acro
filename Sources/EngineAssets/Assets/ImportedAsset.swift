@@ -562,6 +562,8 @@ public struct PrefabNode: Equatable, Sendable, Codable {
     public var lod: MeshLOD?
     /// Fur grown on the node's mesh (instantiating adds the `GroomRenderer`); mesh builds, terrain scatter and grooms use it.
     public var groom: GroomRenderer?
+    /// What the node is made of (instantiating adds the `PhysicsSurface`); mesh builds and terrains set it.
+    public var physicsSurface: PhysicsSurface?
     public var children: [PrefabNode]
 
     public init(name: String, transform: Transform = Transform(), mesh: AssetReference? = nil,
@@ -630,6 +632,7 @@ extension World {
             if let motion = node.tilemapMotion { add(motion, to: entity) }
             if let lod = node.lod { add(lod, to: entity) }
             if let groom = node.groom { add(groom, to: entity) }
+            if let surface = node.physicsSurface { add(surface, to: entity) }
             if let skin = node.skin { skinned.append((entity, skin)) }
             if let parent { setParent(entity, to: parent) }
             for child in node.children { _ = spawn(child, parent: entity) }

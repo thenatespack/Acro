@@ -25,7 +25,8 @@ public struct RigidBody: Component, Codable, Equatable, Sendable {
          "linearDamping": FieldHints(range: 0...100, step: 0.01), "angularDamping": FieldHints(range: 0...100, step: 0.01),
          "gravityScale": FieldHints(range: -10...10, step: 0.1),
          "startsAsleep": FieldHints(tooltip: "Created asleep (a stack built at rest) until something touches it"),
-         "interpolation": FieldHints(tooltip: "Smooth the displayed Transform between fixed steps (the simulation stays exact)")]
+         "interpolation": FieldHints(tooltip: "Smooth the displayed Transform between fixed steps (the simulation stays exact)"),
+         "continuous": FieldHints(tooltip: "Continuous collision: fast bodies (bullets, thrown objects) can't pass through thin walls")]
     }
 
     public var motion: MotionType
@@ -37,10 +38,14 @@ public struct RigidBody: Component, Codable, Equatable, Sendable {
     public var allowSleep: Bool
     public var startsAsleep: Bool
     public var interpolation: PoseInterpolation
+    /// Sweep the body each step so it stops at the first thing in its way instead of passing
+    /// through (see `BodyDescriptor.continuous`). Costs a shape cast per moving step.
+    public var continuous: Bool
 
     public init(_ motion: MotionType = .dynamic, linearVelocity: Vec3 = .zero, angularVelocity: Vec3 = .zero,
                 linearDamping: Float = 0.05, angularDamping: Float = 0.1, gravityScale: Float = 1, allowSleep: Bool = true,
-                startsAsleep: Bool = false, interpolation: PoseInterpolation = .inherit) {
+                startsAsleep: Bool = false, interpolation: PoseInterpolation = .inherit, continuous: Bool = false) {
+        self.continuous = continuous
         self.motion = motion
         self.linearVelocity = linearVelocity
         self.angularVelocity = angularVelocity
@@ -64,6 +69,7 @@ public struct RigidBody: Component, Codable, Equatable, Sendable {
         allowSleep = try c.decode(Bool.self, forKey: .allowSleep)
         startsAsleep = try c.decode(Bool.self, forKey: .startsAsleep)
         interpolation = try c.decodeIfPresent(PoseInterpolation.self, forKey: .interpolation) ?? .inherit
+        continuous = try c.decodeIfPresent(Bool.self, forKey: .continuous) ?? false
     }
 }
 
@@ -153,6 +159,6 @@ extension PhysicsWorld {
     /// Registers the physics components with `ComponentRegistry` (done by `addPhysics`, and
     /// needed before loading scene files that use them into a world that hasn't seen them).
     public static func registerComponents() {
-        ComponentRegistry.register(RigidBody.self, Collider.self, Joint.self, CharacterController.self, Ragdoll.self)
+        ComponentRegistry.register(RigidBody.self, Collider.self, Joint.self, CharacterController.self, Ragdoll.self, PhysicsSurface.self)
     }
 }

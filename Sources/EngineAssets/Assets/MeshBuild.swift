@@ -187,6 +187,9 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
     public var open: Bool? = nil
     /// A sweep drawn as a flat strip this many meters wide (times `radii`).
     public var ribbon: Float? = nil
+    /// The physics material (a built-in name or a `.physmat` path) placed copies' colliders and
+    /// footsteps use; unset: the one its `look` implies (MeshBuildPhysicsMaterials.swift).
+    public var physicsMaterial: String? = nil
     /// Not in the file: a foliage part's `on` targets in its space, set by `MeshBuild.attachingFoliageTargets`.
     public var foliageTargets: [MeshBuildFoliageTarget] = []
     /// Not in the file: problems with its `on` names, found with the targets.
@@ -295,6 +298,8 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
         case cardSize, count, density, seed, on, along, open, ribbon
         // Fur and hair (GroomBuild.swift).
         case groom
+        // Physics (MeshBuildPhysicsMaterials.swift).
+        case physicsMaterial
     }
 
     /// Every key is optional.
@@ -354,6 +359,7 @@ public struct MeshBuildPart: Codable, Equatable, Sendable {
         open = (try? c.decodeIfPresent(Bool.self, forKey: .open)) ?? nil
         ribbon = (try? c.decodeIfPresent(Float.self, forKey: .ribbon)) ?? nil
         groom = (try? c.decodeIfPresent(String.self, forKey: .groom)) ?? nil
+        physicsMaterial = (try? c.decodeIfPresent(String.self, forKey: .physicsMaterial)) ?? nil
     }
 
     /// The part's local transform (its size is in the mesh, not the scale).

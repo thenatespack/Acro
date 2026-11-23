@@ -220,6 +220,7 @@ public struct AssetImporterRegistry: Sendable {
         registry.register(DialogueImporter())
         registry.register(TimelineImporter())
         registry.register(AnimationGraphImporter())
+        registry.register(PhysicsMaterialImporter())
         // ProceduralTextureImporter, MeshBuildImporter, TerrainImporter, GridMapImporter, PathBuildImporter, CharacterImporter.
         registerMeshBuildImporters(&registry)
         return registry

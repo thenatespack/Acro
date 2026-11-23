@@ -60,7 +60,7 @@ extension World {
 
     /// The systems `addPhysics` adds ("ragdoll" and "ragdoll.pose" drive `Ragdoll`s, see Ragdoll.swift).
     public static let physicsSystemNames = ["physics.restore", "character", "physics", "physics.events", "physics.interpolate",
-                                            "ragdoll", "ragdoll.pose"]
+                                            "ragdoll", "ragdoll.pose", "physics.surfaceEffects"]
 
     /// Removes the systems added by `addPhysics` (the components stay).
     public func removePhysics() {
@@ -140,13 +140,22 @@ extension PhysicsWorld {
             plan.append((root, effectiveCollider(nil, members[root])))
             planned.insert(root)
         }
+        // Physics materials: a `PhysicsSurface` on the entity (or above it) sets friction, bounce and density.
+        var surfaces: [PhysicsSurface?] = Array(repeating: nil, count: plan.count)
+        if world.count(of: PhysicsSurface.self) > 0 {
+            for k in plan.indices {
+                guard let surface = surface(for: plan[k].0, in: world) else { continue }
+                surfaces[k] = surface
+                if let material = materials.material(named: surface.material) { plan[k].1 = material.applied(to: plan[k].1) }
+            }
+        }
 
         for i in bodies.indices.dropFirst() where bodies[i].isAlive && !bodies[i].isExternal {
             guard let e = bodies[i].entity else { continue }
             if !world.isAlive(e) || !planned.contains(e) || bodyForEntity[e] != i { removeBody(at: i) }
         }
 
-        for (e, collider) in plan {
+        for (k, (e, collider)) in plan.enumerated() {
             let transform = world.get(Transform.self, for: e) ?? Transform()
             let rigidBody = world.get(RigidBody.self, for: e)
             let (pose, scale) = worldPose(of: e, transform, in: world)
@@ -159,12 +168,14 @@ extension PhysicsWorld {
                     material: collider.material, isTrigger: collider.isTrigger, layer: collider.layer, mask: collider.mask,
                     linearVelocity: rb.linearVelocity, angularVelocity: rb.angularVelocity, linearDamping: rb.linearDamping,
                     angularDamping: rb.angularDamping, gravityScale: rb.gravityScale, allowSleep: rb.allowSleep,
-                    startsAsleep: rb.startsAsleep, entity: e))
+                    startsAsleep: rb.startsAsleep, entity: e, continuous: rb.continuous))
                 let index = Int(id.index)
+                bodies[index].surface = surfaces[k]
                 bodyForEntity[e] = index
                 bodies[index].sync = BodySync(transform: transform, rigidBody: rigidBody, collider: collider, scale: scale)
                 continue
             }
+            if bodies[i].surface != surfaces[k] { bodies[i].surface = surfaces[k] }
             if collider != bodies[i].sync.collider || scale != bodies[i].sync.scale {
                 setShape(i, collider.shape, offset: Pose(position: collider.offset, rotation: collider.rotation), scale: scale,
                          material: collider.material, isTrigger: collider.isTrigger, layer: collider.layer, mask: collider.mask)
@@ -178,6 +189,7 @@ extension PhysicsWorld {
                 bodies[i].angularDamping = rb.angularDamping
                 bodies[i].gravityScale = rb.gravityScale
                 bodies[i].allowSleep = rb.allowSleep
+                bodies[i].continuous = rb.continuous
                 if motion != .static {
                     if rb.linearVelocity != old?.linearVelocity { bodies[i].linearVelocity = rb.linearVelocity; wake(i) }
                     if rb.angularVelocity != old?.angularVelocity { bodies[i].angularVelocity = rb.angularVelocity; wake(i) }
