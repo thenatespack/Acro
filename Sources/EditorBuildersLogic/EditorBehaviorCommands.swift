@@ -444,17 +444,20 @@ public enum BehaviorNavigationCommand: EditorCommand {
         public var path: [Vec3]
         public var pathLength: Float
         public var pathFound: Bool
+        /// Navmesh polygons (0: no navmesh; paths are on the grid).
+        public var navMeshPolygons: Int = 0
     }
 
     public static let id: CommandID = "behavior.navigation"
     public static let title = "Behavior Navigation"
-    public static let doc = "The navigation grid behavior trees walk on (moveTo, patrol, chase and flee follow A* paths on it, straight-line steering where there is none): bakes it from the static colliders of the current world (the play world while playing) if it has none or `rebake`, reports its size and walkable areas, and with `from` and `to` returns the path between them. A NavigationArea component sets the baked box and the agent's radius, height, step and slope; without one the bake covers the static colliders around the agents. Game code: `world.bakeNavigation()`, `world.findPath(from:to:)`."
+    public static let doc = "The navigation behavior trees walk on (moveTo, patrol, chase and flee follow paths on it, avoiding each other; straight-line steering where there is none): bakes the navmesh and the grid fallback from the static colliders of the current world (the play world while playing) if it has none or `rebake`, reports the grid's size and walkable areas and the navmesh's polygon count, and with `from` and `to` returns the path between them (on the navmesh when there is one). A NavigationArea component sets the baked box and the agent's radius, height, step and slope; without one the bake covers the static colliders around the agents. navigation.bake, navigation.query and navigation.overlay do more with the navmesh. Game code: `world.bakeNavigation()`, `world.findPath(from:to:)`."
     public static let isReadOnly = true
     public static func isAvailable(in session: EditorSession) -> Bool { true }
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
         let world = session.world
         var baked = false
         if arguments.rebake == true || world.navigation == nil {
+            if let assets = session.assets { world.navigationCache = NavigationBakeCache.forAssets(assets) }
             baked = world.bakeNavigation() != nil
         }
         guard let grid = world.navigation else {
@@ -463,14 +466,15 @@ public enum BehaviorNavigationCommand: EditorCommand {
         }
         var path: [Vec3] = []
         if let from = arguments.from, let to = arguments.to {
-            path = grid.findPath(from: from, to: to, partial: arguments.partial ?? false) ?? []
+            path = world.findPath(from: from, to: to, partial: arguments.partial ?? false) ?? []
         } else if (arguments.from == nil) != (arguments.to == nil) {
             throw CommandError.failed("\(title): give both `from` and `to` for a path")
         }
         let bounds = grid.bounds
         return Result(hasGrid: true, baked: baked, cellSize: grid.cellSize, width: grid.width, depth: grid.depth,
                       walkableCells: grid.walkableCount, areas: grid.regionCount, boundsMin: bounds.min, boundsMax: bounds.max,
-                      path: path, pathLength: NavigationGrid.length(of: path), pathFound: !path.isEmpty)
+                      path: path, pathLength: NavigationGrid.length(of: path), pathFound: !path.isEmpty,
+                      navMeshPolygons: world.navMesh?.polygonCount ?? 0)
     }
 }
 

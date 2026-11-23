@@ -142,6 +142,9 @@ public struct AssetPackManifest: Codable, Sendable {
     public var runtime: ProjectRuntimeSettings? = nil
     /// The engine version that cooked it (`EngineVersion`); nil in packs from before it was recorded.
     public var engineVersion: String? = nil
+    /// Baked navmeshes by bake key (the project's `Library/Navigation` files), which games read
+    /// instead of baking; nil when there are none.
+    public var navigation: [String: AssetPackBlob]? = nil
 
     public struct Scene: Codable, Equatable, Sendable {
         package init(path: String, blob: AssetPackBlob) {

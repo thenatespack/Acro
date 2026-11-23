@@ -46,7 +46,7 @@ package enum EditorBuildersLogic {
                                              open: { $0.run(BehaviorOpenCommand.self, .init(asset: AssetReference($1))) })
 
     static var behaviorTree: EditorBuilderModule {
-        EditorBuilderModule(panelID: EditorLayout.behaviorTree, title: "Behavior Tree", commands: EditorBehaviorCommands.all, asset: behaviorTreeAsset,
+        EditorBuilderModule(panelID: EditorLayout.behaviorTree, title: "Behavior Tree", commands: EditorBehaviorCommands.all + EditorNavigationCommands.all, asset: behaviorTreeAsset,
                             inspector: { context in
             let session = context.session, id = context.asset
             guard session.isBehaviorFile(id) else { return nil }

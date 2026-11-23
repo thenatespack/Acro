@@ -28,6 +28,10 @@ import EngineScene
 // One walkable layer per cell: a bridge or a table hides the ground under it, and floors
 // stacked above one another aren't supported. Moving obstacles aren't baked; rebake with
 // `bakeNavigation()` after the static level changes.
+//
+// The grid is the fallback: `bakeNavigation()` also bakes a `NavMesh` (NavMesh.swift,
+// NavMeshBake.swift; several floors, ramps, bridges and off-mesh links) unless the settings
+// turn it off, and `World.findPath` and behavior trees use the navmesh when there is one.
 
 /// What a navigation bake assumes about the agents and how fine its grid is.
 public struct NavigationSettings: Codable, Equatable, Sendable {
@@ -41,20 +45,29 @@ public struct NavigationSettings: Codable, Equatable, Sendable {
     public var stepHeight: Float
     /// Steepest walkable ground, in degrees.
     public var maxSlope: Float
-    /// At most this many cells; a bigger area gets bigger cells.
+    /// At most this many cells (or navmesh voxel columns); a bigger area gets bigger ones.
     public var maxCells: Int
+    /// Also bake a navmesh (`NavMesh`), which paths use when there is one.
+    public var navMesh: Bool
+    /// The navmesh's voxel edge in meters (0: half the agent radius, at least 0.1 m and at most `cellSize`).
+    public var voxelSize: Float
+    /// The widest a navmesh polygon gets, in meters.
+    public var maxPolygonSize: Float
 
     public init(cellSize: Float = 0.5, agentRadius: Float = 0.4, agentHeight: Float = 1.8, stepHeight: Float = 0.4,
-                maxSlope: Float = 45, maxCells: Int = 250_000) {
+                maxSlope: Float = 45, maxCells: Int = 250_000, navMesh: Bool = true, voxelSize: Float = 0, maxPolygonSize: Float = 8) {
         self.cellSize = cellSize
         self.agentRadius = agentRadius
         self.agentHeight = agentHeight
         self.stepHeight = stepHeight
         self.maxSlope = maxSlope
         self.maxCells = maxCells
+        self.navMesh = navMesh
+        self.voxelSize = voxelSize
+        self.maxPolygonSize = maxPolygonSize
     }
 
-    private enum CodingKeys: String, CodingKey { case cellSize, agentRadius, agentHeight, stepHeight, maxSlope, maxCells }
+    private enum CodingKeys: String, CodingKey { case cellSize, agentRadius, agentHeight, stepHeight, maxSlope, maxCells, navMesh, voxelSize, maxPolygonSize }
 
     public init(from decoder: any Decoder) throws {
         let d = NavigationSettings()
@@ -65,6 +78,9 @@ public struct NavigationSettings: Codable, Equatable, Sendable {
         stepHeight = try c.decodeIfPresent(Float.self, forKey: .stepHeight) ?? d.stepHeight
         maxSlope = try c.decodeIfPresent(Float.self, forKey: .maxSlope) ?? d.maxSlope
         maxCells = try c.decodeIfPresent(Int.self, forKey: .maxCells) ?? d.maxCells
+        navMesh = try c.decodeIfPresent(Bool.self, forKey: .navMesh) ?? d.navMesh
+        voxelSize = try c.decodeIfPresent(Float.self, forKey: .voxelSize) ?? d.voxelSize
+        maxPolygonSize = try c.decodeIfPresent(Float.self, forKey: .maxPolygonSize) ?? d.maxPolygonSize
     }
 }
 
@@ -78,7 +94,10 @@ public struct NavigationArea: Component, Codable, Equatable, Sendable {
          "agentRadius": FieldHints(range: 0...4, step: 0.05, tooltip: "Agents keep this far from walls and drops"),
          "agentHeight": FieldHints(range: 0.2...6, step: 0.05, tooltip: "Space an agent needs above the ground"),
          "stepHeight": FieldHints(range: 0...2, step: 0.05, tooltip: "Highest step an agent walks up or down"),
-         "maxSlope": FieldHints(range: 0...89, step: 1, tooltip: "Steepest walkable ground in degrees")]
+         "maxSlope": FieldHints(range: 0...89, step: 1, tooltip: "Steepest walkable ground in degrees"),
+         "navMesh": FieldHints(tooltip: "Also bake a navmesh (several floors, ramps, bridges, off-mesh links); paths use it when there is one"),
+         "voxelSize": FieldHints(range: 0...2, step: 0.01, tooltip: "Navmesh voxel edge in meters (0: half the agent radius)"),
+         "maxPolygonSize": FieldHints(range: 0.5...100, step: 0.5, tooltip: "The widest a navmesh polygon gets, in meters")]
     }
 
     public var size: Vec3
@@ -87,6 +106,9 @@ public struct NavigationArea: Component, Codable, Equatable, Sendable {
     public var agentHeight: Float
     public var stepHeight: Float
     public var maxSlope: Float
+    public var navMesh: Bool
+    public var voxelSize: Float
+    public var maxPolygonSize: Float
 
     public init(size: Vec3 = Vec3(40, 20, 40), settings: NavigationSettings = NavigationSettings()) {
         self.size = size
@@ -95,13 +117,17 @@ public struct NavigationArea: Component, Codable, Equatable, Sendable {
         agentHeight = settings.agentHeight
         stepHeight = settings.stepHeight
         maxSlope = settings.maxSlope
+        navMesh = settings.navMesh
+        voxelSize = settings.voxelSize
+        maxPolygonSize = settings.maxPolygonSize
     }
 
     public var settings: NavigationSettings {
-        NavigationSettings(cellSize: cellSize, agentRadius: agentRadius, agentHeight: agentHeight, stepHeight: stepHeight, maxSlope: maxSlope)
+        NavigationSettings(cellSize: cellSize, agentRadius: agentRadius, agentHeight: agentHeight, stepHeight: stepHeight, maxSlope: maxSlope,
+                           navMesh: navMesh, voxelSize: voxelSize, maxPolygonSize: maxPolygonSize)
     }
 
-    private enum CodingKeys: String, CodingKey { case size, cellSize, agentRadius, agentHeight, stepHeight, maxSlope }
+    private enum CodingKeys: String, CodingKey { case size, cellSize, agentRadius, agentHeight, stepHeight, maxSlope, navMesh, voxelSize, maxPolygonSize }
 
     public init(from decoder: any Decoder) throws {
         let d = NavigationSettings()
@@ -112,6 +138,9 @@ public struct NavigationArea: Component, Codable, Equatable, Sendable {
         agentHeight = try c.decodeIfPresent(Float.self, forKey: .agentHeight) ?? d.agentHeight
         stepHeight = try c.decodeIfPresent(Float.self, forKey: .stepHeight) ?? d.stepHeight
         maxSlope = try c.decodeIfPresent(Float.self, forKey: .maxSlope) ?? d.maxSlope
+        navMesh = try c.decodeIfPresent(Bool.self, forKey: .navMesh) ?? d.navMesh
+        voxelSize = try c.decodeIfPresent(Float.self, forKey: .voxelSize) ?? d.voxelSize
+        maxPolygonSize = try c.decodeIfPresent(Float.self, forKey: .maxPolygonSize) ?? d.maxPolygonSize
     }
 }
 
@@ -511,134 +540,3 @@ extension NavigationGrid {
     }
 }
 
-// MARK: World
-
-/// The grid each world keeps for `World.findPath` (worlds are main-actor objects, so a table
-/// keyed by identity, checked against a weak reference, stands in for a stored property).
-@MainActor
-enum NavigationStore {
-    final class Entry {
-        weak var world: World?
-        var grid: NavigationGrid
-        /// Baked by the behavior tree system (rebaked the next time the system is added).
-        var automatic: Bool
-
-        init(world: World, grid: NavigationGrid, automatic: Bool) {
-            self.world = world
-            self.grid = grid
-            self.automatic = automatic
-        }
-    }
-
-    static var entries: [ObjectIdentifier: Entry] = [:]
-
-    static func entry(_ world: World) -> Entry? {
-        guard let entry = entries[ObjectIdentifier(world)] else { return nil }
-        guard entry.world === world else { entries[ObjectIdentifier(world)] = nil; return nil }
-        return entry
-    }
-
-    static func set(_ grid: NavigationGrid?, for world: World, automatic: Bool) {
-        entries = entries.filter { $0.value.world != nil }
-        if let grid { entries[ObjectIdentifier(world)] = Entry(world: world, grid: grid, automatic: automatic) }
-        else { entries[ObjectIdentifier(world)] = nil }
-    }
-}
-
-extension World {
-    /// The navigation grid `findPath` uses (nil until one is baked or set).
-    public var navigation: NavigationGrid? {
-        get { NavigationStore.entry(self)?.grid }
-        set { NavigationStore.set(newValue, for: self, automatic: false) }
-    }
-
-    /// Whether the behavior tree system baked `navigation` itself (it rebakes when added again).
-    var navigationIsAutomatic: Bool { NavigationStore.entry(self)?.automatic ?? false }
-
-    /// Whether `entity` is something a bake treats as a moving agent rather than level geometry.
-    func isNavigationAgent(_ entity: Entity) -> Bool {
-        var current: Entity? = entity
-        while let e = current {
-            if has(CharacterController.self, for: e) || has(BehaviorTreeRunner.self, for: e) { return true }
-            if let body = get(RigidBody.self, for: e), body.motion != .static { return true }
-            current = parent(of: e)
-        }
-        return false
-    }
-
-    /// The area a bake covers: the `NavigationArea` entity's box, else the static colliders'
-    /// extent (limited to 40 m around the agents when there are any). nil without colliders.
-    func navigationBounds(physics: PhysicsWorld, accepts: (BodyID) -> Bool) -> (bounds: AABB, settings: NavigationSettings)? {
-        var statics: AABB?
-        for body in physics.bodyIDs where accepts(body) {
-            guard let b = physics.bounds(of: body) else { continue }
-            statics = statics.map { $0.union(b) } ?? b
-        }
-        var areaEntity: Entity?
-        query(NavigationArea.self) { e, _ in if areaEntity == nil { areaEntity = e } }
-        if let e = areaEntity, let area = get(NavigationArea.self, for: e) {
-            let center = worldMatrix(of: e).c3
-            let c = Vec3(center.x, center.y, center.z)
-            var lo = c - area.size / 2, hi = c + area.size / 2
-            for axis in 0..<3 where area.size[axis] <= 0 {
-                lo[axis] = statics?.min[axis] ?? c[axis]
-                hi[axis] = statics?.max[axis] ?? c[axis]
-            }
-            return (AABB(min: lo, max: hi), area.settings)
-        }
-        guard var bounds = statics else { return nil }
-        var agents: AABB?
-        var runners: [Entity] = []
-        query(BehaviorTreeRunner.self) { e, _ in runners.append(e) }
-        for e in runners {
-            let p4 = worldMatrix(of: e).c3
-            let p = Vec3(p4.x, p4.y, p4.z)
-            let box = AABB(min: p, max: p)
-            agents = agents.map { $0.union(box) } ?? box
-        }
-        if let agents {
-            let near = agents.expanded(by: 40)
-            let lo = pointwiseMax(bounds.min, near.min), hi = pointwiseMin(bounds.max, near.max)
-            if lo.x < hi.x, lo.z < hi.z { bounds = AABB(min: Vec3(lo.x, bounds.min.y, lo.z), max: Vec3(hi.x, bounds.max.y, hi.z)) }
-        }
-        return (bounds, NavigationSettings())
-    }
-
-    /// Bakes a navigation grid from this world's static colliders (see the notes at the top of
-    /// Navigation.swift) and keeps it as `navigation`. `physics` defaults to a temporary
-    /// physics world built from the `Collider` components; `settings` and `bounds` default to
-    /// the `NavigationArea` entity's, else defaults around the static colliders near the
-    /// agents. nil (and `navigation` unchanged) when there is nothing to bake.
-    @discardableResult
-    public func bakeNavigation(physics: PhysicsWorld? = nil, settings: NavigationSettings? = nil, bounds: AABB? = nil) -> NavigationGrid? {
-        guard let grid = makeNavigation(physics: physics, settings: settings, bounds: bounds) else { return nil }
-        navigation = grid
-        return grid
-    }
-
-    /// A baked grid without keeping it (what `bakeNavigation` bakes).
-    public func makeNavigation(physics: PhysicsWorld? = nil, settings: NavigationSettings? = nil, bounds: AABB? = nil) -> NavigationGrid? {
-        let world: PhysicsWorld
-        if let physics { world = physics } else {
-            guard count(of: Collider.self) > 0 else { return nil }
-            PhysicsWorld.registerComponents()
-            propagateTransforms()
-            world = PhysicsWorld()
-            world.syncFromWorld(self, dt: 0)
-        }
-        let accepts: (BodyID) -> Bool = { body in
-            guard world.motion(of: body) == .static else { return false }
-            if let e = world.entity(of: body), self.isAlive(e), self.isNavigationAgent(e) { return false }
-            return true
-        }
-        guard let found = navigationBounds(physics: world, accepts: accepts) ?? bounds.map({ ($0, NavigationSettings()) }) else { return nil }
-        let area = bounds ?? found.bounds
-        return NavigationGrid.bake(physics: world, bounds: area, settings: settings ?? found.settings, isObstacle: accepts)
-    }
-
-    /// A walkable path between two world points on `navigation` (see `NavigationGrid.findPath`);
-    /// nil without a grid or a path.
-    public func findPath(from start: Vec3, to goal: Vec3, partial: Bool = false) -> [Vec3]? {
-        navigation?.findPath(from: start, to: goal, partial: partial)
-    }
-}

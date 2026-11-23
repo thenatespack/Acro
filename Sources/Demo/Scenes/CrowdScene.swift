@@ -1,17 +1,20 @@
 import Engine
 import Foundation
 
-/// A CPU stress test for the job system (`JobSystem`, `ENGINE_JOB_THREADS`): 144 skinned foxes
-/// in a 12 x 12 crowd (each with its own `Animator`, clip and start time: animator updates and
-/// skin palettes run in parallel), 640 rigid bodies dropped into a pen of four walled bays
+/// A CPU stress test for the job system (`JobSystem`, `ENGINE_JOB_THREADS`) and crowds: 144
+/// skinned foxes in two groups of 72 that walk through each other and back (behavior tree
+/// patrols on a baked navmesh, steering around each other with ORCA crowd avoidance; each fox
+/// has its own `Animator`, speed and start time: animator updates and skin palettes run in
+/// parallel), 640 rigid bodies dropped into a pen of four walled bays
 /// (pair search, narrowphase and the four piles' solver islands in parallel), and 2500
 /// shadow-casting posts around them (camera and shadow-caster culling in parallel). The title
 /// shows the CPU time of the world update and of render prep, averaged over the last 30
 /// frames, and the job thread count.
 /// Results are the same for any thread count, so screenshots match `ENGINE_JOB_THREADS=1`.
+/// N shows the navmesh and the foxes' paths.
 final class CrowdScene: DemoScene {
     static let name = "crowd"
-    static let summary = "job system stress: 144 animated skinned foxes, 640 rigid bodies in four bays (four solver islands), 2500 culled shadow casters"
+    static let summary = "job system and crowd stress: 144 skinned foxes crossing with ORCA avoidance on a navmesh, 640 rigid bodies in four bays, 2500 culled shadow casters"
 
     private var world = World()
     private var physics = PhysicsWorld()
@@ -23,11 +26,16 @@ final class CrowdScene: DemoScene {
     private var cameraEntity = Entity.invalid
     private var orbit: (eye: Vec3, target: Vec3)?
     private var timings = (update: [Double](), prep: [Double]())
+    private let debug = DebugDraw()
+    private var overlay = false
+    private var foxes: [Entity] = []
+    private static let tree = "crowd.cross"
     private static let sky = Vec3(0.62, 0.7, 0.8)
     private static let foxScale: Float = 0.02
 
     init(renderer: Renderer) throws {
         sceneRenderer = try SceneRenderer(device: renderer.device, quality: renderer.quality)
+        sceneRenderer.debugDraw = debug
         try sceneRenderer.registerMaterial(Material(baseColor: Vec4(0.4, 0.42, 0.38, 1), checker: true, roughness: 0.9), key: "floor")
         try sceneRenderer.registerMaterial(Material(baseColor: Vec4(1, 1, 1, 1), roughness: 0.6), key: "matte")
         try sceneRenderer.registerMaterial(Material(baseColor: Vec4(1, 1, 1, 1), roughness: 0.25), key: "gloss")
@@ -41,6 +49,9 @@ final class CrowdScene: DemoScene {
         handles = try model.register(with: sceneRenderer, keyPrefix: "fox", textures: textures)
         clips = model.registerAnimations(in: library, keyPrefix: "fox")
         guard clips.count == 3 else { throw GraphicsError("Fox.glb should have 3 animations, has \(clips.count)") }
+        BehaviorTreeLibrary.register(BehaviorTree(nodes: [BehaviorNode("cross", .patrol, ["key": .string("route"), "loop": .bool(true),
+                                                                                           "wait": .double(1.5), "arriveDistance": .double(0.4)])],
+                                                  speed: 1.6, turnSpeed: 5), as: Self.tree)
         build()
     }
 
@@ -65,20 +76,32 @@ final class CrowdScene: DemoScene {
             MeshRenderer(mesh: .cube, material: MaterialHandle("floor"), castsShadows: false),
             Collider(.box(Vec3(repeating: 0.5)), friction: 0.7))
 
-        // The crowd: 12 x 12 foxes playing Survey / Walk / Run from different times.
+        // The crowd: two groups of 12 x 6 foxes a few meters apart, each walking to where the
+        // other started and back (behavior tree patrols on the navmesh), weaving through each
+        // other with crowd avoidance. A NavigationArea keeps the bake to the foxes' field.
+        world.spawn(Name("Fox field"), Transform(position: Vec3(-17, 1, -1)), NavigationArea(size: Vec3(36, 6, 32)))
+        world.addBehaviorTrees()
+        let walk = clips.first { $0.key.hasSuffix("Walk") } ?? clips[1]
+        foxes = []
         for row in 0..<12 {
             for column in 0..<12 {
-                let k = row * 12 + column
-                let root = world.spawn(
-                    Transform(position: Vec3(Float(column) * 2.2 - 30, 0, Float(row) * 2 - 12),
-                              rotation: Quat(angle: .pi / 2 + (rng.next() - 0.5) * 0.6, axis: Vec3(0, 1, 0)),
-                              scale: Vec3(repeating: Self.foxScale)))
+                let east = column < 6
+                let x = east ? -26 + Float(column) * 1.6 : -15 + Float(column - 6) * 1.6
+                let start = Vec3(x + (rng.next() - 0.5) * 0.4, 0, Float(row) * 2 - 12 + (east ? 0 : 1) + (rng.next() - 0.5) * 0.4)
+                let goal = start + Vec3(east ? 17 : -17, 0, 0)
+                let agent = world.spawn(Transform(position: start, rotation: Quat(angle: east ? -.pi / 2 : .pi / 2, axis: Vec3(0, 1, 0))),
+                                        BehaviorTreeRunner(tree: Self.tree, speed: 1.4 + rng.next() * 0.5, radius: 0.55))
+                world.setBlackboardValue(.points([goal, start]), forKey: "route", of: agent)
+                // The model faces +z: turned to face the agent's forward (-z).
+                let root = world.spawn(Transform(rotation: Quat(angle: .pi, axis: Vec3(0, 1, 0)), scale: Vec3(repeating: Self.foxScale)))
+                _ = world.setParent(root, to: agent)
                 let instance = model.instantiate(in: world, under: root, handles: handles)
-                let tint = hsv(0.05 + rng.next() * 0.08, 0.3 * rng.next(), 0.8 + 0.2 * rng.next())
+                let tint = east ? hsv(0.05 + rng.next() * 0.05, 0.3 * rng.next(), 0.8 + 0.2 * rng.next()) : hsv(0.58 + rng.next() * 0.04, 0.55, 0.95)
                 for entity in instance.renderers { world.modify(MeshRenderer.self, for: entity) { $0.tint = tint } }
                 let rig = model.animationTargets(of: instance)
-                world.add(Animator(targets: rig.targets, restPose: rig.restPose, clip: clips[k % 3], speed: 0.8 + rng.next() * 0.4,
+                world.add(Animator(targets: rig.targets, restPose: rig.restPose, clip: walk, speed: 0.8 + rng.next() * 0.4,
                                    normalizedTime: rng.next()), to: root)
+                foxes.append(agent)
             }
         }
 
@@ -131,6 +154,7 @@ final class CrowdScene: DemoScene {
             }
         }
         world.propagateTransforms()
+        world.bakeNavigation()
     }
 
     var initialView: OrbitView { OrbitView(yaw: 0.75, pitch: 0.55, distance: 46, target: Vec3(-6, 0, 0)) }
@@ -141,7 +165,8 @@ final class CrowdScene: DemoScene {
         }
         let threads = JobSystem.shared.threadCount
         return "\(threads) job thread\(threads == 1 ? "" : "s"): world \(average(timings.update)), render prep \(average(timings.prep)); "
-            + "\(physics.awakeBodyCount) awake, \(physics.contactCount) contacts, \(sceneRenderer.stats.list.opaque) drawn [R reset]"
+            + "\(physics.awakeBodyCount) awake, \(physics.contactCount) contacts, \(sceneRenderer.stats.list.opaque) drawn; "
+            + "\(foxes.count) foxes, navmesh of \(world.navMesh?.polygonCount ?? 0) polygons [R reset, N navmesh]"
     }
 
     func camera(orbitEye: Vec3, target: Vec3) -> ViewCamera {
@@ -156,9 +181,17 @@ final class CrowdScene: DemoScene {
 
     func update(input: Input, dt: Float, time: Float) {
         if input.wasPressed(.r) { build() }
+        if input.wasPressed(.n) { overlay.toggle() }
         let start = DispatchTime.now().uptimeNanoseconds
         world.update(dt: Double(dt))
         record(Double(DispatchTime.now().uptimeNanoseconds - start) * 1e-9, into: &timings.update)
+        debug.removeAll()
+        if overlay {
+            world.navMesh?.drawDebug(into: debug)
+            for fox in foxes {
+                if let path = world.get(BehaviorTreeState.self, for: fox)?.path, path.count >= 2 { NavMesh.drawPath(path, into: debug) }
+            }
+        }
     }
 
     func renderOffscreen(engine: Engine, frame: Frame) {

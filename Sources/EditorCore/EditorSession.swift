@@ -164,6 +164,10 @@ public final class EditorSession {
     /// The behavior tree open in the Behavior Tree tab (`behavior.open`), and how the app shows it.
     public var openBehavior: AssetID?
     public var onOpenBehavior: ((AssetID) -> Void)?
+    /// Extra Scene view overlays by name, drawn with the gizmos into the editor view (builder
+    /// tools add them: `navigation.overlay` draws the navmesh). Each gets the draw list and the
+    /// current world (the play world while playing).
+    public var sceneOverlays: [String: @MainActor (DebugDraw, World) -> Void] = [:]
     /// The layout open in the UI Builder tab (`uiLayout.open`), and how the app shows it.
     public var openUIBuild: AssetID?
     public var onOpenUIBuild: ((AssetID) -> Void)?
