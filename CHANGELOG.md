@@ -23,6 +23,9 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 - `FieldHints.srgb`: a color field that holds display (sRGB) values; the property grid shows and writes them as they are. `TextField.onKey` sees keys before the field does.
 
 ### Fixed
+- A `Ragdoll` in a scene with no `Collider` does something in play: editor play mode, `ScenePlayback` and networked GameRunner start 3D physics when `World.needsPhysics` (a `Collider` or a `Ragdoll`).
+- The `ik` demo scene: the ragdoll is pushed off the crate's corner hard enough to lie on the floor by the screenshot frame (it hung over the edge), and each character wears its own shirt color (the near-white tints didn't show).
+- `EditorLayoutTests.viewMenuSwitchesThemeAndZoom` finds View menu entries by title, so Return to Origin and Go to Object didn't break it.
 - GameRunner loads the `VisualScript` components of the first scene it plays. They were registered only once play systems started, so scripts in that scene didn't run.
 - Builder color fields stored as sRGB (Mesh Builder part color and glow, Path Builder profile and piece colors, terrain layers, procedural textures, Timeline fade keys, the Tilemap and VFX backgrounds, character recolors) showed in the property grid as if linear, lighter than the file's color, and wrote linear values back.
 - Cooked games ship `.dialogue` files (they had no data in the pack) and what they name by path or id (portraits, `uiLayout`), and the files scene and prefab components name by plain path: a `PathFollower`'s `.path`, a `UILayoutPlayer`'s layout, a `DialoguePlayer`'s dialogue and layout, a `TimelinePlayer`'s timeline. Paths inside JSON held in strings (a prefab's scene data) are followed too.

@@ -762,12 +762,12 @@ public final class EditorSession {
     ///
     /// Spatial audio starts with no `AudioEmitter` in the scene. A module spawns shots, explosions
     /// and music while it runs, and those need the system already installed. Physics and sprite
-    /// animation stay gated: nothing needs them until a collider or animator exists.
+    /// animation stay gated: nothing needs them until a collider, ragdoll or animator exists.
     private func addPlaySystems() {
         let runtime = project?.settings.runtime ?? ProjectRuntimeSettings()
         timestepBeforePlay = world.fixedTimestep
         runtime.apply(to: world)
-        if world.count(of: Collider.self) > 0 {
+        if world.needsPhysics {
             let physics = PhysicsWorld()
             runtime.apply(to: physics)
             world.addPhysics(physics)

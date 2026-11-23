@@ -79,7 +79,7 @@ enum NetRun {
     static func runServer(module: GameModule, sceneURL: URL?, options: NetRunOptions) throws {
         let world = try makeWorld(module: module, sceneURL: sceneURL)
         let replicatesAll = prepare(world, options.replication)
-        if world.count(of: Collider.self) > 0 { world.addPhysics(PhysicsWorld()) }
+        if world.needsPhysics { world.addPhysics(PhysicsWorld()) }
         if world.count(of: Collider2D.self) > 0 { world.addPhysics2D(PhysicsWorld2D()) }
         for warning in module.addSystems(to: world, context: GameContext(input: Input())) { log(warning) }
         let transport = try UDPTransport(host: options.host, port: options.port)

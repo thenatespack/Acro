@@ -162,6 +162,19 @@ import Testing
         #expect(try session.world.save() == before)
     }
 
+    @Test func aRagdollWithoutCollidersStartsPhysicsInPlay() throws {
+        let session = makeSession()
+        let id = try #require(session.create(.empty, at: Vec3(0, 1, 0), name: "Faller"))
+        #expect(session.addComponent(named: "Ragdoll", to: id))
+        #expect(session.world.count(of: Collider.self) == 0)
+
+        session.play()
+        #expect(session.physics != nil, "a ragdoll builds its own bodies, so play needs physics")
+        #expect(session.world.systemNames(in: .fixedUpdate).contains("ragdoll"))
+        session.stop()
+        #expect(session.physics == nil)
+    }
+
     @Test func physics2DRunsInPlayAndItsFieldsAreEditable() throws {
         let client = Client()
         let session = client.session

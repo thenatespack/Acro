@@ -296,8 +296,9 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
         let panels = app.toolbar.menuPanels.map(\.title)
         #expect(Array(items.prefix(panels.count)) == panels && panels.contains("Files") && panels.contains("Scripts"))
         let settings = items.dropFirst(panels.count)
-        #expect(settings.first?.hasPrefix("Settings…") == true && settings.dropFirst().first == "Reset Layout"
-                && settings.dropFirst(2).first == "Animate in Scene View")
+        #expect(settings.first?.hasPrefix("Settings…") == true && settings.dropFirst().first == "Reset Layout")
+        #expect(settings.contains { $0.hasPrefix("Return to Origin") } && settings.contains { $0.hasPrefix("Go to Object") }
+                && settings.contains("Animate in Scene View"))
         #expect(items.contains("Light Theme") && items.contains("Zoom 125%"))
         #expect(!items.contains("Game Theme"))  // a game HUD preset, not offered for the editor
         client.call("ui.click", ["label": "Light Theme", "role": "menuItem"])
@@ -315,7 +316,9 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
         let menu = try #require(app.ui.overlays.compactMap { $0 as? PopupMenu }.last)
         let first = app.toolbar.menuPanels.count
         let openPanels = Set(app.toolbar.menuPanels.indices.filter { app.dock.isOpen(app.toolbar.menuPanels[$0].id) })
-        #expect(menu.checkedIndices == openPanels.union([first + 4, first + 3 + EditorApp.menuThemes.count + 2]))
+        let checkedTitles = Set(menu.checkedIndices.filter { $0 >= first }.map { menu.items[$0] })
+        #expect(menu.checkedIndices.filter { $0 < first } == openPanels)
+        #expect(checkedTitles == ["Light Theme", "Zoom 125%"])
         client.call("ui.key", ["keys": ["escape"]])
         // The engine's Game preset is for game UI: refused, with the editor's themes named.
         #expect(throws: CommandError.self) { try app.session.commands.run(ViewAppearanceCommand.self, .init(theme: "game")) }

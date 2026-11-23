@@ -38,6 +38,9 @@ final class IKScene: DemoScene {
 
     private static let sky = Vec3(0.6, 0.7, 0.85)
     private static let crate = Vec3(3.2, 1.1, 0)
+    /// Where the faller stands: near the crate's front-right corner, so the push carries its
+    /// whole body (not just the top half) over the edge.
+    private static let fallerStart = crate + Vec3(0.3, 0, 0.25)
     private static let cycle: Float = 8
 
     init(renderer: Renderer) throws {
@@ -53,6 +56,8 @@ final class IKScene: DemoScene {
             try sceneRenderer.registerMaterial(Material(baseColor: Vec4(c.x, c.y, c.z, 1), roughness: region == .eyes ? 0.2 : 0.75),
                                                key: "ik.body.\(region.rawValue)")
         }
+        // A white shirt each character tints its own color, so the three are told apart.
+        try sceneRenderer.registerMaterial(Material(baseColor: Vec4(1, 1, 1, 1), roughness: 0.75), key: "ik.shirt")
         _ = try sceneRenderer.registerMesh(Self.floorMesh(halfSize: 20), key: "ik.floor")
         if let clip = CharacterClips.clip("idle", rig: rig) { idle = library.register(clip, key: "ik.idle") }
         build()
@@ -84,13 +89,13 @@ final class IKScene: DemoScene {
             box("Step", at: Vec3(x, h / 2, 0), size: Vec3(0.55, h, 2.2), tint: hsv(0.08 + Float(k) * 0.03, 0.4, 0.92))
         }
         // Its root on the edge between the first two steps (on the higher one); the left foot hangs over the lower.
-        stander = spawnCharacter("Stander", at: Vec3(-2.975, 0.31, 0.1), yaw: 0, tint: Vec3(0.95, 0.95, 0.95),
+        stander = spawnCharacter("Stander", at: Vec3(-2.975, 0.31, 0.1), yaw: 0, shirt: Vec3(0.85, 0.45, 0.1),
                                  ik: [AnimationIKNode.humanoidFeet()])
 
         // The aimer and its target.
         target = world.spawn(Transform(position: Vec3(0.6, 1.5, 1.2), scale: Vec3(repeating: 0.14)), Name("Target"),
                              MeshRenderer(mesh: .sphere, material: MaterialHandle("ik.glow")))
-        aimer = spawnCharacter("Aimer", at: Vec3(0, 0, 0), yaw: 0.25, tint: Vec3(0.75, 1, 0.8), ik: [
+        aimer = spawnCharacter("Aimer", at: Vec3(0, 0, 0), yaw: 0.25, shirt: Vec3(0.15, 0.6, 0.25), ik: [
             AnimationIKNode(name: "Look", type: .aim, bones: ["spine", "chest", "neck", "head"], targetEntity: "Target", maxAngle: 35),
             AnimationIKNode(name: "Hand.R", type: .twoBoneIK, bones: ["upperArm.R", "lowerArm.R", "hand.R"], targetEntity: "Target",
                             pole: Vec3(-0.3, -0.4, -1)),
@@ -99,14 +104,14 @@ final class IKScene: DemoScene {
         // The crate the faller is pushed off, and some boxes to land among.
         box("Crate", at: Self.crate - Vec3(0, 0.55, 0), size: Vec3(1, 1.1, 1), tint: Vec3(0.55, 0.4, 0.25))
         box("Block", at: Vec3(3.6, 0.15, 1.3), size: Vec3(0.6, 0.3, 0.6), tint: Vec3(0.4, 0.5, 0.7))
-        faller = spawnCharacter("Faller", at: Self.crate, yaw: 0.0, tint: Vec3(1, 0.8, 0.8), ik: nil)
+        faller = spawnCharacter("Faller", at: Self.fallerStart, yaw: 0.0, shirt: Vec3(0.75, 0.12, 0.12), ik: nil)
         world.add(rig.ragdoll(CharacterRagdoll()), to: faller)
         world.propagateTransforms()
     }
 
     /// A humanoid: root, bones, skinned body meshes, an idle Animator with `ik`.
     @discardableResult
-    private func spawnCharacter(_ name: String, at position: Vec3, yaw: Float, tint: Vec3, ik: [AnimationIKNode]?) -> Entity {
+    private func spawnCharacter(_ name: String, at position: Vec3, yaw: Float, shirt: Vec3, ik: [AnimationIKNode]?) -> Entity {
         let root = world.spawn(Transform(position: position, rotation: Quat(angle: yaw, axis: Vec3(0, 1, 0))), Name(name))
         var bones: [Entity] = []
         for bone in rig.bones {
@@ -115,9 +120,10 @@ final class IKScene: DemoScene {
             bones.append(e)
         }
         for region in regions {
+            let material = region == .body ? MaterialHandle("ik.shirt") : MaterialHandle("ik.body.\(region.rawValue)")
             let body = world.spawn(Transform(), Name("Body \(region.rawValue)"),
-                                   MeshRenderer(mesh: MeshHandle("ik.body.\(region.rawValue)"), material: MaterialHandle("ik.body.\(region.rawValue)"),
-                                                tint: region == .eyes ? Vec3(1, 1, 1) : tint),
+                                   MeshRenderer(mesh: MeshHandle("ik.body.\(region.rawValue)"), material: material,
+                                                tint: region == .body ? shirt : Vec3(1, 1, 1)),
                                    Skin(joints: bones, inverseBindMatrices: rig.inverseBindMatrices))
             _ = world.setParent(body, to: root)
         }
@@ -161,7 +167,7 @@ final class IKScene: DemoScene {
             dropped = true
             world.modify(Ragdoll.self, for: faller) {
                 $0.goLimp()
-                $0.applyImpulse(bone: "spine", impulse: Vec3(10, 6, 18))
+                $0.applyImpulse(bone: "spine", impulse: Vec3(40, 20, 70))
             }
         } else if dropped, !standing, phase > 4.5 {
             standing = true
@@ -169,7 +175,7 @@ final class IKScene: DemoScene {
         } else if standing, phase < 0.05 {
             dropped = false
             standing = false
-            world.modify(Transform.self, for: faller) { $0.position = Self.crate }
+            world.modify(Transform.self, for: faller) { $0.position = Self.fallerStart }
         }
         world.update(dt: Double(dt))
         debug.removeAll()

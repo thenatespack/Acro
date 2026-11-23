@@ -125,7 +125,7 @@ public final class ScenePlayback {
 
     private func addSystems() {
         runtime.apply(to: world)
-        if world.count(of: Collider.self) > 0 {
+        if world.needsPhysics {
             let physics = PhysicsWorld()
             runtime.apply(to: physics)
             world.addPhysics(physics)

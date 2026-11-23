@@ -20,6 +20,12 @@ import EngineGraphics
 import EngineScene
 
 extension World {
+    /// Whether playing this world needs 3D physics (`addPhysics`): it has a `Collider`, or a
+    /// `Ragdoll`, which builds its own bodies from the skeleton and needs no collider of its own.
+    public var needsPhysics: Bool {
+        count(of: Collider.self) > 0 || count(of: Ragdoll.self) > 0
+    }
+
     /// Simulates `physics` from this world's `Collider`, `RigidBody` and `Joint` components:
     /// adds a `.fixedUpdate` system "physics" that syncs, steps by the fixed timestep and
     /// writes results back, and an `.update` system "physics.events" (first in its stage).

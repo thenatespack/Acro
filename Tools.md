@@ -617,7 +617,7 @@ blends straight back, the root keeps its yaw rather than facing where the body l
 doesn't check that the spot under the pelvis is free; ragdoll state isn't networked or saved
 mid-fall (the component saves its mode, not the bodies); the Test Ragdoll push is fixed (backwards,
 0.6 m/s); quadruped, bird and blob ragdolls are rough (blob arms are spheres; bird wings have no
-lift); `character.ragdoll {test}` needs the editor window.
+lift); `character.ragdoll {test}` needs the editor window. Play mode starts physics for a ragdoll even in a scene with no `Collider` (`World.needsPhysics`).
 
 ### Material Builder (`.material` graphs)
 
