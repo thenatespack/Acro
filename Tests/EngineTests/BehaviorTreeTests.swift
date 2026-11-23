@@ -409,9 +409,11 @@ private func flatDistance(_ a: Vec3, _ b: Vec3) -> Float {
         let path = try #require(world.findPath(from: Vec3(0, 0, -5), to: Vec3(0, 0, 5)))
         #expect(path.first.map { flatDistance($0, Vec3(0, 0, -5)) < 0.01 } == true)
         #expect(path.last.map { flatDistance($0, Vec3(0, 0, 5)) < 0.01 } == true)
-        #expect(path.count >= 3 && path.count <= 6, "string-pulled to a few corners: \(path)")
+        #expect(path.count >= 3 && path.count <= 8, "string-pulled to a few corners: \(path)")
         #expect(NavigationGrid.length(of: path) > 12, "around the wall, not through it")
-        for (a, b) in zip(path, path.dropFirst()) { #expect(grid.isClear(from: a, to: b), "\(a) → \(b)") }
+        // The path comes from the navmesh baked alongside the grid.
+        let mesh = try #require(world.navMesh)
+        for (a, b) in zip(path, path.dropFirst()) { #expect(mesh.isClear(from: a, to: b), "\(a) → \(b)") }
         // A straight line when nothing is in the way.
         #expect(world.findPath(from: Vec3(-3, 0, -5), to: Vec3(3, 0, -8))?.count == 2, "\(String(describing: world.findPath(from: Vec3(-3, 0, -5), to: Vec3(3, 0, -8))))")
         // Off the grid: nil, or the nearest reachable point with partial.

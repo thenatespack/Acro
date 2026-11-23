@@ -454,6 +454,22 @@ and flee follow paths). Tab checked in the running editor. Still not done: a tru
 the grid in the Scene view; the first bake happens on the first frame something walks (can stall
 near the 250k-cell cap); a grid baked in edit mode doesn't carry into play mode; the canvas is
 narrow next to the sidebar and clips parameter summaries.
+Roadmap 2C (navmesh and crowds): a baked navmesh (`AI/Navigation/`: recast-style voxel columns
+from downward rays, erosion, single-layer regions, planar rectangle polygons with detail heights,
+`NavigationLink` off-mesh links for jumps, drops and ladders), A* over polygons with the funnel,
+ORCA crowd avoidance between behavior tree agents, surface following and link crossing for
+transform-moved agents, a Library bake cache cooked into packs, the Scene view overlay, and tools
+`navigation.bake`, `navigation.query`, `navigation.overlay`. Demo scenes `navmesh` and `crowd`.
+Gaps: polygons are cell-aligned rectangles (no contour simplification or triangulation), so
+diagonal walls give stair-stepped edges and more polygons than recast; one surface per collider
+per voxel column (a single mesh collider with two floors over the same spot only bakes its top);
+no moving obstacles or runtime tile rebakes (rebake the whole mesh); character-controller and
+dynamic-body agents walk at off-mesh links rather than jumping across them; avoidance covers
+behavior tree agents only (not the player or other characters) and has no static-obstacle
+lines (the navmesh keeps transform-moved agents off walls); no standalone `NavigationAgent`
+component; the Behavior Tree tab has no bake button (use the tools); exports ship only navmeshes
+baked in the editor (others bake at load); no playtest (demo scenes aren't project scenes):
+reachability and avoidance are asserted in `NavMeshTests`.
 
 ### UI / HUD Builder (`.ui`)
 

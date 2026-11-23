@@ -326,6 +326,12 @@ public struct CookPlan: Sendable {
         for (scene, data) in sceneData {
             manifest.scenes.append(AssetPackManifest.Scene(path: scene.path, blob: writer.add(data)))
         }
+        // Navmeshes baked in the editor (Library/Navigation): games load them instead of baking.
+        let baked = NavigationBakeCache.files(in: libraryURL.appendingPathComponent(NavigationBakeCache.libraryFolder, isDirectory: true))
+        for key in baked.keys.sorted() {
+            guard let data = try? Data(contentsOf: baked[key]!) else { continue }
+            manifest.navigation = (manifest.navigation ?? [:]).merging([key: writer.add(data)]) { $1 }
+        }
         var report = CookReport(packPath: "", manifestPath: nil, scenes: scenes.map(\.path), assetCount: cooked.count, imported: [],
                                 fromLibrary: 0, fromCookCache: 0, files: 0, packBytes: 0, textureBytes: 0, meshBytes: 0, fileBytes: 0,
                                 seconds: 0, warnings: [])

@@ -20,14 +20,19 @@ import EngineScene
 // - Custom leaves: `BehaviorTreeLeaves.register("openDoor") { leaf in … return .success }`,
 //   used by `{"type": "custom", "leaf": "openDoor"}` nodes.
 //
-// Movement is steering on the XZ plane along a path on the world's navigation grid
-// (Navigation.swift; baked from the static colliders the first time a tree walks somewhere,
-// or set by game code), straight toward the goal when there is no grid or no path. Paths are
-// replanned when the goal moves (at most five times a second) and every few seconds. Fleeing
-// picks a reachable point away from the threat. A `CharacterController` gets `moveVelocity`,
-// a dynamic `RigidBody` its horizontal velocity, anything else has its `Transform` moved.
-// Everything happens in world space: a parented entity's local position and rotation are
-// worked out through its parent. The entity turns to face where it walks (`turnSpeed`).
+// Movement is steering on the XZ plane along a path on the world's navmesh, or its grid when it
+// has no navmesh (Navigation/; baked from the static colliders the first time a tree walks
+// somewhere, or set by game code), straight toward the goal when there is neither or no path.
+// Paths are replanned when the goal moves (at most five times a second) and every few
+// seconds. Fleeing picks a reachable point away from the threat. Agents moving at once avoid
+// each other (ORCA, NavigationCrowd.swift): each frame the system gathers every runner's
+// preferred velocity and solves them together (`BehaviorTreeRunner.avoidance`, `radius`).
+// A `CharacterController` gets `moveVelocity`, a dynamic `RigidBody` its horizontal velocity,
+// anything else has its `Transform` moved: on a navmesh it slides along the surface (its
+// height follows ramps and floors, walls stop it) and crosses off-mesh links along their arc
+// (jumps, drops) or climbs them (ladders). Everything happens in world space: a parented
+// entity's local position and rotation are worked out through its parent. The entity turns
+// to face where it walks (`turnSpeed`).
 
 /// What a node returned on a tick.
 public enum BehaviorStatus: String, Codable, Sendable {
@@ -118,7 +123,9 @@ public struct BehaviorTreeRunner: Component, Codable, Equatable, Sendable {
          "target": FieldHints(tooltip: "What target-based leaves (can see, chase, attack…) aim at when the blackboard has no \"target\""),
          "isRunning": FieldHints(displayName: "Running"),
          "speed": FieldHints(range: 0...50, step: 0.1, tooltip: "Walking speed in m/s (0: the tree's)"),
-         "blackboard": FieldHints(tooltip: "Starting blackboard values for this entity, over the tree's")]
+         "blackboard": FieldHints(tooltip: "Starting blackboard values for this entity, over the tree's"),
+         "avoidance": FieldHints(tooltip: "Steer around other agents moving at the same time (crowd avoidance)"),
+         "radius": FieldHints(range: 0...10, step: 0.05, tooltip: "The agent's radius for avoidance in meters (0: the navigation's agent radius)")]
     }
 
     public var tree: String
@@ -127,17 +134,23 @@ public struct BehaviorTreeRunner: Component, Codable, Equatable, Sendable {
     /// Walking speed (0: the tree's `speed`).
     public var speed: Float
     public var blackboard: [BehaviorBlackboardEntry]
+    /// Steers around other agents (ORCA crowd avoidance).
+    public var avoidance: Bool
+    /// The agent's radius for avoidance (0: the navigation settings' `agentRadius`).
+    public var radius: Float
 
     public init(tree: String = "", target: EntityRef = .none, isRunning: Bool = true, speed: Float = 0,
-                blackboard: [BehaviorBlackboardEntry] = []) {
+                blackboard: [BehaviorBlackboardEntry] = [], avoidance: Bool = true, radius: Float = 0) {
         self.tree = tree
         self.target = target
         self.isRunning = isRunning
         self.speed = speed
         self.blackboard = blackboard
+        self.avoidance = avoidance
+        self.radius = radius
     }
 
-    private enum CodingKeys: String, CodingKey { case tree, target, isRunning, speed, blackboard }
+    private enum CodingKeys: String, CodingKey { case tree, target, isRunning, speed, blackboard, avoidance, radius }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -146,6 +159,8 @@ public struct BehaviorTreeRunner: Component, Codable, Equatable, Sendable {
         isRunning = try c.decodeIfPresent(Bool.self, forKey: .isRunning) ?? true
         speed = try c.decodeIfPresent(Float.self, forKey: .speed) ?? 0
         blackboard = try c.decodeIfPresent([BehaviorBlackboardEntry].self, forKey: .blackboard) ?? []
+        avoidance = try c.decodeIfPresent(Bool.self, forKey: .avoidance) ?? true
+        radius = try c.decodeIfPresent(Float.self, forKey: .radius) ?? 0
     }
 }
 
@@ -183,6 +198,15 @@ struct BehaviorSteering: Sendable {
     var range: Float = 0
 }
 
+/// An off-mesh link an entity is crossing.
+struct BehaviorLinkCrossing: Sendable {
+    var from: Vec3
+    var to: Vec3
+    var kind: NavigationLinkKind
+    var elapsed: Float = 0
+    var duration: Float
+}
+
 /// The live state of an entity's tree: blackboard, node memory and the last tick's statuses.
 /// Added and kept by the behavior tree system; not saved with scenes.
 public struct BehaviorTreeState: Component, Sendable {
@@ -216,9 +240,17 @@ public struct BehaviorTreeState: Component, Sendable {
     var origin: Vec3?
     var steering: BehaviorSteering?
     var face: Vec3?
-    /// The path being followed on the navigation grid, the next point and what it leads to.
+    /// The path being followed on the navmesh or grid, how each segment is crossed, the next
+    /// point and what it leads to.
     var navPath: [Vec3] = []
+    var navSegments: [NavigationLinkKind] = []
     var navIndex = 0
+    /// The navmesh polygon the entity was last on (-1: unknown).
+    var navPolygon = -1
+    /// The off-mesh link being crossed.
+    var crossing: BehaviorLinkCrossing?
+    /// The velocity it moved at last frame (world XZ), for crowd avoidance.
+    var velocity: Vec3 = .zero
     var navGoal: Vec3?
     var navAway = false
     var navPlannedAt: Double = -1
@@ -236,8 +268,14 @@ public struct BehaviorTreeState: Component, Sendable {
         return statuses[i]
     }
 
-    /// The path the entity is walking on the navigation grid (empty: none, or straight steering).
+    /// The path the entity is walking on the navmesh or grid (empty: none, or straight steering).
     public var path: [Vec3] { navPath }
+
+    /// Whether the entity is crossing an off-mesh link (a jump, drop or ladder) right now.
+    public var isCrossingLink: Bool { crossing != nil }
+
+    /// How fast it moved last frame (world XZ, m/s).
+    public var currentVelocity: Vec3 { velocity }
 
     /// The ids of the nodes that returned running on the last tick, root first.
     public var runningPath: [String] {
@@ -329,8 +367,8 @@ public final class BehaviorLeafContext {
     /// Turns to face `point`.
     public func face(_ point: Vec3) { ticker.state.face = point - position }
 
-    /// A walkable path from the entity to `point` on the world's navigation grid (nil without
-    /// a grid or a path). `walk(to:)` follows one by itself.
+    /// A walkable path from the entity to `point` on the world's navmesh, or its grid without
+    /// one (nil without either or a path). `walk(to:)` follows one by itself.
     public func path(to point: Vec3, partial: Bool = false) -> [Vec3]? {
         world.findPath(from: position, to: point, partial: partial)
     }
@@ -809,13 +847,29 @@ final class BehaviorTicker {
     // MARK: Movement
 
     /// Moves and turns the entity for one frame from the stored steering, along a path on
-    /// `navigation` when there is one.
-    func move(frameDt: Float, turnSpeed: Float, navigation: NavigationGrid? = nil) {
+    /// `navigation` when there is one (no crowd avoidance: the system's run does that).
+    func move(frameDt: Float, turnSpeed: Float, navigation: (any NavigationSurface)? = nil) {
+        let velocity = preferredVelocity(frameDt: frameDt, navigation: navigation)
+        apply(velocity: velocity, frameDt: frameDt, turnSpeed: turnSpeed, navMesh: navigation as? NavMesh)
+    }
+
+    /// Whether the entity moves by its `Transform` (not a character controller or a dynamic body).
+    var movesTransform: Bool {
+        if world.has(CharacterController.self, for: entity) { return false }
+        if let body = world.get(RigidBody.self, for: entity), body.motion == .dynamic { return false }
+        return true
+    }
+
+    /// The velocity (world XZ) the stored steering asks for this frame, following a path on
+    /// `navigation` when there is one. Zero while crossing an off-mesh link.
+    func preferredVelocity(frameDt: Float, navigation: (any NavigationSurface)?) -> Vec3 {
+        guard state.crossing == nil else { return .zero }
         var velocity = Vec3.zero
         let here = position
         if let steering = state.steering {
             let goal = steering.entity.flatMap { world.isAlive($0) ? position(of: $0) : nil } ?? steering.goal
             let waypoint = navigation.flatMap { self.waypoint(on: $0, steering: steering, goal: goal, from: here) }
+            guard state.crossing == nil else { return .zero }
             if waypoint == nil { clearPath() }
             if steering.away, waypoint == nil {
                 var offset = goal - here
@@ -837,15 +891,39 @@ final class BehaviorTicker {
         } else {
             clearPath()
         }
-        if world.has(CharacterController.self, for: entity) {
-            world.modify(CharacterController.self, for: entity) { $0.moveVelocity = Vec3(velocity.x, 0, velocity.z) }
+        return velocity
+    }
+
+    /// Moves the entity at `velocity` for one frame (along the surface of `navMesh` for
+    /// `Transform` movers; across the off-mesh link it is crossing) and turns it.
+    func apply(velocity requested: Vec3, frameDt: Float, turnSpeed: Float, navMesh: NavMesh?) {
+        var velocity = Vec3(requested.x, 0, requested.z)
+        let here = position
+        if var crossing = state.crossing {
+            // Along the link's arc, at walking speed.
+            crossing.elapsed += frameDt
+            let t = crossing.duration > 0 ? min(crossing.elapsed / crossing.duration, 1) : 1
+            let p = NavMesh.linkPoint(from: crossing.from, to: crossing.to, kind: crossing.kind, t: t)
+            setWorldPosition(p)
+            velocity = frameDt > 0 ? Vec3(p.x - here.x, 0, p.z - here.z) / frameDt : .zero
+            state.crossing = t >= 1 ? nil : crossing
+            state.navPolygon = -1
+        } else if world.has(CharacterController.self, for: entity) {
+            world.modify(CharacterController.self, for: entity) { $0.moveVelocity = velocity }
         } else if let body = world.get(RigidBody.self, for: entity), body.motion == .dynamic {
             world.modify(RigidBody.self, for: entity) { $0.linearVelocity = Vec3(velocity.x, $0.linearVelocity.y, velocity.z) }
         } else if velocity != .zero {
-            // A world-space step, written as the local position under the parent.
-            let local = parentMatrix(of: entity).inverse * Vec4(here + velocity * frameDt, 1)
-            world.modify(Transform.self, for: entity) { $0.position = Vec3(local.x, local.y, local.z) }
+            var next = here + velocity * frameDt
+            if let mesh = navMesh, let start = navLocation(on: mesh, at: here) {
+                // Slide along the surface: walls stop it, its height follows the floor.
+                let moved = mesh.move(from: start, to: Vec3(next.x, start.point.y, next.z))
+                next = Vec3(moved.point.x, here.y + (moved.point.y - start.point.y), moved.point.z)
+                state.navPolygon = moved.polygon
+                if frameDt > 0 { velocity = Vec3(next.x - here.x, 0, next.z - here.z) / frameDt }
+            }
+            setWorldPosition(next)
         }
+        state.velocity = velocity
         let facing = length(velocity) > 1e-3 ? velocity : (state.face ?? .zero)
         guard turnSpeed > 0, length(Vec3(facing.x, 0, facing.z)) > 1e-4, world.has(Transform.self, for: entity) else { return }
         let worldRotation = Transform(matrix: world.worldMatrix(of: entity)).rotation
@@ -863,17 +941,39 @@ final class BehaviorTicker {
         world.modify(Transform.self, for: entity) { $0.rotation = rotation }
     }
 
+    /// Puts the entity at world position `p` (written as the local position under its parent).
+    private func setWorldPosition(_ p: Vec3) {
+        let local = parentMatrix(of: entity).inverse * Vec4(p, 1)
+        world.modify(Transform.self, for: entity) { $0.position = Vec3(local.x, local.y, local.z) }
+    }
+
+    /// Where on `mesh` the entity stands (its last polygon when it is still on it).
+    private func navLocation(on mesh: NavMesh, at here: Vec3) -> NavMeshLocation? {
+        if state.navPolygon >= 0, state.navPolygon < mesh.polygons.count {
+            let polygon = mesh.polygons[state.navPolygon]
+            if polygon.contains(x: here.x, z: here.z, margin: 1e-3) {
+                let h = polygon.height(x: here.x, z: here.z)
+                if here.y - h <= mesh.settings.agentHeight, here.y - h >= -max(mesh.settings.stepHeight, 0.25) {
+                    return NavMeshLocation(polygon: state.navPolygon, point: Vec3(here.x, h, here.z))
+                }
+            }
+        }
+        return mesh.locate(here)
+    }
+
     private func clearPath() {
         guard !state.navPath.isEmpty || state.navGoal != nil else { return }
         state.navPath = []
+        state.navSegments = []
         state.navIndex = 0
         state.navGoal = nil
     }
 
     /// The point to walk toward this frame on `nav` and whether it is the path's last, or nil
-    /// when there is no path (walk straight).
-    private func waypoint(on nav: NavigationGrid, steering: BehaviorSteering, goal: Vec3, from here: Vec3) -> (point: Vec3, last: Bool)? {
-        let reach = max(nav.cellSize * 0.75, 0.3)
+    /// when there is no path (walk straight). Starts crossing an off-mesh link when the entity
+    /// gets to one (then returns nil).
+    private func waypoint(on nav: any NavigationSurface, steering: BehaviorSteering, goal: Vec3, from here: Vec3) -> (point: Vec3, last: Bool)? {
+        let reach = max(nav.resolution * 0.75, 0.3)
         var target = goal
         if steering.away {
             if let kept = state.navGoal, state.navAway, !state.navPath.isEmpty, flatDistance(here, kept) > reach,
@@ -887,24 +987,45 @@ final class BehaviorTicker {
         }
         let age = state.clock - state.navPlannedAt
         let moved = state.navGoal.map { flatDistance($0, target) } ?? .infinity
-        let stale = state.navPath.isEmpty || state.navAway != steering.away || (moved > max(nav.cellSize, 0.5) && age >= 0.2) || age > 3
+        let stale = state.navPath.isEmpty || state.navAway != steering.away || (moved > max(nav.resolution, 0.5) && age >= 0.2) || age > 3
         if stale {
-            guard let path = nav.findPath(from: here, to: target, partial: true), path.count >= 2 else { return nil }
-            state.navPath = path
+            guard let path = nav.navigationPath(from: here, to: target, partial: true), path.points.count >= 2 else { return nil }
+            state.navPath = path.points
+            state.navSegments = path.segments
             state.navIndex = 1
             state.navGoal = target
             state.navAway = steering.away
             state.navPlannedAt = state.clock
         }
-        while state.navIndex < state.navPath.count - 1, flatDistance(here, state.navPath[state.navIndex]) <= reach { state.navIndex += 1 }
+        while state.navIndex < state.navPath.count - 1, flatDistance(here, state.navPath[state.navIndex]) <= reach {
+            if startCrossing(at: state.navIndex, from: here, speed: steering.speed) { return nil }
+            state.navIndex += 1
+        }
         guard state.navIndex < state.navPath.count else { return nil }
         let last = state.navIndex == state.navPath.count - 1
-        if last, !steering.away, let end = state.navPath.last, flatDistance(end, goal) <= nav.cellSize * 1.5 { return (goal, true) }
+        if last, !steering.away, let end = state.navPath.last, flatDistance(end, goal) <= nav.resolution * 1.5 { return (goal, true) }
         return (state.navPath[state.navIndex], last)
     }
 
+    /// Starts crossing the off-mesh link from path point `index`, if the segment from it is one
+    /// and the entity moves by its transform. Returns whether it did.
+    private func startCrossing(at index: Int, from here: Vec3, speed: Float) -> Bool {
+        guard index < state.navSegments.count, index + 1 < state.navPath.count, state.navSegments[index] != .walk, movesTransform else {
+            return false
+        }
+        let kind = state.navSegments[index]
+        let start = state.navPath[index], end = state.navPath[index + 1]
+        // Keep the entity's height above the surface it stands on.
+        let lift = here.y - start.y
+        let to = end + Vec3(0, lift, 0)
+        let span = length(to - here) + (kind == .ladder ? abs(to.y - here.y) * 0.5 : 0)
+        state.crossing = BehaviorLinkCrossing(from: here, to: to, kind: kind, duration: max(span / max(speed, 0.5), 0.25))
+        state.navIndex = index + 1
+        return true
+    }
+
     /// A reachable point about `distance` away that takes the entity away from `threat`.
-    private func fleeGoal(on nav: NavigationGrid, from here: Vec3, threat: Vec3, distance: Float) -> Vec3? {
+    private func fleeGoal(on nav: any NavigationSurface, from here: Vec3, threat: Vec3, distance: Float) -> Vec3? {
         guard let start = nav.nearestWalkablePoint(to: here, maxDistance: 3) else { return nil }
         var away = Vec3(here.x - threat.x, 0, here.z - threat.z)
         away = length(away) > 1e-4 ? normalize(away) : Vec3(1, 0, 0)
@@ -913,7 +1034,7 @@ final class BehaviorTicker {
         for k in 0..<16 {
             let angle = Float(k) * .pi / 8
             let dir = Vec3(away.x * cos(angle) - away.z * sin(angle), 0, away.x * sin(angle) + away.z * cos(angle))
-            guard let p = nav.nearestWalkablePoint(to: here + dir * distance, maxDistance: nav.cellSize * 3),
+            guard let p = nav.nearestWalkablePoint(to: Vec3(here.x, start.y, here.z) + dir * distance, maxDistance: nav.resolution * 3),
                   nav.areConnected(start, p) else { continue }
             var score = flatDistance(p, threat) - flatDistance(p, here) * 0.25
             if nav.isClear(from: start, to: p) { score += distance * 0.5 }
@@ -937,7 +1058,7 @@ public enum BehaviorTreeSystem {
 
     /// Registers the behavior tree components with `ComponentRegistry`.
     @MainActor public static func registerComponents() {
-        ComponentRegistry.register(BehaviorTreeRunner.self, BehaviorTreeState.self, NavigationArea.self)
+        ComponentRegistry.register(BehaviorTreeRunner.self, BehaviorTreeState.self, NavigationArea.self, NavigationLink.self)
     }
 }
 
@@ -950,17 +1071,26 @@ extension World {
                                             physics: @escaping () -> PhysicsWorld? = { nil }) {
         guard !systemNames(in: .update).contains(name) else { return }
         BehaviorTreeSystem.registerComponents()
-        // A grid this system baked during an earlier run may be out of date: bake it again.
-        if navigationIsAutomatic { NavigationStore.set(nil, for: self, automatic: true) }
+        // Navigation this system baked during an earlier run may be out of date: bake it again.
+        if navigationIsAutomatic { NavigationStore.clear(self) }
+        if navigationCache == nil, let database = assets() { navigationCache = .forAssets(database) }
         var triedBaking = false
-        func navigation(_ world: World) -> NavigationGrid? {
-            if let grid = world.navigation { return grid }
+        func navigation(_ world: World) -> (any NavigationSurface)? {
+            if let surface = world.navigationSurface { return surface }
             guard !triedBaking else { return nil }
             triedBaking = true
-            guard world.count(of: Collider.self) > 0, let grid = world.makeNavigation() else { return nil }
-            NavigationStore.set(grid, for: world, automatic: true)
-            EngineLog.info("Navigation: baked a \(grid.width)×\(grid.depth) grid (\(grid.walkableCount) walkable cells of \(grid.cellSize) m)")
-            return grid
+            guard world.count(of: Collider.self) > 0 else { return nil }
+            if world.navigationCache == nil, let database = assets() { world.navigationCache = .forAssets(database) }
+            guard let grid = world.bakeNavigation() else { return nil }
+            NavigationStore.entry(world)?.automatic = true
+            if let report = world.lastNavMeshBake {
+                EngineLog.info("Navigation: \(report.cached ? "loaded" : "baked") a navmesh of \(report.polygonCount) polygons"
+                               + (report.cached ? "" : String(format: " in %.0f ms", report.seconds * 1000)))
+                for warning in report.warnings { EngineLog.warning("Navigation: \(warning)") }
+            } else {
+                EngineLog.info("Navigation: baked a \(grid.width)×\(grid.depth) grid (\(grid.walkableCount) walkable cells of \(grid.cellSize) m)")
+            }
+            return world.navigationSurface
         }
         var cache: [String: (key: String, revision: Int, compiled: CompiledBehaviorTree)] = [:]
         var missing = Set<String>()
@@ -998,6 +1128,11 @@ extension World {
                     return found
                 }
                 let frameDt = world.time.delta
+                // Tick every tree, then move everyone together so agents avoid each other.
+                var movers: [(ticker: BehaviorTicker, preferred: Vec3, turnSpeed: Float)] = []
+                var obstacles: [CrowdAgent] = []
+                var obstacleEntities: [Entity] = []
+                var surface: (any NavigationSurface)?
                 for (entity, runner) in runners {
                     guard world.isAlive(entity) else { continue }
                     guard runner.isRunning, let tree = compiled(runner.tree) else {
@@ -1005,6 +1140,10 @@ extension World {
                         else if missing.insert(runner.tree).inserted {
                             EngineLog.warning("BehaviorTreeRunner: no behavior tree '\(runner.tree)'")
                         }
+                        // Still in the way of those that walk.
+                        let c = world.worldMatrix(of: entity).c3
+                        obstacles.append(CrowdAgent(position: Vec3(c.x, c.y, c.z), radius: runner.radius, maxSpeed: 0, avoids: false))
+                        obstacleEntities.append(entity)
                         continue
                     }
                     let existing = world.get(BehaviorTreeState.self, for: entity)
@@ -1028,9 +1167,36 @@ extension World {
                             ticker.halt(root)  // finished: start over on the next tick
                         }
                     }
-                    ticker.move(frameDt: frameDt, turnSpeed: Float(tree.compiled.tree.turnSpeed),
-                                navigation: ticker.state.steering != nil ? navigation(world) : nil)
-                    world.add(ticker.state, to: entity)
+                    if ticker.state.steering != nil, surface == nil { surface = navigation(world) }
+                    let preferred = ticker.preferredVelocity(frameDt: frameDt, navigation: ticker.state.steering != nil ? surface : nil)
+                    movers.append((ticker, preferred, Float(tree.compiled.tree.turnSpeed)))
+                }
+                let mesh = world.navMesh
+                var velocities = movers.map(\.preferred)
+                if movers.count + obstacles.count > 1 {
+                    let defaultRadius = mesh?.settings.agentRadius ?? world.navigation?.settings.agentRadius ?? 0.4
+                    var agents = movers.map { mover -> CrowdAgent in
+                        let runner = mover.ticker.runner
+                        let speed = max(mover.ticker.state.steering?.speed ?? mover.ticker.defaultSpeed, length(mover.preferred))
+                        return CrowdAgent(position: mover.ticker.position, velocity: mover.ticker.state.velocity, preferredVelocity: mover.preferred,
+                                          radius: runner.radius > 0 ? runner.radius : defaultRadius, maxSpeed: speed,
+                                          avoids: runner.avoidance && mover.ticker.state.crossing == nil)
+                    }
+                    for i in obstacles.indices where obstacles[i].radius <= 0 { obstacles[i].radius = defaultRadius }
+                    agents += obstacles
+                    // Nobody avoids the agent it chases or walks up to.
+                    var index: [Entity: Int] = [:]
+                    for (i, mover) in movers.enumerated() { index[mover.ticker.entity] = i }
+                    for (i, e) in obstacleEntities.enumerated() { index[e] = movers.count + i }
+                    for (i, mover) in movers.enumerated() {
+                        if let target = mover.ticker.state.steering?.entity { agents[i].ignoring = index[target] }
+                    }
+                    let solved = NavigationCrowd().solve(agents, dt: frameDt)
+                    for i in movers.indices where agents[i].avoids { velocities[i] = solved[i] }
+                }
+                for (i, mover) in movers.enumerated() {
+                    mover.ticker.apply(velocity: velocities[i], frameDt: frameDt, turnSpeed: mover.turnSpeed, navMesh: mesh)
+                    world.add(mover.ticker.state, to: mover.ticker.entity)
                 }
             }
         }

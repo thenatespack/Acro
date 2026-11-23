@@ -1543,6 +1543,7 @@ public final class EditorApp: Game, EditorHost {
             let matrix = world.get(GlobalTransform.self, for: entity)?.matrix ?? world.worldMatrix(of: entity)
             draw.axes(matrix, length: 0.6, style: DebugDraw.Style(width: 2, depth: .onTop))
         }
+        for name in session.sceneOverlays.keys.sorted() { session.sceneOverlays[name]?(draw, world) }
     }
 
     public func renderOffscreen(engine: Engine, frame: Frame) {

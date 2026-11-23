@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 288 tools.
+named by its id (see README › Use the editor › AI control). 291 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -36,6 +36,7 @@ optional arguments.
 | `material` | [`material.get`](#materialget), [`material.set`](#materialset) |
 | `materialGraph` | [`materialGraph.assign`](#materialgraphassign), [`materialGraph.edit`](#materialgraphedit), [`materialGraph.get`](#materialgraphget), [`materialGraph.new`](#materialgraphnew), [`materialGraph.nodes`](#materialgraphnodes), [`materialGraph.open`](#materialgraphopen), [`materialGraph.set`](#materialgraphset) |
 | `meshBuild` | [`meshBuild.edit`](#meshbuildedit), [`meshBuild.examples`](#meshbuildexamples), [`meshBuild.get`](#meshbuildget), [`meshBuild.new`](#meshbuildnew), [`meshBuild.open`](#meshbuildopen), [`meshBuild.preview`](#meshbuildpreview), [`meshBuild.set`](#meshbuildset) |
+| `navigation` | [`navigation.bake`](#navigationbake), [`navigation.overlay`](#navigationoverlay), [`navigation.query`](#navigationquery) |
 | `net` | [`net.overlay`](#netoverlay), [`net.setConditions`](#netsetconditions), [`net.start`](#netstart), [`net.stats`](#netstats), [`net.stop`](#netstop), [`net.view`](#netview) |
 | `panel` | [`panel.close`](#panelclose), [`panel.dock`](#paneldock), [`panel.focus`](#panelfocus), [`panel.list`](#panellist), [`panel.open`](#panelopen) |
 | `path` | [`path.edit`](#pathedit), [`path.flattenTerrain`](#pathflattenterrain), [`path.get`](#pathget), [`path.new`](#pathnew), [`path.open`](#pathopen), [`path.sample`](#pathsample), [`path.set`](#pathset) |
@@ -692,7 +693,7 @@ Result:
 
 **Behavior Navigation** · _read-only_
 
-The navigation grid behavior trees walk on (moveTo, patrol, chase and flee follow A* paths on it, straight-line steering where there is none): bakes it from the static colliders of the current world (the play world while playing) if it has none or `rebake`, reports its size and walkable areas, and with `from` and `to` returns the path between them. A NavigationArea component sets the baked box and the agent's radius, height, step and slope; without one the bake covers the static colliders around the agents. Game code: `world.bakeNavigation()`, `world.findPath(from:to:)`.
+The navigation behavior trees walk on (moveTo, patrol, chase and flee follow paths on it, avoiding each other; straight-line steering where there is none): bakes the navmesh and the grid fallback from the static colliders of the current world (the play world while playing) if it has none or `rebake`, reports the grid's size and walkable areas and the navmesh's polygon count, and with `from` and `to` returns the path between them (on the navmesh when there is one). A NavigationArea component sets the baked box and the agent's radius, height, step and slope; without one the bake covers the static colliders around the agents. navigation.bake, navigation.query and navigation.overlay do more with the navmesh. Game code: `world.bakeNavigation()`, `world.findPath(from:to:)`.
 
 Arguments:
 
@@ -710,6 +711,7 @@ Result:
 - `cellSize`: number
 - `depth`: integer
 - `hasGrid`: boolean
+- `navMeshPolygons`: integer
 - `path`: [number[3]]
 - `pathFound`: boolean
 - `pathLength`: number
@@ -2598,6 +2600,77 @@ Result:
 - `prefab`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
 - `triangles?`: integer
 - `warnings`: [string]
+
+## navigation
+
+### `navigation.bake`
+
+**Bake Navigation** · _read-only_
+
+Bakes the navmesh behavior trees and `world.findPath` walk on from the static colliders of the current world (the play world while playing): voxelized, eroded by the agent radius, cut into layer regions and convex polygons with detail heights, so floors above one another, ramps and bridges work; NavigationLink components add off-mesh links (jumps, drops, ladders). A NavigationArea component sets the box and the agent (radius, height, step, slope, voxelSize, maxPolygonSize). Reports the polygon count, bake time and warnings (areas the largest can't reach, links off the mesh). Bakes are cached in the project's Library/Navigation by what they were baked from (`force` bakes anyway) and cooked into exported games, which load them instead of baking. The grid fallback is baked too. Game code: `world.bakeNavMesh()`.
+
+Arguments:
+
+- `force?`: boolean
+- `overlay?`: boolean
+
+Result:
+
+- `area`: number
+- `baked`: boolean
+- `boundsMax?`: number[3] — [x, y, z]
+- `boundsMin?`: number[3] — [x, y, z]
+- `cacheFile?`: string
+- `cached`: boolean
+- `islands`: integer
+- `milliseconds`: number
+- `offMeshLinks`: integer
+- `polygons`: integer
+- `regions`: integer
+- `voxelSize`: number
+- `warnings`: [string]
+
+### `navigation.overlay`
+
+**Show Navigation** · _idempotent_
+
+Shows or hides the navmesh in the Scene view: polygons tinted by region (areas the largest can't reach in red), their outlines, off-mesh links as arcs, the paths behavior tree agents are walking and the last `navigation.query` path. It draws the current world's navmesh as last baked (`navigation.bake`). view.screenshot shows it with gizmos on.
+
+Arguments:
+
+- `show?`: boolean
+
+Result:
+
+- `polygons`: integer
+- `shown`: boolean
+
+### `navigation.query`
+
+**Query Navigation** · _read-only_
+
+Tests navigation in the current world (baking it first if it has none): with `from` and `to`, the path an agent would walk (on the navmesh when there is one, else the grid; `partial` returns the way to the nearest reachable point), how each segment is crossed (walk, jump, drop, ladder), its length, and whether the ends are on the mesh and connected; with `point`, whether the point is walkable and the nearest walkable point. The navigation overlay (`navigation.overlay`) draws the last path found.
+
+Arguments:
+
+- `from?`: number[3] — [x, y, z]
+- `partial?`: boolean
+- `point?`: number[3] — [x, y, z]
+- `to?`: number[3] — [x, y, z]
+
+Result:
+
+- `baked`: boolean
+- `connected?`: boolean
+- `found`: boolean
+- `fromOnMesh?`: boolean
+- `length`: number
+- `nearest?`: number[3] — [x, y, z]
+- `path`: [number[3]]
+- `pointOnMesh?`: boolean
+- `segments`: [string]
+- `surface`: string
+- `toOnMesh?`: boolean
 
 ## net
 

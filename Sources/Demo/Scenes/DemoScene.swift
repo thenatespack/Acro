@@ -114,7 +114,8 @@ extension DemoScene {
     FogScene.self,
     ReflectionsScene.self,
     ForestScene.self,
-    FurScene.self,
     IKScene.self,
     Physics2Scene.self,
+    NavMeshScene.self,
+    FurScene.self,
 ]
