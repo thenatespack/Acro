@@ -15,7 +15,10 @@ import Testing
 
 private struct Position: Component, Equatable { var value: Vec3 }
 private struct Velocity: Component, Equatable { var value: Vec3 }
-private struct Health: Component, Equatable { var points: Int }
+private struct Health: Component, Equatable {
+    static let componentName = "WorldTestsHealth"  // not the engine's Health
+    var points: Int
+}
 private struct Tag: Component {}
 
 private func approx(_ a: Vec3, _ b: Vec3, _ eps: Float = 1e-4) -> Bool { length(a - b) < eps }
@@ -159,8 +162,8 @@ private func approx(_ a: Vec3, _ b: Vec3, _ eps: Float = 1e-4) -> Bool { length(
     let e = world.spawn(Health(points: 7), Position(value: Vec3(1, 1, 1)))
     let other = world.spawn(Velocity(value: .zero))
     world.add(Tag(), to: e)
-    #expect(world.componentTypes(of: e).map { $0.componentName } == ["Health", "Position", "Tag"])
-    #expect(world.registeredComponentTypes.map { $0.componentName } == ["Health", "Position", "Velocity", "Tag"])
+    #expect(world.componentTypes(of: e).map { $0.componentName } == ["WorldTestsHealth", "Position", "Tag"])
+    #expect(world.registeredComponentTypes.map { $0.componentName } == ["WorldTestsHealth", "Position", "Velocity", "Tag"])
     // What serialization will do: copy components through existentials.
     let copy = world.spawn()
     for component in world.components(of: e) { world.add(component, to: copy) }

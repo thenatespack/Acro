@@ -386,6 +386,9 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
     /// `.groom` file (path under `Assets/` or "asset:<id>"). Skinned with the body, so it follows
     /// the animation. Not in `init`'s parameters: set it after.
     public var grooms: [String: String] = [:]
+    /// Health, hurtboxes on the bones and attack hitboxes (CharacterCombat.swift); nil: none. Not
+    /// in `init`'s parameters: set it after.
+    public var combat: CharacterCombat?
 
     public init(template: CharacterTemplate = .humanoid, proportions: CharacterProportions = CharacterProportions(),
                 colors: CharacterColors = CharacterColors(), attachments: [CharacterAttachment] = [],
@@ -404,7 +407,7 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
         self.ik = ik
     }
 
-    private enum CodingKeys: String, CodingKey { case template, proportions, colors, attachments, clips, defaultClip, smooth, segments, ragdoll, ik, grooms }
+    private enum CodingKeys: String, CodingKey { case template, proportions, colors, attachments, clips, defaultClip, smooth, segments, ragdoll, ik, grooms, combat }
 
     /// A `clips` entry: a stock name, or a clip from another asset.
     private enum ClipEntry: Decodable {
@@ -436,6 +439,7 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
                   ragdoll: try c.decodeIfPresent(CharacterRagdoll.self, forKey: .ragdoll),
                   ik: try c.decodeIfPresent(CharacterIK.self, forKey: .ik))
         grooms = try c.decodeIfPresent([String: String].self, forKey: .grooms) ?? [:]
+        combat = try c.decodeIfPresent(CharacterCombat.self, forKey: .combat)
     }
 
     /// `clips` holds the stock names, then the external clips' objects.
@@ -454,6 +458,7 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
         try c.encodeIfPresent(ragdoll, forKey: .ragdoll)
         try c.encodeIfPresent(ik, forKey: .ik)
         if !grooms.isEmpty { try c.encode(grooms, forKey: .grooms) }
+        try c.encodeIfPresent(combat, forKey: .combat)
     }
 
     public func fileData() throws -> Data { try AssetJSON.encode(self) }
@@ -538,6 +543,7 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
             }
             if let m = ragdoll.mass, !(m > 0) { problems.append("ragdoll: mass must be above 0") }
         }
+        if let combat { problems += rig.combatProblems(combat) }
         if let ik {
             if ik.footPlacement && rig.ikLegs == nil { problems.append("ik: the \(template.rawValue) template has no legs for footPlacement") }
             if ik.handIK && rig.ikArms.isEmpty { problems.append("ik: the \(template.rawValue) template has no arms for handIK") }

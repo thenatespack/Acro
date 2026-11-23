@@ -25,8 +25,9 @@ public struct KeyboardMover: Component, Equatable, Sendable {
 /// IrradianceVolume (bake them with lighting.bake), MeshRenderer (a cube),
 /// the physics components (a unit box Collider, a dynamic RigidBody, a ball Joint to the world,
 /// a CharacterController, a Ragdoll with a humanoid character's bodies, a wood PhysicsSurface), AudioListener and AudioEmitter (no sound until one is picked), the 2D physics components (a dynamic RigidBody2D, a unit
-/// box Collider2D, a revolute Joint2D to the world), ParticleEmitter, TextMesh ("Neon", emissive 4), Sprite (atlas "sprites", frame 0), SpriteAnimator (one looping "idle" clip), GroomRenderer (no groom until one is picked), Saveable, Tag (no tags), Spin, TilemapMotion (parallax 0.5) and
-/// KeyboardMover. `Name` is left out on purpose: the inspector header edits it. Games register their own
+/// box Collider2D, a revolute Joint2D to the world), ParticleEmitter, TextMesh ("Neon", emissive 4), Sprite (atlas "sprites", frame 0), SpriteAnimator (one looping "idle" clip), GroomRenderer (no groom until one is picked), CameraRig (third person, no target yet), Saveable, Tag (no tags), Spin, TilemapMotion (parallax 0.5),
+/// the gameplay components (Health 100, a body-sized capsule Hurtbox, a sphere Hitbox, Interactable, Interactor, Door,
+/// Lever, Container, Pickup) and KeyboardMover. `Name` is left out on purpose: the inspector header edits it. Games register their own
 /// with `register(_:make:)`, or `register(_:)` for types with a no-argument initializer.
 @MainActor
 public enum EditorComponentCatalog {
@@ -100,6 +101,8 @@ public enum EditorComponentCatalog {
         register(LightFlicker.self) { LightFlicker() }
         register(TilemapMotion.self) { TilemapMotion(parallax: Vec2(0.5, 0.5)) }
         register(CameraPath.self) { CameraPath() }
+        // A third-person rig; pick its target (it follows its own entity until then).
+        register(CameraRig.self) { CameraRig() }
         register(BehaviorTreeRunner.self) { BehaviorTreeRunner() }
         register(NavigationArea.self) { NavigationArea() }
         register(NavigationLink.self) { NavigationLink() }
@@ -108,6 +111,17 @@ public enum EditorComponentCatalog {
         register(TimelinePlayer.self) { TimelinePlayer() }
         register(PathFollower.self) { PathFollower() }
         register(Animator.self) { Animator(targets: [], restPose: [], stateMachine: AnimationStateMachine(states: [])) }
+        // Gameplay (EngineScene/Gameplay): damage and interaction.
+        GameplayComponents.register()
+        register(Health.self) { Health() }
+        register(Hurtbox.self) { Hurtbox() }
+        register(Hitbox.self) { Hitbox() }
+        register(Interactable.self) { Interactable() }
+        register(Interactor.self) { Interactor() }
+        register(Door.self) { Door() }
+        register(Lever.self) { Lever() }
+        register(Container.self) { Container() }
+        register(Pickup.self) { Pickup() }
         ComponentRegistry.register(VisualScript.self)
         register(VisualScript.self) { VisualScript() }
         // Visual scripts list component fields from the same defaults Add Component uses.

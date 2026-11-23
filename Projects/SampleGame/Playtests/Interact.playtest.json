@@ -1,0 +1,148 @@
+{
+  "format": "Acro.Playtest",
+  "version": 1,
+  "name": "Walk to a lever and pull it (the gate opens), then to a chest and open it (its gold goes to the player)",
+  "scene": "Scenes/Interact.scene",
+  "actions": {
+    "use": [
+      "key.e",
+      "pad.west"
+    ]
+  },
+  "steps": [
+    {
+      "note": "One frame so the Player's visual script starts (its input actions are known from then on)."
+    },
+    {
+      "frames": 1
+    },
+    {
+      "assert": {
+        "label": "the gate starts closed",
+        "entity": "Gate",
+        "component": "Door",
+        "field": "open",
+        "equals": false
+      }
+    },
+    {
+      "note": "Walk right to the lever (2 m/s for 1.5 s)."
+    },
+    {
+      "action": "right",
+      "duration": 1.5
+    },
+    {
+      "frames": 100
+    },
+    {
+      "assert": {
+        "label": "at the lever",
+        "entity": "Player",
+        "field": "position.x",
+        "min": 2.9,
+        "max": 3.1
+      }
+    },
+    {
+      "note": "Press the use action (E): the lever flips and opens the gate."
+    },
+    {
+      "action": "use"
+    },
+    {
+      "frames": 5
+    },
+    {
+      "assert": {
+        "label": "the lever is pulled",
+        "entity": "Lever",
+        "component": "Lever",
+        "field": "on",
+        "equals": true
+      }
+    },
+    {
+      "assert": {
+        "label": "it opened the gate",
+        "entity": "Gate",
+        "component": "Door",
+        "field": "open",
+        "equals": true
+      }
+    },
+    {
+      "assert": {
+        "label": "the lever was used once",
+        "entity": "Lever",
+        "component": "Interactable",
+        "field": "uses",
+        "equals": 1
+      }
+    },
+    {
+      "frames": 90
+    },
+    {
+      "assert": {
+        "label": "the gate swung all the way",
+        "entity": "Gate",
+        "component": "Door",
+        "field": "motion.progress",
+        "min": 0.99
+      }
+    },
+    {
+      "note": "On to the chest."
+    },
+    {
+      "action": "right",
+      "duration": 1.5
+    },
+    {
+      "frames": 100
+    },
+    {
+      "assert": {
+        "label": "the chest is still closed",
+        "entity": "Chest",
+        "component": "Container",
+        "field": "open",
+        "equals": false
+      }
+    },
+    {
+      "action": "use"
+    },
+    {
+      "frames": 5
+    },
+    {
+      "assert": {
+        "label": "the chest is open",
+        "entity": "Chest",
+        "component": "Container",
+        "field": "open",
+        "equals": true
+      }
+    },
+    {
+      "assert": {
+        "label": "the player took the gold",
+        "entity": "Player",
+        "component": "Interactor",
+        "field": "items.gold",
+        "equals": 10
+      }
+    },
+    {
+      "assert": {
+        "label": "an empty chest can't be used again",
+        "entity": "Chest",
+        "component": "Interactable",
+        "field": "enabled",
+        "equals": false
+      }
+    }
+  ]
+}

@@ -106,7 +106,9 @@ enum VisualScriptEngineNodes {
     static func register() {
         VisualScriptAnimationNodes.register()
         VisualScriptIKNodes.register()
+        VisualScriptCombatNodes.register()
         VisualScriptCharacterNodes.register()
+        VisualScriptCameraNodes.register()
         VisualScriptDialogueNodes.register()
         VisualScriptTimelineNodes.register()
         VisualScriptBehaviorNodes.register()
@@ -144,6 +146,7 @@ enum VisualScriptEngineNodes {
         VisualScriptBehaviorNodes.addEventSource(to: runtime)
         VisualScriptUINodes.addEventSource(to: runtime)
         VisualScriptBuilderLinkNodes.addEventSource(to: runtime)
+        VisualScriptCombatNodes.addEventSource(to: runtime)
         runtime.addEventSource("engine.sprites") { runtime in
             guard runtime.world.count(of: SpriteAnimator.self) > 0 else { return }
             var fired: [(Entity, [String], String?)] = []

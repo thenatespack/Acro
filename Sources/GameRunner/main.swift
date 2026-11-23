@@ -201,6 +201,8 @@ MainActor.assumeIsolated {
         ComponentRegistry.register(Spin.self, FieldAnimator.self, LightFlicker.self, CameraPath.self, TimelinePlayer.self, TilemapMotion.self, PathFollower.self, UILayoutPlayer.self,
                                    VisualScript.self)
         SkeletalAnimation.registerComponents()  // MeshRenderer, Skin, Animator: placed models and characters
+        GameplayComponents.register()  // Health, Hitbox, Hurtbox, Interactable, Door…
+        CameraRig.register()
         print("Loaded \(module.name): \(module.componentNames.joined(separator: ", "))")
         if check {
             // The module filled in this process's GameModule through Engine's API (on Windows,

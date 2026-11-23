@@ -25,7 +25,9 @@ import EngineScene
 //   "layers": [{"name": "Breathe", "clip": "asset:<id>#animation/Breathe", "weight": 0.5},
 //              {"name": "Wave", "clip": "asset:<id>#animation/Wave", "blend": "override", "mask": ["Spine"]}],
 //   "retarget": {"boneMap": {"mixamorig:Spine1": "chest"}, "rotation": "world", "translation": "root"},
-//   "ik": [{"name": "Look", "type": "aim", "bones": ["chest", "neck", "head"], "targetEntity": "Target", "weightParameter": "look"}]
+//   "ik": [{"name": "Look", "type": "aim", "bones": ["chest", "neck", "head"], "targetEntity": "Target", "weightParameter": "look"}],
+//   "hitboxes": [{"name": "Slash", "state": "Jump", "bone": "hand.R", "start": 0.3, "end": 0.6,
+//                 "shape": {"kind": "capsule", "radius": 0.1, "to": [0, -0.5, 0]}, "damage": {"amount": 20, "type": "slash"}}]
 // }
 // ```
 //
@@ -325,10 +327,14 @@ public struct AnimationGraph: Codable, Equatable, Sendable {
     /// Inverse kinematics nodes run on the pose after the states and layers, in order
     /// (`Animator.ik`; AnimationIK.swift).
     public var ik: [AnimationIKNode]
+    /// Hitboxes on bones, each active during part of a state (`Animator.hitboxes`; a swing deals
+    /// its damage to hurtboxes it touches, once per victim).
+    public var hitboxes: [HitboxTrack]
 
     public init(preview: String? = nil, parameters: [AnimationGraphParameter] = [], states: [AnimationGraphState] = [],
                 transitions: [AnimationGraphTransition] = [], layers: [AnimationGraphLayer] = [], initialState: String? = nil,
-                anyStatePosition: Vec2 = Vec2(0, -120), retarget: AnimationRetargetOptions? = nil, ik: [AnimationIKNode] = []) {
+                anyStatePosition: Vec2 = Vec2(0, -120), retarget: AnimationRetargetOptions? = nil, ik: [AnimationIKNode] = [],
+                hitboxes: [HitboxTrack] = []) {
         self.preview = preview
         self.parameters = parameters
         self.states = states
@@ -338,9 +344,10 @@ public struct AnimationGraph: Codable, Equatable, Sendable {
         self.anyStatePosition = anyStatePosition
         self.retarget = retarget
         self.ik = ik
+        self.hitboxes = hitboxes
     }
 
-    private enum CodingKeys: String, CodingKey { case preview, parameters, states, transitions, layers, initialState, anyStatePosition, retarget, ik }
+    private enum CodingKeys: String, CodingKey { case preview, parameters, states, transitions, layers, initialState, anyStatePosition, retarget, ik, hitboxes }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -353,9 +360,10 @@ public struct AnimationGraph: Codable, Equatable, Sendable {
         anyStatePosition = try c.decodeIfPresent(Vec2.self, forKey: .anyStatePosition) ?? Vec2(0, -120)
         retarget = try c.decodeIfPresent(AnimationRetargetOptions.self, forKey: .retarget)
         ik = try c.decodeIfPresent([AnimationIKNode].self, forKey: .ik) ?? []
+        hitboxes = try c.decodeIfPresent([HitboxTrack].self, forKey: .hitboxes) ?? []
     }
 
-    /// Leaves `ik` out when there are no nodes (files from before IK stay as they were).
+    /// Leaves `ik` and `hitboxes` out when there are none (older files stay as they were).
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encodeIfPresent(preview, forKey: .preview)
@@ -367,6 +375,12 @@ public struct AnimationGraph: Codable, Equatable, Sendable {
         try c.encode(anyStatePosition, forKey: .anyStatePosition)
         try c.encodeIfPresent(retarget, forKey: .retarget)
         if !ik.isEmpty { try c.encode(ik, forKey: .ik) }
+        if !hitboxes.isEmpty { try c.encode(hitboxes, forKey: .hitboxes) }
+    }
+
+    /// `base`, or `base 2`, `base 3`… so it is unused among the hitbox names.
+    public func uniqueHitboxName(_ base: String) -> String {
+        Self.unique(base.isEmpty ? "Hit" : base, taken: Set(hitboxes.map(\.name)))
     }
 
     /// `base`, or `base 2`, `base 3`… so it is unused among the IK node names.
@@ -542,6 +556,15 @@ public enum AnimationGraphCheck {
         for node in graph.ik {
             if !ikNames.insert(node.name).inserted { problems.append("two IK nodes are named '\(node.name)'") }
             problems += node.problems(parameters: kinds)
+        }
+        var hitboxNames = Set<String>()
+        let stateNames = Set(graph.flattened().states.map(\.name))
+        for track in graph.hitboxes {
+            if !hitboxNames.insert(track.name).inserted { problems.append("two hitboxes are named '\(track.name)'") }
+            problems += track.problems
+            if let state = track.state, !state.isEmpty, !stateNames.contains(state) {
+                problems.append("hitbox '\(track.name)' names state '\(state)', which doesn't exist")
+            }
         }
         if let clipExists {
             for key in graph.clipKeys where !clipExists(key) { problems.append("clip '\(key)' doesn't exist") }

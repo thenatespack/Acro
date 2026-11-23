@@ -15,6 +15,7 @@ public enum EditorAnimationGraphCommands {
         AnimGraphOpenCommand.self,
         AnimGraphBonesCommand.self,
         AnimGraphClipEventsCommand.self,
+        AnimGraphHitboxesCommand.self,
         AnimGraphSetClipEventsCommand.self,
     ]
 

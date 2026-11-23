@@ -159,12 +159,13 @@ extension Animator {
         graph != nil || clipHandles.contains { $0.key.hasPrefix(AssetReference.scheme) }
     }
 
-    /// Takes `graph`'s state machine, parameters and layers (`replaceGraph`), and its retarget
-    /// options.
+    /// Takes `graph`'s state machine, parameters and layers (`replaceGraph`), its retarget
+    /// options, IK nodes and hitboxes.
     public mutating func apply(_ graph: AnimationGraph) {
         replaceGraph(graph.stateMachine, parameters: graph.parameterDefaults, layers: graph.additiveLayers)
         retarget = graph.retarget
         replaceIK(graph.ik)
+        if !graph.hitboxes.isEmpty { hitboxes = graph.hitboxes }
     }
 
     /// An animator playing `graph` on `root`'s subtree (`World.animationRig(of:)`), with
@@ -176,6 +177,7 @@ extension Animator {
         self.graph = reference
         retarget = graph.retarget
         if !graph.ik.isEmpty { ik = graph.ik }
+        if !graph.hitboxes.isEmpty { hitboxes = graph.hitboxes }
     }
 }
 

@@ -803,6 +803,90 @@ path (start and end are checked); crouch, ledge and climb inputs aren't in `NetC
 stride is a constant fraction of height, no animation-driven foot contacts; IK hand points are
 exposed but nothing sets IK targets automatically.
 
+### Combat and interaction (roadmap 3B)
+
+Components in EngineScene (Gameplay/: Damage.swift, HitShapes.swift, Interaction.swift; every key
+optional, registered by `GameplayComponents.register()`): `Health`, `Hurtbox`, `Hitbox`,
+`Interactable`, `Interactor`, `Door`, `Lever`, `Container`, `Pickup`; `HitboxTrack` on
+`Animator.hitboxes`. `World.applyDamage` / `heal` / `combat` (hit log, damage types),
+`World.timeScale` / `hitStop`. Play systems in Engine (Gameplay/: `world.addGameplay`, added by the
+editor's play mode and `ScenePlayback`): "interaction" and "interaction.devices" (`.update`),
+"combat" and "gameFeel" (`.lateUpdate`). `.animgraph` `hitboxes` (the Animation Graph tab's
+Hitboxes section, `animGraph.hitboxes`); `.character` `combat` (Character Builder Combat section,
+`character.combat`; importer version 3). Tools `combat.inspect`, `combat.simulateHit`,
+`combat.overlay`, `interaction.list`, `interaction.use`. Visual Script nodes in
+VisualScriptCombatNodes.swift. Demo scene `combat`; SampleGame `Interact.scene` / `Combat.scene`
+with playtests. The editor Game view outlines the focused interactable with a second
+`SelectionOutlineRenderer` (`World.interactionFocus`).
+Not done: damage types are code or per-world data (`World.combat.damageTypes`), not a project
+file; `Health.resistances` and `Interactor.items` are dictionaries the inspector can edit but not
+add keys to (scene files and `component.setField` can); hitbox tracks are keyed to a state's
+normalized cycle, not to clip frames or events, and there is no hitbox gizmo or timeline strip in
+the Animation Graph tab's preview (the Scene view overlay draws them while playing); fast swings
+are tested once per frame with no sweep, so a thin blade can skip a small hurtbox at low frame
+rates; the `.character` default hitbox is a fist sphere (no weapon attachment hitboxes); hit
+stop freezes the whole world (no per-entity time scale); camera shake moves the active camera
+entity and assumes nothing else edits it after `.lateUpdate` (3C's camera rigs should call or
+replace `GameFeel` rather than fight it); hit flashes and the focus highlight both multiply
+`MeshRenderer.tint`, so an entity flashed while highlighted can keep a wrong tint until its
+highlight ends; exported games and GameRunner get the tint highlight and the prompt text but no
+outline (`SceneRenderer.renderOffscreen` in EngineRendering has no hook for it); prompts are a
+billboard `TextMesh` (no icon glyphs, no UI-layer prompt); the glyph is the action's first
+keyboard or gamepad binding, switching on the last device pressed; doors swing their transform
+only (a door with a static `Collider` doesn't move its body: make the panel kinematic); levers
+toggle one target by name; containers hand over everything at once (no inventory UI);
+`interaction.use` and `combat.simulateHit` aren't recorded in playtests (press input actions).
+### Camera rigs (`CameraRig`)
+
+Not a file type: a component (EngineRendering/Camera, CameraRig.swift and CameraRigSystem.swift),
+ready for the action and platformer templates. A rig is a virtual camera: `mode` thirdPerson |
+firstPerson | topDown | sideScroller | fixed, `target` (EntityRef; none follows the rig's own
+entity), `targetOffset` (the followed point), `priority`, `enabled`, `camera` (which Camera it
+moves: else its own entity's Camera, else the active camera with the lowest index), `fieldOfView`,
+`blendTime`, `blendCurve` (an `Easing`), `distance` / `minDistance` / `maxDistance`,
+`shoulderOffset`, `yaw` / `pitch` / `minPitch` / `maxPitch`, `autoRecenter` / `recenterDelay` /
+`recenterTime`, `headBob` / `headBobFrequency` / `rotateTarget` (first person), `sideDirection` /
+`deadZone` / `lookAhead` / `lookAheadTime` (side scroller), `collision` / `collisionRadius` /
+`collisionMask` / `pullInTime` / `easeOutTime`, `positionDamping` (per world axis) /
+`rotationDamping` (yaw, pitch), and input: `inputEnabled`, `orbitAction` / `zoomAction` /
+`recenterAction` (named actions of `CameraRigSystem.actions`, default right stick, d-pad up/down,
+right-stick click or middle mouse), `mouseOrbit` (right button held or mouse captured),
+`orbitSpeed`, `mouseSensitivity`, `zoomSpeed`, `invertX` / `invertY`. Every key is optional;
+`distance`, `pitch` and its limits and the damping are optional fields whose unset value is the
+mode's (`CameraRigMode.defaults`). State the system writes (readable in playtests): `isLive`,
+`blendWeight`, `cameraPosition`, `probeStart`, `probeEnd`, `probeHit`.
+The "cameraRigs" system (`world.addCameraRigs(input:)`, `.lateUpdate`; added by the editor's play
+mode, `ScenePlayback` (GameRunner, exported games)) evaluates every enabled rig each frame (standby
+rigs too, so a blend follows both ends), picks the live one by priority, blends position (lerp),
+rotation (slerp) and field of view over the new rig's `blendTime` (from the pose reached when a
+blend is interrupted) and writes the output camera's `Transform` (in its parent's space) and
+`fovY`. Switching = raising a priority: `world.activateCameraRig(_:blendTime:)`, the tool
+`cameraRig.activate`, the node Activate Camera Rig. Collision sphere-casts from the followed point to
+the wanted camera position, retrying past bodies of the target's subtree, its nearest
+`CharacterController` / `Ragdoll` ancestor's subtree (ragdoll bones), the rig and the camera; the
+camera pulls in within `pullInTime` (never more than a collision radius behind the hit) and eases
+out over `easeOutTime`. Smoothing is `1 - exp(-dt / time)` everywhere (tested at 30 vs 144 fps).
+Tools: `cameraRig.state`, `.activate`, `.setTarget` (undoable when editing). Visual Script nodes
+(VisualScriptCameraNodes.swift): Activate Camera Rig, Set Camera Rig Target, Set Camera Rig Mode,
+Live Camera Rig. Editor: Add Component entry (a third-person rig), "camera-rig" icon (rig entities
+show as cameras in the hierarchy and get a billboard), Scene view gizmo (each rig's camera as a
+small frustum, the followed point and the probe, red past a hit; selected rigs probe the scene's
+colliders in edit mode), the Game view caption names the live rig. Demo scene `camerarigs`
+(`CAMERARIGS_MODE=orbit|first|top|side`, C next rig, G probes); SampleGame `CameraRigs.scene` and
+`Playtests/CameraRigs.playtest.json` (collision in front of a wall, a blend through a visual script).
+Gaps: the component lives in EngineRendering (it needs physics queries and `Camera`), not
+EngineScene; one output camera at a time (no split-screen brains yet); blends are straight lerps
+(no arc around the target, and a blend can pass through a wall since collision is per rig, not on
+the blended pose); first person has no collision or near-clip push-back, so a camera against a
+wall can see through it; side-scroller dead zone and look-ahead are horizontal (look-ahead along
+the view's right only, none vertically); auto-recenter needs the target's +Z to be its facing and
+waits for it to move faster than 0.5 m/s; `rotateTarget` sets the target's local rotation (assumes
+an unrotated parent); rig input actions live on the system (`CameraRigSystem.actions`), not in the
+project's input settings or a visual script's `actions` (playtests declare them in `actions`);
+mouse orbit in the editor's Game view needs the right button held (no capture toggle); the
+Scene view gizmo's edit-mode probe keeps a second physics world in step with the scene; no camera
+shake, no look-at framing of a second target, no per-rig post-FX; the editor features were checked
+by tests, not in the running editor.
 ### Light probes (`ReflectionProbe`, `IrradianceVolume`, `lighting.bake`)
 
 Baked indirect light for interiors (LightProbes.swift, SceneRenderer+Probes.swift, probes.glsl).
