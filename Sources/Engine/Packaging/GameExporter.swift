@@ -375,6 +375,28 @@ public struct GameExporter: Sendable {
     }
 
     /// Writes the generated player package (only files whose contents changed, so builds stay incremental).
+    /// Whether game sources import full Foundation outside a `#if os(WASI)` / `#else` block:
+    /// such code needs Foundation linked on the web (see `writePlayerPackage`).
+    package static func importsFullFoundation(sourcesIn directory: URL) -> Bool {
+        guard let files = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil) else { return false }
+        for case let file as URL in files where file.pathExtension == "swift" {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            var previous = ""
+            for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+                let code = line.trimmingCharacters(in: .whitespaces)
+                if code.isEmpty || code.hasPrefix("//") { continue }
+                // `import Foundation`, `@preconcurrency import Foundation`, `import struct Foundation.Date`, ...
+                let words = code.split(separator: " ").filter { !$0.hasPrefix("@") }
+                if words.first == "import", let module = words.last?.split(separator: ".").first, module == "Foundation",
+                   previous != "#else" {
+                    return true
+                }
+                previous = code
+            }
+        }
+        return false
+    }
+
     public func writePlayerPackage() throws {
         let fm = FileManager.default
         let root = playerPackage
@@ -416,6 +438,7 @@ public struct GameExporter: Sendable {
                 }
             }
         }
+        let gameUsesFoundation = !options.sceneOnly && Self.importsFullFoundation(sourcesIn: link.resolvingSymlinksInPath())
         let engine = options.enginePackage.standardizedFileURL
         let identity = engine.lastPathComponent.lowercased()
         let web = options.platform == .web
@@ -433,7 +456,10 @@ public struct GameExporter: Sendable {
         let wasmSettings = web
             ? #".enableUpcomingFeature("MemberImportVisibility"), .unsafeFlags(["Foundation", "FoundationInternationalization", "_FoundationICU", "CoreFoundation"].flatMap { ["-Xfrontend", "-disable-autolink-library", "-Xfrontend", $0] })"#
             : ""
-        let gameSettings = web ? ",\n                            swiftSettings: [\(wasmSettings)]" : ""
+        // A game whose code imports Foundation (JSONSerialization, String(format:), ...) links all
+        // of it, ICU included: its target keeps autolinking. `run` says what that costs.
+        let gameWasmSettings = gameUsesFoundation ? #".enableUpcomingFeature("MemberImportVisibility")"# : wasmSettings
+        let gameSettings = web ? ",\n                            swiftSettings: [\(gameWasmSettings)]" : ""
         let playerSettings = web ? ", \(wasmSettings)" : ""
         let manifest = """
             // swift-tools-version: 6.0
@@ -535,7 +561,15 @@ public struct GameExporter: Sendable {
 
         // 2. Build the player.
         try writePlayerPackage()
-        if options.platform == .web { return try runWeb(cook: cook, start: start, progress: progress) }
+        if options.platform == .web {
+            let sources = options.gamePackage.appendingPathComponent("Sources/\(options.gameTarget)", isDirectory: true)
+            if !options.sceneOnly, Self.importsFullFoundation(sourcesIn: sources) {
+                progress?("Note: \(options.gameTarget) imports Foundation, so the web build links all of it (ICU included: "
+                          + "about 35 MB more, 10 MB compressed). To leave it out, import it as "
+                          + "`#if os(WASI) import WASIFoundation #else import Foundation #endif` (see docs/wasm-spike.md)")
+            }
+            return try runWeb(cook: cook, start: start, progress: progress)
+        }
         let built = options.useDocker ? try buildInDocker(staging: staging, progress: progress) : try buildNatively(progress: progress)
 
         // 3. Lay it out.

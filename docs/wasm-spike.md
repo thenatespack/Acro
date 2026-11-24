@@ -117,6 +117,23 @@ the scene at 60 Hz with 0 WebGPU errors, and every request (only `.wgsl` shaders
 a pack you cooked and copies the whole engine bundle (Metal and SPIR-V too); `--export` uses the
 exporter instead.
 
+### Game code and Foundation
+
+If a game's own Swift code imports Foundation (`JSONSerialization`, `String(format:)`, and so on),
+the Web export links all of Foundation, including ICU. That's about 35 MB more, or 10 MB
+compressed, and the export log says so. To leave ICU out, import it like the engine does:
+
+```swift
+#if os(WASI)
+import WASIFoundation   // FoundationEssentials plus the engine's shims (JSONSerialization, String(format:) without %@, ...)
+#else
+import Foundation
+#endif
+```
+
+Games that don't import Foundation, or that import it only this way, are built without
+Foundation autolinking (`GameExporter.importsFullFoundation`).
+
 ## What had to change
 
 | Problem | Change in the spike | Proper fix |

@@ -137,6 +137,24 @@ private func write(_ text: String, to url: URL) throws {
         #expect(readme.contains("application/wasm") && readme.contains("WebGPU") && readme.hasPrefix("Web Export Tests"))
     }
 
+    /// Game code that imports Foundation keeps it linked on the web; the WASI import block doesn't.
+    @Test func detectsGameCodeImportingFoundation() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("WebExportFoundation-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("Game.swift")
+        func imports(_ source: String) throws -> Bool {
+            try source.write(to: file, atomically: true, encoding: .utf8)
+            return GameExporter.importsFullFoundation(sourcesIn: dir)
+        }
+        #expect(try !imports("import Engine\n"))
+        #expect(try imports("import Engine\nimport Foundation\n"))
+        #expect(try imports("@preconcurrency import Foundation\n"))
+        #expect(try imports("import struct Foundation.Date\n"))
+        #expect(try !imports("#if os(WASI)\nimport WASIFoundation\n#else\nimport Foundation\n#endif\n"))
+        #expect(try !imports("// import Foundation\nimport FoundationEssentials\n"))
+    }
+
     @Test func engineResourcesForTheWeb() {
         #expect(GameExporter.isWebEngineResource("Shaders/mesh.vert.wgsl"))
         #expect(GameExporter.isWebEngineResource("Shaders/FidelityFX/x.comp.wgsl"))
