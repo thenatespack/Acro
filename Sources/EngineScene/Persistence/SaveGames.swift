@@ -184,6 +184,7 @@ public final class SaveGames {
     public func save<State: Encodable>(slot: String, state: State, world: World? = nil, sceneName: String = "",
                                        playtime: Double = 0, thumbnail: Image? = nil, date: Date = Date()) throws -> SaveSlotInfo {
         try checkName(slot)
+        defer { UserData.changed() }
         var worldText: String?
         var parents: [SavedParentLink] = []
         if let world {
@@ -239,6 +240,7 @@ public final class SaveGames {
     /// Removes the slot's files (no error if it doesn't exist).
     public func delete(slot: String) throws {
         try checkName(slot)
+        defer { UserData.changed() }
         for url in [file(slot), thumbnailURL(slot)] where FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
         }

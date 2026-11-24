@@ -12,6 +12,21 @@ import Testing
         }
     }
 
+    /// Every key means the same physical key on every platform: each native window maps every
+    /// case (the keypad's Enter is `enter` everywhere).
+    @MainActor @Test func nativeWindowsMapEveryKey() {
+        #if canImport(AppKit)
+        let appKit = Set(AppKitWindow.keyMap.values).union(AppKitWindow.modifierMap.values.map { $0.0 })
+        #expect(appKit == Set(Key.allCases), "AppKitWindow lacks \(Set(Key.allCases).subtracting(appKit))")
+        #expect(AppKitWindow.keyMap[76] == .enter && AppKitWindow.keyMap[36] == .enter)
+        #endif
+        #if ENGINE_VULKAN
+        let glfw = GLFWWindow.keyMap.map { $0.0 }
+        #expect(Set(glfw) == Set(Key.allCases), "GLFWWindow lacks \(Set(Key.allCases).subtracting(glfw))")
+        #expect(glfw.count == Key.allCases.count, "a key is mapped twice")
+        #endif
+    }
+
     @Test func codesFollowTheUIEventsNames() {
         #expect(WebInputMapping.key(forCode: "KeyW") == .w)
         #expect(WebInputMapping.key(forCode: "Digit0") == .num0)
@@ -21,7 +36,11 @@ import Testing
         #expect(WebInputMapping.key(forCode: "MetaLeft") == .leftSuper)
         #expect(WebInputMapping.key(forCode: "OSRight") == .rightSuper)
         #expect(WebInputMapping.key(forCode: "NumpadEnter") == .enter)
-        #expect(WebInputMapping.key(forCode: "Period") == nil)
+        #expect(WebInputMapping.key(forCode: "Period") == .period)
+        #expect(WebInputMapping.key(forCode: "Quote") == .apostrophe)
+        #expect(WebInputMapping.key(forCode: "Numpad7") == .numpad7)
+        #expect(WebInputMapping.key(forCode: "NumpadSubtract") == .numpadSubtract)
+        #expect(WebInputMapping.key(forCode: "IntlBackslash") == nil)
         #expect(WebInputMapping.key(forCode: "") == nil)
     }
 

@@ -2,6 +2,12 @@ public enum Key: String, Hashable, Sendable, CaseIterable, Codable {
     case a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z
     case num0, num1, num2, num3, num4, num5, num6, num7, num8, num9
     case space, enter, escape, tab, backspace, grave, leftBracket, rightBracket, comma
+    /// Punctuation, by its place on a US keyboard (the physical key: `minus` is the key right of 0,
+    /// whatever the layout prints on it), like the letters.
+    case minus, equal, semicolon, apostrophe, backslash, period, slash
+    /// The numeric keypad. Its Enter key is `enter` on every platform.
+    case numpad0, numpad1, numpad2, numpad3, numpad4, numpad5, numpad6, numpad7, numpad8, numpad9
+    case numpadDecimal, numpadAdd, numpadSubtract, numpadMultiply, numpadDivide, numpadEqual
     case f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12
     case delete, home, end, pageUp, pageDown
     case left, right, up, down

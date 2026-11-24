@@ -10,6 +10,8 @@ import EngineCore
 /// - macOS: `~/Library/Application Support/<app>/`
 /// - Linux: `$XDG_CONFIG_HOME/<app>/`, or `~/.config/<app>/`
 /// - Windows: `%APPDATA%\<app>\`
+/// - Web (WASI): `/userdata/<app>/` in the page's in-memory filesystem, which Web/saves.js loads
+///   from IndexedDB before the game starts and writes back after each `changed()`
 ///
 /// `ENGINE_USER_DATA_DIR` replaces the whole directory (no `<app>` is appended), so tests and
 /// screenshot runs can point the game at a scratch folder and never see, or touch, the real
@@ -32,7 +34,10 @@ public enum UserData {
         }
         let home = FileManager.default.homeDirectoryForCurrentUser
         let base: URL
-        #if os(Windows)
+        #if os(WASI)
+        _ = home
+        base = URL(fileURLWithPath: "/userdata", isDirectory: true)
+        #elseif os(Windows)
         base = env["APPDATA"].map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? home.appendingPathComponent("AppData/Roaming", isDirectory: true)
         #elseif os(Linux)
@@ -46,6 +51,15 @@ public enum UserData {
             ?? home.appendingPathComponent("Library/Application Support", isDirectory: true)
         #endif
         return base.appendingPathComponent(app, isDirectory: true)
+    }
+
+    /// Called after the engine writes or removes user data files (`SaveGames`, `SettingsStore`).
+    /// The web player persists the folder then (IndexedDB); nil elsewhere.
+    nonisolated(unsafe) public static var onChange: (() -> Void)?
+
+    /// Tells `onChange` that files under the user data directory changed.
+    public static func changed() {
+        onChange?()
     }
 }
 

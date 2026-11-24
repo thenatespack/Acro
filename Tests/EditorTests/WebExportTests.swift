@@ -107,7 +107,7 @@ private func write(_ text: String, to url: URL) throws {
 
         let fm = FileManager.default
         #expect(!fm.fileExists(atPath: site.appendingPathComponent("old.txt").path))
-        for path in ["index.html", "loader.js", "app/WebExportTestsGamePlayer.wasm", "app/instantiate.js", "app/runtime.js",
+        for path in ["index.html", "loader.js", "saves.js", "app/WebExportTestsGamePlayer.wasm", "app/instantiate.js", "app/runtime.js",
                      "vendor/browser_wasi_shim/index.js", "vendor/browser_wasi_shim/LICENSE-MIT", "game.pack", "player.json",
                      "README.txt", "engine/manifest.json"] + expected.map({ "engine/" + $0 }) {
             #expect(fm.fileExists(atPath: site.appendingPathComponent(path).path), "\(path)")

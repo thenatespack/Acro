@@ -92,7 +92,7 @@ package final class GLFWWindow: PlatformWindow, VulkanSurfaceProvider {
         textTarget = nil
         // Polling state (rather than callbacks) keeps this free of C-callback plumbing.
         for (key, code) in Self.keyMap {
-            input.setKey(key, down: glfwGetKey(handle, code) == GLFW_PRESS)
+            input.setKey(key, down: glfwGetKey(handle, code) == GLFW_PRESS || (key == .enter && glfwGetKey(handle, GLFW_KEY_KP_ENTER) == GLFW_PRESS))
         }
         for (button, code) in Self.buttonMap {
             input.setButton(button, down: glfwGetMouseButton(handle, code) == GLFW_PRESS)
@@ -224,13 +224,15 @@ package final class GLFWWindow: PlatformWindow, VulkanSurfaceProvider {
         glfwGetWindowUserPointer(window).map { Unmanaged<GLFWWindow>.fromOpaque($0).takeUnretainedValue() }
     }
 
+    /// The keypad's Enter is `enter`, as on the other platforms.
     private static let reverseKeyMap: [Int32: Key] = Dictionary(uniqueKeysWithValues: keyMap.map { ($0.1, $0.0) })
+        .merging([GLFW_KEY_KP_ENTER: .enter]) { a, _ in a }
 
     private static let buttonMap: [(MouseButton, Int32)] = [
         (.left, GLFW_MOUSE_BUTTON_LEFT), (.right, GLFW_MOUSE_BUTTON_RIGHT), (.middle, GLFW_MOUSE_BUTTON_MIDDLE),
     ]
 
-    private static let keyMap: [(Key, Int32)] = [
+    package static let keyMap: [(Key, Int32)] = [
         (.a, GLFW_KEY_A), (.b, GLFW_KEY_B), (.c, GLFW_KEY_C), (.d, GLFW_KEY_D), (.e, GLFW_KEY_E),
         (.f, GLFW_KEY_F), (.g, GLFW_KEY_G), (.h, GLFW_KEY_H), (.i, GLFW_KEY_I), (.j, GLFW_KEY_J),
         (.k, GLFW_KEY_K), (.l, GLFW_KEY_L), (.m, GLFW_KEY_M), (.n, GLFW_KEY_N), (.o, GLFW_KEY_O),
@@ -242,6 +244,13 @@ package final class GLFWWindow: PlatformWindow, VulkanSurfaceProvider {
         (.space, GLFW_KEY_SPACE), (.enter, GLFW_KEY_ENTER), (.escape, GLFW_KEY_ESCAPE),
         (.tab, GLFW_KEY_TAB), (.backspace, GLFW_KEY_BACKSPACE), (.grave, GLFW_KEY_GRAVE_ACCENT),
         (.leftBracket, GLFW_KEY_LEFT_BRACKET), (.rightBracket, GLFW_KEY_RIGHT_BRACKET), (.comma, GLFW_KEY_COMMA),
+        (.minus, GLFW_KEY_MINUS), (.equal, GLFW_KEY_EQUAL), (.semicolon, GLFW_KEY_SEMICOLON),
+        (.apostrophe, GLFW_KEY_APOSTROPHE), (.backslash, GLFW_KEY_BACKSLASH), (.period, GLFW_KEY_PERIOD), (.slash, GLFW_KEY_SLASH),
+        (.numpad0, GLFW_KEY_KP_0), (.numpad1, GLFW_KEY_KP_1), (.numpad2, GLFW_KEY_KP_2), (.numpad3, GLFW_KEY_KP_3),
+        (.numpad4, GLFW_KEY_KP_4), (.numpad5, GLFW_KEY_KP_5), (.numpad6, GLFW_KEY_KP_6), (.numpad7, GLFW_KEY_KP_7),
+        (.numpad8, GLFW_KEY_KP_8), (.numpad9, GLFW_KEY_KP_9), (.numpadDecimal, GLFW_KEY_KP_DECIMAL),
+        (.numpadAdd, GLFW_KEY_KP_ADD), (.numpadSubtract, GLFW_KEY_KP_SUBTRACT), (.numpadMultiply, GLFW_KEY_KP_MULTIPLY),
+        (.numpadDivide, GLFW_KEY_KP_DIVIDE), (.numpadEqual, GLFW_KEY_KP_EQUAL),
         (.f1, GLFW_KEY_F1), (.f2, GLFW_KEY_F2), (.f3, GLFW_KEY_F3), (.f4, GLFW_KEY_F4), (.f5, GLFW_KEY_F5),
         (.f6, GLFW_KEY_F6), (.f7, GLFW_KEY_F7), (.f8, GLFW_KEY_F8), (.f9, GLFW_KEY_F9), (.f10, GLFW_KEY_F10),
         (.f11, GLFW_KEY_F11), (.f12, GLFW_KEY_F12),

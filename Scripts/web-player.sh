@@ -9,7 +9,7 @@
 # JavaScriptKit's PackageToJS plugin, and assembles a static site in <dir> (default
 # .build-wasm/web-player):
 #
-#   index.html, loader.js   from Web/
+#   index.html, loader.js, saves.js   from Web/
 #   app/                    PackageToJS output (WasmPlayer.wasm, instantiate.js, runtime.js, ...)
 #   vendor/browser_wasi_shim/   the WASI shim (npm package, cached in .build-wasm/web-deps)
 #   engine/                 the engine resources (Acro_EngineCore.bundle) and engine/manifest.json
@@ -116,7 +116,7 @@ fi
 
 rm -rf "$out"
 mkdir -p "$out/app" "$out/vendor" "$out/engine"
-cp Web/index.html Web/loader.js "$out/"
+cp Web/index.html Web/loader.js Web/saves.js "$out/"
 cp -R "$packaged/." "$out/app/"
 cp -R "$deps/node_modules/@bjorn3/browser_wasi_shim/dist" "$out/vendor/browser_wasi_shim"
 cp -R "$resources/." "$out/engine/"

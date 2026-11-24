@@ -463,6 +463,8 @@ public final class Engine {
             // The canvas is sized by the page's CSS, so the configured window size doesn't apply.
             let canvasWindow = try CanvasWindow()
             window = canvasWindow
+            // Saves and settings go to IndexedDB after each write (Web/saves.js).
+            UserData.onChange = { MainActor.assumeIsolated { WebHost.userDataChanged() } }
             if !config.title.isEmpty { canvasWindow.title = config.title }
             device = try WebGPURenderDevice(sampleCount: sampleCount)
             #else

@@ -23,6 +23,9 @@ import EngineScene
 //    discard below the cutoff and no color), the depth-only fragment stage masked graphs cast
 //    shadows and fill the depth prepass with (`metalDepthFragment` / `spirvDepthFragment`), and
 //    into decal_graph.frag, which decals with a graph material draw with (`metalDecalFragment`).
+// 4. For WebGPU the IR is emitted as WGSL and replaces the body of `graphSurface_u0028_` (naga's
+//    name for `graphSurface()`) in the three templates' .wgsl (compile-shaders.sh output), where
+//    the function reads and writes the module's globals. Plain text, so it works in the browser.
 //
 // The program's `key` is a hash of the generated code: materials whose graphs differ only in
 // constants share pipelines.
@@ -36,8 +39,8 @@ public struct MaterialGraphProgram: Sendable, Equatable {
     public var metalFragmentColor0: String?
     /// mesh_graph's fragment stage in SPIR-V with the graph's code.
     public var spirvFragment: [UInt8]
-    /// The fragment stage in WGSL, for the WebGPU backend: only for programs with fixed shaders
-    /// (`TerrainSplat`); compiled graphs have none, so WebGPU can't draw them.
+    /// The fragment stage in WGSL, for the WebGPU backend (nil when the engine's resources have no
+    /// WGSL templates: WebGPU then can't draw it).
     public var wgslFragment: String? = nil
     /// mesh_graph_depth's fragment stage with the graph's code, in MSL and in SPIR-V: discards
     /// where the graph's opacity is below push constant `params.z`, writes no color. Draw it
@@ -49,6 +52,8 @@ public struct MaterialGraphProgram: Sendable, Equatable {
     /// with this program casts its whole shape (`Material.masksDepth` is false).
     public var metalDepthFragment: String? = nil
     public var spirvDepthFragment: [UInt8]? = nil
+    /// The same depth-only stage in WGSL (WebGPU), when the templates have WGSL.
+    public var wgslDepthFragment: String? = nil
     /// decal_graph's fragment stage with the graph's code, in MSL and in SPIR-V: a `Decal` whose
     /// `material` has this program paints the graph's surface (see `DecalRenderer`). Draw it
     /// after decal.vert with the program's values in storage buffer 0, its textures in slots
@@ -56,6 +61,8 @@ public struct MaterialGraphProgram: Sendable, Equatable {
     /// Optional, as the depth variant: without both, such decals draw their own texture and tint.
     public var metalDecalFragment: String? = nil
     public var spirvDecalFragment: [UInt8]? = nil
+    /// The same decal stage in WGSL (WebGPU), when the templates have WGSL.
+    public var wgslDecalFragment: String? = nil
     /// The graph's constants, the shader's `graphValues.values` (at least one).
     public var values: [Vec4]
     /// The textures in shader slots 1-5, in order.
@@ -92,6 +99,7 @@ public enum MaterialGraphCompiler {
         var builder = GraphBuilder(graph: graph, resolveTexture: resolveTexture ?? { AssetReference($0) })
         builder.build()
         let msl = MSLEmitter.body(builder.ir, outputs: builder.outputs)
+        let wgsl = WGSLEmitter.body(builder.ir, outputs: builder.outputs)
         let key = String(fnv1a64(Array(msl.utf8)), radix: 16)
         var warnings = builder.warnings
         let shaders: Shaders
@@ -103,7 +111,10 @@ public enum MaterialGraphCompiler {
                         metalDepth: try template.metalDepth.replacingFunctionBody("graphSurface", with: msl),
                         spirvDepth: try SPIRVSplicer(template.spirvDepth).replacingGraphSurface(builder.ir, outputs: builder.outputs),
                         metalDecal: try template.metalDecal.replacingFunctionBody("graphSurface", with: msl),
-                        spirvDecal: try SPIRVSplicer(template.spirvDecal).replacingGraphSurface(builder.ir, outputs: builder.outputs))
+                        spirvDecal: try SPIRVSplicer(template.spirvDecal).replacingGraphSurface(builder.ir, outputs: builder.outputs),
+                        wgsl: try template.wgsl.map { try $0.replacingWGSLFunctionBody(WGSLEmitter.graphSurface, with: wgsl) },
+                        wgslDepth: try template.wgslDepth.map { try $0.replacingWGSLFunctionBody(WGSLEmitter.graphSurface, with: wgsl) },
+                        wgslDecal: try template.wgslDecal.map { try $0.replacingWGSLFunctionBody(WGSLEmitter.graphSurface, with: wgsl) })
             }
         } catch {
             warnings.append("the material graph shader couldn't be built: \(error)")
@@ -111,11 +122,14 @@ public enum MaterialGraphCompiler {
         }
         var values = builder.ir.values
         if values.isEmpty { values = [.zero] }
-        let program = MaterialGraphProgram(
+        var program = MaterialGraphProgram(
             key: key, metalFragment: shaders.metal, metalFragmentColor0: shaders.metalColor0, spirvFragment: shaders.spirv,
             metalDepthFragment: shaders.metalDepth, spirvDepthFragment: shaders.spirvDepth,
             metalDecalFragment: shaders.metalDecal, spirvDecalFragment: shaders.spirvDecal,
             values: values, textures: builder.textures, usesTime: builder.ir.ops.contains { $0.kind == .input("gTime") }, code: msl)
+        program.wgslFragment = shaders.wgsl
+        program.wgslDepthFragment = shaders.wgslDepth
+        program.wgslDecalFragment = shaders.wgslDecal
         return MaterialGraphCompilation(program: program, warnings: warnings)
     }
 
@@ -131,6 +145,10 @@ public enum MaterialGraphCompiler {
         /// decal_graph.frag's.
         var metalDecal: String
         var spirvDecal: [UInt32]
+        /// The three templates in WGSL (nil without them: the program then has no WGSL).
+        var wgsl: String?
+        var wgslDepth: String?
+        var wgslDecal: String?
     }
 
     struct Shaders {
@@ -141,6 +159,9 @@ public enum MaterialGraphCompiler {
         var spirvDepth: [UInt8]
         var metalDecal: String
         var spirvDecal: [UInt8]
+        var wgsl: String?
+        var wgslDepth: String?
+        var wgslDecal: String?
     }
 
     struct CompileError: Error, CustomStringConvertible {
@@ -160,9 +181,13 @@ public enum MaterialGraphCompiler {
         guard let lit = load("mesh_graph"), let depth = load("mesh_graph_depth"), let decal = load("decal_graph") else {
             return .failure(CompileError("mesh_graph / mesh_graph_depth / decal_graph .frag.metal / .spv missing from the engine's resources"))
         }
-        let color0 = url("mesh_graph", "frag.color0.metal").flatMap { try? String(contentsOf: $0, encoding: .utf8) }
-        return .success(Template(metal: lit.metal, metalColor0: color0, spirv: lit.spirv, metalDepth: depth.metal, spirvDepth: depth.spirv,
-                                 metalDecal: decal.metal, spirvDecal: decal.spirv))
+        func text(_ name: String, _ ext: String) -> String? { url(name, ext).flatMap { try? String(contentsOf: $0, encoding: .utf8) } }
+        // All three or none (a program has WGSL for every stage, or for none).
+        let wgsl = [text("mesh_graph", "frag.wgsl"), text("mesh_graph_depth", "frag.wgsl"), text("decal_graph", "frag.wgsl")]
+        let hasWGSL = wgsl.allSatisfy { $0 != nil }
+        return .success(Template(metal: lit.metal, metalColor0: text("mesh_graph", "frag.color0.metal"), spirv: lit.spirv,
+                                 metalDepth: depth.metal, spirvDepth: depth.spirv, metalDecal: decal.metal, spirvDecal: decal.spirv,
+                                 wgsl: hasWGSL ? wgsl[0] : nil, wgslDepth: hasWGSL ? wgsl[1] : nil, wgslDecal: hasWGSL ? wgsl[2] : nil))
     }()
 
     private static let cacheLock = NSLock()
@@ -729,7 +754,82 @@ enum MSLEmitter {
     }
 }
 
+/// Emits the IR as WGSL statements for `graphSurface`'s body in the WGSL templates (naga output),
+/// where the graph's inputs and outputs, `graphValues`, the textures and `materialSampler` are
+/// module globals with the same names as in the GLSL.
+enum WGSLEmitter {
+    /// naga's name for the GLSL `graphSurface()` (it keeps the SPIR-V debug name, escaping `(` and `)`).
+    static let graphSurface = "graphSurface_u0028_"
+    static let typeNames = ["", "f32", "vec2<f32>", "vec3<f32>", "vec4<f32>"]
+
+    static func body(_ ir: MaterialIR, outputs: [(variable: String, value: GraphValue)]) -> String {
+        var lines: [String] = []
+        func t(_ id: Int) -> String { "t\(id)" }
+        for (id, op) in ir.ops.enumerated() {
+            let a = op.args.map(t)
+            let expr: String
+            switch op.kind {
+            case .constant(let floats):
+                expr = floats.count == 1 ? MSLEmitter.literal(floats[0])
+                    : "\(typeNames[op.size])(\(floats.map(MSLEmitter.literal).joined(separator: ", ")))"
+            case .uniform(let slot):
+                expr = "graphValues.values[\(slot)]" + (op.size == 4 ? "" : "." + MSLEmitter.swizzleText(Array(0..<op.size)))
+            case .input(let name):
+                expr = name
+            case .texture(let slot):
+                expr = "textureSample(\(MaterialGraphCompiler.textureNames[slot]), materialSampler, \(a[0]))"
+            case .add: expr = "\(a[0]) + \(a[1])"
+            case .subtract: expr = "\(a[0]) - \(a[1])"
+            case .multiply: expr = "\(a[0]) * \(a[1])"
+            case .divide: expr = "\(a[0]) / \(a[1])"
+            case .negate: expr = "-\(a[0])"
+            // The GLSL.std.450 functions the builder uses have the same names and argument orders
+            // in WGSL (mix with a scalar factor included).
+            case .function(let name): expr = "\(name)(\(a.joined(separator: ", ")))"
+            case .dot: expr = "dot(\(a[0]), \(a[1]))"
+            case .length: expr = "length(\(a[0]))"
+            case .swizzle(let indices): expr = "\(a[0]).\(MSLEmitter.swizzleText(indices))"
+            case .construct: expr = "\(typeNames[op.size])(\(a.joined(separator: ", ")))"
+            }
+            lines.append("    let \(t(id)): \(typeNames[op.size]) = \(expr);")
+        }
+        for (variable, value) in outputs {
+            lines.append("    \(variable) = \(t(value.id));")
+        }
+        return lines.joined(separator: "\n")
+    }
+}
+
 extension String {
+    /// This WGSL with the body of `fn name()` replaced by `body`.
+    func replacingWGSLFunctionBody(_ name: String, with body: String) throws -> String {
+        guard let signature = range(of: "fn \(name)() {") else {
+            throw MaterialGraphCompiler.CompileError("no function \(name) in the template WGSL")
+        }
+        let open = index(before: signature.upperBound)
+        guard let close = matchingBrace(open) else { throw MaterialGraphCompiler.CompileError("unbalanced braces in \(name)") }
+        for needed in ["graphValues", "materialSampler", "gUV", "gTime", "gBaseColor", "gOcclusion"] + MaterialGraphCompiler.textureNames
+        where !contains(" \(needed): ") {
+            throw MaterialGraphCompiler.CompileError("the template WGSL has no global \(needed)")
+        }
+        return String(self[...open]) + "\n" + body + "\n" + String(self[close...])
+    }
+
+    /// The `}` that closes the `{` at `open`.
+    fileprivate func matchingBrace(_ open: String.Index) -> String.Index? {
+        var depth = 0
+        var i = open
+        while i < endIndex {
+            if self[i] == "{" { depth += 1 }
+            if self[i] == "}" {
+                depth -= 1
+                if depth == 0 { return i }
+            }
+            i = index(after: i)
+        }
+        return nil
+    }
+
     /// This MSL with the body of function `name` replaced by `body`.
     func replacingFunctionBody(_ name: String, with body: String) throws -> String {
         guard let signature = range(of: "void \(name)(") else {

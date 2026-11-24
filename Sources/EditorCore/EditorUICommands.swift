@@ -165,12 +165,12 @@ enum UIKeyParsing {
             "return": .enter, "esc": .escape, "del": .delete, "forwarddelete": .delete, "bksp": .backspace,
             "pgup": .pageUp, "pageup": .pageUp, "pgdn": .pageDown, "pagedown": .pageDown, "arrowleft": .left,
             "arrowright": .right, "arrowup": .up, "arrowdown": .down, "`": .grave, "[": .leftBracket, "]": .rightBracket, ",": .comma,
-            " ": .space,
+            " ": .space, "-": .minus, "=": .equal, ";": .semicolon, "'": .apostrophe, "\\": .backslash, ".": .period, "/": .slash,
         ]
         if let key = aliases[lower] { return key }
         if lower.count == 1, let digit = lower.first?.wholeNumberValue, let key = Key(rawValue: "num\(digit)") { return key }
         if let key = Key.allCases.first(where: { $0.rawValue.lowercased() == lower }) { return key }
-        throw CommandError.failed("Unknown key '\(name)' (letters, digits, enter, escape, tab, space, backspace, delete, arrows, f1…f12, home, end, pageUp, pageDown)")
+        throw CommandError.failed("Unknown key '\(name)' (letters, digits, punctuation, numpad0…numpad9, enter, escape, tab, space, backspace, delete, arrows, f1…f12, home, end, pageUp, pageDown)")
     }
 }
 

@@ -76,12 +76,16 @@ public final class SettingsStore<S: Settings> {
     /// Writes `values` atomically.
     public func save() throws {
         try AtomicFile.write(try Self.encode(values), to: url)
+        UserData.changed()
     }
 
     /// Deletes the file and goes back to the defaults.
     public func reset() throws {
         values = S()
-        if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+            UserData.changed()
+        }
     }
 
     // MARK: Coding

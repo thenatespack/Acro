@@ -45,6 +45,26 @@ private func spirvValidation(_ spirv: [UInt8]) -> String? {
     return process.terminationStatus == 0 ? "" : output
 }
 
+/// Runs naga-cli on `wgsl` when it is installed (nil when it isn't): its output on failure, "" when valid.
+private func wgslValidation(_ wgsl: String) -> String? {
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    let candidates = [ProcessInfo.processInfo.environment["NAGA"], "\(home)/.cargo/bin/naga"].compactMap { $0 }
+    guard let tool = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return nil }
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("MaterialGraphTests-\(UUID().uuidString).wgsl")
+    defer { try? FileManager.default.removeItem(at: url) }
+    guard (try? Data(wgsl.utf8).write(to: url)) != nil else { return nil }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: tool)
+    process.arguments = [url.path]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+    guard (try? process.run()) != nil else { return nil }
+    process.waitUntilExit()
+    let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    return process.terminationStatus == 0 ? "" : output
+}
+
 @MainActor @Suite struct MaterialGraphTests {
     @Test func nodesFlattenTheirFieldsAndRoundTrip() throws {
         let g = try graph(#"""
@@ -100,6 +120,16 @@ private func spirvValidation(_ spirv: [UInt8]) -> String? {
             #expect(depthSPIRV.count % 4 == 0 && depthSPIRV.count > 500)
             if let validation = spirvValidation(depthSPIRV) {
                 #expect(validation.isEmpty, "\(name) depth: \(validation)")
+            }
+            // WGSL (WebGPU): the same body in all three templates, valid for naga.
+            let stages = [("lit", program.wgslFragment), ("depth", program.wgslDepthFragment), ("decal", program.wgslDecalFragment)]
+            for (stage, wgsl) in stages {
+                let wgsl = try #require(wgsl, "\(name) \(stage)")
+                #expect(wgsl.contains("fn graphSurface_u0028_() {\n    let t0: "), "\(name) \(stage)")
+                #expect(!wgsl.contains("textureSample(baseColorMap, materialSampler, _e"), "\(name) \(stage): placeholder body left in")
+                if let validation = wgslValidation(wgsl) {
+                    #expect(validation.isEmpty, "\(name) \(stage) WGSL: \(validation)")
+                }
             }
         }
         #expect(MaterialGraph.preset("nope") == nil)
