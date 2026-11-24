@@ -144,13 +144,14 @@ public struct ShaderSource: Sendable {
         func url(_ ext: String) -> URL? {
             bundle.engineResourceURL(fragment, withExtension: ext, subdirectory: subdirectory)
         }
-        guard let spirv = url("frag.spv") else {
-            throw GraphicsError("No fragment shader named '\(fragment)' found in \(bundle.bundlePath)")
-        }
-        source.spirvFragment = Array(try Data(contentsOf: spirv))
+        // Any of the variants will do: a web export ships only the WGSL ones (GameExporterWeb.swift).
+        source.spirvFragment = try url("frag.spv").map { Array(try Data(contentsOf: $0)) }
         source.metalFragmentSource = try url("frag.metal").map { try String(contentsOf: $0, encoding: .utf8) }
         source.metalFragmentColor0Source = try url("frag.color0.metal").map { try String(contentsOf: $0, encoding: .utf8) }
         source.wgslFragment = try url("frag.wgsl").map { try String(contentsOf: $0, encoding: .utf8) }
+        if source.spirvFragment == nil && source.metalFragmentSource == nil && source.wgslFragment == nil {
+            throw GraphicsError("No fragment shader named '\(fragment)' found in \(bundle.bundlePath)")
+        }
         return source
     }
 }

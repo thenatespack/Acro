@@ -4,7 +4,7 @@ import Foundation
 // Build Game (`game.build`, the toolbar's Build Game button with a project open): cooks the
 // project's scenes into a pack and exports a standalone game (GameExporter: the game module
 // and Engine linked into one release executable, a .app on macOS, a folder with a launcher on
-// Linux). The cook plan is taken from the open project's database on the main actor; cooking
+// Linux, a static web folder for Web). The cook plan is taken from the open project's database on the main actor; cooking
 // and the release build run on a background thread, their progress lines go to the console
 // as they come (drained each frame by `poll`), and the command finishes with the output path.
 
@@ -34,13 +34,14 @@ public enum GameBuildCommand: EditorDeferredCommand {
         /// `Build`, plus the platform, architecture and configuration ("Build/macos-arm64",
         /// "Build/linux-x86_64-debug").
         public var output: String?
-        /// `macos`, `linux` or `windows`. Default: this machine's. A game can only be built for
-        /// this machine's platform (no cross-compiling); `cookOnly` cooks for any.
+        /// `macos`, `linux`, `windows` or `web`. Default: this machine's. A game can only be built for
+        /// this machine's platform (no cross-compiling), or for the web (WebAssembly, from any
+        /// machine with the Swift SDK for WebAssembly); `cookOnly` cooks for any.
         public var platform: CookPlatform?
         /// `release` (optimized, the default) or `debug` (unoptimized, with assertions and debug info).
         public var configuration: BuildConfiguration?
         /// `x86_64` or `arm64`. Default: this machine's. macOS builds either; elsewhere only this
-        /// machine's, unless `docker`.
+        /// machine's, unless `docker`. Ignored for `web`.
         public var architecture: BuildArchitecture?
         /// Build in a Docker container (Linux only): a Linux game from any machine, for either architecture.
         public var docker: Bool?
@@ -74,12 +75,15 @@ public enum GameBuildCommand: EditorDeferredCommand {
         Exports the project as a standalone game: cooks every asset reachable from the scenes into one pack (textures \
         block-compressed for the target GPU family, no source files), builds the game module (a generated one that only plays the scenes when the project has no game code) and Engine in release and \
         links them into one executable, and lays out a runnable app (macOS: <output>/<Name>.app; Linux: <output>/<Name>/ \
-        with run.sh). Runs in the background (the first build compiles Engine in release, minutes; later ones seconds); \
+        with run.sh; Web: <output>/<Name>/, a static folder with index.html, the .wasm and the pack, to host on any web \
+        server and play in a WebGPU browser). Runs in the background (the first build compiles Engine in release, minutes; later ones seconds); \
         progress and errors go to the console. Returns the output path, the pack's contents and sizes, and timings. \
         `platform`, `architecture` (x86_64 or arm64) and `configuration` (release or debug) pick what is built; \
         only this machine's platform can be built (macOS builds either architecture, other platforms only their own), \
         except with `docker: true`, which builds a Linux game in a container from any machine for either architecture \
-        (Docker must be installed and running; the first build takes many minutes). `output` may be any folder. \
+        (Docker must be installed and running; the first build takes many minutes). `platform: web` builds from any machine \
+        with the open-source Swift toolchain and its WebAssembly SDK (the error says how to install them); the result \
+        reports the .wasm's gzip and brotli sizes. `output` may be any folder. \
         `cookOnly` writes just the pack (for any platform). The output folder is replaced.
         """
     public static func isAvailable(in session: EditorSession) -> Bool {

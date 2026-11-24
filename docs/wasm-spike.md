@@ -83,6 +83,40 @@ assets into a temporary project at run time, and `AssetDatabase` finds no files 
 filesystem (editor-side; W3). Packs are cooked for one GPU family (ASTC for Apple, `--gpu bc` for
 the rest). No saves (IndexedDB) yet.
 
+### Web export (W2B)
+
+A project exports to the web like to any other platform: **Web** in the editor's Export Game
+dialog, `game.build` with `platform: "web"` (MCP), or
+
+```sh
+swift run Editor --build-game Projects/SampleGame --platform web [--config debug] [--out <dir>]
+Scripts/web-player.sh --export Projects/SampleGame [--release]     # the same, then serves it
+```
+
+The result, `<out>/<Name>/` (default `<project>/Build/web/<Name>/`), is a static folder in the
+layout `Web/loader.js` reads: `index.html`, `loader.js`, `app/` (PackageToJS output),
+`vendor/browser_wasi_shim/`, `engine/` (only `Shaders/*.wgsl` and `Fonts/`, listed in
+`engine/manifest.json`), `game.pack`, `player.json` and a `README.txt` on hosting it (any static
+server; `.wasm` as `application/wasm`; a WebGPU browser). `GameExporterWeb.swift` has the details:
+the same generated player package as native exports (in `.build/game-export-web/<Target>`, with a
+JavaScriptKit dependency for the `js` plugin), built with `ENGINE_WASM=1` by
+`~/.swiftly/bin/swift package --swift-sdk swift-6.4.2-RELEASE_wasm js -c <cfg> --no-optimize`,
+DWARF stripped at link time in release, then `wasm-opt -Oz` when binaryen is installed. The
+generated `main.swift` now declares the entry point with `@_extern(c)` (and the `Extern` feature)
+for every platform. A missing toolchain or SDK disables Web in the dialog with how to install it
+(`ACRO_WASM_SWIFT`, `ACRO_WASM_SDK` and `ACRO_WASM_OPT` override the defaults).
+
+SampleGame, release (2026-11-23): the first build takes about 11 minutes (all of Engine for
+wasm32); the folder is 59 MB: a 54.5 MB `.wasm` (79.0 MB linked; `-Os` gives 55.0 MB),
+**21.5 MB gzip -9, 14.2 MB brotli -q 11**, a 1.7 MB pack (BC textures, the Web default), 3 MB
+of WGSL and fonts. After W2A the exported folder plays: served on localhost and run with
+`Spikes/WebPlayerCheck/run.mjs` in Playwright Chromium (Apple M5), it starts in 0.85 s, renders
+the scene at 60 Hz with 0 WebGPU errors, and every request (only `.wgsl` shaders) succeeds.
+
+`Scripts/web-player.sh <pack>` still builds the spike's `WasmPlayer` (SampleGame linked in) with
+a pack you cooked and copies the whole engine bundle (Metal and SPIR-V too); `--export` uses the
+exporter instead.
+
 ## What had to change
 
 | Problem | Change in the spike | Proper fix |

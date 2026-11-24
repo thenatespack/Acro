@@ -166,7 +166,9 @@ private let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathCompon
         #expect(manifest.contains(".product(name: \"Engine\", package: \"\(packageRoot.standardizedFileURL.lastPathComponent.lowercased())\")"))
         #expect(manifest.contains(".executableTarget(name: \"BuildGameTestsGamePlayer\""))
         let main = try String(contentsOf: root.appendingPathComponent("Sources/Player/main.swift"), encoding: .utf8)
-        #expect(main.contains("@_silgen_name(\"\(GameModuleABI.entryPoint)\")") && main.contains("GamePlayer.main(module: gameModuleEntry)"))
+        // The entry point is the C function the module defines (`@_cdecl`), declared as one (WebAssembly traps otherwise).
+        #expect(main.contains("@_extern(c, \"\(GameModuleABI.entryPoint)\")") && main.contains("GamePlayer.main(module: { gameModuleEntry($0) })"))
+        #expect(manifest.contains(".enableExperimentalFeature(\"Extern\")"))
         #expect(try FileManager.default.destinationOfSymbolicLink(atPath: root.appendingPathComponent("Sources/BuildGameTestsGame").path) == sources.path)
         // Unchanged files aren't rewritten (the build stays incremental).
         let date = try FileManager.default.attributesOfItem(atPath: root.appendingPathComponent("Package.swift").path)[.modificationDate] as? Date

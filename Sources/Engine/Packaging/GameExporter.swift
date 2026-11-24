@@ -22,6 +22,8 @@ import EngineUI
 //                                  /Resources/Acro_EngineCore.bundle   shaders, fonts
 // Linux   <out>/<Name>/<Name>, <Name>.pack, Acro_EngineCore.bundle/ (or .resources/), lib/libglfw.so.3, run.sh
 // Windows <out>/<Name>/<Name>.exe, <Name>.pack, Acro_EngineCore.resources/, Engine.dll, the Swift runtime and zlib DLLs
+// Web     <out>/<Name>/index.html, loader.js, app/, vendor/, engine/, game.pack, player.json, README.txt
+//         (a static site: GameExporterWeb.swift)
 // ```
 //
 // **Static linking.** In the editor a game is a module loaded at run time (GameModule.swift):
@@ -103,6 +105,9 @@ public struct GameExportOptions: Equatable, Sendable, Codable {
     /// either architecture (the other one emulated, slowly).
     public var useDocker: Bool
 
+    /// The cook target's platform: what the export builds.
+    public var platform: CookPlatform { cook.target.platform }
+
     public init(name: String, gameTarget: String, gamePackage: URL, enginePackage: URL, output: URL, cook: CookOptions,
                 sceneOnly: Bool = false, configuration: BuildConfiguration = .release, architecture: BuildArchitecture = .current,
                 useDocker: Bool = false) {
@@ -132,10 +137,18 @@ public struct GameExportReport: Codable, Equatable, Sendable {
     public var totalBytes: Int
     /// How the game code is linked ("static": one executable).
     public var linking: String
+    /// Web: the `.wasm` compressed with gzip -9 and brotli (what a server sends with compression on), when those tools exist.
+    public var wasmGzipBytes: Int?
+    public var wasmBrotliBytes: Int?
 
     public var summary: String {
         let mb = { (bytes: Int) in String(format: "%.1f MB", Double(bytes) / 1_048_576) }
-        return "Exported \(outputPath) (\(mb(totalBytes)): executable \(mb(executableBytes)), pack \(mb(cook.packBytes))); "
+        var compressed = ""
+        if wasmGzipBytes != nil || wasmBrotliBytes != nil {
+            compressed = " (" + [wasmGzipBytes.map { "\(mb($0)) gzip" }, wasmBrotliBytes.map { "\(mb($0)) brotli" }]
+                .compactMap { $0 }.joined(separator: ", ") + ")"
+        }
+        return "Exported \(outputPath) (\(mb(totalBytes)): executable \(mb(executableBytes))\(compressed), pack \(mb(cook.packBytes))); "
             + String(format: "cook %.2f s, build %.1f s, total %.1f s", cook.seconds, buildSeconds, totalSeconds)
     }
 }
@@ -149,6 +162,8 @@ public enum GameExportError: Error, Equatable, CustomStringConvertible {
     case missingSources(String)
     case buildFailed(String)
     case missingProduct(String)
+    /// Web: the Wasm toolchain or SDK isn't installed, or a tool the web export needs is missing.
+    case webToolchain(String)
 
     public var description: String {
         switch self {
@@ -160,6 +175,7 @@ public enum GameExportError: Error, Equatable, CustomStringConvertible {
         case .missingSources(let path): "The game target's sources aren't at \(path) (exporting needs Sources/<Target>)"
         case .buildFailed(let output): "Building the player failed:\n\(output)"
         case .missingProduct(let path): "The build finished but \(path) is missing"
+        case .webToolchain(let reason): reason
         }
     }
 }
@@ -177,6 +193,8 @@ public struct GameExporter: Sendable {
             if let reason = unbuildableReason(platform: platform, architecture: options.architecture, useDocker: true) {
                 throw GameExportError.docker(reason)
             }
+        } else if platform == .web {
+            if let reason = WebToolchain.find().problem { throw GameExportError.webToolchain(reason) }
         } else {
             guard platform == .current else { throw GameExportError.wrongPlatform(platform) }
             guard options.architecture.canBuild(for: .current) else { throw GameExportError.wrongArchitecture(options.architecture) }
@@ -193,6 +211,10 @@ public struct GameExporter: Sendable {
                 return "Docker isn't installed (no docker in PATH, ~/.docker/bin, /usr/local/bin or /opt/homebrew/bin)"
             }
             return nil
+        }
+        if platform == .web {
+            // WebAssembly: one target for every machine (the architecture doesn't apply).
+            return WebToolchain.find().problem
         }
         if platform != .current {
             let docker = platform == .linux ? " (or build in Docker)" : ""
@@ -288,9 +310,9 @@ public struct GameExporter: Sendable {
                                     isDirectory: true)
     }
 
-    /// The output folder's name for an export: "macos-arm64", "linux-x86_64-debug".
+    /// The output folder's name for an export: "macos-arm64", "linux-x86_64-debug", "web" (no architecture).
     public static func outputFolderName(platform: CookPlatform, architecture: BuildArchitecture, configuration: BuildConfiguration) -> String {
-        "\(platform.rawValue)-\(architecture.rawValue)" + (configuration == .debug ? "-debug" : "")
+        (platform == .web ? "web" : "\(platform.rawValue)-\(architecture.rawValue)") + (configuration == .debug ? "-debug" : "")
     }
 
     /// The engine's package at or above `start` (8 levels at most).
@@ -335,9 +357,9 @@ public struct GameExporter: Sendable {
     }
 
     /// Where the generated player package lives.
-    /// (A Docker build gets its own, so its products never mix with the host's.)
+    /// (A Docker or Web build gets its own, so its products never mix with the host's.)
     public var playerPackage: URL {
-        let suffix = options.useDocker ? "-docker" : ""
+        let suffix = options.useDocker ? "-docker" : options.platform == .web ? "-web" : ""
         return options.sceneOnly
             ? options.gamePackage.appendingPathComponent(options.gameTarget + suffix, isDirectory: true)
             : options.gamePackage.appendingPathComponent(".build/game-export\(suffix)/\(options.gameTarget)", isDirectory: true)
@@ -396,6 +418,15 @@ public struct GameExporter: Sendable {
         }
         let engine = options.enginePackage.standardizedFileURL
         let identity = engine.lastPathComponent.lowercased()
+        let web = options.platform == .web
+        // Web: JavaScriptKit's `js` plugin packages the player (a command plugin has to come from
+        // a direct dependency); the engine's package depends on it too with ENGINE_WASM=1.
+        let webPackage = web ? ",\n        .package(url: \"https://github.com/swiftwasm/JavaScriptKit.git\", from: \"\(WebToolchain.javaScriptKitVersion)\")" : ""
+        let linkerSettings = web
+            // wasm-ld drops DWARF in release (a third of the module; names stay for stack traces).
+            ? #"[.unsafeFlags(["-Xlinker", "--strip-debug"], .when(configuration: .release))]"#
+            // Linux: shared libraries the export bundles (GLFW) are looked up in lib/ next to the executable.
+            : #"[.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "$ORIGIN/lib"], .when(platforms: [.linux]))]"#
         let manifest = """
             // swift-tools-version: 6.0
             // Generated by GameExporter (Sources/Engine/Packaging/GameExporter.swift); rewritten on every export.
@@ -405,28 +436,31 @@ public struct GameExporter: Sendable {
             let package = Package(
                 name: "\(options.gameTarget)Export",
                 platforms: [.macOS(.v14)],
-                dependencies: [.package(path: \(Self.literal(engine.path)))],
+                dependencies: [.package(path: \(Self.literal(engine.path)))\(webPackage)],
                 targets: [
                     .target(name: \(Self.literal(options.gameTarget)), dependencies: [.product(name: "Engine", package: \(Self.literal(identity)))],
                             path: \(Self.literal("Sources/\(options.gameTarget)"))),
                     .executableTarget(name: \(Self.literal(playerTarget)),
                                       dependencies: [\(Self.literal(options.gameTarget)), .product(name: "Engine", package: \(Self.literal(identity)))],
                                       path: "Sources/Player",
-                                      // Linux: shared libraries the export bundles (GLFW) are looked up in lib/ next to the executable.
-                                      linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "$ORIGIN/lib"], .when(platforms: [.linux]))]),
+                                      // `@_extern(c)` in main.swift.
+                                      swiftSettings: [.enableExperimentalFeature("Extern")],
+                                      linkerSettings: \(linkerSettings)),
                 ]
             )
 
             """
         let main = """
             // Generated by GameExporter. The game module's entry point, linked in statically (see GamePlayer.swift).
+            // Declared as the C function it is (`@_cdecl`): a Swift-convention declaration (`@_silgen_name`)
+            // happens to work natively, but WebAssembly traps on the signature mismatch.
             import Engine
 
-            @_silgen_name("\(entryPoint)")
+            @_extern(c, "\(entryPoint)")
             func gameModuleEntry(_ module: UnsafeMutableRawPointer) -> Int32
 
             MainActor.assumeIsolated {
-                GamePlayer.main(module: gameModuleEntry)
+                GamePlayer.main(module: { gameModuleEntry($0) })
             }
 
             """
@@ -434,9 +468,14 @@ public struct GameExporter: Sendable {
         try Self.writeIfChanged(main, to: root.appendingPathComponent("Sources/Player/main.swift"))
     }
 
-    /// The build command for the player.
+    /// The build command for the player. Web: the Wasm toolchain's `swift package js` (JavaScriptKit's
+    /// PackageToJS) builds and packages it; wasm-opt runs afterwards (`webOptimize`).
     public var buildCommand: [String] {
-        ["swift", "build"] + buildFlags + ["--product", playerTarget]
+        if options.platform == .web {
+            return [WebToolchain.find().swift.path, "package"] + buildFlags
+                + ["js", "--product", playerTarget, "-c", options.configuration.rawValue, "--no-optimize"]
+        }
+        return ["swift", "build"] + buildFlags + ["--product", playerTarget]
     }
 
     /// `NAME=value` settings for the build (`/usr/bin/env` takes them before the command): a
@@ -445,11 +484,17 @@ public struct GameExporter: Sendable {
     /// (`/opt/homebrew/...dylib`), which players' Macs don't have, and which exist for this
     /// machine's architecture only.
     var buildEnvironment: [String] {
-        options.cook.target.platform == .macos ? ["ENGINE_DISABLE_VULKAN=1"] : []
+        switch options.platform {
+        case .macos: ["ENGINE_DISABLE_VULKAN=1"]
+        // The engine's manifest leaves out what WASI lacks (docs/wasm-spike.md).
+        case .web: ["ENGINE_WASM=1"]
+        case .linux, .windows: []
+        }
     }
 
     /// The flags that pick the build's products folder (shared by `buildCommand` and `--show-bin-path`).
     var buildFlags: [String] {
+        if options.platform == .web { return ["--swift-sdk", WebToolchain.find().sdk] }
         var flags = ["-c", options.configuration.rawValue]
         switch options.cook.target.platform {
         case .macos:
@@ -457,7 +502,7 @@ public struct GameExporter: Sendable {
             flags += ["--arch", options.architecture.rawValue]
         case .linux:
             flags.append("--static-swift-stdlib")
-        case .windows:
+        case .windows, .web:
             break
         }
         return flags
@@ -482,6 +527,7 @@ public struct GameExporter: Sendable {
 
         // 2. Build the player.
         try writePlayerPackage()
+        if options.platform == .web { return try runWeb(cook: cook, start: start, progress: progress) }
         let built = options.useDocker ? try buildInDocker(staging: staging, progress: progress) : try buildNatively(progress: progress)
 
         // 3. Lay it out.
