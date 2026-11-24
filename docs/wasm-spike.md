@@ -74,8 +74,9 @@ of 0.05 / 255, and 13 Demo scenes checked (shadows, UI, widgets, text, glTF, PBR
 HUD, sky, particles, fog, probes) are pixel-identical. Frames run at the display's 60 Hz
 (requestAnimationFrame intervals 16.67 ms, p95 under 18 ms); the frame's work in its callback is
 0.4 ms for SampleGame and 0.5 to 3 ms for most Demo scenes. Crowd (446 draws, single-threaded in
-wasm) takes 48 ms. GPU pass times on Apple look cumulative (each pass's end minus the frame's
-first begin: post's bloom passes read 2.85, 3.19, 3.35...), so `gpuTime` (their sum) overstates.
+wasm) takes 48 ms (13.7 ms and a steady 60 fps after W2.5C; see "Performance"). GPU pass times
+on Apple look cumulative (each pass's end minus the frame's first begin: post's bloom passes read
+2.85, 3.19, 3.35...), so `gpuTime` (their sum) overstates.
 
 Known gaps: PNG writing and net snapshots need zlib, and the Compression scene needs the texture
 codec (W2C): the Images, Net, Net Character and Compression scenes stop. Forest and Fur import
@@ -226,6 +227,146 @@ checked above), `EntityID` / `AssetID` (two `UInt64`s, hex strings in files), th
 rather than wrapping), `monotonicNanoseconds` (`UInt64`), the other `<< 32` keys and 64-bit hash
 mixers (all `UInt64` / `Int64`). Left as is: `Int(Float)` of huge coordinates and >2 GB files
 would trap on wasm32, which can't hold them anyway.
+
+## Performance (W2.5C)
+
+The question: where does a CPU-heavy frame go in a single-threaded browser build, and what's
+slow only because it's WebAssembly? Measured on the Crowd Demo scene (144 skinned foxes on a
+navmesh, 640 rigid bodies, 2500 shadow casters) and the Racing game (`~/Games/Racing`, exported
+with `Editor --build-game ... --platform web`), release builds, Playwright Chromium with WebGPU
+on an Apple M5 (other agents' builds running at times, so before and after builds were run
+alternately, 3-4 times each, and the medians are compared).
+
+```sh
+# Demo with a name section, so profiles show Swift functions:
+ENGINE_WASM=1 ~/.swiftly/bin/swift package --swift-sdk swift-6.4.2-RELEASE_wasm --scratch-path .build-wasm \
+    js --product Demo -c release --debug-info-format name
+Scripts/web-player.sh --demo --release --no-build --no-serve
+# Frames 300-600 at fixed 1/60 s steps (ENGINE_SCREENSHOT mode: the same work in every run);
+# --profile adds Chrome's CPU profiler (CDP) with the top functions by self and total time:
+node Spikes/WebPlayerCheck/profile.mjs .build-wasm/web-demo <out> --frames 300:600 [--profile] \
+    --query 'args=--scene,crowd&env=ENGINE_SCREENSHOT=/s.png,ENGINE_SCREENSHOT_FRAME=100000'
+```
+
+A Web export keeps its name section with `ACRO_WASM_OPT=none` (wasm-opt drops it). The
+`.cpuprofile` it writes opens in Chrome DevTools' Performance panel.
+
+**What the profiles showed** (Crowd, before; ms per frame of a ~23 ms profiled frame):
+
+- **Swift strings passed to JavaScript.** `setIndexBuffer` passed its index format as a Swift
+  `String`, which JavaScriptKit converts to a new JS string on every call
+  (`swjs_decode_string` plus a retain in its object heap): 2.7 ms in Crowd (~450 draws), and
+  **6.2 of Racing's 10.9 ms**. Native builds have no such cost, so it never showed up there.
+- **Allocation per draw** in the WebGPU backend's bind group code (key and offset arrays,
+  closures, an empty dynamic-offset array converted to a JS array): ~1.3 ms.
+- **Physics (10.8 ms)**: the narrowphase transformed both bodies' polyhedra into world space
+  for every contact (three arrays each; 4400 contacts, 640 bodies), and GJK kept its simplex in
+  arrays that grew and shrank each iteration. `malloc`, `free`, release and array destruction
+  were ~2.5 ms of the frame. The solver itself (`solveContact`, ~3 ms) is plain float math.
+- **No SIMD.** `Vec3` is `SIMD3<Float>`; without `-msimd128` every vector operation is
+  scalarized.
+- Not hot: ECS queries, unspecialized generics or existential calls (the ECS store and
+  queries were already specialized and pointer-based), bounds checks. Copying `Body` structs
+  (~0.5 ms, solver islands and the ECS sync) is by design.
+
+**Fixes** (all general; native behavior unchanged, physics results bit-identical: a 120-body
+pile's poses hash the same before and after, and the physics tests pass):
+
+1. WebGPU: index formats are JS strings made once; bind groups are matched in scratch arrays
+   without allocating, and groups without dynamic offsets pass none (281b79b).
+2. Physics: each body in an active contact gets its world-space shape once per step (in
+   parallel on native), reused by every contact it's in; GJK's simplex is fixed storage;
+   `awakeBodyCount` / `touchingContactCount` count in place (1aca312).
+3. Wasm builds compile the engine with WebAssembly SIMD (`-Xcc -msimd128`, which Swift's code
+   generation takes from the Clang options): f32x4 instead of four scalar lanes (e02b1e2).
+   Every WebGPU browser has SIMD128. **It changes the calling convention for
+   `SIMD3<Float>` / `SIMD4<Float>`**, so game code must be built with it too: the Web export
+   adds it to the game and player targets (76af63e); a mismatch traps at once with
+   `signature_mismatch` (Racing did, before that). The 51 Demo scenes that run in the browser
+   still run (Forest and Fur stop as before, editor-side assets).
+
+**Results** (rAF callback = the whole engine frame in one `requestAnimationFrame`; update and
+render are the engine's own CPU times; medians of 4 alternated runs, frames 300-600, ms):
+
+| Crowd (fixed 1/60 s steps) | frame (rAF callback) | update | render |
+|---|---|---|---|
+| Before (wasm-spike 364581d) | 17.9 | 11.1 | 5.9 |
+| + WebGPU strings and bind groups | 16.8 | 11.9 | 3.9 |
+| + physics world shapes, GJK | 13.6 | 8.7 | 3.7 |
+| + SIMD128 | **12.5** | **7.9** | **3.4** |
+
+| Racing (fixed steps, frames 300-600) | frame | update | render |
+|---|---|---|---|
+| Before | 7.1 | 0.2 | 6.9 |
+| After (all of the above) | **3.4** | 0.3 | 2.8 |
+
+In real time (variable steps, what a player sees) Crowd went from 21.5 ms per frame
+(~47 fps, p95 34 ms) to a steady **60 fps** (16.7 ms intervals, p95 18.6 ms; 13.7 ms of work
+per frame). While the 640 bodies are still falling (frames 60-300) the frame is 19.2 → 14.1 ms.
+The 48 ms measured in W2A was with the machine loaded by other builds. The Demo's `.wasm` is
+1.1 MB smaller with SIMD.
+
+**Wasm against native** (same work: Crowd, frames 300-600, after the fixes): the native
+release build with `ENGINE_JOB_THREADS=1` spends 7.8-8.5 ms in update, the browser 7.9 ms, so
+the simulation code itself runs at about native speed (the single-threaded native process may
+be scheduled on efficiency cores; the browser's renderer isn't). With its job threads native
+takes 4.9-6.2 ms. What made the browser slower was the JS bridge (render: 3.4 ms in the browser
+against 1.8 ms natively) and allocation, not WebAssembly arithmetic.
+
+**Left:** `endFrame` copies the frame's transient data into a new JS `Uint8Array` before
+`queue.writeBuffer` (`swjs_create_typed_array`, ~0.5 ms in Crowd); writing straight from a view
+of the wasm memory would avoid the copy but needs the loader to hand the memory over. Each draw
+is still a few JS calls (`setVertexBuffer`, `setBindGroup` with its offsets array,
+`drawIndexed`): render bundles or one call per batch through a small JS helper would cut that.
+The solver (~2.8 ms) is real work. Racing's frame is now mostly WebGPU calls.
+
+### Threads (estimate, not built)
+
+What `wasm32-unknown-wasip1-threads` with cross-origin isolation would buy, and cost.
+
+**What would run in parallel:** the job system's loops, the same as natively: the physics pair
+search, world shapes, narrowphase and solver islands; animators; transform
+propagation by root; camera and shadow-caster culling and shadow batches; background asset
+imports and texture work. In the Crowd profile 6.3 of 14.2 ms per frame (45%) is inside
+`JobSystem.parallelFor` / `parallelMap` (physics 5.0 ms, of which the solver can use at most
+four threads: the scene has four piles, so four islands). WebGPU calls can't move: a
+`GPUDevice` and every JS object belong to the thread that made them, so render submission
+stays on one thread. Racing spends 0.3 ms in update; threads would give it nothing.
+
+**Estimate:** natively, threads take Crowd's update from ~8.1 to ~5.5 ms (1.5x, with its default job threads).
+The browser would see about the same, minus costs it doesn't have now: atomic reference
+counting (the single-threaded runtime uses `swift_nonatomic_retain/release`; the threads
+runtime uses atomic read-modify-writes on shared memory) and a locking `malloc`. So Crowd would
+go from ~12.5 to ~10-10.5 ms per frame, ~15-20%, and it already runs at 60 fps. Worth it later
+for games that are CPU-bound in the simulation, not now.
+
+**Toolchain:** the swift.org 6.4.2 SDK we use has no threads variant (only `wasm32-unknown-wasip1`
+and Embedded). The SwiftWasm SDK index (`swiftwasm/swift-sdk-index`) has a
+`wasm32-unknown-wasip1-threads` SDK for 6.3.2 (built from a 6.3 snapshot) and none yet for
+6.4.2 (checked 2026-11-24), so threads would mean another toolchain, or building the SDK.
+JavaScriptKit 0.63 supports it: PackageToJS builds threaded products (shared memory, a
+worker per `wasi-threads` thread), `WebWorkerTaskExecutor` runs Swift tasks on workers, and
+`JSSending` moves JS objects between threads. The engine's `JobSystem` uses `Thread` and
+`NSCondition`, which WASIFoundation stubs out; they would become pthreads (wasi-libc has
+them in the threads target). The astc-encoder `std::mutex` shim and `NSLock` no-ops would go.
+
+**Browser rules:** the main thread can't block (`Atomics.wait` throws there), and the engine
+runs its frame on the main thread. So either `JobSystem.wait` and `parallelFor` spin on the
+main thread while workers run jobs (simple; wastes the main core while waiting), or the whole
+engine moves into a worker with an `OffscreenCanvas` (WebGPU works in dedicated workers) and
+the page forwards input events to it: the bigger change, and the one that also keeps the page
+responsive. Shared memory needs a maximum size up front (the pack is copied into it: Racing's
+is 120 MB).
+
+**Hosting:** `SharedArrayBuffer` needs cross-origin isolation: the page served with
+`Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` (or
+`credentialless`), and every subresource same-origin or sent with
+`Cross-Origin-Resource-Policy`. Our folder is all same-origin, so only the two headers. A
+plain static host can't set headers (GitHub Pages; a service worker such as
+coi-serviceworker can add them after a reload); itch.io has a SharedArrayBuffer option;
+Netlify, Cloudflare Pages and nginx set them in config. An isolated page also can't embed
+cross-origin iframes or popups that talk back (ads, some login flows). The export would need a
+single-threaded fallback for hosts without the headers, so two `.wasm` files.
 
 ## What's left for a browser build
 

@@ -55,6 +55,9 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 - `MCPToolSchemaTests.subscribedResourcesReportUpdates` no longer depends on how long a call takes: `EditorMCP.resourceCheckInterval` (default 200 ms) can be 0 to check subscribed resources on every pump.
 
 ### Changed
+- Web builds run CPU-heavy frames faster ([docs/wasm-spike.md](docs/wasm-spike.md), "Performance"): the Crowd Demo scene in Chromium went from 17.9 to 12.5 ms per frame (a steady 60 fps in real time, from ~47) and Racing from 7.1 to 3.4 ms. The WebGPU backend no longer converts a Swift string to JavaScript on every `setIndexBuffer` (6 ms of Racing's frame) or allocates per draw to match bind groups. Wasm builds compile the engine, and Web exports the game, with WebAssembly SIMD (`-msimd128`). The write-up also estimates what `wasip1-threads` would give (about 15-20% on Crowd, nothing on Racing) and what hosting it needs.
+- Physics: the narrowphase makes each body's world-space shape once per step instead of once per contact, and GJK no longer allocates; results are bit-identical. `awakeBodyCount` and `touchingContactCount` no longer copy bodies.
+- `Spikes/WebPlayerCheck/profile.mjs` times a web player over a fixed frame range and CPU-profiles it through Chrome's DevTools protocol, with Swift names.
 - The Windows workflow exports and starts a game on every push to main and when run by hand, and no longer on pull requests or nightly. Its build cache leaves out the `.build/debug` symlink, which came back from the cache as a plain folder and hid the new `GameRunner.exe`.
 
 ## [0.18.1] - 2026-11-17
