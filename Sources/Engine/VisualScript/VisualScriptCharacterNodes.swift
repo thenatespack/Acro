@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAssets
 import EngineCore
 import EnginePhysics

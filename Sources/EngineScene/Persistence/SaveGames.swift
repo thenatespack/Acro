@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 // Save games: named slots in `<user data dir>/saves/`, each a JSON file `<slot>.save.json`

@@ -13,7 +13,11 @@
 ///   all that is drawn past the groom's last detail distance.
 /// Wind (`SceneEnvironment.wind` x `GroomBuild.wind`) and a spring per bone (skinned) or per
 /// entity bend the strands; fur doesn't cast shadows (the mesh under it does).
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 import EngineScene
 
@@ -179,8 +183,9 @@ public struct MaterialFur: Codable, Equatable, Sendable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         mix((try? encoder.encode(g)) ?? Data())
-        if let m = fur.maskImage { mix(m.pixels); mix(withUnsafeBytes(of: m.width) { Array($0) }) }
-        if let f = fur.flowImage { mix(f.pixels); mix(withUnsafeBytes(of: f.width) { Array($0) }) }
+        // Widths as Int64, so 32-bit (wasm32) builds compute the same tag.
+        if let m = fur.maskImage { mix(m.pixels); mix(withUnsafeBytes(of: Int64(m.width).littleEndian) { Array($0) }) }
+        if let f = fur.flowImage { mix(f.pixels); mix(withUnsafeBytes(of: Int64(f.width).littleEndian) { Array($0) }) }
         return String(h, radix: 16)
     }
 

@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Logs a fault, writes a crash report (see `CrashReporter`) and traps. Use it for states the
 /// engine can't continue from, instead of `fatalError` (which leaves nothing behind but a stack

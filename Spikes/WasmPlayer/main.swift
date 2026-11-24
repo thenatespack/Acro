@@ -10,7 +10,11 @@ import Engine
 GamePlayer.main(module: { gameModuleEntry($0) })
 
 #if os(WASI)
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import JavaScriptKit
 
 // Spike-only check of the browser frame driver while there's no WebGPU device or canvas

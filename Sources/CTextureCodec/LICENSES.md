@@ -12,7 +12,10 @@ Local changes, marked `acro:`: in `bc7enc.c`, opaque blocks encoded in mode 6
 only use p-bit 1, so their alpha decodes to 255 instead of sometimes 254; in
 `ConvectionKernels_BC67.cpp`, `PackingVector::InitPacked` zeroes the words past the header
 (upstream left the last one uninitialized and ORed BC6H indices into it, so stack garbage
-corrupted texels 8-15 of a block now and then). astc-encoder is unmodified.
+corrupted texels 8-15 of a block now and then). astc-encoder is unmodified: WebAssembly builds
+(single-threaded WASI, whose libc++ has no `std::mutex` or `std::condition_variable`) compile it
+with `wasi/wasi_threads_shim.h` force-included (no-op stand-ins; the engine's own file, see
+`Package.swift`).
 
 The Apache License requires shipping its text with source or binary redistributions of
 astc-encoder (section 4); upstream has no NOTICE file. bc7enc needs no attribution. The MIT

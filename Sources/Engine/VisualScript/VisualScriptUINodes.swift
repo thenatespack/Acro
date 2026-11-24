@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAssets
 import EngineCore
 import EngineScene
@@ -135,7 +139,7 @@ enum VisualScriptUINodes {
                 let value = try c.string("layout")
                 guard let id = assets.assetID(forScriptValue: value) else { throw VisualScriptError("no layout '\(value)'") }
                 var name = try c.string("name").trimmingCharacters(in: .whitespaces)
-                if name.isEmpty { name = ((assets.path(of: id) ?? value) as NSString).lastPathComponent.split(separator: ".").first.map(String.init) ?? "layout" }
+                if name.isEmpty { name = (assets.path(of: id) ?? value).pathLastComponent.split(separator: ".").first.map(String.init) ?? "layout" }
                 let registry = VisualScriptUI.of(c.runtime)
                 if registry.view(name) == nil {
                     let gameUI = c.world.gameUI

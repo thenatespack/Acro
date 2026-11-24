@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 extension Data.WritingOptions {
     /// `.atomic` (write a temporary file, then rename it over the target), except in WebAssembly,

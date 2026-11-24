@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 import EngineGraphics
 import EngineScene
@@ -26,7 +30,7 @@ public struct GroomImporter: AssetImporter {
             throw AssetError.unreadable("not a groom: \(error)")
         }
         for problem in GroomCheck.problems(build) { context.warn(problem) }
-        let stem = ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension
+        let stem = context.assetPath.pathLastComponent.pathDeletingExtension
         var asset = ImportedAsset()
         var namer = SubAssetNamer()
 

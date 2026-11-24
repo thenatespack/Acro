@@ -1,7 +1,9 @@
-#if canImport(CTextureCodec)
 import CTextureCodec
-#endif
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 /// The block compression the texture importer applies (`TextureImporter.Settings.compression`).
@@ -56,7 +58,6 @@ public enum TextureCompression: String, Codable, Sendable, CaseIterable {
 public enum TextureCompressionQuality: String, Codable, Sendable, CaseIterable {
     case fast, normal, high
 
-    #if canImport(CTextureCodec)
     var level: tc_quality {
         switch self {
         case .fast: 0
@@ -64,7 +65,6 @@ public enum TextureCompressionQuality: String, Codable, Sendable, CaseIterable {
         case .high: 2
         }
     }
-    #endif
 }
 
 /// CPU block compression with the vendored encoders (Sources/CTextureCodec): BC7 with bc7enc,
@@ -140,16 +140,12 @@ public enum TextureCodec {
             throw GraphicsError("A \(level.width)x\(level.height) level needs \(max(level.width * level.height * texel, 0)) "
                                 + "\(format.decompressedFormat) bytes")
         }
-        #if !canImport(CTextureCodec)
-        throw GraphicsError("Texture encoding and decoding are unavailable in WebAssembly builds")
-        #else
         switch format {
         case .bc7Unorm, .bc7Srgb, .bc5Unorm, .bc6hUfloat:
             return levels.map { encodeBlockRows($0, format: format, quality: quality) }
         default:
             return try encodeASTC(levels, format: format, quality: quality)
         }
-        #endif
     }
 
     /// Decodes one compressed level to RGBA8 (sRGB data stays sRGB-encoded). HDR formats decode
@@ -161,9 +157,6 @@ public enum TextureCodec {
         guard level.pixels.count == format.byteCount(width: level.width, height: level.height) else {
             throw GraphicsError("A \(level.width)x\(level.height) \(format) level needs \(format.byteCount(width: level.width, height: level.height)) bytes")
         }
-        #if !canImport(CTextureCodec)
-        throw GraphicsError("Texture encoding and decoding are unavailable in WebAssembly builds")
-        #else
         var pixels = [UInt8](repeating: 0, count: level.width * level.height * 4)
         let ok = level.pixels.withUnsafeBufferPointer { blocks in
             pixels.withUnsafeMutableBufferPointer { out in
@@ -180,7 +173,6 @@ public enum TextureCodec {
         }
         guard ok else { throw GraphicsError("Invalid \(format) data") }
         return Image(width: level.width, height: level.height, pixels: pixels)
-        #endif
     }
 
     /// Decodes one level of an HDR format (`TextureFormat.hdrCompressedFormats`) to linear float
@@ -208,9 +200,6 @@ public enum TextureCodec {
         guard level.pixels.count == format.byteCount(width: level.width, height: level.height) else {
             throw GraphicsError("A \(level.width)x\(level.height) \(format) level needs \(format.byteCount(width: level.width, height: level.height)) bytes")
         }
-        #if !canImport(CTextureCodec)
-        throw GraphicsError("Texture encoding and decoding are unavailable in WebAssembly builds")
-        #else
         var half = [UInt16](repeating: 0, count: level.width * level.height * 4)
         let ok = level.pixels.withUnsafeBufferPointer { blocks in
             half.withUnsafeMutableBufferPointer { out in
@@ -223,7 +212,6 @@ public enum TextureCodec {
         }
         guard ok else { throw GraphicsError("Invalid \(format) data") }
         return half
-        #endif
     }
 
     // MARK: - Normal maps
@@ -269,7 +257,6 @@ public enum TextureCodec {
     }
 
     // MARK: - Encoders
-    #if canImport(CTextureCodec)
 
     /// BC7, BC5 or BC6H: bands of block rows on every core.
     private static func encodeBlockRows(_ level: TextureMipLevel, format: TextureFormat, quality: TextureCompressionQuality) -> TextureMipLevel {
@@ -282,7 +269,7 @@ public enum TextureCodec {
             blocks.withUnsafeMutableBufferPointer { out in
                 // Linux's Dispatch requires a @Sendable closure, so the pointers go in through a box.
                 let p = LevelPointers(source: source.baseAddress!, out: out.baseAddress!, count: out.count, encoder: nil)
-                DispatchQueue.concurrentPerform(iterations: bands) { band in
+                concurrentPerform(iterations: bands) { band in
                     let first = rows * band / bands, last = rows * (band + 1) / bands
                     if format == .bc6hUfloat {
                         tc_bc6h_encode(UnsafeRawPointer(p.source).assumingMemoryBound(to: UInt16.self), Int32(level.width),
@@ -302,7 +289,11 @@ public enum TextureCodec {
 
     private static func encodeASTC(_ levels: [TextureMipLevel], format: TextureFormat,
                                    quality: TextureCompressionQuality) throws -> [TextureMipLevel] {
+        #if os(WASI)
+        let threads = 1  // Single-threaded WebAssembly (the codec's locks are no-ops there).
+        #else
         let threads = ProcessInfo.processInfo.activeProcessorCount
+        #endif
         let made = format == .astc4x4RG ? tc_astc_encoder_create_rg(quality.level, Int32(threads))
             : format == .astc4x4HDR ? tc_astc_encoder_create_hdr(quality.level, Int32(threads))
             : tc_astc_encoder_create(format.isSRGB ? 1 : 0, quality.level, Int32(threads))
@@ -317,7 +308,7 @@ public enum TextureCodec {
                 blocks.withUnsafeMutableBufferPointer { out in
                     let p = LevelPointers(source: source.baseAddress!, out: out.baseAddress!, count: out.count, encoder: encoder)
                     let hdr = format == .astc4x4HDR
-                    DispatchQueue.concurrentPerform(iterations: threads) { thread in
+                    concurrentPerform(iterations: threads) { thread in
                         let ok = hdr
                             ? tc_astc_encode_hdr(p.encoder, UnsafeRawPointer(p.source).assumingMemoryBound(to: UInt16.self),
                                                  Int32(level.width), Int32(level.height), p.out, p.count, Int32(thread))
@@ -332,7 +323,6 @@ public enum TextureCodec {
             return TextureMipLevel(width: level.width, height: level.height, pixels: blocks)
         }
     }
-    #endif
 }
 
 /// A level's input and output for the encoder threads (each writes only its own blocks).

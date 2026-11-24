@@ -3,7 +3,11 @@
 // shadowing sun and a point light, GPU particles (compute, indirect draws), cubes with BC7 and
 // ASTC textures, UI text, an MSAA render target drawn into the UI, occlusion queries, and a buffer
 // update, buffer and render-target readbacks and a frame capture along the way.
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 import EngineScene
 import EngineGraphics

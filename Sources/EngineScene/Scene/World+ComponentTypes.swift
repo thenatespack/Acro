@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 // Taking component types out of a world and putting them back, for code that comes and goes

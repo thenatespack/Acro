@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 /// Which queue a job waits in (`JobSystem.schedule(_:priority:after:in:_:)`).

@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics
@@ -239,13 +243,13 @@ public struct TimelineKey: Codable, Equatable, Sendable {
     public func summary(kind: TimelineTrackKind?) -> String {
         switch kind {
         case .animation: return clip ?? "(no clip)"
-        case .audio: return ((clip ?? "(no sound)") as NSString).lastPathComponent
-        case .particles: return ((effect ?? "(no effect)") as NSString).lastPathComponent
+        case .audio: return (clip ?? "(no sound)").pathLastComponent
+        case .particles: return (effect ?? "(no effect)").pathLastComponent
         case .event: return name ?? "(unnamed)"
         case .fade: return String(format: "%.0f%%", (amount ?? 0) * 100)
         case .camera: return cut == true ? "cut" : (path != nil ? "path" : "")
         case .dialogue:
-            let file = dialogue.map { (($0 as NSString).lastPathComponent as NSString).deletingPathExtension }
+            let file = dialogue.map { $0.pathLastComponent.pathDeletingExtension }
             let what = [file, node].compactMap { $0?.isEmpty == false ? $0 : nil }.joined(separator: " · ")
             return (what.isEmpty ? "talk" : what) + (wait == true ? " (waits)" : "")
         default: return ""

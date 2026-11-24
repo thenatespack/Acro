@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 import EngineGraphics
 import EngineScene
@@ -270,7 +274,7 @@ public struct MeshBuildDeform: Codable, Equatable, Sendable {
         var parts: [String] = []
         if let taper { parts.append(String(format: "taper %g × %g", taper.x, taper.y)) }
         if let twist { parts.append(String(format: "twist %g°", twist)) }
-        if let bend { parts.append(String(format: "bend %@ %g°", bend.axis.rawValue, bend.degrees)) }
+        if let bend { parts.append("bend \(bend.axis.rawValue) " + String(format: "%g°", bend.degrees)) }
         if let noise { parts.append(String(format: "noise %g m / %g m, seed %d", noise.amount, noise.scale, noise.seed)) }
         return parts.isEmpty ? "nothing" : parts.joined(separator: ", ")
     }

@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics
@@ -201,10 +205,18 @@ public final class FileWatcher: @unchecked Sendable {
             let components = url.standardizedFileURL.resolvingSymlinksInPath().pathComponents
             guard components.count > base.count else { continue }
             let path = components.dropFirst(base.count).joined(separator: "/")
+            #if os(WASI)
+            // FoundationEssentials stores integer attributes as Swift integers, not NSNumber.
+            entries[path] = Entry(
+                size: (attributes[.size] as? any BinaryInteger).map { Int64($0) } ?? 0,
+                modified: (attributes[.modificationDate] as? Date)?.timeIntervalSinceReferenceDate ?? 0,
+                fileNumber: (attributes[.systemFileNumber] as? any BinaryInteger).map { UInt64($0) } ?? 0)
+            #else
             entries[path] = Entry(
                 size: (attributes[.size] as? NSNumber)?.int64Value ?? 0,
                 modified: (attributes[.modificationDate] as? Date)?.timeIntervalSinceReferenceDate ?? 0,
                 fileNumber: (attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0)
+            #endif
         }
         return entries
     }

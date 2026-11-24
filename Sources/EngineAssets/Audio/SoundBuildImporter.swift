@@ -1,6 +1,10 @@
 // The asset side of sound builds (SoundBuild.swift in EngineAudio): the importer and the
 // database helpers that create and edit `.sfx` assets.
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics

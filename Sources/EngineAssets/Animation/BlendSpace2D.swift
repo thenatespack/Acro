@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 // 2D blend spaces: clips placed at points on a plane of two float parameters (e.g. strafe

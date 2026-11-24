@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAssets
 import EngineAudio
 import EngineBackends
@@ -110,7 +114,7 @@ public struct CookReport: Codable, Equatable, Sendable {
     /// One line for logs.
     public var summary: String {
         let mb = { (bytes: Int) in String(format: "%.2f MB", Double(bytes) / 1_048_576) }
-        return "\(assetCount) assets, \(scenes.count) scene\(scenes.count == 1 ? "" : "s") → \((packPath as NSString).lastPathComponent) "
+        return "\(assetCount) assets, \(scenes.count) scene\(scenes.count == 1 ? "" : "s") → \(packPath.pathLastComponent) "
             + "(\(mb(packBytes)): textures \(mb(textureBytes)), meshes \(mb(meshBytes)), files \(mb(fileBytes))); "
             + "\(imported.count) imported, \(fromLibrary) from Library, \(fromCookCache) from the cook cache, "
             + String(format: "%.2f s", seconds)

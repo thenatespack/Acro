@@ -2,7 +2,11 @@ import EngineAssets
 import EngineCore
 import EngineMCP
 import EngineScene
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 // Runs playtest steps against a host that plays a scene: the editor's play mode
 // (EditorSession), `PlaytestHeadlessHost` (no window) or anything else that can run game frames

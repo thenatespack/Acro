@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics
@@ -146,7 +150,7 @@ public struct PixelSpriteImporter: AssetImporter {
         }
         for problem in sprite.problems() { context.warn(problem) }
         var asset = ImportedAsset()
-        asset.add("texture", name: ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension,
+        asset.add("texture", name: context.assetPath.pathLastComponent.pathDeletingExtension,
                   .texture(TextureAsset(image: sprite.sheet().image, isSRGB: true, generatesMipmaps: false)))
         return asset
     }

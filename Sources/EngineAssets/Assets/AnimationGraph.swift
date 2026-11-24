@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 import EngineScene
 
@@ -588,7 +592,7 @@ public struct AnimationGraphImporter: AssetImporter {
             throw AssetError.unreadable("not an animgraph file: \(error)")
         }
         for problem in AnimationGraphCheck.problems(graph) { context.warn(problem) }
-        let stem = ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension
+        let stem = context.assetPath.pathLastComponent.pathDeletingExtension
         var asset = ImportedAsset()
         var namer = SubAssetNamer()
         let id = namer.id(kind: "animgraph", name: stem, index: 0)

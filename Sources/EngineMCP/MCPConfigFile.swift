@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// `mcp.json`: how to reach a running HTTP transport. Written owner-only next to the project
 /// (or the host's prefs), read by people and scripts to configure a client:

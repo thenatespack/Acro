@@ -10,6 +10,11 @@
 //   names, per terrain cell, the material of the layer painted most there (cells of layers
 //   without one use the chunk's most common material).
 import EngineAssets
+#if os(WASI)
+import WASIFoundation
+#else
+import Foundation
+#endif
 import EngineCore
 import EnginePhysics
 import EngineScene

@@ -1,7 +1,11 @@
 // The asset side of physics materials (PhysicsMaterial.swift in EnginePhysics): the `.physmat`
 // importer, the database helpers that create, read and edit them, and the loader that lets a
 // `PhysicsWorld` find them by path while playing.
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 import EnginePhysics
 import EngineScene

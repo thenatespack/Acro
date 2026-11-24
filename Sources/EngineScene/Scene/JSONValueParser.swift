@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Reads JSON text straight into a `JSONValue` (see `JSONValue.parse`). Gives the same values as
 /// decoding a `JSONValue` with `SceneCoder.decoder()`; `JSONValueParseTests` compares the two.

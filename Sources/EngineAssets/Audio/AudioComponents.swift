@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics
@@ -182,7 +186,7 @@ final class SpatialAudioBinding {
         let id = reference.asset
         if let buffer = clips[id] { return buffer }
         guard !loading.contains(id), !failed.contains(id), let assets = assets() else { return nil }
-        let name = assets.path(of: id).map { (($0 as NSString).lastPathComponent as NSString).deletingPathExtension } ?? ""
+        let name = assets.path(of: id).map { $0.pathLastComponent.pathDeletingExtension } ?? ""
         let source: ClipMailbox.Source
         if assets.pack != nil {
             guard let data = try? assets.fileData(of: id) else {

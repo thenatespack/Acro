@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 /// The size the scene is rendered at. `.native` renders at the window's framebuffer size;

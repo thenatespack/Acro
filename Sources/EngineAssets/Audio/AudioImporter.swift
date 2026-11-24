@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics
@@ -76,7 +80,7 @@ extension AssetDatabase {
     /// Fully decodes an audio asset.
     public func loadSound(_ id: AssetID) throws -> SoundBuffer {
         if pack != nil {
-            return try SoundBuffer(data: fileData(of: id), name: record(id).map { ($0.fileName as NSString).deletingPathExtension } ?? "")
+            return try SoundBuffer(data: fileData(of: id), name: record(id).map { ($0.fileName).pathDeletingExtension } ?? "")
         }
         guard let url = sourceURL(of: id) else { throw AudioError("No asset \(id)") }
         return try SoundBuffer(contentsOf: url)
@@ -93,7 +97,7 @@ extension AssetDatabase {
         if pack != nil {
             // A pack keeps the file's bytes; streaming decodes them from memory.
             decoder = try AudioFile.decoder(data: fileData(of: id))
-            name = record(id).map { ($0.fileName as NSString).deletingPathExtension } ?? ""
+            name = record(id).map { ($0.fileName).pathDeletingExtension } ?? ""
         } else {
             guard let url = sourceURL(of: id) else { throw AudioError("No asset \(id)") }
             decoder = try AudioFile.decoder(contentsOf: url)

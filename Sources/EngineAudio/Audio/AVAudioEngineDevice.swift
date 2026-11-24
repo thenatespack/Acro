@@ -1,6 +1,10 @@
 #if canImport(AVFAudio)
 import AVFAudio
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 import EngineScene
 

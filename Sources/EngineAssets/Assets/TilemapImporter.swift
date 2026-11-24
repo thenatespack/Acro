@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics
@@ -25,7 +29,7 @@ public struct TilemapImporter: AssetImporter {
         do { map = try AssetJSON.decoder().decode(Tilemap.self, from: context.data()) } catch {
             throw AssetError.unreadable("not a tilemap: \(error)")
         }
-        let stem = ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension
+        let stem = context.assetPath.pathLastComponent.pathDeletingExtension
         var warnings: [String] = []
         var sprite: PixelSprite?
         let built = map.buildTileset(load: { path in Self.image(path, &context) },

@@ -1,7 +1,11 @@
 import EngineAssets
 import EngineCore
 import EngineScene
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 // A scene played without a window for playtests: `ScenePlayback` (the play systems and the
 // module's) over one world, an `Input` nothing but the playtest feeds, and frames run on
@@ -118,7 +122,7 @@ public final class PlaytestHeadlessHost {
     /// the project folder).
     public static func resolve(_ path: String, from start: URL) -> URL {
         let fm = FileManager.default
-        let expanded = (path as NSString).expandingTildeInPath
+        let expanded = path.pathExpandingTilde
         if expanded.hasPrefix("/") || fm.fileExists(atPath: expanded) { return URL(fileURLWithPath: expanded) }
         var candidates: [URL] = []
         var folder = start.deletingLastPathComponent().standardizedFileURL

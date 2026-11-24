@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 /// Immediate-mode 3D debug drawing: lines, boxes, spheres, arrows, axes, frusta, a ground grid

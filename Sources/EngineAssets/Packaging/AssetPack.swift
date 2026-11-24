@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics
@@ -366,7 +370,7 @@ public final class AssetPack: Sendable {
         let scenes = manifest.scenes
         // `path` may also be project-root relative ("Assets/Scenes/X.scene").
         let relative = path.map { $0.hasPrefix("Assets/") ? String($0.dropFirst("Assets/".count)) : $0 }
-        guard let scene = relative.map({ p in scenes.first { $0.path == p || ($0.path as NSString).lastPathComponent == p } }) ?? scenes.first else {
+        guard let scene = relative.map({ p in scenes.first { $0.path == p || ($0.path).pathLastComponent == p } }) ?? scenes.first else {
             throw AssetPackError.unknownScene(path ?? "(start scene)", pack: name, available: scenes.map(\.path))
         }
         return try bytes(of: scene.blob)

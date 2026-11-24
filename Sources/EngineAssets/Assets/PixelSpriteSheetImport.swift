@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 // Turning an RGBA sprite sheet (a PNG of frames in a grid) into a `PixelSprite`: slice it into

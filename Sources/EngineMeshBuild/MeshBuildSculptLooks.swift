@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 #if canImport(Dispatch)
 import Dispatch
 #endif

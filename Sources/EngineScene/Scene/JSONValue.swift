@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 /// An untyped JSON value: what a scene file holds for a component whose type isn't

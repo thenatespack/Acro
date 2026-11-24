@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// 8-bit RGBA pixels, rows top to bottom.
 public struct Image: Sendable {

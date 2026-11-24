@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics
@@ -640,7 +644,7 @@ public final class AssetDatabase {
         // New files: create sidecars.
         let taken = Set(sidecars.values.map(\.id))
         for path in files.keys.sorted() where sidecars[path] == nil && !unreadable.contains(path) {
-            let ext = (path as NSString).pathExtension
+            let ext = path.pathFileExtension
             let importer = importers.importer(forExtension: ext)
             var id = AssetID.random()
             while taken.contains(id) || records[id] != nil { id = .random() }
@@ -661,7 +665,7 @@ public final class AssetDatabase {
             let id = sidecar.id
             let previous = records[id]
             let entry = index.assets[id.description]
-            let ext = (path as NSString).pathExtension
+            let ext = path.pathFileExtension
             let importer = sidecar.importer.flatMap(importers.importer(named:)) ?? importers.importer(forExtension: ext)
             let objects = previous?.objects ?? (entry?.importer == importer?.name ? entry?.objects : nil) ?? []
             newRecords[id] = AssetRecord(

@@ -15,7 +15,11 @@
 /// into clumps, each drawn as a strip `cardWidth` wide: UV x across, y from root (0) to tip (1),
 /// tangent along the strand (w: 2 + a random number per card), the skin of the nearest corner of
 /// the root's triangle.
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 public enum GroomGeometry {

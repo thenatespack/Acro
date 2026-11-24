@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAssets
 import EngineCore
 import EnginePhysics
@@ -515,7 +519,7 @@ final class BehaviorTicker {
 
     func randomUnit() -> Double {
         state.random = state.random &* 6364136223846793005 &+ 1442695040888963407
-        return Double(state.random >> 11) / Double(1 << 53)
+        return Double(state.random >> 11) / Double(UInt64(1) << 53)  // UInt64: 1 << 53 overflows a 32-bit Int
     }
 
     func tickRoot() -> BehaviorStatus? {

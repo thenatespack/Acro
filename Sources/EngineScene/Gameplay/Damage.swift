@@ -15,6 +15,11 @@
 //   reactions and death.
 //
 // Every key of these components is optional in scene files.
+#if os(WASI)
+import WASIFoundation
+#else
+import Foundation
+#endif
 import EngineCore
 
 /// What a type of damage does beyond the number: knockback, game feel and effects. Every key

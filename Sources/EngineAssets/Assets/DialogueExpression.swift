@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineScene
 
 /// A dialogue variable's value: a number, a bool or text.

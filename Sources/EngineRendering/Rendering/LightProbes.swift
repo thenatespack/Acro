@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAssets
 import EngineCore
 import EngineGraphics
@@ -602,8 +606,9 @@ struct LightProbeFile {
             data.withUnsafeBytes { UInt32(littleEndian: $0.loadUnaligned(fromByteOffset: i * 4, as: UInt32.self)) }
         }
         guard word(1) == UInt32(LightProbeBakeCache.bakeVersion) else { return nil }
-        let count = Int(word(6))
-        guard data.count == 28 + count * 4 else { return nil }
+        // In UInt64: on 32-bit (wasm32) Int(word(6)) or the multiplication could trap on a bad file.
+        guard UInt64(data.count) == 28 + UInt64(word(6)) * 4 else { return nil }
+        let count = (data.count - 28) / 4
         kind = word(2)
         counts = SIMD3(Int(word(3)), Int(word(4)), Int(word(5)))
         words = data.withUnsafeBytes { raw in (0..<count).map { UInt32(littleEndian: raw.loadUnaligned(fromByteOffset: 28 + $0 * 4, as: UInt32.self)) } }

@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics
@@ -31,7 +35,7 @@ public struct GridMapImporter: AssetImporter {
         do { map = try AssetJSON.decoder().decode(GridMap.self, from: context.data()) } catch {
             throw AssetError.unreadable("not a grid map: \(error)")
         }
-        let stem = ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension
+        let stem = context.assetPath.pathLastComponent.pathDeletingExtension
         var asset = ImportedAsset()
         var warnings: [String] = []
         var placements = map.placements(warnings: &warnings)
@@ -373,7 +377,7 @@ final class PieceLoader {
         if let done = imports[id] { return done }
         imports[id] = .some(nil)
         guard let path = paths[id] else { return nil }
-        let ext = (path as NSString).pathExtension.lowercased()
+        let ext = path.pathFileExtension.lowercased()
         guard ext != "gridmap", let importer = AssetImporterRegistry.builtIn.importer(forExtension: ext) else { return nil }
         let url = assetsRoot.appendingPathComponent(path)
         var settings: JSONValue?

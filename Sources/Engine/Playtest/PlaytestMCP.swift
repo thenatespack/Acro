@@ -1,7 +1,11 @@
 import EngineCore
 import EngineMCP
 import EngineScene
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 // A headless game as an MCP server for agent playtesting (`GameRunner <module> <scene> --mcp`):
 // no window, frames run only when a tool asks, so every session is deterministic. The tools
@@ -264,7 +268,7 @@ public final class PlaytestMCP: MCPToolProvider {
     }
 
     private func url(_ path: String) -> URL {
-        let expanded = (path as NSString).expandingTildeInPath
+        let expanded = path.pathExpandingTilde
         return expanded.hasPrefix("/") ? URL(fileURLWithPath: expanded) : folder.appendingPathComponent(expanded).standardizedFileURL
     }
 

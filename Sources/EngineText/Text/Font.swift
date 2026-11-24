@@ -1,5 +1,9 @@
 import CStbTrueType
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 import EngineGraphics
 import EngineScene

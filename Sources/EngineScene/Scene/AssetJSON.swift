@@ -1,5 +1,9 @@
 // How the engine writes and reads its JSON files (assets, project settings, sound builds).
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 /// JSON helpers for sidecars, settings and the Library index: sorted keys, stable output.

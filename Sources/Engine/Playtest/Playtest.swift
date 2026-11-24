@@ -1,6 +1,10 @@
 import EngineCore
 import EngineMCP
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 // Agent playtesting: a playtest is a script of what a player does and what should then be true,
 // stored as JSON so it can be committed and run in CI. The same steps are what an agent sends

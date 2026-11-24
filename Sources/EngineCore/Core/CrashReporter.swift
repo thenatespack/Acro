@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Writes a crash report when the engine hits `engineFatal` or the process gets a fatal signal
 /// (SIGSEGV, SIGABRT, SIGILL, SIGBUS, SIGFPE, SIGTRAP: what Swift traps and `precondition`

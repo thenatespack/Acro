@@ -100,11 +100,37 @@ let zlibTarget: Target = .systemLibrary(
 )
 #endif
 
-// No zlib in the WASI sysroot; code using it is behind `#if canImport(CZlib)`.
-let zlibDependency: [Target.Dependency] = wasmBuild ? [] : ["CZlib"]
-// astc-encoder needs std::mutex, which single-threaded WASI's libc++ lacks. A web build only
-// loads textures the cooker already encoded, so the codec (`#if canImport(CTextureCodec)`) is left out.
-let textureCodecDependency: [Target.Dependency] = wasmBuild ? [] : ["CTextureCodec"]
+// No zlib in the WASI sysroot: WebAssembly builds compile a vendored copy (Sources/CZlibWasm) as
+// the same `CZlib` module.
+let zlibModule: Target = wasmBuild
+    ? .target(name: "CZlib", path: "Sources/CZlibWasm", exclude: ["LICENSE", "README.md"])
+    : zlibTarget
+let zlibDependency: [Target.Dependency] = ["CZlib"]
+// astc-encoder uses std::mutex and std::condition_variable, which single-threaded WASI's libc++
+// lacks. WebAssembly builds force-include no-op stand-ins (wasi/wasi_threads_shim.h) instead of
+// changing the vendored sources.
+let textureCodecDependency: [Target.Dependency] = ["CTextureCodec"]
+let textureCodecWasmFlags: [CXXSetting] = wasmBuild
+    ? [.headerSearchPath("wasi"), .unsafeFlags(["-include", "wasi_threads_shim.h"])]
+    : []
+
+// WebAssembly: `import Foundation` links all of Foundation, FoundationInternationalization and ICU
+// (~35 MB of data) even when nothing from them is used, so the runtime modules import
+// WASIFoundation there instead (FoundationEssentials plus the few Foundation-only APIs the engine
+// uses). See docs/wasm-spike.md, "Size". One import remains: EngineCore's generated resource
+// accessor (`Bundle.module`, unused on WASI and dead-stripped). So that it costs nothing:
+// - Foundation isn't autolinked by the modules on top of EngineCore (its swiftmodule records
+//   Foundation as a library to link). Code that really used Foundation would fail to link.
+// - MemberImportVisibility keeps Foundation's extension members (`String(format:)`,
+//   `.whitespaces`), loaded as EngineCore's dependency, out of files that import WASIFoundation.
+let wasiFoundationTargets: [Target] = wasmBuild ? [.target(name: "WASIFoundation")] : []
+let wasiFoundationDependency: [Target.Dependency] = wasmBuild ? ["WASIFoundation"] : []
+let wasmFoundationSettings: [SwiftSetting] = wasmBuild
+    ? [.enableUpcomingFeature("MemberImportVisibility"),
+       .unsafeFlags(["Foundation", "FoundationInternationalization", "_FoundationICU", "CoreFoundation"]
+        .flatMap { ["-Xfrontend", "-disable-autolink-library", "-Xfrontend", $0] })]
+    : []
+engineSwiftSettings += wasmFoundationSettings
 
 // The block-compression encoders (CTextureCodec) are optimized in debug builds too: unoptimized,
 // astc-encoder's SIMD wrappers are many times slower (an uncached debug cook of SampleGame: 17 s
@@ -155,13 +181,19 @@ let webDependencies: [Target.Dependency] = wasmBuild
 // WebAssembly spike: a player with SampleGame linked in, built only with ENGINE_WASM=1.
 let wasmSpikeTargets: [Target] = wasmBuild
     ? [.executableTarget(name: "WasmPlayer", dependencies: ["Engine", "SampleGame"], path: "Spikes/WasmPlayer",
-                       swiftSettings: [.enableExperimentalFeature("Extern")]),
+                       swiftSettings: [.enableExperimentalFeature("Extern")] + wasmFoundationSettings),
        // Browser check of CanvasWindow, input, gamepads and WebAudioDevice (see Spikes/WebInputSmoke/main.swift).
        .executableTarget(name: "WebInputSmoke", dependencies: ["EngineBackends", "EngineAudio"] + webDependencies,
-                         path: "Spikes/WebInputSmoke", exclude: ["index.html", "smoke.mjs"]),
+                         path: "Spikes/WebInputSmoke", exclude: ["index.html", "smoke.mjs"], swiftSettings: wasmFoundationSettings),
        // WebGPU backend smoke test: renders frames in a browser (see Spikes/WebGPUSmoke/main.swift).
        .executableTarget(name: "WebGPUSmoke", dependencies: ["EngineRendering", "EngineMeshBuild", "EngineUI", "EngineBackends"] + webDependencies,
-                         path: "Spikes/WebGPUSmoke", exclude: ["web"])]
+                         path: "Spikes/WebGPUSmoke", exclude: ["web"], swiftSettings: wasmFoundationSettings)]
+    : []
+// Codec, PNG/zlib and layout checks whose output must match between a native and a wasm32 build
+// (see Spikes/WasmPortabilityCheck/main.swift). ENGINE_WASM_CHECK=1 adds it to a native build.
+let wasmCheckTargets: [Target] = wasmBuild || ProcessInfo.processInfo.environment["ENGINE_WASM_CHECK"] != nil
+    ? [.executableTarget(name: "WasmPortabilityCheck", dependencies: ["Engine", "CZlib"], path: "Spikes/WasmPortabilityCheck",
+                         swiftSettings: wasmFoundationSettings)]
     : []
 
 let package = Package(
@@ -176,8 +208,8 @@ let package = Package(
     ],
     dependencies: webPackages,
     // `as [Target]`: without it Swift 6.0's type checker gives up on this expression.
-    targets: vulkanTargets + wasmSpikeTargets + ([
-        zlibTarget,
+    targets: vulkanTargets + wasmSpikeTargets + wasmCheckTargets + wasiFoundationTargets + ([
+        zlibModule,
         // Vendored stb_truetype (public domain): font parsing, kerning and SDF glyph rasterization.
         .target(name: "CStbTrueType"),
         // Vendored stb_image v2.30 (public domain): PNG/JPEG/TGA/HDR decoding from memory.
@@ -197,9 +229,9 @@ let package = Package(
             exclude: ["LICENSES.md", "vendor/bc7enc/LICENSE", "vendor/astcenc/LICENSE.txt", "vendor/cvtt/LICENSE.txt"],
             cSettings: textureCodecCFlags,
             // Only 4x4 blocks are used: smaller per-block working sets.
-            cxxSettings: [.define("ASTCENC_BLOCK_MAX_TEXELS", to: "16")] + textureCodecCXXFlags
+            cxxSettings: [.define("ASTCENC_BLOCK_MAX_TEXELS", to: "16")] + textureCodecCXXFlags + textureCodecWasmFlags
         ),
-        .target(name: "EngineCore", dependencies: zlibDependency + ["CStbImage"], resources: [.copy("Shaders"), .copy("Fonts")],
+        .target(name: "EngineCore", dependencies: zlibDependency + ["CStbImage"] + wasiFoundationDependency, resources: [.copy("Shaders"), .copy("Fonts")],
                 swiftSettings: engineSwiftSettings, linkerSettings: windowsLinkerSettings),
         .target(name: "EngineScene", dependencies: ["EngineCore"], swiftSettings: engineSwiftSettings, linkerSettings: windowsLinkerSettings),
         .target(name: "EngineGraphics", dependencies: ["EngineCore"] + textureCodecDependency, swiftSettings: engineSwiftSettings,
@@ -245,7 +277,7 @@ let package = Package(
         // A Model Context Protocol server (JSON-RPC, stdio and Streamable HTTP transports, JSON
         // Schemas from Codable types). Foundation only, so games can embed it too.
         // WebAssembly: no sockets, stdio relay or URLSession; only the protocol core is built.
-        .target(name: "EngineMCP", exclude: wasmBuild ? ["MCPStdioRelay.swift", "Socket.swift", "MCPHTTPTransport.swift", "MCPStdioTransport.swift"] : []),
+        .target(name: "EngineMCP", dependencies: wasiFoundationDependency, exclude: wasmBuild ? ["MCPStdioRelay.swift", "Socket.swift", "MCPHTTPTransport.swift", "MCPStdioTransport.swift"] : []),
         // The in-engine editor: its logic in EditorCore and the builder tabs' modules (unit-tested
         // by EditorTests), and a thin executable that runs it (`swift run Editor [scene.json]`).
         .target(name: "EditorCore", dependencies: ["Engine", "EngineMCP"], linkerSettings: windowsLinkerSettings),
@@ -262,7 +294,7 @@ let package = Package(
         // A game as a game module: built as a target (not a product: a `.dynamic` product would
         // link its own copy of Engine) and linked into a shared library by GameModuleBuilder,
         // which the editor (`--game SampleGame`) and GameRunner load. See README "Game modules".
-        .target(name: "SampleGame", dependencies: ["Engine"]),
+        .target(name: "SampleGame", dependencies: ["Engine"], swiftSettings: wasmFoundationSettings),
         // Orbfall: a peg-clearing arcade game (the project at ~/Games/Peggle).
         .target(name: "Orbfall", dependencies: ["Engine"]),
         // Runs a game module standalone: `swift run GameRunner SampleGame [scene.json]`.

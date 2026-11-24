@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics
@@ -514,7 +518,7 @@ public struct VFXBuildImporter: AssetImporter {
         do { build = try AssetJSON.decoder().decode(VFXBuild.self, from: context.data()) } catch {
             throw AssetError.unreadable("not a vfx file: \(error)")
         }
-        let stem = ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension
+        let stem = context.assetPath.pathLastComponent.pathDeletingExtension
         var asset = ImportedAsset()
         var namer = SubAssetNamer()
         for problem in VFXBuildCheck.problems(build) { context.warn(problem) }
@@ -574,7 +578,7 @@ extension VFXBuildImporter {
             context.warn("emitter '\(e.name)': no texture '\(value)'")
             return nil
         }
-        guard let path, (path as NSString).pathExtension.lowercased() == "sprite" else {
+        guard let path, path.pathFileExtension.lowercased() == "sprite" else {
             return AssetReference(id, subAsset: subAsset ?? "texture")
         }
         // A sprite: its frames (the tag's, in order) become a flipbook texture of this effect.

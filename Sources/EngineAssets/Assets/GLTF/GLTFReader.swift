@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics
@@ -514,7 +518,7 @@ struct GLTFParser {
         if let uri = desc.uri {
             let (data, dataMime) = try resolver.data(for: uri, what: what)
             let shownURI = uri.hasPrefix("data:") ? String(uri.prefix(while: { $0 != "," })) : uri
-            let mime = desc.mimeType ?? dataMime ?? Self.mimeType(extension: (uri as NSString).pathExtension) ?? Self.sniffMimeType(data)
+            let mime = desc.mimeType ?? dataMime ?? Self.mimeType(extension: uri.pathFileExtension) ?? Self.sniffMimeType(data)
             return ImportedImage(name: desc.name, mimeType: mime, uri: shownURI, data: data)
         }
         guard let view = desc.bufferView else { throw GLTFError.invalidData("\(what) has neither a uri nor a bufferView") }

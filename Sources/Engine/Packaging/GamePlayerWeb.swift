@@ -1,5 +1,9 @@
 #if os(WASI)
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import JavaScriptKit
 import EngineAssets
 import EngineCore

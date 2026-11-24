@@ -1,6 +1,10 @@
 #if ENGINE_VULKAN
 import CVulkan
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 import EngineGraphics
 

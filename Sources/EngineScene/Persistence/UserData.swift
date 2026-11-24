@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 /// Where a game keeps per-user files (settings, save games), and how it writes them.
@@ -65,7 +69,12 @@ public enum AtomicFile {
             try data.write(to: temp)
             try beforeCommit?()
             if fm.fileExists(atPath: url.path) {
+                #if os(WASI)
+                // FoundationEssentials has no replaceItemAt; rename(2) replaces the file.
+                guard rename(temp.path, url.path) == 0 else { throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path]) }
+                #else
                 _ = try fm.replaceItemAt(url, withItemAt: temp)
+                #endif
             } else {
                 try fm.moveItem(at: temp, to: url)
             }

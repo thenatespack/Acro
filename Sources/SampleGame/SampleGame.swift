@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 // A small game as a game module (see Sources/Engine/GameModule/GameModule.swift): two
 // components, their systems and a standalone `Game`. The editor loads it with

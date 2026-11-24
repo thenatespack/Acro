@@ -1,5 +1,10 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
+import EngineScene
 
 /// A ready-to-paint tile set made in code, so a new tilemap shows something without outside art:
 /// 32 tiles of 16 x 16 pixels in 8 columns. `tilemap.new` writes it next to the map when no tile

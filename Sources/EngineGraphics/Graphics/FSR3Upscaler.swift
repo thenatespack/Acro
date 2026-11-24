@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 // AMD FidelityFX Super Resolution 3.1 upscaler (FSR 3.1.4 from FidelityFX SDK 1.1.4, MIT). The

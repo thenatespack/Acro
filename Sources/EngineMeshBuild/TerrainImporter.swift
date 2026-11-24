@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics
@@ -30,7 +34,7 @@ public struct TerrainImporter: AssetImporter {
             context.warn("height data has \(terrain.heightData.count) samples but resolution \(terrain.res) needs \(terrain.res * terrain.res); padded")
         }
         terrain.normalizeData()
-        let stem = ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension
+        let stem = context.assetPath.pathLastComponent.pathDeletingExtension
         var asset = ImportedAsset()
         var namer = SubAssetNamer()
 

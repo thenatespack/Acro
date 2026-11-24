@@ -1,6 +1,10 @@
 // The `game` and `build` sections of Project.json (see `Project`). They live with the asset
 // side so `Project` can hold them; `GameModuleBuilder` and `GameExporter` act on them.
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics

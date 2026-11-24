@@ -24,6 +24,11 @@
 //  "minImpactSpeed": 1.5, "minScrapeSpeed": 0.5,
 //  "pairs": {"metal": {"impact": {"sound": "Sounds/Clang.sfx"}}}}
 // ```
+#if os(WASI)
+import WASIFoundation
+#else
+import Foundation
+#endif
 import EngineCore
 import EngineGraphics
 import EngineScene

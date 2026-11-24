@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 // Conventions shared by the temporal upscalers (see `Upscaler.isTemporal`):

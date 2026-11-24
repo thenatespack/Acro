@@ -1,5 +1,9 @@
 import CStbImage
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Linear floating-point RGBA pixels (RGBA32F), rows top to bottom. What HDR images decode to.
 public struct FloatImage: Sendable {

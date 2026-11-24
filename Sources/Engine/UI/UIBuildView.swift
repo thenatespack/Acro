@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAssets
 import EngineBackends
 import EngineCore
@@ -845,7 +849,7 @@ final class UIBuildImage: Widget {
             if owner.showsPlaceholders {
                 list.fillRect(box, color: theme.controlBackground)
                 list.strokeRect(box, color: theme.controlBorder)
-                let name = (path as NSString).lastPathComponent
+                let name = path.pathLastComponent
                 list.drawText(name.isEmpty ? "image" : name, at: Vec2(box.x + 4, box.y + 4), size: theme.smallFontSize,
                               color: theme.secondaryTextColor)
             }
