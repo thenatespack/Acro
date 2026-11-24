@@ -77,12 +77,14 @@ export async function startPlayer({ canvas, status, args = [], env = [], probeFr
 
     show("Starting the game…");
     const wasi = new WASI(
-      [config.wasm], [`ENGINE_RESOURCES=/engine`, ...(config.env ?? []), ...env],
+      [config.wasm], [`ENGINE_RESOURCES=/engine`, `TMPDIR=/tmp`, ...(config.env ?? []), ...env],
       [
         new OpenFile(new File([])),  // stdin
         ConsoleStdout.lineBuffered((line) => console.log(line)),
         ConsoleStdout.lineBuffered((line) => console.error(line)),
-        new PreopenDirectory("/", new Map([["engine", engineFiles], ...mounts.map(([name], i) => [name, mounted[i]])])),
+        // /tmp: an empty, writable folder in memory (temporary files; gone with the page).
+        new PreopenDirectory("/", new Map([["engine", engineFiles], ["tmp", new Directory(new Map())],
+                                           ...mounts.map(([name], i) => [name, mounted[i]])])),
       ],
       { debug: false },
     );
