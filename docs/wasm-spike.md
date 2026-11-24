@@ -108,9 +108,10 @@ for every platform. A missing toolchain or SDK disables Web in the dialog with h
 
 SampleGame, release (2026-11-23): the first build takes about 11 minutes (all of Engine for
 wasm32); the folder is 59 MB: a 54.5 MB `.wasm` (79.0 MB linked; `-Os` gives 55.0 MB),
-**21.5 MB gzip -9, 14.2 MB brotli -q 11**, a 1.7 MB pack, 3 MB of WGSL and fonts. In Chromium
-(Playwright) the page loads everything, the wasm starts, the pack is read and the game is created;
-`Engine.init` then stops at "The WebGPU backend isn't wired into Engine yet" until W2A.
+**21.5 MB gzip -9, 14.2 MB brotli -q 11**, a 1.7 MB pack (BC textures, the Web default), 3 MB
+of WGSL and fonts. After W2A the exported folder plays: served on localhost and run with
+`Spikes/WebPlayerCheck/run.mjs` in Playwright Chromium (Apple M5), it starts in 0.85 s, renders
+the scene at 60 Hz with 0 WebGPU errors, and every request (only `.wgsl` shaders) succeeds.
 
 `Scripts/web-player.sh <pack>` still builds the spike's `WasmPlayer` (SampleGame linked in) with
 a pack you cooked and copies the whole engine bundle (Metal and SPIR-V too); `--export` uses the
