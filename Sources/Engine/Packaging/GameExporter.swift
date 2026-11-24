@@ -684,7 +684,8 @@ public struct GameExporter: Sendable {
     /// for the editor: every DLL in the build's products folder (`Engine.dll`: on Windows Engine
     /// is a .dynamic product, see Package.swift), every DLL in the Swift runtime's folder (the one
     /// on `Path` holding `swiftCore.dll`: the standard library, Foundation, ICU…), and zlib's
-    /// (`$ZLIB_DIR\bin\z*.dll`, else `zlib1.dll` or `z.dll` on `Path`). The Vulkan loader comes
+    /// (`$ZLIB_DIR\bin\z*.dll` and `libz*.dll`, else `zlib1.dll`, `z.dll` or `libz.dll` on `Path`; vcpkg's
+    /// zlib 1.4 builds `libz.dll`). The Vulkan loader comes
     /// with the GPU driver and GLFW is linked statically; the MSVC runtime is the player's
     /// Visual C++ Redistributable. One file per name, first found wins.
     static func windowsLibraries(builtIn bin: URL, environment: [String: String]) -> [URL] {
@@ -706,8 +707,8 @@ public struct GameExporter: Sendable {
         let zlibBin = environment.first { $0.key.uppercased() == "ZLIB_DIR" }.map {
             URL(fileURLWithPath: $0.value, isDirectory: true).appendingPathComponent("bin", isDirectory: true)
         }
-        let zlib = zlibBin.map { dlls(in: $0) { $0.hasPrefix("z") } } ?? []
-        found += zlib.isEmpty ? ["zlib1.dll", "z.dll"].compactMap(onPath) : zlib
+        let zlib = zlibBin.map { dlls(in: $0) { $0.hasPrefix("z") || $0.hasPrefix("libz") } } ?? []
+        found += zlib.isEmpty ? ["zlib1.dll", "z.dll", "libz.dll"].compactMap(onPath) : zlib
 
         var names = Set<String>()
         return found.filter { names.insert($0.lastPathComponent.lowercased()).inserted }

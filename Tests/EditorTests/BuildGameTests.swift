@@ -269,6 +269,10 @@ private let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathCompon
         #expect(names(["PATH": path + ";" + zlib.path]) == ["Engine.dll", "Foundation.dll", "swiftCore.dll", "zlib1.dll"])
         // Nothing on Path: only the build's own DLLs.
         #expect(names([:]) == ["Engine.dll"])
+        // vcpkg's zlib 1.4 builds libz.dll.
+        let zlib14 = try make("zlib14/bin", ["libz.dll", "other.dll"])
+        #expect(names(["Path": path, "ZLIB_DIR": zlib14.deletingLastPathComponent().path])
+            == ["Engine.dll", "Foundation.dll", "swiftCore.dll", "libz.dll"])
     }
 
     @Test func commandLineCooks() throws {
