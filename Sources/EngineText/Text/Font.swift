@@ -67,7 +67,7 @@ public final class Font {
 
     /// Inter Regular (SIL Open Font License; see `Fonts/Inter-LICENSE.txt`), bundled with the engine.
     public static func bundledUI() throws -> Font {
-        guard let url = Bundle.engineResources.url(forResource: "Inter-Regular", withExtension: "ttf", subdirectory: "Fonts") else {
+        guard let url = Bundle.engineResources.engineResourceURL("Inter-Regular", withExtension: "ttf", subdirectory: "Fonts") else {
             throw FontError("Bundled font Inter-Regular.ttf not found")
         }
         return try Font(contentsOf: url)

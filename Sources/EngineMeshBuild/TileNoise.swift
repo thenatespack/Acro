@@ -169,7 +169,7 @@ enum TileNoise {
         values.withUnsafeMutableBufferPointer { buffer in
             guard let base = buffer.baseAddress else { return }
             let shared = SharedPointer(UnsafePointer(base))
-            DispatchQueue.concurrentPerform(iterations: rows) { y in body(y, shared.advanced(by: y * stride)) }
+            concurrentPerform(iterations: rows) { y in body(y, shared.advanced(by: y * stride)) }
         }
         return values
     }

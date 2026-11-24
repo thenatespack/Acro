@@ -711,7 +711,7 @@ public struct GameExporter: Sendable {
     static func writeIfChanged(_ text: String, to url: URL) throws {
         let data = Data(text.utf8)
         if FileManager.default.contents(atPath: url.path) == data { return }
-        try data.write(to: url, options: .atomic)
+        try data.write(to: url, options: .engineAtomic)
     }
 
     /// Bytes of a file, or of everything in a folder.

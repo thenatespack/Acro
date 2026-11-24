@@ -4,6 +4,26 @@
 // macOS with ENGINE_AUDIO=miniaudio (the default there is AVAudioEngine). Backends (ALSA,
 // PulseAudio, WASAPI, Core Audio, ...) are loaded at run time, so nothing extra is linked
 // besides -ldl -lpthread -lm on Linux.
+#ifdef __wasi__
+// WebAssembly: no threads and no device APIs in WASI. A web build needs a Web Audio
+// (AudioWorklet) output that pulls from the engine's mixer instead; until then, opening fails.
+#include <stdlib.h>
+#include <string.h>
+#include "include/CAudio.h"
+
+caudio_device *caudio_device_open(uint32_t sample_rate, caudio_render_fn render, void *user,
+                                  uint32_t *out_rate, char *name, size_t name_capacity,
+                                  char *error, size_t error_capacity) {
+    if (error_capacity > 0) {
+        strncpy(error, "no audio output in WebAssembly builds yet", error_capacity - 1);
+        error[error_capacity - 1] = 0;
+    }
+    return NULL;
+}
+int caudio_device_start(caudio_device *device) { return -1; }
+void caudio_device_stop(caudio_device *device) {}
+void caudio_device_close(caudio_device *device) {}
+#else
 #define MA_NO_DECODING
 #define MA_NO_ENCODING
 #define MA_NO_GENERATION
@@ -76,3 +96,4 @@ void caudio_device_close(caudio_device *device) {
     ma_device_uninit(&device->device);
     free(device);
 }
+#endif

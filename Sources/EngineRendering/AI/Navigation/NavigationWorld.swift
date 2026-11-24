@@ -326,7 +326,7 @@ public final class NavigationBakeCache: @unchecked Sendable {
         guard let directory, let url = url(key) else { return }
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try JSONEncoder().encode(mesh).write(to: url, options: .atomic)
+            try JSONEncoder().encode(mesh).write(to: url, options: .engineAtomic)
             prune()
         } catch {
             EngineLog.warning("Navigation: couldn't cache the navmesh in \(directory.path): \(error)")

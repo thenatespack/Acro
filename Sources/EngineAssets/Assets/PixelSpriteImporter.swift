@@ -160,7 +160,7 @@ extension AssetDatabase {
         let url = project.url(forAssetPath: path)
         if FileManager.default.fileExists(atPath: url.path) { throw AssetFileError.exists(path) }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try sprite.fileData().write(to: url, options: .atomic)
+        try sprite.fileData().write(to: url, options: .engineAtomic)
         refresh()
         guard let id = id(forPath: path) else { throw AssetError.noSuchAsset(path) }
         return id
@@ -176,7 +176,7 @@ extension AssetDatabase {
     @discardableResult
     public func writePixelSprite(_ sprite: PixelSprite, to id: AssetID) throws -> [String] {
         guard let path = path(of: id) else { throw AssetError.noSuchAsset(id.description) }
-        try sprite.fileData().write(to: project.url(forAssetPath: path), options: .atomic)
+        try sprite.fileData().write(to: project.url(forAssetPath: path), options: .engineAtomic)
         let report = refresh()
         return report.warnings.filter { $0.hasPrefix(path + ": ") }.map { String($0.dropFirst(path.count + 2)) }
             + report.errors.filter { $0.path == path }.map { "import failed: \($0.message)" }

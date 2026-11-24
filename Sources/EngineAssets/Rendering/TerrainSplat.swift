@@ -64,7 +64,7 @@ public struct TerrainSplat: Codable, Equatable, Sendable {
 
     private static let shaders: (metal: String, metalColor0: String?, spirv: [UInt8])? = {
         let bundle = Bundle.engineResources
-        func url(_ ext: String) -> URL? { bundle.url(forResource: "mesh_terrain", withExtension: ext, subdirectory: "Shaders") }
+        func url(_ ext: String) -> URL? { bundle.engineResourceURL("mesh_terrain", withExtension: ext, subdirectory: "Shaders") }
         guard let metalURL = url("frag.metal"), let spirvURL = url("frag.spv"),
               let metal = try? String(contentsOf: metalURL, encoding: .utf8), let spirv = try? Data(contentsOf: spirvURL) else {
             print("TerrainSplat: mesh_terrain.frag.metal / .spv missing from the engine's resources")

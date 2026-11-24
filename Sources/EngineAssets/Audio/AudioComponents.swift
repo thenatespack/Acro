@@ -215,7 +215,7 @@ final class ClipMailbox: @unchecked Sendable {
     private var done: [(AssetID, Result<SoundBuffer, Error>)] = []
 
     func decode(_ id: AssetID, _ source: Source, name: String) {
-        DispatchQueue.global(qos: .utility).async { [self] in
+        runInBackground { [self] in
             let result = Result<SoundBuffer, Error> {
                 switch source {
                 case .url(let url): try SoundBuffer(decoder: AudioFile.decoder(contentsOf: url), name: name)

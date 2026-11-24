@@ -6,8 +6,14 @@ import Foundation
 // always built on Linux/Windows, and on macOS it is built when the Vulkan SDK is
 // installed (it then runs on top of MoltenVK — handy for testing the Vulkan path).
 // Set ENGINE_DISABLE_VULKAN=1 to skip it on macOS.
+// ENGINE_WASM=1: building for WebAssembly (swift build --swift-sdk <wasm sdk>). The manifest is
+// evaluated on the host, so it can't see the target triple; this switch turns off what the WASI
+// sysroot lacks (Vulkan/GLFW, system zlib). Spike: see docs/wasm-spike.md.
+let wasmBuild = ProcessInfo.processInfo.environment["ENGINE_WASM"] != nil
+
 #if os(macOS)
 let vulkanEnabled: Bool = {
+    if wasmBuild { return false }
     if ProcessInfo.processInfo.environment["ENGINE_DISABLE_VULKAN"] != nil { return false }
     let prefixes = ["/opt/homebrew", "/usr/local"]
     let sdk = ProcessInfo.processInfo.environment["VULKAN_SDK"].map { [$0] } ?? []
@@ -94,6 +100,12 @@ let zlibTarget: Target = .systemLibrary(
 )
 #endif
 
+// No zlib in the WASI sysroot; code using it is behind `#if canImport(CZlib)`.
+let zlibDependency: [Target.Dependency] = wasmBuild ? [] : ["CZlib"]
+// astc-encoder needs std::mutex, which single-threaded WASI's libc++ lacks. A web build only
+// loads textures the cooker already encoded, so the codec (`#if canImport(CTextureCodec)`) is left out.
+let textureCodecDependency: [Target.Dependency] = wasmBuild ? [] : ["CTextureCodec"]
+
 // The block-compression encoders (CTextureCodec) are optimized in debug builds too: unoptimized,
 // astc-encoder's SIMD wrappers are many times slower (an uncached debug cook of SampleGame: 17 s
 // instead of 2.8 s), and debug editors and tests encode. That needs unsafeFlags, which SwiftPM
@@ -131,6 +143,12 @@ let engineModules = ["EngineCore", "EngineScene", "EngineGraphics", "EngineBacke
 // The builder tabs' modules (see the EditorBuilders target).
 let editorBuilderModules = ["EditorBuildersMesh", "EditorBuildersWorld", "EditorBuilders2D", "EditorBuildersAnimation", "EditorBuildersLogic"]
 
+// WebAssembly spike: a player with SampleGame linked in, built only with ENGINE_WASM=1.
+let wasmSpikeTargets: [Target] = wasmBuild
+    ? [.executableTarget(name: "WasmPlayer", dependencies: ["Engine", "SampleGame"], path: "Spikes/WasmPlayer",
+                       swiftSettings: [.enableExperimentalFeature("Extern")])]
+    : []
+
 let package = Package(
     name: "Acro",
     platforms: [.macOS(.v14)],
@@ -142,7 +160,7 @@ let package = Package(
         .executable(name: "GameRunner", targets: ["GameRunner"]),
     ],
     // `as [Target]`: without it Swift 6.0's type checker gives up on this expression.
-    targets: vulkanTargets + ([
+    targets: vulkanTargets + wasmSpikeTargets + ([
         zlibTarget,
         // Vendored stb_truetype (public domain): font parsing, kerning and SDF glyph rasterization.
         .target(name: "CStbTrueType"),
@@ -165,10 +183,10 @@ let package = Package(
             // Only 4x4 blocks are used: smaller per-block working sets.
             cxxSettings: [.define("ASTCENC_BLOCK_MAX_TEXELS", to: "16")] + textureCodecCXXFlags
         ),
-        .target(name: "EngineCore", dependencies: ["CZlib", "CStbImage"], resources: [.copy("Shaders"), .copy("Fonts")],
+        .target(name: "EngineCore", dependencies: zlibDependency + ["CStbImage"], resources: [.copy("Shaders"), .copy("Fonts")],
                 swiftSettings: engineSwiftSettings, linkerSettings: windowsLinkerSettings),
         .target(name: "EngineScene", dependencies: ["EngineCore"], swiftSettings: engineSwiftSettings, linkerSettings: windowsLinkerSettings),
-        .target(name: "EngineGraphics", dependencies: ["EngineCore", "CTextureCodec"], swiftSettings: engineSwiftSettings,
+        .target(name: "EngineGraphics", dependencies: ["EngineCore"] + textureCodecDependency, swiftSettings: engineSwiftSettings,
                 linkerSettings: windowsLinkerSettings),
         .target(name: "EngineBackends", dependencies: ["EngineGraphics"] + backendDependencies, swiftSettings: engineSwiftSettings,
                 linkerSettings: windowsLinkerSettings),
@@ -185,7 +203,7 @@ let package = Package(
         // that run them. Nothing below Engine depends on it, so it compiles alongside EngineRendering.
         .target(name: "EngineMeshBuild", dependencies: ["EngineAssets"], swiftSettings: engineSwiftSettings,
                 linkerSettings: windowsLinkerSettings),
-        .target(name: "EngineNet", dependencies: ["EnginePhysics", "CZlib"], swiftSettings: engineSwiftSettings,
+        .target(name: "EngineNet", dependencies: ["EnginePhysics"] + zlibDependency, swiftSettings: engineSwiftSettings,
                 linkerSettings: windowsLinkerSettings),
         .target(name: "EngineUI", dependencies: ["EngineText", "EngineBackends", "EnginePhysics"], swiftSettings: engineSwiftSettings,
                 linkerSettings: windowsLinkerSettings),
@@ -195,6 +213,10 @@ let package = Package(
         .target(
             name: "Engine",
             dependencies: ["EngineRendering", "EngineMeshBuild", "EngineUI", "EngineNet", "EngineBackends", "EngineAudio", "EngineMCP"] + backendDependencies,
+            // WebAssembly: no processes, dynamic loading or Docker. Exporting and building or loading
+            // game modules are editor-side; a web build links its game statically.
+            exclude: wasmBuild ? ["Packaging/GameExporter.swift", "Packaging/GameExporterDocker.swift", "GameModule/GameModuleBuilder.swift",
+                                  "GameModule/GameModuleFastBuild.swift", "GameModule/GameModuleLoader.swift"] : [],
             swiftSettings: engineSwiftSettings,
             linkerSettings: windowsLinkerSettings
         ),
@@ -206,7 +228,8 @@ let package = Package(
         ),
         // A Model Context Protocol server (JSON-RPC, stdio and Streamable HTTP transports, JSON
         // Schemas from Codable types). Foundation only, so games can embed it too.
-        .target(name: "EngineMCP"),
+        // WebAssembly: no sockets, stdio relay or URLSession; only the protocol core is built.
+        .target(name: "EngineMCP", exclude: wasmBuild ? ["MCPStdioRelay.swift", "Socket.swift", "MCPHTTPTransport.swift", "MCPStdioTransport.swift"] : []),
         // The in-engine editor: its logic in EditorCore and the builder tabs' modules (unit-tested
         // by EditorTests), and a thin executable that runs it (`swift run Editor [scene.json]`).
         .target(name: "EditorCore", dependencies: ["Engine", "EngineMCP"], linkerSettings: windowsLinkerSettings),

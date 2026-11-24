@@ -713,7 +713,7 @@ public final class VisualScriptRuntime {
         if outermost { steps = 0 }
         let profiling = outermost && Profiler.isEnabled
         if profiling { Profiler.begin("vscript \(instance.program.name)") }
-        let start = outermost ? DispatchTime.now().uptimeNanoseconds : 0
+        let start = outermost ? monotonicNanoseconds() : 0
         do {
             try body()
         } catch let error as VSRunaway {
@@ -725,7 +725,7 @@ public final class VisualScriptRuntime {
             report(instance, nil, "\(error)")
         }
         if outermost {
-            timings[instance.program.name, default: 0] += Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9
+            timings[instance.program.name, default: 0] += Double(monotonicNanoseconds() - start) / 1e9
             recording = false
         }
         if profiling { Profiler.end() }

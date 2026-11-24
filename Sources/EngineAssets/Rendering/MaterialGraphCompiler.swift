@@ -143,7 +143,7 @@ public enum MaterialGraphCompiler {
 
     static let template: Result<Template, CompileError> = {
         let bundle = Bundle.engineResources
-        func url(_ name: String, _ ext: String) -> URL? { bundle.url(forResource: name, withExtension: ext, subdirectory: "Shaders") }
+        func url(_ name: String, _ ext: String) -> URL? { bundle.engineResourceURL(name, withExtension: ext, subdirectory: "Shaders") }
         func load(_ name: String) -> (metal: String, spirv: [UInt32])? {
             guard let metalURL = url(name, "frag.metal"), let spirvURL = url(name, "frag.spv"),
                   let metal = try? String(contentsOf: metalURL, encoding: .utf8), let data = try? Data(contentsOf: spirvURL),

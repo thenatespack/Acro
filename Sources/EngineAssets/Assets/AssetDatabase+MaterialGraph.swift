@@ -17,7 +17,7 @@ extension AssetDatabase {
     @discardableResult
     public func writeMaterialFile(_ material: MaterialAsset, to id: AssetID) throws -> [String] {
         guard let path = path(of: id) else { throw AssetError.noSuchAsset(id.description) }
-        try Self.materialFileData(material).write(to: project.url(forAssetPath: path), options: .atomic)
+        try Self.materialFileData(material).write(to: project.url(forAssetPath: path), options: .engineAtomic)
         let report = refresh()
         return report.warnings.filter { $0.hasPrefix(path + ": ") }.map { String($0.dropFirst(path.count + 2)) }
             + report.errors.filter { $0.path == path }.map { "import failed: \($0.message)" }

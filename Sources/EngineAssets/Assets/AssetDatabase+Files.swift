@@ -233,7 +233,7 @@ extension AssetDatabase {
         let url = project.url(forAssetPath: path)
         if FileManager.default.fileExists(atPath: url.path) { throw AssetFileError.exists(path) }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Self.materialFileData(material).write(to: url, options: .atomic)
+        try Self.materialFileData(material).write(to: url, options: .engineAtomic)
         refresh()
         guard let id = id(forPath: path) else { throw AssetError.noSuchAsset(path) }
         return id
@@ -243,7 +243,7 @@ extension AssetDatabase {
     /// pick up the change on their next frame.
     public func writeMaterial(_ material: MaterialAsset, to id: AssetID) throws {
         guard let path = path(of: id) else { throw AssetError.noSuchAsset(id.description) }
-        try Self.materialFileData(material).write(to: project.url(forAssetPath: path), options: .atomic)
+        try Self.materialFileData(material).write(to: project.url(forAssetPath: path), options: .engineAtomic)
         refresh()
     }
 
@@ -257,7 +257,7 @@ extension AssetDatabase {
         let url = project.url(forAssetPath: path)
         if FileManager.default.fileExists(atPath: url.path) { throw AssetFileError.exists(path) }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try scene.write(to: url, options: .atomic)
+        try scene.write(to: url, options: .engineAtomic)
         refresh()
         guard let id = id(forPath: path) else { throw AssetError.noSuchAsset(path) }
         return id
@@ -266,7 +266,7 @@ extension AssetDatabase {
     /// Overwrites the `.prefab` asset `id` with `scene` and reimports it.
     public func writePrefab(_ scene: Data, to id: AssetID) throws {
         guard let path = path(of: id) else { throw AssetError.noSuchAsset(id.description) }
-        try scene.write(to: project.url(forAssetPath: path), options: .atomic)
+        try scene.write(to: project.url(forAssetPath: path), options: .engineAtomic)
         refresh()
     }
 

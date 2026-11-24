@@ -359,7 +359,7 @@ public final class PlaytestMCP: MCPToolProvider {
             if !path.hasSuffix(".json") { path += Playtest.fileSuffix }
             let file = url(path)
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try recording.json().write(to: file, options: .atomic)
+            try recording.json().write(to: file, options: .engineAtomic)
             return PlaytestSaveResult(path: file.path, playtest: recording)
         }
         add("playtest.run", "Run Playtest", "Replays a playtest (`path` to a file or the `playtest` itself) from the start of the scene and returns its result.",
@@ -379,6 +379,7 @@ public final class PlaytestMCP: MCPToolProvider {
 
     // MARK: Serving
 
+    #if !os(WASI)  // No stdio transport in WebAssembly builds.
     /// Points standard output at standard error and returns the protocol's handle to it (see
     /// `MCPStdioTransport.claimStandardOutput`): call before anything prints.
     public static func claimStandardOutput() -> FileHandle {
@@ -396,4 +397,5 @@ public final class PlaytestMCP: MCPToolProvider {
         }
         server.pump()
     }
+    #endif
 }

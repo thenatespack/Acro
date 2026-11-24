@@ -108,6 +108,9 @@ public final class JobSystem: @unchecked Sendable {
 
     /// The thread count `ENGINE_JOB_THREADS` asks for, or one per core (at most 16).
     static func threadCount(environment: [String: String]) -> Int {
+        #if os(WASI)
+        return 1  // Single-threaded WebAssembly: jobs run inline.
+        #endif
         if let value = environment["ENGINE_JOB_THREADS"], let n = Int(value.trimmingCharacters(in: .whitespaces)), n >= 0 {
             return min(n, 64)
         }
@@ -117,6 +120,9 @@ public final class JobSystem: @unchecked Sendable {
     /// A pool running jobs on `threadCount` threads in all: the caller plus `threadCount - 1`
     /// workers (0 or 1: inline).
     public init(threadCount: Int) {
+        #if os(WASI)
+        workerCount = 0  // No threads in single-threaded WebAssembly: jobs run inline.
+        #else
         workerCount = max(threadCount - 1, 0)
         // Start workers one at a time so they register with the profiler in order (stable lane order).
         let started = DispatchSemaphore(value: 0)
@@ -134,6 +140,7 @@ public final class JobSystem: @unchecked Sendable {
             thread.start()
             started.wait()
         }
+        #endif
     }
 
     /// Stops the workers once the queue is empty; later jobs run inline. A pool's workers keep

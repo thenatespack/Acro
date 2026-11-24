@@ -449,8 +449,8 @@ public struct RenderList {
     private var slotOfItem: [Int32] = []
     private var shadowSlotOfItem: [Int32] = []
     private var transparentItems: [(item: Int32, distance: Float)] = []
-    private var opaqueSlots: [Int: Int] = [:]
-    private var shadowSlots: [Int: Int] = [:]
+    private var opaqueSlots: [Int64: Int] = [:]
+    private var shadowSlots: [Int64: Int] = [:]
     private var visibility: [UInt8] = []
     /// Runs the visibility tests (in batches of 4096 items; the result doesn't depend on its
     /// thread count).
@@ -493,7 +493,7 @@ public struct RenderList {
         }
 
         // Classify and count, in item order. `count` of each batch is used as a counter here.
-        var lastKey = Int.min, lastSlot = -1
+        var lastKey = Int64.min, lastSlot = -1  // Int64 keys: Int is 32-bit on wasm32
         var lastSkinned: (skin: Int, mesh: Int, material: Int)?
         for (i, item) in items.enumerated() {
             if shadows != nil, item.castsShadows {
@@ -501,7 +501,7 @@ public struct RenderList {
                     let slot: Int
                     // Alpha-tested casters need their material; the rest share a depth-only batch per mesh.
                     let material = item.alphaTested ? item.material : -1
-                    let key = item.mesh << 32 | (material & 0xffff_ffff)
+                    let key = Int64(item.mesh) << 32 | (Int64(material) & 0xffff_ffff)
                     if item.skin < 0, let existing = shadowSlots[key] {
                         slot = existing
                     } else {
@@ -526,7 +526,7 @@ public struct RenderList {
                 transparentItems.append((Int32(i), dot(d, d)))
                 continue
             }
-            let key = item.skin < 0 ? item.mesh << 32 | item.material : Int.min
+            let key = item.skin < 0 ? Int64(item.mesh) << 32 | Int64(item.material) : Int64.min
             let slot: Int
             if key == lastKey && item.skin < 0 {
                 slot = lastSlot

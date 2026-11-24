@@ -126,9 +126,9 @@ enum CompressedTextureCache {
 
     private static func encode(width: Int, height: Int, format: TextureFormat, key: String, file: URL?, label: String,
                                _ body: () throws -> [TextureMipLevel]) throws -> [TextureMipLevel] {
-        let start = DispatchTime.now().uptimeNanoseconds
+        let start = monotonicNanoseconds()
         let levels = try body()
-        let milliseconds = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
+        let milliseconds = Double(monotonicNanoseconds() - start) / 1e6
         EngineLog.debug("Encoded \(label) (\(width)x\(height), \(levels.count) levels) as \(format) in "
                         + String(format: "%.0f ms", milliseconds), category: .assets)
         if let file { write(levels, key: key, to: file) }
@@ -163,7 +163,7 @@ enum CompressedTextureCache {
         var data = Data(magic + u32(keyBytes.count) + keyBytes + u32(levels.count))
         for level in levels { data.append(contentsOf: level.pixels) }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
+        try? data.write(to: url, options: .engineAtomic)
     }
 }
 

@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(Dispatch)
 import Dispatch
+#endif
 import EngineCore
 import EngineScene
 import EngineAssets
@@ -777,7 +779,7 @@ struct MeshBuildSculptor {
         let ix = Int32(truncatingIfNeeded: Int(i.x)), iy = Int32(truncatingIfNeeded: Int(i.y)), iz = Int32(truncatingIfNeeded: Int(i.z))
         func corner(_ dx: Int32, _ dy: Int32, _ dz: Int32) -> Float {
             var h = UInt32(bitPattern: (ix &+ dx) &* 73_856_093 ^ (iy &+ dy) &* 19_349_663 ^ (iz &+ dz) &* 83_492_791)
-            h ^= UInt32(truncatingIfNeeded: seed &* 2_654_435_761)
+            h ^= UInt32(truncatingIfNeeded: seed) &* 2_654_435_761  // same low 32 bits as before; Int is 32-bit on wasm32
             h = (h ^ (h >> 16)) &* 0x45d9f3b
             h ^= h >> 16
             let g = Vec3(Float(h & 0xFF) / 127.5 - 1, Float((h >> 8) & 0xFF) / 127.5 - 1, Float((h >> 16) & 0xFF) / 127.5 - 1)

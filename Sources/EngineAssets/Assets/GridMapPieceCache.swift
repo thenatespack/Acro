@@ -129,7 +129,7 @@ package final class GridMapPieceCache {
         do {
             try AssetArtifacts.write(Self.slim(asset), to: folder.appendingPathComponent(Self.importFolder, isDirectory: true))
             let key = Key(importer: importer.name, version: importer.version, settings: settings, source: source, dependencies: dependencies)
-            try AssetJSON.encode(key).write(to: folder.appendingPathComponent(Self.keyName), options: .atomic)
+            try AssetJSON.encode(key).write(to: folder.appendingPathComponent(Self.keyName), options: .engineAtomic)
         } catch {
             try? fm.removeItem(at: folder)
         }

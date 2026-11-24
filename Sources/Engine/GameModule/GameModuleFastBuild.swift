@@ -263,7 +263,7 @@ extension GameModuleBuilder {
         try? FileManager.default.createDirectory(at: cacheFolder, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try? encoder.encode(cache).write(to: cacheURL, options: .atomic)
+        try? encoder.encode(cache).write(to: cacheURL, options: .engineAtomic)
     }
 
     /// The game's targets (`swift package describe`, cached while Package.swift is unchanged).

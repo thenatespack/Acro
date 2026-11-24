@@ -179,7 +179,7 @@ final class LogCore: @unchecked Sendable {
     static let shared = LogCore(environment: ProcessInfo.processInfo.environment)
 
     private let lock = NSLock()
-    private let epoch = DispatchTime.now().uptimeNanoseconds
+    private let epoch = monotonicNanoseconds()
     private var level: EngineLog.Level = .info
     private var categoryLevels: [EngineLog.Category: EngineLog.Level] = [:]
     private var handler: EngineLog.Handler?
@@ -279,7 +279,7 @@ final class LogCore: @unchecked Sendable {
         let text = message()
         let handlerToCall: EngineLog.Handler? = lock.withLock {
             let entry = EngineLog.Entry(
-                sequence: sequence, time: Double(DispatchTime.now().uptimeNanoseconds - epoch) * 1e-9,
+                sequence: sequence, time: Double(monotonicNanoseconds() - epoch) * 1e-9,
                 level: messageLevel, category: category, message: text)
             sequence += 1
             if ring.count < capacity {

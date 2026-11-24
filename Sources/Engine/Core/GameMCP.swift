@@ -55,8 +55,10 @@ public enum EngineMCPMode: Equatable, Sendable {
 @MainActor
 public final class GameMCP: MCPToolProvider {
     public let server: MCPServer
+    #if !os(WASI)  // No transports in WebAssembly builds: the server is reachable only in-process.
     public private(set) var stdio: MCPStdioTransport?
     public private(set) var http: MCPHTTPTransport?
+    #endif
     /// The world the entity tools read and edit: `engine.world` by default. Games that keep
     /// their world elsewhere point this at it.
     public var world: (() -> World?)?
@@ -88,6 +90,9 @@ public final class GameMCP: MCPToolProvider {
     /// Starts the transport `mode` names. Stdio claims standard output first (from then on
     /// `print` goes to standard error), so start it before printing anything.
     func start(_ mode: EngineMCPMode) {
+        #if os(WASI)
+        if mode != .off { MCPServer.logToStandardError("MCP: no transports in WebAssembly builds") }
+        #else
         switch mode {
         case .off: break
         case .stdio:
@@ -102,10 +107,17 @@ public final class GameMCP: MCPToolProvider {
                 MCPServer.logToStandardError("MCP: HTTP server unavailable: \(error)")
             }
         }
+        #endif
     }
 
     /// The stdio client closed its end: the game should quit.
-    public var stdioClientDisconnected: Bool { stdio?.isClosed ?? false }
+    public var stdioClientDisconnected: Bool {
+        #if os(WASI)
+        false
+        #else
+        stdio?.isClosed ?? false
+        #endif
+    }
 
     /// Handles queued requests (the engine calls it once per frame).
     public func pump() {
@@ -113,7 +125,9 @@ public final class GameMCP: MCPToolProvider {
     }
 
     func stop() {
+        #if !os(WASI)
         http?.stop()
+        #endif
     }
 
     // MARK: Tools

@@ -132,7 +132,7 @@ final class ProfilerCore: @unchecked Sendable {
     static let shared = ProfilerCore()
 
     private let lock = NSLock()
-    private var epoch = DispatchTime.now().uptimeNanoseconds
+    private var epoch = monotonicNanoseconds()
     private var openScopes: [UInt64: [(name: String, start: Double)]] = [:]
     private var threadNumbers: [ObjectIdentifier: UInt64] = [:]
     private var nextThreadNumber: UInt64 = 1
@@ -165,12 +165,12 @@ final class ProfilerCore: @unchecked Sendable {
         ring.count < capacity || ringStart == 0 ? ring : Array(ring[ringStart...] + ring[..<ringStart])
     }
 
-    private func now() -> Double { Double(DispatchTime.now().uptimeNanoseconds - epoch) * 1e-9 }
+    private func now() -> Double { Double(monotonicNanoseconds() - epoch) * 1e-9 }
 
     /// Time restarts from zero whenever recording is switched on, so traces start near 0.
     func restartClock() {
         lock.withLock {
-            epoch = DispatchTime.now().uptimeNanoseconds
+            epoch = monotonicNanoseconds()
             openScopes.removeAll()
             pending.removeAll()
             ring.removeAll()

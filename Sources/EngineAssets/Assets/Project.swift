@@ -193,7 +193,7 @@ public struct Project: Sendable {
 
     /// Writes `Project.json`.
     public func saveSettings() throws {
-        try AssetJSON.encode(settings).write(to: settingsURL, options: .atomic)
+        try AssetJSON.encode(settings).write(to: settingsURL, options: .engineAtomic)
     }
 
     /// The URL of `path` (relative to `Assets/`, "/" separators).

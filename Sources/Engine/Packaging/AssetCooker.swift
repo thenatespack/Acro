@@ -292,7 +292,7 @@ public struct CookPlan: Sendable {
         while !level.isEmpty {
             let sorted = level.sorted()
             let results = LockedArray<Result<Cooked, any Error>>(count: sorted.count)
-            DispatchQueue.concurrentPerform(iterations: sorted.count) { i in
+            concurrentPerform(iterations: sorted.count) { i in
                 let source = sources[sorted[i]]!
                 progress?("Cooking \(source.path)")
                 results.set(i, Result { try cook(source) })
@@ -364,12 +364,12 @@ public struct CookPlan: Sendable {
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let name = options.packName ?? projectName
         let packURL = output.appendingPathComponent("\(name).pack")
-        try bytes.write(to: packURL, options: .atomic)
+        try bytes.write(to: packURL, options: .engineAtomic)
         report.packPath = packURL.path
         report.packBytes = bytes.count
         if options.writesManifest {
             let manifestURL = output.appendingPathComponent("\(name).manifest.json")
-            try AssetJSON.encode(manifest).write(to: manifestURL, options: .atomic)
+            try AssetJSON.encode(manifest).write(to: manifestURL, options: .engineAtomic)
             report.manifestPath = manifestURL.path
         }
         report.imported.sort()
@@ -456,7 +456,7 @@ public struct CookPlan: Sendable {
         try AssetArtifacts.write(manifest: manifest, files: files, to: cacheURL)
         let key = CacheKey(sourceHash: source.sourceHash, importer: importer.name, version: importer.version, settings: canonical,
                            dependencies: context.dependencyLog.all)
-        try AssetJSON.encode(key).write(to: keyURL, options: .atomic)
+        try AssetJSON.encode(key).write(to: keyURL, options: .engineAtomic)
         return finish(manifest, files, .imported, context.warnings)
     }
 

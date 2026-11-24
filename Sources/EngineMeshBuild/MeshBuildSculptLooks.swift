@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(Dispatch)
 import Dispatch
+#endif
 import EngineCore
 import EngineScene
 import EngineAssets

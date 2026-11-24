@@ -1,6 +1,23 @@
+#if canImport(CZlib)
 import CZlib
+#endif
+#if canImport(Dispatch)
 import Dispatch
+#endif
 import Foundation
+
+#if !canImport(CZlib)
+/// WebAssembly spike: no zlib in the WASI sysroot yet, so PNG writing is unavailable there.
+enum PNGEncoder {
+    struct Unavailable: Error {}
+    static func encode(
+        width: Int, height: Int, pixels: UnsafeBufferPointer<UInt8>,
+        write: (UnsafeRawBufferPointer) throws -> Void
+    ) throws {
+        throw Unavailable()
+    }
+}
+#else
 
 /// Streaming PNG encoder for 8-bit RGBA images.
 ///
@@ -180,3 +197,4 @@ private struct RowPointers: @unchecked Sendable {
     let batch: UnsafeMutablePointer<UInt8>
     let scratchPool: UnsafeMutablePointer<UInt8>
 }
+#endif

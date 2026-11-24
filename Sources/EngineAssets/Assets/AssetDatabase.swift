@@ -791,10 +791,10 @@ extension AssetDatabase {
         }
         ready += loadQueue.takeFinished()
         guard !ready.isEmpty else { return report }
-        let start = DispatchTime.now().uptimeNanoseconds
+        let start = monotonicNanoseconds()
         var applied = 0
         while applied < ready.count {
-            if applied > 0, Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9 > timeBudget { break }
+            if applied > 0, Double(monotonicNanoseconds() - start) / 1e9 > timeBudget { break }
             let result = ready[applied]
             applied += 1
             let id = result.id

@@ -617,7 +617,7 @@ enum MeshBuildLeafPainter {
             var canvases: [Int: Canvas] = [:]
         }
         let results = Results()
-        DispatchQueue.concurrentPerform(iterations: g * g) { v in
+        concurrentPerform(iterations: g * g) { v in
             let canvas = paintVariant(look, v, size: inner)
             results.lock.lock()
             results.canvases[v] = canvas

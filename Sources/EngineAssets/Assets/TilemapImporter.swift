@@ -203,7 +203,7 @@ extension AssetDatabase {
         let url = project.url(forAssetPath: path)
         if FileManager.default.fileExists(atPath: url.path) { throw AssetFileError.exists(path) }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try map.fileData().write(to: url, options: .atomic)
+        try map.fileData().write(to: url, options: .engineAtomic)
         refresh()
         guard let id = id(forPath: path) else { throw AssetError.noSuchAsset(path) }
         return id
@@ -220,7 +220,7 @@ extension AssetDatabase {
     @discardableResult
     public func writeTilemap(_ map: Tilemap, to id: AssetID) throws -> [String] {
         guard let path = path(of: id) else { throw AssetError.noSuchAsset(id.description) }
-        try map.fileData().write(to: project.url(forAssetPath: path), options: .atomic)
+        try map.fileData().write(to: project.url(forAssetPath: path), options: .engineAtomic)
         let report = refresh()
         return report.warnings.filter { $0.hasPrefix(path + ": ") }.map { String($0.dropFirst(path.count + 2)) }
             + report.errors.filter { $0.path == path }.map { "import failed: \($0.message)" }

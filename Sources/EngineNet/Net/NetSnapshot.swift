@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(CZlib)
 import CZlib
+#endif
 import EngineCore
 import EngineGraphics
 import EnginePhysics
@@ -617,6 +619,9 @@ enum NetCompression {
     static let maxInflatedSize = 1 << 22
 
     static func deflate(_ bytes: [UInt8], level: Int32 = 6) -> [UInt8] {
+        #if !canImport(CZlib)
+        fatalError("WebAssembly spike: no zlib yet")
+        #else
         var bound = compressBound(uLong(bytes.count))
         var out = [UInt8](repeating: 0, count: Int(bound))
         let status = out.withUnsafeMutableBufferPointer { o in
@@ -627,9 +632,13 @@ enum NetCompression {
         w.varint(bytes.count)
         w.bytes(Array(out[0..<Int(bound)]))
         return w.data
+        #endif
     }
 
     static func inflate(_ bytes: [UInt8]) throws -> [UInt8] {
+        #if !canImport(CZlib)
+        throw NetError.malformed("WebAssembly spike: no zlib yet")
+        #else
         var r = ByteReader(bytes)
         let size = try r.varint(max: maxInflatedSize)
         let stream = Array(bytes[r.offset...])
@@ -640,6 +649,7 @@ enum NetCompression {
         }
         guard status == Z_OK, Int(length) == size else { throw NetError.malformed("compressed payload") }
         return Array(out[0..<size])
+        #endif
     }
 }
 

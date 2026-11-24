@@ -63,7 +63,7 @@ package struct LibraryIndex: Codable {
 
     func save(to url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try AssetJSON.encode(self).write(to: url, options: .atomic)
+        try AssetJSON.encode(self).write(to: url, options: .engineAtomic)
     }
 }
 
@@ -130,7 +130,7 @@ package enum AssetArtifacts {
         for (name, data) in files.sorted(by: { $0.key < $1.key }) {
             try data.write(to: directory.appendingPathComponent(name))
         }
-        try AssetJSON.encode(manifest).write(to: directory.appendingPathComponent(manifestName), options: .atomic)
+        try AssetJSON.encode(manifest).write(to: directory.appendingPathComponent(manifestName), options: .engineAtomic)
     }
 
     /// The import as a manifest plus its binary files by name: what `write` stores, and what

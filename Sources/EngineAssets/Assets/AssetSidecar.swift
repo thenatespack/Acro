@@ -79,6 +79,6 @@ public struct AssetSidecar: Equatable, Sendable, Codable {
     }
 
     public func write(to url: URL) throws {
-        try AssetJSON.encode(self).write(to: url, options: .atomic)
+        try AssetJSON.encode(self).write(to: url, options: .engineAtomic)
     }
 }

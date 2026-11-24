@@ -555,7 +555,7 @@ public final class LightProbeBakeCache: @unchecked Sendable {
         guard let directory, let url = url(key) else { return nil }
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try file.data.write(to: url, options: .atomic)
+            try file.data.write(to: url, options: .engineAtomic)
             prune()
             return url.lastPathComponent
         } catch {

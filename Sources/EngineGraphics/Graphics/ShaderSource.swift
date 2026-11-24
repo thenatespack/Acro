@@ -67,7 +67,7 @@ public struct ShaderSource: Sendable {
     /// `<name>.comp`), or a hand-written `<name>.metal` defining `compute_main`.
     public static func load(compute name: String, bundle: Bundle, subdirectory: String? = "Shaders") throws -> ShaderSource {
         func url(_ ext: String) -> URL? {
-            bundle.url(forResource: name, withExtension: ext, subdirectory: subdirectory)
+            bundle.engineResourceURL(name, withExtension: ext, subdirectory: subdirectory)
         }
         var source = ShaderSource()
         if let metal = url("metal") ?? url("comp.metal") {
@@ -88,7 +88,7 @@ public struct ShaderSource: Sendable {
     /// the error.
     public static func load(named name: String, bundle: Bundle, subdirectory: String? = "Shaders") throws -> ShaderSource {
         func url(_ ext: String) -> URL? {
-            bundle.url(forResource: name, withExtension: ext, subdirectory: subdirectory)
+            bundle.engineResourceURL(name, withExtension: ext, subdirectory: subdirectory)
         }
         var source = ShaderSource()
         if let metal = url("metal") {
@@ -120,7 +120,7 @@ public struct ShaderSource: Sendable {
     public static func load(vertex: String, fragment: String, bundle: Bundle, subdirectory: String? = "Shaders") throws -> ShaderSource {
         var source = try load(named: vertex, bundle: bundle, subdirectory: subdirectory)
         func url(_ ext: String) -> URL? {
-            bundle.url(forResource: fragment, withExtension: ext, subdirectory: subdirectory)
+            bundle.engineResourceURL(fragment, withExtension: ext, subdirectory: subdirectory)
         }
         guard let spirv = url("frag.spv") else {
             throw GraphicsError("No fragment shader named '\(fragment)' found in \(bundle.bundlePath)")

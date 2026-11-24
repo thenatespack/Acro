@@ -377,7 +377,7 @@ public struct ShadowCasterBatches {
     public private(set) var drawn = 0
     public private(set) var culled = 0
 
-    private var slots: [Int: Int] = [:]
+    private var slots: [Int64: Int] = [:]  // key: mesh << 32 | material (Int64: Int is 32-bit on wasm32)
     private var members: [(batch: Int32, item: Int32)] = []
     /// Per tile, then per item: whether the tile draws the item.
     private var drawsItem: [Bool] = []
@@ -413,7 +413,7 @@ public struct ShadowCasterBatches {
                     continue
                 }
                 let material = item.alphaTested ? item.material : -1
-                let key = item.mesh << 32 | (material & 0xffff_ffff)
+                let key = Int64(item.mesh) << 32 | (Int64(material) & 0xffff_ffff)
                 let slot: Int
                 if item.skin < 0, let existing = slots[key] {
                     slot = existing

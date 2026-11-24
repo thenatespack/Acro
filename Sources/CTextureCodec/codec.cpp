@@ -8,6 +8,16 @@
 #include <cstring>
 #include <mutex>
 
+// Single-threaded WebAssembly's libc++ has no std::mutex; nothing runs concurrently there.
+#if defined(__wasi__) && !defined(_REENTRANT)
+struct codec_mutex {
+    void lock() {}
+    void unlock() {}
+};
+#else
+using codec_mutex = std::mutex;
+#endif
+
 #include "vendor/bc7enc/bc7enc.h"
 #include "vendor/bc7enc/bc7decomp.h"
 #include "vendor/astcenc/astcenc.h"
@@ -65,7 +75,7 @@ float astc_effort(tc_quality quality) {
 
 /// Decompress-only contexts, one per profile (LDR, LDR sRGB, HDR), shared under a lock.
 struct AstcDecoder {
-    std::mutex lock;
+    codec_mutex lock;
     astcenc_context *context = nullptr;
     bool failed = false;
 };
@@ -75,7 +85,7 @@ AstcDecoder astc_decoders[3];
 bool astc_decode(int index, astcenc_profile profile, const uint8_t *blocks, int width, int height, astcenc_type type,
                  void *pixels) {
     AstcDecoder &decoder = astc_decoders[index];
-    std::lock_guard<std::mutex> guard(decoder.lock);
+    std::lock_guard<codec_mutex> guard(decoder.lock);
     if (!decoder.context && !decoder.failed) {
         astcenc_config config;
         decoder.failed = astcenc_config_init(profile, 4, 4, 1, ASTCENC_PRE_FAST, ASTCENC_FLG_DECOMPRESS_ONLY, &config)

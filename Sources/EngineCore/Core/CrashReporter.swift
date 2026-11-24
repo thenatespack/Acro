@@ -20,6 +20,8 @@ public enum CrashReporter {
     static var signals: [Int32] {
         #if os(Windows)
         [SIGSEGV, SIGABRT, SIGILL, SIGFPE]
+        #elseif os(WASI)
+        []  // No signals in WebAssembly: a trap ends the instance (the browser reports it).
         #else
         [SIGSEGV, SIGABRT, SIGILL, SIGBUS, SIGFPE, SIGTRAP]
         #endif
@@ -52,7 +54,9 @@ public enum CrashReporter {
             return enabled && !installed
         }
         guard shouldInstall else { return }
+        #if !os(WASI)
         for signalNumber in signals { signal(signalNumber, crashSignalHandler) }
+        #endif
     }
 
     /// Adds a line to the "Engine" section of reports (replaces an earlier line with the same key).
@@ -193,6 +197,7 @@ public enum CrashReporter {
     }
 }
 
+#if !os(WASI)
 /// `signal` handlers are C functions: no captures, so this forwards to `CrashReporter`.
 private func crashSignalHandler(_ signalNumber: Int32) {
     signal(signalNumber, SIG_DFL)
@@ -215,3 +220,4 @@ private func crashSignalHandler(_ signalNumber: Int32) {
     CrashReporter.writeReport(reason: name)
     raise(signalNumber)
 }
+#endif

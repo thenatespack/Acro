@@ -61,9 +61,17 @@ public final class FileWatcher: @unchecked Sendable {
     }
 
     // State below is only touched on `queue`.
+    #if os(WASI)
+    // Single-threaded WebAssembly: no Dispatch, no background polling (`start` does nothing;
+    // `poll()` still works). A web build has no project folder to watch anyway.
+    private struct InlineQueue { func sync<T>(_ body: () -> T) -> T { body() } }
+    private let queue = InlineQueue()
+    private var timer: Never?
+    #else
     private let queue = DispatchQueue(label: "FileWatcher", qos: .utility)
-    private var snapshot: [String: Entry]
     private var timer: DispatchSourceTimer?
+    #endif
+    private var snapshot: [String: Entry]
     private var collected: [FileChange] = []
 
     /// Takes the initial listing: changes are reported relative to it.
@@ -72,7 +80,9 @@ public final class FileWatcher: @unchecked Sendable {
         snapshot = Self.list(directory)
     }
 
+    #if !os(WASI)
     deinit { timer?.cancel() }
+    #endif
 
     /// Lists the folder and returns what changed since the previous listing, sorted by path.
     public func poll() -> [FileChange] {
@@ -82,15 +92,19 @@ public final class FileWatcher: @unchecked Sendable {
     /// Polls every `interval` seconds on a background queue and calls `handler` on the main
     /// actor with each non-empty batch. Replaces an earlier `start`.
     public func start(interval: Double = 0.5, handler: @escaping @MainActor @Sendable ([FileChange]) -> Void) {
+        #if !os(WASI)
         startTimer(interval: interval) { changes in
             DispatchQueue.main.async { MainActor.assumeIsolated { handler(changes) } }
         }
+        #endif
     }
 
     /// Polls like `start`, but keeps the changes until `takeChanges()` collects them, so a
     /// frame loop can pick them up without relying on the main dispatch queue.
     public func startCollecting(interval: Double = 0.5) {
+        #if !os(WASI)
         startTimer(interval: interval) { [weak self] changes in self?.collected.append(contentsOf: changes) }
+        #endif
     }
 
     /// The changes found since the last call (`startCollecting`), oldest first.
@@ -101,6 +115,7 @@ public final class FileWatcher: @unchecked Sendable {
         }
     }
 
+    #if !os(WASI)
     /// `deliver` runs on the watcher's queue.
     private func startTimer(interval: Double, deliver: @escaping @Sendable ([FileChange]) -> Void) {
         queue.sync {
@@ -112,10 +127,10 @@ public final class FileWatcher: @unchecked Sendable {
             // this timer while it runs (startTimer cancels the old one before replacing it).
             timer.setEventHandler { [weak self] in
                 guard let self, let timer = self.timer else { return }
-                let started = DispatchTime.now().uptimeNanoseconds
+                let started = monotonicNanoseconds()
                 let changes = pollOnQueue()
                 // Back off when polling is expensive (a big tree): at least 20 polls' worth of idle time.
-                let cost = Double(DispatchTime.now().uptimeNanoseconds - started) / 1e9
+                let cost = Double(monotonicNanoseconds() - started) / 1e9
                 let wanted = min(max(interval, cost * 20), 10)
                 if abs(wanted - current) > current * 0.25 {
                     current = wanted
@@ -127,12 +142,15 @@ public final class FileWatcher: @unchecked Sendable {
             self.timer = timer
         }
     }
+    #endif
 
     public func stop() {
+        #if !os(WASI)
         queue.sync {
             timer?.cancel()
             timer = nil
         }
+        #endif
     }
 
     private func pollOnQueue() -> [FileChange] {
