@@ -262,15 +262,31 @@ public final class AssetPack: Sendable {
 
     /// Opens and checks the pack at `url`: magic, version, table of contents (hash and
     /// layout), the vertex layout it was cooked for.
-    public init(url: URL, verifiesBlobs: Bool = true) throws {
-        self.url = url
-        self.verifiesBlobs = verifiesBlobs
+    public convenience init(url: URL, verifiesBlobs: Bool = true) throws {
         let data: Data
         do {
             data = try Data(contentsOf: url, options: .alwaysMapped)
         } catch {
             throw AssetPackError.notAPack("\(url.path) (\(error.localizedDescription))")
         }
+        try self.init(data: data, url: url, verifiesBlobs: verifiesBlobs)
+    }
+
+    /// Opens and checks a pack already in memory (a browser fetches it), with the same checks
+    /// as `init(url:)`. `name` is its file name, for messages (`url` becomes a file URL with
+    /// that name, in the current folder).
+    public convenience init(data: Data, name: String, verifiesBlobs: Bool = true) throws {
+        try self.init(data: data, url: URL(fileURLWithPath: name), verifiesBlobs: verifiesBlobs)
+    }
+
+    /// `init(data:name:)` with the pack's bytes as an array.
+    public convenience init(bytes: [UInt8], name: String, verifiesBlobs: Bool = true) throws {
+        try self.init(data: Data(bytes), name: name, verifiesBlobs: verifiesBlobs)
+    }
+
+    private init(data: Data, url: URL, verifiesBlobs: Bool) throws {
+        self.url = url
+        self.verifiesBlobs = verifiesBlobs
         guard data.count >= AssetPackFormat.headerSize, Array(data.prefix(8)) == AssetPackFormat.magic else {
             throw AssetPackError.notAPack(url.path)
         }

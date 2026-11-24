@@ -25,6 +25,24 @@ wasmkit run --dir <pack dir> --dir $B/Acro_EngineCore.bundle \
 `wasmkit` ships in the swiftly toolchain's `usr/bin`. `ENGINE_WASM=1` is a manifest switch
 (the manifest runs on the host, so it can't see the target triple). Native builds ignore it.
 
+### In a browser (W1B)
+
+```sh
+Scripts/web-player.sh <game.pack> [--release] [--port 8080]   # then open http://localhost:8080/
+```
+
+It packages WasmPlayer with PackageToJS (`swift package ... js --product WasmPlayer`), assembles
+`Web/index.html` + `Web/loader.js`, the PackageToJS output (`app/`), the WASI shim (`vendor/`),
+the engine resources (`engine/` + `manifest.json`) and the pack in `.build-wasm/web-player`, and
+serves it. The loader sets up WebGPU (`globalThis.acro = { adapter, device, context, format, canvas }`),
+fetches the pack (handed to Swift as `acro.pack`, opened with `AssetPack(data:)`) and the engine
+resources (put in the shim's in-memory filesystem at `/engine`, so `Bundle.engineResourceURL`
+works unchanged), and runs `main`. On WASI `GamePlayer.main` calls `Engine.start` and returns
+(PackageToJS builds a WASI reactor, so the instance stays alive; `exit` would end it);
+`WebFrameDriver` then calls `Engine.tick` from `requestAnimationFrame` and `finish` at the end.
+Errors go to the console and `acro.onError` (shown on the page). `?probe=<n>` (spike only) runs a
+stand-in tick n times when the engine can't start.
+
 ## What had to change
 
 | Problem | Change in the spike | Proper fix |

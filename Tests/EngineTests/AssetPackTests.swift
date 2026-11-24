@@ -384,3 +384,28 @@ private struct TestProject {
         #expect(try Project.open(at: root).settings.build == project.settings.build)
     }
 }
+
+/// The web runtime's in-memory loading: a browser fetches the pack, so it opens from bytes.
+@MainActor @Suite struct WebRuntimeTests {
+    @Test func packOpensFromMemoryLikeFromAFile() throws {
+        let project = try TestProject()
+        let report = try project.cook(CookOptions(scenes: ["Scenes/Main.scene"], target: CookTarget(platform: .linux)))
+        let url = URL(fileURLWithPath: report.packPath)
+        let bytes = try Data(contentsOf: url)
+        let fromFile = try AssetPack(url: url)
+        let fromData = try AssetPack(data: bytes, name: "Game.pack")
+        let fromArray = try AssetPack(bytes: [UInt8](bytes), name: "Game.pack")
+        #expect(fromData.name == "Game.pack" && fromArray.name == "Game.pack")
+        #expect(fromData.manifest.assets.map(\.id) == fromFile.manifest.assets.map(\.id))
+        #expect(try fromData.scene() == fromFile.scene())
+        let assets = AssetDatabase(mounting: fromArray)
+        #expect(try #require(assets.mesh(AssetReference(project.model, subAsset: "mesh/Quad"))).indices.count == 6)
+
+        // The same checks as a file: not a pack, a damaged table of contents.
+        #expect(throws: AssetPackError.self) { try AssetPack(data: Data("nope".utf8), name: "x.pack") }
+        var damaged = bytes
+        let tocOffset = damaged.withUnsafeBytes { Int(UInt64(littleEndian: $0.loadUnaligned(fromByteOffset: 16, as: UInt64.self))) }
+        damaged[tocOffset] ^= 0xFF
+        #expect(throws: AssetPackError.self) { try AssetPack(data: damaged, name: "x.pack") }
+    }
+}

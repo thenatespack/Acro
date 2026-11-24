@@ -297,6 +297,21 @@ public final class Engine {
     }
     private var overlay: DebugOverlay?
     private var uiRenderer: UIRenderer?
+    /// The main loop's state from `start` on (nil before it).
+    private final class MainLoop {
+        let game: Game
+        let clock = ContinuousClock()
+        /// When setup ended (`time` counts from it), and when the last frame began.
+        var start: ContinuousClock.Instant
+        var last: ContinuousClock.Instant
+        init(game: Game) {
+            self.game = game
+            start = clock.now
+            last = start
+        }
+    }
+    private var loop: MainLoop?
+    private var loopFinished = false
     private let countingPass = CountingRenderPass()
     /// Receives window events during automated screenshots so stray keyboard/mouse input
     /// (e.g. the window grabbing focus mid-run) can't change the captured frame.
@@ -465,28 +480,47 @@ public final class Engine {
         return nil
     }
 
-    /// Runs the main loop until the window closes or `quit()` is called.
+    /// Runs the main loop until the window closes or `quit()` is called: `start`, `tick` until
+    /// it returns false, then `finish` (also when `start` or a frame throws).
     public func run(_ game: Game) throws {
-        CrashReporter.armExitWatch()
-        defer {
-            CrashReporter.disarmExitWatch()
-            let reason = quitReason ?? window.closeReason ?? "an error ended the main loop"
-            quitReason = reason
-            FileHandle.standardError.write(Data("Engine: quitting after \(frameCount) frames: \(reason)\n".utf8))
-            if let url = profileTraceURL {
-                do {
-                    try Profiler.finishTraceCapture(to: url)
-                    EngineLog.info("Saved profile trace to \(url.path)", category: .engine)
-                } catch {
-                    EngineLog.error("Saving the profile trace to \(url.path) failed: \(error)")
-                }
+        defer { finish() }
+        try start(game)
+        while try tick() {}
+    }
+
+    /// Ends the main loop: prints why, saves the profile trace, stops MCP and audio, and shuts
+    /// the device and window down. Call it once after `start`, also when `start` or `tick`
+    /// threw; it does nothing before `start` or a second time. `run` calls it for you.
+    public func finish() {
+        guard loop != nil, !loopFinished else { return }
+        loopFinished = true
+        CrashReporter.disarmExitWatch()
+        let reason = quitReason ?? window.closeReason ?? "an error ended the main loop"
+        quitReason = reason
+        FileHandle.standardError.write(Data("Engine: quitting after \(frameCount) frames: \(reason)\n".utf8))
+        if let url = profileTraceURL {
+            do {
+                try Profiler.finishTraceCapture(to: url)
+                EngineLog.info("Saved profile trace to \(url.path)", category: .engine)
+            } catch {
+                EngineLog.error("Saving the profile trace to \(url.path) failed: \(error)")
             }
-            mcp?.stop()
-            audioSystem?.shutdown()
-            device.waitIdle()
-            device.shutdown()
-            window.destroy()
         }
+        mcp?.stop()
+        audioSystem?.shutdown()
+        device.waitIdle()
+        device.shutdown()
+        window.destroy()
+    }
+
+    /// Sets `game` up and readies the main loop. Then call `tick` once per frame, and `finish`
+    /// at the end. For hosts that own the loop (a browser's `requestAnimationFrame`); `run`
+    /// does all three. Call it once per engine.
+    public func start(_ game: Game) throws {
+        precondition(loop == nil, "Engine.start was already called")
+        CrashReporter.armExitWatch()
+        let loop = MainLoop(game: game)
+        self.loop = loop
 
         ui.beginFrame(framebufferSize: window.framebufferSize, scale: window.contentScale)
         try game.setup(engine: self)
@@ -506,11 +540,18 @@ public final class Engine {
             EngineLog.warning("Post-processing unavailable: \(error)")
         }
 
-        let clock = ContinuousClock()
-        let start = clock.now
-        var last = start
+        // `time` counts from the end of setup.
+        loop.start = loop.clock.now
+        loop.last = loop.start
+    }
 
-        while !window.shouldClose {
+    /// Runs one frame: events, update, render, present. Returns false, without running a
+    /// frame, once the window has closed or `quit()` was called; then call `finish`.
+    public func tick() throws -> Bool {
+        guard let loop, !loopFinished else { preconditionFailure("Engine.tick needs start(_:) and no finish()") }
+        guard !window.shouldClose else { return false }
+        let game = loop.game, clock = loop.clock, start = loop.start
+        do {
             input.beginFrame()
             CrashReporter.frame = frameCount
             Profiler.scope("events") { window.pollEvents(into: automatedScreenshot == nil ? input : ignoredInput) }
@@ -526,9 +567,9 @@ public final class Engine {
             input.endEvents()
 
             let now = clock.now
-            stats.frameTime = Self.seconds(now - last)
+            stats.frameTime = Self.seconds(now - loop.last)
             var dt = min(stats.frameTime, 0.25)
-            last = now
+            loop.last = now
             if automatedScreenshot != nil {
                 // Deterministic timing so screenshots are reproducible across runs and backends.
                 dt = 1.0 / 60.0
@@ -665,10 +706,14 @@ public final class Engine {
                 if temporalInputs.resetHistory { historyResetRequested = true }
                 pendingCaptures.insert(contentsOf: captures, at: 0)
                 if automatedScreenshot != nil { screenshotTotals.skipped += 1 }
+                #if !os(WASI)
+                // (In a browser, requestAnimationFrame paces the next frame instead.)
                 Thread.sleep(forTimeInterval: 1.0 / 60.0)
+                #endif
             }
             Profiler.endFrame(gpuPasses: stats.gpuPassTimes)
         }
+        return !window.shouldClose
     }
 
     /// Writes the profiler's recent frames as Chrome trace JSON (the profiler key's export).

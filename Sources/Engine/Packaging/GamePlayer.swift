@@ -31,6 +31,9 @@ import EngineUI
 // the executable; `ENGINE_PACK` too), `--scene <path>` (a cooked scene other than the start
 // scene), `--backend metal|vulkan`, `--size <w>x<h>`, `--version` (prints the engine version).
 // A pack cooked by another engine version gets a warning on stderr and is played anyway.
+//
+// In a browser (WASI), `main` returns once the game has started instead of running the loop,
+// and the pack comes from the page in memory: see GamePlayerWeb.swift and Web/loader.js.
 
 @MainActor
 public enum GamePlayer {
@@ -144,8 +147,31 @@ public enum GamePlayer {
         return "Warning: \(manifest.name)'s asset pack was cooked by engine \(mismatch.saved), but this game runs engine \(mismatch.current); rebuild the game if anything looks wrong"
     }
 
+    /// Everything `main` does before the main loop: registers the engine's and the module's
+    /// components, opens the pack (`openPack`), mounts it, makes the game and the engine.
+    static func prepare(options: Options, module entry: (UnsafeMutableRawPointer) -> Int32,
+                        openPack: () throws -> AssetPack) throws -> (engine: Engine, game: any Game) {
+        registerEngineComponents()
+        let module = try register(module: entry)
+        for component in module.components { ComponentRegistry.register(component.type) }
+        let pack = try openPack()
+        if let warning = packVersionWarning(pack.manifest) { FileHandle.standardError.write(Data((warning + "\n").utf8)) }
+        let assets = AssetDatabase(mounting: pack)
+        self.assets = assets
+        let game = try makeGame(module: module, assets: assets, scene: options.scene)
+        var config = EngineConfig(title: module.name.isEmpty ? pack.manifest.name : module.name, showDebugOverlay: false)
+        // The project's runtime settings, then the command line's size.
+        pack.manifest.runtime?.apply(to: &config)
+        if let width = options.width { config.width = width }
+        if let height = options.height { config.height = height }
+        if let backend = options.backend { config.backend = backend }
+        return (try Engine(config: config), game)
+    }
+
+    #if !os(WASI)
     /// The exported executable's whole `main`: parses the command line, mounts the pack,
     /// registers the module and runs the game. Exits with a message on failure.
+    /// (In a browser, `main` starts the game and returns: see GamePlayerWeb.swift.)
     public static func main(module entry: (UnsafeMutableRawPointer) -> Int32,
                             arguments: [String] = Array(CommandLine.arguments.dropFirst())) -> Never {
         do {
@@ -154,21 +180,9 @@ public enum GamePlayer {
                 print(EngineVersion.displayName)
                 exit(0)
             }
-            registerEngineComponents()
-            let module = try register(module: entry)
-            for component in module.components { ComponentRegistry.register(component.type) }
-            let pack = try AssetPack(url: try findPack(explicit: options.pack))
-            if let warning = packVersionWarning(pack.manifest) { FileHandle.standardError.write(Data((warning + "\n").utf8)) }
-            let assets = AssetDatabase(mounting: pack)
-            self.assets = assets
-            let game = try makeGame(module: module, assets: assets, scene: options.scene)
-            var config = EngineConfig(title: module.name.isEmpty ? pack.manifest.name : module.name, showDebugOverlay: false)
-            // The project's runtime settings, then the command line's size.
-            pack.manifest.runtime?.apply(to: &config)
-            if let width = options.width { config.width = width }
-            if let height = options.height { config.height = height }
-            if let backend = options.backend { config.backend = backend }
-            let engine = try Engine(config: config)
+            let (engine, game) = try prepare(options: options, module: entry) {
+                try AssetPack(url: try findPack(explicit: options.pack))
+            }
             try engine.run(game)
             exit(0)
         } catch {
@@ -176,6 +190,7 @@ public enum GamePlayer {
             exit(1)
         }
     }
+    #endif
 }
 
 public enum GamePlayerError: Error, Equatable, CustomStringConvertible {
