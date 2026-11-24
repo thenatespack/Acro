@@ -65,29 +65,67 @@ import EngineGraphics
     }
 
     /// Binds the groups of `layout` from the current slots, skipping groups that haven't changed.
+    /// Every draw calls this, so the unchanged case allocates nothing: the key, offsets and
+    /// resources go into scratch arrays kept between calls.
     func apply(_ layout: WebGPUPipelineLayout, encoder: JSObject, functions: WebGPUEncoderFunctions) {
-        for (index, group) in layout.groups.enumerated() {
-            var key = [group.id]
-            var offsets: [Int] = []
-            var resources: [(binding: Int, resource: () -> ConvertibleToJSValue)] = []
+        for index in layout.groups.indices {
+            let group = layout.groups[index]
+            scratchKey.removeAll(keepingCapacity: true)
+            scratchOffsets.removeAll(keepingCapacity: true)
+            scratchResources.removeAll(keepingCapacity: true)
+            scratchKey.append(group.id)
             for entry in group.entries {
-                let resolved = resource(group: index, entry: entry)
-                key.append(contentsOf: resolved.key)
-                if let offset = resolved.dynamicOffset { offsets.append(offset) }
-                resources.append((entry.binding, resolved.make))
+                let (resource, dynamicOffset) = resource(group: index, entry: entry)
+                switch resource {
+                case .buffer(let buffer, let offset, let size):
+                    scratchKey.append(buffer.id)
+                    scratchKey.append(offset)
+                    scratchKey.append(size)
+                case .sampler(let sampler): scratchKey.append(sampler.id)
+                case .texture(let texture): scratchKey.append(texture.id)
+                }
+                if let dynamicOffset { scratchOffsets.append(dynamicOffset) }
+                scratchResources.append(resource)
             }
-            if let bound = current[index], bound.key == key, bound.offsets == offsets { continue }
-            let bindGroup = device.bindGroup(key: key) {
-                jsObject(["layout": group.object, "entries": resources.map { ["binding": $0.binding, "resource": $0.resource()].jsValue }])
+            if let bound = current[index], bound.key == scratchKey, bound.offsets == scratchOffsets { continue }
+            let resources = scratchResources
+            let bindGroup = device.bindGroup(key: scratchKey) {
+                jsObject(["layout": group.object, "entries": zip(group.entries, resources).map { entry, resource in
+                    ["binding": entry.binding, "resource": resource.jsValue].jsValue
+                }])
             }
-            _ = functions.setBindGroup(this: encoder, index, bindGroup, offsets)
-            current[index] = (key, offsets)
+            // Without dynamic offsets there's no array to convert.
+            if scratchOffsets.isEmpty {
+                _ = functions.setBindGroup(this: encoder, index, bindGroup)
+            } else {
+                _ = functions.setBindGroup(this: encoder, index, bindGroup, scratchOffsets)
+            }
+            current[index] = (scratchKey, scratchOffsets)
         }
     }
 
-    /// The resource for one layout entry: its cache key, dynamic offset (uniform buffers) and JS value.
-    private func resource(group: Int, entry: WebGPULayoutEntry)
-        -> (key: [Int], dynamicOffset: Int?, make: () -> ConvertibleToJSValue) {
+    /// What one layout entry binds.
+    private enum Resource {
+        /// A buffer range (uniform buffers bind from 0 and add a dynamic offset).
+        case buffer(WebGPUBuffer, offset: Int, size: Int)
+        case sampler(WebGPUSampler)
+        case texture(WebGPUTexture)
+
+        @MainActor var jsValue: ConvertibleToJSValue {
+            switch self {
+            case .buffer(let buffer, let offset, let size): jsObject(["buffer": buffer.object, "offset": offset, "size": size])
+            case .sampler(let sampler): sampler.object
+            case .texture(let texture): texture.view
+            }
+        }
+    }
+
+    private var scratchKey: [Int] = []
+    private var scratchOffsets: [Int] = []
+    private var scratchResources: [Resource] = []
+
+    /// The resource for one layout entry, and its dynamic offset (uniform buffers).
+    private func resource(group: Int, entry: WebGPULayoutEntry) -> (Resource, dynamicOffset: Int?) {
         let binding = entry.binding
         switch entry.kind {
         case .uniformBuffer:
@@ -100,14 +138,12 @@ import EngineGraphics
             }
             let (buffer, offset) = bound ?? (device.placeholderUniform, 0)
             let size = min(webGPUUniformWindow, buffer.allocatedLength - offset)
-            return ([buffer.id, size], offset, { jsObject(["buffer": buffer.object, "offset": 0, "size": size]) })
+            return (.buffer(buffer, offset: 0, size: size), offset)
         case .storageBuffer:
             let index = binding - 24
             let (buffer, offset) = (group == 2 && storageBufferIndices.contains(index) ? storageBuffers[index] : nil)
                 ?? (device.placeholderStorage, 0)
-            return ([buffer.id, offset], nil, {
-                jsObject(["buffer": buffer.object, "offset": offset, "size": buffer.allocatedLength - offset])
-            })
+            return (.buffer(buffer, offset: offset, size: buffer.allocatedLength - offset), nil)
         case .sampler(let comparison):
             let sampler: WebGPUSampler
             if comparison {
@@ -118,7 +154,7 @@ import EngineGraphics
                 let index = binding - 16
                 sampler = (textureIndices.contains(index) ? samplers[index] : nil) ?? device.linearSampler
             }
-            return ([sampler.id], nil, { sampler.object })
+            return (.sampler(sampler), nil)
         case .texture(let sampleType):
             var texture: WebGPUTexture?
             if group == 1 {
@@ -126,13 +162,12 @@ import EngineGraphics
             } else if group == 2, textureIndices.contains(binding - 8) {
                 texture = textures[binding - 8]
             }
-            let bound = texture ?? device.placeholderTexture(sampleType)
-            return ([bound.id], nil, { bound.view })
+            return (.texture(texture ?? device.placeholderTexture(sampleType)), nil)
         case .storageTexture(let format, _):
             let index = binding - 32
             let bound = (group == 2 && storageTextureIndices.contains(index) ? storageTextures[index] : nil)
                 ?? device.placeholderStorageTexture(format)
-            return ([bound.id], nil, { bound.view })
+            return (.texture(bound), nil)
         }
     }
 }
@@ -356,6 +391,11 @@ final class WebGPUComputePass: ComputePass {
 }
 
 extension IndexType {
-    var webGPU: String { self == .uint16 ? "uint16" : "uint32" }
+    /// The `GPUIndexFormat`, as a JS string made once: passing a Swift `String` converts it on
+    /// every call (`swjs_decode_string` plus a heap retain, ~4 µs), which was 10% of Crowd's
+    /// frame with one `setIndexBuffer` per draw.
+    var webGPU: JSValue { self == .uint16 ? webGPUIndexFormats.uint16 : webGPUIndexFormats.uint32 }
 }
+
+nonisolated(unsafe) private let webGPUIndexFormats = (uint16: JSValue.string(JSString("uint16")), uint32: JSValue.string(JSString("uint32")))
 #endif

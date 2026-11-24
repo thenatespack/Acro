@@ -51,6 +51,8 @@ private func write(_ text: String, to url: URL) throws {
         #expect(manifest.contains(".enableExperimentalFeature(\"Extern\")"))
         #expect(manifest.contains(#"[.unsafeFlags(["-Xlinker", "--strip-debug"], .when(configuration: .release))]"#))
         #expect(!manifest.contains("$ORIGIN/lib"))
+        // Game and player are built with WebAssembly SIMD like the engine (it changes how Vec3 is passed).
+        #expect(manifest.components(separatedBy: #".unsafeFlags(["-Xcc", "-msimd128"])"#).count == 3)
         let main = try String(contentsOf: web.playerPackage.appendingPathComponent("Sources/Player/main.swift"), encoding: .utf8)
         #expect(main.contains("@_extern(c, \"\(GameModuleABI.entryPoint)\")\nfunc gameModuleEntry(_ module: UnsafeMutableRawPointer) -> Int32"))
         #expect(!main.contains("@_silgen_name("))
@@ -70,7 +72,7 @@ private func write(_ text: String, to url: URL) throws {
         try native.writePlayerPackage()
         #expect(native.playerPackage.path.hasSuffix(".build/game-export/WebExportTestsGame"))
         let nativeManifest = try String(contentsOf: native.playerPackage.appendingPathComponent("Package.swift"), encoding: .utf8)
-        #expect(nativeManifest.contains("$ORIGIN/lib") && !nativeManifest.contains("JavaScriptKit"))
+        #expect(nativeManifest.contains("$ORIGIN/lib") && !nativeManifest.contains("JavaScriptKit") && !nativeManifest.contains("msimd128"))
     }
 
     /// The folder holds exactly what Web/loader.js and Web/index.html fetch.
