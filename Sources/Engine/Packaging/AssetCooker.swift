@@ -356,11 +356,24 @@ public struct CookPlan: Sendable {
         var report = CookReport(packPath: "", manifestPath: nil, scenes: scenes.map(\.path), assetCount: cooked.count, imported: [],
                                 fromLibrary: 0, fromCookCache: 0, files: 0, packBytes: 0, textureBytes: 0, meshBytes: 0, fileBytes: 0,
                                 seconds: 0, warnings: [])
-        for id in cooked.keys.sorted() {
+        // Compressing is most of the writing time: all the binary files at once, then appended in order.
+        let ids = cooked.keys.sorted()
+        let jobs = ids.flatMap { id in cooked[id]!.files.keys.sorted().map { (id, $0) } }
+        let prepared = LockedArray<AssetPackFormat.Writer.Prepared>(count: jobs.count)
+        let items = cooked
+        concurrentPerform(iterations: jobs.count) { i in
+            let (id, name) = jobs[i]
+            let item = items[id]!
+            let compression = options.compressesBlobs ? AssetPackFormat.compression(of: name, objects: item.entry.objects) : .none
+            prepared.set(i, AssetPackFormat.Writer.prepare(item.files[name]!, compression: compression))
+        }
+        var job = 0
+        for id in ids {
             var item = cooked[id]!
             for name in item.files.keys.sorted() {
                 let data = item.files[name]!
-                let blob = writer.add(data, compression: options.compressesBlobs ? AssetPackFormat.compression(of: name, objects: item.entry.objects) : .none)
+                let blob = writer.add(prepared.get(job)!)
+                job += 1
                 item.entry.files[name] = blob
                 if name.hasPrefix("texture") {
                     report.textureBytes += data.count

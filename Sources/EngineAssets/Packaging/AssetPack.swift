@@ -277,15 +277,27 @@ package enum AssetPackFormat {
         /// Appends `bytes` (or finds identical bytes already appended), compressed as `compression` allows.
         package func add(_ bytes: Data, compression: Compression = .none) -> AssetPackBlob {
             let hash = ContentHash.hex(bytes)
-            let key = "\(hash):\(bytes.count)"
-            if let blob = blobs[key] { return blob }
+            if let blob = blobs["\(hash):\(bytes.count)"] { return blob }
+            return add(Self.prepare(bytes, compression: compression, hash: hash))
+        }
+
+        /// A blob ready to append: compressed (the slow part), so callers can prepare many at once.
+        package struct Prepared: Sendable {
+            let hash: String
+            let rawCount: Int
+            let stored: Data
+            let encoding: Encoding?
+        }
+
+        /// `bytes` compressed as `compression` allows. Thread-safe.
+        package static func prepare(_ bytes: Data, compression: Compression, hash: String? = nil) -> Prepared {
             var stored = bytes
             var encoding: Encoding?
             switch compression {
             case .none:
                 break
             case .deflate:
-                if let deflated = Self.deflated(bytes) { stored = deflated; encoding = .deflate }
+                if let deflated = deflated(bytes) { stored = deflated; encoding = .deflate }
             case .mesh(let vertexCount, let indexCount, let skinned, let painted):
                 if let payload = PackMeshCodec.encode(bytes, vertexCount: vertexCount, indexCount: indexCount, skinned: skinned, painted: painted) {
                     var prefixed = Data()
@@ -293,22 +305,30 @@ package enum AssetPackFormat {
                     prefixed.append(contentsOf: Zlib.deflate(payload))
                     stored = prefixed
                     encoding = .mesh1
-                } else if let deflated = Self.deflated(bytes) {
+                } else if let deflated = deflated(bytes) {
                     stored = deflated; encoding = .deflate
                 }
             }
+            return Prepared(hash: hash ?? ContentHash.hex(bytes), rawCount: bytes.count, stored: stored, encoding: encoding)
+        }
+
+        /// Appends a prepared blob (or finds identical bytes already appended).
+        package func add(_ prepared: Prepared) -> AssetPackBlob {
+            let key = "\(prepared.hash):\(prepared.rawCount)"
+            if let blob = blobs[key] { return blob }
             pad()
+            let stored = prepared.stored
             var blob = AssetPackBlob(offset: UInt64(body.count), size: UInt64(stored.count),
-                                     hash: encoding == nil ? hash : ContentHash.hex(stored))
-            if let encoding {
+                                     hash: prepared.encoding == nil ? prepared.hash : ContentHash.hex(stored))
+            if let encoding = prepared.encoding {
                 blob.encoding = encoding.rawValue
-                blob.rawSize = UInt64(bytes.count)
+                blob.rawSize = UInt64(prepared.rawCount)
             }
             body.append(stored)
             blobs[key] = blob
-            let name = encoding?.rawValue ?? "none"
+            let name = prepared.encoding?.rawValue ?? "none"
             let total = stats[name, default: (0, 0)]
-            stats[name] = (total.raw + bytes.count, total.stored + stored.count)
+            stats[name] = (total.raw + prepared.rawCount, total.stored + stored.count)
             return blob
         }
 
