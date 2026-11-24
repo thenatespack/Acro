@@ -320,6 +320,9 @@ public final class Engine {
     private var pendingScreenshots: [URL] = []
     /// `captureFrame` requests: called with the next captured frame (nil if it couldn't be read back).
     private var pendingCaptures: [@MainActor (Image?) -> Void] = []
+    /// Frames captured for screenshots and `captureFrame` whose images haven't come back yet,
+    /// oldest first (only on devices whose `capturesArriveLate`: WebGPU).
+    private var capturesInFlight: [(screenshots: [URL], captures: [@MainActor (Image?) -> Void])] = []
     /// Set via ENGINE_SCREENSHOT=<path.png>: capture after ENGINE_SCREENSHOT_FRAME frames (default 60), then quit.
     private var automatedScreenshot: (url: URL, frame: Int)?
     /// Per-frame sums during an automated screenshot, printed as averages when it's saved.
@@ -451,9 +454,16 @@ public final class Engine {
             throw GraphicsError("The Vulkan backend was not compiled in (install the Vulkan SDK and GLFW, then rebuild)")
             #endif
         case .webgpu:
-            // WebGPURenderDevice exists in WebAssembly builds; the engine doesn't create it yet
-            // (it needs a canvas window: wave W2A of docs/wasm-spike.md).
-            throw GraphicsError("The WebGPU backend isn't wired into Engine yet")
+            #if os(WASI)
+            // The page's canvas and the GPUDevice it requested (globalThis.acro: see Web/loader.js).
+            // The canvas is sized by the page's CSS, so the configured window size doesn't apply.
+            let canvasWindow = try CanvasWindow()
+            window = canvasWindow
+            if !config.title.isEmpty { canvasWindow.title = config.title }
+            device = try WebGPURenderDevice(sampleCount: sampleCount)
+            #else
+            throw GraphicsError("The WebGPU backend is only available in WebAssembly builds")
+            #endif
         }
         if let icon = config.icon { window.setIcon(icon) }
         if let error = validate(resolution) { throw GraphicsError("Render resolution \(resolution): \(error)") }
@@ -513,6 +523,9 @@ public final class Engine {
         mcp?.stop()
         audioSystem?.shutdown()
         device.waitIdle()
+        // (Captures still on their way back from an asynchronous device won't arrive now.)
+        for group in capturesInFlight { for capture in group.captures { capture(nil) } }
+        capturesInFlight.removeAll()
         device.shutdown()
         window.destroy()
     }
@@ -621,7 +634,13 @@ public final class Engine {
             // Captures asked for until now get this frame (later ones the next).
             let captures = pendingCaptures
             pendingCaptures.removeAll()
-            device.captureNextFrame = !pendingScreenshots.isEmpty || !captures.isEmpty
+            // A device whose captures arrive late gets each request once; its image is matched
+            // to the request when it comes back (see `capturesInFlight`).
+            let capturesLate = device.capturesArriveLate
+            let screenshots = capturesLate ? pendingScreenshots : []
+            if capturesLate { pendingScreenshots.removeAll() }
+            let capturing = !pendingScreenshots.isEmpty || !screenshots.isEmpty || !captures.isEmpty
+            device.captureNextFrame = capturing
 
             let framebufferSize = window.framebufferSize
             let renderSize = renderResolution.size(window: framebufferSize)
@@ -693,11 +712,23 @@ public final class Engine {
                 Profiler.begin("present")
                 let captured = try device.endFrame()
                 Profiler.end()
-                for capture in captures { capture(captured) }
-                if let image = captured {
-                    for url in pendingScreenshots { try image.writePNG(to: url) }
-                    pendingScreenshots.removeAll()
-                    if let shot = automatedScreenshot, frameCount >= shot.frame {
+                var delivered: (image: Image?, screenshots: [URL], captures: [@MainActor (Image?) -> Void])?
+                if capturesLate {
+                    if capturing { capturesInFlight.append((screenshots, captures)) }
+                    if let image = captured, !capturesInFlight.isEmpty {
+                        let group = capturesInFlight.removeFirst()
+                        delivered = (image, group.screenshots, group.captures)
+                    }
+                } else {
+                    delivered = (captured, captured == nil ? [] : pendingScreenshots, captures)
+                    if captured != nil { pendingScreenshots.removeAll() }
+                }
+                if let delivered {
+                    for capture in delivered.captures { capture(delivered.image) }
+                }
+                if let delivered, let image = delivered.image {
+                    for url in delivered.screenshots { try Self.save(image, to: url) }
+                    if let shot = automatedScreenshot, frameCount >= shot.frame, delivered.screenshots.contains(shot.url) || !capturesLate {
                         print("Saved screenshot to \(shot.url.path)")
                         printScreenshotAverages()
                         quit(reason: "the ENGINE_SCREENSHOT frame was saved")
@@ -709,6 +740,7 @@ public final class Engine {
                 // Minimized or no drawable: don't spin the CPU. A reset that wasn't delivered stays pending.
                 if temporalInputs.resetHistory { historyResetRequested = true }
                 pendingCaptures.insert(contentsOf: captures, at: 0)
+                pendingScreenshots.insert(contentsOf: screenshots, at: 0)
                 if automatedScreenshot != nil { screenshotTotals.skipped += 1 }
                 #if !os(WASI)
                 // (In a browser, requestAnimationFrame paces the next frame instead.)
@@ -761,6 +793,14 @@ public final class Engine {
         lastTemporalSetup = (renderSize, window, upscaler)
         historyResetRequested = false
         return TemporalInputs(jitter: jitter, resetHistory: reset, reversedDepth: clearDepth == 0)
+    }
+
+    /// Writes a screenshot. In a browser it goes to the page's `acro.onScreenshot` when there is one.
+    private static func save(_ image: Image, to url: URL) throws {
+        #if os(WASI)
+        if WebHost.screenshot(image, path: url.path) { return }
+        #endif
+        try image.writePNG(to: url)
     }
 
     /// Saves the next rendered frame as a PNG.

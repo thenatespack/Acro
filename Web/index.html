@@ -25,7 +25,8 @@
 <script type="module">
   import { startPlayer } from "./loader.js";
   // Query options: ?scene=<path> starts another cooked scene, ?args=<a,b,...> passes player
-  // options, ?probe=<n> (spike) runs the frame-driver probe for n frames when the engine can't start.
+  // options, ?env=<NAME=value,...> sets environment variables (ENGINE_OVERLAY=1, ...),
+  // ?probe=<n> (spike) runs the frame-driver probe for n frames when the engine can't start.
   const query = new URLSearchParams(location.search);
   const args = (query.get("args") ?? "").split(",").filter(Boolean);
   if (query.has("scene")) args.push("--scene", query.get("scene"));
@@ -33,6 +34,7 @@
     canvas: document.getElementById("game"),
     status: document.getElementById("status"),
     args,
+    env: (query.get("env") ?? "").split(",").filter(Boolean),
     probeFrames: Number(query.get("probe") ?? 0),
   });
 </script>

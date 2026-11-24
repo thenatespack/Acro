@@ -49,6 +49,7 @@ package final class WebGPURenderDevice: RenderDevice {
     let features: Set<String>
     private let maxWorkgroupSize: (x: Int, y: Int, z: Int, invocations: Int)
     package var captureNextFrame = false
+    package var capturesArriveLate: Bool { true }
     package var captureWindow = false
     package var vsync = true
     package var upscaler = Upscaler.bilinear

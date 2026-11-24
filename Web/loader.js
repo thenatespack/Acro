@@ -14,22 +14,15 @@
 import { WASI, File, Directory, PreopenDirectory, OpenFile, ConsoleStdout } from "@bjorn3/browser_wasi_shim";
 import { instantiate } from "./app/instantiate.js";
 
-/** Features the engine uses when the adapter has them (the device asks for no others). */
-const optionalFeatures = [
-  "texture-compression-bc", "texture-compression-astc", "texture-compression-etc2", "float32-filterable",
-  "rg11b10ufloat-renderable", "timestamp-query", "depth32float-stencil8", "indirect-first-instance",
-  "shader-f16", "bgra8unorm-storage", "depth-clip-control", "float32-blendable", "clip-distances",
-  "dual-source-blending",
-];
-
 class PlayerError extends Error {}
 
 /**
  * Starts the player.
- * @param {{ canvas: HTMLCanvasElement, status: HTMLElement, args?: string[], probeFrames?: number,
- *           base?: string }} options
+ * @param {{ canvas: HTMLCanvasElement, status: HTMLElement, args?: string[], env?: string[],
+ *           probeFrames?: number, base?: string }} options
+ * `env` adds `NAME=value` environment variables (ENGINE_OVERLAY=1, ENGINE_QUALITY=high, ...).
  */
-export async function startPlayer({ canvas, status, args = [], probeFrames = 0, base = "." }) {
+export async function startPlayer({ canvas, status, args = [], env = [], probeFrames = 0, base = "." }) {
   const show = (text) => { status.hidden = false; status.className = ""; status.textContent = text; };
   const fail = (text) => {
     status.hidden = false;
@@ -53,9 +46,13 @@ export async function startPlayer({ canvas, status, args = [], probeFrames = 0, 
     show("Loading…");
     const url = (path) => new URL(path, new URL(`${base}/`, location.href));
     const config = await fetchJSON(url("player.json"));
-    const [pack, engineFiles] = await Promise.all([
-      fetchBytes(url(config.pack)),
+    // `mounts` (optional): more folders for the WASI filesystem, { "<name>": "<manifest.json>" }
+    // mounted at /<name> (the Demo's resources, say). A player without a pack has `pack: null`.
+    const mounts = Object.entries(config.mounts ?? {});
+    const [pack, engineFiles, ...mounted] = await Promise.all([
+      config.pack ? fetchBytes(url(config.pack)) : undefined,
       fetchFolder(url(config.engine)),
+      ...mounts.map(([, manifest]) => fetchFolder(url(manifest))),
     ]);
 
     Object.assign(globalThis.acro, {
@@ -66,19 +63,37 @@ export async function startPlayer({ canvas, status, args = [], probeFrames = 0, 
       onError: (message) => fail(message),
       // (An error stays on screen.)
       onExit: (code) => { if (!status.classList.contains("error")) show(code === 0 ? "The game has ended." : `The game exited (${code}).`); },
+      // Screenshots (ENGINE_SCREENSHOT, Engine.saveScreenshot) as PNG data URLs, by path.
+      screenshots: {},
+      onScreenshot: (path, width, height, rgba) => {
+        const canvas2D = document.createElement("canvas");
+        canvas2D.width = width;
+        canvas2D.height = height;
+        canvas2D.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0);
+        globalThis.acro.screenshots[path] = canvas2D.toDataURL("image/png");
+        console.log(`[acro] screenshot ${path} (${width}x${height})`);
+      },
     });
 
     show("Starting the game…");
     const wasi = new WASI(
-      [config.wasm], [`ENGINE_RESOURCES=/engine`],
+      [config.wasm], [`ENGINE_RESOURCES=/engine`, ...(config.env ?? []), ...env],
       [
         new OpenFile(new File([])),  // stdin
         ConsoleStdout.lineBuffered((line) => console.log(line)),
         ConsoleStdout.lineBuffered((line) => console.error(line)),
-        new PreopenDirectory("/", new Map([["engine", engineFiles]])),
+        new PreopenDirectory("/", new Map([["engine", engineFiles], ...mounts.map(([name], i) => [name, mounted[i]])])),
       ],
       { debug: false },
     );
+    // The shim answers poll_oneoff (sleeps, timed waits) by spinning: nothing in the engine
+    // should call it in a browser, so say so when something does.
+    const poll = wasi.wasiImport.poll_oneoff;
+    let polls = 0;
+    wasi.wasiImport.poll_oneoff = (...args) => {
+      if (polls++ === 0) console.warn("[acro] poll_oneoff called: something waited on the browser's main thread");
+      return poll(...args);
+    };
     // instantiate() runs `main`: it returns once the game has started (or failed: onError).
     await instantiate({ module: fetch(url(config.wasm)), wasi });
     if (!status.classList.contains("error")) status.hidden = true;
@@ -94,7 +109,9 @@ async function setUpWebGPU(canvas) {
   }
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
   if (!adapter) throw new PlayerError("WebGPU is available, but no suitable GPU adapter was found.");
-  const requiredFeatures = optionalFeatures.filter((name) => adapter.features.has(name));
+  // Every feature the adapter has (texture compression, timestamp queries, the storage texture
+  // tiers...): the engine checks `device.features` for what it can use.
+  const requiredFeatures = [...adapter.features];
   // The adapter's own limits, so the engine isn't held to WebGPU's conservative defaults.
   const requiredLimits = {};
   for (const name in adapter.limits) {
