@@ -36,7 +36,7 @@ final class SkinningScene: DemoScene {
         try sceneRenderer.registerMaterial(Material(baseColor: Vec4(0.42, 0.45, 0.38, 1), checker: true, roughness: 0.9), key: "floor")
         try sceneRenderer.registerMaterial(Material(baseColor: Vec4(0.6, 0.58, 0.55, 1), roughness: 0.7), key: "stone")
 
-        guard let url = Bundle.module.url(forResource: "Fox", withExtension: "glb", subdirectory: "Models") else {
+        guard let url = Bundle.demoModel("Fox") else {
             throw GraphicsError("Models/Fox.glb is missing from the Demo bundle")
         }
         let model = try GLTFReader.read(contentsOf: url)

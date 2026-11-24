@@ -724,6 +724,9 @@ public struct DrawIndexedIndirectArguments: Sendable, BitwiseCopyable, Equatable
     func endFrame() throws -> Image?
     /// When true, the next frame is read back and returned by `endFrame`. Resets after.
     var captureNextFrame: Bool { get set }
+    /// Whether a captured frame comes back from a later `endFrame` than its own (WebGPU, whose
+    /// readbacks are asynchronous), in the order they were captured, instead of its own frame's.
+    var capturesArriveLate: Bool { get }
     /// Reads `target`'s color (an `.rgba8Srgb` target) back once this frame's passes ran:
     /// `endFrame` waits for the GPU, like a captured frame, and calls `completion` with the
     /// pixels (RGBA8, top row first). Call it inside a frame, after the passes into `target`.
@@ -757,6 +760,7 @@ public struct DrawIndexedIndirectArguments: Sendable, BitwiseCopyable, Equatable
 
 extension RenderDevice {
     public var descriptorPoolCount: Int? { nil }
+    public var capturesArriveLate: Bool { false }
 
     public func beginFrame(framebufferSize: (width: Int, height: Int)) throws -> Bool {
         try beginFrame(framebufferSize: framebufferSize, renderSize: nil)

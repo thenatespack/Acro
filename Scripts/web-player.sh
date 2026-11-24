@@ -2,6 +2,7 @@
 # Builds the browser player (Spikes/WasmPlayer: SampleGame linked in) and serves it with a pack.
 #
 #   Scripts/web-player.sh <game.pack> [--release] [--port <n>] [--out <dir>] [--no-build] [--no-serve]
+#   Scripts/web-player.sh --demo [same options]     the Demo app's scenes instead (no pack)
 #
 # Builds with the Swift Wasm SDK (ENGINE_WASM=1, see docs/wasm-spike.md), packages the wasm with
 # JavaScriptKit's PackageToJS plugin, and assembles a static site in <dir> (default
@@ -14,14 +15,16 @@
 #   game.pack, player.json  the pack, and what the loader fetches
 #
 # Then serves it on http://localhost:<port>/ (default 8080) until Ctrl-C. Open it in a browser
-# with WebGPU. Page options: ?scene=<path>, ?args=--opt,value, ?probe=<n> (see Web/index.html).
+# with WebGPU. Page options: ?scene=<path>, ?args=--opt,value, ?env=NAME=value, ?probe=<n>
+# (see Web/index.html). With --demo the page runs the Demo product (its resources mounted at
+# /demo) and ?args=--scene,<name or number> picks the scene; default out .build-wasm/web-demo.
 #
 # Environment: SWIFT (default ~/.swiftly/bin/swift), WASM_SDK (default swift-6.4.2-RELEASE_wasm).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 usage() { sed -n '2,3p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
-pack="" configuration=debug port=8080 out=.build-wasm/web-player build=1 serve=1
+pack="" configuration=debug port=8080 out="" build=1 serve=1 demo=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --release) configuration=release ;;
@@ -29,14 +32,21 @@ while [[ $# -gt 0 ]]; do
         --out) out=$2; shift ;;
         --no-build) build=0 ;;
         --no-serve) serve=0 ;;
+        --demo) demo=1 ;;
         -h|--help) usage ;;
         -*) echo "Unknown option $1" >&2; usage ;;
         *) [[ -z "$pack" ]] || usage; pack=$1 ;;
     esac
     shift
 done
-[[ -n "$pack" ]] || usage
-[[ -f "$pack" ]] || { echo "No pack at $pack" >&2; exit 1; }
+if [[ $demo == 1 ]]; then
+    [[ -z "$pack" ]] || usage
+    product=Demo out=${out:-.build-wasm/web-demo}
+else
+    [[ -n "$pack" ]] || usage
+    [[ -f "$pack" ]] || { echo "No pack at $pack" >&2; exit 1; }
+    product=WasmPlayer out=${out:-.build-wasm/web-player}
+fi
 
 swift=${SWIFT:-$HOME/.swiftly/bin/swift}
 sdk=${WASM_SDK:-swift-6.4.2-RELEASE_wasm}
@@ -45,10 +55,10 @@ packaged=$scratch/plugins/PackageToJS/outputs/Package
 export ENGINE_WASM=1
 
 if [[ $build == 1 ]]; then
-    echo "Building and packaging WasmPlayer ($configuration)..."
+    echo "Building and packaging $product ($configuration)..."
     mkdir -p "$scratch"
     log=$scratch/web-player-build.log
-    if ! "$swift" package --swift-sdk "$sdk" --scratch-path "$scratch" js --product WasmPlayer -c "$configuration" >"$log" 2>&1; then
+    if ! "$swift" package --swift-sdk "$sdk" --scratch-path "$scratch" js --product "$product" -c "$configuration" >"$log" 2>&1; then
         grep -E 'error:' "$log" >&2 || tail -30 "$log" >&2
         echo "Building or packaging failed (full log: $log)" >&2
         exit 1
@@ -74,12 +84,23 @@ cp -R "$packaged/." "$out/app/"
 cp -R "$deps/node_modules/@bjorn3/browser_wasi_shim/dist" "$out/vendor/browser_wasi_shim"
 cp -R "$resources/." "$out/engine/"
 # Everything under engine/ but Info.plist and the manifest itself, relative to engine/.
-(cd "$out/engine" && find . -type f ! -name Info.plist | sed 's|^\./||' | sort) | python3 -c '
+manifest() {
+    (cd "$1" && find . -type f ! -name Info.plist ! -name manifest.json | sed 's|^\./||' | sort) | python3 -c '
 import json, sys
-print(json.dumps({"files": [line.strip() for line in sys.stdin if line.strip()]}, indent=1))' > "$out/engine/manifest.json"
-cp "$pack" "$out/game.pack"
-python3 -c 'import json, sys; print(json.dumps({"wasm": "app/WasmPlayer.wasm", "pack": "game.pack",
-    "packName": sys.argv[1], "engine": "engine/manifest.json", "args": []}, indent=1))' "$(basename "$pack")" > "$out/player.json"
+print(json.dumps({"files": [line.strip() for line in sys.stdin if line.strip()]}, indent=1))' > "$1/manifest.json"
+}
+manifest "$out/engine"
+if [[ $demo == 1 ]]; then
+    mkdir -p "$out/demo"
+    cp -R "$bin/Acro_Demo.bundle/." "$out/demo/"
+    manifest "$out/demo"
+    python3 -c 'import json; print(json.dumps({"wasm": "app/Demo.wasm", "pack": None, "engine": "engine/manifest.json",
+        "mounts": {"demo": "demo/manifest.json"}, "args": []}, indent=1))' > "$out/player.json"
+else
+    cp "$pack" "$out/game.pack"
+    python3 -c 'import json, sys; print(json.dumps({"wasm": "app/WasmPlayer.wasm", "pack": "game.pack",
+        "packName": sys.argv[1], "engine": "engine/manifest.json", "args": []}, indent=1))' "$(basename "$pack")" > "$out/player.json"
+fi
 echo "Assembled $out ($(du -sh "$out" | cut -f1))"
 
 [[ $serve == 1 ]] || exit 0

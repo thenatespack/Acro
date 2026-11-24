@@ -40,7 +40,7 @@ final class CrowdScene: DemoScene {
         try sceneRenderer.registerMaterial(Material(baseColor: Vec4(1, 1, 1, 1), roughness: 0.6), key: "matte")
         try sceneRenderer.registerMaterial(Material(baseColor: Vec4(1, 1, 1, 1), roughness: 0.25), key: "gloss")
 
-        guard let url = Bundle.module.url(forResource: "Fox", withExtension: "glb", subdirectory: "Models") else {
+        guard let url = Bundle.demoModel("Fox") else {
             throw GraphicsError("Models/Fox.glb is missing from the Demo bundle")
         }
         model = try GLTFReader.read(contentsOf: url)
@@ -182,9 +182,9 @@ final class CrowdScene: DemoScene {
     func update(input: Input, dt: Float, time: Float) {
         if input.wasPressed(.r) { build() }
         if input.wasPressed(.n) { overlay.toggle() }
-        let start = DispatchTime.now().uptimeNanoseconds
+        let start = monotonicNanoseconds()
         world.update(dt: Double(dt))
-        record(Double(DispatchTime.now().uptimeNanoseconds - start) * 1e-9, into: &timings.update)
+        record(Double(monotonicNanoseconds() - start) * 1e-9, into: &timings.update)
         debug.removeAll()
         if overlay {
             world.navMesh?.drawDebug(into: debug)

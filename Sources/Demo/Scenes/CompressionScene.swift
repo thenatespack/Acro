@@ -241,7 +241,7 @@ final class CompressionScene: DemoScene {
 
     /// The BoomBox's base color and normal map, decoded.
     private static func boomBoxImages() throws -> (baseColor: Image, normal: Image) {
-        guard let url = Bundle.module.url(forResource: "BoomBox", withExtension: "glb", subdirectory: "Models") else {
+        guard let url = Bundle.demoModel("BoomBox") else {
             throw GraphicsError("Models/BoomBox.glb is missing from the Demo bundle")
         }
         let model = try GLTFReader.read(contentsOf: url)

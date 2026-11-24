@@ -676,7 +676,8 @@ struct GLTFParser {
         }
         let positions = try readFloats(positionAccessor, allowed: [.vec3], what: "\(what) POSITION").values
         let vertexCount = positions.count / 3
-        guard vertexCount <= Int(UInt32.max) else { throw GLTFError.invalidData("\(what) has too many vertices") }
+        // (Not `Int(UInt32.max)`: that traps where Int is 32 bits, as on wasm32.)
+        guard vertexCount <= UInt32.max else { throw GLTFError.invalidData("\(what) has too many vertices") }
 
         func attribute(_ name: String, _ allowed: Set<ElementType>) throws -> (values: [Float], components: Int)? {
             guard let accessor = desc.attributes[name] else { return nil }
