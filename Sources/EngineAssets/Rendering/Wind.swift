@@ -6,7 +6,11 @@
 /// from the object-space position and the material's numbers alone (no vertex attribute), in the
 /// lit, shadow and depth passes alike, on Metal and Vulkan. Materials without wind draw with the
 /// usual shaders, unchanged. `WindSway.offset` is the shader's function on the CPU (tests).
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 import EngineScene
 

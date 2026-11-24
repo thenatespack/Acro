@@ -7,7 +7,11 @@
 // positions but leaves no velocity behind.
 // (A rigid Baumgarte bias, which the warm start then reapplied, fed energy into the chain
 // demo: an out-of-plane wobble grew until hinges and the chain flailed.)
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 import EngineGraphics
 import EngineScene

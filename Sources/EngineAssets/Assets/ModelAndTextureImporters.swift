@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics
@@ -85,7 +89,7 @@ public struct TextureImporter: AssetImporter {
             break
         }
         var asset = ImportedAsset()
-        asset.add("texture", name: ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension,
+        asset.add("texture", name: context.assetPath.pathLastComponent.pathDeletingExtension,
                   .texture(texture))
         return asset
     }
@@ -389,7 +393,7 @@ public struct GLTFImporter: AssetImporter {
             for i in node.children.indices { numberJoints(&node.children[i]) }
         }
 
-        let stem = ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension
+        let stem = context.assetPath.pathLastComponent.pathDeletingExtension
         var roots = model.roots.map(node)
         guard !roots.isEmpty else { throw AssetError.unreadable("the scene has no nodes") }
         for i in roots.indices { numberJoints(&roots[i]) }

@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EnginePhysics
@@ -144,7 +148,7 @@ enum VisualScriptWorldNodes {
                 ?? assets.references(of: .prefab).first { $0.asset == id }
         }
         guard let reference, let prefab = assets.prefab(reference) else { throw VisualScriptError("'\(value)' isn't a prefab, model or effect") }
-        let name = (assets.path(of: reference.asset).map { (($0 as NSString).lastPathComponent as NSString).deletingPathExtension }) ?? "Prefab"
+        let name = (assets.path(of: reference.asset).map { $0.pathLastComponent.pathDeletingExtension }) ?? "Prefab"
         let root = c.world.spawn(Transform(position: position, rotation: rotation), Name(name))
         if let template = try? prefab.template(prefabs: { assets.prefab($0) }), prefab.variant != nil {
             _ = try? c.world.load(template.data, under: root, ids: .regenerate)

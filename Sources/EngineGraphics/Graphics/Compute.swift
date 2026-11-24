@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 /// A 3D count: threads per workgroup, workgroups, or threads of a dispatch.

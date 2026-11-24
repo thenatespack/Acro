@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// A JSON value: what MCP messages, tool arguments and results, and JSON Schemas are made of.
 /// Objects encode with sorted keys (`data()`), so output is deterministic.

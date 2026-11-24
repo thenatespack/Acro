@@ -1,5 +1,9 @@
 #if canImport(JavaScriptKit)
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import JavaScriptKit
 import EngineCore
 import EngineGraphics

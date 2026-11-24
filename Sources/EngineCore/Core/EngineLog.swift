@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// The engine's log: levels, categories, a few sinks and a filter, safe to call from any thread.
 ///

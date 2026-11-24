@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 import EngineGraphics
 
@@ -152,7 +156,7 @@ public struct LUTImporter: AssetImporter {
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         let data = try context.data()
         let texture: TextureAsset
-        if (context.assetPath as NSString).pathExtension.lowercased() == "cube" {
+        if context.assetPath.pathFileExtension.lowercased() == "cube" {
             guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
                 throw AssetError.unreadable("not a text file")
             }
@@ -167,7 +171,7 @@ public struct LUTImporter: AssetImporter {
             texture = TextureAsset(image: image, isSRGB: false, generatesMipmaps: false)
         }
         var asset = ImportedAsset()
-        asset.add("texture", name: ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension, .texture(texture))
+        asset.add("texture", name: context.assetPath.pathLastComponent.pathDeletingExtension, .texture(texture))
         asset.main = "texture"
         return asset
     }

@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 import EngineGraphics
 import EnginePhysics
@@ -26,7 +30,7 @@ public struct PathBuildImporter: AssetImporter {
             throw AssetError.unreadable("not a path: \(error)")
         }
         for problem in build.problems { context.warn(problem) }
-        let stem = ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension
+        let stem = context.assetPath.pathLastComponent.pathDeletingExtension
         let ground = Self.terrain(build.terrain, &context)
         let samples = build.samples(on: ground)
         let junctions = build.junctionLayout(Self.junctionTargets(build, ground: ground, &context), samples: samples)

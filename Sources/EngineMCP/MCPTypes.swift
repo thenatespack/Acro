@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 // What a server offers: tools (named calls with a JSON Schema for their arguments) and
 // resources (readable documents named by URI). The host supplies them through

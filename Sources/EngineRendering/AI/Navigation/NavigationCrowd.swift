@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 // Crowd avoidance: ORCA (optimal reciprocal collision avoidance, the RVO2 algorithm by van den

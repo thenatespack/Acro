@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics
@@ -339,7 +343,7 @@ public struct ProceduralTextureImporter: AssetImporter {
             throw AssetError.unreadable("not a procedural texture: \(error)")
         }
         var asset = ImportedAsset()
-        asset.add("texture", name: ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension,
+        asset.add("texture", name: context.assetPath.pathLastComponent.pathDeletingExtension,
                   .texture(TextureAsset(image: spec.render(), isSRGB: settings.sRGB, generatesMipmaps: settings.mipmaps)))
         if spec.normalStrength > 0 {
             // The companion normal map ("asset:<id>#normal"), always linear.

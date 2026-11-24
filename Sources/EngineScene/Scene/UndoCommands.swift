@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 // The built-in `UndoCommand`s. All of them name entities by `EntityID`, so they keep working

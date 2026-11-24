@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 // Spline math shared by `CameraPath` and `LineRenderer` (EngineRendering) and `.path` builds

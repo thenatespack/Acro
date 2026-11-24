@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics
@@ -44,8 +48,8 @@ public struct OBJImporter: AssetImporter {
             nodes.append(PrefabNode(name: object.name ?? "Mesh \(index)", mesh: context.reference(id)))
         }
         guard !nodes.isEmpty else { throw AssetError.unreadable("no faces") }
-        let base = (context.assetPath as NSString).lastPathComponent
-        let stem = (base as NSString).deletingPathExtension
+        let base = context.assetPath.pathLastComponent
+        let stem = base.pathDeletingExtension
         let root = nodes.count == 1 ? nodes[0] : PrefabNode(name: stem, children: nodes)
         asset.add(namer.id(kind: "prefab", name: stem, index: 0), name: stem, .prefab(PrefabAsset(roots: [root])))
         return asset
@@ -167,7 +171,7 @@ public struct MaterialFileImporter: AssetImporter {
         var material = try AssetJSON.decoder().decode(MaterialAsset.self, from: context.data())
         if material.graph != nil { Self.compileGraph(&material, &context) }
         var asset = ImportedAsset()
-        asset.add("material", name: ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension,
+        asset.add("material", name: context.assetPath.pathLastComponent.pathDeletingExtension,
                   .material(material))
         return asset
     }
@@ -219,7 +223,7 @@ public struct PrefabFileImporter: AssetImporter {
         let data = try context.data()
         if let variant = try PrefabVariant(fileData: data) {
             var asset = ImportedAsset()
-            asset.add("prefab", name: ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension,
+            asset.add("prefab", name: context.assetPath.pathLastComponent.pathDeletingExtension,
                       .prefab(PrefabAsset(variant: variant)))
             return asset
         }
@@ -236,7 +240,7 @@ public struct PrefabFileImporter: AssetImporter {
         guard header.version <= SceneFile.currentVersion else { throw AssetError.unreadable("written by a newer engine") }
         guard !header.entities.isEmpty else { throw AssetError.unreadable("the prefab has no entities") }
         var asset = ImportedAsset()
-        asset.add("prefab", name: ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension,
+        asset.add("prefab", name: context.assetPath.pathLastComponent.pathDeletingExtension,
                   .prefab(PrefabAsset(scene: data)))
         return asset
     }

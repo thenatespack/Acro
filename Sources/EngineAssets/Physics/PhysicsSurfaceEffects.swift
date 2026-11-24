@@ -11,7 +11,11 @@
 //   `PhysicsSurface` on it, else "default") and the ground's material under its feet.
 // The pair's effect comes from `PhysicsMaterialLibrary.effect`. Spawned entities are named
 // "Footstep", "Impact" or "Scrape" and removed after `lifetime` seconds (sounds when they end).
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EnginePhysics

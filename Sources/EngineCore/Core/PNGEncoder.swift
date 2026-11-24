@@ -1,23 +1,12 @@
-#if canImport(CZlib)
 import CZlib
-#endif
 #if canImport(Dispatch)
 import Dispatch
 #endif
-import Foundation
-
-#if !canImport(CZlib)
-/// WebAssembly spike: no zlib in the WASI sysroot yet, so PNG writing is unavailable there.
-enum PNGEncoder {
-    struct Unavailable: Error {}
-    static func encode(
-        width: Int, height: Int, pixels: UnsafeBufferPointer<UInt8>,
-        write: (UnsafeRawBufferPointer) throws -> Void
-    ) throws {
-        throw Unavailable()
-    }
-}
+#if os(WASI)
+import WASIFoundation
 #else
+import Foundation
+#endif
 
 /// Streaming PNG encoder for 8-bit RGBA images.
 ///
@@ -108,7 +97,7 @@ enum PNGEncoder {
             // Each worker reads shared source rows and writes only its own batch/scratch slices.
             // Linux's Dispatch requires a @Sendable closure, so the pointers go in through a box.
             let p = RowPointers(base: base, zeroRow: zeroRow, batch: batch, scratchPool: scratchPool)
-            DispatchQueue.concurrentPerform(iterations: rows) { i in
+            concurrentPerform(iterations: rows) { i in
                 let row = firstRow + i
                 let cur = p.base + row * rowBytes
                 let prev = row == 0 ? UnsafePointer(p.zeroRow) : UnsafePointer(p.base + (row - 1) * rowBytes)
@@ -197,4 +186,3 @@ private struct RowPointers: @unchecked Sendable {
     let batch: UnsafeMutablePointer<UInt8>
     let scratchPool: UnsafeMutablePointer<UInt8>
 }
-#endif

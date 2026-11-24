@@ -17,7 +17,11 @@
 // The bodies are the physics world's own (not ECS colliders): `PhysicsWorld.ragdollBody(of:bone:)`
 // finds them; ray casts report the bone entity they belong to. Bodies of one ragdoll never
 // collide with each other, and a `CharacterController` on the same entity ignores them.
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 import EngineGraphics
 import EngineScene

@@ -1,5 +1,9 @@
 import EngineMCP
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAssets
 import EngineAudio
 import EngineBackends

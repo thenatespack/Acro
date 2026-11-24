@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 // Settings: one Codable struct of the game's options, kept as JSON in the user data folder.

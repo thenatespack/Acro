@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics
@@ -71,9 +75,8 @@ extension AssetDatabase {
         let fm = FileManager.default
         func free(_ path: String) -> Bool { !taken.contains(path) && !fm.fileExists(atPath: project.url(forAssetPath: path).path) }
         guard !free(path) else { return path }
-        let ns = path as NSString
-        let ext = ns.pathExtension
-        let stem = ext.isEmpty ? path : ns.deletingPathExtension
+        let ext = path.pathFileExtension
+        let stem = ext.isEmpty ? path : path.pathDeletingExtension
         var n = 2
         while true {
             let candidate = "\(stem) \(n)" + (ext.isEmpty ? "" : ".\(ext)")
@@ -217,7 +220,7 @@ extension AssetDatabase {
     }
 
     private static func join(_ folder: String, _ name: String) -> String { folder.isEmpty ? name : folder + "/" + name }
-    private static func parentPath(of path: String) -> String { (path as NSString).deletingLastPathComponent }
+    private static func parentPath(of path: String) -> String { path.pathDeletingLastComponent }
 
     // MARK: Materials
 

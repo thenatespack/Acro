@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics
@@ -236,7 +240,7 @@ public struct MeshBuildImporter: AssetImporter {
         // Their looks blend across the boundaries (MeshBuildSculptBlend.swift): blend layers are parts too.
         let pieces = sculpting.splittingLooks(blending: true)
         let build = pieces.build
-        let stem = ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension
+        let stem = context.assetPath.pathLastComponent.pathDeletingExtension
         var asset = ImportedAsset()
         var namer = SubAssetNamer()
 

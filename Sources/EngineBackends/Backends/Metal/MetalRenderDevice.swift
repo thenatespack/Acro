@@ -1,5 +1,9 @@
 #if canImport(Metal) && canImport(AppKit)
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import Metal
 import MetalFX
 import QuartzCore

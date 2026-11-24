@@ -1,7 +1,11 @@
 // The networking marker component. It lives with the scene code because `ComponentRegistry`
 // registers it up front (so scenes can name it before networking runs); replication itself
 // is in Net/.
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 /// Marks an entity for replication and names the components sent (by `componentName`).

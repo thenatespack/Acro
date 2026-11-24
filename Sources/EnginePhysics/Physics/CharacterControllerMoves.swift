@@ -22,7 +22,11 @@
 //   still find climbable wall, else the character mantles onto the top (or lets go). Down onto
 //   walkable ground it walks again; `drop` lets go, `jump` jumps off the wall.
 // Ledges and climbed walls carry the character when they move (kinematic or dynamic bodies).
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 import EngineGraphics
 import EngineScene

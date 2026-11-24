@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Which part of a gamepad axis a source reads: the whole signed value, or just one direction
 /// as a 0...1 strength (so a stick pushed left can be a button, or a trigger an "axis" half).

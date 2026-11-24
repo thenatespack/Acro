@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 // JSON Schemas derived from `Decodable` types, for tool input and output schemas.
 //

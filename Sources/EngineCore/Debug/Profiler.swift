@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// One finished scope.
 public struct ProfilerEvent: Sendable, Equatable {

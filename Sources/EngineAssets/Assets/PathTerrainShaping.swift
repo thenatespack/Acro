@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 // Shaping a terrain to a path: flattening the ground under a road, carving a river bed, building

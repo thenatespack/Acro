@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 // A Model Context Protocol server (https://modelcontextprotocol.io): JSON-RPC 2.0 messages
 // carrying `initialize`, `ping`, `tools/*`, `resources/*` and notifications. Foundation only,

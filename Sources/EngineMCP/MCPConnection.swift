@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 // Between transports (which run on their own threads) and the server (main actor): a
 // transport posts what a client sent to the server's `MCPInbox` together with where the

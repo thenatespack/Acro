@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 extension Bundle {
     /// The engine's resource bundle: shaders under `Shaders/`, fonts under `Fonts/`. The engine

@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics
@@ -39,7 +43,7 @@ public struct CharacterImporter: AssetImporter {
             throw AssetError.unreadable("not a character: \(error)")
         }
         for problem in build.problems { context.warn(problem) }
-        let stem = ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension
+        let stem = context.assetPath.pathLastComponent.pathDeletingExtension
         let rig = build.rig
         var asset = ImportedAsset()
         var namer = SubAssetNamer()
@@ -276,12 +280,12 @@ public struct CharacterImporter: AssetImporter {
             return nil
         }
         let up = String(repeating: "../", count: context.assetPath.split(separator: "/").count - 1)
-        let folder = (path as NSString).deletingLastPathComponent
+        let folder = path.pathDeletingLastComponent
         let reader = context
         // The source clip, and the name of each target it drives.
         let source: AnimationClip?, sourceSkeleton: AnimationSkeleton
         var keepsTranslation = false
-        switch (path as NSString).pathExtension.lowercased() {
+        switch path.pathFileExtension.lowercased() {
         case "gltf", "glb":
             guard let data = try? reader.readDependency(relativePath: up + path),
                   let model = try? GLTFReader.read(data: data, loadResource: { uri in

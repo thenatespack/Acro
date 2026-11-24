@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 /// The Tag component (named `Tags` in Swift, as Swift Testing owns `Tag`): labels that group entities across the hierarchy ("enemy", "pickup", "checkpoint"), so game

@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineAudio
 import EngineCore
 import EngineGraphics
@@ -336,7 +340,7 @@ public struct PostFXImporter: AssetImporter {
                 _ = try? context.readDependency(relativePath: up + path)
             }
         }
-        let stem = ((context.assetPath as NSString).lastPathComponent as NSString).deletingPathExtension
+        let stem = context.assetPath.pathLastComponent.pathDeletingExtension
         var asset = ImportedAsset()
         var namer = SubAssetNamer()
         let prefab = namer.id(kind: "prefab", name: stem, index: 0)

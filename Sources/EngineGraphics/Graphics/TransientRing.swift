@@ -53,7 +53,11 @@ package final class TransientRing<Chunk> {
     }
 }
 
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 import EngineCore
 
 /// A value written from GPU completion handlers and read on the main thread.
