@@ -207,7 +207,7 @@ swift build -c release
 swift run -c release Demo
 ```
 
-The engine links `zlib.lib`. vcpkg's zlib 1.3.2 and later installs it as `z.lib`, so copy `%ZLIB_DIR%\lib\z.lib` to `zlib.lib` if it's missing.
+The engine links `zlib.lib`. vcpkg's zlib installs it as `z.lib` (1.3.2 to 1.3.x) or `libz.lib` (1.4 and later), so copy that file to `%ZLIB_DIR%\lib\zlib.lib` if it's missing.
 
 ### Using Acro as a package dependency
 

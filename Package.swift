@@ -141,6 +141,9 @@ engineSwiftSettings += wasmFoundationSettings
 let isDependencyCheckout = URL(fileURLWithPath: Context.packageDirectory).deletingLastPathComponent().lastPathComponent == "checkouts"
 let textureCodecCFlags: [CSetting] = isDependencyCheckout ? [] : [.unsafeFlags(["-O2"], .when(configuration: .debug))]
 let textureCodecCXXFlags: [CXXSetting] = isDependencyCheckout ? [] : [.unsafeFlags(["-O2"], .when(configuration: .debug))]
+    // Newer MSVC STLs (14.52+) refuse any clang older than 22 with error STL1000; the clang in
+    // Swift's Windows toolchain lags behind, and the STL headers astc-encoder uses work with it.
+    + [.define("_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH", .when(platforms: [.windows]))]
 
 // Game modules (Sources/Engine/GameModule) resolve Engine's symbols against the host process
 // when loaded, so hosts export them: executables do on macOS; on Linux they need
