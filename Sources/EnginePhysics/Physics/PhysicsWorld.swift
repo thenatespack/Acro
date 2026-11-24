@@ -108,10 +108,11 @@ public final class PhysicsWorld {
 
     public var bodyCount: Int { bodies.count - 1 - freeBodies.count }
     /// Bodies currently awake (dynamic and moving kinematic ones).
-    public var awakeBodyCount: Int { bodies.filter { $0.isAlive && $0.isAwake && $0.motion != .static }.count }
+    // Counted in place: `filter(...).count` would copy every matching body (a few hundred bytes each).
+    public var awakeBodyCount: Int { bodies.reduce(0) { $1.isAlive && $1.isAwake && $1.motion != .static ? $0 + 1 : $0 } }
     public var contactCount: Int { contacts.count }
     /// Contacts whose shapes touch.
-    public var touchingContactCount: Int { contacts.filter { $0.touching && !$0.isTrigger }.count }
+    public var touchingContactCount: Int { contacts.reduce(0) { $1.touching && !$1.isTrigger ? $0 + 1 : $0 } }
 
     // MARK: - Bodies
 
@@ -580,10 +581,11 @@ public final class PhysicsWorld {
 
     /// The narrowphase of one contact. It reads only the contact and its bodies, so contacts
     /// are processed in parallel on the job system.
-    private nonisolated static func narrowphase(_ c: Contact, _ a: Body, _ b: Body, dt: Float, speculativeDistance: Float,
-                                                linearSlop: Float) -> ContactUpdate {
-        let active = (a.isAwake && a.motion != .static) || (b.isAwake && b.motion != .static)
-        guard active else { return .inactive }
+    /// `worldA` and `worldB` are the bodies' shapes in world space (`worldShapes`), nil for
+    /// meshes and compounds.
+    private nonisolated static func narrowphase(_ c: Contact, _ a: Body, _ b: Body, worldA: WorldConvex?, worldB: WorldConvex?,
+                                                dt: Float, speculativeDistance: Float, linearSlop: Float) -> ContactUpdate {
+        guard isActive(a, b) else { return .inactive }
         guard a.fatBox.overlaps(b.fatBox) else { return .separated }
         if c.isTrigger {
             let points = Narrowphase.collide(a.shape!, a.shapePose, b.shape!, b.shapePose, margin: 0)
@@ -593,8 +595,12 @@ public final class PhysicsWorld {
         // caught by speculative points instead of tunneling.
         let closing = length(b.linearVelocity - a.linearVelocity) + length(a.angularVelocity) * a.shape!.extent
             + length(b.angularVelocity) * b.shape!.extent
-        let found = Narrowphase.collide(a.shape!, a.shapePose, b.shape!, b.shapePose,
-                                        margin: speculativeDistance + closing * dt)
+        let margin = speculativeDistance + closing * dt
+        let found = if let worldA, let worldB {
+            Narrowphase.collide(worldA, worldB, margin: margin)  // what the call below does for two convex shapes
+        } else {
+            Narrowphase.collide(a.shape!, a.shapePose, b.shape!, b.shapePose, margin: margin)
+        }
         var points: [ManifoldPoint] = []
         points.reserveCapacity(found.count)
         for p in found {
@@ -615,14 +621,44 @@ public final class PhysicsWorld {
         return .updated(points: points, touching: points.contains { $0.separation <= linearSlop * 2 })
     }
 
+    /// Whether a contact between `a` and `b` needs its narrowphase: one of them may move.
+    private nonisolated static func isActive(_ a: Body, _ b: Body) -> Bool {
+        (a.isAwake && a.motion != .static) || (b.isAwake && b.motion != .static)
+    }
+
+    /// The world-space convex shape of every body in an active contact (nil for the rest, and
+    /// for meshes and compounds), made once per step: a body in a pile is in several contacts,
+    /// and transforming its polyhedron for each of them (three arrays each time) was a third
+    /// of the narrowphase.
+    private func worldShapes(for contacts: [Contact]) -> [WorldConvex?] {
+        let bodies = self.bodies
+        var needed = [Bool](repeating: false, count: bodies.count)
+        for c in contacts where !c.isTrigger && Self.isActive(bodies[c.a], bodies[c.b]) {
+            needed[c.a] = true
+            needed[c.b] = true
+        }
+        let list = needed.indices.filter { needed[$0] }
+        let shapes = jobs.parallelMap(list.count, batchSize: 32, name: "world shapes") { k in Self.worldShape(of: bodies[list[k]]) }
+        var result = [WorldConvex?](repeating: nil, count: bodies.count)
+        for (k, i) in list.enumerated() { result[i] = shapes[k] }
+        return result
+    }
+
+    /// Runs on job threads.
+    private nonisolated static func worldShape(of body: Body) -> WorldConvex? {
+        body.shape.flatMap { WorldConvex($0, body.shapePose) }
+    }
+
     private func updateContacts(_ dt: Float) {
         // The narrowphase in parallel (each contact on its own), then removals and events in
         // contact order, so nothing depends on the thread count.
         let (previous, bodies) = (contacts, self.bodies)
         let (speculativeDistance, linearSlop) = (self.speculativeDistance, self.linearSlop)
+        let world = worldShapes(for: previous)
         let updates = jobs.parallelMap(previous.count, batchSize: 16, name: "narrowphase") { k in
-            Self.narrowphase(previous[k], bodies[previous[k].a], bodies[previous[k].b], dt: dt,
-                             speculativeDistance: speculativeDistance, linearSlop: linearSlop)
+            let (a, b) = (previous[k].a, previous[k].b)
+            return Self.narrowphase(previous[k], bodies[a], bodies[b], worldA: world[a], worldB: world[b], dt: dt,
+                                    speculativeDistance: speculativeDistance, linearSlop: linearSlop)
         }
         var kept: [Contact] = []
         kept.reserveCapacity(previous.count)
