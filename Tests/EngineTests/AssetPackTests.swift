@@ -409,3 +409,24 @@ private struct TestProject {
         #expect(throws: AssetPackError.self) { try AssetPack(data: damaged, name: "x.pack") }
     }
 }
+
+/// Compressed packs (version 2: PackMeshCodec.swift, AssetPack.swift) from a cook.
+@MainActor @Suite struct PackCompressionTests {
+    @Test func cooksCompressedByDefaultAndPlainOnRequest() throws {
+        let project = try TestProject()
+        let compressed = try project.cook(CookOptions(scenes: ["Scenes/Main.scene"], target: CookTarget(platform: .linux)), to: "a")
+        let plain = try project.cook(CookOptions(scenes: ["Scenes/Main.scene"], target: CookTarget(platform: .linux), compressesBlobs: false), to: "b")
+        let packs = try [compressed, plain].map { try AssetPack(url: URL(fileURLWithPath: $0.packPath)) }
+        #expect(packs[0].manifest.version == 2 && packs[1].manifest.version == 1)
+        let meshBlobs = packs.map { $0.entry(project.model)!.files.values.first! }
+        #expect(meshBlobs[0].encoding == "mesh1" && meshBlobs[1].encoding == nil)
+        #expect(packs[0].manifest.scenes[0].blob.encoding == "deflate")
+        #expect(compressed.storedMeshBytes < compressed.meshBytes && plain.storedMeshBytes == plain.meshBytes)
+        // The same mesh, within the codec's error; the same scene.
+        let meshes = try packs.map { try #require(AssetDatabase(mounting: $0).mesh(AssetReference(project.model, subAsset: "mesh/Quad"))) }
+        #expect(meshes[0].indices == meshes[1].indices)
+        #expect(zip(meshes[0].vertices, meshes[1].vertices).allSatisfy { largestDifference($0.position, $1.position) < 1e-4 && largestDifference($0.uv, $1.uv) < 1e-4 })
+        #expect(try packs[0].scene() == packs[1].scene())
+        #expect(compressed.summary.contains("→"))
+    }
+}

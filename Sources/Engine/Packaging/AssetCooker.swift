@@ -74,11 +74,15 @@ public struct CookOptions: Equatable, Sendable, Codable {
     public var writesManifest: Bool
     /// Stored in the pack's manifest for the player (`AssetPackManifest.runtime`).
     public var runtime: ProjectRuntimeSettings?
+    /// Store meshes quantized and compressed, and other blobs deflated where that saves enough
+    /// (pack version 2, AssetPack.swift); false writes every blob as it is (version 1).
+    public var compressesBlobs: Bool
 
     public init(scenes: [String], include: [String] = [], target: CookTarget = CookTarget(), textures: TextureCookMode = .compress,
                 textureQuality: TextureCompressionQuality? = nil, packName: String? = nil, writesManifest: Bool = true,
-                runtime: ProjectRuntimeSettings? = nil) {
+                runtime: ProjectRuntimeSettings? = nil, compressesBlobs: Bool = true) {
         self.runtime = runtime
+        self.compressesBlobs = compressesBlobs
         self.scenes = scenes
         self.include = include
         self.target = target
@@ -110,12 +114,18 @@ public struct CookReport: Codable, Equatable, Sendable {
     public var fileBytes: Int
     public var seconds: Double
     public var warnings: [String]
+    /// The same as stored in the pack (compressed: `CookOptions.compressesBlobs`).
+    public var storedTextureBytes = 0
+    public var storedMeshBytes = 0
+    public var storedFileBytes = 0
 
     /// One line for logs.
     public var summary: String {
         let mb = { (bytes: Int) in String(format: "%.2f MB", Double(bytes) / 1_048_576) }
+        let sizes = { (raw: Int, stored: Int) in stored > 0 && stored != raw ? "\(mb(raw)) → \(mb(stored))" : mb(raw) }
         return "\(assetCount) assets, \(scenes.count) scene\(scenes.count == 1 ? "" : "s") → \(packPath.pathLastComponent) "
-            + "(\(mb(packBytes)): textures \(mb(textureBytes)), meshes \(mb(meshBytes)), files \(mb(fileBytes))); "
+            + "(\(mb(packBytes)): textures \(sizes(textureBytes, storedTextureBytes)), meshes \(sizes(meshBytes, storedMeshBytes)), "
+            + "files \(sizes(fileBytes, storedFileBytes))); "
             + "\(imported.count) imported, \(fromLibrary) from Library, \(fromCookCache) from the cook cache, "
             + String(format: "%.2f s", seconds)
     }
@@ -327,20 +337,21 @@ public struct CookPlan: Sendable {
                                          vertexStride: MemoryLayout<MeshVertex>.stride, scenes: [], assets: [])
         if let runtime = options.runtime, !runtime.isEmpty { manifest.runtime = runtime }
         manifest.engineVersion = EngineVersion.current
+        let deflate: AssetPackFormat.Compression = options.compressesBlobs ? .deflate : .none
         for (scene, data) in sceneData {
-            manifest.scenes.append(AssetPackManifest.Scene(path: scene.path, blob: writer.add(data)))
+            manifest.scenes.append(AssetPackManifest.Scene(path: scene.path, blob: writer.add(data, compression: deflate)))
         }
         // Navmeshes baked in the editor (Library/Navigation): games load them instead of baking.
         let baked = NavigationBakeCache.files(in: libraryURL.appendingPathComponent(NavigationBakeCache.libraryFolder, isDirectory: true))
         for key in baked.keys.sorted() {
             guard let data = try? Data(contentsOf: baked[key]!) else { continue }
-            manifest.navigation = (manifest.navigation ?? [:]).merging([key: writer.add(data)]) { $1 }
+            manifest.navigation = (manifest.navigation ?? [:]).merging([key: writer.add(data, compression: deflate)]) { $1 }
         }
         // Light probes baked in the editor (Library/Lighting): games load them instead of baking.
         let probes = LightProbeBakeCache.files(in: libraryURL.appendingPathComponent(LightProbeBakeCache.libraryFolder, isDirectory: true))
         for key in probes.keys.sorted() {
             guard let data = try? Data(contentsOf: probes[key]!) else { continue }
-            manifest.lighting = (manifest.lighting ?? [:]).merging([key: writer.add(data)]) { $1 }
+            manifest.lighting = (manifest.lighting ?? [:]).merging([key: writer.add(data, compression: deflate)]) { $1 }
         }
         var report = CookReport(packPath: "", manifestPath: nil, scenes: scenes.map(\.path), assetCount: cooked.count, imported: [],
                                 fromLibrary: 0, fromCookCache: 0, files: 0, packBytes: 0, textureBytes: 0, meshBytes: 0, fileBytes: 0,
@@ -349,12 +360,21 @@ public struct CookPlan: Sendable {
             var item = cooked[id]!
             for name in item.files.keys.sorted() {
                 let data = item.files[name]!
-                item.entry.files[name] = writer.add(data)
-                if name.hasPrefix("texture") { report.textureBytes += data.count } else { report.meshBytes += data.count }
+                let blob = writer.add(data, compression: options.compressesBlobs ? AssetPackFormat.compression(of: name, objects: item.entry.objects) : .none)
+                item.entry.files[name] = blob
+                if name.hasPrefix("texture") {
+                    report.textureBytes += data.count
+                    report.storedTextureBytes += Int(blob.size)
+                } else {
+                    report.meshBytes += data.count
+                    report.storedMeshBytes += Int(blob.size)
+                }
             }
             if let data = item.data {
-                item.entry.data = writer.add(data)
+                let blob = writer.add(data, compression: deflate)
+                item.entry.data = blob
                 report.fileBytes += data.count
+                report.storedFileBytes += Int(blob.size)
             }
             manifest.assets.append(item.entry)
             switch item.origin {
