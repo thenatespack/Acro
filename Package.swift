@@ -125,10 +125,15 @@ let textureCodecWasmFlags: [CXXSetting] = wasmBuild
 //   `.whitespaces`), loaded as EngineCore's dependency, out of files that import WASIFoundation.
 let wasiFoundationTargets: [Target] = wasmBuild ? [.target(name: "WASIFoundation")] : []
 let wasiFoundationDependency: [Target.Dependency] = wasmBuild ? ["WASIFoundation"] : []
+// They're also compiled with WebAssembly SIMD (`-msimd128`, which Swift's code generation takes
+// from the Clang options): `SIMD3<Float>` / `SIMD4<Float>` math (Vec3, Quat, Mat4: physics,
+// animation, culling) becomes f32x4 instructions instead of one lane at a time. Every browser
+// with WebGPU has SIMD128 (Chrome 91, Firefox 89, Safari 16.4), and its float operations round
+// like the scalar ones, so results don't change. See docs/wasm-spike.md, "Performance".
 let wasmFoundationSettings: [SwiftSetting] = wasmBuild
     ? [.enableUpcomingFeature("MemberImportVisibility"),
        .unsafeFlags(["Foundation", "FoundationInternationalization", "_FoundationICU", "CoreFoundation"]
-        .flatMap { ["-Xfrontend", "-disable-autolink-library", "-Xfrontend", $0] })]
+        .flatMap { ["-Xfrontend", "-disable-autolink-library", "-Xfrontend", $0] } + ["-Xcc", "-msimd128"])]
     : []
 engineSwiftSettings += wasmFoundationSettings
 
