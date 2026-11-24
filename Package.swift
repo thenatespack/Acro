@@ -143,6 +143,15 @@ let engineModules = ["EngineCore", "EngineScene", "EngineGraphics", "EngineBacke
 // The builder tabs' modules (see the EditorBuilders target).
 let editorBuilderModules = ["EditorBuildersMesh", "EditorBuildersWorld", "EditorBuilders2D", "EditorBuildersAnimation", "EditorBuildersLogic"]
 
+// WebAssembly: JavaScriptKit bridges Swift to the browser (WebGPU, canvas, input, Web Audio,
+// fetch). Only a dependency of ENGINE_WASM=1 builds, so native builds fetch nothing.
+let webPackages: [Package.Dependency] = wasmBuild
+    ? [.package(url: "https://github.com/swiftwasm/JavaScriptKit.git", from: "0.63.0")]
+    : []
+let webDependencies: [Target.Dependency] = wasmBuild
+    ? [.product(name: "JavaScriptKit", package: "JavaScriptKit")]
+    : []
+
 // WebAssembly spike: a player with SampleGame linked in, built only with ENGINE_WASM=1.
 let wasmSpikeTargets: [Target] = wasmBuild
     ? [.executableTarget(name: "WasmPlayer", dependencies: ["Engine", "SampleGame"], path: "Spikes/WasmPlayer",
@@ -159,6 +168,7 @@ let package = Package(
         .executable(name: "Editor", targets: ["Editor"]),
         .executable(name: "GameRunner", targets: ["GameRunner"]),
     ],
+    dependencies: webPackages,
     // `as [Target]`: without it Swift 6.0's type checker gives up on this expression.
     targets: vulkanTargets + wasmSpikeTargets + ([
         zlibTarget,
@@ -188,14 +198,14 @@ let package = Package(
         .target(name: "EngineScene", dependencies: ["EngineCore"], swiftSettings: engineSwiftSettings, linkerSettings: windowsLinkerSettings),
         .target(name: "EngineGraphics", dependencies: ["EngineCore"] + textureCodecDependency, swiftSettings: engineSwiftSettings,
                 linkerSettings: windowsLinkerSettings),
-        .target(name: "EngineBackends", dependencies: ["EngineGraphics"] + backendDependencies, swiftSettings: engineSwiftSettings,
+        .target(name: "EngineBackends", dependencies: ["EngineGraphics"] + backendDependencies + webDependencies, swiftSettings: engineSwiftSettings,
                 linkerSettings: windowsLinkerSettings),
         // UI/Icons: Lucide icon paths (ISC), see its LICENSES.md.
         .target(name: "EngineText", dependencies: ["EngineScene", "EngineGraphics", "CStbTrueType"], exclude: ["UI/Icons/LICENSES.md"],
                 swiftSettings: engineSwiftSettings, linkerSettings: windowsLinkerSettings),
         .target(name: "EnginePhysics", dependencies: ["EngineScene", "EngineGraphics"], swiftSettings: engineSwiftSettings,
                 linkerSettings: windowsLinkerSettings),
-        .target(name: "EngineAudio", dependencies: ["EngineScene", "CAudio"], swiftSettings: engineSwiftSettings,
+        .target(name: "EngineAudio", dependencies: ["EngineScene", "CAudio"] + webDependencies, swiftSettings: engineSwiftSettings,
                 linkerSettings: windowsLinkerSettings),
         .target(name: "EngineAssets", dependencies: ["EnginePhysics", "EngineAudio"], swiftSettings: engineSwiftSettings,
                 linkerSettings: windowsLinkerSettings),
