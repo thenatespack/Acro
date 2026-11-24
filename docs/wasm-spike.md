@@ -77,11 +77,64 @@ HUD, sky, particles, fog, probes) are pixel-identical. Frames run at the display
 wasm) takes 48 ms. GPU pass times on Apple look cumulative (each pass's end minus the frame's
 first begin: post's bloom passes read 2.85, 3.19, 3.35...), so `gpuTime` (their sum) overstates.
 
-Known gaps: PNG writing and net snapshots need zlib, and the Compression scene needs the texture
-codec (W2C): the Images, Net, Net Character and Compression scenes stop. Forest and Fur import
-assets into a temporary project at run time, and `AssetDatabase` finds no files in the shim's
-filesystem (editor-side; W3). Packs are cooked for one GPU family (ASTC for Apple, `--gpu bc` for
-the rest). No saves (IndexedDB) yet.
+Known gaps (W2A): the Images, Net, Net Character and Compression scenes stopped (zlib and the
+texture codec, W2C); Forest and Fur stopped (`AssetDatabase` found no files). All fixed in W2.5A,
+see below. Packs are cooked for one GPU family (ASTC for Apple, `--gpu bc` for the rest).
+
+### Content gaps (W2.5A)
+
+- **The four stopped scenes** run with zlib and the texture codec built for WASI (W2C), unchanged:
+  Images, Net, Net Character and Compression have 0 WebGPU errors and their `ENGINE_SCREENSHOT`
+  frames match Metal (mean difference 0.07, 0.07, 0.10 and 0.00 / 255).
+- **Folders listed empty** in the browser: browser_wasi_shim 0.3.0 gives every directory entry
+  `d_ino` 0, and Swift's `FileManager.contentsOfDirectory` skips such entries as deleted, so an
+  `AssetDatabase` in the shim's filesystem found no files. The loader wraps `fd_readdir` and gives
+  entries a nonzero inode (their cookie). With that Forest and Fur import their assets at run time
+  in the browser; Forest also needed a 32-bit fix (`MeshBuildPart.applyingLookUVs`: `Int(UInt32)`
+  of a name hash trapped above `Int32.max`).
+- **Material graphs on WebGPU.** `MaterialGraphCompiler` emits the graph's IR as WGSL as well and
+  replaces the body of `graphSurface_u0028_` (naga's name for `graphSurface()`) in
+  `mesh_graph.frag.wgsl`, `mesh_graph_depth.frag.wgsl` and `decal_graph.frag.wgsl` (the
+  compile-shaders.sh output of the unoptimized templates), the way it already splices MSL. It's
+  text, so it runs in the browser with no shader compiler; the template's globals (`gUV`,
+  `graphValues`, the five textures, `materialSampler`, the `g*` outputs) keep their GLSL names in
+  naga's output. `MaterialGraphProgram.wgslFragment` / `wgslDepthFragment` / `wgslDecalFragment`
+  feed graph pipelines, masked graph shadows and depth, and graph decals. The terrain splat shader
+  already had WGSL (fixed shader); terrain graph layers are ordinary graph materials, so they draw
+  now too. MaterialGraphTests validates the WGSL of every preset in all three templates with naga
+  when it is installed. Demo scene `graphs` (new, number 54): a sphere per preset on a splat terrain
+  with a lava graph layer, imported by an `AssetDatabase` at start. In Chromium: 0 WebGPU errors,
+  `ENGINE_SCREENSHOT` mean difference 0.065 / 255 from Metal (0.22% of pixels over 16).
+- **Saves on IndexedDB.** On WASI `UserData.directory(app:)` is `/userdata/<app>`. `Web/saves.js`
+  (`openUserData()`) reads every stored file from IndexedDB (database `acro-userdata`, store
+  `files`, one record per path) into an in-memory folder the loader mounts at `/userdata` before
+  the wasm starts. `SaveGames` and `SettingsStore` call `UserData.changed()` after writing or
+  removing files; on the web `Engine` sets `UserData.onChange` to call `acro.onUserDataChange()`,
+  and saves.js writes the folder's changes back (puts and deletes in one transaction, skipping
+  `AtomicFile`'s temporary files), and again on `pagehide` / hidden. Without IndexedDB saves last
+  for the session. `node Spikes/WebPlayerCheck/saves.mjs .build-wasm/web-demo` checks it in
+  Playwright: the Demo's `character` scene finds no quick save, F5 saves, the page reloads
+  (`[acro] user data: 1 file(s) from IndexedDB`), F9 loads it (largest distance from the save
+  0.0001 m).
+- **Keys.** `Key` has punctuation (`minus`, `equal`, `semicolon`, `apostrophe`, `backslash`,
+  `period`, `slash`) and keypad cases (`numpad0`…`numpad9`, `numpadDecimal`, `numpadAdd`,
+  `numpadSubtract`, `numpadMultiply`, `numpadDivide`, `numpadEqual`), mapped by physical key in
+  `CanvasWindow` (`KeyboardEvent.code`), `AppKitWindow` and `GLFWWindow` (Windows, Linux); the
+  keypad's Enter is `enter` everywhere. A test checks that each native window maps every case.
+
+Results (2026-11-24, same setup, release): **all 54 Demo scenes run with 0 WebGPU validation
+errors** (the 53 of W2A plus `graphs`; each run 4 s in Chromium with input). `ENGINE_SCREENSHOT`
+frames against Metal at 1280x720: graphs 0.065, images 0.069, compression 0.000, net 0.066, net
+character 0.099, fur 0.28 mean / 255. Forest differs by 1.95 (6% of pixels): same triangle counts,
+but the leaf cards' silhouettes differ, also with wind off; native runs are identical to each
+other, so something in the tree's import (likely the generated leaf texture or its compression)
+comes out differently on wasm32. Not investigated further.
+
+Remaining gaps: Forest's leaves (above). The Demo's F5 quick save is also the browser's reload key outside Playwright (a
+real F5 reloads the page; the save usually lands first, but the scene should use other keys on
+the web). IndexedDB writes are asynchronous, so a save made right before the tab is killed can be
+lost. The web editor (W3) will need the same `fd_readdir` fix in its own loader if it doesn't
+reuse `Web/loader.js`.
 
 ### Web export (W2B)
 
@@ -237,7 +290,7 @@ would trap on wasm32, which can't hold them anyway.
 3. **Canvas `PlatformWindow`** and input (DOM keyboard and mouse events, the Gamepad API).
 4. **Web Audio output.**
 5. **Asset loading**: fetch the pack and engine resources into memory or a virtual filesystem
-   instead of WASI preopened folders. Saves go to IndexedDB.
+   instead of WASI preopened folders. Saves go to IndexedDB (done in W2.5A).
 6. **Web export target** in GameExporter: Wasm build, `wasm-opt`, an HTML/JS loader with a
    WASI shim, and the pack. Includes the `@_extern(c)` entry-point fix.
 7. Cleanup: vendored zlib, a FoundationEssentials-only runtime for size, the 32-bit `Int` audit
