@@ -222,7 +222,7 @@ let package = Package(
         // EngineMCP (Foundation only) lets any game host an MCP server (`EngineConfig.mcp`).
         .target(
             name: "Engine",
-            dependencies: ["EngineRendering", "EngineMeshBuild", "EngineUI", "EngineNet", "EngineBackends", "EngineAudio", "EngineMCP"] + backendDependencies,
+            dependencies: ["EngineRendering", "EngineMeshBuild", "EngineUI", "EngineNet", "EngineBackends", "EngineAudio", "EngineMCP"] + backendDependencies + webDependencies,
             // WebAssembly: no processes, dynamic loading or Docker. Exporting and building or loading
             // game modules are editor-side; a web build links its game statically.
             exclude: wasmBuild ? ["Packaging/GameExporter.swift", "Packaging/GameExporterDocker.swift", "GameModule/GameModuleBuilder.swift",

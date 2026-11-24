@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Acro Player</title>
+<link rel="icon" href="data:,">
+<!-- The loader imports the WASI shim by its package name; Scripts/web-player.sh copies it to vendor/. -->
+<script type="importmap">
+{ "imports": { "@bjorn3/browser_wasi_shim": "./vendor/browser_wasi_shim/index.js" } }
+</script>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #ddd; font: 15px/1.4 system-ui, sans-serif; overflow: hidden; }
+  #game { display: block; width: 100vw; height: 100vh; outline: none; }
+  #status { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center;
+            padding: 24px; white-space: pre-wrap; pointer-events: none; }
+  #status.error { color: #ff8a80; align-items: flex-start; justify-content: flex-start; text-align: left;
+                  font-family: ui-monospace, Menlo, monospace; font-size: 13px; background: rgba(0, 0, 0, 0.85); pointer-events: auto; }
+  #status[hidden] { display: none; }
+</style>
+</head>
+<body>
+<canvas id="game" tabindex="0"></canvas>
+<div id="status">Loading…</div>
+<script type="module">
+  import { startPlayer } from "./loader.js";
+  // Query options: ?scene=<path> starts another cooked scene, ?args=<a,b,...> passes player
+  // options, ?probe=<n> (spike) runs the frame-driver probe for n frames when the engine can't start.
+  const query = new URLSearchParams(location.search);
+  const args = (query.get("args") ?? "").split(",").filter(Boolean);
+  if (query.has("scene")) args.push("--scene", query.get("scene"));
+  startPlayer({
+    canvas: document.getElementById("game"),
+    status: document.getElementById("status"),
+    args,
+    probeFrames: Number(query.get("probe") ?? 0),
+  });
+</script>
+</body>
+</html>
