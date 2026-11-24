@@ -57,12 +57,15 @@ public struct TerrainSplat: Codable, Equatable, Sendable {
     /// The material graph program that draws it (nil when the shader isn't in the engine's resources).
     public func program(metallic: Float, roughness: Float, normalScale: Float) -> MaterialGraphProgram? {
         guard let shaders = Self.shaders else { return nil }
-        return MaterialGraphProgram(key: "terrain-splat", metalFragment: shaders.metal, metalFragmentColor0: shaders.metalColor0,
-                                    spirvFragment: shaders.spirv, values: values(metallic: metallic, roughness: roughness, normalScale: normalScale),
-                                    textures: [], usesTime: false, code: "// terrain_splat.glsl")
+        var program = MaterialGraphProgram(
+            key: "terrain-splat", metalFragment: shaders.metal, metalFragmentColor0: shaders.metalColor0,
+            spirvFragment: shaders.spirv, values: values(metallic: metallic, roughness: roughness, normalScale: normalScale),
+            textures: [], usesTime: false, code: "// terrain_splat.glsl")
+        program.wgslFragment = shaders.wgsl
+        return program
     }
 
-    private static let shaders: (metal: String, metalColor0: String?, spirv: [UInt8])? = {
+    private static let shaders: (metal: String, metalColor0: String?, spirv: [UInt8], wgsl: String?)? = {
         let bundle = Bundle.engineResources
         func url(_ ext: String) -> URL? { bundle.engineResourceURL("mesh_terrain", withExtension: ext, subdirectory: "Shaders") }
         guard let metalURL = url("frag.metal"), let spirvURL = url("frag.spv"),
@@ -70,7 +73,8 @@ public struct TerrainSplat: Codable, Equatable, Sendable {
             print("TerrainSplat: mesh_terrain.frag.metal / .spv missing from the engine's resources")
             return nil
         }
-        return (metal, url("frag.color0.metal").flatMap { try? String(contentsOf: $0, encoding: .utf8) }, Array(spirv))
+        func text(_ ext: String) -> String? { url(ext).flatMap { try? String(contentsOf: $0, encoding: .utf8) } }
+        return (metal, text("frag.color0.metal"), Array(spirv), text("frag.wgsl"))
     }()
 
     /// Packs `images` (nil: a cell of `colors[i]`, display sRGB 0...1) into an atlas of

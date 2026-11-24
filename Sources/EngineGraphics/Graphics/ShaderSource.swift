@@ -7,28 +7,37 @@ import EngineCore
 /// compiles them to SPIR-V (`name.vert.spv`, `name.frag.spv`) and cross-compiles that SPIR-V to
 /// MSL with SPIRV-Cross (`name.vert.metal`, `name.frag.metal`, one file per stage), following
 /// the binding table below. Hand-written MSL (one `name.metal` with both entry points) works too.
+/// For the WebGPU backend the script also translates the SPIR-V to WGSL with naga
+/// (`name.vert.wgsl`, `name.frag.wgsl`, `name.comp.wgsl`, entry point `main`).
 ///
 /// Conventions shared by all shaders:
 /// - Vertex attributes come from buffer slot 0, `location n` ↔ `[[attribute(n)]]`.
-/// - Push constants: GLSL `layout(push_constant) uniform`, MSL `constant T& [[buffer(16)]]`.
-/// - Entry points: MSL `vertex_main` / `fragment_main`, GLSL `main`.
+/// - Push constants: GLSL `layout(push_constant) uniform`, MSL `constant T& [[buffer(16)]]`,
+///   WGSL `@group(3) @binding(0) var<uniform>` (WebGPU has no push constants).
+/// - Entry points: MSL `vertex_main` / `fragment_main`, GLSL and WGSL `main`.
 ///
-/// Resource bindings. `n` is the `index` passed to the `RenderPass` call:
+/// Resource bindings. `n` is the `index` passed to the `RenderPass` call. WGSL bindings are
+/// `@group(set) @binding(binding)` of the GLSL ones, except as noted:
 ///
-/// | Resource (pass call) | Metal | Vulkan GLSL |
-/// |---|---|---|
-/// | vertex buffers 0 / 1 | `[[stage_in]]` / `[[buffer(0)]]`, `[[buffer(1)]]` | `layout(location = ...) in` |
-/// | `setUniformData(_:)` (per-frame block) | `constant T& [[buffer(15)]]` | `layout(set = 0, binding = 0, std140) uniform` |
-/// | `setTexture(_:)` (shadow map) | `depth2d<float> [[texture(0)]]`, `sampler [[sampler(0)]]` | `layout(set = 1, binding = 0) uniform sampler2DShadow` |
-/// | `setUniformBuffer` / `setUniformData(_:index:)`, n in 2...7 | `constant T& [[buffer(n)]]` | `layout(set = 2, binding = n, std140) uniform` |
-/// | `setTexture(_:index:)`, n in 1...7 | `texture2d<float> [[texture(n)]]` | `layout(set = 2, binding = 8 + n) uniform texture2D` |
-/// | `setSampler(_:index:)`, n in 1...7 | `sampler [[sampler(n)]]` | `layout(set = 2, binding = 16 + n) uniform sampler` |
-/// | `setPushConstants` (≤ 128 B) | `constant T& [[buffer(16)]]` | `layout(push_constant) uniform` |
-/// | `setStorageBuffer`, n in 0...7 | `device T& [[buffer(20 + n)]]` | `layout(set = 2, binding = 24 + n, std430) buffer` |
-/// | `ComputePass.setStorageTexture`, n in 0...7 | `texture2d<float, access::read_write> [[texture(8 + n)]]` | `layout(set = 2, binding = 32 + n, rgba16f) uniform image2D` |
+/// | Resource (pass call) | Metal | Vulkan GLSL | WebGPU WGSL |
+/// |---|---|---|---|
+/// | vertex buffers 0 / 1 | `[[stage_in]]` / `[[buffer(0)]]`, `[[buffer(1)]]` | `layout(location = ...) in` | `@location(...)` |
+/// | `setUniformData(_:)` (per-frame block) | `constant T& [[buffer(15)]]` | `layout(set = 0, binding = 0, std140) uniform` | `@group(0) @binding(0) var<uniform>` |
+/// | `setTexture(_:)` (shadow map) | `depth2d<float> [[texture(0)]]`, `sampler [[sampler(0)]]` | `layout(set = 1, binding = 0) uniform sampler2DShadow` | `@group(1) @binding(0) texture_depth_2d`, `@group(1) @binding(1) sampler_comparison` (split) |
+/// | `setUniformBuffer` / `setUniformData(_:index:)`, n in 2...7 | `constant T& [[buffer(n)]]` | `layout(set = 2, binding = n, std140) uniform` | `@group(2) @binding(n) var<uniform>` |
+/// | `setTexture(_:index:)`, n in 1...7 | `texture2d<float> [[texture(n)]]` | `layout(set = 2, binding = 8 + n) uniform texture2D` | `@group(2) @binding(8 + n) texture_2d<f32>` |
+/// | `setSampler(_:index:)`, n in 1...7 | `sampler [[sampler(n)]]` | `layout(set = 2, binding = 16 + n) uniform sampler` | `@group(2) @binding(16 + n) sampler` |
+/// | `setPushConstants` (≤ 128 B) | `constant T& [[buffer(16)]]` | `layout(push_constant) uniform` | `@group(3) @binding(0) var<uniform>` (WGSL uniform layout rules apply) |
+/// | `setStorageBuffer`, n in 0...7 | `device T& [[buffer(20 + n)]]` | `layout(set = 2, binding = 24 + n, std430) buffer` | `@group(2) @binding(24 + n) var<storage>` |
+/// | `ComputePass.setStorageTexture`, n in 0...7 | `texture2d<float, access::read_write> [[texture(8 + n)]]` | `layout(set = 2, binding = 32 + n, rgba16f) uniform image2D` | `@group(2) @binding(32 + n) texture_storage_2d` |
 ///
-/// Compute shaders (`name.comp` → `name.comp.spv`, `name.comp.metal` with `compute_main`) use
-/// the same set 2 table and push constants; see `ComputePass`.
+/// Compute shaders (`name.comp` → `name.comp.spv`, `name.comp.metal` with `compute_main`,
+/// `name.comp.wgsl`) use the same set 2 table and push constants; see `ComputePass`.
+///
+/// WebGPU only has the storage-texture formats and accesses the browser's adapter offers:
+/// write-only `rgba16f`, `rgba8` and `r32f` everywhere, `r8`, `r16f` and `rg16f` with the
+/// "texture-formats-tier1" feature, read-write `rgba16f` and `r8` with "texture-formats-tier2".
+/// The backend refuses compute pipelines that need more (FSR 3 is unsupported there).
 ///
 /// On Vulkan, textures and samplers are separate descriptors (combine them in the shader with
 /// `texture(sampler2D(tex, samp), uv)`), matching Metal where either can be mixed freely.
@@ -53,6 +62,12 @@ public struct ShaderSource: Sendable {
     /// MSL defining `compute_main` (a compute shader; the vertex and fragment fields stay nil).
     public var metalComputeSource: String?
     public var spirvCompute: [UInt8]?
+    /// WGSL for the WebGPU backend, one module per stage (generated `<name>.vert.wgsl`,
+    /// `.frag.wgsl`, `.comp.wgsl`; entry point `main`). nil when the shader has none (hand-written
+    /// MSL, or SPIR-V naga can't translate): the WebGPU backend then refuses the pipeline.
+    public var wgslVertex: String?
+    public var wgslFragment: String?
+    public var wgslCompute: String?
 
     public init(metalSource: String? = nil, metalFragmentSource: String? = nil, metalFragmentColor0Source: String? = nil,
                 spirvVertex: [UInt8]? = nil, spirvFragment: [UInt8]? = nil) {
@@ -76,7 +91,8 @@ public struct ShaderSource: Sendable {
         if let spirv = url("comp.spv") {
             source.spirvCompute = Array(try Data(contentsOf: spirv))
         }
-        if source.metalComputeSource == nil && source.spirvCompute == nil {
+        source.wgslCompute = try url("comp.wgsl").map { try String(contentsOf: $0, encoding: .utf8) }
+        if source.metalComputeSource == nil && source.spirvCompute == nil && source.wgslCompute == nil {
             throw GraphicsError("No compute shader named '\(name)' found in \(bundle.bundlePath)")
         }
         return source
@@ -84,7 +100,7 @@ public struct ShaderSource: Sendable {
 
     /// Loads `<name>.vert.spv` and `<name>.frag.spv` from a bundle, plus MSL: `<name>.metal`
     /// if it exists (hand-written, both stages), else the generated `<name>.vert.metal` and
-    /// `<name>.frag.metal` (and `<name>.frag.color0.metal` when generated). Missing variants are left nil; the backend that needs them reports
+    /// `<name>.frag.metal` (and `<name>.frag.color0.metal` when generated), and WGSL (`<name>.vert.wgsl`, `<name>.frag.wgsl`). Missing variants are left nil; the backend that needs them reports
     /// the error.
     public static func load(named name: String, bundle: Bundle, subdirectory: String? = "Shaders") throws -> ShaderSource {
         func url(_ ext: String) -> URL? {
@@ -108,14 +124,16 @@ public struct ShaderSource: Sendable {
         if let frag = url("frag.spv") {
             source.spirvFragment = Array(try Data(contentsOf: frag))
         }
-        if source.metalSource == nil && source.spirvVertex == nil {
+        source.wgslVertex = try url("vert.wgsl").map { try String(contentsOf: $0, encoding: .utf8) }
+        source.wgslFragment = try url("frag.wgsl").map { try String(contentsOf: $0, encoding: .utf8) }
+        if source.metalSource == nil && source.spirvVertex == nil && source.wgslVertex == nil {
             throw GraphicsError("No shader named '\(name)' found in \(bundle.bundlePath)")
         }
         return source
     }
 
     /// The vertex stage of the generated shader `vertex` with the fragment stage of the
-    /// generated `fragment` (`<fragment>.frag.spv`, `.frag.metal`, `.frag.color0.metal`), for
+    /// generated `fragment` (`<fragment>.frag.spv`, `.frag.metal`, `.frag.color0.metal`, `.frag.wgsl`), for
     /// fragment variants that share a vertex shader.
     public static func load(vertex: String, fragment: String, bundle: Bundle, subdirectory: String? = "Shaders") throws -> ShaderSource {
         var source = try load(named: vertex, bundle: bundle, subdirectory: subdirectory)
@@ -128,6 +146,7 @@ public struct ShaderSource: Sendable {
         source.spirvFragment = Array(try Data(contentsOf: spirv))
         source.metalFragmentSource = try url("frag.metal").map { try String(contentsOf: $0, encoding: .utf8) }
         source.metalFragmentColor0Source = try url("frag.color0.metal").map { try String(contentsOf: $0, encoding: .utf8) }
+        source.wgslFragment = try url("frag.wgsl").map { try String(contentsOf: $0, encoding: .utf8) }
         return source
     }
 }

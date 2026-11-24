@@ -182,6 +182,7 @@ final class DecalRenderer {
             shader.metalFragmentSource = metal
             shader.metalFragmentColor0Source = nil
             shader.spirvFragment = spirv
+            shader.wgslFragment = nil  // no WGSL is generated for material graphs
             let pipeline = try device.makePipeline(Self.descriptor(shader))
             if graphPipelines.count >= 64 { graphPipelines.removeAll() }
             graphPipelines[key] = pipeline

@@ -1,0 +1,14 @@
+<!doctype html>
+<!-- WebGPU smoke test page; assembled into a site with the wasm and engine resources by run.sh. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Acro WebGPU smoke test</title>
+<script type="importmap">{ "imports": { "@bjorn3/browser_wasi_shim": "./wasi-shim/index.js" } }</script>
+<style>body { margin: 0; background: #222; } canvas { display: block; }</style>
+</head>
+<body>
+<canvas width="960" height="540"></canvas>
+<script type="module" src="smoke.js"></script>
+</body>
+</html>

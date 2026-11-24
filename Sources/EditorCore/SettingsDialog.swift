@@ -291,7 +291,7 @@ public final class SettingsDialog: Widget {
                  options: samples.map { $0.map { $0 == 1 ? "Off" : "\($0)x" } ?? "Default (from render quality)" },
                  get: { [unowned self] in samples.firstIndex(of: project.runtime?.window?.msaa) ?? 0 },
                  set: { [unowned self] index in updateWindow { $0.msaa = samples[index] } })
-        let backends: [GraphicsBackend?] = [nil] + GraphicsBackend.allCases
+        let backends: [GraphicsBackend?] = [nil] + GraphicsBackend.allCases.filter { $0 != .webgpu }
         dropdown("Graphics API", name: "settingsBackend", command: setProject,
                  options: backends.map { $0.map { $0 == .metal ? "Metal" : "Vulkan" } ?? "Default (Metal on macOS, Vulkan elsewhere)" },
                  get: { [unowned self] in backends.firstIndex(of: project.runtime?.window?.backend) ?? 0 },

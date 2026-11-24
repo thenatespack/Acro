@@ -32,6 +32,9 @@ public struct MaterialGraphProgram: Sendable, Equatable {
     public var metalFragmentColor0: String?
     /// mesh_graph's fragment stage in SPIR-V with the graph's code.
     public var spirvFragment: [UInt8]
+    /// The fragment stage in WGSL, for the WebGPU backend: only for programs with fixed shaders
+    /// (`TerrainSplat`); compiled graphs have none, so WebGPU can't draw them.
+    public var wgslFragment: String? = nil
     /// mesh_graph_depth's fragment stage with the graph's code, in MSL and in SPIR-V: discards
     /// where the graph's opacity is below push constant `params.z`, writes no color. Draw it
     /// after mesh_shadow_graph.vert (or mesh_shadow_graph_skinned.vert) in a depth-only

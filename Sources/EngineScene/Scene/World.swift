@@ -146,7 +146,7 @@ public final class World {
             alive[Int(slot)] = true
             entity = Entity(index: slot, generation: generations[Int(slot)])
         } else {
-            precondition(generations.count < Int(UInt32.max), "Too many entities")
+            precondition(generations.count < UInt32.max, "Too many entities")  // not Int(UInt32.max): traps on wasm32
             entity = Entity(index: UInt32(generations.count), generation: 0)
             generations.append(0)
             alive.append(true)

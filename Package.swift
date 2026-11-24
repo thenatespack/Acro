@@ -158,7 +158,10 @@ let wasmSpikeTargets: [Target] = wasmBuild
                        swiftSettings: [.enableExperimentalFeature("Extern")]),
        // Browser check of CanvasWindow, input, gamepads and WebAudioDevice (see Spikes/WebInputSmoke/main.swift).
        .executableTarget(name: "WebInputSmoke", dependencies: ["EngineBackends", "EngineAudio"] + webDependencies,
-                         path: "Spikes/WebInputSmoke", exclude: ["index.html", "smoke.mjs"])]
+                         path: "Spikes/WebInputSmoke", exclude: ["index.html", "smoke.mjs"]),
+       // WebGPU backend smoke test: renders frames in a browser (see Spikes/WebGPUSmoke/main.swift).
+       .executableTarget(name: "WebGPUSmoke", dependencies: ["EngineRendering", "EngineMeshBuild", "EngineUI", "EngineBackends"] + webDependencies,
+                         path: "Spikes/WebGPUSmoke", exclude: ["web"])]
     : []
 
 let package = Package(
