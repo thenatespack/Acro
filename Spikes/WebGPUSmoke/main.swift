@@ -8,6 +8,7 @@
 // sets `globalThis.acro = { adapter, device, context, format }`, mounts the engine's shaders and
 // fonts at /engine, and calls `globalThis.acroSmokeFrame()` from requestAnimationFrame.
 import JavaScriptKit
+import EngineCore
 import EngineGraphics
 import EngineBackends
 

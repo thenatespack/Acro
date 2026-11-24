@@ -184,10 +184,10 @@ let wasmSpikeTargets: [Target] = wasmBuild
                        swiftSettings: [.enableExperimentalFeature("Extern")] + wasmFoundationSettings),
        // Browser check of CanvasWindow, input, gamepads and WebAudioDevice (see Spikes/WebInputSmoke/main.swift).
        .executableTarget(name: "WebInputSmoke", dependencies: ["EngineBackends", "EngineAudio"] + webDependencies,
-                         path: "Spikes/WebInputSmoke", exclude: ["index.html", "smoke.mjs"]),
+                         path: "Spikes/WebInputSmoke", exclude: ["index.html", "smoke.mjs"], swiftSettings: wasmFoundationSettings),
        // WebGPU backend smoke test: renders frames in a browser (see Spikes/WebGPUSmoke/main.swift).
        .executableTarget(name: "WebGPUSmoke", dependencies: ["EngineRendering", "EngineMeshBuild", "EngineUI", "EngineBackends"] + webDependencies,
-                         path: "Spikes/WebGPUSmoke", exclude: ["web"])]
+                         path: "Spikes/WebGPUSmoke", exclude: ["web"], swiftSettings: wasmFoundationSettings)]
     : []
 // Codec, PNG/zlib and layout checks whose output must match between a native and a wasm32 build
 // (see Spikes/WasmPortabilityCheck/main.swift). ENGINE_WASM_CHECK=1 adds it to a native build.

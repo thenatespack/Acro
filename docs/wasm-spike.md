@@ -51,25 +51,90 @@ stand-in tick n times when the engine can't start.
 | `DispatchTime` | `monotonicNanoseconds()` (ContinuousClock) everywhere in the engine | Keep |
 | Foundation doesn't re-export libc on WASI (`sinf`, ...) | `@_exported import WASILibc` in EngineCore | Keep |
 | No signals | CrashReporter installs no handlers on WASI | Report traps from the JS side |
-| No zlib in the sysroot | PNG writing and net snapshot compression are unavailable | Vendor zlib (or miniz) as a C target |
-| astc-encoder needs `std::mutex` | CTextureCodec left out (encoding/decoding throw) | Fine: web builds load pre-encoded textures. Cook BC7 and ASTC, or uncompressed, per GPU |
+| No zlib in the sysroot | PNG writing and net snapshot compression are unavailable | Done (W2C): zlib 1.3.1 vendored in `Sources/CZlibWasm`, built as `CZlib` in Wasm builds only |
+| astc-encoder needs `std::mutex` | CTextureCodec left out (encoding/decoding throw) | Done (W2C): no-op `std::mutex` / `condition_variable` force-included on WASI (`CTextureCodec/wasi/wasi_threads_shim.h`); the codec builds and matches native output |
 | miniaudio needs pthreads | `CAudio` device functions are stubs on WASI | Web Audio (AudioWorklet) output pulling from the mixer |
 | `.atomic` writes are unavailable | `Data.WritingOptions.engineAtomic` (`[]` on WASI) | Keep |
 | MCP transports (sockets, stdio, URLSession) | Excluded from the target; GameMCP has no transport | Fine: not needed in a web game |
 | Exporter / game-module builder and loader (`Process`, `dlopen`) | Excluded; `GameModuleError` moved to its own file | Fine: editor-side |
-| **`Int` is 32-bit on wasm32** | Fixed a hash constant (MeshBuildSculpt) and the `mesh << 32 \| material` batch keys in ShadowMaps and RenderList: on 32-bit they silently became 0 and every batch would collide | **Audit**: only literals that overflow are compile errors. Shifts, byte counts and hash math can still be wrong without any warning |
+| **`Int` is 32-bit on wasm32** | Fixed a hash constant (MeshBuildSculpt) and the `mesh << 32 \| material` batch keys in ShadowMaps and RenderList: on 32-bit they silently became 0 and every batch would collide | **Audit**: only literals that overflow are compile errors. Shifts, byte counts and hash math can still be wrong without any warning. Audited in W2C (see "Size" below for the list) |
 | **Generated player `main.swift` traps** | `@_silgen_name("acro_module_v1")` declares the `@_cdecl` entry with Swift's calling convention; wasm traps on the signature mismatch (native tolerates it). Spike player uses `@_extern(c, …)` | Change GameExporter's template (needs the `Extern` experimental feature) |
 | `Bundle.module` traps (it goes through `Bundle.main`) | `Bundle.engineResources` reads a folder named by `ENGINE_RESOURCES` | Ship engine resources inside the pack, or fetch them into a virtual filesystem |
 | Foundation bug: `Bundle.url(forResource:withExtension:)` drops the extension's last character on WASI | `Bundle.engineResourceURL` builds paths directly on WASI (all 6 lookups) | Keep, and report upstream |
 
 ## Size
 
-The release `WasmPlayer.wasm` with SampleGame is 117 MB unstripped and **70 MB stripped:
-about 31 MB of code and 39 MB of data. That's 24.7 MB gzip or 15.7 MB brotli.** The data
-section is probably mostly ICU tables pulled in through `import Foundation`
-(FoundationInternationalization). Moving the runtime modules to `FoundationEssentials` should
-remove most of it. `wasm-opt -Oz` and dead-code stripping of editor-only code would cut more.
-A target of under 10 MB compressed looks realistic. Not measured: start-up time in a browser.
+**The data section was ICU.** `import Foundation` on WASI links swift-corelibs-foundation,
+FoundationInternationalization and `_FoundationICU`, whose `icudt76l` table is ~35 MB, even if
+nothing from them is used: the import's autolink entries pull the libraries in whole. A
+one-line test binary shows it: `import Foundation` and a `JSONEncoder` call is 51 MB stripped
+(36 MB data); the same with `import FoundationEssentials` is 12 MB (2 MB data). An unused
+`import class Foundation.Bundle` in one file is enough to bring the 36 MB back.
+
+So in Wasm builds (W2C) the runtime modules (`EngineCore` … `Engine`, `EngineMCP`, `SampleGame`
+and the `Spikes` targets) import **`WASIFoundation`** instead of Foundation:
+
+```swift
+#if os(WASI)
+import WASIFoundation
+#else
+import Foundation
+#endif
+```
+
+`WASIFoundation` (`Sources/WASIFoundation`, a target only in `ENGINE_WASM=1` builds) re-exports
+`FoundationEssentials` and `WASILibc` and adds the Foundation-only APIs the engine uses, with
+Foundation's names so call sites stay the same: `NSLock` / `NSCondition` (no-ops; single thread),
+`Thread.isMainThread`, `FileHandle` (on POSIX file descriptors), `CharacterSet` and
+`trimmingCharacters(in:)`, `replacingOccurrences(of:with:)`, `range(of:)`, `String(format:)`
+(through `vsnprintf`; no `%@`), `removingPercentEncoding`, `DateFormatter` (the
+`yyyyMMdd-HHmmss` patterns only), `ISO8601DateFormatter`, `JSONSerialization.jsonObject`,
+`Bundle` (by path), `URLResourceValues` and `FileManager.enumerator(at:...)`. Native builds don't
+build it and are unchanged. `(path as NSString).lastPathComponent` and friends became
+`path.pathLastComponent`, `pathFileExtension`, `pathDeletingExtension`,
+`pathDeletingLastComponent` and `pathExpandingTilde` (EngineCore `PathString.swift`: NSString's
+own functions natively).
+
+One `import Foundation` remains: EngineCore's SwiftPM-generated `Bundle.module` accessor (it has
+resources). It is unused on WASI and dead-stripped, so the manifest's `wasmFoundationSettings`
+make it free: `-disable-autolink-library` for Foundation, FoundationInternationalization,
+`_FoundationICU` and CoreFoundation in every module on top of EngineCore (Foundation would
+otherwise be autolinked through EngineCore's swiftmodule), and `MemberImportVisibility` so
+Foundation's extension members (`.whitespaces`, `String(format:)`) don't leak into files that
+import WASIFoundation. Code that really used Foundation would now fail to link, not silently
+add 35 MB. **New files under `Sources/Engine*` must use the import block above.**
+
+Release `WasmPlayer.wasm` (SampleGame linked in), stripped; MB = 10^6 bytes:
+
+| Step | Stripped | gzip -9 | brotli -q 11 | Code | Data |
+|---|---|---|---|---|---|
+| Spike / W1 baseline | 70.9 MB | 24.9 MB | 15.8 MB | 31.2 MB | 39.0 MB |
+| WASIFoundation, no ICU (+ vendored zlib and the texture codec, ≤ 0.4 MB of it) | 30.2 MB | 9.6 MB | 6.1 MB | 26.2 MB | 3.5 MB |
+| `wasm-opt -Oz` on top (binaryen 133) | 19.4 MB | 7.4 MB | 5.0 MB | 16.0 MB | 3.0 MB |
+
+`Scripts/wasm-size.sh [--no-build] [--wasm-opt]` builds the release player, strips it, prints
+these numbers and fails over its budgets (the second row plus ~10%: 33 MB stripped, 10.6 MB
+gzip, 6.7 MB brotli, 3.9 MB data) or when ICU's data (`icudt`) is linked in. `wasm-opt -Oz` takes
+about a minute and cuts another third; the web export should run it. Not measured: start-up
+time in a browser.
+
+**zlib and the texture codec on WASI.** `Spikes/WasmPortabilityCheck` encodes and decodes a test
+image in every BC and ASTC format (LDR and HDR), writes a PNG to disk and reads it back,
+round-trips zlib and prints the layouts of types stored in caches, with a hash per result. Its
+output under Node's WASI (wasmkit can't run modules that import JavaScriptKit) is identical to
+the native one (`ENGINE_WASM_CHECK=1 swift run WasmPortabilityCheck <png>`; see the file).
+
+**32-bit `Int` audit (W2C).** Fixed: `GLTFReader` (`Int(UInt32.max)` trapped),
+`BehaviorTreeRuntime.randomUnit` (`1 << 53` was 0 on 32-bit: a division by zero), the groom
+geometry tag (hashed `Int` widths as 4 bytes on 32-bit, so web builds keyed fur meshes differently
+from the cooker) and `LightProbeBakeCache` decoding (`Int(UInt32)` and `count * 4` could trap on a
+bad file). Checked and fine: the pack format (`AssetPack`: fixed-width fields, offsets bounded by
+the data), `AssetCache` (raw `MeshVertex` / `VertexPaint` / skin arrays: same strides on wasm32,
+checked above), `EntityID` / `AssetID` (two `UInt64`s, hex strings in files), the net coder
+(fixed-width, `exactly:` on decode), scene JSON (an `Int` over 2^31 fails to decode on wasm32
+rather than wrapping), `monotonicNanoseconds` (`UInt64`), the other `<< 32` keys and 64-bit hash
+mixers (all `UInt64` / `Int64`). Left as is: `Int(Float)` of huge coordinates and >2 GB files
+would trap on wasm32, which can't hold them anyway.
 
 ## What's left for a browser build
 
@@ -84,7 +149,8 @@ A target of under 10 MB compressed looks realistic. Not measured: start-up time 
    instead of WASI preopened folders. Saves go to IndexedDB.
 6. **Web export target** in GameExporter: Wasm build, `wasm-opt`, an HTML/JS loader with a
    WASI shim, and the pack. Includes the `@_extern(c)` entry-point fix.
-7. Cleanup: vendored zlib, a FoundationEssentials-only runtime for size, the 32-bit `Int` audit.
+7. Cleanup: vendored zlib, a FoundationEssentials-only runtime for size, the 32-bit `Int` audit
+   (done in W2C, see "Size").
 
 None of this is blocked by the toolchain. The spike suggests about 3 roadmap waves:
 (1) WebGPU backend and WGSL, (2) loop, window, input, audio and asset loading,
