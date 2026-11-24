@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Client-side prediction (Sources/EngineNet/Net, card 662): one server and two clients in one
 /// process over a simulated link (100 ms one way, 20 ms jitter, 3% loss each way). Each client

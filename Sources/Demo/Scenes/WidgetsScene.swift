@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// The retained widget toolkit (`UIContext`): stacks with flex layout, buttons, checkboxes and
 /// switches, sliders, text fields, a dropdown, a scroll view, a virtualized list, a tree and a

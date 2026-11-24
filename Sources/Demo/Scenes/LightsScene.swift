@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Moves a light (and its marker) around a circle: angle = speed * time + phase, bobbing.
 struct LightOrbit: Component, Codable, Sendable {

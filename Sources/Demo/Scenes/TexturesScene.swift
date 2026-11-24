@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Textures, samplers and uniform buffers. A procedural tile texture (no asset files) repeats
 /// across the floor with a trilinear sampler, so it stays smooth toward the horizon; a small

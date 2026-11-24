@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Block-compressed textures: the same three images uploaded as RGBA8, BC7 and ASTC 4x4 (each
 /// with its full mip chain), side by side. Rows: the Khronos BoomBox's base color (sRGB, JPEG)
@@ -121,7 +125,7 @@ final class CompressionScene: DemoScene {
         world.propagateTransforms()
         litPanels = [[panels[0]], [panels[1], panels[2]], [panels[3], panels[4]]]
         func error(_ i: Int) -> String {
-            String(format: "%@ %.2f°/%.0f°", normalMaps[i].title, normalMaps[i].error.mean, normalMaps[i].error.max)
+            normalMaps[i].title + String(format: " %.2f°/%.0f°", normalMaps[i].error.mean, normalMaps[i].error.max)
         }
         litLabels = ["Lit by the mesh shader | its normal map", error(1) + " | " + error(2) + " mean/max",
                      error(3) + " | " + error(4)]

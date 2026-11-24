@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Camera rigs: one character pacing a walled yard and four `CameraRig`s on it, cycling every
 /// 6 s with a 1.2 s blend: third-person orbit (the end wall behind the character pulls the camera

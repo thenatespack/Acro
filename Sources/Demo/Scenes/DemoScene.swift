@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Where the orbit camera starts when a scene is opened.
 struct OrbitView {

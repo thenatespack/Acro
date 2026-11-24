@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Three columns, one per cull mode: back (left), front (middle), none (right). Each has
 /// a spinning cube and, above it, a spinning single-sided quad. Expected:

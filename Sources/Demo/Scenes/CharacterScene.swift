@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Moves a kinematic body back and forth along `axis` (its `Transform` is set every fixed step
 /// from the simulated time, so the physics sync turns that into velocity and characters on it

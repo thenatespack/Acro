@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// The built-in cylinder, capsule, cone and torus next to the older cube and sphere, and
 /// `LineRenderer` cables: power lines sagging between poles (endpoints following the poles'

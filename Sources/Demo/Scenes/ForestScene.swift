@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// A small forest of one mesh build tree (the editor's Gnarled Tree example), placed 200 times
 /// with random turns and sizes: every copy is a prefab of parts that draw instanced (one draw per

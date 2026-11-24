@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// The audio system (`engine.audio`): a streamed, looping music track (generated here and
 /// streamed from an in-memory WAV), one-shots with pitch and pan, a looping ambience on a user
@@ -186,8 +190,10 @@ final class AudioScene: DemoScene {
         voiceRows = audio.activeVoices.map { voice in
             let bus = voice.bus?.name ?? "-"
             let state = voice.isPaused ? " paused" : ""
-            return String(format: "%@  ·  %@  ·  %.2f s  ·  vol %.2f  pitch %.2f  pan %+.2f%@",
-                          voice.name, bus, voice.position, voice.volume, voice.pitch, voice.pan, state)
+            // No %@: Strings aren't CVarArg without Foundation (WebAssembly builds).
+            return "\(voice.name)  ·  \(bus)  ·  "
+                + String(format: "%.2f s  ·  vol %.2f  pitch %.2f  pan %+.2f", voice.position, voice.volume, voice.pitch, voice.pan)
+                + state
         }
     }
 

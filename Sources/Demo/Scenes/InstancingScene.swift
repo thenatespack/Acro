@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// A large rippling heightfield of cubes, uploaded once per frame into transient memory
 /// and drawn from there by both the shadow and the screen pass. I cycles the grid size.

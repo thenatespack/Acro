@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Cascaded shadow maps and point / spot light shadows through `SceneRenderer`: a 600-unit
 /// field of rocks, pillars and trees under a low evening sun (four cascades out to 220 units

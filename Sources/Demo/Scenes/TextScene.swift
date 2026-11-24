@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// SDF text rendering with the bundled font: a range of sizes, kerning pairs, a word-wrapped
 /// paragraph, the three alignments, and non-ASCII Latin. Laid out in 1280x720 pixel

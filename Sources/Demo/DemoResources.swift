@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 extension Bundle {
     /// The Demo's resources (Shaders/, Models/). In a browser (WASI) `Bundle.module` traps, so

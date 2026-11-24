@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// The options the menu persists (see `SettingsStore`): missing keys keep these defaults.
 struct HUDSettings: Settings {

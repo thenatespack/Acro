@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// 3D audio (`AudioListener` / `AudioEmitter` components): three sounds orbit a listener at the
 /// origin (the box with a nose pointing down -Z). A rising-and-falling siren (inverse rolloff,

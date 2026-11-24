@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Drives the kinematic pinball paddle: turns its `Transform` every fixed step (the physics
 /// sync turns that into velocity, so it flings what it touches).

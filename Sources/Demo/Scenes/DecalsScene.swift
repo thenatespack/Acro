@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Decals (`Decal`): projector boxes that paint a texture onto the opaque geometry inside them.
 /// A night wall and road lit by neon: a magenta burst of graffiti that crosses from the wall

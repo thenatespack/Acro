@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Creates and drops GPU resources continuously while they're in use:
 /// - a new instance buffer every frame

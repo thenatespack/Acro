@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Inverse kinematics and ragdolls on Character Builder humanoids (skeletons, skinned bodies and
 /// the idle clip made in code from `CharacterRig`):

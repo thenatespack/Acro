@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Spins a kinematic body about Y (its `Transform` is set every fixed step; the physics sync
 /// turns that into velocity, so it pushes what it touches).

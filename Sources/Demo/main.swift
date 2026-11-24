@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Hosts the test scenes: owns the orbit camera, the shadow pass and scene switching.
 ///
@@ -174,7 +178,7 @@ final class DemoGame: Game {
 
         """
     for (i, scene) in allScenes.enumerated() {
-        text += "  \(i + 1). \(scene.name.padding(toLength: 13, withPad: " ", startingAt: 0)) \(scene.summary)\n"
+        text += "  \(i + 1). \(scene.name.count >= 13 ? String(scene.name.prefix(13)) : scene.name + String(repeating: " ", count: 13 - scene.name.count)) \(scene.summary)\n"
     }
     return text
 }

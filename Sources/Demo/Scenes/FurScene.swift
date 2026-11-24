@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Fur and hair from `.groom` files (Groom Builder): three grooms imported by an `AssetDatabase`
 /// in a temporary project and grown at run time by `GroomRenderer`s:

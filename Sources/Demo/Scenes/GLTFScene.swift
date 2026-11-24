@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// A glTF model imported with `GLTFReader` and drawn by `SceneRenderer`: by default the
 /// Khronos OrientationTest model (every arrow must point into its matching target; a mirrored

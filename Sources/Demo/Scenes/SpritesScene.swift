@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// 2D sprites: 2800 animated sprites from one runtime-packed atlas in a single draw call over an
 /// opaque tiled background (a second draw), flipbook characters from a nearest-filtered grid

@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// The 2D UI draw layer (`engine.ui`): fills, rounded corners with per-corner radii, strokes,
 /// gradients, images, lines, nested clipping and batching, laid out in points on a 1280x720

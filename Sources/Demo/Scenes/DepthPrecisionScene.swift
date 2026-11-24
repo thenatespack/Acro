@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Pairs of nearly coplanar boxes at 10 m … 20 km with a 0.05 m near plane. Each blue box
 /// sits 0.01% of its distance in front of a red one. With standard depth the far pairs

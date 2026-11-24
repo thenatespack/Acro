@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// The networking prototype (Sources/EngineNet/Net): a server world and a client world in one
 /// process, joined by a simulated link (100 ms one way, 5% loss each way). Left: the server's

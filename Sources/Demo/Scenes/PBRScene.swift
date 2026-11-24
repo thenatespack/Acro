@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// PBR materials drawn by `SceneRenderer`: a wall of spheres from dielectric to metal
 /// (bottom to top) and smooth to rough (left to right), a normal-mapped brick slab, an

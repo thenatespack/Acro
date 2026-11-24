@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Navigation meshes and crowds: a level with two floors (the ground, and two decks 3 m up
 /// joined by a bridge over the ground), a ramp from the ground up to the west deck and a one-way

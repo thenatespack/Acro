@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// HDR post-processing (`PostProcess` component, see `PostProcessSettings`): a dark room with a
 /// window onto a sunlit courtyard and a bright sky (both far above 1), ceiling light strips,

@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// GPU particles (`ParticleEmitter`, simulated in compute, drawn with indirect draws): a fire
 /// in a brazier under a column of lit, soft, flipbook-textured smoke (sorted back to front),

@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Physics v2: the character controller's new moves, continuous collision and physics materials.
 /// Capsule characters (scripted, deterministic with the fixed timestep), left to right:

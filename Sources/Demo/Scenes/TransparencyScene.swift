@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Alpha-blended glass panes and cubes over an opaque, shadowed scene. Transparent
 /// objects are sorted back to front every frame and drawn without depth writes.

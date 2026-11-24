@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// A room lit through one window: the sun lays a patch on a red rug and the floor, and
 /// everything else inside is lit by light bouncing off it, from an `IrradianceVolume` of 6 x 3 x 5

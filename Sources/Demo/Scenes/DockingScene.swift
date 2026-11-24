@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Editor-style docking (`DockSpace`): a hierarchy, a scene viewport placeholder, an
 /// inspector, a bottom tab group of three panels (the console scrolls both ways), and a

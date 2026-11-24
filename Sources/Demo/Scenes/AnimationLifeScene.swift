@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// The data-driven animation components, with no game code: `FieldAnimator` bobbing, breathing
 /// and rocking objects and sweeping a tint, `LightFlicker` on a candle-like, a neon and a

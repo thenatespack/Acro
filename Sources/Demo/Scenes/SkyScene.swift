@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Skybox and image-based lighting (`SceneEnvironment.sky`): rows of chrome, gold and red
 /// plastic spheres from smooth to rough (left to right) on a small stage, reflecting either an

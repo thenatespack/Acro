@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Decoded images as textures. Nothing here is a file: each image is generated in code, encoded
 /// (PNG with the engine's writer, Radiance HDR by hand), then decoded with `ImageDecoder` and

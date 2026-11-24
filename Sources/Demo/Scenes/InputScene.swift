@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Action-mapped input (`InputActions`) and gamepads. A cube moves on the floor with the `move`
 /// action (WASD, arrows or the left stick: one 2D axis, normalized), spins with `spin`, speeds up

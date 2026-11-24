@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// A rainy neon street at night: ~3.5k streaked raindrops (`stretchMode: .streak`: a drop's streak
 /// is its speed × `stretch` seconds long, like a motion-blur exposure) that die on the wet road

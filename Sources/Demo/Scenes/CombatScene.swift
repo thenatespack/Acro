@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Hitboxes, damage and interaction (Engine/Gameplay) on Character Builder humanoids:
 /// - left: a fighter swings a sword at a training dummy. The sword is an animation hitbox track

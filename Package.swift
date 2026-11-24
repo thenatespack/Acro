@@ -270,8 +270,9 @@ let package = Package(
         ),
         .executableTarget(
             name: "Demo",
-            dependencies: ["Engine"],
+            dependencies: ["Engine"] + wasiFoundationDependency,
             resources: [.copy("Shaders"), .copy("Models")],
+            swiftSettings: wasmFoundationSettings,
             linkerSettings: windowsLinkerSettings
         ),
         // A Model Context Protocol server (JSON-RPC, stdio and Streamable HTTP transports, JSON

@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// The engine's editor viewport tools on an ECS world rendered into render targets: picking
 /// (`ScenePicker`), the selection outline (`SelectionOutlineRenderer`: primary and secondary

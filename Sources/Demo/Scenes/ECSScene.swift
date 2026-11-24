@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Spins an entity about `axis` at `speed` rad/s (absolute: angle = speed * time + phase).
 struct Spin: Component, Codable, Sendable {

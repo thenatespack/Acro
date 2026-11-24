@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// World-space text (`TextMesh`): a rainy neon street at night. Shop signs in glowing Latin
 /// letters (the bundled Inter) and Japanese (a system CJK font, found among a few well-known paths and

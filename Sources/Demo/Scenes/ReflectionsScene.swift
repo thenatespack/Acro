@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Drifts a colored light (and its marker) back and forth along the street.
 struct StreetLight: Component, Codable, Sendable {

@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// The showcase: a field of ~800 cubes moving in waves, a spiral tower and a ring of
 /// pillars, lit by an orbiting sun. L pauses the sun, R rebuilds the pillars.

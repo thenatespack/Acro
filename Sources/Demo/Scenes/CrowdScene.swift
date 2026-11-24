@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// A CPU stress test for the job system (`JobSystem`, `ENGINE_JOB_THREADS`) and crowds: 144
 /// skinned foxes in two groups of 72 that walk through each other and back (behavior tree

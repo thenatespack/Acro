@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Skeletal animation and GPU skinning with the Khronos Fox (CC0 model, CC BY 4.0 rigging and
 /// animation, see Models/LICENSE.md): a row of foxes playing Survey, Walk and Run from different

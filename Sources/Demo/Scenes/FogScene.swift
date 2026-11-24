@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// Height fog, volumetric light shafts and per-entity emissive overrides: a dusk street between
 /// two rows of buildings with gaps, a low sun at the far end casting shafts through the gaps

@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// A night street of tall buildings. Four towers get a generated `ProceduralTexture.windowGrid` as
 /// an emissive texture (lit windows picked at random, per-window color variation), one material

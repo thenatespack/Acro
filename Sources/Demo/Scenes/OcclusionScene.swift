@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// A city grid seen from street level. Every intersection holds a cluster of 125 animated
 /// cubes; most clusters are hidden behind buildings. Each frame the scene skips clusters

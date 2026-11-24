@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 /// One ECS world rendered twice per frame into render targets, shown side by side through the
 /// UI draw list like an editor: an "editor" fly camera with debug drawing (ground grid, axes,

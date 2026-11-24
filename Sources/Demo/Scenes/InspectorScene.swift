@@ -1,5 +1,9 @@
 import Engine
+#if os(WASI)
+import WASIFoundation
+#else
 import Foundation
+#endif
 
 private enum Faction: String, Codable, CaseIterable { case neutral, friendly, hostile }
 
