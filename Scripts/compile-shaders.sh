@@ -7,10 +7,14 @@
 # shader with more outputs than [[color(0)]] also gets
 #   name.frag.spv -> name.frag.color0.metal (outputs other than color 0 dropped; the Metal
 #   backend uses it for pipelines without those attachments, as MoltenVK does)
-# All outputs are committed, so building the package needs neither tool.
-# Requires glslc (shaderc) and SPIRV-Cross with its C API:
-#   macOS: brew install shaderc spirv-cross
-#   Linux: apt install glslc libspirv-cross-c-shared-dev (or the Vulkan SDK)
+#   name.vert.spv -> name.vert.wgsl (spirv-opt, Scripts/spirv-wgsl-prep.c, then naga; used by the
+#   WebGPU backend: combined image samplers split, push constants moved to a uniform buffer at
+#   @group(3) @binding(0), see ShaderSource)
+# All outputs are committed, so building the package needs none of the tools.
+# Requires glslc (shaderc), SPIRV-Cross with its C API, spirv-opt (SPIRV-Tools) and naga-cli:
+#   macOS: brew install shaderc spirv-cross spirv-tools
+#   Linux: apt install glslc libspirv-cross-c-shared-dev spirv-tools (or the Vulkan SDK)
+#   Both: cargo install naga-cli (Homebrew's "naga" is an unrelated program); NAGA=<path> overrides
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -65,3 +69,44 @@ for src in "${shaders[@]}"; do
         rm -f "$src.color0.metal"
     fi
 done
+
+# SPIR-V -> WGSL for the WebGPU backend. naga translates; the SPIR-V is prepared first:
+# spirv-opt splits the set 1 combined image samplers (texture at binding 0, sampler at 1), and
+# spirv-wgsl-prep turns push constants into a uniform buffer and drops write-only from storage
+# buffers. Derivative uniformity (textureSample in non-uniform control flow, which GLSL allows)
+# is turned off per module. Barrier uniformity can't be turned off: browsers reject the FSR 3
+# shaders that call barriers under a condition naga can't prove uniform (FSR 3 is unsupported there). A shader naga can't translate gets no .wgsl (listed at the end); the
+# WebGPU backend refuses pipelines without WGSL.
+naga=${NAGA:-$(command -v naga || echo "$HOME/.cargo/bin/naga")}
+if ! "$naga" --version 2>/dev/null | grep -Eq '^(naga )?[0-9]+\.'; then
+    echo "naga-cli not found (cargo install naga-cli; Homebrew's naga is a different program), or set NAGA" >&2
+    exit 1
+fi
+command -v spirv-opt >/dev/null || { echo "spirv-opt not found (brew install spirv-tools / apt install spirv-tools)" >&2; exit 1; }
+prep=.build/spirv-wgsl-prep
+if [[ ! -x "$prep" || Scripts/spirv-wgsl-prep.c -nt "$prep" ]]; then
+    mkdir -p .build
+    echo "building $prep"
+    cc -O2 -Wall Scripts/spirv-wgsl-prep.c -o "$prep"
+fi
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+failed=()
+for src in "${shaders[@]}"; do
+    echo "naga $src.spv -> $src.wgsl"
+    spirv-opt --split-combined-image-sampler --resolve-binding-conflicts "$src.spv" -o "$work/split.spv"
+    "$prep" "$work/split.spv" "$work/prepared.spv"
+    if ! "$naga" "$work/prepared.spv" "$work/out.wgsl" >"$work/naga.log" 2>&1; then
+        failed+=("$src: $(grep -v WARN "$work/naga.log" | head -n 3 | tr '\n' ' ')")
+        rm -f "$src.wgsl"
+        continue
+    fi
+    # naga prints FLT_MAX as 340282350000000000000000000000000000000f, which is above FLT_MAX: browsers
+    # reject it ("value cannot be represented as 'f32'"), so write it exactly.
+    { "$prep" --header "$src.spv" "$src"; echo 'diagnostic(off, derivative_uniformity);'; echo
+      sed 's/340282350000000000000000000000000000000f/0x1.fffffep+127f/g' "$work/out.wgsl"; } >"$src.wgsl"
+done
+if ((${#failed[@]})); then
+    echo "No WGSL for these shaders (the WebGPU backend refuses their pipelines):"
+    printf '  %s\n' "${failed[@]}"
+fi
