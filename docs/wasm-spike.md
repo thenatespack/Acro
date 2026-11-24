@@ -71,3 +71,41 @@ A target of under 10 MB compressed looks realistic. Not measured: start-up time 
 None of this is blocked by the toolchain. The spike suggests about 3 roadmap waves:
 (1) WebGPU backend and WGSL, (2) loop, window, input, audio and asset loading,
 (3) export, size and the 32-bit audit.
+
+## Waves
+
+Each wave is three lanes that don't edit the same code. Agents work in their own worktrees and
+are merged into `wasm-spike` one at a time.
+
+**Shared rules:**
+- Build with `ENGINE_WASM=1 ~/.swiftly/bin/swift build --swift-sdk swift-6.4.2-RELEASE_wasm --scratch-path .build-wasm`.
+- JavaScriptKit 0.63.0 is already a dependency of EngineBackends and EngineAudio in Wasm builds.
+  Its `js` plugin (`swift package ... js --product X`) packages a product with its JS glue.
+- Browser tests use Playwright's Chromium from `~/.acro-webtools` (`import { chromium } from 'playwright'`,
+  `chromium.launch({ channel: 'chromium', args: ['--enable-unsafe-webgpu'] })`, page served from
+  `http://localhost`). That gives a real Apple Metal WebGPU adapter with BC and ASTC.
+- WebGPU's adapter and device requests are Promises, and the engine starts synchronously. So the
+  page's JS gets the `GPUDevice` and canvas before starting the wasm and passes them in through
+  globals (`globalThis.acro = { device, canvas, ... }`). Swift reads them synchronously.
+
+### Wave W1
+- **W1A: WebGPU render device.** `Sources/EngineBackends/Backends/WebGPU/` implements
+  `RenderDevice` through JavaScriptKit. `GraphicsBackend.webgpu`. WGSL fields in `ShaderSource`.
+  `compile-shaders.sh` adds a SPIR-V → WGSL step (naga-cli) and commits the `.wgsl` files.
+  Push constants become a uniform buffer. Fallbacks for anything WebGPU lacks.
+- **W1B: Web runtime host.** `Engine.run` split into `start` / `tick` / `finish` (native `run`
+  unchanged on top of them). A `requestAnimationFrame` driver for WASI. The page and JS loader
+  (PackageToJS output, WebGPU device and canvas setup, fetching the pack and engine resources
+  into memory). `AssetPack` loading from memory. Engine resources without a WASI preopened folder.
+- **W1C: Canvas window, input and audio.** `CanvasWindow: PlatformWindow` (size, devicePixelRatio,
+  keyboard, mouse, wheel, pointer lock, cursor, focus). A Gamepad API `GamepadSource`.
+  `WebAudioDevice: AudioDevice` (AudioWorklet fed from the main thread; no SharedArrayBuffer
+  needed).
+
+### Wave W2
+- **W2A: Integration.** `Engine` picks WebGPU and `CanvasWindow` on WASI. SampleGame and Demo
+  scenes run in Chromium. Screenshots compared with Metal. Fix what breaks.
+- **W2B: Web export.** A "Web" target in GameExporter and the editor (Wasm build, `wasm-opt`,
+  loader, pack, the `@_extern(c)` entry point). One folder that a static file server can host.
+- **W2C: Size and robustness.** Runtime modules on `FoundationEssentials` (drop ICU), vendored
+  zlib, the 32-bit `Int` audit, a size budget check.
