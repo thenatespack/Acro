@@ -285,3 +285,19 @@ are merged into `wasm-spike` one at a time.
 - **W2C: Size and robustness.** Runtime modules on `FoundationEssentials` (drop ICU), vendored
   zlib, CTextureCodec without threads (astc-encoder `std::mutex` shim, for the web editor),
   the 32-bit `Int` audit, a size budget check.
+
+### Wave W2.5 (web polish)
+- **W2.5A: Content gaps.** Re-run the Images, Net, Net Character and Compression Demo scenes in
+  Chromium now that zlib and the texture codec build for WASI, and fix what still stops. A WGSL
+  path for material-graph shaders and terrain splat (the material graph builder's previews need
+  it too). Saves on IndexedDB (preload into the in-memory filesystem before start, write back
+  after a save). `Key` cases for punctuation and numpad keys in `CanvasWindow` (and every other
+  platform window that lacks them).
+- **W2.5B: Download size.** Racing's pack is ~120 MB, 86 MB of it meshes; the `.wasm` is not
+  the problem. Mesh quantization and meshopt-style compression in the pack (native players must
+  read it too), streaming the pack with a progress bar on the page, and optionally caching it
+  (Cache API) for repeat visits.
+- **W2.5C: Single-thread performance.** Profile Crowd (~20 fps) and Racing in the browser and fix
+  the worst Wasm hot spots (bounds checks, unspecialized generics, allocation in the frame loop).
+  Measure whether `wasip1-threads` with cross-origin isolation would be worth it later; write up
+  the numbers, don't build it.
