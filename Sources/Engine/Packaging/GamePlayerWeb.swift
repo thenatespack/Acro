@@ -19,7 +19,8 @@ import EngineCore
 //   and `canvas` for the WebGPU device.
 // - out: `onError(message)` when the game fails to start or a frame throws, `onExit(code)`
 //   when it ends (0: quit normally), `onScreenshot(path, width, height, rgba)` for screenshots,
-//   and `stats` (see `publishStats`).
+//   `onUserDataChange()` after saves and settings are written (Web/saves.js stores /userdata in
+//   IndexedDB), and `stats` (see `publishStats`).
 
 extension GamePlayer {
     /// The browser's `main`: like the native one, but it returns once the game has started,
@@ -118,6 +119,11 @@ public enum WebHost {
         let pixels = image.pixels.withUnsafeBufferPointer { JSTypedArray<UInt8>(buffer: $0) }
         _ = onScreenshot(path, image.width, image.height, pixels)
         return true
+    }
+
+    /// Tells the page that files under /userdata changed (`acro.onUserDataChange()`).
+    public static func userDataChanged() {
+        if let onChange = acro.onUserDataChange.function { _ = onChange() }
     }
 
     /// Tells the page the game ended (`acro.onExit(code)`).

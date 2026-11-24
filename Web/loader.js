@@ -9,10 +9,12 @@
 //    in-memory filesystem holds the engine resources at /engine (ENGINE_RESOURCES), so Swift
 //    reads them by URL as usual. The pack goes to Swift as a Uint8Array (`acro.pack`), opened
 //    with `AssetPack(data:)`.
+//    Saves and settings live in /userdata, kept in IndexedDB (saves.js).
 // 4. Runs the player's main, which starts the game and returns; frames then come from
 //    requestAnimationFrame (`WebFrameDriver` in Swift). Errors show on the page and console.
 import { WASI, File, Directory, PreopenDirectory, OpenFile, ConsoleStdout } from "@bjorn3/browser_wasi_shim";
 import { instantiate } from "./app/instantiate.js";
+import { openUserData } from "./saves.js";
 
 class PlayerError extends Error {}
 
@@ -49,7 +51,8 @@ export async function startPlayer({ canvas, status, args = [], env = [], probeFr
     // `mounts` (optional): more folders for the WASI filesystem, { "<name>": "<manifest.json>" }
     // mounted at /<name> (the Demo's resources, say). A player without a pack has `pack: null`.
     const mounts = Object.entries(config.mounts ?? {});
-    const [pack, engineFiles, ...mounted] = await Promise.all([
+    const [userData, pack, engineFiles, ...mounted] = await Promise.all([
+      openUserData(),  // saves and settings, from IndexedDB (saves.js)
       config.pack ? fetchBytes(url(config.pack)) : undefined,
       fetchFolder(url(config.engine)),
       ...mounts.map(([, manifest]) => fetchFolder(url(manifest))),
@@ -61,6 +64,8 @@ export async function startPlayer({ canvas, status, args = [], env = [], probeFr
       packName: config.packName ?? "Game.pack",
       probeFrames,
       onError: (message) => fail(message),
+      // The engine wrote or removed a file under /userdata: keep it in IndexedDB.
+      onUserDataChange: () => userData.persist(),
       // (An error stays on screen.)
       onExit: (code) => { if (!status.classList.contains("error")) show(code === 0 ? "The game has ended." : `The game exited (${code}).`); },
       // Screenshots (ENGINE_SCREENSHOT, Engine.saveScreenshot) as PNG data URLs, by path.
@@ -83,7 +88,7 @@ export async function startPlayer({ canvas, status, args = [], env = [], probeFr
         ConsoleStdout.lineBuffered((line) => console.log(line)),
         ConsoleStdout.lineBuffered((line) => console.error(line)),
         // /tmp: an empty, writable folder in memory (temporary files; gone with the page).
-        new PreopenDirectory("/", new Map([["engine", engineFiles], ["tmp", new Directory(new Map())],
+        new PreopenDirectory("/", new Map([["engine", engineFiles], ["tmp", new Directory(new Map())], ["userdata", userData.directory],
                                            ...mounts.map(([name], i) => [name, mounted[i]])])),
       ],
       { debug: false },

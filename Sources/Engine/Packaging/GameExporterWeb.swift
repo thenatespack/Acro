@@ -6,7 +6,7 @@ import EngineCore
 // The Web export (`CookPlatform.web`): the game as one static folder any web server can host.
 //
 // ```
-// <out>/<Name>/index.html, loader.js      the page and its loader (the engine's Web/, as is)
+// <out>/<Name>/index.html, loader.js, saves.js   the page and its loader (the engine's Web/, as is)
 //              app/<Target>Player.wasm    the player (Engine + game), packaged by JavaScriptKit's PackageToJS
 //              app/instantiate.js, runtime.js, …   PackageToJS's JS glue
 //              vendor/browser_wasi_shim/  the WASI shim the glue was made for (@bjorn3/browser_wasi_shim)
@@ -112,7 +112,7 @@ public struct WebToolchain: Sendable, Equatable {
 
 /// What a Web export's folder is made of (GameExporter.assembleWebSite).
 struct WebSiteInputs {
-    /// The engine's `Web/` (index.html, loader.js).
+    /// The engine's `Web/` (index.html, loader.js, saves.js).
     var page: URL
     /// PackageToJS's output folder (`<wasm name>`, instantiate.js, …).
     var packaged: URL
@@ -149,7 +149,7 @@ extension GameExporter {
         let fm = FileManager.default
         try? fm.removeItem(at: folder)
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-        for page in ["index.html", "loader.js"] {
+        for page in ["index.html", "loader.js", "saves.js"] {
             try fm.copyItem(at: inputs.page.appendingPathComponent(page), to: folder.appendingPathComponent(page))
         }
         try fm.copyItem(at: inputs.packaged, to: folder.appendingPathComponent("app", isDirectory: true))
@@ -212,7 +212,7 @@ extension GameExporter {
         with hardware acceleration on. Other browsers show a message instead.
 
         Files
-        index.html, loader.js   the page and its loader
+        index.html, loader.js   the page and its loader (saves.js keeps saves in the browser)
         app/                    the game (WebAssembly) and its JavaScript glue
         vendor/                 the WASI shim the game runs on (@bjorn3/browser_wasi_shim, MIT/Apache-2.0)
         engine/                 the engine's shaders and fonts (manifest.json lists them)
