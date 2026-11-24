@@ -569,6 +569,19 @@ public final class Engine {
     /// Runs one frame: events, update, render, present. Returns false, without running a
     /// frame, once the window has closed or `quit()` was called; then call `finish`.
     public func tick() throws -> Bool {
+        #if canImport(ObjectiveC)
+        // Each frame drains its own autorelease pool. The loop never returns to an NSApplication
+        // run loop, so without one every frame's autoreleased drawable and command buffers stay
+        // alive until exit, each holding an IOSurfaceSharedEvent: at 120 Hz that exhausted the
+        // system-wide pool (65,535) in about 9 minutes, after which no process on the Mac could
+        // create one (browsers lost WebGPU, Metal apps failed to start).
+        return try autoreleasepool { try tickFrame() }
+        #else
+        return try tickFrame()
+        #endif
+    }
+
+    private func tickFrame() throws -> Bool {
         guard let loop, !loopFinished else { preconditionFailure("Engine.tick needs start(_:) and no finish()") }
         guard !window.shouldClose else { return false }
         let game = loop.game, clock = loop.clock, start = loop.start
