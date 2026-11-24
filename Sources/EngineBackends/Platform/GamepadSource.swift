@@ -11,13 +11,16 @@ protocol GamepadSource: AnyObject {
 }
 
 /// The gamepad source for this platform: GameController on Apple platforms (for both the AppKit
-/// and the GLFW window), GLFW's joystick / gamepad API elsewhere. nil when there is none.
+/// and the GLFW window), GLFW's joystick / gamepad API on Linux and Windows, and the browser's
+/// Gamepad API in WebAssembly builds. nil when there is none.
 @MainActor
 func makePlatformGamepadSource() -> GamepadSource? {
     #if canImport(GameController)
     return GameControllerSource()
     #elseif ENGINE_VULKAN
     return GLFWGamepadSource()
+    #elseif canImport(JavaScriptKit)
+    return WebGamepadSource()
     #else
     return nil
     #endif
@@ -111,6 +114,45 @@ final class GLFWGamepadSource: GamepadSource {
                 rightStick: Vec2(axes[Int(GLFW_GAMEPAD_AXIS_RIGHT_X)], -axes[Int(GLFW_GAMEPAD_AXIS_RIGHT_Y)]),
                 leftTrigger: (axes[Int(GLFW_GAMEPAD_AXIS_LEFT_TRIGGER)] + 1) / 2,
                 rightTrigger: (axes[Int(GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER)] + 1) / 2))
+        }
+        return result
+    }
+}
+#endif
+
+#if canImport(JavaScriptKit)
+import JavaScriptKit
+
+/// The browser's Gamepad API: `navigator.getGamepads()` polled each frame. Pads with the
+/// standard mapping (what browsers give Xbox, PlayStation and Switch pads) are read in that
+/// layout (`WebInputMapping.gamepadSnapshot`); others are read as if they had it, which is
+/// right for the sticks and face buttons of most pads. The pad's slot index is its id, as GLFW's
+/// joystick numbers are. Browsers only list pads after a button press while the page is open.
+@MainActor
+final class WebGamepadSource: GamepadSource {
+    private let navigator = JSObject.global.navigator.object
+
+    func snapshots() -> [GamepadSnapshot] {
+        guard let navigator, navigator.getGamepads.function != nil,
+              let list = navigator.getGamepads!().object else { return [] }
+        var result: [GamepadSnapshot] = []
+        let count = Int(list.length.number ?? 0)
+        for slot in 0..<count {
+            guard let pad = list[slot].object, pad.connected.boolean != false else { continue }
+            var pressed: [Bool] = [], values: [Double] = [], axes: [Double] = []
+            if let buttons = pad.buttons.object {
+                for i in 0..<Int(buttons.length.number ?? 0) {
+                    let button = buttons[i]
+                    pressed.append(button.pressed.boolean ?? false)
+                    values.append(button.value.number ?? 0)
+                }
+            }
+            if let list = pad.axes.object {
+                for i in 0..<Int(list.length.number ?? 0) { axes.append(list[i].number ?? 0) }
+            }
+            result.append(WebInputMapping.gamepadSnapshot(
+                id: Int(pad.index.number ?? Double(slot)), name: pad.id.string ?? "Gamepad",
+                pressed: pressed, values: values, axes: axes))
         }
         return result
     }

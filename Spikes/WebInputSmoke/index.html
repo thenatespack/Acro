@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>WebInputSmoke</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #202020; }
+  /* The canvas is sized by CSS; CanvasWindow sets its width/height attributes to CSS size x devicePixelRatio. */
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<!-- PackageToJS's loader imports the WASI shim by package name; smoke.mjs serves it at ./wasi-shim/. -->
+<script type="importmap">{ "imports": { "@bjorn3/browser_wasi_shim": "./wasi-shim/index.js" } }</script>
+<script type="module">
+  // Served from the PackageToJS output folder (index.js is its loader).
+  import { init } from "./index.js";
+  globalThis.acro = { canvas: document.getElementById("game") };
+  init().catch((e) => console.error("[acro] start failed", e));
+</script>
+</body>
+</html>

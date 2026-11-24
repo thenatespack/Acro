@@ -10,7 +10,7 @@ public typealias AudioRenderCallback = @Sendable (_ output: UnsafeMutablePointer
 /// `sampleRate`. The engine's `AudioSystem` mixes in Swift and only needs this.
 ///
 /// Implementations: `AVAudioEngineDevice` (macOS default), `MiniaudioDevice` (Linux and
-/// Windows default; also on macOS) and `OfflineAudioDevice` (renders on demand into memory:
+/// Windows default; also on macOS), `WebAudioDevice` (WebAssembly) and `OfflineAudioDevice` (renders on demand into memory:
 /// tests, screenshots, headless runs).
 public protocol AudioDevice: AnyObject {
     /// Frames per second the callback is asked for.
@@ -71,7 +71,8 @@ extension AudioSystem {
     /// The device the engine uses when nothing else is asked for, chosen by `ENGINE_AUDIO`:
     /// - `offline` (or `off`, `none`): `OfflineAudioDevice`, silent.
     /// - `avaudioengine` (macOS only) or `miniaudio`: that backend.
-    /// - unset or `default`: AVAudioEngine on macOS, miniaudio elsewhere.
+    /// - unset or `default`: AVAudioEngine on macOS, Web Audio in WebAssembly builds
+    ///   (`WebAudioDevice`), miniaudio elsewhere.
     /// `headless` (automated screenshots) picks the offline device unless `ENGINE_AUDIO` names
     /// a backend, so the frames don't depend on audio timing. A backend that fails to start
     /// falls back to the offline device (printed), so a machine without sound still runs.
@@ -92,7 +93,9 @@ extension AudioSystem {
                 #endif
             default:
                 if choice != "default" { EngineLog.warning("Unknown ENGINE_AUDIO '\(choice)'; using the default device", category: .audio) }
-                #if canImport(AVFAudio)
+                #if canImport(JavaScriptKit)
+                return try WebAudioDevice()
+                #elseif canImport(AVFAudio)
                 return try AVAudioEngineDevice()
                 #else
                 return try MiniaudioDevice()
