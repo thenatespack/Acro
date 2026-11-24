@@ -43,6 +43,46 @@ works unchanged), and runs `main`. On WASI `GamePlayer.main` calls `Engine.start
 Errors go to the console and `acro.onError` (shown on the page). `?probe=<n>` (spike only) runs a
 stand-in tick n times when the engine can't start.
 
+### Running a game in the browser (W2A)
+
+On WASI `Engine.init` creates `CanvasWindow` (`acro.canvas`) and `WebGPURenderDevice(sampleCount:)`
+(`acro.adapter/device/context/format`); `.webgpu` is the default backend there. The loader asks
+for every feature and the largest limits the adapter has.
+
+```sh
+Editor --cook Projects/SampleGame --out /tmp/pack          # or any cooked .pack (--gpu bc for non-Apple GPUs)
+Scripts/web-player.sh /tmp/pack/SampleGame.pack --release  # open http://localhost:8080/ (Chrome, Edge, Safari 26)
+Scripts/web-player.sh --demo                                # the Demo; ?args=--scene,<n or name>
+node Spikes/WebPlayerCheck/run.mjs .build-wasm/web-player <out dir> [--query ...]   # Playwright check
+```
+
+Page options: `?env=ENGINE_OVERLAY=1,ENGINE_QUALITY=high,...` sets environment variables,
+`?args=...` passes player arguments. `ENGINE_SCREENSHOT=/s.png` works as natively (fixed 1/60 s
+steps, quits after the capture); the image goes to `acro.onScreenshot` (the loader keeps it as a
+PNG data URL in `acro.screenshots`). The player puts frame and GPU pass times on `acro.stats`.
+
+Nothing blocks the main thread: a whole frame is one `requestAnimationFrame` callback, Web Audio
+is pumped from `setInterval`, `waitIdle` only delivers finished readbacks, and captures come back
+a frame or more late (`RenderDevice.capturesArriveLate`: the engine matches each image to its
+request). The shim's `poll_oneoff` throws, and the loader warns when anything calls it.
+The page also has an empty in-memory `/tmp` (`TMPDIR`).
+
+Results (2026-11-23, Playwright Chromium with `--enable-unsafe-webgpu`, Apple M5 through Metal,
+release builds): SampleGame and 47 of the 53 Demo scenes run with **0 WebGPU validation errors**.
+The engine's `ENGINE_SCREENSHOT` frames match the native Metal run: SampleGame differs by a mean
+of 0.05 / 255, and 13 Demo scenes checked (shadows, UI, widgets, text, glTF, PBR, post, sprites,
+HUD, sky, particles, fog, probes) are pixel-identical. Frames run at the display's 60 Hz
+(requestAnimationFrame intervals 16.67 ms, p95 under 18 ms); the frame's work in its callback is
+0.4 ms for SampleGame and 0.5 to 3 ms for most Demo scenes. Crowd (446 draws, single-threaded in
+wasm) takes 48 ms. GPU pass times on Apple look cumulative (each pass's end minus the frame's
+first begin: post's bloom passes read 2.85, 3.19, 3.35...), so `gpuTime` (their sum) overstates.
+
+Known gaps: PNG writing and net snapshots need zlib, and the Compression scene needs the texture
+codec (W2C): the Images, Net, Net Character and Compression scenes stop. Forest and Fur import
+assets into a temporary project at run time, and `AssetDatabase` finds no files in the shim's
+filesystem (editor-side; W3). Packs are cooked for one GPU family (ASTC for Apple, `--gpu bc` for
+the rest). No saves (IndexedDB) yet.
+
 ### Web export (W2B)
 
 A project exports to the web like to any other platform: **Web** in the editor's Export Game

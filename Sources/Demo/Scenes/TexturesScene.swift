@@ -40,7 +40,7 @@ final class TexturesScene: DemoScene {
         self.renderer = renderer
         let device = renderer.device
         var descriptor = PipelineDescriptor(
-            shader: try ShaderSource.load(named: "textures", bundle: .module),
+            shader: try ShaderSource.load(named: "textures", bundle: .demo),
             vertexLayout: Renderer.vertexLayout, instanceLayout: Renderer.instanceLayout)
         descriptor.cullMode = .back
         descriptor.writesMotionVectors = true

@@ -114,7 +114,7 @@ final class PBRScene: DemoScene {
 
     /// The BoomBox model (2 cm in the file), scaled up and stood on the floor.
     private func loadBoomBox(device: RenderDevice, at position: Vec3) throws {
-        guard let url = Bundle.module.url(forResource: "BoomBox", withExtension: "glb", subdirectory: "Models") else {
+        guard let url = Bundle.demoModel("BoomBox") else {
             throw GraphicsError("Models/BoomBox.glb is missing from the Demo bundle")
         }
         let model = try GLTFReader.read(contentsOf: url)

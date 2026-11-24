@@ -14,7 +14,8 @@ import EngineCore
 //   player copies it and deletes it) and `packName`; `adapter`, `device`, `context`, `format`
 //   and `canvas` for the WebGPU device.
 // - out: `onError(message)` when the game fails to start or a frame throws, `onExit(code)`
-//   when it ends (0: quit normally).
+//   when it ends (0: quit normally), `onScreenshot(path, width, height, rgba)` for screenshots,
+//   and `stats` (see `publishStats`).
 
 extension GamePlayer {
     /// The browser's `main`: like the native one, but it returns once the game has started,
@@ -34,7 +35,11 @@ extension GamePlayer {
                 engine.finish()
                 throw error
             }
-            WebFrameDriver.start(tick: { try engine.tick() }, finish: { engine.finish() })
+            WebFrameDriver.start(tick: {
+                let more = try engine.tick()
+                WebHost.publishStats(engine)
+                return more
+            }, finish: { engine.finish() })
         } catch {
             WebHost.report(error)
         }
@@ -73,6 +78,42 @@ public enum WebHost {
         let message = "\(error)"
         FileHandle.standardError.write(Data((message + "\n").utf8))
         if let onError = acro.onError.function { _ = onError(message) }
+    }
+
+    /// Puts the last frame's stats on `acro.stats` (twice a second) for the page and for tests:
+    /// `{ frames, fps, frameTime, updateTime, renderTime, drawCalls, triangles, gpuTime, gpuPasses: [{ name, ms }] }`,
+    /// times in milliseconds. WebGPU's pass times come back a frame or more late.
+    public static func publishStats(_ engine: Engine) {
+        guard let acro = acro.object, WebFrameDriver.frames % 30 == 0 else { return }
+        let stats = engine.stats
+        let passes = JSObject.global.Array.function!.new()
+        for (i, pass) in stats.gpuPassTimes.enumerated() {
+            let entry = JSObject.global.Object.function!.new()
+            entry.name = .string(pass.name)
+            entry.ms = .number(pass.seconds * 1000)
+            passes[i] = .object(entry)
+        }
+        let object = JSObject.global.Object.function!.new()
+        object.frames = .number(Double(engine.frameCount))
+        object.fps = .number(stats.fps)
+        object.frameTime = .number(stats.frameTime * 1000)
+        object.updateTime = .number(stats.updateTime * 1000)
+        object.renderTime = .number(stats.renderTime * 1000)
+        object.drawCalls = .number(Double(stats.drawCalls))
+        object.triangles = .number(Double(stats.triangles))
+        object.gpuTime = stats.gpuTime.map { .number($0 * 1000) } ?? .null
+        object.gpuPasses = .object(passes)
+        acro.stats = .object(object)
+    }
+
+    /// Hands a screenshot (`ENGINE_SCREENSHOT`, `Engine.saveScreenshot`) to the page's
+    /// `acro.onScreenshot(path, width, height, rgba)` (RGBA8 rows, top first). False when the
+    /// page has none.
+    static func screenshot(_ image: Image, path: String) -> Bool {
+        guard let onScreenshot = acro.onScreenshot.function else { return false }
+        let pixels = image.pixels.withUnsafeBufferPointer { JSTypedArray<UInt8>(buffer: $0) }
+        _ = onScreenshot(path, image.width, image.height, pixels)
+        return true
     }
 
     /// Tells the page the game ended (`acro.onExit(code)`).

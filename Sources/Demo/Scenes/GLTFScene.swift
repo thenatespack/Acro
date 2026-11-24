@@ -27,7 +27,7 @@ final class GLTFScene: DemoScene {
         if let path = ProcessInfo.processInfo.environment["DEMO_GLTF"] {
             url = URL(fileURLWithPath: path)
         } else {
-            guard let bundled = Bundle.module.url(forResource: "OrientationTest", withExtension: "glb", subdirectory: "Models") else {
+            guard let bundled = Bundle.demoModel("OrientationTest") else {
                 throw GraphicsError("Models/OrientationTest.glb is missing from the Demo bundle")
             }
             url = bundled

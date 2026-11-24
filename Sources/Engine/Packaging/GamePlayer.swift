@@ -107,7 +107,8 @@ public enum GamePlayer {
         ComponentRegistry.register(Transform.self, Name.self, Camera.self, DirectionalLight.self, PointLight.self, SpotLight.self,
                                    SceneEnvironment.self, PostProcessSettings.self, PlanarReflection.self, ReflectionProbe.self, IrradianceVolume.self, MeshRenderer.self, LineRenderer.self, MeshArray.self, MeshLOD.self, Decal.self, Saveable.self,
                                    Sprite.self, SpriteAnimator.self, PrefabInstance.self, Spin.self, FieldAnimator.self, LightFlicker.self,
-                                   CameraPath.self, TimelinePlayer.self, PathFollower.self, Animator.self, TilemapMotion.self, UILayoutPlayer.self, GroomRenderer.self)
+                                   CameraPath.self, TimelinePlayer.self, PathFollower.self, Animator.self, TilemapMotion.self, UILayoutPlayer.self, GroomRenderer.self,
+                                   VisualScript.self)
         PhysicsWorld.registerComponents()
         CameraRig.register()
         PhysicsWorld2D.registerComponents()
