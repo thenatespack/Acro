@@ -101,6 +101,19 @@ export async function startPlayer({ canvas, status, args = [], env = [], probeFr
       if (polls++ === 0) console.warn("[acro] poll_oneoff called: something waited on the browser's main thread");
       return poll(...args);
     };
+    // The shim's directory entries all have inode 0, which wasi-libc's readdir callers (Swift's
+    // FileManager) skip as deleted: every folder would list empty. Give each a nonzero one.
+    const readdir = wasi.wasiImport.fd_readdir;
+    wasi.wasiImport.fd_readdir = (fd, buf, length, cookie, usedPtr) => {
+      const result = readdir(fd, buf, length, cookie, usedPtr);
+      const view = new DataView(wasi.inst.exports.memory.buffer);
+      const end = buf + view.getUint32(usedPtr, true);
+      // Entries: d_next u64, d_ino u64, d_namlen u32, d_type u8 (24 bytes), then the name.
+      for (let p = buf; p + 24 <= end; p += 24 + view.getUint32(p + 16, true)) {
+        if (view.getBigUint64(p + 8, true) === 0n) view.setBigUint64(p + 8, view.getBigUint64(p, true), true);
+      }
+      return result;
+    };
     // instantiate() runs `main`: it returns once the game has started (or failed: onError).
     await instantiate({ module: fetch(url(config.wasm)), wasi });
     if (!status.classList.contains("error")) status.hidden = true;

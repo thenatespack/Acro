@@ -69,7 +69,9 @@ extension MeshBuildPart {
 
     /// The look's texture coordinates on `geometry` (the part's mesh, in its space).
     func applyingLookUVs(to geometry: MeshGeometry) -> MeshGeometry {
-        let offset = Vec2(TileNoise.hash01(Int(Self.nameHash(name)), 1), TileNoise.hash01(Int(Self.nameHash(name)), 2))
+        // truncatingIfNeeded: Int(_:) traps on wasm32 for hashes over Int32.max (Hash32 uses the low 32 bits either way).
+        let seed = Int(truncatingIfNeeded: Self.nameHash(name))
+        let offset = Vec2(TileNoise.hash01(seed, 1), TileNoise.hash01(seed, 2))
         if isRoundShape {
             let b = geometry.bounds
             var radius: Float = 0
