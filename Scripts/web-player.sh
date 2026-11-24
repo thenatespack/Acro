@@ -2,6 +2,7 @@
 # Builds the browser player (Spikes/WasmPlayer: SampleGame linked in) and serves it with a pack.
 #
 #   Scripts/web-player.sh <game.pack> [--release] [--port <n>] [--out <dir>] [--no-build] [--no-serve]
+#   Scripts/web-player.sh --export <project> [--release] [--port <n>] [--out <dir>] [--no-serve]
 #
 # Builds with the Swift Wasm SDK (ENGINE_WASM=1, see docs/wasm-spike.md), packages the wasm with
 # JavaScriptKit's PackageToJS plugin, and assembles a static site in <dir> (default
@@ -13,6 +14,13 @@
 #   engine/                 the engine resources (Acro_EngineCore.bundle) and engine/manifest.json
 #   game.pack, player.json  the pack, and what the loader fetches
 #
+# --export <project> instead exports the project the way the editor's Web export does
+# (`Editor --build-game <project> --platform web`, GameExporterWeb.swift): the project's own game
+# code and scenes in a generated player package rather than the spike's WasmPlayer (SampleGame
+# linked in) with a pack you cooked, wasm-opt in release, only the WGSL shaders and fonts of the
+# engine resources, and a README.txt. Same layout. The folder is <dir>/<project name>/ (default
+# dir .build-wasm/web-export).
+#
 # Then serves it on http://localhost:<port>/ (default 8080) until Ctrl-C. Open it in a browser
 # with WebGPU. Page options: ?scene=<path>, ?args=--opt,value, ?probe=<n> (see Web/index.html).
 #
@@ -20,11 +28,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-usage() { sed -n '2,3p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
-pack="" configuration=debug port=8080 out=.build-wasm/web-player build=1 serve=1
+usage() { sed -n '2,4p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+pack="" configuration=debug port=8080 out="" build=1 serve=1 project=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --release) configuration=release ;;
+        --export) project=$2; shift ;;
         --port) port=$2; shift ;;
         --out) out=$2; shift ;;
         --no-build) build=0 ;;
@@ -35,6 +44,35 @@ while [[ $# -gt 0 ]]; do
     esac
     shift
 done
+serve() {
+    [[ $serve == 1 ]] || exit 0
+    echo "Serving $1 on http://localhost:$port/ (Ctrl-C to stop)"
+    exec python3 -c '
+import http.server, sys
+class Handler(http.server.SimpleHTTPRequestHandler):
+    extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map, ".wasm": "application/wasm", ".js": "text/javascript"}
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+    def log_message(self, *args): pass
+port, root = int(sys.argv[1]), sys.argv[2]
+http.server.ThreadingHTTPServer(("127.0.0.1", port), lambda *a: Handler(*a, directory=root)).serve_forever()
+' "$port" "$1"
+}
+
+if [[ -n "$project" ]]; then
+    [[ -z "$pack" ]] || usage
+    [[ -d "$project" ]] || { echo "No project at $project" >&2; exit 1; }
+    out=${out:-.build-wasm/web-export}
+    mkdir -p "$(dirname "$out")"
+    echo "Building the editor..."
+    swift build --product Editor >/dev/null
+    editor=$(swift build --show-bin-path)/Editor
+    "$editor" --build-game "$project" --platform web --config "$configuration" --out "$out" | tee "$out.log"
+    serve "$(tail -1 "$out.log")"
+fi
+
+out=${out:-.build-wasm/web-player}
 [[ -n "$pack" ]] || usage
 [[ -f "$pack" ]] || { echo "No pack at $pack" >&2; exit 1; }
 
@@ -82,16 +120,4 @@ python3 -c 'import json, sys; print(json.dumps({"wasm": "app/WasmPlayer.wasm", "
     "packName": sys.argv[1], "engine": "engine/manifest.json", "args": []}, indent=1))' "$(basename "$pack")" > "$out/player.json"
 echo "Assembled $out ($(du -sh "$out" | cut -f1))"
 
-[[ $serve == 1 ]] || exit 0
-echo "Serving $out on http://localhost:$port/ (Ctrl-C to stop)"
-exec python3 -c '
-import http.server, sys
-class Handler(http.server.SimpleHTTPRequestHandler):
-    extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map, ".wasm": "application/wasm", ".js": "text/javascript"}
-    def end_headers(self):
-        self.send_header("Cache-Control", "no-store")
-        super().end_headers()
-    def log_message(self, *args): pass
-port, root = int(sys.argv[1]), sys.argv[2]
-http.server.ThreadingHTTPServer(("127.0.0.1", port), lambda *a: Handler(*a, directory=root)).serve_forever()
-' "$port" "$out"
+serve "$out"

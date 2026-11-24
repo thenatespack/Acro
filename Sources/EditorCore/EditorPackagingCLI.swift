@@ -3,24 +3,27 @@ import Foundation
 
 // `Editor --cook` and `Editor --build-game`: cooking and exporting without a window.
 //
-//   Editor --cook <project> [--scenes a.scene,b.scene] [--platform macos|linux|windows] [--gpu bc|astc]
+//   Editor --cook <project> [--scenes a.scene,b.scene] [--platform macos|linux|windows|web] [--gpu bc|astc]
 //                 [--textures compress|asImported] [--quality fast|normal|high] [--include <path or id>]… [--out <dir>]
-//   Editor --build-game <project> [--scenes …] [--config release|debug] [--arch x86_64|arm64] [--docker] [--gpu bc|astc] [--textures …]
+//   Editor --build-game <project> [--scenes …] [--config release|debug] [--arch x86_64|arm64] [--docker] [--platform web]
+//                       [--gpu bc|astc] [--textures …]
 //                       [--game <target>] [--out <dir>]
 
 public enum EditorPackagingCLI {
     public static let usage = """
-        Editor --cook <project> [--scenes a.scene,b.scene] [--platform macos|linux|windows] [--gpu bc|astc]
+        Editor --cook <project> [--scenes a.scene,b.scene] [--platform macos|linux|windows|web] [--gpu bc|astc]
                       [--textures compress|asImported] [--quality fast|normal|high] [--include <asset path or id>]... [--out <dir>]
         Editor --build-game <project> [--scenes ...] [--config release|debug] [--arch x86_64|arm64] [--docker]
-                            [--platform linux] [--gpu bc|astc] [--textures ...] [--game <target>] [--out <dir>]
+                            [--platform linux|web] [--gpu bc|astc] [--textures ...] [--game <target>] [--out <dir>]
 
         --cook writes <out>/<name>.pack and <name>.manifest.json (default out: <project>/Build/<platform>-pack): every
         asset reachable from the scenes (default: Project.json "build.scenes"), textures compressed for the GPU family
         (default: astc for macos, bc otherwise). --build-game also builds the game module and Engine (release by default;
         this machine's architecture unless --arch, which macOS accepts either of) into one executable and writes a
         runnable app to <out> (default <project>/Build/<platform>-<arch>, plus -debug for --config debug). --docker builds a
-        Linux game in a Docker container (implies --platform linux; either --arch, from any machine).
+        Linux game in a Docker container (implies --platform linux; either --arch, from any machine). --platform web
+        builds a static web folder (<out>/<name>/, default out <project>/Build/web) with the Swift SDK for WebAssembly
+        (see docs/wasm-spike.md); serve it with any web server and open it in a WebGPU browser.
         """
 
     /// Whether `arguments` (without the program name) ask for cooking or exporting.

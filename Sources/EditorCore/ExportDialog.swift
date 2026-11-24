@@ -4,12 +4,14 @@ import Foundation
 /// The Export Game window: a modal card that picks what Build Game (`game.build`) builds and
 /// where, then starts it.
 ///
-/// - **Platform**: macOS, Linux or Windows. Natively only this machine's platform can be built
+/// - **Platform**: macOS, Linux, Windows or Web. Natively only this machine's platform can be built
 ///   (there is no cross-compiling); Linux can also be built in Docker from any machine. The
-///   others say why, and Export stays disabled.
+///   others say why, and Export stays disabled. Web (a static folder for WebGPU browsers,
+///   GameExporterWeb.swift) builds on any machine with the Swift SDK for WebAssembly; without
+///   it the note says how to install it.
 /// - **Architecture**: x86_64 or arm64. macOS builds either (`swift build --arch`); Linux in
 ///   Docker builds either (the one that isn't the machine's under emulation); otherwise only the
-///   machine's own.
+///   machine's own. Not used for Web (WebAssembly), where it is disabled.
 /// - **Configuration**: Release (optimized, what to ship) or Debug (unoptimized, with assertions
 ///   and debug info).
 /// - **Build in Docker**: Linux only (GameExporterDocker.swift); turned on when Linux is picked
@@ -232,6 +234,7 @@ public final class ExportDialog: Widget {
         let host = CookPlatform.current
         let platforms = Self.platforms.map { platform -> String in
             if platform == host { return "\(platform.title) (this machine)" }
+            if platform == .web { return "Web (WebAssembly, WebGPU browsers)" }
             return platform == .linux ? "\(platform.title) (in Docker)" : "\(platform.title) (build on \(platform.title))"
         }
         if platformMenu.options != platforms { platformMenu.options = platforms }
@@ -246,6 +249,7 @@ public final class ExportDialog: Widget {
         sync(configurationMenu, Self.configurations.firstIndex(of: choice.configuration))
         if dockerBox.isOn != choice.useDocker { dockerBox.isOn = choice.useDocker }
         dockerBox.isEnabled = choice.platform == .linux
+        architectureMenu.isEnabled = choice.platform != .web
         chooseButton.isEnabled = FilePicker.isAvailable && session.project != nil
         chooseButton.tooltip = FilePicker.isAvailable ? "Pick the output folder" : "Type the folder in the field (no folder picker here)"
         if let project = session.project {
@@ -261,9 +265,11 @@ public final class ExportDialog: Widget {
         if let reason {
             text = reason
         } else if let folder = outputFolder {
-            let what = choice.platform == .macos ? "an app" : "a game folder"
+            let what = choice.platform == .macos ? "an app" : choice.platform == .web ? "a static web folder (host it on any web server)" : "a game folder"
             let first = choice.useDocker
                 ? "The first Docker build downloads the Swift toolchain and compiles the engine: many minutes."
+                : choice.platform == .web
+                ? "The first \(choice.configuration.rawValue) build compiles the engine for WebAssembly: many minutes."
                 : "The first \(choice.configuration.rawValue) build for an architecture compiles the engine: minutes."
             text = "Builds \(what) into \(displayPath(folder))/ (the previous one there is replaced). \(first)"
         } else {

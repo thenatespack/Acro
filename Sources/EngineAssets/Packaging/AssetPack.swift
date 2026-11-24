@@ -66,6 +66,8 @@ public enum AssetPackError: Error, Equatable, CustomStringConvertible {
 /// The platform a pack is cooked for.
 public enum CookPlatform: String, Codable, Sendable, CaseIterable {
     case macos, linux, windows
+    /// A browser with WebGPU (WebAssembly; GameExporterWeb.swift).
+    case web
 
     /// The platform this program runs on.
     public static var current: CookPlatform {
@@ -73,6 +75,8 @@ public enum CookPlatform: String, Codable, Sendable, CaseIterable {
         .macos
         #elseif os(Windows)
         .windows
+        #elseif os(WASI)
+        .web
         #else
         .linux
         #endif
@@ -84,10 +88,12 @@ public enum CookPlatform: String, Codable, Sendable, CaseIterable {
         case .macos: "macOS"
         case .linux: "Linux"
         case .windows: "Windows"
+        case .web: "Web"
         }
     }
 
-    /// The texture family its GPUs are best served by: ASTC on macOS (Apple silicon), BC elsewhere.
+    /// The texture family its GPUs are best served by: ASTC on macOS (Apple silicon), BC elsewhere
+    /// (the web too: WebGPU on desktop GPUs, Apple silicon Macs included, has BC).
     public var defaultTextureFamily: TextureFamily { self == .macos ? .astc : .bc }
 }
 
