@@ -137,9 +137,40 @@ extension GameExporter {
         return true
     }
 
-    /// `player.json`: what Web/loader.js starts.
-    static func webPlayerConfig(wasm: String, packName: String) -> [String: Any] {
-        ["wasm": "app/\(wasm)", "pack": webPackFile, "packName": packName, "engine": "engine/manifest.json", "args": [String]()]
+    /// `player.json`: what Web/loader.js starts. `packSize` and `wasmSize` (bytes) let the page
+    /// show download progress when the server doesn't say how big they are (or compresses them);
+    /// `packHash` (`packHash(of:)`) names the pack in the browser's cache, so a new export is
+    /// downloaded again.
+    static func webPlayerConfig(wasm: String, packName: String, packSize: Int? = nil, packHash: String? = nil,
+                                wasmSize: Int? = nil) -> [String: Any] {
+        var config: [String: Any] = ["wasm": "app/\(wasm)", "pack": webPackFile, "packName": packName, "engine": "engine/manifest.json",
+                                     "args": [String]()]
+        if let packSize { config["packSize"] = packSize }
+        if let packHash { config["packHash"] = packHash }
+        if let wasmSize { config["wasmSize"] = wasmSize }
+        return config
+    }
+
+    /// Writes `site`'s player.json for its pack and wasm as they are now.
+    static func writeWebPlayerConfig(site: URL, wasmName: String, packName: String) throws {
+        let pack = site.appendingPathComponent(webPackFile), wasm = site.appendingPathComponent("app/\(wasmName)")
+        let config = webPlayerConfig(wasm: wasmName, packName: packName, packSize: fileSize(pack), packHash: packHash(of: pack),
+                                     wasmSize: fileSize(wasm))
+        try json(config).write(to: site.appendingPathComponent("player.json"))
+    }
+
+    private static func fileSize(_ url: URL) -> Int? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue
+    }
+
+    /// The hash in a pack's header (its table of contents', which lists every blob's hash): it
+    /// changes whenever the pack's content does.
+    static func packHash(of url: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let header = try? handle.read(upToCount: 48), header.count == 48 else { return nil }
+        let hash = String(decoding: header[32..<48], as: UTF8.self)
+        return hash.allSatisfy(\.isHexDigit) ? hash : nil
     }
 
     /// Lays out a Web export in `folder` (made, or replaced) from `inputs` (see the notes at the
@@ -180,7 +211,7 @@ extension GameExporter {
         try fm.createDirectory(at: engine, withIntermediateDirectories: true)
         try json(["files": files]).write(to: engine.appendingPathComponent("manifest.json"))
         try fm.copyItem(at: inputs.pack, to: folder.appendingPathComponent(webPackFile))
-        try json(webPlayerConfig(wasm: wasmName, packName: packName)).write(to: folder.appendingPathComponent("player.json"))
+        try writeWebPlayerConfig(site: folder, wasmName: wasmName, packName: packName)
         try Data(webReadme(name: gameName).utf8).write(to: folder.appendingPathComponent("README.txt"))
         return files
     }
@@ -261,6 +292,7 @@ extension GameExporter {
                 optimizeSeconds = step.seconds
                 if step.succeeded {
                     _ = try fm.replaceItemAt(wasm, withItemAt: optimized)
+                    try Self.writeWebPlayerConfig(site: site, wasmName: wasmName, packName: "\(options.name).pack")  // the new wasmSize
                     let mb = { (bytes: Int) in String(format: "%.1f MB", Double(bytes) / 1_048_576) }
                     progress?(String(format: "wasm-opt \(level): \(mb(before)) → \(mb(Self.size(of: wasm))) in %.0f s", step.seconds))
                 } else {
