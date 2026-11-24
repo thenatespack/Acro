@@ -185,7 +185,12 @@ final class DemoGame: Game {
     exit(1)
 }
 
+#if os(WASI)
+// In a browser the page passes the arguments (`acro.args`: Web/loader.js, `?args=`).
+let arguments = WebHost.arguments
+#else
 let arguments = Array(CommandLine.arguments.dropFirst())
+#endif
 var config = EngineConfig(title: "Demo")
 var sceneIndex = 0
 var i = 0
@@ -247,8 +252,22 @@ do {
     let size = engine.renderSize
     print("Running \(allScenes[sceneIndex].name) on \(engine.device.backend.rawValue) (\(engine.device.deviceName)), "
         + "\(engine.quality.rawValue) quality, \(engine.device.sampleCount)x MSAA, rendering at \(size.width)x\(size.height)")
+    #if os(WASI)
+    // A browser can't block in a loop: frames come from requestAnimationFrame.
+    try engine.start(DemoGame(initialScene: sceneIndex))
+    WebFrameDriver.start(tick: {
+        let more = try engine.tick()
+        WebHost.publishStats(engine)
+        return more
+    }, finish: { engine.finish() })
+    #else
     try engine.run(DemoGame(initialScene: sceneIndex))
+    #endif
 } catch {
     print("Fatal: \(error)")
+    #if os(WASI)
+    WebHost.report(error)
+    #else
     exit(1)
+    #endif
 }

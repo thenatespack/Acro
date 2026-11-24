@@ -40,9 +40,9 @@ final class SkyScene: DemoScene {
             try ImageDecoder.decodeFloat(Data(contentsOf: URL(fileURLWithPath: $0)))
         } ?? Self.studio(width: 1024, height: 512)
         if let format = Self.mapCompression {
-            let start = DispatchTime.now().uptimeNanoseconds
+            let start = monotonicNanoseconds()
             let levels = try TextureCodec.encode(image, format: format)
-            let milliseconds = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
+            let milliseconds = Double(monotonicNanoseconds() - start) / 1e6
             let map = try device.makeTexture(compressedLevels: levels, format: format)
             sceneRenderer.registerTexture(map, key: "environment")
             let bytes = levels.reduce(0) { $0 + $1.pixels.count }

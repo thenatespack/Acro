@@ -144,8 +144,8 @@ final class Renderer {
     init(device: RenderDevice, quality: RenderQuality) throws {
         self.device = device
         self.quality = quality
-        litShader = try ShaderSource.load(named: "lit", bundle: .module)
-        shadowShader = try ShaderSource.load(named: "shadow", bundle: .module)
+        litShader = try ShaderSource.load(named: "lit", bundle: .demo)
+        shadowShader = try ShaderSource.load(named: "shadow", bundle: .demo)
         cube = try makeCubeMesh()
         quad = try makeQuadMesh()
 
