@@ -126,4 +126,5 @@ are merged into `wasm-spike` one at a time.
 - **W2B: Web export.** A "Web" target in GameExporter and the editor (Wasm build, `wasm-opt`,
   loader, pack, the `@_extern(c)` entry point). One folder that a static file server can host.
 - **W2C: Size and robustness.** Runtime modules on `FoundationEssentials` (drop ICU), vendored
-  zlib, the 32-bit `Int` audit, a size budget check.
+  zlib, CTextureCodec without threads (astc-encoder `std::mutex` shim, for the web editor),
+  the 32-bit `Int` audit, a size budget check.
