@@ -109,8 +109,18 @@ async function setUpWebGPU(canvas) {
     throw new PlayerError("This browser doesn't support WebGPU, which the game needs.\n\n" +
       "Use a recent Chrome or Edge, or Safari 26 or later, and make sure hardware acceleration is on.");
   }
-  const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
-  if (!adapter) throw new PlayerError("WebGPU is available, but no suitable GPU adapter was found.");
+  // Some browsers return null for a power preference they can't honor; ask again without one.
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" })
+    ?? await navigator.gpu.requestAdapter();
+  if (!adapter) {
+    // Chromium browsers return no adapter when their GPU process can't start WebGPU (the console
+    // says "Failed to create WebGPU Context Provider"): usually graphics acceleration is off or the
+    // GPU is blocklisted.
+    const internals = /Edg\//.test(navigator.userAgent) ? "edge://gpu" : "chrome://gpu";
+    throw new PlayerError("WebGPU is available, but this browser couldn't get a GPU adapter.\n\n" +
+      "Turn on graphics/hardware acceleration in the browser's settings (System) and restart it. " +
+      `In Chrome or Edge, ${internals} shows whether WebGPU is hardware accelerated.`);
+  }
   // Every feature the adapter has (texture compression, timestamp queries, the storage texture
   // tiers...): the engine checks `device.features` for what it can use.
   const requiredFeatures = [...adapter.features];
