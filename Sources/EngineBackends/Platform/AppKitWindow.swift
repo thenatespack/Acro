@@ -278,18 +278,22 @@ package final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate, NS
     }
 
     // Virtual key codes (kVK_* from Carbon's Events.h).
-    private static let keyMap: [UInt16: Key] = [
+    package static let keyMap: [UInt16: Key] = [
         0: .a, 11: .b, 8: .c, 2: .d, 14: .e, 3: .f, 5: .g, 4: .h, 34: .i, 38: .j, 40: .k, 37: .l, 46: .m,
         45: .n, 31: .o, 35: .p, 12: .q, 15: .r, 1: .s, 17: .t, 32: .u, 9: .v, 13: .w, 7: .x, 16: .y, 6: .z,
         29: .num0, 18: .num1, 19: .num2, 20: .num3, 21: .num4, 23: .num5, 22: .num6, 26: .num7, 28: .num8, 25: .num9,
         49: .space, 36: .enter, 53: .escape, 48: .tab, 51: .backspace, 50: .grave, 33: .leftBracket, 30: .rightBracket, 43: .comma,
+        27: .minus, 24: .equal, 41: .semicolon, 39: .apostrophe, 42: .backslash, 47: .period, 44: .slash,
+        82: .numpad0, 83: .numpad1, 84: .numpad2, 85: .numpad3, 86: .numpad4, 87: .numpad5, 88: .numpad6, 89: .numpad7,
+        91: .numpad8, 92: .numpad9, 65: .numpadDecimal, 69: .numpadAdd, 78: .numpadSubtract, 67: .numpadMultiply,
+        75: .numpadDivide, 81: .numpadEqual, 76: .enter,
         122: .f1, 120: .f2, 99: .f3, 118: .f4, 96: .f5, 97: .f6, 98: .f7, 100: .f8, 101: .f9, 109: .f10,
         103: .f11, 111: .f12,
         117: .delete, 115: .home, 119: .end, 116: .pageUp, 121: .pageDown,
         123: .left, 124: .right, 125: .down, 126: .up,
     ]
 
-    private static let modifierMap: [UInt16: (Key, NSEvent.ModifierFlags)] = [
+    package static let modifierMap: [UInt16: (Key, NSEvent.ModifierFlags)] = [
         56: (.leftShift, .shift), 60: (.rightShift, .shift),
         59: (.leftControl, .control), 62: (.rightControl, .control),
         58: (.leftAlt, .option), 61: (.rightAlt, .option),
