@@ -155,7 +155,10 @@ let webDependencies: [Target.Dependency] = wasmBuild
 // WebAssembly spike: a player with SampleGame linked in, built only with ENGINE_WASM=1.
 let wasmSpikeTargets: [Target] = wasmBuild
     ? [.executableTarget(name: "WasmPlayer", dependencies: ["Engine", "SampleGame"], path: "Spikes/WasmPlayer",
-                       swiftSettings: [.enableExperimentalFeature("Extern")])]
+                       swiftSettings: [.enableExperimentalFeature("Extern")]),
+       // WebGPU backend smoke test: renders frames in a browser (see Spikes/WebGPUSmoke/main.swift).
+       .executableTarget(name: "WebGPUSmoke", dependencies: ["EngineRendering", "EngineMeshBuild", "EngineUI", "EngineBackends"] + webDependencies,
+                         path: "Spikes/WebGPUSmoke", exclude: ["web"])]
     : []
 
 let package = Package(

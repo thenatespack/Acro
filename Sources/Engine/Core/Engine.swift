@@ -435,6 +435,10 @@ public final class Engine {
             #else
             throw GraphicsError("The Vulkan backend was not compiled in (install the Vulkan SDK and GLFW, then rebuild)")
             #endif
+        case .webgpu:
+            // WebGPURenderDevice exists in WebAssembly builds; the engine doesn't create it yet
+            // (it needs a canvas window: wave W2A of docs/wasm-spike.md).
+            throw GraphicsError("The WebGPU backend isn't wired into Engine yet")
         }
         if let icon = config.icon { window.setIcon(icon) }
         if let error = validate(resolution) { throw GraphicsError("Render resolution \(resolution): \(error)") }

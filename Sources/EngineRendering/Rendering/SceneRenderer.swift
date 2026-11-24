@@ -1007,6 +1007,7 @@ public final class SceneRenderer {
             shader.metalFragmentSource = metal
             shader.metalFragmentColor0Source = nil
             shader.spirvFragment = spirv
+            shader.wgslFragment = nil  // no WGSL is generated for material graphs
             var descriptor = PipelineDescriptor(shader: shader, vertexLayout: key.skinned ? SkinnedMeshVertex.layout : MeshVertex.layout,
                                                 instanceLayout: MeshInstance.layout)
             descriptor.target = .depthOnly
@@ -1284,6 +1285,7 @@ public final class SceneRenderer {
             shader.metalFragmentSource = probeFragment.metalFragmentSource
             shader.metalFragmentColor0Source = probeFragment.metalFragmentColor0Source
             shader.spirvFragment = probeFragment.spirvFragment
+            shader.wgslFragment = probeFragment.wgslFragment
         }
         if let graph = key.graph {
             // The material graph's fragment stage (MaterialGraphCompiler) after the usual vertex stage.
@@ -1291,6 +1293,8 @@ public final class SceneRenderer {
             shader.metalFragmentSource = program.metalFragment
             shader.metalFragmentColor0Source = program.metalFragmentColor0
             shader.spirvFragment = program.spirvFragment
+            // nil for compiled graphs (no WGSL is generated): the WebGPU backend refuses the pipeline.
+            shader.wgslFragment = program.wgslFragment
         }
         var descriptor = PipelineDescriptor(shader: shader, vertexLayout: key.skinned ? SkinnedMeshVertex.layout : MeshVertex.layout,
                                             instanceLayout: MeshInstance.layout)

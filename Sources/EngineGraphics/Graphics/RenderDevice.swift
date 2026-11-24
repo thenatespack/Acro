@@ -3,11 +3,15 @@ import EngineCore
 
 public enum GraphicsBackend: String, Sendable, CaseIterable {
     case metal, vulkan
+    /// Browser WebGPU (WebAssembly builds; see `WebGPURenderDevice`).
+    case webgpu
 
-    /// Metal on Apple platforms, Vulkan everywhere else.
+    /// Metal on Apple platforms, WebGPU in WebAssembly builds, Vulkan everywhere else.
     public static var platformDefault: GraphicsBackend {
         #if os(macOS)
         .metal
+        #elseif os(WASI)
+        .webgpu
         #else
         .vulkan
         #endif
@@ -21,6 +25,9 @@ public enum GraphicsBackend: String, Sendable, CaseIterable {
         #endif
         #if ENGINE_VULKAN
         result.append(.vulkan)
+        #endif
+        #if os(WASI)
+        result.append(.webgpu)
         #endif
         return result
     }
