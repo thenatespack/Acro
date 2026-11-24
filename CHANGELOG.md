@@ -43,6 +43,8 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 - MCP tools `animGraph.hitboxes`, `character.combat`, `combat.inspect`, `combat.simulateHit`, `combat.overlay` (hitboxes and hurtboxes in the Scene view, active ones highlighted), `interaction.list` and `interaction.use`. Visual Script nodes Apply Damage, Heal, Get Health, Hit Stop, Camera Shake, Set Interactable Enabled, Interact, Get Interaction Focus and the events On Hit, On Hit Dealt, On Death and On Interact.
 - Demo scene `combat`: a fighter's sword swing kills a training dummy that flinches, then ragdolls, and a lever-opened gate and a chest used by two visitors with prompts. SampleGame: `Scenes/Interact.scene` and `Scenes/Combat.scene` with playtests that use a lever and a chest and land three sword hits.
 - `FieldHints.srgb`: a color field that holds display (sRGB) values; the property grid shows and writes them as they are. `TextField.onKey` sees keys before the field does.
+- Compressed asset packs (pack version 2, every platform): meshes are stored quantized (positions on a 16-bit power-of-two grid no coarser than 2^-10, octahedral 12-bit normals and tangents, 16-bit UVs, delta-coded byte planes, deflated; `PackMeshCodec`) and other blobs deflated when that saves 10% (`AssetPackBlob.encoding`, `rawSize`). The Racing project's pack goes from 126.5 MB to 31.9 MB (meshes 89.9 MB to 9.0 MB). `AssetPack` decodes them as it reads; a pack with nothing compressed is still written as version 1, and `Editor --cook --uncompressed` (`CookOptions.compressesBlobs`) writes one. Cook summaries show raw and stored sizes (`CookReport.storedMeshBytes` ...). The cooker compresses in parallel.
+- Web export: the page shows a progress bar while the pack and the wasm download (`packSize`, `wasmSize` in `player.json` give the totals when the server compresses or doesn't say), and keeps the pack in the browser's cache (Cache API, keyed by `packHash`, the pack header's hash), so a second visit doesn't download it again. The wasm now downloads (and compiles) at the same time as the pack, not after it.
 
 ### Fixed
 - The private `Health` test components of `WorldTests` and `TweenTests` have their own component names, so they no longer clash with the engine's `Health`.
@@ -55,6 +57,7 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 - `MCPToolSchemaTests.subscribedResourcesReportUpdates` no longer depends on how long a call takes: `EditorMCP.resourceCheckInterval` (default 200 ms) can be 0 to check subscribed resources on every pump.
 
 ### Changed
+- Packs cooked with compression (the default) are version 2: engines from before it refuse them as "newer than this engine reads". Re-cook with `--uncompressed` for an older player.
 - The Windows workflow exports and starts a game on every push to main and when run by hand, and no longer on pull requests or nightly. Its build cache leaves out the `.build/debug` symlink, which came back from the cache as a plain folder and hid the new `GameRunner.exe`.
 
 ## [0.18.1] - 2026-11-17

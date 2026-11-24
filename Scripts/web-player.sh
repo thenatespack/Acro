@@ -135,8 +135,12 @@ if [[ $demo == 1 ]]; then
         "mounts": {"demo": "demo/manifest.json"}, "args": []}, indent=1))' > "$out/player.json"
 else
     cp "$pack" "$out/game.pack"
-    python3 -c 'import json, sys; print(json.dumps({"wasm": "app/WasmPlayer.wasm", "pack": "game.pack",
-        "packName": sys.argv[1], "engine": "engine/manifest.json", "args": []}, indent=1))' "$(basename "$pack")" > "$out/player.json"
+    # packSize / wasmSize: totals for the page's progress bar; packHash (the pack header's): its key in the browser's cache.
+    python3 -c 'import json, os, sys
+header = open(sys.argv[2], "rb").read(48)
+print(json.dumps({"wasm": "app/WasmPlayer.wasm", "pack": "game.pack", "packName": sys.argv[1], "engine": "engine/manifest.json",
+    "args": [], "packSize": os.path.getsize(sys.argv[2]), "packHash": header[32:48].decode("ascii"),
+    "wasmSize": os.path.getsize(sys.argv[3])}, indent=1))' "$(basename "$pack")" "$out/game.pack" "$out/app/WasmPlayer.wasm" > "$out/player.json"
 fi
 echo "Assembled $out ($(du -sh "$out" | cut -f1))"
 

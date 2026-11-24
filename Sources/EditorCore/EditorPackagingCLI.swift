@@ -4,7 +4,8 @@ import Foundation
 // `Editor --cook` and `Editor --build-game`: cooking and exporting without a window.
 //
 //   Editor --cook <project> [--scenes a.scene,b.scene] [--platform macos|linux|windows|web] [--gpu bc|astc]
-//                 [--textures compress|asImported] [--quality fast|normal|high] [--include <path or id>]… [--out <dir>]
+//                 [--textures compress|asImported] [--quality fast|normal|high] [--include <path or id>]… [--uncompressed]
+//                 [--out <dir>]
 //   Editor --build-game <project> [--scenes …] [--config release|debug] [--arch x86_64|arm64] [--docker] [--platform web]
 //                       [--gpu bc|astc] [--textures …]
 //                       [--game <target>] [--out <dir>]
@@ -12,13 +13,15 @@ import Foundation
 public enum EditorPackagingCLI {
     public static let usage = """
         Editor --cook <project> [--scenes a.scene,b.scene] [--platform macos|linux|windows|web] [--gpu bc|astc]
-                      [--textures compress|asImported] [--quality fast|normal|high] [--include <asset path or id>]... [--out <dir>]
+                      [--textures compress|asImported] [--quality fast|normal|high] [--include <asset path or id>]...
+                      [--uncompressed] [--out <dir>]
         Editor --build-game <project> [--scenes ...] [--config release|debug] [--arch x86_64|arm64] [--docker]
                             [--platform linux|web] [--gpu bc|astc] [--textures ...] [--game <target>] [--out <dir>]
 
         --cook writes <out>/<name>.pack and <name>.manifest.json (default out: <project>/Build/<platform>-pack): every
         asset reachable from the scenes (default: Project.json "build.scenes"), textures compressed for the GPU family
-        (default: astc for macos, bc otherwise). --build-game also builds the game module and Engine (release by default;
+        (default: astc for macos, bc otherwise), meshes quantized and compressed (--uncompressed: every blob as it is,
+        a version 1 pack that older engines read too). --build-game also builds the game module and Engine (release by default;
         this machine's architecture unless --arch, which macOS accepts either of) into one executable and writes a
         runnable app to <out> (default <project>/Build/<platform>-<arch>, plus -debug for --config debug). --docker builds a
         Linux game in a Docker container (implies --platform linux; either --arch, from any machine). --platform web
@@ -49,6 +52,7 @@ public enum EditorPackagingCLI {
             var configuration = BuildConfiguration.release
             var architecture = BuildArchitecture.current
             var useDocker = false
+            var uncompressed = false
             func value(_ flag: String) throws -> String {
                 guard let next = rest.popFirst() else { throw CLIError("\(flag) needs a value") }
                 return next
@@ -74,6 +78,7 @@ public enum EditorPackagingCLI {
                 case "--quality": quality = try parse(flag, TextureCompressionQuality.self)
                 case "--include": include.append(try value(flag))
                 case "--out": out = try value(flag)
+                case "--uncompressed": uncompressed = true
                 case "--game": game = try value(flag)
                 default: throw CLIError("Unknown option '\(flag)'\n\n\(usage)")
                 }
@@ -90,7 +95,7 @@ public enum EditorPackagingCLI {
             if mode == "--cook" {
                 let options = CookOptions(scenes: scenes ?? build.scenes ?? [], include: include + (build.include ?? []), target: target,
                                           textures: textures ?? build.textures ?? .compress, textureQuality: quality,
-                                          packName: build.name ?? project.name)
+                                          packName: build.name ?? project.name, compressesBlobs: !uncompressed)
                 let folder = outURL ?? project.root.appendingPathComponent(build.output ?? "Build", isDirectory: true)
                     .appendingPathComponent("\(platform.rawValue)-pack", isDirectory: true)
                 let report = try AssetCooker.plan(database: database, options: options).run(to: folder)

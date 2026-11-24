@@ -117,6 +117,76 @@ the scene at 60 Hz with 0 WebGPU errors, and every request (only `.wgsl` shaders
 a pack you cooked and copies the whole engine bundle (Metal and SPIR-V too); `--export` uses the
 exporter instead.
 
+### Download size (W2.5B)
+
+The test case is the Racing project (one scene, 27 assets): its pack was 126.5 MB, 89.9 MB of it
+meshes. Pack version 2 compresses blobs, for every platform (native players read the same packs):
+
+- **Meshes** (`PackMeshCodec.swift`, encoding `mesh1`): positions on a power-of-two grid, 16 bits
+  across the mesh's largest extent and never coarser than 2^-10 (about 1 mm); the grid is absolute,
+  so meshes of similar size that share an edge round it the same way. Normals and tangents
+  octahedral at 12 bits (under 0.05°), tangent w 16-bit with 0 kept as 0 (no tangents), UVs on a
+  16-bit grid no coarser than 2^-14. Indices, skin joints and paint are exact, skin weights 16-bit.
+  Each value is a stream of integers, delta coded, zigzagged and split into byte planes, then the
+  whole payload is deflated (zlib: the system one natively, the vendored one in Wasm builds).
+  Meshes the encoder can't quantize within those bounds (a zero normal, NaN, out-of-range weights)
+  are deflated losslessly instead. A meshopt-style codec (meshoptimizer's vertex and index codecs
+  on the same quantized data, then deflate) came out 9.7 MB against 8.9 MB for the byte planes, so
+  there's no third-party codec.
+- **Everything else** (textures, scenes, baked navmeshes and probes, audio) is deflated when that
+  saves at least 10%. Racing's BC7 textures save 36%.
+- `AssetPackBlob` gains `encoding` and `rawSize`; the hash is of the stored bytes. `AssetPack`
+  decodes in `bytes(of:)`, so nothing above it changed. A pack with nothing compressed is still
+  written as version 1 (`Editor --cook --uncompressed`, `CookOptions.compressesBlobs = false`), which
+  older engines read; they refuse version 2 as "newer than this engine reads". An encoding the engine
+  doesn't know fails when the pack opens, not when a level loads. The cooker compresses all blobs in
+  parallel (Racing: 9 s for the whole cook, debug build).
+
+Racing, web pack (BC textures), MB = 10^6; gzip -9 and brotli -q 11 of each kind's blobs as an HTTP
+server would compress them:
+
+| Kind | Before: raw | gzip | brotli | After: stored | gzip | brotli |
+|---|---|---|---|---|---|---|
+| Meshes (127) | 89.92 | 41.27 | 31.91 | **8.97** | 8.93 | 8.97 |
+| Textures (33) | 35.21 | 22.41 | 19.81 | **22.60** | 22.37 | 22.11 |
+| Scenes (1) | 1.17 | 0.09 | 0.06 | 0.09 | 0.09 | 0.09 |
+| **Pack** | **126.5** | 63.8 | 51.8 | **31.9** | 31.6 | 31.4 |
+
+There was no audio. Static hosts often don't compress `.pack` files at all, so the in-pack
+compression is what counts: 4.0x smaller than before, and 1.6x smaller than the old pack with brotli
+at its best. Textures with brotli would be 2.3 MB smaller than deflated in the pack; the engine has
+no brotli decoder.
+
+**Decode cost**, Racing's whole pack (90 MB of meshes and 30 MB of textures decoded): natively
+(release, Apple M5) a run to the 60th frame takes 1.97 s against 1.88 s with the uncompressed pack
+(medians of 3), so about 0.1 s. In Chromium (localhost, so no network time) the game starts in 1.93 s
+against 1.68 s: about 0.25 s, which the 95 MB saved repays at any real download speed (at
+50 Mbit/s the pack takes 5 s instead of 20 s, or 8 s with brotli).
+
+**Quality**: `ENGINE_SCREENSHOT` frames of the race start with the uncompressed and the compressed
+pack (the same player). Natively (2560x1440) they differ by a mean of 0.006 / 255; 0.05% of pixels
+differ by more than 2 and 0.02% by more than 8. In Chromium (1280x720): mean 0.007 / 255, 0.06% and
+0.02%. The differences are single pixels along silhouettes (edge coverage, the largest a taillight's
+edge on a car); repeated runs of either pack are pixel-identical, and nothing shows at 1:1.
+
+**The page** (`Web/loader.js`): the pack and the wasm download together under a progress bar
+("Downloading… 67.3 MB of 89.4 MB", `acro.download = { loaded, total }`) instead of a blank canvas.
+`player.json` has `packSize` and `wasmSize` (written by the exporter and `web-player.sh`), used as
+totals because Content-Length is the size in transit when the server compresses (it's used when it
+doesn't, and with neither the bar shows bytes only). The wasm compiles as it downloads
+(`compileStreaming`; before, it was fetched only after the pack). The pack is kept in the Cache API
+(`acro-packs`) under `packHash`, the hash in the pack's header (the table of contents', which covers
+every blob's hash): a second visit loads it from there without a request, and a new export replaces
+it. Pages that aren't on https or localhost have no Cache API and just download. Checked in
+Playwright Chromium with the server throttled to 8 and 20 MB/s, with and without Content-Length:
+the bar advances over 18 steps, and the second visit in the same browser makes no pack request and
+starts in 1.6 s instead of 4.5 s. Racing's wasm is 57.6 MB here: Racing's code imports Foundation,
+so ICU is linked (see below).
+
+Not done: the wasm isn't cached by the page (the browser's HTTP cache and code cache handle it when
+the host sends cache headers), and textures could shrink further with a block-aware layout before
+deflate (BC7 endpoints and indices in separate streams).
+
 ### Game code and Foundation
 
 If a game's own Swift code imports Foundation (`JSONSerialization`, `String(format:)`, and so on),

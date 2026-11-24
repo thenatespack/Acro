@@ -91,7 +91,8 @@ private func write(_ text: String, to url: URL) throws {
             try write(file, to: resources.appendingPathComponent(file))
         }
         let pack = folder.appendingPathComponent("Web Export Tests.pack")
-        try write("pack", to: pack)
+        // A pack header (magic, version, alignment, table of contents offset and size, its hash), padded.
+        try write("SGEPACK\0" + String(repeating: "\u{1}", count: 24) + "0123456789abcdef" + String(repeating: " ", count: 80), to: pack)
 
         let site = folder.appendingPathComponent("Out/Web Export Tests", isDirectory: true)
         try write("stale", to: site.appendingPathComponent("old.txt"))
@@ -124,6 +125,10 @@ private func write(_ text: String, to url: URL) throws {
         #expect(config["packName"] as? String == "Web Export Tests.pack")
         #expect(config["engine"] as? String == "engine/manifest.json")
         #expect(config["args"] as? [String] == [])
+        // For the download progress and the browser's cache.
+        #expect(config["packSize"] as? Int == 128)
+        #expect(config["packHash"] as? String == "0123456789abcdef")
+        #expect(config["wasmSize"] as? Int == 4)
         for key in ["wasm", "pack", "engine"] {
             let path = try #require(config[key] as? String)
             #expect(fm.fileExists(atPath: site.appendingPathComponent(path).path), "player.json \(key): \(path)")

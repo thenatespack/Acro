@@ -18,14 +18,15 @@ import EngineScene
 //
 // ```
 // 0    "SGEPACK\0"                       magic
-// 8    UInt32 version (1)
+// 8    UInt32 version (1, or 2 when blobs are compressed)
 // 12   UInt32 alignment (64)             every blob starts at a multiple of it
 // 16   UInt64 table of contents offset
 // 24   UInt64 table of contents size
 // 32   16 ASCII hex digits               ContentHash of the table of contents
 // 48   zeros up to 64
-// 64   blobs, each aligned               mesh / texture bytes exactly as Library/Artifacts stores them,
-//                                        scene files, raw files (audio)
+// 64   blobs, each aligned               mesh / texture bytes as Library/Artifacts stores them,
+//                                        scene files, raw files (audio); stored as they are or
+//                                        compressed (version 2, see below)
 // ...  table of contents (JSON, sorted keys): `AssetPackManifest`
 // ```
 //
@@ -33,7 +34,16 @@ import EngineScene
 // objects (kinds, names, mesh / texture layout, materials and prefabs inline) and for each
 // binary file its blob (offset, size, ContentHash); the scenes, the start scene first. Blobs
 // with the same bytes are stored once. A pack is written in one go and only read afterwards;
-// nothing in it depends on time or on the machine, so the same inputs give the same bytes.
+// nothing in it depends on time, so the same inputs give the same bytes on one machine (the
+// compressed blobs depend on the zlib that wrote them).
+//
+// Version 2 adds compressed blobs: a blob with an `encoding` holds `rawSize` bytes compressed,
+// and its hash is of the stored bytes. `deflate` is a zlib stream; `mesh1` is a quantized,
+// delta-coded mesh, deflated (PackMeshCodec.swift: about a tenth of the raw size, within 1 mm,
+// 0.05° and a quarter texel). Readers hand out the decoded bytes, so nothing above `AssetPack`
+// sees the difference. A pack without compressed blobs is written as version 1 (older engines
+// read it); version 1 engines reject version 2 packs as too new, and a reader rejects an
+// encoding it doesn't know when it opens the pack.
 
 /// Errors from reading packs.
 public enum AssetPackError: Error, Equatable, CustomStringConvertible {
@@ -115,9 +125,17 @@ public enum TextureFamily: String, Codable, Sendable, CaseIterable {
 /// Where one blob lies in a pack.
 public struct AssetPackBlob: Codable, Equatable, Hashable, Sendable {
     public var offset: UInt64
+    /// Bytes stored in the pack.
     public var size: UInt64
-    /// `ContentHash` of the bytes (16 hex digits).
+    /// `ContentHash` of the stored bytes (16 hex digits).
     public var hash: String
+    /// How the bytes are compressed (`AssetPackFormat.Encoding`); nil: stored as they are.
+    public var encoding: String? = nil
+    /// The size once decoded; nil when stored as they are.
+    public var rawSize: UInt64? = nil
+
+    /// The size of the bytes readers get.
+    public var decodedSize: UInt64 { rawSize ?? size }
 }
 
 /// A pack's table of contents (see the notes at the top of this file).
@@ -134,7 +152,8 @@ public struct AssetPackManifest: Codable, Sendable {
     }
 
     public static let format = FileFormat.tag("AssetPack")
-    public static let currentVersion = 1
+    /// 2: blobs may be compressed (`AssetPackBlob.encoding`).
+    public static let currentVersion = 2
 
     public var format = AssetPackManifest.format
     public var version = AssetPackManifest.currentVersion
@@ -201,7 +220,7 @@ public struct AssetPackManifest: Codable, Sendable {
 
         /// The objects, as the database lists them.
         public var objectInfos: [AssetObjectInfo] { objects.map { AssetObjectInfo(id: $0.id, name: $0.name, kind: $0.kind) } }
-        /// Bytes of its blobs.
+        /// Bytes of its blobs, as stored.
         public var byteCount: UInt64 { files.values.reduce(data?.size ?? 0) { $0 + $1.size } }
     }
 
@@ -215,26 +234,113 @@ package enum AssetPackFormat {
     static let headerSize = 64
     static let alignment = 64
 
+    /// How a blob's bytes are stored (`AssetPackBlob.encoding`).
+    package enum Encoding: String, CaseIterable, Sendable {
+        /// A zlib stream (header, deflate, Adler-32).
+        case deflate
+        /// `PackMeshCodec`'s payload as a zlib stream.
+        case mesh1
+    }
+
+    /// What `Writer.add` may compress a blob as.
+    package enum Compression: Sendable {
+        /// Stored as it is.
+        case none
+        /// Deflated when that saves at least `deflateMinimumSaving` of it.
+        case deflate
+        /// A mesh file (`AssetArtifacts`' layout): `PackMeshCodec`, or deflated when the mesh can't be quantized.
+        case mesh(vertexCount: Int, indexCount: Int, skinned: Bool, painted: Bool)
+    }
+
+    /// The smallest fraction deflating a blob must save for it to be stored deflated: below it,
+    /// decoding time isn't worth the bytes.
+    package static let deflateMinimumSaving = 0.1
+
+    /// How a cook compresses an imported asset's binary file `name` (`AssetArtifacts.Object.file`).
+    package static func compression(of name: String, objects: [AssetArtifacts.Object]) -> Compression {
+        guard let object = objects.first(where: { $0.file == name }), object.kind == .mesh,
+              let vertexCount = object.vertexCount, let indexCount = object.indexCount else { return .deflate }
+        return .mesh(vertexCount: vertexCount, indexCount: indexCount, skinned: object.skinned == true, painted: object.painted == true)
+    }
+
     /// Assembles a pack: blobs appended (deduplicated, aligned), then the table of contents.
     package final class Writer {
         private(set) var body = Data()
         private var blobs: [String: AssetPackBlob] = [:]
+        /// Blob bytes before and after compression, by encoding ("none": stored as they are).
+        package private(set) var stats: [String: (raw: Int, stored: Int)] = [:]
 
         package init() {
             body.append(Data(count: headerSize))
         }
 
-        /// Appends `bytes` (or finds identical bytes already appended).
-        package func add(_ bytes: Data) -> AssetPackBlob {
+        /// Appends `bytes` (or finds identical bytes already appended), compressed as `compression` allows.
+        package func add(_ bytes: Data, compression: Compression = .none) -> AssetPackBlob {
             let hash = ContentHash.hex(bytes)
-            let key = "\(hash):\(bytes.count)"
+            if let blob = blobs["\(hash):\(bytes.count)"] { return blob }
+            return add(Self.prepare(bytes, compression: compression, hash: hash))
+        }
+
+        /// A blob ready to append: compressed (the slow part), so callers can prepare many at once.
+        package struct Prepared: Sendable {
+            let hash: String
+            let rawCount: Int
+            let stored: Data
+            let encoding: Encoding?
+        }
+
+        /// `bytes` compressed as `compression` allows. Thread-safe.
+        package static func prepare(_ bytes: Data, compression: Compression, hash: String? = nil) -> Prepared {
+            var stored = bytes
+            var encoding: Encoding?
+            switch compression {
+            case .none:
+                break
+            case .deflate:
+                if let deflated = deflated(bytes) { stored = deflated; encoding = .deflate }
+            case .mesh(let vertexCount, let indexCount, let skinned, let painted):
+                if let payload = PackMeshCodec.encode(bytes, vertexCount: vertexCount, indexCount: indexCount, skinned: skinned, painted: painted) {
+                    var prefixed = Data()
+                    withUnsafeBytes(of: UInt32(payload.count).littleEndian) { prefixed.append(contentsOf: $0) }
+                    prefixed.append(contentsOf: Zlib.deflate(payload))
+                    stored = prefixed
+                    encoding = .mesh1
+                } else if let deflated = deflated(bytes) {
+                    stored = deflated; encoding = .deflate
+                }
+            }
+            return Prepared(hash: hash ?? ContentHash.hex(bytes), rawCount: bytes.count, stored: stored, encoding: encoding)
+        }
+
+        /// Appends a prepared blob (or finds identical bytes already appended).
+        package func add(_ prepared: Prepared) -> AssetPackBlob {
+            let key = "\(prepared.hash):\(prepared.rawCount)"
             if let blob = blobs[key] { return blob }
             pad()
-            let blob = AssetPackBlob(offset: UInt64(body.count), size: UInt64(bytes.count), hash: hash)
-            body.append(bytes)
+            let stored = prepared.stored
+            var blob = AssetPackBlob(offset: UInt64(body.count), size: UInt64(stored.count),
+                                     hash: prepared.encoding == nil ? prepared.hash : ContentHash.hex(stored))
+            if let encoding = prepared.encoding {
+                blob.encoding = encoding.rawValue
+                blob.rawSize = UInt64(prepared.rawCount)
+            }
+            body.append(stored)
             blobs[key] = blob
+            let name = prepared.encoding?.rawValue ?? "none"
+            let total = stats[name, default: (0, 0)]
+            stats[name] = (total.raw + prepared.rawCount, total.stored + stored.count)
             return blob
         }
+
+        /// `bytes` deflated, when that saves enough.
+        private static func deflated(_ bytes: Data) -> Data? {
+            guard bytes.count >= 256 else { return nil }
+            let deflated = bytes.withUnsafeBytes { Zlib.deflate($0) }
+            return Double(deflated.count) <= Double(bytes.count) * (1 - deflateMinimumSaving) ? Data(deflated) : nil
+        }
+
+        /// Whether any blob is compressed (the pack is then version 2).
+        package var compresses: Bool { stats.keys.contains { $0 != "none" } }
 
         private func pad() {
             let rest = body.count % alignment
@@ -244,11 +350,14 @@ package enum AssetPackFormat {
         /// The finished file: header, blobs, table of contents.
         package func finish(_ manifest: AssetPackManifest) throws -> Data {
             pad()
+            // Version 1 when nothing is compressed, so engines from before version 2 read it.
+            var manifest = manifest
+            manifest.version = compresses ? AssetPackManifest.currentVersion : 1
             let toc = try AssetJSON.encode(manifest)
             let tocOffset = UInt64(body.count)
             body.append(toc)
             var header = Data(magic)
-            withUnsafeBytes(of: UInt32(AssetPackManifest.currentVersion).littleEndian) { header.append(contentsOf: $0) }
+            withUnsafeBytes(of: UInt32(manifest.version).littleEndian) { header.append(contentsOf: $0) }
             withUnsafeBytes(of: UInt32(alignment).littleEndian) { header.append(contentsOf: $0) }
             withUnsafeBytes(of: tocOffset.littleEndian) { header.append(contentsOf: $0) }
             withUnsafeBytes(of: UInt64(toc.count).littleEndian) { header.append(contentsOf: $0) }
@@ -323,6 +432,12 @@ public final class AssetPack: Sendable {
         guard manifest.vertexStride == MemoryLayout<MeshVertex>.stride else {
             throw AssetPackError.incompatible("cooked for \(manifest.vertexStride)-byte vertices; this engine uses \(MemoryLayout<MeshVertex>.stride)")
         }
+        // Every blob's encoding is one this engine decodes (checked now, not when a level loads).
+        let blobs = manifest.scenes.map(\.blob) + Array((manifest.navigation ?? [:]).values) + Array((manifest.lighting ?? [:]).values)
+            + manifest.assets.flatMap { Array($0.files.values) + ($0.data.map { [$0] } ?? []) }
+        if let unknown = blobs.lazy.compactMap(\.encoding).first(where: { AssetPackFormat.Encoding(rawValue: $0) == nil }) {
+            throw AssetPackError.incompatible("blobs are compressed as '\(unknown)', which this engine doesn't decode (cooked by a newer engine?)")
+        }
         self.manifest = manifest
         bytes = data
         assetsByID = Dictionary(manifest.assets.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -337,7 +452,7 @@ public final class AssetPack: Sendable {
     /// Whether the pack has `id`.
     public func contains(_ id: AssetID) -> Bool { assetsByID[id] != nil }
 
-    /// A blob's bytes (copied), checked against its hash when `verifiesBlobs`.
+    /// A blob's bytes (copied, or decoded when it is compressed), checked against its hash when `verifiesBlobs`.
     public func bytes(of blob: AssetPackBlob) throws -> Data {
         guard blob.offset <= UInt64(bytes.count), blob.size <= UInt64(bytes.count) - blob.offset else {
             throw AssetPackError.damaged("a blob lies outside the file")
@@ -346,7 +461,28 @@ public final class AssetPack: Sendable {
         if verifiesBlobs, ContentHash.hex(data) != blob.hash {
             throw AssetPackError.damaged("a blob at offset \(blob.offset) doesn't match its hash")
         }
-        return data
+        guard let name = blob.encoding else { return data }
+        guard let rawSize = blob.rawSize, rawSize <= UInt64(Int32.max) else {
+            throw AssetPackError.damaged("a compressed blob at offset \(blob.offset) has no valid size")
+        }
+        let decoded: [UInt8]?
+        switch AssetPackFormat.Encoding(rawValue: name) {
+        case .deflate:
+            decoded = data.withUnsafeBytes { Zlib.inflate($0, size: Int(rawSize)) }
+        case .mesh1:
+            // UInt32 payload size, then the payload deflated. Payloads are never much larger than the raw mesh.
+            decoded = data.withUnsafeBytes { raw -> [UInt8]? in
+                guard raw.count >= 4 else { return nil }
+                let size = UInt64(UInt32(littleEndian: raw.loadUnaligned(as: UInt32.self)))
+                guard size <= rawSize + rawSize / 4 + 4096 else { return nil }
+                return Zlib.inflate(UnsafeRawBufferPointer(rebasing: raw[4...]), size: Int(size))
+                    .flatMap { PackMeshCodec.decode($0, size: Int(rawSize)) }
+            }
+        case nil:
+            throw AssetPackError.incompatible("a blob is compressed as '\(name)', which this engine doesn't decode")
+        }
+        guard let decoded else { throw AssetPackError.damaged("a compressed blob at offset \(blob.offset) doesn't decode") }
+        return Data(decoded)
     }
 
     /// The imported objects of `id`, as the asset database would have them.
