@@ -1704,7 +1704,7 @@ Arguments:
 Result:
 
 - `buildSeconds?`: number
-- `cook`: {assetCount: integer, fileBytes: integer, files: integer, fromCookCache: integer, fromLibrary: integer, imported: [string], manifestPath?: string, meshBytes: integer, packBytes: integer, packPath: string, scenes: [string], seconds: number, textureBytes: integer, warnings: [string]}
+- `cook`: {assetCount: integer, fileBytes: integer, files: integer, fromCookCache: integer, fromLibrary: integer, imported: [string], manifestPath?: string, meshBytes: integer, packBytes: integer, packPath: string, scenes: [string], seconds: number, storedFileBytes: integer, storedMeshBytes: integer, storedTextureBytes: integer, textureBytes: integer, warnings: [string]}
 - `executablePath?`: string
 - `outputPath`: string
 - `packPath`: string
@@ -2243,7 +2243,7 @@ Arguments:
 Result:
 
 - `actionInputPending`: integer
-- `state`: {buttons: ["left" \| "right" \| "middle"], frame: integer, gameCamera: boolean, inputPending: integer, inputSeconds: number, keys: [string (74 cases)], paused: boolean, physics: boolean, playing: boolean, reason?: string, stepped?: integer, time: number, timeScale: number}
+- `state`: {buttons: ["left" \| "right" \| "middle"], frame: integer, gameCamera: boolean, inputPending: integer, inputSeconds: number, keys: [string (97 cases)], paused: boolean, physics: boolean, playing: boolean, reason?: string, stepped?: integer, time: number, timeScale: number}
 
 ### `input.actions`
 
@@ -2272,7 +2272,7 @@ Result:
 - `gameCamera`: boolean
 - `inputPending`: integer
 - `inputSeconds`: number
-- `keys`: [string (74 cases)]
+- `keys`: [string (97 cases)]
 - `paused`: boolean
 - `physics`: boolean
 - `playing`: boolean
@@ -2298,7 +2298,7 @@ Arguments:
 Result:
 
 - `actionInputPending`: integer
-- `state`: {buttons: ["left" \| "right" \| "middle"], frame: integer, gameCamera: boolean, inputPending: integer, inputSeconds: number, keys: [string (74 cases)], paused: boolean, physics: boolean, playing: boolean, reason?: string, stepped?: integer, time: number, timeScale: number}
+- `state`: {buttons: ["left" \| "right" \| "middle"], frame: integer, gameCamera: boolean, inputPending: integer, inputSeconds: number, keys: [string (97 cases)], paused: boolean, physics: boolean, playing: boolean, reason?: string, stepped?: integer, time: number, timeScale: number}
 
 ### `input.inject`
 
@@ -2309,12 +2309,12 @@ Plays input into the game (play mode) over game time, after what is already sche
 Arguments:
 
 - `replace?`: boolean
-- `steps`: [{button?: "left" \| "right" \| "middle", down?: boolean, duration?: number, key?: string (74 cases), keys?: [string (74 cases)], mouseBy?: number[2], mouseTo?: number[2], scroll?: number[2], text?: string, wait?: number}]
+- `steps`: [{button?: "left" \| "right" \| "middle", down?: boolean, duration?: number, key?: string (97 cases), keys?: [string (97 cases)], mouseBy?: number[2], mouseTo?: number[2], scroll?: number[2], text?: string, wait?: number}]
 
 Result:
 
 - `seconds`: number
-- `state`: {buttons: ["left" \| "right" \| "middle"], frame: integer, gameCamera: boolean, inputPending: integer, inputSeconds: number, keys: [string (74 cases)], paused: boolean, physics: boolean, playing: boolean, reason?: string, stepped?: integer, time: number, timeScale: number}
+- `state`: {buttons: ["left" \| "right" \| "middle"], frame: integer, gameCamera: boolean, inputPending: integer, inputSeconds: number, keys: [string (97 cases)], paused: boolean, physics: boolean, playing: boolean, reason?: string, stepped?: integer, time: number, timeScale: number}
 
 ### `input.state`
 
@@ -2327,8 +2327,8 @@ Arguments: none.
 Result:
 
 - `buttons`: ["left" \| "right" \| "middle"]
-- `injectedKeys`: [string (74 cases)]
-- `keys`: [string (74 cases)]
+- `injectedKeys`: [string (97 cases)]
+- `keys`: [string (97 cases)]
 - `mouse`: number[2] — [x, y]
 - `mouseDelta`: number[2] — [x, y]
 - `pending`: integer
@@ -3427,7 +3427,7 @@ Result:
 - `gameCamera`: boolean
 - `inputPending`: integer
 - `inputSeconds`: number
-- `keys`: [string (74 cases)]
+- `keys`: [string (97 cases)]
 - `paused`: boolean
 - `physics`: boolean
 - `playing`: boolean
@@ -3453,7 +3453,7 @@ Result:
 - `gameCamera`: boolean
 - `inputPending`: integer
 - `inputSeconds`: number
-- `keys`: [string (74 cases)]
+- `keys`: [string (97 cases)]
 - `paused`: boolean
 - `physics`: boolean
 - `playing`: boolean
@@ -3479,7 +3479,7 @@ Result:
 - `gameCamera`: boolean
 - `inputPending`: integer
 - `inputSeconds`: number
-- `keys`: [string (74 cases)]
+- `keys`: [string (97 cases)]
 - `paused`: boolean
 - `physics`: boolean
 - `playing`: boolean
@@ -3503,7 +3503,7 @@ Result:
 - `gameCamera`: boolean
 - `inputPending`: integer
 - `inputSeconds`: number
-- `keys`: [string (74 cases)]
+- `keys`: [string (97 cases)]
 - `paused`: boolean
 - `physics`: boolean
 - `playing`: boolean
@@ -3532,7 +3532,7 @@ Result:
 - `gameCamera`: boolean
 - `inputPending`: integer
 - `inputSeconds`: number
-- `keys`: [string (74 cases)]
+- `keys`: [string (97 cases)]
 - `paused`: boolean
 - `physics`: boolean
 - `playing`: boolean
@@ -3672,7 +3672,7 @@ Result:
 - `gameCamera`: boolean
 - `inputPending`: integer
 - `inputSeconds`: number
-- `keys`: [string (74 cases)]
+- `keys`: [string (97 cases)]
 - `paused`: boolean
 - `physics`: boolean
 - `playing`: boolean

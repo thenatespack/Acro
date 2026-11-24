@@ -124,6 +124,16 @@ private func angle(_ a: Vec3, _ b: Vec3) -> Float {
         #expect(mesh.paint == skinned.paint)
     }
 
+    /// Streams whose values are all equal take no bytes; one at the very end of the payload (one
+    /// influence per vertex and no paint, as generated characters have) must still decode.
+    @Test func constantStreamsAtTheEndDecode() throws {
+        var skinned = sphere()
+        skinned.skin = skinned.vertices.indices.map { i in SkinInfluence(joints: SIMD4(UInt16(i % 7), 0, 0, 0), weights: Vec4(1, 0, 0, 0)) }
+        let skin = try #require(try roundTrip(skinned).skin)
+        #expect(skin.map(\.joints) == skinned.skin!.map(\.joints))
+        #expect(skin.map(\.weights) == skinned.skin!.map(\.weights))
+    }
+
     @Test func meshesItCantQuantizeAreRefused() {
         var zeroNormal = sphere()
         zeroNormal.vertices[3].normal = .zero

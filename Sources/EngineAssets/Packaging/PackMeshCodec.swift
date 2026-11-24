@@ -290,7 +290,8 @@ package enum PackMeshCodec {
             guard offset < input.count else { return false }
             let header = input[offset]
             let width = Int(header & 7), delta = header & 8 != 0
-            guard width <= 4, header >> 4 == 0, count <= (input.count - offset - 1) / max(width, 1) else { return false }
+            // A width-0 stream (every value the same) has no bytes after its header.
+            guard width <= 4, header >> 4 == 0, width == 0 || count <= (input.count - offset - 1) / width else { return false }
             offset += 1
             let base = input.baseAddress!.assumingMemoryBound(to: UInt8.self) + offset
             for i in 0..<count { values[i] = 0 }
