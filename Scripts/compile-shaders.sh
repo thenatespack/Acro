@@ -10,6 +10,9 @@
 #   name.vert.spv -> name.vert.wgsl (spirv-opt, Scripts/spirv-wgsl-prep.c, then naga; used by the
 #   WebGPU backend: combined image samplers split, push constants moved to a uniform buffer at
 #   @group(3) @binding(0), see ShaderSource)
+#   name.vert.spv -> name.vert.gles (GLSL ES 3.00 via Scripts/spirv-to-gles.c; used by the WebGL 2
+#   backend: combined image samplers, push constants as a uniform block, everything named by its
+#   binding and listed in a header the device parses, see ShaderSource). Vertex and fragment only.
 # All outputs are committed, so building the package needs none of the tools.
 # Requires glslc (shaderc), SPIRV-Cross with its C API, spirv-opt (SPIRV-Tools) and naga-cli:
 #   macOS: brew install shaderc spirv-cross spirv-tools
@@ -35,10 +38,11 @@ for src in "${shaders[@]}"; do
     glslc --target-env=vulkan1.1 $opt ${includes[@]+"${includes[@]}"} "$src" -o "$src.spv"
 done
 
-# Build the SPIR-V -> MSL driver (SPIRV-Cross C API; the spirv-cross CLI can't remap our
-# descriptor sets and push constants to the Metal binding table).
+# Build the SPIR-V -> MSL and -> GLSL ES drivers (SPIRV-Cross C API; the spirv-cross CLI can't
+# remap our descriptor sets and push constants to the Metal binding table, or name resources by binding).
 tool=.build/spirv-to-msl
-if [[ ! -x "$tool" || Scripts/spirv-to-msl.c -nt "$tool" ]]; then
+gles_tool=.build/spirv-to-gles
+if [[ ! -x "$tool" || Scripts/spirv-to-msl.c -nt "$tool" || ! -x "$gles_tool" || Scripts/spirv-to-gles.c -nt "$gles_tool" ]]; then
     mkdir -p .build
     if pkg-config --exists spirv-cross-c-shared 2>/dev/null; then
         read -r -a flags <<<"$(pkg-config --cflags --libs spirv-cross-c-shared)"
@@ -57,6 +61,8 @@ if [[ ! -x "$tool" || Scripts/spirv-to-msl.c -nt "$tool" ]]; then
     fi
     echo "building $tool"
     c++ -x c -O2 -Wall Scripts/spirv-to-msl.c "${flags[@]}" -o "$tool"
+    echo "building $gles_tool"
+    c++ -x c -O2 -Wall Scripts/spirv-to-gles.c "${flags[@]}" -o "$gles_tool"
 fi
 
 for src in "${shaders[@]}"; do
@@ -67,6 +73,32 @@ for src in "${shaders[@]}"; do
         "$tool" "$src.spv" "$src.color0.metal" "$src" 1
     else
         rm -f "$src.color0.metal"
+    fi
+done
+
+# SPIR-V -> GLSL ES 3.00 for the WebGL 2 backend (vertex and fragment stages). A stage whose active
+# resources include storage buffers or images gets no .gles (listed at the end); the WebGL 2 backend
+# refuses its pipelines. With glslangValidator installed each output is checked as GLSL ES.
+validator=$(command -v glslangValidator || true)
+work_gles_log=$(mktemp)
+no_gles=()
+for src in "${shaders[@]}"; do
+    [[ "$src" == *.comp ]] && continue
+    echo "spirv-to-gles $src.spv -> $src.gles"
+    status=0
+    "$gles_tool" "$src.spv" "$src.gles" "$src" 2>"$work_gles_log" || status=$?
+    if ((status == 3)); then
+        no_gles+=("$src: $(head -n 1 "$work_gles_log")")
+        rm -f "$src.gles"
+        continue
+    elif ((status != 0)); then
+        cat "$work_gles_log" >&2
+        exit 1
+    fi
+    if [[ -n "$validator" ]] && ! "$validator" -S "${src##*.}" "$src.gles" >"$work_gles_log" 2>&1; then
+        cat "$work_gles_log" >&2
+        echo "GLSL ES validation failed: $src.gles" >&2
+        exit 1
     fi
 done
 
@@ -90,7 +122,7 @@ if [[ ! -x "$prep" || Scripts/spirv-wgsl-prep.c -nt "$prep" ]]; then
     cc -O2 -Wall Scripts/spirv-wgsl-prep.c -o "$prep"
 fi
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+trap 'rm -rf "$work" "$work_gles_log"' EXIT
 failed=()
 for src in "${shaders[@]}"; do
     echo "naga $src.spv -> $src.wgsl"
@@ -106,6 +138,10 @@ for src in "${shaders[@]}"; do
     { "$prep" --header "$src.spv" "$src"; echo 'diagnostic(off, derivative_uniformity);'; echo
       sed 's/340282350000000000000000000000000000000f/0x1.fffffep+127f/g' "$work/out.wgsl"; } >"$src.wgsl"
 done
+if ((${#no_gles[@]})); then
+    echo "No GLSL ES for these shaders (the WebGL 2 backend refuses their pipelines):"
+    printf '  %s\n' "${no_gles[@]}"
+fi
 if ((${#failed[@]})); then
     echo "No WGSL for these shaders (the WebGPU backend refuses their pipelines):"
     printf '  %s\n' "${failed[@]}"

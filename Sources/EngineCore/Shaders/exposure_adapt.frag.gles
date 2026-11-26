@@ -1,0 +1,59 @@
+#version 300 es
+// Generated from exposure_adapt.frag by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 449e45e48ec9c048
+// glsl-fnv1a64: d15be63d50739b57
+// acro-ubo acro_fs_push -1 -1
+// acro-sampler acro_t2_9_s2_17 2 9 2 17 0
+// acro-sampler acro_t2_10_s2_17 2 10 2 17 0
+precision highp float;
+precision highp int;
+
+layout(std140) uniform acro_fs_push
+{
+    ivec2 _m0;
+    float _m1;
+    float _m2;
+    float _m3;
+    float _m4;
+} _23;
+
+uniform highp sampler2D acro_t2_9_s2_17;
+uniform highp sampler2D acro_t2_10_s2_17;
+
+layout(location = 0) out vec4 _103;
+
+void main()
+{
+    int _123;
+    float _124;
+    _124 = 0.0;
+    _123 = 0;
+    float _67;
+    for (; _123 < _23._m0.y; _124 = _67, _123++)
+    {
+        float _127;
+        _127 = 0.0;
+        for (int _126 = 0; _126 < _23._m0.x; )
+        {
+            _127 += texelFetch(acro_t2_9_s2_17, ivec2(_126, _123), 0).x;
+            _126++;
+            continue;
+        }
+        _67 = _124 + _127;
+    }
+    float _92 = clamp(_23._m2 - (_124 / float(_23._m0.x * _23._m0.y)), _23._m3, _23._m4);
+    vec4 _100 = texelFetch(acro_t2_10_s2_17, ivec2(0), 0);
+    float _101 = _100.x;
+    float _125;
+    if (_23._m1 >= 1.0)
+    {
+        _125 = _92;
+    }
+    else
+    {
+        _125 = _101 + ((_92 - _101) * _23._m1);
+    }
+    _103 = vec4(_125, 0.0, 0.0, 1.0);
+}
+

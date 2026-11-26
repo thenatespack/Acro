@@ -1,0 +1,41 @@
+#version 300 es
+// Generated from exposure_reduce.frag by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 6bf3fc4809e2b5e4
+// glsl-fnv1a64: c5887e23c92485e4
+// acro-ubo acro_fs_push -1 -1
+// acro-sampler acro_t2_9_s2_17 2 9 2 17 0
+precision highp float;
+precision highp int;
+
+layout(std140) uniform acro_fs_push
+{
+    ivec2 _m0;
+    ivec2 _m1;
+} _73;
+
+uniform highp sampler2D acro_t2_9_s2_17;
+
+layout(location = 0) out vec4 _113;
+
+void main()
+{
+    ivec2 _31 = ivec2(gl_FragCoord.xy);
+    int _123;
+    float _124;
+    _124 = 0.0;
+    _123 = 0;
+    float _127;
+    for (; _123 < 8; _124 = _127, _123++)
+    {
+        _127 = _124;
+        for (int _125 = 0; _125 < 8; )
+        {
+            _127 += log2(max(dot(texelFetch(acro_t2_9_s2_17, (((((_31 * ivec2(8)) + ivec2(_125, _123)) * ivec2(2)) + ivec2(1)) * _73._m0) / (_73._m1 * ivec2(16)), 0).xyz, vec3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875)), 1.52587890625e-05));
+            _125++;
+            continue;
+        }
+    }
+    _113 = vec4(_124 * 0.015625, 0.0, 0.0, 1.0);
+}
+

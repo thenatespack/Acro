@@ -1,0 +1,111 @@
+#version 300 es
+// Generated from debug_line.vert by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 6642f30ccaf40729
+// glsl-fnv1a64: 2270d0a3345da869
+// acro-ubo acro_vs_push -1 -1
+
+const vec2 _197[6] = vec2[](vec2(0.0, -1.0), vec2(1.0, -1.0), vec2(1.0), vec2(0.0, -1.0), vec2(1.0), vec2(0.0, 1.0));
+
+layout(std140) uniform acro_vs_push
+{
+    mat4 _m0;
+    vec4 _m1;
+} _13;
+
+layout(location = 0) in vec4 _20;
+layout(location = 1) in vec4 _33;
+out vec4 acro_v0;
+layout(location = 2) in vec4 _83;
+out vec2 acro_v1;
+
+void main()
+{
+    do
+    {
+        vec4 _29 = _13._m0 * vec4(_20.xyz, 1.0);
+        vec4 _40 = _13._m0 * vec4(_33.xyz, 1.0);
+        bool _51 = _13._m1.z > 0.5;
+        float _316;
+        if (_51)
+        {
+            _316 = _29.w - _29.z;
+        }
+        else
+        {
+            _316 = _29.z;
+        }
+        float _318;
+        if (_51)
+        {
+            _318 = _40.w - _40.z;
+        }
+        else
+        {
+            _318 = _40.z;
+        }
+        acro_v0 = _83;
+        bool _87 = _316 < 0.0;
+        bool _89 = _318 < 0.0;
+        if (_87 && _89)
+        {
+            gl_Position = vec4(0.0, 0.0, 0.5, 1.0);
+            acro_v1 = vec2(0.0);
+            break;
+        }
+        vec4 _323;
+        if (_87)
+        {
+            _323 = mix(_29, _40, vec4(_316 / (_316 - _318)));
+        }
+        else
+        {
+            _323 = _29;
+        }
+        vec4 _324;
+        if (_89)
+        {
+            _324 = mix(_40, _29, vec4(_318 / (_318 - _316)));
+        }
+        else
+        {
+            _324 = _40;
+        }
+        vec2 _141 = _13._m1.xy * 0.5;
+        vec2 _150 = (_323.xy / vec2(_323.w)) * _141;
+        vec2 _159 = (_324.xy / vec2(_324.w)) * _141;
+        vec2 _163 = _159 - _150;
+        float _166 = length(_163);
+        vec2 _326;
+        if (_166 > 9.9999997473787516355514526367188e-05)
+        {
+            _326 = _163 / vec2(_166);
+        }
+        else
+        {
+            _326 = vec2(1.0, 0.0);
+        }
+        bool _209 = _197[gl_VertexID].x > 0.5;
+        bvec4 _215 = bvec4(_209);
+        vec4 _216 = vec4(_215.x ? _324.x : _323.x, _215.y ? _324.y : _323.y, _215.z ? _324.z : _323.z, _215.w ? _324.w : _323.w);
+        float _329;
+        if (_20.w >= 0.0)
+        {
+            _329 = _20.w;
+        }
+        else
+        {
+            _329 = (((-_20.w) * _141.y) * _13._m1.w) / _216.w;
+        }
+        float _243 = 0.5 * _329;
+        float _246 = _243 + 1.0;
+        bvec2 _252 = bvec2(_209);
+        float _258 = _197[gl_VertexID].y * _246;
+        gl_Position = vec4((((vec2(_252.x ? _159.x : _150.x, _252.y ? _159.y : _150.y) + (vec2(-_326.y, _326.x) * _258)) + (_326 * ((_209 ? 1.0 : (-1.0)) * _246))) / _141) * _216.w, _216.zw);
+        acro_v1 = vec2(_258, _243);
+        gl_Position.y = -gl_Position.y;
+        break;
+    } while(false);
+    gl_Position.z = 2.0 * gl_Position.z - gl_Position.w;
+}
+

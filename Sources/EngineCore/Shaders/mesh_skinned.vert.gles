@@ -1,0 +1,106 @@
+#version 300 es
+// Generated from mesh_skinned.vert by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: acd4e7dc470d319a
+// glsl-fnv1a64: d5e47112554e85b0
+// acro-ubo acro_vs_u2_2 2 2
+// acro-ubo acro_vs_u0_0 0 0
+
+layout(std140) uniform acro_vs_u2_2
+{
+    vec4 _m0[8];
+    vec4 _m1[384];
+    vec4 _m2[384];
+} _51;
+
+layout(std140) uniform acro_vs_u0_0
+{
+    mat4 _m0;
+    mat4 _m1;
+    mat4 _m2;
+    mat4 _m3;
+} _326;
+
+layout(location = 14) in vec4 _35;
+layout(location = 15) in vec4 _57;
+layout(location = 3) in vec4 _193;
+layout(location = 4) in vec4 _195;
+layout(location = 5) in vec4 _197;
+layout(location = 6) in vec4 _199;
+layout(location = 7) in vec4 _225;
+layout(location = 8) in vec4 _227;
+layout(location = 9) in vec4 _229;
+layout(location = 10) in vec4 _231;
+layout(location = 0) in vec3 _260;
+out vec3 acro_v0;
+out vec3 acro_v1;
+layout(location = 1) in vec3 _351;
+out vec2 acro_v2;
+layout(location = 2) in vec2 _360;
+out vec4 acro_v3;
+layout(location = 11) in vec4 _363;
+out vec4 acro_v5;
+layout(location = 12) in vec4 _366;
+out vec4 acro_v6;
+out vec4 acro_v7;
+out vec4 acro_v8;
+layout(location = 13) in vec4 _399;
+out vec3 acro_v4;
+
+void main()
+{
+    vec4 _568;
+    vec4 _569;
+    vec4 _570;
+    _570 = vec4(0.0);
+    _569 = vec4(0.0);
+    _568 = vec4(0.0);
+    for (int _567 = 0; _567 < 4; )
+    {
+        int _430 = int(_35[_567]) * 3;
+        _570 += (_51._m1[_430 + 2] * _57[_567]);
+        _569 += (_51._m1[_430 + 1] * _57[_567]);
+        _568 += (_51._m1[_430] * _57[_567]);
+        _567++;
+        continue;
+    }
+    mat4 _223 = mat4(_193, _195, _197, _199) * transpose(mat4(_568, _569, _570, vec4(0.0, 0.0, 0.0, 1.0)));
+    vec4 _572;
+    vec4 _573;
+    vec4 _574;
+    _574 = vec4(0.0);
+    _573 = vec4(0.0);
+    _572 = vec4(0.0);
+    for (int _571 = 0; _571 < 4; )
+    {
+        int _505 = int(_35[_571]) * 3;
+        _574 += (_51._m2[_505 + 2] * _57[_571]);
+        _573 += (_51._m2[_505 + 1] * _57[_571]);
+        _572 += (_51._m2[_505] * _57[_571]);
+        _571++;
+        continue;
+    }
+    vec4 _265 = vec4(_260, 1.0);
+    vec4 _266 = _223 * _265;
+    vec4 _278 = _223[0];
+    vec3 _279 = _278.xyz;
+    vec4 _282 = _223[1];
+    vec3 _283 = _282.xyz;
+    vec4 _286 = _223[2];
+    vec3 _287 = _286.xyz;
+    vec3 _299 = cross(_279, _283);
+    float _322 = (dot(_299, _287) < 0.0) ? (-1.0) : 1.0;
+    gl_Position = _326._m0 * _266;
+    gl_Position.y = -gl_Position.y;
+    acro_v0 = _266.xyz;
+    acro_v1 = (mat3(cross(_283, _287), cross(_287, _279), _299) * _351) * _322;
+    acro_v2 = _360;
+    acro_v3 = _363;
+    acro_v5 = _366;
+    acro_v6 = _326._m2 * _266;
+    acro_v7 = _326._m3 * ((mat4(_225, _227, _229, _231) * transpose(mat4(_572, _573, _574, vec4(0.0, 0.0, 0.0, 1.0)))) * _265);
+    acro_v8 = vec4(mat3(vec3(_278.xyz), vec3(_282.xyz), vec3(_286.xyz)) * _399.xyz, _399.w * _322);
+    acro_v4 = _260;
+    gl_Position.z = 2.0 * gl_Position.z - gl_Position.w;
+}
+

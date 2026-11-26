@@ -1,0 +1,44 @@
+#version 300 es
+// Generated from shadow.vert by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 9880248748432611
+// glsl-fnv1a64: 3e7e47147ef1908d
+// acro-ubo acro_vs_u0_0 0 0
+
+layout(std140) uniform acro_vs_u0_0
+{
+    mat4 _m0;
+    mat4 _m1;
+    vec4 _m2;
+    vec4 _m3;
+    vec4 _m4;
+    vec4 _m5;
+} _107;
+
+layout(location = 2) in vec4 _66;
+layout(location = 3) in vec4 _68;
+layout(location = 4) in vec4 _70;
+layout(location = 5) in vec4 _72;
+layout(location = 7) in vec4 _95;
+layout(location = 0) in vec3 _118;
+
+void main()
+{
+    mat4 _94 = mat4(_66, _68, _70, _72);
+    vec4 _200;
+    if (_95.w > 0.0)
+    {
+        float _169 = _107._m3.w + _95.z;
+        float _170 = cos(_169);
+        float _175 = sin(_169);
+        _200 = (_94 * vec4(mat3(vec3(_170, 0.0, -_175), vec3(0.0, 1.0, 0.0), vec3(_175, 0.0, _170)) * _118, 1.0)) + vec4(0.0, sin((_107._m3.w * 2.0) + _95.z) * _95.w, 0.0, 0.0);
+    }
+    else
+    {
+        _200 = _94 * vec4(_118, 1.0);
+    }
+    gl_Position = _107._m1 * _200;
+    gl_Position.y = -gl_Position.y;
+    gl_Position.z = 2.0 * gl_Position.z - gl_Position.w;
+}
+

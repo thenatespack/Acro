@@ -1,0 +1,120 @@
+#version 300 es
+// Generated from lit.frag by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 2ebfa28bda9a2685
+// glsl-fnv1a64: 87ae7a3e10624e75
+// acro-ubo acro_fs_u0_0 0 0
+// acro-sampler acro_t1_0 1 0 1 0 1
+precision highp float;
+precision highp int;
+
+layout(std140) uniform acro_fs_u0_0
+{
+    mat4 _m0;
+    mat4 _m1;
+    vec4 _m2;
+    vec4 _m3;
+    vec4 _m4;
+    vec4 _m5;
+} _83;
+
+uniform highp sampler2DShadow acro_t1_0;
+
+in vec4 acro_v3;
+in vec3 acro_v1;
+in vec3 acro_v0;
+in vec4 acro_v2;
+in vec4 acro_v4;
+layout(location = 0) out vec4 _409;
+layout(location = 1) out vec2 _424;
+in vec4 acro_v5;
+in vec4 acro_v6;
+
+void main()
+{
+    vec3 _279 = normalize(acro_v1);
+    vec3 _285 = normalize(_83._m2.xyz);
+    vec3 _292 = _83._m3.xyz - acro_v0;
+    vec3 _687;
+    if (acro_v4.x > 0.5)
+    {
+        vec2 _314 = floor(acro_v0.xz * vec2(0.5));
+        _687 = acro_v2.xyz * ((mod(abs(_314.x + _314.y), 2.0) < 0.5) ? 1.0 : 0.75);
+    }
+    else
+    {
+        _687 = acro_v2.xyz;
+    }
+    float _685;
+    do
+    {
+        vec3 _470 = acro_v3.xyz / vec3(acro_v3.w);
+        float _474 = (_470.x * 0.5) + 0.5;
+        float _478 = 0.5 - (_470.y * 0.5);
+        float _485 = min(_470.z, 1.0) - _83._m5.y;
+        int _490 = int(_83._m5.z);
+        if (_490 <= 0)
+        {
+            _685 = texture(acro_t1_0, vec3(vec3(_474, _478, _485).xy, _485));
+            break;
+        }
+        vec2 _509 = (vec2(_474, _478) / vec2(_83._m5.x)) + vec2(0.5);
+        vec2 _510 = floor(_509);
+        vec2 _515 = _509 - _510;
+        vec2 _520 = (_510 - vec2(0.5)) * _83._m5.x;
+        bool _522 = _490 == 1;
+        vec2 _455[3];
+        vec2 _456[3];
+        if (_522)
+        {
+            vec2 _525 = _515 * 2.0;
+            _455[0] = vec2(3.0) - _525;
+            _455[1] = vec2(1.0) + _525;
+            _456[0] = ((vec2(2.0) - _515) / _455[0]) - vec2(1.0);
+            _456[1] = (_515 / _455[1]) + vec2(1.0);
+        }
+        else
+        {
+            vec2 _552 = _515 * 3.0;
+            _455[0] = vec2(4.0) - _552;
+            _455[1] = vec2(7.0);
+            _455[2] = vec2(1.0) + _552;
+            _456[0] = ((vec2(3.0) - (_515 * 2.0)) / _455[0]) - vec2(2.0);
+            _456[1] = (vec2(3.0) + _515) / _455[1];
+            _456[2] = (_515 / _455[2]) + vec2(2.0);
+        }
+        int _699 = _522 ? 2 : 3;
+        int _675;
+        float _678;
+        _678 = 0.0;
+        _675 = 0;
+        float _684;
+        for (; _675 < _699; _678 = _684, _675++)
+        {
+            _684 = _678;
+            for (int _681 = 0; _681 < _699; )
+            {
+                _684 += ((_455[_681].x * _455[_675].y) * texture(acro_t1_0, vec3(vec3(_520 + (vec2(_456[_681].x, _456[_675].y) * _83._m5.x), _485).xy, _485)));
+                _681++;
+                continue;
+            }
+        }
+        _685 = _678 * (_522 ? 0.0625 : 0.0069444444961845874786376953125);
+        break;
+    } while(false);
+    float _332 = dot(_279, _285);
+    _409 = vec4(mix(mix((_687 * ((mix(vec3(0.119999997317790985107421875, 0.100000001490116119384765625, 0.0900000035762786865234375), vec3(0.550000011920928955078125, 0.64999997615814208984375, 0.85000002384185791015625), vec3((_279.y * 0.5) + 0.5)) * 0.300000011920928955078125) + vec3((max(_332, 0.0) * _83._m2.w) * _685))) + vec3(((pow(max(dot(_279, normalize(_285 + normalize(_292))), 0.0), 48.0) * 0.3499999940395355224609375) * step(0.0, _332)) * _685), _687, vec3(acro_v4.y)), _83._m4.xyz, vec3(1.0 - exp((-length(_292)) * _83._m4.w))), acro_v2.w);
+    vec2 _691;
+    do
+    {
+        if (acro_v6.w <= 0.0)
+        {
+            _691 = vec2(0.0);
+            break;
+        }
+        _691 = ((acro_v6.xy / vec2(acro_v6.w)) - (acro_v5.xy / vec2(acro_v5.w))) * vec2(0.5, -0.5);
+        break;
+    } while(false);
+    _424 = _691;
+}
+

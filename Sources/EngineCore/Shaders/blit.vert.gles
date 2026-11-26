@@ -1,0 +1,27 @@
+#version 300 es
+// Generated from blit.vert by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: fa787a348664c466
+// glsl-fnv1a64: 40889789fe220612
+// acro-ubo acro_vs_push -1 -1
+
+layout(std140) uniform acro_vs_push
+{
+    vec2 _m0;
+    ivec2 _m1;
+    ivec2 _m2;
+    ivec2 _m3;
+} _40;
+
+out vec2 acro_v0;
+
+void main()
+{
+    float _18 = float((gl_VertexID << 1) & 2);
+    float _21 = float(gl_VertexID & 2);
+    gl_Position = vec4(((vec2(_18, _21) * 2.0) - vec2(1.0)) * _40._m0, 0.0, 1.0);
+    gl_Position.y = -gl_Position.y;
+    acro_v0 = vec2(_18, 1.0 - _21);
+    gl_Position.z = 2.0 * gl_Position.z - gl_Position.w;
+}
+

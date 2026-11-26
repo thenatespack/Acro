@@ -1,0 +1,90 @@
+#version 300 es
+// Generated from textures.vert by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: a1e636f739047e9e
+// glsl-fnv1a64: d485bc52c10c6349
+// acro-ubo acro_vs_u0_0 0 0
+// acro-ubo acro_vs_u2_2 2 2
+// acro-ubo acro_vs_u2_3 2 3
+
+layout(std140) uniform acro_vs_u0_0
+{
+    mat4 _m0;
+    mat4 _m1;
+    vec4 _m2;
+    vec4 _m3;
+    vec4 _m4;
+    vec4 _m5;
+    mat4 _m6;
+    mat4 _m7;
+} _114;
+
+layout(std140) uniform acro_vs_u2_2
+{
+    vec4 _m0;
+    vec4 _m1;
+} _144;
+
+layout(std140) uniform acro_vs_u2_3
+{
+    vec4 _m0;
+} _152;
+
+layout(location = 2) in vec4 _64;
+layout(location = 3) in vec4 _66;
+layout(location = 4) in vec4 _68;
+layout(location = 5) in vec4 _70;
+layout(location = 0) in vec3 _99;
+out vec3 acro_v0;
+out vec3 acro_v1;
+layout(location = 1) in vec3 _132;
+out vec2 acro_v2;
+out vec4 acro_v3;
+out vec4 acro_v4;
+
+void main()
+{
+    vec4 _105 = mat4(_64, _66, _68, _70) * vec4(_99, 1.0);
+    gl_Position = _114._m0 * _105;
+    gl_Position.y = -gl_Position.y;
+    acro_v0 = _105.xyz;
+    acro_v1 = _132;
+    vec2 _225;
+    do
+    {
+        vec3 _185 = abs(_132);
+        float _187 = _185.y;
+        float _189 = _185.x;
+        bool _190 = _187 >= _189;
+        bool _198;
+        if (_190)
+        {
+            _198 = _187 >= _185.z;
+        }
+        else
+        {
+            _198 = _190;
+        }
+        if (_198)
+        {
+            _225 = _105.xz;
+            break;
+        }
+        vec2 _224;
+        if (_189 >= _185.z)
+        {
+            _224 = _105.zy;
+        }
+        else
+        {
+            _224 = _105.xy;
+        }
+        _225 = _224;
+        break;
+    } while(false);
+    acro_v2 = (_225 * _144._m0.xy) + _152._m0.xy;
+    acro_v3 = _114._m6 * _105;
+    acro_v4 = _114._m7 * _105;
+    gl_Position.z = 2.0 * gl_Position.z - gl_Position.w;
+}
+

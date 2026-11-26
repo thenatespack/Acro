@@ -1,0 +1,66 @@
+#version 300 es
+// Generated from mesh.vert by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 3b56a08836e44d27
+// glsl-fnv1a64: bacf28d0113fec6f
+// acro-ubo acro_vs_u0_0 0 0
+
+layout(std140) uniform acro_vs_u0_0
+{
+    mat4 _m0;
+    mat4 _m1;
+    mat4 _m2;
+    mat4 _m3;
+    vec4 _m4;
+    vec4 _m5;
+    vec4 _m6;
+    vec4 _m7;
+    vec4 _m8;
+    vec4 _m9;
+    vec4 _m10;
+} _149;
+
+layout(location = 3) in vec4 _12;
+layout(location = 4) in vec4 _14;
+layout(location = 5) in vec4 _16;
+layout(location = 6) in vec4 _18;
+layout(location = 7) in vec4 _44;
+layout(location = 8) in vec4 _46;
+layout(location = 9) in vec4 _48;
+layout(location = 10) in vec4 _50;
+layout(location = 0) in vec3 _78;
+out vec3 acro_v0;
+out vec3 acro_v1;
+layout(location = 1) in vec3 _168;
+out vec2 acro_v2;
+layout(location = 2) in vec2 _177;
+out vec4 acro_v3;
+layout(location = 11) in vec4 _180;
+out vec4 acro_v5;
+layout(location = 12) in vec4 _183;
+out vec4 acro_v6;
+out vec4 acro_v7;
+out vec4 acro_v8;
+layout(location = 13) in vec4 _214;
+out vec3 acro_v4;
+
+void main()
+{
+    vec4 _83 = vec4(_78, 1.0);
+    vec4 _84 = mat4(_12, _14, _16, _18) * _83;
+    vec3 _114 = cross(_12.xyz, _14.xyz);
+    float _138 = (dot(_114, _16.xyz) < 0.0) ? (-1.0) : 1.0;
+    gl_Position = _149._m0 * _84;
+    gl_Position.y = -gl_Position.y;
+    acro_v0 = _84.xyz;
+    acro_v1 = (mat3(cross(_14.xyz, _16.xyz), cross(_16.xyz, _12.xyz), _114) * _168) * _138;
+    acro_v2 = _177;
+    acro_v3 = _180;
+    acro_v5 = _183;
+    acro_v6 = _149._m2 * _84;
+    acro_v7 = _149._m3 * (mat4(_44, _46, _48, _50) * _83);
+    acro_v8 = vec4(mat3(vec3(_12.xyz), vec3(_14.xyz), vec3(_16.xyz)) * _214.xyz, _214.w * _138);
+    acro_v4 = _78;
+    gl_Position.z = 2.0 * gl_Position.z - gl_Position.w;
+}
+

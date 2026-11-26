@@ -1,0 +1,110 @@
+#version 300 es
+// Generated from dof.frag by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 8f6172556eb870a3
+// glsl-fnv1a64: 0ed45bba6fbcfdd0
+// acro-ubo acro_fs_push -1 -1
+// acro-sampler acro_t2_10_s2_17 2 10 2 17 0
+// acro-sampler acro_t2_9_s2_17 2 9 2 17 0
+precision highp float;
+precision highp int;
+
+layout(std140) uniform acro_fs_push
+{
+    vec4 _m0;
+    vec4 _m1;
+    ivec2 _m2;
+    float _m3;
+    float _m4;
+} _41;
+
+uniform highp sampler2D acro_t2_10_s2_17;
+uniform highp sampler2D acro_t2_9_s2_17;
+
+layout(location = 0) out vec4 _227;
+
+void main()
+{
+    ivec2 _107 = ivec2(gl_FragCoord.xy);
+    vec4 _247 = texelFetch(acro_t2_10_s2_17, _107, 0);
+    float _248 = _247.x;
+    float _255 = (_41._m0.z * _248) + _41._m0.w;
+    float _352;
+    if (abs(_255) < 9.9999999600419720025001879548654e-13)
+    {
+        _352 = 1000000.0;
+    }
+    else
+    {
+        _352 = abs(((_41._m0.x * _248) + _41._m0.y) / _255);
+    }
+    float _274 = clamp(_352, 9.9999997473787516355514526367188e-05, 1000000.0);
+    float _293 = min((_41._m1.z * max(abs(_274 - _41._m1.x) - _41._m1.y, 0.0)) / _274, _41._m1.w);
+    vec3 _356;
+    float _358;
+    _358 = 1.0;
+    _356 = texelFetch(acro_t2_9_s2_17, _107, 0).xyz;
+    vec3 _212;
+    float _214;
+    float _220;
+    float _223;
+    int _353 = 0;
+    float _354 = _41._m3;
+    float _360 = 0.0;
+    for (;;)
+    {
+        bool _143 = _353 < 160;
+        bool _150;
+        if (_143)
+        {
+            _150 = _354 < _41._m1.w;
+        }
+        else
+        {
+            _150 = _143;
+        }
+        if (_150)
+        {
+            ivec2 _168 = clamp(_107 + ivec2(round(vec2(cos(_360), sin(_360)) * _354)), ivec2(0), _41._m2);
+            vec4 _305 = texelFetch(acro_t2_10_s2_17, _168, 0);
+            float _306 = _305.x;
+            float _313 = (_41._m0.z * _306) + _41._m0.w;
+            float _362;
+            if (abs(_313) < 9.9999999600419720025001879548654e-13)
+            {
+                _362 = 1000000.0;
+            }
+            else
+            {
+                _362 = abs(((_41._m0.x * _306) + _41._m0.y) / _313);
+            }
+            float _332 = clamp(_362, 9.9999997473787516355514526367188e-05, 1000000.0);
+            float _351 = min((_41._m1.z * max(abs(_332 - _41._m1.x) - _41._m1.y, 0.0)) / _332, _41._m1.w);
+            float _365;
+            if (_332 > _274)
+            {
+                _365 = clamp(_351, 0.0, _293 * 2.0);
+            }
+            else
+            {
+                _365 = _351;
+            }
+            _212 = _356 + mix(_356 / vec3(_358), texelFetch(acro_t2_9_s2_17, _168, 0).xyz, vec3(smoothstep(_354 - 0.5, _354 + 0.5, _365)));
+            _214 = _358 + 1.0;
+            _220 = _354 + (_41._m3 / _354);
+            _223 = _360 + 2.3999631404876708984375;
+            _360 = _223;
+            _358 = _214;
+            _356 = _212;
+            _354 = _220;
+            _353++;
+            continue;
+        }
+        else
+        {
+            break;
+        }
+    }
+    _227 = vec4(_356 / vec3(_358), 1.0);
+}
+

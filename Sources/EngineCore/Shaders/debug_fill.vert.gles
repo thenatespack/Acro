@@ -1,0 +1,45 @@
+#version 300 es
+// Generated from debug_fill.vert by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 28cb792195098208
+// glsl-fnv1a64: 22218318aeeefe3b
+// acro-ubo acro_vs_push -1 -1
+
+layout(std140) uniform acro_vs_push
+{
+    mat4 _m0;
+    vec4 _m1;
+} _54;
+
+layout(location = 0) in vec4 _22;
+layout(location = 1) in vec4 _32;
+layout(location = 2) in vec4 _36;
+out vec4 acro_v0;
+layout(location = 3) in vec4 _43;
+
+void main()
+{
+    vec3 _72;
+    if (gl_VertexID == 0)
+    {
+        _72 = _22.xyz;
+    }
+    else
+    {
+        vec3 _71;
+        if (gl_VertexID == 1)
+        {
+            _71 = _32.xyz;
+        }
+        else
+        {
+            _71 = _36.xyz;
+        }
+        _72 = _71;
+    }
+    acro_v0 = _43;
+    gl_Position = _54._m0 * vec4(_72, 1.0);
+    gl_Position.y = -gl_Position.y;
+    gl_Position.z = 2.0 * gl_Position.z - gl_Position.w;
+}
+

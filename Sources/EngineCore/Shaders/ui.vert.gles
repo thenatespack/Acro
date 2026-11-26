@@ -1,0 +1,39 @@
+#version 300 es
+// Generated from ui.vert by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 365ff86fa6efada9
+// glsl-fnv1a64: eaea6046697bd6ea
+// acro-ubo acro_vs_push -1 -1
+
+layout(std140) uniform acro_vs_push
+{
+    vec2 _m0;
+} _19;
+
+layout(location = 0) in vec2 _11;
+out vec2 acro_v0;
+layout(location = 1) in vec2 _58;
+out vec4 acro_v1;
+layout(location = 2) in vec4 _62;
+out vec2 acro_v2;
+layout(location = 3) in vec2 _65;
+flat out vec2 acro_v3;
+layout(location = 4) in vec2 _68;
+flat out vec4 acro_v4;
+layout(location = 5) in vec4 _71;
+flat out vec4 acro_v5;
+layout(location = 6) in vec4 _74;
+
+void main()
+{
+    gl_Position = vec4(((_11.x / _19._m0.x) * 2.0) - 1.0, 1.0 - ((_11.y / _19._m0.y) * 2.0), 0.0, 1.0);
+    gl_Position.y = -gl_Position.y;
+    acro_v0 = _58;
+    acro_v1 = _62;
+    acro_v2 = _65;
+    acro_v3 = _68;
+    acro_v4 = _71;
+    acro_v5 = _74;
+    gl_Position.z = 2.0 * gl_Position.z - gl_Position.w;
+}
+

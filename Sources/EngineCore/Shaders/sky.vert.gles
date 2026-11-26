@@ -1,0 +1,38 @@
+#version 300 es
+// Generated from sky.vert by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 4235d2bddf84cd91
+// glsl-fnv1a64: ad1a15be52517b55
+// acro-ubo acro_vs_u2_2 2 2
+
+layout(std140) uniform acro_vs_u2_2
+{
+    mat4 _m0;
+    vec4 _m1;
+    vec4 _m2;
+    vec4 _m3;
+    vec4 _m4;
+    vec4 _m5;
+    vec4 _m6;
+    vec4 _m7;
+    vec4 _m8;
+} _34;
+
+out vec4 acro_v0;
+
+void main()
+{
+    vec2 _27 = (vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)) * 2.0) - vec2(1.0);
+    float _45 = _27.x;
+    vec4 _47 = vec4(_45, _27.y, _34._m2.x, 1.0);
+    acro_v0 = _34._m0 * _47;
+    if (_34._m2.z > 0.5)
+    {
+        vec4 _68 = _34._m0 * vec4(_45, _27.y, 1.0 - _34._m2.x, 1.0);
+        acro_v0 = vec4((acro_v0.xyz / vec3(acro_v0.w)) - (_68.xyz / vec3(_68.w)), 1.0);
+    }
+    gl_Position = _47;
+    gl_Position.y = -gl_Position.y;
+    gl_Position.z = 2.0 * gl_Position.z - gl_Position.w;
+}
+

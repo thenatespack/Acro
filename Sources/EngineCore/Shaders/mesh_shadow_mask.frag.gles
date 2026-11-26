@@ -1,0 +1,33 @@
+#version 300 es
+// Generated from mesh_shadow_mask.frag by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: c9170889009cf0f1
+// glsl-fnv1a64: 5a3f20b268ccdd21
+// acro-ubo acro_fs_u2_2 2 2
+// acro-sampler acro_t2_9_s2_17 2 9 2 17 0
+precision highp float;
+precision highp int;
+
+layout(std140) uniform acro_fs_u2_2
+{
+    vec4 _m0;
+    vec4 _m1;
+    vec4 _m2;
+    vec4 _m3;
+    vec4 _m4;
+    vec4 _m5;
+    vec4 _m6;
+} _13;
+
+uniform highp sampler2D acro_t2_9_s2_17;
+
+in vec2 acro_v0;
+
+void main()
+{
+    if ((_13._m0.w * texture(acro_t2_9_s2_17, vec2(dot(_13._m2.xy, acro_v0) + _13._m2.z, dot(_13._m3.xy, acro_v0) + _13._m3.z)).w) < _13._m6.x)
+    {
+        discard;
+    }
+}
+

@@ -1,0 +1,103 @@
+#version 300 es
+// Generated from sky.frag by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 1dd939ef2c066d33
+// glsl-fnv1a64: 8e97b8b7cec86dd8
+// acro-ubo acro_fs_u2_2 2 2
+// acro-ubo acro_fs_u0_0 0 0
+// acro-sampler acro_t2_9_s2_17 2 9 2 17 0
+precision highp float;
+precision highp int;
+
+layout(std140) uniform acro_fs_u2_2
+{
+    mat4 _m0;
+    vec4 _m1;
+    vec4 _m2;
+    vec4 _m3;
+    vec4 _m4;
+    vec4 _m5;
+    vec4 _m6;
+    vec4 _m7;
+    vec4 _m8;
+} _190;
+
+layout(std140) uniform acro_fs_u0_0
+{
+    mat4 _m0;
+    mat4 _m1;
+    mat4 _m2;
+    mat4 _m3;
+} _311;
+
+uniform highp sampler2D acro_t2_9_s2_17;
+
+in vec4 acro_v0;
+layout(location = 0) out vec4 _301;
+layout(location = 1) out vec2 _331;
+
+void main()
+{
+    vec3 _225 = normalize(acro_v0.xyz / vec3(acro_v0.w));
+    vec3 _587;
+    if (_190._m1.x > 0.5)
+    {
+        float _393 = _225.x;
+        float _398 = _225.z;
+        vec2 _430 = vec2((atan((_190._m1.z * _393) - (_190._m1.w * _398), -((_190._m1.w * _393) + (_190._m1.z * _398))) * 0.15915493667125701904296875) + 0.5, acos(clamp(_225.y, -1.0, 1.0)) * 0.3183098733425140380859375);
+        vec2 _244 = dFdx(_430);
+        vec2 _247 = dFdy(_430);
+        float _249 = _244.x;
+        _244.x = _249 - round(_249);
+        float _256 = _247.x;
+        _247.x = _256 - round(_256);
+        _587 = textureGrad(acro_t2_9_s2_17, _430, _244, _247).xyz;
+    }
+    else
+    {
+        float _464 = _225.y;
+        float _469 = smoothstep(0.0, 0.02999999932944774627685546875, -_464);
+        float _487 = max(dot(_225, _190._m6.xyz), 0.0);
+        float _490 = _487 * _487;
+        float _493 = _490 * _490;
+        float _496 = _493 * _493;
+        float _499 = _496 * _496;
+        _587 = mix(mix(_190._m4.xyz, _190._m3.xyz, vec3(sqrt(clamp(_464, 0.0, 1.0)))), _190._m5.xyz, vec3(_469)) + (((_190._m7.xyz * (_190._m8.w * ((0.25 * _496) + (((_499 * _499) * _499) * _499)))) + (_190._m7.xyz * (_190._m8.z * smoothstep(_190._m8.x, _190._m8.y, _487)))) * (1.0 - _469));
+    }
+    vec3 _289 = _587 * _190._m1.y;
+    vec3 _588;
+    if (_190._m2.y > 0.5)
+    {
+        _588 = _289 / (vec3(1.0) + _289);
+    }
+    else
+    {
+        _588 = _289;
+    }
+    _301 = vec4(_588, 1.0);
+    vec4 _319 = vec4(_225, 0.0);
+    vec4 _320 = _311._m2 * _319;
+    vec4 _329 = _311._m3 * _319;
+    float _333 = _329.w;
+    bool _334 = _333 <= 0.0;
+    bool _341;
+    if (!_334)
+    {
+        _341 = _320.w <= 0.0;
+    }
+    else
+    {
+        _341 = _334;
+    }
+    vec2 _589;
+    if (_341)
+    {
+        _589 = vec2(0.0);
+    }
+    else
+    {
+        _589 = ((_329.xy / vec2(_333)) - (_320.xy / vec2(_320.w))) * vec2(0.5, -0.5);
+    }
+    _331 = _589;
+}
+

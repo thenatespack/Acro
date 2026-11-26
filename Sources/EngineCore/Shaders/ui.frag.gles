@@ -1,0 +1,100 @@
+#version 300 es
+// Generated from ui.frag by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 14116735d09891bb
+// glsl-fnv1a64: d75b6e9d41c2b8b4
+// acro-sampler acro_t2_9_s2_17 2 9 2 17 0
+precision highp float;
+precision highp int;
+
+uniform highp sampler2D acro_t2_9_s2_17;
+
+in vec2 acro_v0;
+flat in vec4 acro_v5;
+in vec2 acro_v2;
+flat in vec2 acro_v3;
+flat in vec4 acro_v4;
+in vec4 acro_v1;
+layout(location = 0) out vec4 _226;
+
+void main()
+{
+    vec4 _122 = texture(acro_t2_9_s2_17, acro_v0);
+    int _133 = int(acro_v5.y + 0.5);
+    float _330;
+    if (acro_v2.x < 0.0)
+    {
+        float _329;
+        if (acro_v2.y < 0.0)
+        {
+            _329 = acro_v4.x;
+        }
+        else
+        {
+            _329 = acro_v4.w;
+        }
+        _330 = _329;
+    }
+    else
+    {
+        float _328;
+        if (acro_v2.y < 0.0)
+        {
+            _328 = acro_v4.y;
+        }
+        else
+        {
+            _328 = acro_v4.z;
+        }
+        _330 = _328;
+    }
+    vec2 _280 = (abs(acro_v2) - acro_v3) + vec2(_330);
+    float _293 = (min(max(_280.x, _280.y), 0.0) + length(max(_280, vec2(0.0)))) - _330;
+    float _335;
+    if (acro_v5.x > 0.0)
+    {
+        float _155 = 0.5 * acro_v5.x;
+        _335 = clamp(0.5 - (abs(_293 + _155) - _155), 0.0, 1.0);
+    }
+    else
+    {
+        _335 = clamp(0.5 - _293, 0.0, 1.0);
+    }
+    vec4 _173 = clamp(acro_v1, vec4(0.0), vec4(1.0));
+    vec3 _177 = _173.xyz;
+    float _180 = _173.w;
+    vec4 _184 = vec4(mix(_177 * vec3(0.077399380505084991455078125), pow((_177 + vec3(0.054999999701976776123046875)) * vec3(0.947867333889007568359375), vec3(2.400000095367431640625)), step(vec3(0.040449999272823333740234375), _177)), _180);
+    vec4 _331;
+    if (_133 == 1)
+    {
+        _331 = _184 * _122;
+    }
+    else
+    {
+        vec4 _332;
+        if (_133 == 2)
+        {
+            vec4 _322 = _184;
+            _322.w = _180 * _122.w;
+            _332 = _322;
+        }
+        else
+        {
+            vec4 _333;
+            if (_133 == 3)
+            {
+                vec4 _326 = _184;
+                _326.w = _180 * clamp(((_122.w - 0.5) / max(acro_v5.z, 9.9999997473787516355514526367188e-05)) + 0.5, 0.0, 1.0);
+                _333 = _326;
+            }
+            else
+            {
+                _333 = _184;
+            }
+            _332 = _333;
+        }
+        _331 = _332;
+    }
+    _226 = vec4(_331.xyz, _331.w * _335);
+}
+

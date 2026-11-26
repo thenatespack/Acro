@@ -1,0 +1,13 @@
+#version 300 es
+// Generated from taau.vert by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 5e5203b53f286cc8
+// glsl-fnv1a64: 76eadab7dc82f085
+
+void main()
+{
+    gl_Position = vec4((vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)) * 2.0) - vec2(1.0), 0.0, 1.0);
+    gl_Position.y = -gl_Position.y;
+    gl_Position.z = 2.0 * gl_Position.z - gl_Position.w;
+}
+

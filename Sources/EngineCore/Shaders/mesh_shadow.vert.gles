@@ -1,0 +1,26 @@
+#version 300 es
+// Generated from mesh_shadow.vert by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 76de42530e8f0610
+// glsl-fnv1a64: f7a59b18a4dece10
+// acro-ubo acro_vs_u0_0 0 0
+
+layout(std140) uniform acro_vs_u0_0
+{
+    mat4 _m0;
+    mat4 _m1;
+} _53;
+
+layout(location = 3) in vec4 _12;
+layout(location = 4) in vec4 _14;
+layout(location = 5) in vec4 _16;
+layout(location = 6) in vec4 _18;
+layout(location = 0) in vec3 _61;
+
+void main()
+{
+    gl_Position = _53._m1 * (mat4(_12, _14, _16, _18) * vec4(_61, 1.0));
+    gl_Position.y = -gl_Position.y;
+    gl_Position.z = 2.0 * gl_Position.z - gl_Position.w;
+}
+

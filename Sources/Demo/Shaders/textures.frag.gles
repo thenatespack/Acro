@@ -1,0 +1,53 @@
+#version 300 es
+// Generated from textures.frag by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: f7b89778d88aa8a0
+// glsl-fnv1a64: 2ea6da69276412ef
+// acro-ubo acro_fs_u2_2 2 2
+// acro-ubo acro_fs_u0_0 0 0
+// acro-sampler acro_t2_9_s2_17 2 9 2 17 0
+precision highp float;
+precision highp int;
+
+layout(std140) uniform acro_fs_u2_2
+{
+    vec4 _m0;
+    vec4 _m1;
+} _29;
+
+layout(std140) uniform acro_fs_u0_0
+{
+    mat4 _m0;
+    mat4 _m1;
+    vec4 _m2;
+    vec4 _m3;
+    vec4 _m4;
+    vec4 _m5;
+} _46;
+
+uniform highp sampler2D acro_t2_9_s2_17;
+
+in vec2 acro_v2;
+in vec3 acro_v1;
+in vec3 acro_v0;
+layout(location = 0) out vec4 _115;
+in vec4 acro_v3;
+in vec4 acro_v4;
+layout(location = 1) out vec2 _136;
+
+void main()
+{
+    vec3 _41 = normalize(acro_v1);
+    _115 = vec4(mix((texture(acro_t2_9_s2_17, acro_v2).xyz * _29._m1.xyz) * ((mix(vec3(0.119999997317790985107421875, 0.100000001490116119384765625, 0.0900000035762786865234375), vec3(0.550000011920928955078125, 0.64999997615814208984375, 0.85000002384185791015625), vec3((_41.y * 0.5) + 0.5)) * 0.300000011920928955078125) + vec3(max(dot(_41, normalize(_46._m2.xyz)), 0.0) * _46._m2.w)), _46._m4.xyz, vec3(1.0 - exp((-length(_46._m3.xyz - acro_v0)) * _46._m4.w))), 1.0);
+    vec2 _168;
+    if (acro_v4.w > 0.0)
+    {
+        _168 = ((acro_v4.xy / vec2(acro_v4.w)) - (acro_v3.xy / vec2(acro_v3.w))) * vec2(0.5, -0.5);
+    }
+    else
+    {
+        _168 = vec2(0.0);
+    }
+    _136 = _168;
+}
+

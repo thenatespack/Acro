@@ -1,0 +1,27 @@
+#version 300 es
+// Generated from sprite.vert by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 5a32036da3536a91
+// glsl-fnv1a64: b8879fade431e363
+// acro-ubo acro_vs_push -1 -1
+
+layout(std140) uniform acro_vs_push
+{
+    mat4 _m0;
+} _19;
+
+layout(location = 0) in vec3 _25;
+out vec2 acro_v0;
+layout(location = 1) in vec2 _44;
+out vec4 acro_v1;
+layout(location = 2) in vec4 _48;
+
+void main()
+{
+    gl_Position = _19._m0 * vec4(_25, 1.0);
+    gl_Position.y = -gl_Position.y;
+    acro_v0 = _44;
+    acro_v1 = _48;
+    gl_Position.z = 2.0 * gl_Position.z - gl_Position.w;
+}
+

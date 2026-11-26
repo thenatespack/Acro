@@ -1,0 +1,22 @@
+#version 300 es
+// Generated from outline_mask.frag by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 5b2e3713436dd0c8
+// glsl-fnv1a64: 4e8e08f628d5118e
+// acro-ubo acro_fs_push -1 -1
+precision highp float;
+precision highp int;
+
+layout(std140) uniform acro_fs_push
+{
+    mat4 _m0;
+    vec4 _m1;
+} _13;
+
+layout(location = 0) out vec4 _9;
+
+void main()
+{
+    _9 = _13._m1;
+}
+

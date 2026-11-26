@@ -1,0 +1,73 @@
+#version 300 es
+// Generated from particle.frag by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 8d2398c2d0f7c792
+// glsl-fnv1a64: 270ecc2a7da9a11b
+// acro-ubo acro_fs_u2_2 2 2
+// acro-sampler acro_t2_9_s2_17 2 9 2 17 0
+// acro-sampler acro_t2_10_s2_17 2 10 2 17 0
+precision highp float;
+precision highp int;
+
+layout(std140) uniform acro_fs_u2_2
+{
+    mat4 _m0;
+    vec4 _m1;
+    vec4 _m2[4];
+    vec4 _m3;
+    vec4 _m4;
+    vec4 _m5;
+    vec4 _m6;
+    vec4 _m7;
+    vec4 _m8;
+    vec4 _m9;
+    vec4 _m10;
+} _19;
+
+uniform highp sampler2D acro_t2_9_s2_17;
+uniform highp sampler2D acro_t2_10_s2_17;
+
+in vec4 acro_v1;
+in vec4 acro_v2;
+in float acro_v3;
+in vec2 acro_v0;
+layout(location = 0) out vec4 _135;
+
+void main()
+{
+    vec4 _12 = acro_v1;
+    vec4 _145;
+    if (_19._m9.z > 0.5)
+    {
+        vec4 _46 = texture(acro_t2_9_s2_17, acro_v2.xy);
+        vec4 _143;
+        if (acro_v3 > 0.0)
+        {
+            _143 = mix(_46, texture(acro_t2_9_s2_17, acro_v2.zw), vec4(acro_v3));
+        }
+        else
+        {
+            _143 = _46;
+        }
+        _145 = _12 * _143;
+    }
+    else
+    {
+        float _77 = clamp(1.0 - dot(acro_v0, acro_v0), 0.0, 1.0);
+        _12.w = _12.w * (_77 * _77);
+        _145 = _12;
+    }
+    vec4 _146;
+    if (_19._m10.x > 0.0)
+    {
+        vec4 _142 = _145;
+        _142.w = _145.w * clamp(((_19._m10.y / (texelFetch(acro_t2_10_s2_17, ivec2(gl_FragCoord.xy), 0).x + _19._m10.z)) - (_19._m10.y / (gl_FragCoord.z + _19._m10.z))) * _19._m10.x, 0.0, 1.0);
+        _146 = _142;
+    }
+    else
+    {
+        _146 = _145;
+    }
+    _135 = _146;
+}
+

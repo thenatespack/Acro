@@ -1,0 +1,54 @@
+#version 300 es
+// Generated from mesh_shadow_mask_skinned.vert by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: d29357ae853f142b
+// glsl-fnv1a64: 183c28eabc2e461c
+// acro-ubo acro_vs_u2_2 2 2
+// acro-ubo acro_vs_u0_0 0 0
+
+layout(std140) uniform acro_vs_u2_2
+{
+    vec4 _m0[8];
+    vec4 _m1[384];
+    vec4 _m2[384];
+} _49;
+
+layout(std140) uniform acro_vs_u0_0
+{
+    mat4 _m0;
+    mat4 _m1;
+} _150;
+
+layout(location = 14) in vec4 _33;
+layout(location = 15) in vec4 _55;
+layout(location = 3) in vec4 _116;
+layout(location = 4) in vec4 _118;
+layout(location = 5) in vec4 _120;
+layout(location = 6) in vec4 _122;
+layout(location = 0) in vec3 _157;
+out vec2 acro_v0;
+layout(location = 2) in vec2 _182;
+
+void main()
+{
+    vec4 _260;
+    vec4 _261;
+    vec4 _262;
+    _262 = vec4(0.0);
+    _261 = vec4(0.0);
+    _260 = vec4(0.0);
+    for (int _259 = 0; _259 < 4; )
+    {
+        int _200 = int(_33[_259]) * 3;
+        _262 += (_49._m1[_200 + 2] * _55[_259]);
+        _261 += (_49._m1[_200 + 1] * _55[_259]);
+        _260 += (_49._m1[_200] * _55[_259]);
+        _259++;
+        continue;
+    }
+    gl_Position = _150._m1 * ((mat4(_116, _118, _120, _122) * transpose(mat4(_260, _261, _262, vec4(0.0, 0.0, 0.0, 1.0)))) * vec4(_157, 1.0));
+    gl_Position.y = -gl_Position.y;
+    acro_v0 = _182;
+    gl_Position.z = 2.0 * gl_Position.z - gl_Position.w;
+}
+

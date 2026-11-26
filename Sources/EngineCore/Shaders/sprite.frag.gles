@@ -1,0 +1,20 @@
+#version 300 es
+// Generated from sprite.frag by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 8a16bd8393f06c77
+// glsl-fnv1a64: e47c018cf9396629
+// acro-sampler acro_t2_9_s2_17 2 9 2 17 0
+precision highp float;
+precision highp int;
+
+uniform highp sampler2D acro_t2_9_s2_17;
+
+layout(location = 0) out vec4 _9;
+in vec2 acro_v0;
+in vec4 acro_v1;
+
+void main()
+{
+    _9 = texture(acro_t2_9_s2_17, acro_v0) * acro_v1;
+}
+

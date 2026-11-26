@@ -1,0 +1,21 @@
+#version 300 es
+// Generated from test_storage_draw.frag by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 4cfabfada863d48f
+// glsl-fnv1a64: a80ff571cdad8bd3
+// acro-ubo acro_fs_push -1 -1
+precision highp float;
+precision highp int;
+
+layout(std140) uniform acro_fs_push
+{
+    vec4 _m0;
+} _12;
+
+layout(location = 0) out vec4 _9;
+
+void main()
+{
+    _9 = _12._m0;
+}
+
