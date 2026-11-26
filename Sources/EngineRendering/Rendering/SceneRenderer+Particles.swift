@@ -27,6 +27,10 @@ extension SceneRenderer {
     func prepareParticles(world: World, cameraPosition: Vec3) {
         if particles == nil {
             guard world.count(of: ParticleEmitter.self) > 0 else { return }
+            guard device.supportsCompute else {
+                warnUnavailable("GPU particles (ParticleEmitter)")
+                return
+            }
             do {
                 particles = try ParticleSystem(device: device)
                 particles?.textureResolver = { [unowned self] in texture($0) }

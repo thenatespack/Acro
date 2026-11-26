@@ -1,9 +1,16 @@
 // The browser loader for an exported Acro game (docs/wasm-spike.md, wave W1B).
 //
-// 1. Gets a WebGPU adapter and device, configures the canvas, and publishes them as
-//    `globalThis.acro = { adapter, device, context, format, canvas }` (the WebGPU render device
-//    reads them synchronously; WebGPU's requests are Promises and the engine starts synchronously).
-// 2. Fetches `player.json` (written by the Web export or Scripts/web-player.sh), the asset pack
+// 1. Fetches `player.json` (written by the Web export or Scripts/web-player.sh) and picks the
+//    renderer: `?renderer=webgpu|webgl2|auto`, else the player's saved choice (localStorage
+//    `acro.renderer`, set by `acro.setRenderer`), else player.json's `renderer` (default `auto`).
+//    `auto` is WebGPU when an adapter and a device come up, else WebGL 2; a renderer that fails
+//    falls back to the other (the console says why), and the page shows an error only when
+//    neither works. It publishes the result as `globalThis.acro`: `renderer` ("webgpu" or
+//    "webgl2") and `canvas`, with `adapter`, `device`, `context`, `format` for WebGPU or `gl` and
+//    `webgl` (Web/webgl2.js) for WebGL 2, plus `renderers` (what this browser seems to have) and
+//    `setRenderer(name)` (saves the choice and reloads). The render device reads them
+//    synchronously (WebGPU's requests are Promises and the engine starts synchronously).
+// 2. Fetches the asset pack
 //    and the engine resources (Shaders/, Fonts/ listed in engine/manifest.json). The pack and the
 //    wasm download together under a progress bar; the pack is kept in the browser's cache (Cache
 //    API, keyed by `packHash`) so the next visit doesn't download it again (wave W2.5B).
@@ -17,16 +24,21 @@
 import { WASI, File, Directory, PreopenDirectory, OpenFile, ConsoleStdout } from "@bjorn3/browser_wasi_shim";
 import { instantiate } from "./app/instantiate.js";
 import { openUserData } from "./saves.js";
+import { setUpWebGL2 } from "./webgl2.js";
 
 class PlayerError extends Error {}
+
+const RENDERERS = ["webgpu", "webgl2"];
+const RENDERER_KEY = "acro.renderer";
 
 /**
  * Starts the player.
  * @param {{ canvas: HTMLCanvasElement, status: HTMLElement, args?: string[], env?: string[],
- *           probeFrames?: number, base?: string }} options
+ *           probeFrames?: number, base?: string, renderer?: string }} options
  * `env` adds `NAME=value` environment variables (ENGINE_OVERLAY=1, ENGINE_QUALITY=high, ...).
+ * `renderer` ("webgpu", "webgl2" or "auto", from `?renderer=`) overrides the saved and configured choice.
  */
-export async function startPlayer({ canvas, status, args = [], env = [], probeFrames = 0, base = "." }) {
+export async function startPlayer({ canvas, status, args = [], env = [], probeFrames = 0, base = ".", renderer = undefined }) {
   const show = (text) => { status.hidden = false; status.className = ""; status.textContent = text; };
   const fail = (text) => {
     status.hidden = false;
@@ -39,17 +51,43 @@ export async function startPlayer({ canvas, status, args = [], env = [], probeFr
   addEventListener("unhandledrejection", (event) => fail(`The game stopped: ${event.reason}`));
 
   try {
-    show("Starting WebGPU…");
-    const gpu = await setUpWebGPU(canvas);
-    // Exactly this shape: the WebGPU render device reads these.
-    globalThis.acro = { adapter: gpu.adapter, device: gpu.device, context: gpu.context, format: gpu.format, canvas };
-    gpu.device.lost.then((info) => {
-      if (info.reason !== "destroyed") fail(`The GPU device was lost: ${info.message}`);
-    });
-
     show("Loading…");
     const url = (path) => new URL(path, new URL(`${base}/`, location.href));
     const config = await fetchJSON(url("player.json"));
+
+    let wasi;
+    const graphics = await setUpRenderer(canvas, pickRenderer(renderer, config.renderer), show);
+    canvas = graphics.canvas;
+    // The render devices read these (WebGPURenderDevice, WebGL2RenderDevice).
+    globalThis.acro = {
+      ...graphics,
+      // WebGL 2: Web/webgl2.js reads its commands and data straight from the WebAssembly memory.
+      wasmMemory: () => wasi.inst.exports.memory.buffer,
+      // Saves `name` ("webgpu", "webgl2" or "auto") as the player's choice and reloads the page with it.
+      setRenderer: (name) => {
+        if (![...RENDERERS, "auto"].includes(name)) throw new Error(`[acro] unknown renderer '${name}'`);
+        try {
+          if (name === "auto") localStorage.removeItem(RENDERER_KEY); else localStorage.setItem(RENDERER_KEY, name);
+        } catch (error) {
+          console.warn(`[acro] couldn't save the renderer choice: ${error}`);
+        }
+        const next = new URL(location.href);
+        if (next.searchParams.has("renderer")) {
+          next.searchParams.set("renderer", name);
+          location.assign(next);
+        } else {
+          location.reload();
+        }
+      },
+    };
+    if (graphics.renderer === "webgpu") {
+      graphics.device.lost.then((info) => {
+        if (info.reason !== "destroyed") fail(`The GPU device was lost: ${info.message}`);
+      });
+    } else {
+      canvas.addEventListener("webglcontextlost", () => fail("The WebGL context was lost (the GPU was reset or reclaimed)."));
+    }
+
     // The pack and the wasm download together, with a progress bar (`packSize` and `wasmSize`
     // in player.json give the totals when the server doesn't); the pack comes from the
     // browser's cache when this exact pack (`packHash`) was downloaded before.
@@ -94,7 +132,7 @@ export async function startPlayer({ canvas, status, args = [], env = [], probeFr
     });
 
     show("Starting the game…");
-    const wasi = new WASI(
+    wasi = new WASI(
       [config.wasm], [`ENGINE_RESOURCES=/engine`, `TMPDIR=/tmp`, ...(config.env ?? []), ...env],
       [
         new OpenFile(new File([])),  // stdin
@@ -135,10 +173,83 @@ export async function startPlayer({ canvas, status, args = [], env = [], probeFr
   }
 }
 
+/** The renderer to start with: the page option, else the player's saved choice, else player.json's (default auto). */
+function pickRenderer(requested, configured) {
+  let saved;
+  try { saved = localStorage.getItem(RENDERER_KEY) ?? undefined; } catch { saved = undefined; }
+  for (const [source, value] of [["?renderer=", requested], ["the saved choice", saved], ["player.json", configured]]) {
+    if (value === undefined || value === null || value === "") continue;
+    if ([...RENDERERS, "auto"].includes(value)) return { choice: value, source };
+    console.warn(`[acro] ignoring renderer '${value}' from ${source} (webgpu, webgl2 or auto)`);
+  }
+  return { choice: "auto", source: "the default" };
+}
+
+/**
+ * Sets up the chosen renderer, or the other one when it fails: `{ renderer, canvas, renderers, ... }`
+ * with the WebGPU device or the WebGL 2 context. Throws only when neither works.
+ */
+async function setUpRenderer(canvas, { choice, source }, show) {
+  const order = choice === "webgl2" ? ["webgl2", "webgpu"] : ["webgpu", "webgl2"];
+  const failures = {};
+  for (const name of order) {
+    try {
+      if (name === "webgpu") {
+        show("Starting WebGPU…");
+        const gpu = await setUpWebGPU(canvas);
+        report(name, choice, source, failures);
+        return { renderer: name, renderers: availableRenderers(name, failures), canvas,
+                 adapter: gpu.adapter, device: gpu.device, context: gpu.context, format: gpu.format };
+      }
+      show("Starting WebGL 2…");
+      // A canvas that has a WebGPU context can't get a WebGL one: start over with a fresh one.
+      if (canvas.acroContext) canvas = freshCanvas(canvas);
+      const result = setUpWebGL2(canvas);
+      if (!result.gl) throw new PlayerError(result.failure);
+      canvas.acroContext = "webgl2";
+      report(name, choice, source, failures);
+      return { renderer: name, renderers: availableRenderers(name, failures), canvas, gl: result.gl, webgl: result.helper };
+    } catch (error) {
+      failures[name] = error instanceof PlayerError ? error.message : String(error?.message ?? error);
+    }
+  }
+  throw new PlayerError("This browser can't run the game: it needs WebGPU or WebGL 2, and neither works here.\n\n" +
+    `WebGPU: ${failures.webgpu}\n\nWebGL 2: ${failures.webgl2}\n\n` +
+    "Use a recent Chrome, Edge, Firefox or Safari, and make sure hardware acceleration is on.");
+}
+
+function report(name, choice, source, failures) {
+  const label = name === "webgpu" ? "WebGPU" : "WebGL 2";
+  const other = name === "webgpu" ? "webgl2" : "webgpu";
+  if (failures[other] && choice !== "auto") {
+    console.warn(`[acro] renderer: ${label} (${other === "webgpu" ? "WebGPU" : "WebGL 2"}, chosen by ${source}, failed: ${failures[other]})`);
+  } else if (failures[other]) {
+    console.info(`[acro] renderer: ${label} (auto; WebGPU is unavailable: ${failures[other]})`);
+  } else {
+    console.info(`[acro] renderer: ${label} (${choice === "auto" ? "auto" : `chosen by ${source}`})`);
+  }
+}
+
+/** The renderers this browser seems to have: the one that started, and the other unless it failed or is missing. */
+function availableRenderers(started, failures) {
+  return RENDERERS.filter((name) => {
+    if (name === started) return true;
+    if (failures[name]) return false;
+    return name === "webgpu" ? !!navigator.gpu : typeof WebGL2RenderingContext !== "undefined";
+  });
+}
+
+/** A copy of `canvas` in its place (a canvas keeps the first kind of context it gave out). */
+function freshCanvas(canvas) {
+  const fresh = canvas.cloneNode(false);
+  canvas.parentNode.insertBefore(fresh, canvas);
+  canvas.remove();
+  return fresh;
+}
+
 async function setUpWebGPU(canvas) {
   if (!navigator.gpu) {
-    throw new PlayerError("This browser doesn't support WebGPU, which the game needs.\n\n" +
-      "Use a recent Chrome or Edge, or Safari 26 or later, and make sure hardware acceleration is on.");
+    throw new PlayerError("This browser doesn't support WebGPU (no navigator.gpu).");
   }
   // Some browsers return null for a power preference they can't honor; ask again without one.
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" })
@@ -171,6 +282,7 @@ async function setUpWebGPU(canvas) {
 
   const context = canvas.getContext("webgpu");
   if (!context) throw new PlayerError("The canvas has no WebGPU context.");
+  canvas.acroContext = "webgpu";
   const format = navigator.gpu.getPreferredCanvasFormat();
   const scale = devicePixelRatio || 1;
   canvas.width = Math.max(1, Math.round(canvas.clientWidth * scale));

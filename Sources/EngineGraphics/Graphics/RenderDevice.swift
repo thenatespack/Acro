@@ -9,6 +9,9 @@ public enum GraphicsBackend: String, Sendable, CaseIterable {
     case metal, vulkan
     /// Browser WebGPU (WebAssembly builds; see `WebGPURenderDevice`).
     case webgpu
+    /// Browser WebGL 2 (WebAssembly builds; see `WebGL2RenderDevice`): the fallback for browsers
+    /// without WebGPU. No compute or storage buffers (`RenderDevice.supportsCompute`).
+    case webgl2
 
     /// Metal on Apple platforms, WebGPU in WebAssembly builds, Vulkan everywhere else.
     public static var platformDefault: GraphicsBackend {
@@ -32,6 +35,7 @@ public enum GraphicsBackend: String, Sendable, CaseIterable {
         #endif
         #if os(WASI)
         result.append(.webgpu)
+        result.append(.webgl2)
         #endif
         return result
     }
@@ -626,6 +630,14 @@ public struct DrawIndexedIndirectArguments: Sendable, BitwiseCopyable, Equatable
     /// Descriptor pools the backend has made so far (Vulkan, whose pools grow on demand; nil
     /// for backends without them).
     var descriptorPoolCount: Int? { get }
+    /// Whether compute passes and pipelines work (`beginComputePass`, `makeComputePipeline`).
+    /// false on WebGL 2: systems built on compute (GPU particles, light probe baking, FSR 3)
+    /// check it and skip themselves with a warning.
+    var supportsCompute: Bool { get }
+    /// Whether shaders can read storage buffers (`RenderPass.setStorageBuffer`) and draw
+    /// indirectly. false on WebGL 2: features whose shaders need them (probe-lit and
+    /// material-graph shaders) are skipped.
+    var supportsStorageBuffers: Bool { get }
 
     /// A static buffer holding a copy of `bytes`. Never waits for the GPU: on Vulkan (device-local
     /// memory) the copy from a staging buffer is recorded into an upload batch that is submitted
@@ -764,6 +776,8 @@ public struct DrawIndexedIndirectArguments: Sendable, BitwiseCopyable, Equatable
 
 extension RenderDevice {
     public var descriptorPoolCount: Int? { nil }
+    public var supportsCompute: Bool { true }
+    public var supportsStorageBuffers: Bool { true }
     public var capturesArriveLate: Bool { false }
 
     public func beginFrame(framebufferSize: (width: Int, height: Int)) throws -> Bool {

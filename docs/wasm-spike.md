@@ -53,7 +53,7 @@ for every feature and the largest limits the adapter has.
 Editor --cook Projects/SampleGame --out /tmp/pack          # or any cooked .pack (--gpu bc for non-Apple GPUs)
 Scripts/web-player.sh /tmp/pack/SampleGame.pack --release  # open http://localhost:8080/ (Chrome, Edge, Safari 26)
 Scripts/web-player.sh --demo                                # the Demo; ?args=--scene,<n or name>
-node Spikes/WebPlayerCheck/run.mjs .build-wasm/web-player <out dir> [--query ...]   # Playwright check
+node Spikes/WebPlayerCheck/run.mjs .build-wasm/web-player <out dir> [--query ...]   # Playwright check (--no-webgpu, --count-calls: see WebGL 2 below)
 ```
 
 Page options: `?env=ENGINE_OVERLAY=1,ENGINE_QUALITY=high,...` sets environment variables,
@@ -490,6 +490,157 @@ coi-serviceworker can add them after a reload); itch.io has a SharedArrayBuffer 
 Netlify, Cloudflare Pages and nginx set them in config. An isolated page also can't embed
 cross-origin iframes or popups that talk back (ads, some login flows). The export would need a
 single-threaded fallback for hosts without the headers, so two `.wasm` files.
+
+## WebGL 2 renderer (2026-11-26)
+
+Browsers without WebGPU (older Safari and Firefox, Chrome with WebGPU blocklisted) get WebGL 2
+instead of an error, and a player can pick either renderer.
+
+### Picking and switching
+
+The loader (`Web/loader.js`) picks, in order: the page option `?renderer=webgpu|webgl2|auto`, the
+player's saved choice (localStorage `acro.renderer`), then `renderer` in `player.json` (default
+`auto`). `auto` is WebGPU when an adapter and a device come up, else WebGL 2; the console says which
+and why (`[acro] renderer: WebGL 2 (auto; WebGPU is unavailable: ...)`). A renderer that fails
+falls back to the other one (a canvas that already has a WebGPU context is replaced by a fresh
+one), and the page shows an error only when neither works. `globalThis.acro.renderer` is the one
+that started; `acro.renderers` lists what the browser seems to have; `acro.setRenderer(name)` saves
+the choice (`auto` clears it) and reloads (replacing `?renderer=` in the address when it's there).
+From Swift (a game's settings menu): `WebHost.renderer`, `WebHost.availableRenderers` and
+`WebHost.setRenderer(.webgl2)`. On WASI `Engine` creates the device that matches `acro.renderer`
+(`GraphicsBackend.webgl2`, `WebGL2RenderDevice`).
+
+A Web export writes `renderer` into `player.json`: the Export Game dialog's **Renderer** (Web
+only), `game.build`'s `renderer`, `Editor --build-game ... --platform web --renderer
+auto|webgpu|webgl2` (`GameExportOptions.webRenderer`, `WebRenderer`). Exports and
+`Scripts/web-player.sh` ship `webgl2.js` and the `.gles` shaders next to the `.wgsl`.
+
+### Shaders
+
+`Scripts/compile-shaders.sh` also writes `<name>.vert.gles` / `<name>.frag.gles` (GLSL ES 3.00) with
+SPIRV-Cross (`Scripts/spirv-to-gles.c`): combined image samplers, push constants as a std140
+uniform block, z mapped from 0..1 to -1..1 (`fixup_clipspace`), `gl_InstanceIndex` as
+`gl_InstanceID`, only the *active* resources (so non-probe mesh shaders don't carry probes.glsl's
+storage buffer). GLSL ES 3.00 has no binding qualifiers and links by name, so everything is named
+deterministically: varyings `acro_v<location>`, uniform blocks `acro_<vs|fs>_u<set>_<binding>` and
+`acro_<vs|fs>_push` (per stage, so blocks that differ between stages never collide), samplers
+`acro_t<set>_<binding>_s<set>_<binding>` (a texture with the sampler it's used with) or
+`acro_t<set>_<binding>` (combined in the GLSL, or texelFetch without a sampler). A header after
+`#version 300 es` (WebGL wants that on the first line) lists them (`// acro-ubo name set binding`,
+`// acro-sampler name tset tbinding sset sbinding shadow`); the device reads it (`GLESInterface`) to
+bind blocks to binding points (0 frame, 1 push constants, n for uniform buffer n) and give each
+sampler a texture unit. Fixes in the driver: `bitfieldReverse` (env_prefilter) gets a polyfill
+(ES 3.10 has it), and `noperspective` varyings (debug_line) become perspective-correct (ES 3.00
+has none). With glslangValidator installed every output is validated. Stages whose active
+resources need storage buffers or images get no `.gles` (listed at the end of the run, like the
+WGSL step): the probe-lit and material-graph mesh shaders, terrain splatting, probe_debug and
+the GPU particle vertex shaders. No GLSL ES is generated for compute. The binding table in
+`ShaderSource` has a WebGL 2 column; `WebGL2ShaderTests` checks every output is current and
+inside the table.
+
+### The device
+
+`Sources/EngineBackends/Backends/WebGL2/` plus `Web/webgl2.js`:
+
+- **Commands, not calls.** A draw doesn't call WebGL. The pass writes what changed (pipeline
+  state, vertex array and attribute offsets, uniform ranges, texture and sampler per unit) and the
+  draw into an Int32 command buffer in WebAssembly memory; `webgl2.js` runs the whole buffer with
+  one `execute(ptr, count)` call, normally once a frame (also before anything that must see the
+  frame's work so far: buffer and texture updates, readbacks). The device keeps what is bound, so
+  an unchanged draw is its draw command alone; nothing per draw makes strings, JS objects or
+  allocations. Objects have numeric ids the device assigns (`webgl2.js` keeps them in a Map).
+  Creation, uploads and readbacks are direct calls with pointers into WebAssembly memory
+  (`acro.wasmMemory()`), so data isn't copied into JS arrays first.
+- **Per-frame data** (uniforms, push constants, vertex and index data) goes into transient
+  rings, uploaded with one `bufferSubData` per buffer before the commands run; uniform ranges
+  are bound with `bindBufferRange` at the device's offset alignment. Index data has its own ring:
+  WebGL types a buffer by its first binding, and index buffers can't be bound as anything else.
+- **Convention.** Every pass renders into the device's own framebuffers, whose memory row 0 is
+  the image's top, as in Metal, Vulkan and WebGPU: the GLSL's Vulkan clip space (y down) is left
+  unflipped, which in GL's window space (y up) puts the image's top at row 0. So texture
+  coordinates, `gl_FragCoord`, viewports, scissors and `readPixels` rows mean what they mean on
+  the other backends, and only two things change: front faces are clockwise in GL terms
+  (`frontFace(CW)`), and presenting flips the image into the canvas. (So `flip_vert_y` is *not*
+  used: flipping in the shader would put the image's bottom at row 0.)
+- **Presenting.** The window image is an SRGB8_ALPHA8 texture. Blitting it into the canvas would
+  decode its sRGB (ANGLE does; `webgl2.js` tests it once), so the canvas gets a fullscreen draw
+  that reads it with texelFetch, encodes it again and flips it; where blits keep the bytes, a
+  y-swapped `blitFramebuffer`. The same copy (unflipped) gives the upscalers the scene image's
+  gamma-encoded bytes (WebGPU uses an unorm view; WebGL has no texture views).
+- MSAA: multisampled renderbuffers, resolved with `blitFramebuffer` at the end of the pass.
+  Samplers are sampler objects; shadow maps DEPTH_COMPONENT32F with a less-or-equal comparison
+  sampler. Depth (and 32-bit float) textures read with texelFetch get a nearest sampler (a
+  filtering one would make them incomplete). Depth bias is `polygonOffset`. A pipeline without a
+  depth test that writes depth tests with ALWAYS (GL only writes depth with the test on).
+- Motion vectors (TAAU): pipelines that don't write them draw with
+  `drawBuffers([COLOR_ATTACHMENT0, NONE])`, so the attachment keeps "no motion".
+- Occlusion queries: `ANY_SAMPLES_PASSED_CONSERVATIVE`, read a frame or more later. GPU pass
+  times with `EXT_disjoint_timer_query_webgl2` (Chromium on macOS has it), else none.
+- Captures and readbacks are synchronous (`readPixels`, `getBufferSubData`):
+  `capturesArriveLate` is false.
+- Compressed textures: BC7 / BC6H with `EXT_texture_compression_bptc`, BC5 with `_rgtc`, ASTC
+  with `WEBGL_compressed_texture_astc` (ASTC HDR with its `hdr` profile). HDR targets need
+  `EXT_color_buffer_float`. Upscalers: bilinear, FSR 1 and TAAU; FSR 3 is refused.
+- `ENGINE_GL_DEBUG=1` (`?env=ENGINE_GL_DEBUG=1`) checks `gl.getError()` after every command and
+  names it in the console (`[acro] WebGL error 0x502 after END_PASS (...)`); it's slow.
+
+**No compute.** WebGL 2 has no compute shaders, storage buffers, storage textures or indirect
+draws. `RenderDevice.supportsCompute` and `supportsStorageBuffers` (default true) are false, and
+the engine skips what needs them with one warning each: GPU particles (`ParticleEmitter`), light
+probes (`ReflectionProbe`, `IrradianceVolume`: their bake and the probe-lit shaders), material
+graphs (registered without the graph: they draw with the material's plain surface; terrain
+splatting is a graph too) and FSR 3. `makeComputePipeline` and storage textures throw;
+`beginComputePass` returns a pass that records nothing; indirect draws are skipped.
+
+### Results (2026-11-26)
+
+Playwright Chromium (Apple M5; WebGL 2 is ANGLE on Metal), release Demo, `?renderer=webgl2` with
+`ENGINE_GL_DEBUG=1`, each scene 4 s with input:
+
+- **All 54 Demo scenes and SampleGame run, with 0 WebGL errors.** Degraded (feature skipped with
+  its warning): `particles` and `rain` (GPU particles), `probes` (light probes), `graphs` (material
+  graphs and the splat terrain draw with plain materials). Two bugs the run found are fixed
+  (debug_line's `noperspective`; a framebuffer's read buffer set on the wrong binding).
+- `ENGINE_SCREENSHOT` frames (1280x720, overlay off) against the WebGPU run, mean difference / 255:
+
+| Scene | Mean | | Scene | Mean |
+|---|---|---|---|---|
+| SampleGame | 0.002 | | hud | 0.000 |
+| shadows | 0.000 | | widgets | 0.000 |
+| shadows2 | 0.000 | | images | 0.000 |
+| ui | 0.000 | | textures | 0.000 |
+| text | 0.000 | | skinning | 0.000 |
+| gltf | 0.000 | | lights | 0.000 |
+| pbr | 0.003 | | transparency | 0.000 |
+| post | 0.000 | | decals | 0.000 |
+| sprites | 0.000 | | reflections | 0.005 |
+| sky | 0.001 | | instancing | 0.001 |
+| fog | 0.000 | | | |
+
+  No pixel differs by more than 16 in any of them. The canvas itself (the presented frame,
+  `text` scene) is identical to WebGPU's too.
+- **Fallback:** with `navigator.gpu` removed the page starts WebGL 2 on its own; with WebGL 2
+  removed as well it shows the "needs WebGPU or WebGL 2" message with both reasons.
+  `acro.setRenderer("webgl2")` reloads into WebGL 2, a fresh load keeps it, `?renderer=webgpu`
+  overrides it, and `setRenderer("auto")` goes back to WebGPU.
+- **Crowd** (446-456 draws, frames 300-600 at fixed steps, 3 alternated runs each, ms):
+
+| Crowd | rAF callback | update | render |
+|---|---|---|---|
+| WebGPU | 14.0 (13.8-14.1) | 8.0 | 3.7 |
+| WebGL 2 | 12.4 (12.0-12.7) | 7.8 | 2.1 |
+
+  The render part is ~40% cheaper than WebGPU's: WebGL 2 crosses into JavaScript about 10 times a
+  frame for ~443 draws (one `execute`, six ring `bufferSubData`s, the present and two timer
+  reads), where WebGPU makes several calls per draw (`setPipeline`, `setVertexBuffer`,
+  `setIndexBuffer`, `setBindGroup`, `drawIndexed`).
+
+**Known gaps:** everything that needs compute or storage buffers (above); material graphs
+could be supported by moving their values from a storage buffer to a uniform block in a GLSL ES
+variant of the templates and splicing the graph's code into it as for MSL and WGSL; GPU particles
+would need a CPU or transform-feedback simulation. `noperspective` varyings interpolate with
+perspective. Only tested on ANGLE/Metal in Chromium; Firefox and Safari (where WebGL 2 is most
+likely to be used) are untested.
 
 ## What's left for a browser build
 

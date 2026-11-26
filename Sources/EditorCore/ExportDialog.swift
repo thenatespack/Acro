@@ -6,7 +6,7 @@ import Foundation
 ///
 /// - **Platform**: macOS, Linux, Windows or Web. Natively only this machine's platform can be built
 ///   (there is no cross-compiling); Linux can also be built in Docker from any machine. The
-///   others say why, and Export stays disabled. Web (a static folder for WebGPU browsers,
+///   others say why, and Export stays disabled. Web (a static folder for WebGPU or WebGL 2 browsers,
 ///   GameExporterWeb.swift) builds on any machine with the Swift SDK for WebAssembly; without
 ///   it the note says how to install it.
 /// - **Architecture**: x86_64 or arm64. macOS builds either (`swift build --arch`); Linux in
@@ -14,6 +14,8 @@ import Foundation
 ///   machine's own. Not used for Web (WebAssembly), where it is disabled.
 /// - **Configuration**: Release (optimized, what to ship) or Debug (unoptimized, with assertions
 ///   and debug info).
+/// - **Renderer** (Web only): what the page starts with: Auto (WebGPU, else WebGL 2), WebGPU or
+///   WebGL 2 (`WebRenderer`). Players can still switch.
 /// - **Build in Docker**: Linux only (GameExporterDocker.swift); turned on when Linux is picked
 ///   on another platform.
 /// - **Output folder**: where the app or game folder goes; empty is the default
@@ -32,9 +34,13 @@ public final class ExportDialog: Widget {
         public var useDocker: Bool
         /// The output folder (absolute, or relative to the project folder); nil: the default.
         public var output: String?
+        /// Web: the renderer the page starts with.
+        public var webRenderer: WebRenderer
 
         public init(platform: CookPlatform = .current, architecture: BuildArchitecture = .current,
-                    configuration: BuildConfiguration = .release, useDocker: Bool = false, output: String? = nil) {
+                    configuration: BuildConfiguration = .release, useDocker: Bool = false, output: String? = nil,
+                    webRenderer: WebRenderer = .auto) {
+            self.webRenderer = webRenderer
             self.platform = platform
             self.architecture = architecture
             self.configuration = configuration
@@ -45,7 +51,7 @@ public final class ExportDialog: Widget {
         /// `game.build`'s arguments for it.
         public var arguments: GameBuildCommand.Arguments {
             .init(output: output, platform: platform, configuration: configuration, architecture: architecture,
-                  docker: useDocker ? true : nil)
+                  docker: useDocker ? true : nil, renderer: platform == .web && webRenderer != .auto ? webRenderer : nil)
         }
     }
 
@@ -55,6 +61,7 @@ public final class ExportDialog: Widget {
     private let platformMenu: Dropdown
     private let architectureMenu: Dropdown
     private let configurationMenu: Dropdown
+    private let rendererMenu: Dropdown
     private let dockerBox = Checkbox("Build in Docker", name: "exportDocker")
     private let outputField = TextField(placeholder: "", name: "exportOutput")
     private let chooseButton = Button("Choose…", name: "exportChooseOutput")
@@ -68,6 +75,7 @@ public final class ExportDialog: Widget {
     static let platforms = CookPlatform.allCases
     static let architectures = BuildArchitecture.allCases
     static let configurations = BuildConfiguration.allCases
+    static let renderers = WebRenderer.allCases
 
     public init(session: EditorSession, initial: Choice? = nil) {
         self.session = session
@@ -75,6 +83,7 @@ public final class ExportDialog: Widget {
         platformMenu = Dropdown(options: [], name: "exportPlatform")
         architectureMenu = Dropdown(options: [], name: "exportArchitecture")
         configurationMenu = Dropdown(options: Self.configurations.map(\.title), name: "exportConfiguration")
+        rendererMenu = Dropdown(options: Self.renderers.map(\.title), name: "exportRenderer")
         let heading = Label("Export Game", role: .heading, name: "exportTitle")
         let cancel = Button("Cancel", name: "exportCancel")
         let footer = HStack(spacing: 8, name: "exportFooter", [Spacer(), cancel, exportButton])
@@ -87,6 +96,9 @@ public final class ExportDialog: Widget {
         row("Architecture", architectureMenu, tooltip: "The CPU the game runs on: x86_64 (Intel, AMD) or arm64 (Apple silicon, ARM)")
         row("Configuration", configurationMenu,
             tooltip: "Release: optimized, what to ship. Debug: unoptimized, with assertions and debug info, for tracking down problems")
+        row("Renderer", rendererMenu,
+            tooltip: "Web: what the page starts with. Auto uses WebGPU where the browser has it, else WebGL 2 (no GPU particles, "
+                + "light probes or material graphs). Players can switch with ?renderer= or the game's settings")
         row("", dockerBox, tooltip: "Build a Linux game in a Docker container with the Linux Swift toolchain: from any machine, "
             + "for either architecture (the other one emulated, slower). Needs Docker installed and running")
         outputField.style.grow = 1
@@ -100,7 +112,7 @@ public final class ExportDialog: Widget {
         card.addChild(footer)
 
         let build = GameBuildCommand.id.rawValue
-        for widget in [platformMenu, architectureMenu, configurationMenu, dockerBox, outputField, chooseButton, exportButton] as [Widget] {
+        for widget in [platformMenu, architectureMenu, configurationMenu, rendererMenu, dockerBox, outputField, chooseButton, exportButton] as [Widget] {
             widget.command = build
         }
         outputField.text = choice.output ?? ""
@@ -118,6 +130,11 @@ public final class ExportDialog: Widget {
         configurationMenu.onChange = { [unowned self] index in
             guard Self.configurations.indices.contains(index) else { return }
             choice.configuration = Self.configurations[index]
+            refresh()
+        }
+        rendererMenu.onChange = { [unowned self] index in
+            guard Self.renderers.indices.contains(index) else { return }
+            choice.webRenderer = Self.renderers[index]
             refresh()
         }
         dockerBox.onChange = { [unowned self] on in
@@ -234,7 +251,7 @@ public final class ExportDialog: Widget {
         let host = CookPlatform.current
         let platforms = Self.platforms.map { platform -> String in
             if platform == host { return "\(platform.title) (this machine)" }
-            if platform == .web { return "Web (WebAssembly, WebGPU browsers)" }
+            if platform == .web { return "Web (WebAssembly: WebGPU or WebGL 2 browsers)" }
             return platform == .linux ? "\(platform.title) (in Docker)" : "\(platform.title) (build on \(platform.title))"
         }
         if platformMenu.options != platforms { platformMenu.options = platforms }
@@ -247,6 +264,8 @@ public final class ExportDialog: Widget {
         sync(platformMenu, Self.platforms.firstIndex(of: choice.platform))
         sync(architectureMenu, Self.architectures.firstIndex(of: choice.architecture))
         sync(configurationMenu, Self.configurations.firstIndex(of: choice.configuration))
+        sync(rendererMenu, Self.renderers.firstIndex(of: choice.webRenderer))
+        rendererMenu.isEnabled = choice.platform == .web
         if dockerBox.isOn != choice.useDocker { dockerBox.isOn = choice.useDocker }
         dockerBox.isEnabled = choice.platform == .linux
         architectureMenu.isEnabled = choice.platform != .web

@@ -10,7 +10,8 @@ import EngineCore
 //              app/<Target>Player.wasm    the player (Engine + game), packaged by JavaScriptKit's PackageToJS
 //              app/instantiate.js, runtime.js, …   PackageToJS's JS glue
 //              vendor/browser_wasi_shim/  the WASI shim the glue was made for (@bjorn3/browser_wasi_shim)
-//              engine/manifest.json       the engine resources the loader fetches: Shaders/*.wgsl and Fonts/
+//              webgl2.js                  the WebGL 2 renderer's side in JavaScript (the fallback without WebGPU)
+//              engine/manifest.json       the engine resources the loader fetches: Shaders/*.wgsl, *.gles and Fonts/
 //              game.pack, player.json     the cooked pack, and what the loader starts (wasm, pack, engine)
 //              README.txt                 how to host it
 // ```
@@ -24,9 +25,11 @@ import EngineCore
 //   when installed) shrinks the module. Without wasm-opt the export says so and ships it as built.
 //   SampleGame (2026-11-23): 79.0 MB linked, 54.5 MB after -Oz (-Os: 55.0 MB, same 45-60 s), 21.5 MB
 //   gzip -9, 14.2 MB brotli -q 11. The report gives the gzip and brotli sizes of release exports.
-// - **Engine resources.** Only what the WebGPU backend reads: WGSL shaders (no Metal or SPIR-V)
-//   and the fonts.
-// - **Hosting.** Any static server; `.wasm` must be served as `application/wasm`. A WebGPU browser.
+// - **Engine resources.** Only what the web backends read: WGSL (WebGPU) and GLSL ES (WebGL 2)
+//   shaders (no Metal or SPIR-V), and the fonts.
+// - **Renderer.** `renderer` in player.json (`GameExportOptions.webRenderer`, default auto): WebGPU,
+//   else WebGL 2; the player can switch (see Web/loader.js).
+// - **Hosting.** Any static server; `.wasm` must be served as `application/wasm`. A WebGPU or WebGL 2 browser.
 //   Scripts/web-player.sh `--export` builds and serves an export locally.
 
 /// The tools a Web export needs: the open-source Swift toolchain with the WebAssembly SDK, and
@@ -110,6 +113,24 @@ public struct WebToolchain: Sendable, Equatable {
     }
 }
 
+/// The renderer a Web export's page starts with (`renderer` in player.json; Web/loader.js). A
+/// `?renderer=` page option and the player's saved choice (`WebHost.setRenderer`) come first.
+public enum WebRenderer: String, Sendable, Codable, CaseIterable {
+    /// WebGPU when the browser has it (an adapter and a device come up), else WebGL 2.
+    case auto
+    case webgpu
+    /// WebGL 2 even where WebGPU works (no compute: no GPU particles, light probes or material graphs).
+    case webgl2
+
+    public var title: String {
+        switch self {
+        case .auto: "Auto (WebGPU, else WebGL 2)"
+        case .webgpu: "WebGPU"
+        case .webgl2: "WebGL 2"
+        }
+    }
+}
+
 /// What a Web export's folder is made of (GameExporter.assembleWebSite).
 struct WebSiteInputs {
     /// The engine's `Web/` (index.html, loader.js, saves.js).
@@ -129,22 +150,22 @@ extension GameExporter {
     static let webPackFile = "game.pack"
 
     /// Whether a file of the engine's resources (path relative to them) goes into a Web export:
-    /// WGSL shaders only (the Metal and SPIR-V ones are for the native backends), everything else
-    /// (the fonts and their licence) but the bundle's Info.plist.
+    /// WGSL and GLSL ES shaders only (the Metal and SPIR-V ones are for the native backends),
+    /// everything else (the fonts and their licence) but the bundle's Info.plist.
     static func isWebEngineResource(_ path: String) -> Bool {
         if path == "Info.plist" || path.hasSuffix("/.DS_Store") || path == ".DS_Store" { return false }
-        if path.hasPrefix("Shaders/") { return path.hasSuffix(".wgsl") }
+        if path.hasPrefix("Shaders/") { return path.hasSuffix(".wgsl") || path.hasSuffix(".gles") }
         return true
     }
 
     /// `player.json`: what Web/loader.js starts. `packSize` and `wasmSize` (bytes) let the page
     /// show download progress when the server doesn't say how big they are (or compresses them);
     /// `packHash` (`packHash(of:)`) names the pack in the browser's cache, so a new export is
-    /// downloaded again.
+    /// downloaded again. `renderer` is the one the page starts with (`WebRenderer`).
     static func webPlayerConfig(wasm: String, packName: String, packSize: Int? = nil, packHash: String? = nil,
-                                wasmSize: Int? = nil) -> [String: Any] {
+                                wasmSize: Int? = nil, renderer: WebRenderer = .auto) -> [String: Any] {
         var config: [String: Any] = ["wasm": "app/\(wasm)", "pack": webPackFile, "packName": packName, "engine": "engine/manifest.json",
-                                     "args": [String]()]
+                                     "args": [String](), "renderer": renderer.rawValue]
         if let packSize { config["packSize"] = packSize }
         if let packHash { config["packHash"] = packHash }
         if let wasmSize { config["wasmSize"] = wasmSize }
@@ -152,10 +173,10 @@ extension GameExporter {
     }
 
     /// Writes `site`'s player.json for its pack and wasm as they are now.
-    static func writeWebPlayerConfig(site: URL, wasmName: String, packName: String) throws {
+    static func writeWebPlayerConfig(site: URL, wasmName: String, packName: String, renderer: WebRenderer = .auto) throws {
         let pack = site.appendingPathComponent(webPackFile), wasm = site.appendingPathComponent("app/\(wasmName)")
         let config = webPlayerConfig(wasm: wasmName, packName: packName, packSize: fileSize(pack), packHash: packHash(of: pack),
-                                     wasmSize: fileSize(wasm))
+                                     wasmSize: fileSize(wasm), renderer: renderer)
         try json(config).write(to: site.appendingPathComponent("player.json"))
     }
 
@@ -176,11 +197,12 @@ extension GameExporter {
     /// Lays out a Web export in `folder` (made, or replaced) from `inputs` (see the notes at the
     /// top of the file); returns the engine files it copied, relative to `engine/`.
     @discardableResult
-    static func assembleWebSite(at folder: URL, inputs: WebSiteInputs, wasmName: String, packName: String, gameName: String) throws -> [String] {
+    static func assembleWebSite(at folder: URL, inputs: WebSiteInputs, wasmName: String, packName: String, gameName: String,
+                                renderer: WebRenderer = .auto) throws -> [String] {
         let fm = FileManager.default
         try? fm.removeItem(at: folder)
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-        for page in ["index.html", "loader.js", "saves.js"] {
+        for page in ["index.html", "loader.js", "saves.js", "webgl2.js"] {
             try fm.copyItem(at: inputs.page.appendingPathComponent(page), to: folder.appendingPathComponent(page))
         }
         try fm.copyItem(at: inputs.packaged, to: folder.appendingPathComponent("app", isDirectory: true))
@@ -211,7 +233,7 @@ extension GameExporter {
         try fm.createDirectory(at: engine, withIntermediateDirectories: true)
         try json(["files": files]).write(to: engine.appendingPathComponent("manifest.json"))
         try fm.copyItem(at: inputs.pack, to: folder.appendingPathComponent(webPackFile))
-        try writeWebPlayerConfig(site: folder, wasmName: wasmName, packName: packName)
+        try writeWebPlayerConfig(site: folder, wasmName: wasmName, packName: packName, renderer: renderer)
         try Data(webReadme(name: gameName).utf8).write(to: folder.appendingPathComponent("README.txt"))
         return files
     }
@@ -239,14 +261,17 @@ extension GameExporter {
             python3 -m http.server 8080      (in this folder), then open http://localhost:8080/
 
         Browsers
-        The game renders with WebGPU: a recent Chrome or Edge (113 or later), or Safari 26 or later,
-        with hardware acceleration on. Other browsers show a message instead.
+        The game renders with WebGPU where the browser has it (a recent Chrome or Edge, Safari 26 or
+        later) and falls back to WebGL 2 elsewhere (any current browser; GPU particles, light probes
+        and material graphs need WebGPU). Add ?renderer=webgpu, webgl2 or auto to the address to
+        pick one; the choice is remembered. Hardware acceleration must be on.
 
         Files
-        index.html, loader.js   the page and its loader (saves.js keeps saves in the browser)
+        index.html, loader.js   the page and its loader (saves.js keeps saves in the browser,
+                                webgl2.js is the WebGL 2 renderer's JavaScript side)
         app/                    the game (WebAssembly) and its JavaScript glue
         vendor/                 the WASI shim the game runs on (@bjorn3/browser_wasi_shim, MIT/Apache-2.0)
-        engine/                 the engine's shaders and fonts (manifest.json lists them)
+        engine/                 the engine's shaders (WGSL, GLSL ES) and fonts (manifest.json lists them)
         game.pack               the game's assets
         player.json             what the loader starts (page options: ?scene=<path>, ?args=a,b)
 
@@ -277,9 +302,10 @@ extension GameExporter {
                                    wasiShim: shim, engineResources: webEngineResources(toolchain: toolchain),
                                    pack: URL(fileURLWithPath: cook.packPath))
         progress?("Writing \(site.path)")
+        let renderer = options.webRenderer ?? .auto
         let engineFiles = try Self.assembleWebSite(at: site, inputs: inputs, wasmName: wasmName, packName: "\(options.name).pack",
-                                                   gameName: options.name)
-        progress?("Engine resources: \(engineFiles.count) files (WGSL shaders, fonts)")
+                                                   gameName: options.name, renderer: renderer)
+        progress?("Engine resources: \(engineFiles.count) files (WGSL and GLSL ES shaders, fonts); renderer \(renderer.rawValue)")
 
         let wasm = site.appendingPathComponent("app/\(wasmName)")
         var optimizeSeconds = 0.0
@@ -292,7 +318,8 @@ extension GameExporter {
                 optimizeSeconds = step.seconds
                 if step.succeeded {
                     _ = try fm.replaceItemAt(wasm, withItemAt: optimized)
-                    try Self.writeWebPlayerConfig(site: site, wasmName: wasmName, packName: "\(options.name).pack")  // the new wasmSize
+                    try Self.writeWebPlayerConfig(site: site, wasmName: wasmName, packName: "\(options.name).pack",
+                                                  renderer: renderer)  // the new wasmSize
                     let mb = { (bytes: Int) in String(format: "%.1f MB", Double(bytes) / 1_048_576) }
                     progress?(String(format: "wasm-opt \(level): \(mb(before)) → \(mb(Self.size(of: wasm))) in %.0f s", step.seconds))
                 } else {

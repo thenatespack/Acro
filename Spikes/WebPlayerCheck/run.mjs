@@ -2,12 +2,16 @@
 // WebGPU, sends some keyboard and mouse input, and records what happened (docs/wasm-spike.md).
 //
 //   node Spikes/WebPlayerCheck/run.mjs <site dir> <out dir> [--name <n>] [--query <a=b&c=d>]
-//        [--seconds <s>] [--width <css px>] [--height <css px>] [--dpr <n>] [--headed]
+//        [--seconds <s>] [--width <css px>] [--height <css px>] [--dpr <n>] [--headed] [--no-webgpu]
+//        [--count-calls]
 //
 // Writes <out>/<name>-<t>s.png screenshots (start, after input, end), <name>.log (the console)
 // and <name>.json: WebGPU errors (lines with "WebGPU:"), requestAnimationFrame intervals and
 // callback durations (ms: mean, p50, p95, max), the engine's last `acro.stats` (frame and GPU
-// pass times), and whether the page showed an error. Exits non-zero on a page error or a trap.
+// pass times), and whether the page showed an error. WebGL 2 errors (`?renderer=webgl2` with
+// `env=ENGINE_GL_DEBUG=1`: "WebGL error" lines) count with them. --no-webgpu launches Chromium
+// without WebGPU (the page falls back to WebGL 2). --count-calls counts calls into Web/webgl2.js
+// per frame (WebGL 2 only) for two seconds. Exits non-zero on a page error or a trap.
 // With ENGINE_SCREENSHOT in the query's env (`--query 'env=ENGINE_SCREENSHOT=/shot.png'`) it sends
 // no input and saves the engine's own capture (fixed 1/60 s steps, as natively) as <name>-engine.png.
 // ACRO_WEBTOOLS (default ~/.acro-webtools) has playwright.
@@ -47,14 +51,16 @@ const port = server.address().port;
 const log = [];
 const webgpuErrors = [];
 let pageError = null;
-const browser = await chromium.launch({ channel: 'chromium', headless: !rest.includes('--headed'), args: ['--enable-unsafe-webgpu'] });
+const browser = await chromium.launch({ channel: 'chromium', headless: !rest.includes('--headed'), args: rest.includes('--no-webgpu') ? [] : ['--enable-unsafe-webgpu'] });
 const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: dpr });
 page.on('console', (message) => {
   const text = message.text();
   log.push(`[${message.type()}] ${text}`);
-  if (/WebGPU:/.test(text)) webgpuErrors.push(text);
+  if (/WebGPU:|WebGL error/.test(text)) webgpuErrors.push(text);
 });
 page.on('pageerror', (error) => { pageError ??= String(error); log.push(`[pageerror] ${error}`); });
+// Without WebGPU: no flag, and no navigator.gpu either (headless Chromium on macOS may have it anyway).
+if (rest.includes('--no-webgpu')) await page.addInitScript(() => { Object.defineProperty(Navigator.prototype, 'gpu', { get: () => undefined }); });
 // Times every requestAnimationFrame callback (the engine runs a whole frame in one) and the intervals between frames.
 await page.addInitScript(() => {
   const raf = window.requestAnimationFrame.bind(window);
@@ -115,6 +121,20 @@ if (running && engineShot) {
   await sleep(Math.max(0, seconds * 1000 - 3000));
   shots.push(await shot('end'));
 }
+let calls = null;
+if (running && rest.includes('--count-calls')) {
+  calls = await page.evaluate(async () => {
+    const helper = globalThis.acro?.webgl;
+    if (!helper) return null;
+    const before = { ...helper.calls };
+    const first = globalThis.acro.stats?.frames ?? 0;
+    await new Promise((r) => setTimeout(r, 2000));
+    const frames = (globalThis.acro.stats?.frames ?? 0) - first;
+    const counts = Object.fromEntries(Object.entries(helper.calls).map(([k, v]) => [k, v - (before[k] ?? 0)]).filter(([, v]) => v > 0));
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    return { frames, perFrame: frames ? Math.round(total / frames * 100) / 100 : null, drawCalls: globalThis.acro.stats?.drawCalls, counts };
+  });
+}
 const result = await page.evaluate(() => {
   const summary = (values) => {
     if (!values.length) return null;
@@ -130,11 +150,12 @@ const result = await page.evaluate(() => {
     rafInterval: summary(intervals), rafCallback: summary(t.durations),
     stats: globalThis.acro?.stats ? JSON.parse(JSON.stringify(globalThis.acro.stats)) : null,
     statusError: status?.classList.contains('error') ? status.textContent : null,
+    renderer: globalThis.acro?.renderer ?? null,
     adapter: globalThis.acro?.adapter?.info ? `${globalThis.acro.adapter.info.vendor} ${globalThis.acro.adapter.info.architecture}` : null,
     canvas: `${document.querySelector('canvas')?.width}x${document.querySelector('canvas')?.height}`,
   };
 });
-const report = { name, query, startupSeconds: startup, running, webgpuErrors: webgpuErrors.length, firstErrors: webgpuErrors.slice(0, 10), pageError, ...result, screenshots: shots };
+const report = { name, query, startupSeconds: startup, running, webgpuErrors: webgpuErrors.length, firstErrors: webgpuErrors.slice(0, 10), pageError, calls, ...result, screenshots: shots };
 fs.writeFileSync(path.join(out, `${name}.json`), JSON.stringify(report, null, 1));
 fs.writeFileSync(path.join(out, `${name}.log`), log.join('\n') + '\n');
 console.log(JSON.stringify(report, null, 1));

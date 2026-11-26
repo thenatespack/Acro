@@ -390,7 +390,12 @@ public final class Engine {
             self.mcp = mcp
         }
         let env = ProcessInfo.processInfo.environment["ENGINE_BACKEND"]?.lowercased()
+        #if os(WASI)
+        // In a browser the page picked the renderer and made its context (`acro.renderer`, Web/loader.js).
+        let backend = WebHost.renderer ?? config.backend ?? env.flatMap(GraphicsBackend.init(rawValue:)) ?? .platformDefault
+        #else
         let backend = config.backend ?? env.flatMap(GraphicsBackend.init(rawValue:)) ?? .platformDefault
+        #endif
         clearColor = config.clearColor
         let envQuality = ProcessInfo.processInfo.environment["ENGINE_QUALITY"].flatMap { RenderQuality(rawValue: $0.lowercased()) }
         quality = envQuality ?? config.quality
@@ -457,18 +462,22 @@ public final class Engine {
             #else
             throw GraphicsError("The Vulkan backend was not compiled in (install the Vulkan SDK and GLFW, then rebuild)")
             #endif
-        case .webgpu:
+        case .webgpu, .webgl2:
             #if os(WASI)
-            // The page's canvas and the GPUDevice it requested (globalThis.acro: see Web/loader.js).
-            // The canvas is sized by the page's CSS, so the configured window size doesn't apply.
+            // The page's canvas and the GPUDevice or WebGL 2 context it made (globalThis.acro: see
+            // Web/loader.js). The canvas is sized by the page's CSS, so the configured window size doesn't apply.
             let canvasWindow = try CanvasWindow()
             window = canvasWindow
             // Saves and settings go to IndexedDB after each write (Web/saves.js).
             UserData.onChange = { MainActor.assumeIsolated { WebHost.userDataChanged() } }
             if !config.title.isEmpty { canvasWindow.title = config.title }
-            device = try WebGPURenderDevice(sampleCount: sampleCount)
+            if backend == .webgl2 {
+                device = try WebGL2RenderDevice(sampleCount: sampleCount)
+            } else {
+                device = try WebGPURenderDevice(sampleCount: sampleCount)
+            }
             #else
-            throw GraphicsError("The WebGPU backend is only available in WebAssembly builds")
+            throw GraphicsError("The \(backend.rawValue) backend is only available in WebAssembly builds")
             #endif
         }
         if let icon = config.icon { window.setIcon(icon) }

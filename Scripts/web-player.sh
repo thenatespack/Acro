@@ -9,7 +9,7 @@
 # JavaScriptKit's PackageToJS plugin, and assembles a static site in <dir> (default
 # .build-wasm/web-player):
 #
-#   index.html, loader.js, saves.js   from Web/
+#   index.html, loader.js, saves.js, webgl2.js   from Web/
 #   app/                    PackageToJS output (WasmPlayer.wasm, instantiate.js, runtime.js, ...)
 #   vendor/browser_wasi_shim/   the WASI shim (npm package, cached in .build-wasm/web-deps)
 #   engine/                 the engine resources (Acro_EngineCore.bundle) and engine/manifest.json
@@ -18,12 +18,12 @@
 # --export <project> instead exports the project the way the editor's Web export does
 # (`Editor --build-game <project> --platform web`, GameExporterWeb.swift): the project's own game
 # code and scenes in a generated player package rather than the spike's WasmPlayer (SampleGame
-# linked in) with a pack you cooked, wasm-opt in release, only the WGSL shaders and fonts of the
+# linked in) with a pack you cooked, wasm-opt in release, only the WGSL and GLSL ES shaders and fonts of the
 # engine resources, and a README.txt. Same layout. The folder is <dir>/<project name>/ (default
 # dir .build-wasm/web-export).
 #
 # Then serves it on http://localhost:<port>/ (default 8080) until Ctrl-C. Open it in a browser
-# with WebGPU. Page options: ?scene=<path>, ?args=--opt,value, ?env=NAME=value, ?probe=<n>
+# with WebGPU or WebGL 2. Page options: ?scene=<path>, ?args=--opt,value, ?env=NAME=value, ?probe=<n>, ?renderer=webgl2
 # (see Web/index.html). With --demo the page runs the Demo product (its resources mounted at
 # /demo) and ?args=--scene,<name or number> picks the scene; default out .build-wasm/web-demo.
 #
@@ -116,7 +116,7 @@ fi
 
 rm -rf "$out"
 mkdir -p "$out/app" "$out/vendor" "$out/engine"
-cp Web/index.html Web/loader.js Web/saves.js "$out/"
+cp Web/index.html Web/loader.js Web/saves.js Web/webgl2.js "$out/"
 cp -R "$packaged/." "$out/app/"
 cp -R "$deps/node_modules/@bjorn3/browser_wasi_shim/dist" "$out/vendor/browser_wasi_shim"
 cp -R "$resources/." "$out/engine/"

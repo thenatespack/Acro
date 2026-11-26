@@ -104,6 +104,9 @@ public struct GameExportOptions: Equatable, Sendable, Codable {
     /// Build a Linux game in a Docker container (GameExporterDocker.swift): from any host, for
     /// either architecture (the other one emulated, slowly).
     public var useDocker: Bool
+    /// Web: the renderer the page starts with (`renderer` in player.json). nil is `.auto`: WebGPU
+    /// where the browser has it, else WebGL 2. Players can still switch (Web/loader.js).
+    public var webRenderer: WebRenderer?
 
     /// The cook target's platform: what the export builds.
     public var platform: CookPlatform { cook.target.platform }

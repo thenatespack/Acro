@@ -88,6 +88,7 @@ private func write(_ text: String, to url: URL) throws {
         try write("MIT", to: shimPackage.appendingPathComponent("LICENSE-MIT"))
         let resources = folder.appendingPathComponent("Acro_EngineCore.bundle", isDirectory: true)
         for file in ["Info.plist", "Shaders/ui.vert.wgsl", "Shaders/ui.vert.spv", "Shaders/ui.vert.metal", "Shaders/ui.frag.wgsl",
+                     "Shaders/ui.vert.gles", "Shaders/ui.frag.gles",
                      "Shaders/particle_spawn.comp.wgsl", "Shaders/particle_spawn.comp.spv", "Shaders/common.glsl",
                      "Fonts/Inter-Regular.ttf", "Fonts/Inter-LICENSE.txt"] {
             try write(file, to: resources.appendingPathComponent(file))
@@ -101,15 +102,15 @@ private func write(_ text: String, to url: URL) throws {
         let inputs = WebSiteInputs(page: webExportTestsRoot.appendingPathComponent("Web"), packaged: packaged,
                                    wasiShim: shimPackage.appendingPathComponent("dist"), engineResources: resources, pack: pack)
         let files = try GameExporter.assembleWebSite(at: site, inputs: inputs, wasmName: "WebExportTestsGamePlayer.wasm",
-                                                     packName: "Web Export Tests.pack", gameName: "Web Export Tests")
-        // Only the WGSL shaders and the fonts.
+                                                     packName: "Web Export Tests.pack", gameName: "Web Export Tests", renderer: .webgl2)
+        // Only the WGSL and GLSL ES shaders and the fonts.
         let expected = ["Fonts/Inter-LICENSE.txt", "Fonts/Inter-Regular.ttf", "Shaders/particle_spawn.comp.wgsl",
-                        "Shaders/ui.frag.wgsl", "Shaders/ui.vert.wgsl"]
+                        "Shaders/ui.frag.gles", "Shaders/ui.frag.wgsl", "Shaders/ui.vert.gles", "Shaders/ui.vert.wgsl"]
         #expect(files == expected)
 
         let fm = FileManager.default
         #expect(!fm.fileExists(atPath: site.appendingPathComponent("old.txt").path))
-        for path in ["index.html", "loader.js", "saves.js", "app/WebExportTestsGamePlayer.wasm", "app/instantiate.js", "app/runtime.js",
+        for path in ["index.html", "loader.js", "saves.js", "webgl2.js", "app/WebExportTestsGamePlayer.wasm", "app/instantiate.js", "app/runtime.js",
                      "vendor/browser_wasi_shim/index.js", "vendor/browser_wasi_shim/LICENSE-MIT", "game.pack", "player.json",
                      "README.txt", "engine/manifest.json"] + expected.map({ "engine/" + $0 }) {
             #expect(fm.fileExists(atPath: site.appendingPathComponent(path).path), "\(path)")
@@ -127,6 +128,8 @@ private func write(_ text: String, to url: URL) throws {
         #expect(config["packName"] as? String == "Web Export Tests.pack")
         #expect(config["engine"] as? String == "engine/manifest.json")
         #expect(config["args"] as? [String] == [])
+        // The renderer the page starts with.
+        #expect(config["renderer"] as? String == "webgl2")
         // For the download progress and the browser's cache.
         #expect(config["packSize"] as? Int == 128)
         #expect(config["packHash"] as? String == "0123456789abcdef")
@@ -137,7 +140,7 @@ private func write(_ text: String, to url: URL) throws {
         }
         // What the page itself refers to.
         let loader = try String(contentsOf: site.appendingPathComponent("loader.js"), encoding: .utf8)
-        #expect(loader.contains("url(\"player.json\")") && loader.contains("./app/instantiate.js"))
+        #expect(loader.contains("url(\"player.json\")") && loader.contains("./app/instantiate.js") && loader.contains("./webgl2.js"))
         let page = try String(contentsOf: site.appendingPathComponent("index.html"), encoding: .utf8)
         #expect(page.contains("./vendor/browser_wasi_shim/index.js"))
         let readme = try String(contentsOf: site.appendingPathComponent("README.txt"), encoding: .utf8)
@@ -165,6 +168,7 @@ private func write(_ text: String, to url: URL) throws {
     @Test func engineResourcesForTheWeb() {
         #expect(GameExporter.isWebEngineResource("Shaders/mesh.vert.wgsl"))
         #expect(GameExporter.isWebEngineResource("Shaders/FidelityFX/x.comp.wgsl"))
+        #expect(GameExporter.isWebEngineResource("Shaders/mesh.frag.gles"))
         #expect(!GameExporter.isWebEngineResource("Shaders/mesh.vert.spv"))
         #expect(!GameExporter.isWebEngineResource("Shaders/mesh.frag.color0.metal"))
         #expect(!GameExporter.isWebEngineResource("Info.plist"))
@@ -214,8 +218,13 @@ private func write(_ text: String, to url: URL) throws {
         #expect(dialog.outputFolder?.lastPathComponent == "web")
         let architecture = try #require(dialog.descendant(named: "exportArchitecture"))
         #expect(!architecture.isEnabled)
+        // The renderer the page starts with: auto (left out of the arguments) unless picked.
+        let renderer = try #require(dialog.descendant(named: "exportRenderer") as? Dropdown)
+        #expect(renderer.isEnabled && dialog.choice.arguments.renderer == nil)
+        renderer.onChange?(WebRenderer.allCases.firstIndex(of: .webgl2)!)  // as when picked
+        #expect(dialog.choice.webRenderer == .webgl2 && dialog.choice.arguments.renderer == .webgl2)
         dialog.setPlatform(.current)
-        #expect(architecture.isEnabled)
+        #expect(architecture.isEnabled && !renderer.isEnabled && dialog.choice.arguments.renderer == nil)
     }
 
     /// A fragment variant loads from WGSL alone (a web export ships no SPIR-V or Metal).
@@ -228,7 +237,7 @@ private func write(_ text: String, to url: URL) throws {
         let bundle = try #require(Bundle(url: folder))
         let source = try ShaderSource.load(vertex: "webexporttests", fragment: "webexporttests_variant", bundle: bundle)
         #expect(source.wgslFragment == "// Shaders/webexporttests_variant.frag.wgsl")
-        #expect(source.spirvFragment == nil && source.wgslVertex != nil)
+        #expect(source.spirvFragment == nil && source.wgslVertex != nil && source.glesFragment == nil)
         #expect(throws: (any Error).self) { try ShaderSource.load(vertex: "webexporttests", fragment: "missing", bundle: bundle) }
     }
 

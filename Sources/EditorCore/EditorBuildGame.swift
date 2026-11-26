@@ -51,10 +51,15 @@ public enum GameBuildCommand: EditorDeferredCommand {
         public var textures: TextureCookMode?
         /// Only cook the pack (`<output>/<name>.pack` and its manifest), without building the game.
         public var cookOnly: Bool?
+        /// Web: the renderer the page starts with, `auto` (the default: WebGPU, else WebGL 2), `webgpu`
+        /// or `webgl2` (player.json's `renderer`; players can still switch). Ignored for other platforms.
+        public var renderer: WebRenderer?
 
         public init(scenes: [String]? = nil, output: String? = nil, platform: CookPlatform? = nil,
                     configuration: BuildConfiguration? = nil, architecture: BuildArchitecture? = nil, docker: Bool? = nil,
-                    textureFamily: TextureFamily? = nil, textures: TextureCookMode? = nil, cookOnly: Bool? = nil) {
+                    textureFamily: TextureFamily? = nil, textures: TextureCookMode? = nil, cookOnly: Bool? = nil,
+                    renderer: WebRenderer? = nil) {
+            self.renderer = renderer
             self.scenes = scenes
             self.output = output
             self.platform = platform
@@ -76,7 +81,7 @@ public enum GameBuildCommand: EditorDeferredCommand {
         block-compressed for the target GPU family, no source files), builds the game module (a generated one that only plays the scenes when the project has no game code) and Engine in release and \
         links them into one executable, and lays out a runnable app (macOS: <output>/<Name>.app; Linux: <output>/<Name>/ \
         with run.sh; Web: <output>/<Name>/, a static folder with index.html, the .wasm and the pack, to host on any web \
-        server and play in a WebGPU browser). Runs in the background (the first build compiles Engine in release, minutes; later ones seconds); \
+        server and play in a browser: WebGPU, or WebGL 2 where WebGPU is missing; `renderer` (auto, webgpu or webgl2) picks the one it starts with). Runs in the background (the first build compiles Engine in release, minutes; later ones seconds); \
         progress and errors go to the console. Returns the output path, the pack's contents and sizes, and timings. \
         `platform`, `architecture` (x86_64 or arm64) and `configuration` (release or debug) pick what is built; \
         only this machine's platform can be built (macOS builds either architecture, other platforms only their own), \
@@ -164,6 +169,7 @@ public final class EditorGameExport {
                                                    configuration: configuration, architecture: architecture)
             if let textures = arguments.textures { options.cook.textures = textures }
             options.useDocker = docker
+            if platform == .web { options.webRenderer = arguments.renderer }
             guard session.checkFileAccess(options.output, GameBuildCommand.title) else {
                 throw CommandError.failed("The output is outside the project folder")
             }

@@ -26,7 +26,8 @@
   import { startPlayer } from "./loader.js";
   // Query options: ?scene=<path> starts another cooked scene, ?args=<a,b,...> passes player
   // options, ?env=<NAME=value,...> sets environment variables (ENGINE_OVERLAY=1, ...),
-  // ?probe=<n> (spike) runs the frame-driver probe for n frames when the engine can't start.
+  // ?probe=<n> (spike) runs the frame-driver probe for n frames when the engine can't start,
+  // ?renderer=webgpu|webgl2|auto picks the renderer (and wins over the saved choice).
   const query = new URLSearchParams(location.search);
   const args = (query.get("args") ?? "").split(",").filter(Boolean);
   if (query.has("scene")) args.push("--scene", query.get("scene"));
@@ -36,6 +37,7 @@
     args,
     env: (query.get("env") ?? "").split(",").filter(Boolean),
     probeFrames: Number(query.get("probe") ?? 0),
+    renderer: query.get("renderer") ?? undefined,
   });
 </script>
 </body>

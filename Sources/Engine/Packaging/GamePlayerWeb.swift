@@ -7,6 +7,7 @@ import Foundation
 import JavaScriptKit
 import EngineAssets
 import EngineCore
+import EngineGraphics
 
 // The exported game's runtime in a browser (Web/loader.js starts it). A browser can't block in
 // a loop, so `main` starts the game and returns: `WebFrameDriver` then runs one engine frame
@@ -15,8 +16,10 @@ import EngineCore
 //
 // The page talks to the player through `globalThis.acro`:
 // - in: `args` (the command line, as strings), `pack` (the fetched pack as a Uint8Array; the
-//   player copies it and deletes it) and `packName`; `adapter`, `device`, `context`, `format`
-//   and `canvas` for the WebGPU device.
+//   player copies it and deletes it) and `packName`; `renderer` ("webgpu" or "webgl2": the one the
+//   page made a context for) with `adapter`, `device`, `context`, `format` and `canvas` for the
+//   WebGPU device, or `gl`, `webgl` (Web/webgl2.js) and `canvas` for the WebGL 2 one; `renderers`
+//   (the ones this browser has) and `setRenderer(name)` (see `WebHost.setRenderer`).
 // - out: `onError(message)` when the game fails to start or a frame throws, `onExit(code)`
 //   when it ends (0: quit normally), `onScreenshot(path, width, height, rgba)` for screenshots,
 //   `onUserDataChange()` after saves and settings are written (Web/saves.js stores /userdata in
@@ -56,6 +59,26 @@ extension GamePlayer {
 public enum WebHost {
     /// `globalThis.acro` (undefined before the loader sets it up).
     public static var acro: JSValue { JSObject.global.acro }
+
+    /// The renderer the page made a context for (`acro.renderer`), which the engine uses: WebGPU,
+    /// or WebGL 2 where WebGPU is missing or the player chose it. nil outside such a page.
+    public static var renderer: GraphicsBackend? {
+        acro.renderer.string.flatMap(GraphicsBackend.init(rawValue:))
+    }
+
+    /// The renderers this browser seems to have (`acro.renderers`): what a settings menu can offer.
+    public static var availableRenderers: [GraphicsBackend] {
+        guard let list = acro.renderers.object, let count = list.length.number else { return renderer.map { [$0] } ?? [] }
+        return (0..<Int(count)).compactMap { list[$0].string.flatMap(GraphicsBackend.init(rawValue:)) }
+    }
+
+    /// Switches renderers: saves `backend` (`.webgpu` or `.webgl2`) as the player's preference in
+    /// the browser and reloads the page, which then starts with it (`acro.setRenderer`). The game
+    /// should save its state first. Does nothing outside such a page or for another backend.
+    public static func setRenderer(_ backend: GraphicsBackend) {
+        guard backend == .webgpu || backend == .webgl2, let setRenderer = acro.setRenderer.function else { return }
+        _ = setRenderer(backend.rawValue)
+    }
 
     /// The player's command line: `acro.args`, else the WASI arguments.
     public static var arguments: [String] {

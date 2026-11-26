@@ -192,6 +192,15 @@ public final class SceneRenderer {
     var uploaded: TransientBuffer?
     private var previousViewProj: Mat4?
     private var reportedMissing: Set<String> = []
+    /// Features this device lacks that were skipped (each warned about once; see `warnUnavailable`).
+    private var reportedUnavailable: Set<String> = []
+
+    /// Logs once that `feature` is skipped on this device (no compute or storage buffers: WebGL 2).
+    func warnUnavailable(_ feature: String) {
+        guard reportedUnavailable.insert(feature).inserted else { return }
+        EngineLog.warning("\(feature) skipped: the \(device.backend.rawValue) renderer has no compute shaders or storage buffers",
+                          category: .rendering)
+    }
 
     /// Resolves handles that name project assets (`MeshHandle(AssetReference)`, keys
     /// `asset:<id>[#<sub-asset>]`): the first frame an entity uses one, its mesh or material
@@ -501,6 +510,12 @@ public final class SceneRenderer {
     /// Registers `material` under `key` (replacing an earlier material with that key).
     @discardableResult
     public func registerMaterial(_ material: Material, key: String) throws -> MaterialHandle {
+        var material = material
+        if material.graph != nil && !device.supportsStorageBuffers {
+            // Graph shaders read their values from a storage buffer: draw the material's plain surface instead.
+            warnUnavailable("Material graphs (and terrain splatting)")
+            material.graph = nil
+        }
         let entry = (material, try device.makeSampler(material.sampler))
         let graphBuffer = try material.graph.map { try device.makeBuffer($0.values, usage: .storage) }
         let id = prep.materials.register(MaterialTraits(blends: material.blends, alphaTested: material.masksDepth || material.sways,
@@ -1012,6 +1027,7 @@ public final class SceneRenderer {
             shader.metalFragmentColor0Source = nil
             shader.spirvFragment = spirv
             shader.wgslFragment = program.wgslDepthFragment
+            shader.glesFragment = nil  // graph shaders read a storage buffer: none for WebGL 2
             var descriptor = PipelineDescriptor(shader: shader, vertexLayout: key.skinned ? SkinnedMeshVertex.layout : MeshVertex.layout,
                                                 instanceLayout: MeshInstance.layout)
             descriptor.target = .depthOnly
@@ -1290,6 +1306,7 @@ public final class SceneRenderer {
             shader.metalFragmentColor0Source = probeFragment.metalFragmentColor0Source
             shader.spirvFragment = probeFragment.spirvFragment
             shader.wgslFragment = probeFragment.wgslFragment
+            shader.glesFragment = probeFragment.glesFragment
         }
         if let graph = key.graph {
             // The material graph's fragment stage (MaterialGraphCompiler) after the usual vertex stage.
@@ -1298,6 +1315,7 @@ public final class SceneRenderer {
             shader.metalFragmentColor0Source = program.metalFragmentColor0
             shader.spirvFragment = program.spirvFragment
             shader.wgslFragment = program.wgslFragment
+            shader.glesFragment = nil  // graph shaders read a storage buffer: none for WebGL 2
         }
         var descriptor = PipelineDescriptor(shader: shader, vertexLayout: key.skinned ? SkinnedMeshVertex.layout : MeshVertex.layout,
                                             instanceLayout: MeshInstance.layout)

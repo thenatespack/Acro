@@ -336,6 +336,12 @@ extension SceneRenderer {
                 state.volumes.append(FoundProbe(entity: entity, name: name(entity), settings: volume, frame: f, key: volume.bakeKey(frame: f)))
             }
         }
+        if !device.supportsStorageBuffers, !state.reflections.isEmpty || !state.volumes.isEmpty {
+            // The probe-lit shaders read the probes from a storage buffer, and baking computes.
+            warnUnavailable("Light probes (ReflectionProbe, IrradianceVolume)")
+            state.reflections.removeAll()
+            state.volumes.removeAll()
+        }
         guard !state.reflections.isEmpty || !state.volumes.isEmpty else {
             state.layout = nil
             state.buffer = nil
@@ -411,6 +417,7 @@ extension SceneRenderer {
 
     /// Binds the probe buffer (storage buffer 1) for the mesh shaders.
     func bindProbes(in pass: RenderPass) {
+        guard device.supportsStorageBuffers else { return }
         pass.setStorageBuffer(probes.buffer ?? probes.emptyBuffer, offset: 0, index: 1, stage: .fragment)
     }
 

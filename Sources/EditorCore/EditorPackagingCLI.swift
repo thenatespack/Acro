@@ -16,7 +16,8 @@ public enum EditorPackagingCLI {
                       [--textures compress|asImported] [--quality fast|normal|high] [--include <asset path or id>]...
                       [--uncompressed] [--out <dir>]
         Editor --build-game <project> [--scenes ...] [--config release|debug] [--arch x86_64|arm64] [--docker]
-                            [--platform linux|web] [--gpu bc|astc] [--textures ...] [--game <target>] [--out <dir>]
+                            [--platform linux|web] [--renderer auto|webgpu|webgl2] [--gpu bc|astc] [--textures ...]
+                            [--game <target>] [--out <dir>]
 
         --cook writes <out>/<name>.pack and <name>.manifest.json (default out: <project>/Build/<platform>-pack): every
         asset reachable from the scenes (default: Project.json "build.scenes"), textures compressed for the GPU family
@@ -26,7 +27,8 @@ public enum EditorPackagingCLI {
         runnable app to <out> (default <project>/Build/<platform>-<arch>, plus -debug for --config debug). --docker builds a
         Linux game in a Docker container (implies --platform linux; either --arch, from any machine). --platform web
         builds a static web folder (<out>/<name>/, default out <project>/Build/web) with the Swift SDK for WebAssembly
-        (see docs/wasm-spike.md); serve it with any web server and open it in a WebGPU browser.
+        (see docs/wasm-spike.md); serve it with any web server and open it in a browser. --renderer picks the renderer the
+        page starts with: auto (default: WebGPU, else WebGL 2), webgpu or webgl2.
         """
 
     /// Whether `arguments` (without the program name) ask for cooking or exporting.
@@ -53,6 +55,7 @@ public enum EditorPackagingCLI {
             var architecture = BuildArchitecture.current
             var useDocker = false
             var uncompressed = false
+            var renderer: WebRenderer?
             func value(_ flag: String) throws -> String {
                 guard let next = rest.popFirst() else { throw CLIError("\(flag) needs a value") }
                 return next
@@ -80,6 +83,7 @@ public enum EditorPackagingCLI {
                 case "--out": out = try value(flag)
                 case "--uncompressed": uncompressed = true
                 case "--game": game = try value(flag)
+                case "--renderer": renderer = try parse(flag, WebRenderer.self)
                 default: throw CLIError("Unknown option '\(flag)'\n\n\(usage)")
                 }
             }
@@ -108,6 +112,7 @@ public enum EditorPackagingCLI {
                                                        configuration: configuration, architecture: architecture)
                 if let textures { options.cook.textures = textures }
                 options.useDocker = useDocker
+                options.webRenderer = renderer
                 options.cook.textureQuality = quality
                 options.cook.include += include
                 let report = try GameExporter.prepare(database: database, options: options).run(progress: progress)
