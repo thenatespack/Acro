@@ -39,11 +39,11 @@ const RENDERER_KEY = "acro.renderer";
  * `renderer` ("webgpu", "webgl2" or "auto", from `?renderer=`) overrides the saved and configured choice.
  */
 export async function startPlayer({ canvas, status, args = [], env = [], probeFrames = 0, base = ".", renderer = undefined }) {
-  const show = (text) => { status.hidden = false; status.className = ""; status.textContent = text; };
+  const splash = new Splash(status);
+  // A stage of starting up (the bar sweeps), or with `{ busy: false }` a closing message.
+  const show = (text, { busy = true } = {}) => splash.stage(text, busy);
   const fail = (text) => {
-    status.hidden = false;
-    status.className = "error";
-    status.textContent = text;
+    splash.error(text);
     console.error(`[acro] ${text}`);
   };
   // Traps (Swift runtime errors) from frame callbacks surface as uncaught errors.
@@ -91,7 +91,7 @@ export async function startPlayer({ canvas, status, args = [], env = [], probeFr
     // The pack and the wasm download together, with a progress bar (`packSize` and `wasmSize`
     // in player.json give the totals when the server doesn't); the pack comes from the
     // browser's cache when this exact pack (`packHash`) was downloaded before.
-    const progress = new DownloadProgress(status);
+    const progress = new DownloadProgress(splash);
     // Compiled as it downloads (a stream only downloads as fast as it is read).
     const wasmResponse = progress.track(fetchOK(url(config.wasm)), config.wasmSize);
     const wasmModule = WebAssembly.compileStreaming
@@ -118,7 +118,7 @@ export async function startPlayer({ canvas, status, args = [], env = [], probeFr
       // The engine wrote or removed a file under /userdata: keep it in IndexedDB.
       onUserDataChange: () => userData.persist(),
       // (An error stays on screen.)
-      onExit: (code) => { if (!status.classList.contains("error")) show(code === 0 ? "The game has ended." : `The game exited (${code}).`); },
+      onExit: (code) => { if (!status.classList.contains("error")) show(code === 0 ? "The game has ended." : `The game exited (${code}).`, { busy: false }); },
       // Screenshots (ENGINE_SCREENSHOT, Engine.saveScreenshot) as PNG data URLs, by path.
       screenshots: {},
       onScreenshot: (path, width, height, rgba) => {
@@ -167,7 +167,7 @@ export async function startPlayer({ canvas, status, args = [], env = [], probeFr
     };
     // instantiate() runs `main`: it returns once the game has started (or failed: onError).
     await instantiate({ module: await wasmModule, wasi });
-    if (!status.classList.contains("error")) status.hidden = true;
+    if (!status.classList.contains("error")) splash.hide();
   } catch (error) {
     fail(error instanceof PlayerError ? error.message : `The game failed to start: ${error?.stack ?? error}`);
   }
@@ -355,18 +355,90 @@ async function storePack(cache, packURL, key, bytes) {
   }
 }
 
-function megabytes(bytes) { return `${(bytes / 1e6).toFixed(1)} MB`; }
+function megabytes(bytes, unit = true) { return `${(bytes / 1e6).toFixed(1)}${unit ? " MB" : ""}`; }
 
 /**
- * Download progress shown in the status box: a bar and "Downloading… 12.3 of 31.9 MB" over every
+ * The splash in `status` (Web/index.html): the Acro lockup over a stage label, an amount and a
+ * progress bar, or an error with a Reload button. It stays until the game has started, then fades
+ * out. A page without the splash markup gets plain text in `status` instead.
+ */
+class Splash {
+  constructor(status) {
+    this.status = status;
+    this.root = status.querySelector(".splash");
+    this.label = status.querySelector(".splash-label");
+    this.amount = status.querySelector(".splash-amount");
+    this.track = status.querySelector(".splash-track");
+    this.bar = status.querySelector(".splash-bar");
+    this.message = status.querySelector(".splash-message");
+    this.plain = !(this.root && this.label && this.amount && this.track && this.bar && this.message);
+  }
+
+  /** A stage of starting up: the bar sweeps while `busy`, and is hidden otherwise. */
+  stage(text, busy = true) {
+    if (this.failed) return;
+    this.reveal();
+    if (this.plain) { this.status.textContent = text; return; }
+    this.root.classList.toggle("busy", busy);
+    this.root.classList.toggle("idle", !busy);
+    this.label.textContent = text;
+    this.amount.textContent = "";
+    this.bar.style.width = "";
+    this.track.removeAttribute("aria-valuenow");
+  }
+
+  /** Download progress: `loaded` of `total` bytes (0: unknown). */
+  progress(loaded, total) {
+    if (this.failed) return;
+    this.reveal();
+    if (this.plain) {
+      this.status.textContent = total ? `Downloading… ${megabytes(loaded)} of ${megabytes(total)}` : `Downloading… ${megabytes(loaded)}`;
+      return;
+    }
+    const fraction = total ? Math.min(loaded / total, 1) : 0;
+    this.root.classList.toggle("busy", !total);
+    this.root.classList.remove("idle");
+    this.label.textContent = total ? `Downloading · ${Math.floor(fraction * 100)}%` : "Downloading";
+    this.amount.textContent = total ? `${megabytes(loaded, false)} / ${megabytes(total)}` : megabytes(loaded);
+    this.bar.style.width = total ? `${(fraction * 100).toFixed(1)}%` : "";
+    if (total) this.track.setAttribute("aria-valuenow", String(Math.round(fraction * 100)));
+  }
+
+  /** Shows `text` as the reason the game stopped; later stages don't replace it. */
+  error(text) {
+    this.failed = true;
+    this.reveal();
+    this.status.classList.add("error");
+    if (this.plain) { this.status.textContent = text; return; }
+    this.message.textContent = text;
+    // Stacks and engine traces read better in monospace; sentences for people don't.
+    this.message.classList.toggle("code", /\n\s+at |@|\.swift:\d|\n {2,}\S/.test(text));
+  }
+
+  /** Fades the splash out over the running game. */
+  hide() {
+    if (this.failed) return;
+    this.status.classList.add("leaving");
+    const done = () => { if (this.status.classList.contains("leaving")) this.status.hidden = true; };
+    this.status.addEventListener("transitionend", done, { once: true });
+    setTimeout(done, 600);  // (no transition with reduced motion)
+  }
+
+  reveal() {
+    this.status.hidden = false;
+    this.status.classList.remove("leaving");
+  }
+}
+
+/**
+ * Download progress shown on the splash: its bar and "Downloading · 12.3 / 31.9 MB" over every
  * download it tracks. Totals come from the caller (player.json) or the response's Content-Length
  * when it isn't compressed in transit. `acro.download` has the numbers ({ loaded, total }).
  */
 class DownloadProgress {
-  constructor(status) {
-    this.status = status;
+  constructor(splash) {
+    this.splash = splash;
     this.downloads = [];
-    this.view = undefined;
     this.shown = 0;
     this.done = false;
   }
@@ -453,32 +525,7 @@ class DownloadProgress {
     const now = performance.now();
     if (this.done || (!force && now - this.shown < 100)) return;
     this.shown = now;
-    if (!this.view || !this.status.contains(this.view.box)) this.view = this.makeView();
-    const fraction = total ? Math.min(loaded / total, 1) : 0;
-    this.view.label.textContent = total ? `Downloading… ${megabytes(loaded)} of ${megabytes(total)}` : `Downloading… ${megabytes(loaded)}`;
-    this.view.bar.style.width = `${(fraction * 100).toFixed(1)}%`;
-    this.view.track.setAttribute("aria-valuenow", String(Math.round(fraction * 100)));
-  }
-
-  makeView() {
-    const status = this.status;
-    status.hidden = false;
-    status.className = "";
-    status.textContent = "";
-    const box = document.createElement("div");
-    box.style.cssText = "width: min(420px, 80vw)";
-    const label = document.createElement("div");
-    const track = document.createElement("div");
-    track.setAttribute("role", "progressbar");
-    track.setAttribute("aria-valuemin", "0");
-    track.setAttribute("aria-valuemax", "100");
-    track.style.cssText = "margin-top: 10px; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.15); overflow: hidden";
-    const bar = document.createElement("div");
-    bar.style.cssText = "height: 100%; width: 0; background: currentColor";
-    track.append(bar);
-    box.append(label, track);
-    status.append(box);
-    return { box, label, track, bar };
+    this.splash.progress(loaded, total);
   }
 }
 

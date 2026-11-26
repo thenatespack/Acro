@@ -3,25 +3,113 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0A0A0F">
 <title>Acro Player</title>
-<link rel="icon" href="data:,">
+<!-- The Apex Split mark (logos/schemes/arcade/split-duo-icon.svg) as the tab icon. -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='50 50 412 412'%3E%3Crect x='50' y='50' width='412' height='412' rx='92' fill='%2314141C'/%3E%3Cmask id='a'%3E%3Crect width='512' height='512' fill='white'/%3E%3Cpolygon points='256,230.9 291.4,302 220.6,302'/%3E%3Cpolygon points='195.8,352 316.2,352 350.5,421 161.5,421'/%3E%3Crect x='244' width='24' height='512'/%3E%3C/mask%3E%3Cg mask='url(%23a)' transform='translate(256 266) scale(0.78) translate(-256 -253)'%3E%3Cpolygon points='256,86 90,420 256,420' fill='%23FFE14D'/%3E%3Cpolygon points='256,86 256,420 422,420' fill='%2322C7F0'/%3E%3C/g%3E%3C/svg%3E">
 <!-- The loader imports the WASI shim by its package name; Scripts/web-player.sh copies it to vendor/. -->
 <script type="importmap">
 { "imports": { "@bjorn3/browser_wasi_shim": "./vendor/browser_wasi_shim/index.js" } }
 </script>
 <style>
-  html, body { margin: 0; height: 100%; background: #000; color: #ddd; font: 15px/1.4 system-ui, sans-serif; overflow: hidden; }
+  /* Inter, the engine's UI typeface, ships with the engine resources (engine/Fonts/). */
+  @font-face { font-family: "Inter"; src: url("engine/Fonts/Inter-Regular.ttf") format("truetype"); font-display: swap; }
+  :root {
+    --ink: #0A0A0F; --tile: #1E1E28; --glow: #3A3A55;
+    --lit: #FFE14D; --shade: #22C7F0; --accent: #FF3E8A;
+    --text: #ECECF4; --muted: #8E8EA6; --track: rgba(255, 255, 255, 0.09);
+  }
+  html, body { margin: 0; height: 100%; background: var(--ink); color: var(--text); overflow: hidden;
+               font: 14px/1.45 "Inter", system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
   #game { display: block; width: 100vw; height: 100vh; outline: none; }
-  #status { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center;
-            padding: 24px; white-space: pre-wrap; pointer-events: none; }
-  #status.error { color: #ff8a80; align-items: flex-start; justify-content: flex-start; text-align: left;
-                  font-family: ui-monospace, Menlo, monospace; font-size: 13px; background: rgba(0, 0, 0, 0.85); pointer-events: auto; }
+
+  /* The splash: the Acro lockup, a stage label and a progress bar, over the canvas until the game draws. */
+  #status { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px;
+            background: radial-gradient(ellipse 60% 50% at 50% 42%, rgba(58, 58, 85, 0.35), transparent 70%), var(--ink);
+            transition: opacity 0.45s ease, visibility 0s linear 0s; }
+  #status.leaving { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.45s ease, visibility 0s linear 0.45s; }
   #status[hidden] { display: none; }
+  .splash { width: min(360px, 100%); display: flex; flex-direction: column; align-items: center; }
+  .splash-lockup { display: flex; align-items: center; gap: 18px; margin-bottom: 44px; }
+  .splash-mark { width: 64px; height: 64px; overflow: visible; filter: drop-shadow(0 6px 22px rgba(34, 199, 240, 0.18)); }
+  .splash-mark .lit { animation: lit 2.4s ease-in-out infinite; }
+  .splash-mark .shade { animation: shade 2.4s ease-in-out infinite; }
+  @keyframes lit { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(-5px); } }
+  @keyframes shade { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(5px); } }
+  .splash-wordmark { height: 34px; width: auto; }
+  .splash-row { width: 100%; display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+                font-size: 13px; color: var(--muted); min-height: 19px; }
+  .splash-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .splash-amount { font-variant-numeric: tabular-nums; color: var(--text); white-space: nowrap; }
+  .splash-track { position: relative; width: 100%; height: 4px; margin-top: 10px; border-radius: 2px;
+                  background: var(--track); overflow: hidden; }
+  .splash-bar { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 2px;
+                background: linear-gradient(90deg, var(--lit), var(--shade));
+                box-shadow: 0 0 12px rgba(34, 199, 240, 0.45); transition: width 0.15s linear; }
+  /* No numbers yet (starting the GPU, starting the game): a segment sweeps across. */
+  .splash.busy .splash-bar { width: 32%; transition: none; animation: sweep 1.3s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+  @keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(320%); } }
+  .splash.idle .splash-track { visibility: hidden; }
+  .splash-error { display: none; max-width: 100%; }
+
+  /* Errors: the lockup stays, the bar gives way to the message and a reload button. */
+  #status.error .splash { width: min(560px, 100%); }
+  #status.error .splash-mark .lit, #status.error .splash-mark .shade { animation: none; }
+  #status.error .splash-row, #status.error .splash-track { display: none; }
+  #status.error .splash-error { display: block; }
+  .splash-error h1 { margin: 0 0 8px; font-size: 16px; font-weight: 600; color: var(--text); }
+  .splash-error h1::before { content: ""; display: inline-block; width: 8px; height: 8px; margin: 0 10px 2px 0;
+                             border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+  .splash-message { margin: 0; max-height: 40vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+                    color: #C4C4D4; user-select: text; }
+  .splash-message.code { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 12px 14px;
+                         border-radius: 8px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.07); }
+  .splash-error button { margin-top: 18px; font: inherit; font-size: 13px; color: var(--ink); background: var(--text);
+                         border: 0; border-radius: 8px; padding: 8px 16px; cursor: pointer; }
+  .splash-error button:hover { background: #fff; }
+  .splash-error button:focus-visible { outline: 2px solid var(--shade); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) {
+    .splash-mark .lit, .splash-mark .shade { animation: none; }
+    .splash.busy .splash-bar { animation: none; width: 100%; opacity: 0.35; }
+    #status, #status.leaving { transition: none; }
+  }
+  @media (max-width: 420px) {
+    .splash-lockup { gap: 14px; margin-bottom: 34px; }
+    .splash-mark { width: 52px; height: 52px; }
+    .splash-wordmark { height: 28px; }
+  }
 </style>
 </head>
 <body>
 <canvas id="game" tabindex="0"></canvas>
-<div id="status">Loading…</div>
+<div id="status">
+  <div class="splash busy" role="status" aria-live="polite">
+    <div class="splash-lockup" aria-label="Acro">
+      <!-- Apex Split, two-tone (logos/schemes/arcade/split-duo-icon.svg); the halves breathe while loading. -->
+      <svg class="splash-mark" viewBox="80 76 352 354" aria-hidden="true">
+        <mask id="splash-a"><rect width="512" height="512" fill="white"/>
+          <polygon points="256,230.9 291.4,302 220.6,302" fill="black"/>
+          <polygon points="195.8,352 316.2,352 350.5,421 161.5,421" fill="black"/>
+          <rect x="248" y="0" width="16" height="512" fill="black"/></mask>
+        <g class="lit"><polygon mask="url(#splash-a)" points="256,86 90,420 256,420" fill="#FFE14D"/></g>
+        <g class="shade"><polygon mask="url(#splash-a)" points="256,86 256,420 422,420" fill="#22C7F0"/></g>
+      </svg>
+      <!-- The Monoline "acro" (logos/finalists/split-lockup-dark.svg), drawn from strokes: no font needed. -->
+      <svg class="splash-wordmark" viewBox="-76 -76 616 152" aria-hidden="true">
+        <g fill="none" stroke="#ECECF4" stroke-width="32" stroke-linecap="round">
+          <circle cx="58" cy="0" r="58"/><line x1="116" y1="-58" x2="116" y2="58"/>
+          <path d="M 259 -41 A 58 58 0 1 0 259 41"/>
+          <line x1="303" y1="-58" x2="303" y2="58"/><path d="M 303 -2 Q 307 -58 361 -58"/>
+        </g>
+        <circle cx="463" cy="0" r="58" fill="none" stroke="#22C7F0" stroke-width="32"/>
+      </svg>
+    </div>
+    <div class="splash-row"><span class="splash-label">Loading…</span><span class="splash-amount"></span></div>
+    <div class="splash-track" role="progressbar" aria-label="Loading" aria-valuemin="0" aria-valuemax="100"><div class="splash-bar"></div></div>
+    <div class="splash-error"><h1>The game couldn't run</h1><p class="splash-message"></p>
+      <button type="button" onclick="location.reload()">Reload</button></div>
+  </div>
+</div>
 <script type="module">
   import { startPlayer } from "./loader.js";
   // Query options: ?scene=<path> starts another cooked scene, ?args=<a,b,...> passes player
