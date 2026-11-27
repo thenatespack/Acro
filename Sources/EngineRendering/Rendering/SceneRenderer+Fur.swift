@@ -1,10 +1,15 @@
 /// Fur (Groom.swift): `syncGroomMeshes` builds each `GroomRenderer`'s fur meshes from its entity's
-/// mesh the first time the pair is drawn (and again when the groom's geometry changes), and fur
-/// materials draw with mesh_fur(_skinned).vert and mesh_fur.frag, their uniform buffer 2 the fur
+/// mesh on a background job the first time the pair is drawn (and again when the groom's geometry
+/// changes), swapping them in once built, and fur materials draw with mesh_fur(_skinned / _sim).vert and mesh_fur.frag, their uniform buffer 2 the fur
 /// block (fur.glsl). Fur casters (a few shells, or the cards; `RenderPrep.appendFur`) draw into the
 /// shadow atlas with mesh_fur_depth(_skinned).vert and mesh_fur_depth.frag, cut to their strands;
 /// fur is left out of the depth prepass. Shells and fins are alpha blended in the transparent pass
-/// (their coverage is filtered, fur_strands.glsl); cards use alpha-to-coverage.
+/// (their coverage is filtered, fur_strands.glsl); cards use hashed alpha. Simulated hair: SceneRenderer+HairSim.swift.
+#if os(WASI)
+import WASIFoundation
+#else
+import Foundation
+#endif
 import EngineAssets
 import EngineCore
 import EngineGraphics
@@ -15,10 +20,63 @@ extension SceneRenderer {
     struct FurMeshes {
         var tag: String
         var keys: [String]
+        /// The hair's simulation rig (cards).
+        var rig: HairRig?
+    }
+
+    /// The fur meshes of one (material, mesh) pair, built by a background job.
+    final class FurBuild: @unchecked Sendable {
+        struct Result {
+            var meshes: [(key: String, geometry: MeshGeometry)]
+            var rig: HairRig?
+            var seconds: Double
+        }
+
+        let tag: String
+        private let lock = NSLock()
+        private var result: Result?
+        private(set) var job: JobHandle?
+
+        init(tag: String, base: String, geometry: MeshGeometry, fur: MaterialFur, jobs: JobSystem) {
+            self.tag = tag
+            job = jobs.schedule("fur meshes", priority: .background) { [self] in
+                let built = Self.build(base: base, geometry: geometry, fur: fur)
+                lock.withLock { result = built }
+            }
+        }
+
+        /// The shell mesh, the fins (shells) or the card levels (cards) and the hair's rig.
+        static func build(base: String, geometry: MeshGeometry, fur: MaterialFur) -> Result {
+            let start = ContinuousClock.now
+            var meshes: [(String, MeshGeometry)] = []
+            var rig: HairRig?
+            let shells = GroomGeometry.shells(geometry, fur: fur)
+            if let shells { meshes.append((GroomRenderer.meshKey("shell", tag: fur.tag, base: base), shells)) }
+            if fur.groom.drawnStyle == .shell, let shells, let fins = GroomFins.fins(shells, spacing: fur.groom.strandSpacing) {
+                meshes.append((GroomRenderer.meshKey("fins", tag: fur.tag, base: base), fins))
+            }
+            if fur.groom.drawnStyle == .cards {
+                let guides = GroomGeometry.guides(geometry, fur: fur).guides
+                for (level, fraction) in fur.groom.cardLevels.enumerated() {
+                    if let cards = GroomGeometry.cards(guides: guides, fur: fur, fraction: fraction, skinned: geometry.skin != nil) {
+                        meshes.append((GroomRenderer.meshKey("cards\(level)", tag: fur.tag, base: base), cards))
+                    }
+                }
+                if !guides.isEmpty { rig = HairRig(guides: guides, fur: fur, base: geometry) }
+            }
+            let d = ContinuousClock.now - start
+            return Result(meshes: meshes, rig: rig, seconds: Double(d.components.seconds) + Double(d.components.attoseconds) * 1e-18)
+        }
+
+        /// The meshes, once built.
+        var built: Result? { lock.withLock { result } }
     }
 
     /// Builds the fur meshes the world's `GroomRenderer`s need (see the notes at the top of
-    /// Groom.swift), resolving their fur materials and base meshes first.
+    /// Groom.swift) on background jobs, resolving their fur materials and base meshes first, and
+    /// registers them once built (the frame after, at the earliest; at once with
+    /// `blocksOnAssetLoading` or without `buildsFurInBackground`). Until then a new groom draws
+    /// nothing and an edited one keeps its old meshes (`RenderPrep.furTags`).
     func syncGroomMeshes(_ world: World) {
         guard world.existingStore(GroomRenderer.self) != nil else { return }
         var wanted: [(base: String, material: String)] = []
@@ -32,32 +90,38 @@ extension SceneRenderer {
             guard let material = material(MaterialHandle(materialKey)), let fur = material.fur else { continue }
             let pair = materialKey + "|" + base
             if furMeshes[pair]?.tag == fur.tag { continue }
-            guard let geometry = geometry(MeshHandle(base)), !geometry.indices.isEmpty else { continue }
-            for key in furMeshes[pair]?.keys ?? [] { unregisterMesh(key: key) }
-            var keys: [String] = []
-            func register(_ made: MeshGeometry?, _ key: String) {
-                guard let made else { return }
-                do {
-                    try registerMesh(made, key: key)
-                    keys.append(key)
-                } catch {
-                    print("SceneRenderer: fur mesh '\(key)' failed: \(error)")
+            if furBuilds[pair]?.tag != fur.tag {
+                guard let geometry = geometry(MeshHandle(base)), !geometry.indices.isEmpty else { continue }
+                if buildsFurInBackground && !blocksOnAssetLoading {
+                    furBuilds[pair] = FurBuild(tag: fur.tag, base: base, geometry: geometry, fur: fur, jobs: prep.jobs)
+                } else {
+                    registerFur(FurBuild.build(base: base, geometry: geometry, fur: fur), pair: pair, tag: fur.tag)
+                    continue
                 }
             }
-            let shells = GroomGeometry.shells(geometry, fur: fur)
-            register(shells, GroomRenderer.meshKey("shell", tag: fur.tag, base: base))
-            if fur.groom.drawnStyle == .shell, let shells {
-                register(GroomFins.fins(shells, spacing: fur.groom.strandSpacing), GroomRenderer.meshKey("fins", tag: fur.tag, base: base))
-            }
-            if fur.groom.drawnStyle == .cards {
-                let guides = GroomGeometry.guides(geometry, fur: fur).guides
-                for (level, fraction) in fur.groom.cardLevels.enumerated() {
-                    register(GroomGeometry.cards(guides: guides, fur: fur, fraction: fraction, skinned: geometry.skin != nil),
-                             GroomRenderer.meshKey("cards\(level)", tag: fur.tag, base: base))
-                }
-            }
-            furMeshes[pair] = FurMeshes(tag: fur.tag, keys: keys)
+            guard let build = furBuilds[pair] else { continue }
+            if blocksOnAssetLoading, let job = build.job { prep.jobs.wait(job) }
+            guard let result = build.built else { continue }
+            furBuilds[pair] = nil
+            registerFur(result, pair: pair, tag: fur.tag)
         }
+    }
+
+    /// Swaps in the fur meshes built for `pair`.
+    private func registerFur(_ result: FurBuild.Result, pair: String, tag: String) {
+        for key in furMeshes[pair]?.keys ?? [] { unregisterMesh(key: key) }
+        var keys: [String] = []
+        for (key, made) in result.meshes {
+            do {
+                try registerMesh(made, key: key)
+                keys.append(key)
+            } catch {
+                print("SceneRenderer: fur mesh '\(key)' failed: \(error)")
+            }
+        }
+        furMeshes[pair] = FurMeshes(tag: tag, keys: keys, rig: result.rig)
+        prep.furTags[pair] = tag
+        furBuildSeconds = result.seconds
     }
 
     /// Vec4s of the fur block before the skin (fur.glsl): the material (8) and the groom (8).
@@ -113,12 +177,13 @@ extension SceneRenderer {
         furBlockScratch.withUnsafeBytes { pass.setUniformData($0, index: 2, stage: .all) }
     }
 
-    /// The fur shader: mesh_fur(_skinned).vert with mesh_fur.frag.
-    func furShader(skinned: Bool) -> ShaderSource? {
-        if let shader = furShaders[skinned] { return shader }
+    /// The fur shader: mesh_fur(_skinned / _sim).vert with mesh_fur.frag.
+    func furShader(skinned: Bool, simulated: Bool = false) -> ShaderSource? {
+        let vertex = skinned ? "mesh_fur_skinned" : simulated ? "mesh_fur_sim" : "mesh_fur"
+        if let shader = furShaders[vertex] { return shader }
         do {
-            let shader = try ShaderSource.load(vertex: skinned ? "mesh_fur_skinned" : "mesh_fur", fragment: "mesh_fur", bundle: .engineResources)
-            furShaders[skinned] = shader
+            let shader = try ShaderSource.load(vertex: vertex, fragment: "mesh_fur", bundle: .engineResources)
+            furShaders[vertex] = shader
             return shader
         } catch {
             print("SceneRenderer: fur shader unavailable: \(error)")

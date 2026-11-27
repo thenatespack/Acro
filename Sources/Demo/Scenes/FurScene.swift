@@ -19,7 +19,11 @@ import Foundation
 /// Environment: `FUR_VIEW=hair|hairfront|hairside|hairback|creature|moss` shows a close-up, `FUR_HAIR=bob` (any hairstyle
 /// preset) changes the hair, `FUR_TIMING=1` prints how long the hair's guides and cards take to build, `FUR_OFF=1` hides every
 /// groom (the before picture for GPU timing), `FUR_SUN=back` backlights,
-/// `FUR_WIND=0` stills the air. The title lists draws and items.
+/// `FUR_WIND=0` stills the air, `FUR_SHAKE=1` turns the humanoid sharply side to side every few
+/// seconds (holding still between, so its hair swings and settles), `FUR_SIM=0` bends the hair
+/// with the old springs instead of simulating it, `FUR_SYNC=1` builds the fur meshes on the
+/// render thread, `FUR_PX_PER_SHELL=<n>` sets the shell fur's pixels per shell. With `FUR_TIMING=1` the scene doesn't wait for assets and prints the first
+/// frames' render prep time and the hair simulation's cost. The title lists draws and items.
 final class FurScene: DemoScene {
     static let name = "fur"
     static let summary = "Groom Builder fur and hair: shell fur on an animated creature, hair cards, moss in wind"
@@ -32,10 +36,21 @@ final class FurScene: DemoScene {
     private var cameraEntity = Entity.invalid
     private var orbit: (eye: Vec3, target: Vec3)?
     private static let sky = Vec3(0.62, 0.7, 0.82)
+    /// `FUR_SHAKE=1`: the humanoid's root, where it stands and its yaw, and the clock.
+    private var shake: (root: Entity, position: Vec3, yaw: Float)?
+    private var shakeTime: Float = 0
+    private let timing = ProcessInfo.processInfo.environment["FUR_TIMING"] == "1"
+    private var frameIndex = 0
+    private var simulationTotal: Double = 0
+    private var slowestPrep: (ms: Double, frame: Int) = (0, 0)
 
     init(renderer: Renderer) throws {
         let env = ProcessInfo.processInfo.environment
         sceneRenderer = try SceneRenderer(device: renderer.device, quality: renderer.quality)
+        sceneRenderer.simulatesHair = env["FUR_SIM"] != "0"
+        sceneRenderer.buildsFurInBackground = env["FUR_SYNC"] != "1"
+        if env["FUR_TIMING"] == "1" { sceneRenderer.blocksOnAssetLoading = false }
+        if let pixels = env["FUR_PX_PER_SHELL"].flatMap(Float.init) { sceneRenderer.furPixelsPerShell = pixels }
         SkeletalAnimation.registerComponents()
 
         // The grooms, imported like a project's.
@@ -80,8 +95,10 @@ final class FurScene: DemoScene {
             let guides = GroomGeometry.guides(scalpMesh, fur: fur).guides
             let grown = Date()
             let triangles = hair.cardLevels.reduce(0) { $0 + (GroomGeometry.cards(guides: guides, fur: fur, fraction: $1, skinned: false)?.indices.count ?? 0) / 3 }
-            print(String(format: "Fur: hair guides %.1f ms (%d guides), cards %.1f ms (%d triangles over %d levels)",
-                         grown.timeIntervalSince(start) * 1000, guides.count, Date().timeIntervalSince(grown) * 1000, triangles, hair.cardLevels.count))
+            let leaders = guides.indices.filter { guides[$0].clump == $0 || guides[$0].clump < 0 && guides[$0].layer != .inner }.count
+            print(String(format: "Fur: hair guides %.1f ms (%d guides, %d simulated), cards %.1f ms (%d triangles over %d levels)",
+                         grown.timeIntervalSince(start) * 1000, guides.count, leaders, Date().timeIntervalSince(grown) * 1000, triangles,
+                         hair.cardLevels.count))
         }
 
         cameraEntity = world.spawn(Transform.looking(from: Vec3(0, 1.4, 4.2), at: Vec3(0, 0.6, 0)),
@@ -107,6 +124,9 @@ final class FurScene: DemoScene {
         let clipName = env["FUR_HUMAN_CLIP"] ?? "idle"
         let idle = CharacterClips.clip(clipName, rig: humanoid).map { library.register($0, key: "fur.humanoid.\(clipName)") }
         let bones = spawnCharacter(humanoid, prefix: "fur.humanoid", at: Vec3(0.35, 0, -0.2), yaw: -0.25, clip: idle, grooms: [:])
+        if env["FUR_SHAKE"] == "1", let first = bones.first, let root = world.parent(of: first) {
+            shake = (root, Vec3(0.35, 0, -0.2), -0.25)
+        }
         if let head = humanoid.index(of: "head") {
             // The scalp mesh is in the head bone's space (the old ball head's sat 0.12 above it).
             let scalp = world.spawn(Transform(position: humanoid.humanScalp == nil ? Vec3(0, 0.12, 0.01) : .zero), Name("Scalp"),
@@ -204,7 +224,26 @@ final class FurScene: DemoScene {
     }
 
     func update(input: Input, dt: Float, time: Float) {
+        if let shake {
+            shakeTime += dt
+            let (turn, step) = Self.shakePose(shakeTime)
+            world.add(Transform(position: shake.position + Vec3(step, 0, 0), rotation: Quat(angle: shake.yaw + turn, axis: Vec3(0, 1, 0))),
+                      to: shake.root)
+        }
         world.update(dt: Double(dt))
+    }
+
+    /// `FUR_SHAKE`: still for a second, then every 3 s a sharp turn of 1.1 rad (and a 10 cm step)
+    /// in 0.3 s, held for 1.2 s, and back the same way.
+    static func shakePose(_ t: Float) -> (turn: Float, step: Float) {
+        guard t > 1 else { return (0, 0) }
+        let u = (t - 1).truncatingRemainder(dividingBy: 3)
+        func ease(_ x: Float) -> Float {
+            let c = min(max(x, 0), 1)
+            return c * c * (3 - 2 * c)
+        }
+        let k = u < 1.5 ? ease(u / 0.3) : 1 - ease((u - 1.5) / 0.3)
+        return (1.1 * k, 0.1 * k)
     }
 
     func renderOffscreen(engine: Engine, frame: Frame) {
@@ -213,6 +252,18 @@ final class FurScene: DemoScene {
             world.propagateTransforms()
         }
         sceneRenderer.renderOffscreen(world: world, engine: engine, frame: frame)
+        if timing {
+            frameIndex += 1
+            simulationTotal += sceneRenderer.hairSimulationSeconds
+            if sceneRenderer.stats.prepareTime * 1000 > slowestPrep.ms { slowestPrep = (sceneRenderer.stats.prepareTime * 1000, frameIndex) }
+            if frameIndex == 200 { print(String(format: "Fur: slowest render prep %.2f ms (frame %d)", slowestPrep.ms, slowestPrep.frame)) }
+            if frameIndex <= 6 || sceneRenderer.furBuildSeconds > 0 && frameIndex % 100 == 0 {
+                print(String(format: "Fur: frame %d render prep %.2f ms (hair simulation %.3f ms, last fur build %.1f ms%@)", frameIndex,
+                             sceneRenderer.stats.prepareTime * 1000, sceneRenderer.hairSimulationSeconds * 1000,
+                             sceneRenderer.furBuildSeconds * 1000, frameIndex % 100 == 0
+                                 ? String(format: ", simulation mean %.3f ms", simulationTotal / Double(frameIndex) * 1000) : ""))
+            }
+        }
     }
 
     func drawShadowCasters(_ pass: RenderPass) {}

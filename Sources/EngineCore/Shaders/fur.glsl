@@ -3,7 +3,9 @@
 // by mesh_fur_depth(_skinned).vert, the shadow atlas's fur casters (only the position and what
 // fur_strands.glsl needs; `Frame` is then the shadow pass's two matrices). Not compiled on its
 // own; rerun Scripts/compile-shaders.sh after editing it. Pairs with mesh_fur.frag /
-// mesh_fur_depth.frag.
+// mesh_fur_depth.frag. mesh_fur_sim.vert defines SIMULATED: simulated hair cards
+// (HairSimulation.swift), their vertices already in world space (identity model) and last
+// frame's position in attribute 14 (the `VertexPaint` stream) for the motion vectors.
 //
 // Uniform buffer 2 (both stages; must match `SceneRenderer.furBlock`): the material (padded to
 // 8 vec4, unused here), the groom's numbers, and for skinned meshes a spring offset per joint and
@@ -18,7 +20,8 @@
 // - fur[7]: x the pass's MSAA sample count, y a frame counter (mod 64; card dithering).
 //
 // Instances (MeshInstance): color rgb the GroomRenderer's tint, color w the item's shell count
-// (shells; mesh_fur.frag thins out alike shells), params.x receives shadows, params.y the shell's height (0...1 of the
+// (shells; mesh_fur.frag thins out alike shells; its fraction the opacity boost of shells drawn
+// for several, `RenderPrep.appendFur`) or -1 for simulated cards (nothing bends them here), params.x receives shadows, params.y the shell's height (0...1 of the
 // length; 0 the undercoat just above the surface; 2 for fins, GroomFins, whose vertices carry
 // their height in UV y and their strand coordinate in UV x), params.zw a rigid entity's spring lag in
 // world X and Z (meters). Shell vertices carry the comb vector in tangent.xyz (mesh space) and
@@ -61,6 +64,9 @@ layout(location = 13) in vec4 inTangent;
 #ifdef SKINNED
 layout(location = 14) in vec4 inJoints;
 layout(location = 15) in vec4 inWeights;
+#endif
+#ifdef SIMULATED
+layout(location = 14) in vec4 inPrevious;     // last frame's world position (xyz)
 #endif
 
 #ifndef FUR_DEPTH
@@ -140,7 +146,9 @@ vec3 furPosition(mat4 model, float time, out vec3 strand) {
     vec3 n = normalize(cofactor * inNormal * handedness);
     float bendable = furData.fur[2].x;
     bool cards = furData.fur[3].w > 0.5;
-    precise vec3 dynamic = (furWind(model[3].xyz, time) + springLag() / max(furData.fur[0].x, 1e-3)) * bendable;
+    // Simulated cards (color w -1) are already where the simulation put them.
+    float animated = inColor.w < -0.5 ? 0.0 : 1.0;
+    precise vec3 dynamic = (furWind(model[3].xyz, time) + springLag() / max(furData.fur[0].x, 1e-3)) * (bendable * animated);
     if (cards) {
         // Cards are grown already: only wind and motion bend them, more toward the tip.
         float v = inUV.y;
@@ -193,7 +201,11 @@ void main() {
     previousModel = previousModel * previousSkinMatrix();
 #endif
     vec3 previousStrand;
+#ifdef SIMULATED
+    precise vec3 previousWorld = inPrevious.xyz;
+#else
     precise vec3 previousWorld = furPosition(previousModel, furData.fur[6].y, previousStrand);
+#endif
     vec3 a = model[0].xyz, b = model[1].xyz, c = model[2].xyz;
     mat3 cofactor = mat3(cross(b, c), cross(c, a), cross(a, b));
     float handedness = dot(cross(a, b), c) < 0.0 ? -1.0 : 1.0;

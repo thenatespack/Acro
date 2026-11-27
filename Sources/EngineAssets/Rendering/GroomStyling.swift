@@ -156,8 +156,8 @@ struct GroomShaper {
 }
 
 /// Closest-point queries on a mesh's triangles through a uniform grid.
-final class GroomSurface {
-    struct Hit {
+package final class GroomSurface {
+    package struct Hit {
         var point: Vec3
         /// The smooth (vertex) normal there.
         var normal: Vec3
@@ -183,7 +183,7 @@ final class GroomSurface {
     private var stamps: [UInt32]
     private var stamp: UInt32 = 0
 
-    init(_ base: MeshGeometry, cell requested: Float) {
+    package init(_ base: MeshGeometry, cell requested: Float) {
         positions = base.vertices.map(\.position)
         normals = base.vertices.map(\.normal)
         var tris: [SIMD3<Int32>] = []
@@ -254,7 +254,7 @@ final class GroomSurface {
     private func index(_ x: Int32, _ y: Int32, _ z: Int32) -> Int { (Int(z) * Int(dims.y) + Int(y)) * Int(dims.x) + Int(x) }
 
     /// The closest point on the mesh within `radius` of `p`.
-    func closest(_ p: Vec3, within radius: Float) -> Hit? {
+    package func closest(_ p: Vec3, within radius: Float) -> Hit? {
         guard !triangles.isEmpty else { return nil }
         // Outside the mesh's bounds by more than the radius: nothing near.
         let top = origin + Vec3(Float(dims.x), Float(dims.y), Float(dims.z)) * cell
@@ -300,7 +300,7 @@ final class GroomSurface {
 
     /// Moves `p` out to `offset` above the surface when it is below that and the surface is right
     /// under it (not off an open edge). Returns the surface normal when it pushed.
-    func pushOut(_ p: inout Vec3, offset: Float, within radius: Float) -> Vec3? {
+    package func pushOut(_ p: inout Vec3, offset: Float, within radius: Float) -> Vec3? {
         guard let hit = closest(p, within: radius) else { return nil }
         let v = p - hit.point
         let d = dot(v, hit.faceNormal)
@@ -344,7 +344,7 @@ final class GroomSurface {
 
 extension GroomCollider {
     /// Moves `p` out to `offset` outside the shape; returns the outward direction when it pushed.
-    func pushOut(_ p: inout Vec3, offset: Float) -> Vec3? {
+    package func pushOut(_ p: inout Vec3, offset: Float) -> Vec3? {
         if let end {
             let q = GroomShaper.closestOnSegment(p, center, end)
             let v = p - q

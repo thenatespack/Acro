@@ -268,7 +268,14 @@ void main() {
     float along, strandRandom, exposed, blur;
     uint sampleMask = 0xFFFFFFFFu;
     float alpha = furCoverage(1.0, along, strandRandom, exposed, blur);
-    float shells = vColor.w;
+    // The shells drawn; in the fraction, how many of the groom's each stands for
+    // (`RenderPrep.furShellCode`): fewer shells drawn by screen size, each that much more opaque.
+    float shells = floor(vColor.w);
+    float code = vColor.w - shells;
+    if (!cards && !fin && !undercoat && code > 0.005) {
+        float boost = 1.0 + (code - 0.01) / 0.98 * 8.0;
+        alpha = 1.0 - pow(1.0 - min(alpha, 0.999), boost);
+    }
     // (Not toward the silhouette, where each shell shows as its own outline.)
     if (!cards && !fin && !undercoat && blur > 0.5 && shells >= 8.0 && abs(dot(normalize(vNormal), v)) > 0.45) {
         // Where the shells have blended into their (alike) average, only every 2nd (4th, for

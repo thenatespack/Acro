@@ -144,6 +144,12 @@ public struct RenderPrep {
     var furSpringState: [Entity: FurSprings] = [:]
     public internal(set) var furSkinSprings: [Int: [Vec4]] = [:]
     var furFrame = 0
+    /// The tag of the fur meshes registered per "material|mesh" pair (`SceneRenderer.syncGroomMeshes`).
+    var furTags: [String: String] = [:]
+    /// Pixels per meter at 1 m from the camera (projection y scale x half the render height; 0:
+    /// unknown) and the projected fur length each drawn shell covers (`RenderPrep.furShellCount`).
+    public var furPixelScale: Float = 0
+    public var furPixelsPerShell: Float = 3
     /// Seconds the fur's springs run by (`SceneRenderer` sets it each frame).
     public var furTime: Float = 0
 

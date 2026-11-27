@@ -1,6 +1,6 @@
 // Generated from mesh_fur_depth_skinned.vert by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc, spirv-cross, spirv-opt and naga-cli).
-// spirv-fnv1a64: 80119e685d2b8a7b
+// spirv-fnv1a64: 09676756adff21d3
 // glsl-fnv1a64: ba2babc36f09d628
 
 diagnostic(off, derivative_uniformity);
@@ -39,224 +39,226 @@ var<uniform> global_1: type_12;
 var<private> global_2: vec4<f32>;
 var<private> global_3: vec3<f32>;
 var<private> global_4: vec3<f32>;
-var<private> global_5: vec2<f32>;
-var<private> global_6: vec4<f32>;
+var<private> global_5: vec4<f32>;
+var<private> global_6: vec2<f32>;
 var<private> global_7: vec4<f32>;
 var<private> global_8: vec4<f32>;
 var<private> global_9: vec4<f32>;
 var<private> global_10: vec4<f32>;
 var<private> global_11: vec4<f32>;
+var<private> global_12: vec4<f32>;
 @group(0) @binding(0) 
-var<uniform> global_12: type_20;
-var<private> global_13: type_24 = type_24(vec4<f32>(0f, 0f, 0f, 1f), 1f, array<f32, 1>(), array<f32, 1>());
-var<private> global_14: vec4<f32>;
-var<private> global_15: vec2<f32>;
-var<private> global_16: vec3<f32>;
+var<uniform> global_13: type_20;
+var<private> global_14: type_24 = type_24(vec4<f32>(0f, 0f, 0f, 1f), 1f, array<f32, 1>(), array<f32, 1>());
+var<private> global_15: vec4<f32>;
+var<private> global_16: vec2<f32>;
 var<private> global_17: vec3<f32>;
+var<private> global_18: vec3<f32>;
 
 fn function_() {
-    var phi_1122_: vec4<f32>;
-    var phi_1121_: vec4<f32>;
-    var phi_1120_: vec4<f32>;
-    var phi_1119_: i32;
+    var phi_1137_: vec4<f32>;
+    var phi_1136_: vec4<f32>;
+    var phi_1135_: vec4<f32>;
+    var phi_1134_: i32;
     var local: vec4<f32>;
     var local_1: vec4<f32>;
     var local_2: vec4<f32>;
-    var phi_1124_: vec3<f32>;
-    var phi_1123_: i32;
+    var phi_1139_: vec3<f32>;
+    var phi_1138_: i32;
     var local_3: vec3<f32>;
-    var phi_1125_: f32;
-    var phi_1126_: vec3<f32>;
-    var phi_1127_: vec3<f32>;
+    var phi_1140_: f32;
+    var phi_1141_: vec3<f32>;
+    var phi_1142_: vec3<f32>;
     var local_4: bool;
-    var phi_618_: bool;
+    var phi_627_: bool;
     var local_5: bool;
-    var phi_1128_: f32;
+    var phi_1143_: f32;
     var local_6: bool;
-    var phi_1129_: f32;
+    var phi_1144_: f32;
     var local_7: bool;
-    var phi_1130_: f32;
-    var phi_656_: bool;
+    var phi_1145_: f32;
+    var phi_665_: bool;
     var local_8: vec3<f32>;
     var local_9: vec3<f32>;
 
-    let _e65 = global_8;
-    let _e66 = global_9;
-    let _e67 = global_10;
-    let _e68 = global_11;
-    phi_1122_ = vec4<f32>(0f, 0f, 0f, 0f);
-    phi_1121_ = vec4<f32>(0f, 0f, 0f, 0f);
-    phi_1120_ = vec4<f32>(0f, 0f, 0f, 0f);
-    phi_1119_ = 0i;
+    let _e67 = global_9;
+    let _e68 = global_10;
+    let _e69 = global_11;
+    let _e70 = global_12;
+    phi_1137_ = vec4<f32>(0f, 0f, 0f, 0f);
+    phi_1136_ = vec4<f32>(0f, 0f, 0f, 0f);
+    phi_1135_ = vec4<f32>(0f, 0f, 0f, 0f);
+    phi_1134_ = 0i;
     loop {
-        let _e71 = phi_1122_;
-        let _e73 = phi_1121_;
-        let _e75 = phi_1120_;
-        let _e77 = phi_1119_;
-        local = _e75;
-        local_1 = _e73;
-        local_2 = _e71;
-        if (_e77 < 4i) {
+        let _e73 = phi_1137_;
+        let _e75 = phi_1136_;
+        let _e77 = phi_1135_;
+        let _e79 = phi_1134_;
+        local = _e77;
+        local_1 = _e75;
+        local_2 = _e73;
+        if (_e79 < 4i) {
             continue;
         } else {
             break;
         }
         continuing {
-            let _e80 = global[_e77];
-            let _e82 = (i32(_e80) * 3i);
-            let _e85 = global_1.member_3[_e82];
-            let _e87 = global_2[_e77];
-            let _e93 = global_1.member_3[(_e82 + 1i)];
-            let _e99 = global_1.member_3[(_e82 + 2i)];
-            phi_1122_ = (_e71 + (_e99 * _e87));
-            phi_1121_ = (_e73 + (_e93 * _e87));
-            phi_1120_ = (_e75 + (_e85 * _e87));
-            phi_1119_ = (_e77 + 1i);
+            let _e82 = global[_e79];
+            let _e84 = (i32(_e82) * 3i);
+            let _e87 = global_1.member_3[_e84];
+            let _e89 = global_2[_e79];
+            let _e95 = global_1.member_3[(_e84 + 1i)];
+            let _e101 = global_1.member_3[(_e84 + 2i)];
+            phi_1137_ = (_e73 + (_e101 * _e89));
+            phi_1136_ = (_e75 + (_e95 * _e89));
+            phi_1135_ = (_e77 + (_e87 * _e89));
+            phi_1134_ = (_e79 + 1i);
         }
     }
-    let _e104 = local;
-    let _e106 = local_1;
-    let _e108 = local_2;
-    let _e111 = (mat4x4<f32>(_e65, _e66, _e67, _e68) * transpose(mat4x4<f32>(_e104, _e106, _e108, vec4<f32>(0f, 0f, 0f, 1f))));
-    let _e115 = global_1.member_1[6i][0u];
+    let _e106 = local;
+    let _e108 = local_1;
+    let _e110 = local_2;
+    let _e113 = (mat4x4<f32>(_e67, _e68, _e69, _e70) * transpose(mat4x4<f32>(_e106, _e108, _e110, vec4<f32>(0f, 0f, 0f, 1f))));
+    let _e117 = global_1.member_1[6i][0u];
     switch bitcast<i32>(0u) {
         default: {
-            let _e117 = global_3;
-            let _e123 = (_e111 * vec4<f32>(_e117.x, _e117.y, _e117.z, 1f)).xyz;
-            let _e125 = _e111[0].xyz;
-            let _e127 = _e111[1].xyz;
-            let _e129 = _e111[2].xyz;
-            let _e132 = cross(_e125, _e127);
-            let _e137 = global_4;
-            let _e140 = normalize(((mat3x3<f32>(cross(_e127, _e129), cross(_e129, _e125), _e132) * _e137) * select(1f, -1f, (dot(_e132, _e129) < 0f))));
-            let _e144 = global_1.member_1[2i][0u];
-            let _e148 = global_1.member_1[3i][3u];
-            let _e149 = (_e148 > 0.5f);
-            let _e154 = global_1.member_1[5i];
-            let _e156 = _e111[3].xz;
-            let _e161 = ((dot(_e156, _e154.xy) * 0.35f) + (dot(_e156, vec2<f32>(0.83f, -0.57f)) * 1.7f));
-            let _e175 = global_1.member_1[5i][3u];
-            let _e181 = (dot(_e111[3].xyz, vec3<f32>(3.1f, 2.3f, 2.7f)) * 3f);
-            let _e198 = global_1.member_1[5i][2u];
-            phi_1124_ = vec3<f32>(0f, 0f, 0f);
-            phi_1123_ = 0i;
-            local_4 = _e149;
-            local_5 = _e149;
-            local_6 = _e149;
-            local_7 = _e149;
-            local_8 = _e117;
-            local_9 = _e137;
+            let _e119 = global_3;
+            let _e125 = (_e113 * vec4<f32>(_e119.x, _e119.y, _e119.z, 1f)).xyz;
+            let _e127 = _e113[0].xyz;
+            let _e129 = _e113[1].xyz;
+            let _e131 = _e113[2].xyz;
+            let _e134 = cross(_e127, _e129);
+            let _e139 = global_4;
+            let _e142 = normalize(((mat3x3<f32>(cross(_e129, _e131), cross(_e131, _e127), _e134) * _e139) * select(1f, -1f, (dot(_e134, _e131) < 0f))));
+            let _e146 = global_1.member_1[2i][0u];
+            let _e150 = global_1.member_1[3i][3u];
+            let _e151 = (_e150 > 0.5f);
+            let _e153 = global_5[3u];
+            let _e160 = global_1.member_1[5i];
+            let _e162 = _e113[3].xz;
+            let _e167 = ((dot(_e162, _e160.xy) * 0.35f) + (dot(_e162, vec2<f32>(0.83f, -0.57f)) * 1.7f));
+            let _e181 = global_1.member_1[5i][3u];
+            let _e187 = (dot(_e113[3].xyz, vec3<f32>(3.1f, 2.3f, 2.7f)) * 3f);
+            let _e204 = global_1.member_1[5i][2u];
+            phi_1139_ = vec3<f32>(0f, 0f, 0f);
+            phi_1138_ = 0i;
+            local_4 = _e151;
+            local_5 = _e151;
+            local_6 = _e151;
+            local_7 = _e151;
+            local_8 = _e119;
+            local_9 = _e139;
             loop {
-                let _e204 = phi_1124_;
-                let _e206 = phi_1123_;
-                local_3 = _e204;
-                if (_e206 < 4i) {
+                let _e210 = phi_1139_;
+                let _e212 = phi_1138_;
+                local_3 = _e210;
+                if (_e212 < 4i) {
                     continue;
                 } else {
                     break;
                 }
                 continuing {
-                    let _e209 = global[_e206];
-                    let _e213 = global_1.member_2[i32(_e209)];
-                    let _e216 = global_2[_e206];
-                    phi_1124_ = (_e204 + (_e213.xyz * _e216));
-                    phi_1123_ = (_e206 + 1i);
+                    let _e215 = global[_e212];
+                    let _e219 = global_1.member_2[i32(_e215)];
+                    let _e222 = global_2[_e212];
+                    phi_1139_ = (_e210 + (_e219.xyz * _e222));
+                    phi_1138_ = (_e212 + 1i);
                 }
             }
-            let _e223 = global_1.member_1[0i][0u];
-            let _e227 = local_3;
-            let _e230 = (((vec3<f32>(_e154.x, 0f, _e154.y) * (((_e198 * (1f + (_e175 * (((0.5f + ((0.5f * sin(((_e115 * 0.61f) + _e161))) * sin(((_e115 * 0.23f) + (_e161 * 0.7f))))) * 1.6f) - 0.6f)))) * (0.7f + ((0.3f * sin(((_e115 * 4.7f) + _e181))) * sin(((_e115 * 2.9f) + (_e181 * 0.37f)))))) * 0.35f)) + (_e227 / vec3(max(_e223, 0.001f)))) * _e144);
-            if _e149 {
-                let _e232 = global_5[1u];
-                phi_1127_ = (_e123 + (_e230 * ((_e223 * _e232) * _e232)));
+            let _e229 = global_1.member_1[0i][0u];
+            let _e233 = local_3;
+            let _e237 = (((vec3<f32>(_e160.x, 0f, _e160.y) * (((_e204 * (1f + (_e181 * (((0.5f + ((0.5f * sin(((_e117 * 0.61f) + _e167))) * sin(((_e117 * 0.23f) + (_e167 * 0.7f))))) * 1.6f) - 0.6f)))) * (0.7f + ((0.3f * sin(((_e117 * 4.7f) + _e187))) * sin(((_e117 * 2.9f) + (_e187 * 0.37f)))))) * 0.35f)) + (_e233 / vec3(max(_e229, 0.001f)))) * (_e146 * select(1f, 0f, (_e153 < -0.5f))));
+            if _e151 {
+                let _e239 = global_6[1u];
+                phi_1142_ = (_e125 + (_e237 * ((_e229 * _e239) * _e239)));
                 break;
             }
-            let _e238 = global_7[1u];
-            let _e239 = (_e238 > 1.5f);
-            if _e239 {
-                let _e241 = global_5[1u];
-                phi_1125_ = _e241;
+            let _e245 = global_8[1u];
+            let _e246 = (_e245 > 1.5f);
+            if _e246 {
+                let _e248 = global_6[1u];
+                phi_1140_ = _e248;
             } else {
-                phi_1125_ = _e238;
+                phi_1140_ = _e245;
             }
-            let _e243 = phi_1125_;
-            let _e245 = global_6[3u];
-            let _e248 = (_e223 * max((_e245 - 1f), 0f));
-            if ((_e243 <= 0f) && !(_e239)) {
-                phi_1127_ = (_e123 + (_e140 * ((_e248 * 0.04f) + 0.0004f)));
+            let _e250 = phi_1140_;
+            let _e252 = global_7[3u];
+            let _e255 = (_e229 * max((_e252 - 1f), 0f));
+            if ((_e250 <= 0f) && !(_e246)) {
+                phi_1142_ = (_e125 + (_e142 * ((_e255 * 0.04f) + 0.0004f)));
                 break;
             }
-            let _e269 = global_6;
-            let _e271 = (mat3x3<f32>(vec3<f32>(_e111[0].x, _e111[0].y, _e111[0].z), vec3<f32>(_e111[1].x, _e111[1].y, _e111[1].z), vec3<f32>(_e111[2].x, _e111[2].y, _e111[2].z)) * _e269.xyz);
-            let _e277 = global_1.member_1[1i][3u];
-            let _e288 = (_e248 * _e243);
-            let _e289 = (normalize((((_e140 * (1f - min(length(_e271), 1f))) + _e271) + ((vec3<f32>(0f, -(_e277), 0f) + _e230) * (0.5f * _e243)))) * _e288);
-            let _e290 = dot(_e289, _e140);
-            let _e291 = (_e288 * 0.12f);
-            phi_1126_ = _e289;
-            if (_e290 < _e291) {
-                phi_1126_ = (_e289 + (_e140 * (_e291 - _e290)));
+            let _e276 = global_7;
+            let _e278 = (mat3x3<f32>(vec3<f32>(_e113[0].x, _e113[0].y, _e113[0].z), vec3<f32>(_e113[1].x, _e113[1].y, _e113[1].z), vec3<f32>(_e113[2].x, _e113[2].y, _e113[2].z)) * _e276.xyz);
+            let _e284 = global_1.member_1[1i][3u];
+            let _e295 = (_e255 * _e250);
+            let _e296 = (normalize((((_e142 * (1f - min(length(_e278), 1f))) + _e278) + ((vec3<f32>(0f, -(_e284), 0f) + _e237) * (0.5f * _e250)))) * _e295);
+            let _e297 = dot(_e296, _e142);
+            let _e298 = (_e295 * 0.12f);
+            phi_1141_ = _e296;
+            if (_e297 < _e298) {
+                phi_1141_ = (_e296 + (_e142 * (_e298 - _e297)));
             }
-            let _e297 = phi_1126_;
-            phi_1127_ = (_e123 + _e297);
+            let _e304 = phi_1141_;
+            phi_1142_ = (_e125 + _e304);
             break;
         }
     }
-    let _e300 = phi_1127_;
-    let _e302 = global_12.member;
-    global_13.member = (_e302 * vec4<f32>(_e300.x, _e300.y, _e300.z, 1f));
-    let _e311 = global_13.member[1u];
-    global_13.member[1u] = -(_e311);
-    let _e314 = local_4;
-    let _e315 = !(_e314);
-    phi_618_ = _e315;
-    if _e315 {
-        let _e317 = global_7[1u];
-        phi_618_ = (_e317 > 1.5f);
+    let _e307 = phi_1142_;
+    let _e309 = global_13.member;
+    global_14.member = (_e309 * vec4<f32>(_e307.x, _e307.y, _e307.z, 1f));
+    let _e318 = global_14.member[1u];
+    global_14.member[1u] = -(_e318);
+    let _e321 = local_4;
+    let _e322 = !(_e321);
+    phi_627_ = _e322;
+    if _e322 {
+        let _e324 = global_8[1u];
+        phi_627_ = (_e324 > 1.5f);
     }
-    let _e320 = phi_618_;
-    let _e322 = local_5;
-    if (_e322 || _e320) {
-        let _e325 = global_5[1u];
-        phi_1128_ = _e325;
+    let _e327 = phi_627_;
+    let _e329 = local_5;
+    if (_e329 || _e327) {
+        let _e332 = global_6[1u];
+        phi_1143_ = _e332;
     } else {
-        let _e327 = global_7[1u];
-        phi_1128_ = _e327;
+        let _e334 = global_8[1u];
+        phi_1143_ = _e334;
     }
-    let _e329 = phi_1128_;
-    let _e331 = local_6;
-    if _e331 {
-        let _e333 = global_6[3u];
-        phi_1129_ = fract(_e333);
-    } else {
-        phi_1129_ = 0f;
-    }
-    let _e336 = phi_1129_;
-    let _e338 = local_7;
+    let _e336 = phi_1143_;
+    let _e338 = local_6;
     if _e338 {
-        phi_1130_ = 1f;
+        let _e340 = global_7[3u];
+        phi_1144_ = fract(_e340);
     } else {
-        phi_1130_ = select(0f, 2f, _e320);
+        phi_1144_ = 0f;
     }
-    let _e341 = phi_1130_;
-    phi_656_ = _e315;
-    if _e315 {
-        let _e343 = global_7[1u];
-        phi_656_ = (_e343 <= 0f);
+    let _e343 = phi_1144_;
+    let _e345 = local_7;
+    if _e345 {
+        phi_1145_ = 1f;
+    } else {
+        phi_1145_ = select(0f, 2f, _e327);
     }
-    let _e346 = phi_656_;
-    global_14 = vec4<f32>(_e329, _e336, _e341, select(0f, 1f, _e346));
-    let _e349 = global_5;
-    global_15 = _e349;
-    let _e351 = local_8;
-    global_16 = _e351;
-    let _e353 = local_9;
-    global_17 = _e353;
+    let _e348 = phi_1145_;
+    phi_665_ = _e322;
+    if _e322 {
+        let _e350 = global_8[1u];
+        phi_665_ = (_e350 <= 0f);
+    }
+    let _e353 = phi_665_;
+    global_15 = vec4<f32>(_e336, _e343, _e348, select(0f, 1f, _e353));
+    let _e356 = global_6;
+    global_16 = _e356;
+    let _e358 = local_8;
+    global_17 = _e358;
+    let _e360 = local_9;
+    global_18 = _e360;
     return;
 }
 
 @vertex 
-fn main(@location(14) param: vec4<f32>, @location(15) param_1: vec4<f32>, @location(0) param_2: vec3<f32>, @location(1) param_3: vec3<f32>, @location(2) param_4: vec2<f32>, @location(13) param_5: vec4<f32>, @location(12) param_6: vec4<f32>, @location(3) param_7: vec4<f32>, @location(4) param_8: vec4<f32>, @location(5) param_9: vec4<f32>, @location(6) param_10: vec4<f32>) -> VertexOutput {
+fn main(@location(14) param: vec4<f32>, @location(15) param_1: vec4<f32>, @location(0) param_2: vec3<f32>, @location(1) param_3: vec3<f32>, @location(11) param_4: vec4<f32>, @location(2) param_5: vec2<f32>, @location(13) param_6: vec4<f32>, @location(12) param_7: vec4<f32>, @location(3) param_8: vec4<f32>, @location(4) param_9: vec4<f32>, @location(5) param_10: vec4<f32>, @location(6) param_11: vec4<f32>) -> VertexOutput {
     global = param;
     global_2 = param_1;
     global_3 = param_2;
@@ -268,13 +270,14 @@ fn main(@location(14) param: vec4<f32>, @location(15) param_1: vec4<f32>, @locat
     global_9 = param_8;
     global_10 = param_9;
     global_11 = param_10;
+    global_12 = param_11;
     function_();
-    let _e29 = global_13.member.y;
-    global_13.member.y = -(_e29);
-    let _e31 = global_13.member;
-    let _e32 = global_14;
-    let _e33 = global_15;
-    let _e34 = global_16;
-    let _e35 = global_17;
-    return VertexOutput(_e31, _e32, _e33, _e34, _e35);
+    let _e31 = global_14.member.y;
+    global_14.member.y = -(_e31);
+    let _e33 = global_14.member;
+    let _e34 = global_15;
+    let _e35 = global_16;
+    let _e36 = global_17;
+    let _e37 = global_18;
+    return VertexOutput(_e33, _e34, _e35, _e36, _e37);
 }
