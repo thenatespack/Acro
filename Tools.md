@@ -719,8 +719,12 @@ How it draws: `GroomImporter` (EngineMeshBuild) makes `material/fur`, a `Materia
 (so fur geometry can be built anywhere), the full mask texture in the metallic-roughness slot, and
 a preview prefab. A new `GroomRenderer` component (next to a `MeshRenderer`; EditorIcons "brush",
 Add Component entry, registered by `SkeletalAnimation.registerComponents` and GamePlayer) names that
-material. `SceneRenderer.syncGroomMeshes` builds the fur meshes from the entity's mesh the first
-time a (mesh, groom) pair draws, keyed by a hash of the groom's geometry fields (GroomGeometry.swift):
+material. `SceneRenderer.syncGroomMeshes` builds the fur meshes from the entity's mesh on a
+background job (`FurBuild`, `JobSystem` background priority; `buildsFurInBackground`, `furBuildSeconds`)
+the first time a (mesh, groom) pair draws and registers them once built (the fur draws from then
+on, at the earliest the next frame; with `blocksOnAssetLoading`, screenshots and tools, at once; an
+edited groom keeps drawing its previous meshes, `RenderPrep.furTags`, until the new ones swap in),
+keyed by a hash of the groom's geometry fields (GroomGeometry.swift):
 a shell mesh (furry triangles; comb vector and length factor in the tangent; skin kept) and, for
 cards, guide curves turned into strips, one mesh per card detail level. Guides (`GroomGeometry.guides`):
 roots spaced evenly (or random), thinned at the hairline and off the part line; each grows in
@@ -738,7 +742,11 @@ gives each guide's vertices (two per point, left then right) and indices in a ca
 items after the entity's own: an opaque undercoat shell in the root color (all copies of one
 mesh and groom in one instanced draw; all that draws past the last `lod.distances` entry, the
 fur-tinted far look), then one instance per shell (its height in `params.y`, the shell count in
-the instance color's alpha) inner to outer and the fins, alpha blended in the transparent pass
+the instance color's alpha) inner to outer and the fins; how many shells is set by screen size
+(`RenderPrep.furShellCount`: about one per `SceneRenderer.furPixelsPerShell`, default 3, pixels of
+the fur's projected length at its bounds' distance, at least 6, at most the level's `shells`; the
+fraction of the color's alpha says how many shells each drawn one stands for, and mesh_fur.frag
+makes it that much more opaque, `furShellCode`), alpha blended in the transparent pass
 (equal bounds and an item-order tie-break keep that order; consecutive copies still share a
 draw: GroomTests checks 3 entities x 8 shells = one blended draw of 24, each copy inner to outer). Skinned fur shares its
 entity's pose: `RenderList` now merges consecutive skinned items with the same skin, mesh and
@@ -784,9 +792,41 @@ deep-opacity style (`furSunShadow`; one hardware-filtered compare per depth, spr
 texel-and-a-half triangle, not three PCF kernels): the cascade is compared at 0.18, 0.69 and 1.79 x a depth set
 by the length and density (4 mm-6 cm) toward the light, so the fur's own strands dim the light
 gradually (about exp(-distance / depth)) while other casters shadow fully. Fur is left out of the
-depth prepass. Secondary motion: a damped
+depth prepass. Secondary motion of shells (and of cards past detail level 1): a damped
 spring per joint (skinned) or per entity (rigid) pulled toward a lag behind its velocity
 (RenderPrep+Fur.swift), plus `SceneEnvironment.wind` x the groom's `wind`.
+Hair dynamics (card hair at detail levels 0 and 1; HairSimulation.swift, SceneRenderer+HairSim.swift):
+built with the cards, a `HairRig` holds every guide's rest points, who follows whom, the colliders
+(each moving with the joint of the base vertex nearest its center on a skinned mesh, else with the
+entity), which rest points sit inside a collider (left alone by it) and which lie on the scalp
+from the root on (held there, so parts and the hair lying on the head keep the style). Per
+entity a `HairSimulation` keeps world-space points: clump leaders (and strands without a clump)
+are simulated, followers take their leader's offset from rest at the same point along the strand
+and are then kept at their lengths and out of the colliders, the inner layer rides the scalp. A
+frame: the strands follow 70% of the root's motion rigidly (`follow`; the rest is inertia), then
+up to four substeps of at most 1/120 s, Verlet: gravity only by how far the root is tilted from
+its rest (the grown shape already hangs), wind (`SceneEnvironment.wind` x `wind`, gusts rolling
+across the scene and fluttering along each strand), air damping and a pull toward the rest shape
+carried by the root (by `stiffness`, stronger at the root); then follow-the-leader
+inextensibility (Müller et al. 2012, with its velocity correction), each segment first bent
+toward its rest direction, pushed out of the colliders (every substep) and the scalp mesh (the
+last substep; `GroomSurface` queries in the mesh's space), set back to its length and pushed out
+again (where a tip is wedged between two colliders the colliders win over the length). Guides
+run in parallel batches on `JobSystem.shared`. The cards are then rewritten in world space
+(`GroomGeometry.writeCard`, shared with `cards`) into a mesh per entity ("groom:sim:<entity>",
+`VertexPaint` stream = last frame's positions) copied to the GPU in `renderShadows` /
+`beginViews` (`RenderDevice.updateBuffer`); the card item draws it unskinned with an identity
+transform and color w -1 (fur.glsl: nothing more bends it) with mesh_fur_sim.vert (motion vectors
+from attribute 14), and casts with the plain fur casters. Level 1 steps every other frame; a
+first frame, a pause over 0.5 s or a jump over 1.5 m starts at rest. `SceneRenderer.simulatesHair`
+(default on) and `hairSimulationSeconds`. Cost (M5, release, the demo's 2208 guides of which 268
+simulated, 9 points each): 0.5 ms of render-thread time per frame with the job system (1.3 ms
+on one thread), so about 0.25 ms per 1,000 guides (0.6 ms of CPU); fur meshes 70-100 ms on a
+background job, and the frame they swap in ~4 ms (registering three card levels and the
+simulated mesh) where the first frame used to stall 75 ms. Demo: `FUR_SHAKE=1` turns the
+humanoid sharply (1.1 rad in 0.3 s, held, back) every 3 s, `FUR_SIM=0` the springs,
+`FUR_SYNC=1` builds on the render thread, `FUR_PX_PER_SHELL=<n>`, and `FUR_TIMING=1` doesn't
+wait for assets and prints the first frames' render prep, the slowest one and the simulation's mean.
 Hooks: Mesh Builder parts take `groom`; `.character` files take `grooms` {region: groom} (skinned
 with the body) and attachments take `groom` (its `mask.parts` picks the attachment's parts; a part's
 own `groom` wins); terrain scatter rules take `groom` (every prop wears it; shell fur batches across
@@ -838,8 +878,23 @@ and blending and the rest shading (three PCF kernels per fragment for the sun's 
 another ~4-5 ms, hence the single hardware compares). Frame-to-frame change in the 3x crops (mean
 absolute difference, frames 120 -> 121, a shimmer measure): creature 30.7 -> 5.0, hair 19.0 ->
 3.7, moss 1.2 -> 0.04.
-Gaps: the springs are per bone (skinned) or per entity (rigid), not per guide, and rigid springs
-move only in X and Z; fur self-shadowing is only as fine as the shadow cascade (a texel is
+Hair dynamics and shell count (same setup, scene pass GPU, fastest of 3 runs alternating with
+the previous commit; the GPU was shared with other agents' runs, so absolute numbers are about
+1.5x the ones above): whole scene 10.5 -> 6.5 ms; hair 7.2 -> 5.5 ms; hairfront 2.7 -> 2.8 ms;
+hairside 14.9 -> 10.9 ms; hairback 14.9 -> 13.4 ms; creature 19.9 -> 15.4 ms (fur off 3.4 ms:
+the fur's own cost 16.5 -> 12.0 ms, -27%; 4 px per shell gives 12.5 ms, -45%, with slightly
+grainier strands); moss 6.3 -> 7.5 / 13.0 -> 12.3 ms (noise). The views with the creature or
+the rocks in the background gain from their fewer shells; simulated cards cost the same to draw.
+Gaps: shells (and cards past detail level 1) still bend with per-bone (skinned) or per-entity
+(rigid) springs, and rigid springs move only in X and Z; simulated hair doesn't collide with
+other hair (no self-collision or volume preservation), nor with anything but its groom's colliders
+and scalp (not the body mesh, other characters or the world), and the scalp is pushed out of only
+where it's right under the strand; a strand wedged between two colliders stretches a little;
+followers interpolate their leader (they don't swing on their own); the rig's colliders follow one
+joint each (the nearest vertex's strongest), so a collider spanning a joint (a shoulder capsule
+on a bending arm) doesn't bend; the inertia `follow` (0.7) and the spring rates aren't groom keys yet;
+the simulated mesh is rewritten and uploaded whole every frame (~1.6 MB for 2208 cards, through
+`updateBuffer`); fur self-shadowing is only as fine as the shadow cascade (a texel is
 millimeters to centimeters, so single strands don't shadow each other, the coat does) and the
 deep-opacity depths are set from the groom, not measured; casters are fixed shells (2) and the
 cards at the drawn detail level (no cheaper shadow level of detail); fur doesn't cast into the
@@ -849,22 +904,23 @@ light is diffuse only) and no per-light transmission depth for point lights; no
 strand rendering (`strands` draws cards); the flow texture and mask texture shape the geometry per
 vertex (128 px copies), the mask also cuts per pixel but the flow doesn't; mask textures go
 through the texture importer's color space (an sRGB mask reads a little darker); card hair keeps
-out of the mesh it grows on and its `colliders` at rest only (the springs and wind can still bend
-it into the body, and a scalp cap needs colliders for the rest of the head, neck and shoulders:
-nothing fits them automatically); styled guides take 40-100 ms to build on the main thread (an
-edited groom rebuilds them); the hairstyle presets assume a head facing +Z with Y up (parts,
+out of the mesh it grows on and its `colliders` (a scalp cap needs colliders for the rest of the
+head, neck and shoulders: nothing fits them automatically; far detail levels bend with the springs
+and can still dip into the body); the hairstyle presets assume a head facing +Z with Y up (parts,
 hemlines, fringes and ties are in the hair's bounding box, so a tilted or very asymmetric hair area
 shifts them); collider radii / end can't be set back to nil from the Hairstyle form; shells on
 low-poly or hard-edged meshes split at the edges (warned under 48 triangles); `MeshArray` copies
-get no fur; a groom on a sculpt with several looks grows on each look's mesh separately; fur meshes
-are built on the main thread the first frame they're used (a 5k-triangle character with cards takes
-a few ms in release) and an edited groom rebuilds them; picking and the selection outline use the
+get no fur; a groom on a sculpt with several looks grows on each look's mesh separately; a new
+groom shows nothing until its background build finishes (up to ~100 ms for styled hair) and
+registering its meshes still takes a few ms on the render thread; picking and the selection outline use the
 base mesh; blended shells sort per entity, not per pixel: where one entity's fur overlaps another's
 (a leg in front of the body, the neck against the torso) the one drawn later blends over the
 other's outer fringe, a visible seam at the join; a close-up filling the view with shell fur costs
 about twice what it did (all covered shell fragments shade; the 2nd/4th-shell thinning only kicks
-in where the pattern is averaged and faces the view), and nothing yet lowers the shell count by
-screen size; fins are straight along each mesh edge, so on low-poly meshes the close-up outline
+in where the pattern is averaged and faces the view; the shell count by screen size takes back a
+quarter of it, not half: fur 6 cm long fills ~65 px there, 22 shells at 3 px each; thinning every
+2nd shell where the surface faces the view while strands are resolved was tried and stippled);
+fins are straight along each mesh edge, so on low-poly meshes the close-up outline
 shows the polygon; the shell fur's blended fringe has the motion vectors of what's behind it
 (the undercoat, or the background past the silhouette), so TAAU can smear the outer fringe of
 fast-moving fur; hashed card alpha stipples sparse tips a little at 4x MSAA (TAAU averages it

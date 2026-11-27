@@ -1,11 +1,12 @@
 /// The CPU side of fur (Groom.swift): `RenderPrep.gather` adds, after an entity's own item, the
 /// items of its `GroomRenderer` (the undercoat and one per shell, or the cards at this detail
-/// level), all sharing the entity's transform, skin and (grown) bounds, so its shells batch into
+/// level; shells as many as the fur's size on screen needs, `furShellCount`), all sharing the entity's transform, skin and (grown) bounds, so its shells batch into
 /// one instanced draw with every other copy of that mesh and groom. A few shells (or the cards)
 /// also cast shadows (`GroomRenderer.castsShadows`), as alpha-tested casters keeping their
 /// material, so the shadow atlas draws them with mesh_fur_depth. It also runs the fur's
 /// secondary motion: a damped spring per entity (rigid meshes) or per joint (skinned), pulled
-/// toward a lag behind its velocity, so fur trails and settles when its owner moves.
+/// toward a lag behind its velocity, so fur trails and settles when its owner moves (card hair
+/// near the camera is simulated per strand instead, SceneRenderer+HairSim.swift).
 import EngineAssets
 import EngineCore
 import EngineScene
@@ -56,6 +57,11 @@ struct FurGroup: Sendable {
     var count: Int
     /// Meters the fur reaches past the base's bounds.
     var pad: Float
+    /// The fur material's and the base mesh's keys ("material|mesh", `SceneRenderer.furMeshes`).
+    var pair: String = ""
+    /// The detail level drawn, and the cards' item (-1 for shells).
+    var level = 0
+    var cards = -1
 }
 
 extension RenderPrep {
@@ -80,9 +86,12 @@ extension RenderPrep {
         let receives: Float = groom.receivesShadows && item.instance.params.x > 0.5 ? 1 : 0
         let casts = groom.castsShadows && item.castsShadows
         let first = items.count
-        let shellCount = fur.style == .shell && level < fur.shellLevels.count ? max(fur.shellLevels[level], 1) : 0
-        // The shell count rides in the color's alpha (fur.glsl).
-        let color = Vec4(groom.tint, Float(shellCount))
+        let fullCount = fur.style == .shell && level < fur.shellLevels.count ? max(fur.shellLevels[level], 1) : 0
+        let shellCount = Self.furShellCount(full: fullCount, length: fur.length * scale, distance: distance, pixelScale: furPixelScale,
+                                            pixelsPerShell: furPixelsPerShell)
+        // The shell count rides in the color's alpha (fur.glsl), and in its fraction how many of
+        // the groom's shells each drawn one stands for (mesh_fur.frag makes it that much more opaque).
+        let color = Vec4(groom.tint, Self.furShellCode(drawn: shellCount, full: fullCount))
         func add(mesh: Int, height: Float, castsShadows: Bool = false, blended: Bool = false) {
             items.append(RenderItem(
                 entity: entity, mesh: mesh, material: material,
@@ -90,25 +99,49 @@ extension RenderPrep {
                                        params: Vec4(receives, height, 0, 0)),
                 bounds: bounds, castsShadows: castsShadows, transparent: blended, alphaTested: castsShadows, skin: item.skin))
         }
-        let shellKey = GroomRenderer.meshKey("shell", tag: fur.tag, base: meshKey)
+        // The meshes built last (an edited groom keeps drawing its old fur until the new is built).
+        let pair = groom.groom.key + "|" + meshKey
+        let tag = furTags[pair] ?? fur.tag
+        let shellKey = GroomRenderer.meshKey("shell", tag: tag, base: meshKey)
         guard let shell = meshes.id(of: shellKey) else { return }  // SceneRenderer.syncGroomMeshes builds it
         // The opaque undercoat, then the shells inner to outer and the fins, alpha blended in the
         // transparent pass (equal bounds keep this order there), so each layer blends over the
         // ones below it: shells need no sorting.
         add(mesh: shell, height: 0)
         if fur.style == .shell, level < fur.shellLevels.count {
-            let n = max(fur.shellLevels[level], 1)
+            let n = max(shellCount, 1)
             let casters = casts ? Self.furShadowShells(n) : []
             for i in 1...n { add(mesh: shell, height: Float(i) / Float(n), castsShadows: casters.contains(i), blended: true) }
-            if let fins = meshes.id(of: GroomRenderer.meshKey("fins", tag: fur.tag, base: meshKey)) {
+            if let fins = meshes.id(of: GroomRenderer.meshKey("fins", tag: tag, base: meshKey)) {
                 add(mesh: fins, height: 2, blended: true)
             }
         }
+        var cardItem = -1
         if fur.style != .shell, level < fur.cardLevels.count,
-           let cards = meshes.id(of: GroomRenderer.meshKey("cards\(level)", tag: fur.tag, base: meshKey)) {
+           let cards = meshes.id(of: GroomRenderer.meshKey("cards\(level)", tag: tag, base: meshKey)) {
+            cardItem = items.count
             add(mesh: cards, height: 1, castsShadows: casts)
         }
-        furGroups.append(FurGroup(base: base, first: first, count: items.count - first, pad: pad))
+        furGroups.append(FurGroup(base: base, first: first, count: items.count - first, pad: pad, pair: pair, level: level, cards: cardItem))
+    }
+
+    /// How many of a level's `full` shells to draw for fur `length` meters long (world) at
+    /// `distance` meters, with `pixelScale` pixels per meter at 1 m (0: unknown, all of them):
+    /// one per `pixelsPerShell` pixels of the fur's projected length, at least 6 (or `full`).
+    /// Closer than that the layers would show apart; farther, more shells only cost shading.
+    static func furShellCount(full: Int, length: Float, distance: Float, pixelScale: Float, pixelsPerShell: Float) -> Int {
+        guard full > 0, pixelScale > 0, pixelsPerShell > 0, length.isFinite, distance.isFinite else { return full }
+        let pixels = length * pixelScale / max(distance, 0.05)
+        let wanted = Int(min(pixels / pixelsPerShell, 1e6).rounded(.up))
+        return min(full, max(wanted, min(full, 6)))
+    }
+
+    /// The instance color's alpha for `drawn` of `full` shells: the count, plus (when fewer are
+    /// drawn) 0.01 + 0.98 x (full / drawn - 1) / 8 in its fraction (mesh_fur.frag decodes it).
+    static func furShellCode(drawn: Int, full: Int) -> Float {
+        guard drawn > 0, full > drawn else { return Float(drawn) }
+        let boost = min(Float(full) / Float(drawn) - 1, 7.9)
+        return Float(drawn) + 0.01 + 0.98 * boost / 8
     }
 
     /// The shells (1...n) of an n-shell groom that cast shadows: those nearest 0.35 and 0.75 of

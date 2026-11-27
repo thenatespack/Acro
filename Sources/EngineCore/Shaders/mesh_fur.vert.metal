@@ -1,6 +1,6 @@
 // Generated from mesh_fur.vert by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
-// spirv-fnv1a64: bf1c24389d9605dd
+// spirv-fnv1a64: c899b7728ebfdc0d
 // glsl-fnv1a64: c770a578588d3aa5
 
 #pragma clang diagnostic ignored "-Wmissing-prototypes"
@@ -78,7 +78,7 @@ struct _47
     float4 _m1[8];
 };
 
-struct _469
+struct _478
 {
     float4x4 _m0;
     float4x4 _m1;
@@ -88,17 +88,17 @@ struct _469
 
 struct vertex_main_out
 {
-    float3 m_637 [[user(locn0)]];
-    float3 m_639 [[user(locn1)]];
-    float2 m_547 [[user(locn2)]];
-    float4 m_645 [[user(locn3)]];
-    float3 m_550 [[user(locn4)]];
-    float4 m_648 [[user(locn5)]];
-    float4 m_670 [[user(locn6)]];
-    float4 m_672 [[user(locn7)]];
-    float4 m_506 [[user(locn8)]];
-    float3 m_674 [[user(locn9)]];
-    float3 m_552 [[user(locn10)]];
+    float3 m_646 [[user(locn0)]];
+    float3 m_648 [[user(locn1)]];
+    float2 m_556 [[user(locn2)]];
+    float4 m_654 [[user(locn3)]];
+    float3 m_559 [[user(locn4)]];
+    float4 m_656 [[user(locn5)]];
+    float4 m_678 [[user(locn6)]];
+    float4 m_680 [[user(locn7)]];
+    float4 m_515 [[user(locn8)]];
+    float3 m_682 [[user(locn9)]];
+    float3 m_561 [[user(locn10)]];
     float4 gl_Position [[position]];
 };
 
@@ -106,210 +106,210 @@ struct vertex_main_in
 {
     float3 m_154 [[attribute(0)]];
     float3 m_214 [[attribute(1)]];
-    float2 m_252 [[attribute(2)]];
-    float4 m_428 [[attribute(3)]];
-    float4 m_430 [[attribute(4)]];
-    float4 m_432 [[attribute(5)]];
-    float4 m_434 [[attribute(6)]];
-    float4 m_555 [[attribute(7)]];
-    float4 m_557 [[attribute(8)]];
-    float4 m_559 [[attribute(9)]];
-    float4 m_561 [[attribute(10)]];
-    float4 m_646 [[attribute(11)]];
+    float2 m_261 [[attribute(2)]];
+    float4 m_437 [[attribute(3)]];
+    float4 m_439 [[attribute(4)]];
+    float4 m_441 [[attribute(5)]];
+    float4 m_443 [[attribute(6)]];
+    float4 m_564 [[attribute(7)]];
+    float4 m_566 [[attribute(8)]];
+    float4 m_568 [[attribute(9)]];
+    float4 m_570 [[attribute(10)]];
+    float4 m_230 [[attribute(11)]];
     float4 m_28 [[attribute(12)]];
-    float4 m_271 [[attribute(13)]];
+    float4 m_280 [[attribute(13)]];
 };
 
-vertex vertex_main_out vertex_main(vertex_main_in in [[stage_in]], constant _47& _49 [[buffer(2)]], constant _469& _471 [[buffer(15)]])
+vertex vertex_main_out vertex_main(vertex_main_in in [[stage_in]], constant _47& _49 [[buffer(2)]], constant _478& _480 [[buffer(15)]])
 {
     vertex_main_out out = {};
-    float3 _715;
-    float4 _719;
-    float3 _730;
+    float3 _724;
+    float4 _728;
     float3 _739;
-    float3x3 _752;
-    float3 _761;
-    float _767;
-    bool _770;
-    float _778;
-    float3 _781;
-    float2 _952;
-    float _978;
-    float3 _1005;
-    float _1007;
-    float3 _1378;
-    float3 _1379;
+    float3 _748;
+    float3x3 _761;
+    float3 _770;
+    bool _779;
+    float _791;
+    float3 _794;
+    float _798;
+    float2 _967;
+    float _993;
+    float3 _1020;
+    float _1022;
+    float3 _1400;
+    float3 _1401;
     do
     {
-        _715 = in.m_154;
-        _719 = float4(_715, 1.0);
-        float3 _721 = (float4x4(in.m_428, in.m_430, in.m_432, in.m_434) * _719).xyz;
-        _730 = in.m_432.xyz;
-        _739 = cross(in.m_428.xyz, in.m_430.xyz);
-        _752 = float3x3(cross(in.m_430.xyz, _730), cross(_730, in.m_428.xyz), _739);
-        _761 = in.m_214;
-        float3 _765 = fast::normalize(spvFMulMatrixVector(_752, _761) * ((dot(_739, _730) < 0.0) ? (-1.0) : 1.0));
-        _767 = _49._m1[2].x;
-        _770 = _49._m1[3].w > 0.5;
-        _952 = _49._m1[5].xy;
-        float _962 = spvFAdd(spvFMul(dot(in.m_434.xz, _952), 0.3499999940395355224609375), spvFMul(dot(in.m_434.xz, float2(0.829999983310699462890625, -0.569999992847442626953125)), 1.7000000476837158203125));
-        _978 = _49._m1[5].w;
-        float _986 = spvFMul(dot(in.m_434.xyz, float3(3.099999904632568359375, 2.2999999523162841796875, 2.7000000476837158203125)), 3.0);
-        _1005 = float3(_49._m1[5].x, 0.0, _49._m1[5].y);
-        _1007 = _49._m1[5].z;
-        _778 = _49._m1[0].x;
-        _781 = float3(in.m_28.z, 0.0, in.m_28.w) / float3(fast::max(_778, 0.001000000047497451305389404296875));
-        float3 _784 = spvFAdd(_1005 * spvFMul(spvFMul(spvFMul(_1007, spvFAdd(1.0, spvFMul(_978, spvFSub(spvFMul(spvFAdd(0.5, spvFMul(spvFMul(0.5, sin(spvFAdd(spvFMul(_49._m1[6].x, 0.61000001430511474609375), _962))), sin(spvFAdd(spvFMul(_49._m1[6].x, 0.23000000417232513427734375), spvFMul(_962, 0.699999988079071044921875))))), 1.60000002384185791015625), 0.60000002384185791015625)))), spvFAdd(0.699999988079071044921875, spvFMul(spvFMul(0.300000011920928955078125, sin(spvFAdd(spvFMul(_49._m1[6].x, 4.69999980926513671875), _986))), sin(spvFAdd(spvFMul(_49._m1[6].x, 2.900000095367431640625), spvFMul(_986, 0.37000000476837158203125)))))), 0.3499999940395355224609375), _781) * _767;
-        if (_770)
+        _724 = in.m_154;
+        _728 = float4(_724, 1.0);
+        float3 _730 = (float4x4(in.m_437, in.m_439, in.m_441, in.m_443) * _728).xyz;
+        _739 = in.m_441.xyz;
+        _748 = cross(in.m_437.xyz, in.m_439.xyz);
+        _761 = float3x3(cross(in.m_439.xyz, _739), cross(_739, in.m_437.xyz), _748);
+        _770 = in.m_214;
+        float3 _774 = fast::normalize(spvFMulMatrixVector(_761, _770) * ((dot(_748, _739) < 0.0) ? (-1.0) : 1.0));
+        _779 = _49._m1[3].w > 0.5;
+        _967 = _49._m1[5].xy;
+        float _977 = spvFAdd(spvFMul(dot(in.m_443.xz, _967), 0.3499999940395355224609375), spvFMul(dot(in.m_443.xz, float2(0.829999983310699462890625, -0.569999992847442626953125)), 1.7000000476837158203125));
+        _993 = _49._m1[5].w;
+        float _1001 = spvFMul(dot(in.m_443.xyz, float3(3.099999904632568359375, 2.2999999523162841796875, 2.7000000476837158203125)), 3.0);
+        _1020 = float3(_49._m1[5].x, 0.0, _49._m1[5].y);
+        _1022 = _49._m1[5].z;
+        _791 = _49._m1[0].x;
+        _794 = float3(in.m_28.z, 0.0, in.m_28.w) / float3(fast::max(_791, 0.001000000047497451305389404296875));
+        _798 = spvFMul(_49._m1[2].x, (in.m_230.w < (-0.5)) ? 0.0 : 1.0);
+        float3 _799 = spvFAdd(_1020 * spvFMul(spvFMul(spvFMul(_1022, spvFAdd(1.0, spvFMul(_993, spvFSub(spvFMul(spvFAdd(0.5, spvFMul(spvFMul(0.5, sin(spvFAdd(spvFMul(_49._m1[6].x, 0.61000001430511474609375), _977))), sin(spvFAdd(spvFMul(_49._m1[6].x, 0.23000000417232513427734375), spvFMul(_977, 0.699999988079071044921875))))), 1.60000002384185791015625), 0.60000002384185791015625)))), spvFAdd(0.699999988079071044921875, spvFMul(spvFMul(0.300000011920928955078125, sin(spvFAdd(spvFMul(_49._m1[6].x, 4.69999980926513671875), _1001))), sin(spvFAdd(spvFMul(_49._m1[6].x, 2.900000095367431640625), spvFMul(_1001, 0.37000000476837158203125)))))), 0.3499999940395355224609375), _794) * _798;
+        if (_779)
         {
-            _1379 = fast::normalize((float3x3(float3(in.m_428.xyz), float3(in.m_430.xyz), float3(in.m_432.xyz)) * in.m_271.xyz) + (_784 * (2.0 * in.m_252.y)));
-            _1378 = spvFAdd(_721, _784 * spvFMul(spvFMul(_778, in.m_252.y), in.m_252.y));
+            _1401 = fast::normalize((float3x3(float3(in.m_437.xyz), float3(in.m_439.xyz), float3(in.m_441.xyz)) * in.m_280.xyz) + (_799 * (2.0 * in.m_261.y)));
+            _1400 = spvFAdd(_730, _799 * spvFMul(spvFMul(_791, in.m_261.y), in.m_261.y));
             break;
         }
-        bool _828 = in.m_28.y > 1.5;
-        float _1376;
-        if (_828)
+        bool _843 = in.m_28.y > 1.5;
+        float _1398;
+        if (_843)
         {
-            _1376 = in.m_252.y;
+            _1398 = in.m_261.y;
         }
         else
         {
-            _1376 = in.m_28.y;
+            _1398 = in.m_28.y;
         }
-        float _844 = spvFMul(_778, fast::max(spvFSub(in.m_271.w, 1.0), 0.0));
-        if ((_1376 <= 0.0) && (!_828))
+        float _859 = spvFMul(_791, fast::max(spvFSub(in.m_280.w, 1.0), 0.0));
+        if ((_1398 <= 0.0) && (!_843))
         {
-            _1379 = _765;
-            _1378 = spvFAdd(_721, _765 * spvFAdd(spvFMul(_844, 0.039999999105930328369140625), 0.00039999998989515006542205810546875));
+            _1401 = _774;
+            _1400 = spvFAdd(_730, _774 * spvFAdd(spvFMul(_859, 0.039999999105930328369140625), 0.00039999998989515006542205810546875));
             break;
         }
-        float3 _879 = spvFMulMatrixVector(float3x3(float3(in.m_428.xyz), float3(in.m_430.xyz), float3(in.m_432.xyz)), in.m_271.xyz);
-        float _882 = fast::min(length(_879), 1.0);
-        float3 _888 = spvFAdd(float3(0.0, -_49._m1[1].w, 0.0), _784);
-        float _914 = spvFMul(_844, _1376);
-        float3 _915 = fast::normalize(spvFAdd(spvFAdd(_765 * spvFSub(1.0, _882), _879), _888 * spvFMul(0.5, _1376))) * _914;
-        float _918 = dot(_915, _765);
-        float _922 = spvFMul(_914, 0.119999997317790985107421875);
-        float3 _1377;
-        if (_918 < _922)
+        float3 _894 = spvFMulMatrixVector(float3x3(float3(in.m_437.xyz), float3(in.m_439.xyz), float3(in.m_441.xyz)), in.m_280.xyz);
+        float _897 = fast::min(length(_894), 1.0);
+        float3 _903 = spvFAdd(float3(0.0, -_49._m1[1].w, 0.0), _799);
+        float _929 = spvFMul(_859, _1398);
+        float3 _930 = fast::normalize(spvFAdd(spvFAdd(_774 * spvFSub(1.0, _897), _894), _903 * spvFMul(0.5, _1398))) * _929;
+        float _933 = dot(_930, _774);
+        float _937 = spvFMul(_929, 0.119999997317790985107421875);
+        float3 _1399;
+        if (_933 < _937)
         {
-            _1377 = spvFAdd(_915, _765 * spvFSub(_922, _918));
+            _1399 = spvFAdd(_930, _774 * spvFSub(_937, _933));
         }
         else
         {
-            _1377 = _915;
+            _1399 = _930;
         }
-        _1379 = fast::normalize(((_765 * (1.0 - _882)) + _879) + (_888 * _1376));
-        _1378 = spvFAdd(_721, _1377);
+        _1401 = fast::normalize(((_774 * (1.0 - _897)) + _894) + (_903 * _1398));
+        _1400 = spvFAdd(_730, _1399);
         break;
     } while(false);
-    float4 _479 = float4(_1378, 1.0);
-    out.gl_Position = spvFMulMatrixVector(_471._m0, _479);
+    float4 _488 = float4(_1400, 1.0);
+    out.gl_Position = spvFMulMatrixVector(_480._m0, _488);
     out.gl_Position.y = -out.gl_Position.y;
-    bool _499 = !_770;
-    bool _505;
-    if (_499)
+    bool _508 = !_779;
+    bool _514;
+    if (_508)
     {
-        _505 = in.m_28.y > 1.5;
+        _514 = in.m_28.y > 1.5;
     }
     else
     {
-        _505 = _499;
+        _514 = _508;
     }
-    float _1381;
-    if (_770 || _505)
+    float _1403;
+    if (_779 || _514)
     {
-        _1381 = in.m_252.y;
+        _1403 = in.m_261.y;
     }
     else
     {
-        _1381 = in.m_28.y;
+        _1403 = in.m_28.y;
     }
-    float _1382;
-    if (_770)
+    float _1404;
+    if (_779)
     {
-        _1382 = fract(in.m_271.w);
+        _1404 = fract(in.m_280.w);
     }
     else
     {
-        _1382 = 0.0;
+        _1404 = 0.0;
     }
-    float _1383;
-    if (_770)
+    float _1405;
+    if (_779)
     {
-        _1383 = 1.0;
+        _1405 = 1.0;
     }
     else
     {
-        _1383 = _505 ? 2.0 : 0.0;
+        _1405 = _514 ? 2.0 : 0.0;
     }
-    bool _543;
-    if (_499)
+    bool _552;
+    if (_508)
     {
-        _543 = in.m_28.y <= 0.0;
+        _552 = in.m_28.y <= 0.0;
     }
     else
     {
-        _543 = _499;
+        _552 = _508;
     }
-    out.m_506 = float4(_1381, _1382, _1383, float(_543));
-    out.m_547 = in.m_252;
-    out.m_550 = _715;
-    out.m_552 = _761;
-    float3 _1386;
+    out.m_515 = float4(_1403, _1404, _1405, float(_552));
+    out.m_556 = in.m_261;
+    out.m_559 = _724;
+    out.m_561 = _770;
+    float3 _1408;
     do
     {
-        float3 _1060 = (float4x4(in.m_555, in.m_557, in.m_559, in.m_561) * _719).xyz;
-        float3 _1078 = cross(in.m_555.xyz, in.m_557.xyz);
-        float3 _1104 = fast::normalize(spvFMulMatrixVector(float3x3(cross(in.m_557.xyz, in.m_559.xyz), cross(in.m_559.xyz, in.m_555.xyz), _1078), _761) * ((dot(_1078, in.m_559.xyz) < 0.0) ? (-1.0) : 1.0));
-        float _1301 = spvFAdd(spvFMul(dot(in.m_561.xz, _952), 0.3499999940395355224609375), spvFMul(dot(in.m_561.xz, float2(0.829999983310699462890625, -0.569999992847442626953125)), 1.7000000476837158203125));
-        float _1325 = spvFMul(dot(in.m_561.xyz, float3(3.099999904632568359375, 2.2999999523162841796875, 2.7000000476837158203125)), 3.0);
-        float3 _1123 = spvFAdd(_1005 * spvFMul(spvFMul(spvFMul(_1007, spvFAdd(1.0, spvFMul(_978, spvFSub(spvFMul(spvFAdd(0.5, spvFMul(spvFMul(0.5, sin(spvFAdd(spvFMul(_49._m1[6].y, 0.61000001430511474609375), _1301))), sin(spvFAdd(spvFMul(_49._m1[6].y, 0.23000000417232513427734375), spvFMul(_1301, 0.699999988079071044921875))))), 1.60000002384185791015625), 0.60000002384185791015625)))), spvFAdd(0.699999988079071044921875, spvFMul(spvFMul(0.300000011920928955078125, sin(spvFAdd(spvFMul(_49._m1[6].y, 4.69999980926513671875), _1325))), sin(spvFAdd(spvFMul(_49._m1[6].y, 2.900000095367431640625), spvFMul(_1325, 0.37000000476837158203125)))))), 0.3499999940395355224609375), _781) * _767;
-        if (_770)
+        float3 _1076 = (float4x4(in.m_564, in.m_566, in.m_568, in.m_570) * _728).xyz;
+        float3 _1094 = cross(in.m_564.xyz, in.m_566.xyz);
+        float3 _1120 = fast::normalize(spvFMulMatrixVector(float3x3(cross(in.m_566.xyz, in.m_568.xyz), cross(in.m_568.xyz, in.m_564.xyz), _1094), _770) * ((dot(_1094, in.m_568.xyz) < 0.0) ? (-1.0) : 1.0));
+        float _1323 = spvFAdd(spvFMul(dot(in.m_570.xz, _967), 0.3499999940395355224609375), spvFMul(dot(in.m_570.xz, float2(0.829999983310699462890625, -0.569999992847442626953125)), 1.7000000476837158203125));
+        float _1347 = spvFMul(dot(in.m_570.xyz, float3(3.099999904632568359375, 2.2999999523162841796875, 2.7000000476837158203125)), 3.0);
+        float3 _1145 = spvFAdd(_1020 * spvFMul(spvFMul(spvFMul(_1022, spvFAdd(1.0, spvFMul(_993, spvFSub(spvFMul(spvFAdd(0.5, spvFMul(spvFMul(0.5, sin(spvFAdd(spvFMul(_49._m1[6].y, 0.61000001430511474609375), _1323))), sin(spvFAdd(spvFMul(_49._m1[6].y, 0.23000000417232513427734375), spvFMul(_1323, 0.699999988079071044921875))))), 1.60000002384185791015625), 0.60000002384185791015625)))), spvFAdd(0.699999988079071044921875, spvFMul(spvFMul(0.300000011920928955078125, sin(spvFAdd(spvFMul(_49._m1[6].y, 4.69999980926513671875), _1347))), sin(spvFAdd(spvFMul(_49._m1[6].y, 2.900000095367431640625), spvFMul(_1347, 0.37000000476837158203125)))))), 0.3499999940395355224609375), _794) * _798;
+        if (_779)
         {
-            _1386 = spvFAdd(_1060, _1123 * spvFMul(spvFMul(_778, in.m_252.y), in.m_252.y));
+            _1408 = spvFAdd(_1076, _1145 * spvFMul(spvFMul(_791, in.m_261.y), in.m_261.y));
             break;
         }
-        bool _1167 = in.m_28.y > 1.5;
-        float _1384;
-        if (_1167)
+        bool _1189 = in.m_28.y > 1.5;
+        float _1406;
+        if (_1189)
         {
-            _1384 = in.m_252.y;
+            _1406 = in.m_261.y;
         }
         else
         {
-            _1384 = in.m_28.y;
+            _1406 = in.m_28.y;
         }
-        float _1183 = spvFMul(_778, fast::max(spvFSub(in.m_271.w, 1.0), 0.0));
-        if ((_1384 <= 0.0) && (!_1167))
+        float _1205 = spvFMul(_791, fast::max(spvFSub(in.m_280.w, 1.0), 0.0));
+        if ((_1406 <= 0.0) && (!_1189))
         {
-            _1386 = spvFAdd(_1060, _1104 * spvFAdd(spvFMul(_1183, 0.039999999105930328369140625), 0.00039999998989515006542205810546875));
+            _1408 = spvFAdd(_1076, _1120 * spvFAdd(spvFMul(_1205, 0.039999999105930328369140625), 0.00039999998989515006542205810546875));
             break;
         }
-        float3 _1218 = spvFMulMatrixVector(float3x3(float3(in.m_555.xyz), float3(in.m_557.xyz), float3(in.m_559.xyz)), in.m_271.xyz);
-        float _1253 = spvFMul(_1183, _1384);
-        float3 _1254 = fast::normalize(spvFAdd(spvFAdd(_1104 * spvFSub(1.0, fast::min(length(_1218), 1.0)), _1218), spvFAdd(float3(0.0, -_49._m1[1].w, 0.0), _1123) * spvFMul(0.5, _1384))) * _1253;
-        float _1257 = dot(_1254, _1104);
-        float _1261 = spvFMul(_1253, 0.119999997317790985107421875);
-        float3 _1385;
-        if (_1257 < _1261)
+        float3 _1240 = spvFMulMatrixVector(float3x3(float3(in.m_564.xyz), float3(in.m_566.xyz), float3(in.m_568.xyz)), in.m_280.xyz);
+        float _1275 = spvFMul(_1205, _1406);
+        float3 _1276 = fast::normalize(spvFAdd(spvFAdd(_1120 * spvFSub(1.0, fast::min(length(_1240), 1.0)), _1240), spvFAdd(float3(0.0, -_49._m1[1].w, 0.0), _1145) * spvFMul(0.5, _1406))) * _1275;
+        float _1279 = dot(_1276, _1120);
+        float _1283 = spvFMul(_1275, 0.119999997317790985107421875);
+        float3 _1407;
+        if (_1279 < _1283)
         {
-            _1385 = spvFAdd(_1254, _1104 * spvFSub(_1261, _1257));
+            _1407 = spvFAdd(_1276, _1120 * spvFSub(_1283, _1279));
         }
         else
         {
-            _1385 = _1254;
+            _1407 = _1276;
         }
-        _1386 = spvFAdd(_1060, _1385);
+        _1408 = spvFAdd(_1076, _1407);
         break;
     } while(false);
-    out.m_637 = _1378;
-    out.m_639 = (_752 * _761) * ((dot(_739, _730) < 0.0) ? (-1.0) : 1.0);
-    out.m_645 = in.m_646;
-    out.m_648 = float4(in.m_28.x, 0.0, 0.0, 0.0);
-    out.m_670 = spvFMulMatrixVector(_471._m2, _479);
-    out.m_672 = spvFMulMatrixVector(_471._m3, float4(_1386, 1.0));
-    out.m_674 = _1379;
+    out.m_646 = _1400;
+    out.m_648 = (_761 * _770) * ((dot(_748, _739) < 0.0) ? (-1.0) : 1.0);
+    out.m_654 = in.m_230;
+    out.m_656 = float4(in.m_28.x, 0.0, 0.0, 0.0);
+    out.m_678 = spvFMulMatrixVector(_480._m2, _488);
+    out.m_680 = spvFMulMatrixVector(_480._m3, float4(_1408, 1.0));
+    out.m_682 = _1401;
     out.gl_Position.y = -(out.gl_Position.y);    // Invert Y-axis for Metal
     return out;
 }

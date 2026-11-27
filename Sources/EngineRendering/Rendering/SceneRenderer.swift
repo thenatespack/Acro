@@ -120,7 +120,7 @@ public final class SceneRenderer {
     /// Debug shapes drawn after the scene by `draw` (nil draws none).
     public var debugDraw: DebugDraw?
     /// The CPU side: registries of mesh bounds and material flags, motion history, gathered items.
-    public private(set) var prep = RenderPrep()
+    public internal(set) var prep = RenderPrep()
     public private(set) var list = RenderList()
 
     var meshes: [GPUMesh] = []
@@ -168,7 +168,23 @@ public final class SceneRenderer {
     /// Fur (SceneRenderer+Fur.swift): the fur meshes built per fur material and base mesh, the
     /// fur shaders (by skinned) and scratch for the fur block.
     var furMeshes: [String: FurMeshes] = [:]
-    var furShaders: [Bool: ShaderSource] = [:]
+    /// Fur meshes being built (background jobs) per "material|mesh" pair.
+    var furBuilds: [String: FurBuild] = [:]
+    /// Builds fur meshes on background jobs (false: on the render thread, the frame they're first needed).
+    public var buildsFurInBackground = true
+    /// Seconds the last fur meshes took to build (on whichever thread built them).
+    public internal(set) var furBuildSeconds: Double = 0
+    /// Simulates card hair per guide (HairSimulation.swift); false bends it with the springs.
+    public var simulatesHair = true
+    /// The hair simulation of each entity wearing card hair (SceneRenderer+HairSim.swift).
+    var hairStates: [Entity: HairState] = [:]
+    /// Seconds the hair simulation and its card vertices took last frame (render thread).
+    public internal(set) var hairSimulationSeconds: Double = 0
+    var hairFrame = 0
+    /// Shell fur draws about one shell per this many pixels of its projected length (at most the
+    /// groom's `shells` for the level; 0 draws them all). `RenderPrep.furShellCount`.
+    public var furPixelsPerShell: Float = 3
+    var furShaders: [String: ShaderSource] = [:]
     /// Fur casters' depth pipelines (mesh_fur_depth(_skinned).vert, mesh_fur_depth.frag).
     var furDepthPipelines: [FurDepthKey: RenderPipeline] = [:]
     var furBlockScratch: [Vec4] = []
@@ -671,6 +687,9 @@ public final class SceneRenderer {
         uniforms!.probes = probes.uniform
         skyView = (view, jitteredProjection)
         let size = engine.renderSize
+        // Next frame's shell counts by screen size (RenderPrep.furShellCount).
+        prep.furPixelScale = camera.projection(aspect: engine.aspectRatio).c1.y * Float(size.height) * 0.5
+        prep.furPixelsPerShell = furPixelsPerShell
         // Binned with the projection the pass rasterizes with, so tiles match gl_FragCoord.
         clusters.build(lights: punctualLights, view: view, projection: jitteredProjection)
         clusters.write(to: &lightData)
@@ -716,6 +735,7 @@ public final class SceneRenderer {
         // Upload assets entities started using, then gather again so they draw this frame
         // (only on frames where something new resolved).
         if resolveMissingAssets() { prep.gather(world: world) }
+        stepHair()
         PunctualLight.gather(in: world, into: &punctualLights)
         gatherDecals(world: world)
         for key in prep.missingKeys where !reportedMissing.contains(key) && !prep.meshes.contains(key) && !prep.materials.contains(key)
@@ -798,6 +818,7 @@ public final class SceneRenderer {
     public func renderShadows(frame: Frame) {
         guard uniforms != nil else { return }
         uploaded = list.instances.isEmpty ? nil : frame.upload(list.instances)
+        uploadHair(frame: frame)
         environmentLighting.render()
         if renderProbeBake(frame: frame) { uniforms?.probes = probes.uniform }
         renderShadowAtlas(shadowsActive ? shadowSetup : nil, frame: frame)
@@ -868,6 +889,7 @@ public final class SceneRenderer {
             stats.prepareTime = Self.seconds(since: start)
         }
         gather(world, viewpoint: shadowFocus?.eye)
+        uploadHair(frame: frame)
         let focus: ShadowSetup.Focus
         if let shadowFocus {
             focus = ShadowSetup.Focus(view: shadowFocus.view, projection: shadowFocus.projection,
@@ -1305,7 +1327,8 @@ public final class SceneRenderer {
             shader = windShader
         }
         if key.fur != nil {
-            guard let furShader = furShader(skinned: key.skinned) else { return nil }
+            // Simulated hair cards carry last frame's positions in the paint stream.
+            guard let furShader = furShader(skinned: key.skinned, simulated: key.painted) else { return nil }
             shader = furShader
         }
         if key.probes {

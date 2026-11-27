@@ -598,41 +598,68 @@ public enum GroomGeometry {
         let f = fraction.isFinite ? min(max(fraction, 0.01), 1) : 1
         let guides = all.prefix(cardCount(guides: all.count, fraction: f))
         guard !all.isEmpty, !guides.isEmpty else { return nil }
-        let width = (fur.groom.cardWidth.isFinite ? min(max(fur.groom.cardWidth, 0.0005), 0.5) : 0.012) * min(2, 1 / f.squareRoot())
+        let width = cardWidth(fur: fur, fraction: f)
         let taper = clamp01(fur.groom.cardTaper)
         var vertices: [MeshVertex] = []
         var indices: [UInt32] = []
         var skin: [SkinInfluence]? = skinned ? [] : nil
+        var facing: [Vec3] = []
         for (index, guide) in guides.enumerated() {
-            let points = guide.points
-            // A random number per card (tangent.w's fraction) varies its strands in the shader.
-            let random = (Float(index) * 0.618_034).truncatingRemainder(dividingBy: 1) * 0.999
-            let count = points.count
+            let count = guide.points.count
             guard count >= 2 else { continue }
             let first = UInt32(vertices.count)
-            let cardWidth = width * (guide.width.isFinite ? max(guide.width, 0.05) : 1)
-            for k in 0..<count {
-                let s = Float(k) / Float(count - 1)
-                let facing = k < guide.normals.count ? guide.normals[k] : guide.normal
-                let t = safeNormalize(points[min(k + 1, count - 1)] - points[max(k - 1, 0)], fallback: facing)
-                var side = cross(t, facing)
-                if dot(side, side) < 1e-10 { side = cross(t, abs(t.y) < 0.9 ? Vec3(0, 1, 0) : Vec3(1, 0, 0)) }
-                side = safeNormalize(side, fallback: Vec3(1, 0, 0))
-                var normal = safeNormalize(cross(side, t), fallback: facing)
-                if dot(normal, facing) < 0 { normal = -normal }
-                let half = cardWidth * (1 - taper * s) * 0.5
-                for (x, sign) in [(Float(0), Float(-1)), (Float(1), Float(1))] {
-                    vertices.append(MeshVertex(position: points[k] + side * (half * sign), normal: normal, uv: Vec2(x, s), tangent: Vec4(t, 2 + random)))
-                    if let influence = guide.skin { skin?.append(influence) } else { skin?.append(SkinInfluence(joint: 0)) }
+            facing.removeAll(keepingCapacity: true)
+            for k in 0..<count { facing.append(k < guide.normals.count ? guide.normals[k] : guide.normal) }
+            vertices.append(contentsOf: repeatElement(MeshVertex(position: .zero, normal: .zero), count: count * 2))
+            vertices.withUnsafeMutableBufferPointer { out in
+                guide.points.withUnsafeBufferPointer { points in
+                    facing.withUnsafeBufferPointer { facing in
+                        writeCard(points: points, facing: facing, width: width * (guide.width.isFinite ? max(guide.width, 0.05) : 1),
+                                  taper: taper, random: cardRandom(index), into: out.baseAddress! + Int(first))
+                    }
                 }
-                if k > 0 {
-                    let a = first + UInt32((k - 1) * 2), b = a + 1, c = a + 2, d = a + 3
-                    indices += [a, c, b, b, c, d]
-                }
+            }
+            for _ in 0..<(count * 2) { skin?.append(guide.skin ?? SkinInfluence(joint: 0)) }
+            for k in 1..<count {
+                let a = first + UInt32((k - 1) * 2), b = a + 1, c = a + 2, d = a + 3
+                indices += [a, c, b, b, c, d]
             }
         }
         guard !indices.isEmpty else { return nil }
         return MeshGeometry(vertices: vertices, indices: indices, skin: skin)
+    }
+
+    /// The full width of a card at detail level `fraction` (fewer, wider cards farther away).
+    public static func cardWidth(fur: MaterialFur, fraction: Float) -> Float {
+        let f = fraction.isFinite ? min(max(fraction, 0.01), 1) : 1
+        return (fur.groom.cardWidth.isFinite ? min(max(fur.groom.cardWidth, 0.0005), 0.5) : 0.012) * min(2, 1 / f.squareRoot())
+    }
+
+    /// A random number per card (tangent.w's fraction) that varies its strands in the shader.
+    public static func cardRandom(_ index: Int) -> Float { (Float(index) * 0.618_034).truncatingRemainder(dividingBy: 1) * 0.999 }
+
+    /// Writes one card's vertices (two per point, left then right, root first) along `points`
+    /// facing `facing` (per point), `width` wide at the root narrowing by `taper` to the tip:
+    /// what `cards` draws, and what the hair simulation rewrites every frame from moved points.
+    public static func writeCard(points: UnsafeBufferPointer<Vec3>, facing: UnsafeBufferPointer<Vec3>, width: Float, taper: Float,
+                                 random: Float, into out: UnsafeMutablePointer<MeshVertex>) {
+        let count = points.count
+        guard count >= 2 else { return }
+        let inverse = 1 / Float(count - 1)
+        for k in 0..<count {
+            let s = Float(k) * inverse
+            let face = facing[k]
+            let t = safeNormalize(points[min(k + 1, count - 1)] - points[max(k - 1, 0)], fallback: face)
+            var side = cross(t, face)
+            if dot(side, side) < 1e-10 { side = cross(t, abs(t.y) < 0.9 ? Vec3(0, 1, 0) : Vec3(1, 0, 0)) }
+            side = safeNormalize(side, fallback: Vec3(1, 0, 0))
+            var normal = safeNormalize(cross(side, t), fallback: face)
+            if dot(normal, face) < 0 { normal = -normal }
+            let half = width * (1 - taper * s) * 0.5
+            let tangent = Vec4(t, 2 + random)
+            out[k * 2] = MeshVertex(position: points[k] - side * half, normal: normal, uv: Vec2(0, s), tangent: tangent)
+            out[k * 2 + 1] = MeshVertex(position: points[k] + side * half, normal: normal, uv: Vec2(1, s), tangent: tangent)
+        }
     }
 
     /// What growing `fur` on `base` costs and what's wrong with it (`groom.apply`'s warnings).
@@ -703,7 +730,7 @@ public enum GroomGeometry {
 
     // MARK: Helpers
 
-    static func clamp01(_ x: Float) -> Float { x.isFinite ? min(max(x, 0), 1) : 0 }
+    package static func clamp01(_ x: Float) -> Float { x.isFinite ? min(max(x, 0), 1) : 0 }
 
     /// 1 inside half the radius, easing to 0 at the rim.
     static func falloff(_ r: Float) -> Float {
