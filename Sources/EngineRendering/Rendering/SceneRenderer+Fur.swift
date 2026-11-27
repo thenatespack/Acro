@@ -3,7 +3,8 @@
 /// materials draw with mesh_fur(_skinned).vert and mesh_fur.frag, their uniform buffer 2 the fur
 /// block (fur.glsl). Fur casters (a few shells, or the cards; `RenderPrep.appendFur`) draw into the
 /// shadow atlas with mesh_fur_depth(_skinned).vert and mesh_fur_depth.frag, cut to their strands;
-/// fur is left out of the depth prepass.
+/// fur is left out of the depth prepass. Shells and fins are alpha blended in the transparent pass
+/// (their coverage is filtered, fur_strands.glsl); cards use alpha-to-coverage.
 import EngineAssets
 import EngineCore
 import EngineGraphics
@@ -43,7 +44,11 @@ extension SceneRenderer {
                     print("SceneRenderer: fur mesh '\(key)' failed: \(error)")
                 }
             }
-            register(GroomGeometry.shells(geometry, fur: fur), GroomRenderer.meshKey("shell", tag: fur.tag, base: base))
+            let shells = GroomGeometry.shells(geometry, fur: fur)
+            register(shells, GroomRenderer.meshKey("shell", tag: fur.tag, base: base))
+            if fur.groom.drawnStyle == .shell, let shells {
+                register(GroomFins.fins(shells, spacing: fur.groom.strandSpacing), GroomRenderer.meshKey("fins", tag: fur.tag, base: base))
+            }
             if fur.groom.drawnStyle == .cards {
                 let guides = GroomGeometry.guides(geometry, fur: fur).guides
                 for (level, fraction) in fur.groom.cardLevels.enumerated() {
@@ -83,7 +88,7 @@ extension SceneRenderer {
             out[12] = Vec4(tip, Float(min(max(g.strandsPerCard, 1), 32)))
             out[13] = Vec4(dir.x, dir.y, wind.effectiveStrength * windScale, wind.effectiveGustiness)
             out[14] = Vec4(windState.time, windState.previousTime, material.metallicRoughnessTexture != nil ? 1 : 0, g.mask.invert ? 1 : 0)
-            out[15] = .zero
+            out[15] = Vec4(Float(device.sampleCount), Float(prep.furFrame % 64), 0, 0)
             guard skinned else { return }
             let springs = prep.furSkinSprings[skin] ?? []
             let pose = skin < prep.skins.count ? prep.skins[skin] : nil

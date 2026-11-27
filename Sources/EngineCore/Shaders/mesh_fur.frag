@@ -1,10 +1,14 @@
 #version 450
+// compile-shaders: gles -DFUR_NO_SAMPLE_MASK
+// compile-shaders: wgsl -DFUR_NO_SAMPLE_MASK
 #extension GL_GOOGLE_include_directive : require
 
 // SceneRenderer's fragment shader for fur (Groom.swift; vertex stage fur.glsl).
 //
-// Coverage: fur_strands.glsl (shared with the shadow casters, mesh_fur_depth.frag); card strands
-// go out as alpha for alpha-to-coverage.
+// Coverage: fur_strands.glsl (shared with the shadow casters, mesh_fur_depth.frag), filtered, as
+// alpha: shells and fins are alpha blended (drawn inner to outer after the opaque surfaces,
+// `RenderPrep.appendFur`), cards are opaque with hashed alpha per MSAA sample (gl_SampleMask;
+// the GLSL ES and WGSL variants, built with FUR_NO_SAMPLE_MASK, alpha-test instead).
 // Shading:
 // - color: root-to-tip with per-strand noise;
 // - hair model (Marschner as approximated by Karis, "Physically Based Hair Shading in Unreal",
@@ -217,9 +221,15 @@ float furCascadeShadow(int c, vec3 p, float depth) {
     float ref = min(local.z, 1.0) - frame.cascadeBiases[c];
     float perMeter = length(vec3(m[0][2], m[1][2], m[2][2]));
     float d = depth * perMeter;
-    float s = tileShadow(local.xy, ref - d * 0.18, origin, frame.shadowTiles.xy);
-    s += tileShadow(local.xy, ref - d * 0.69, origin, frame.shadowTiles.xy);
-    s += tileShadow(local.xy, ref - d * 1.79, origin, frame.shadowTiles.xy);
+    // One hardware-filtered compare per depth, the three spread over a triangle a texel and a
+    // half wide (a small PCF kernel spread across the depths): fur fragments are many and
+    // layered, and three full PCF kernels cost several ms in a close-up.
+    vec2 texel = frame.shadowAtlas.xy;
+    vec2 lo = origin + texel * 0.5, hi = origin + frame.shadowTiles.xy - texel * 0.5;
+    vec2 uv = origin + local.xy * frame.shadowTiles.xy;
+    float s = texture(shadowMap, vec3(clamp(uv + texel * vec2(0.0, 0.85), lo, hi), ref - d * 0.18));
+    s += texture(shadowMap, vec3(clamp(uv + texel * vec2(-0.74, -0.43), lo, hi), ref - d * 0.69));
+    s += texture(shadowMap, vec3(clamp(uv + texel * vec2(0.74, -0.43), lo, hi), ref - d * 1.79));
     return s * (1.0 / 3.0);
 }
 
@@ -249,11 +259,62 @@ float furSunShadow(vec3 p, vec3 ng, float depth, out vec3 tint) {
 
 void main() {
     float h = vFur.x;
-    bool cards = vFur.z > 0.5;
+    bool cards = vFur.z > 0.5 && vFur.z < 1.5;
+    bool fin = vFur.z > 1.5;
     bool undercoat = vFur.w > 0.5;
     vec4 f0 = furData.fur[0], f1 = furData.fur[1], f2 = furData.fur[2];
-    float along, strandRandom, alpha, exposed;
-    if (!furCoverage(1.0, along, strandRandom, alpha, exposed)) discard;
+    vec3 v = normalize(frame.cameraPos.xyz - vWorldPos);
+    vec3 faceNormal = cross(dFdx(vWorldPos), dFdy(vWorldPos));
+    float along, strandRandom, exposed, blur;
+    uint sampleMask = 0xFFFFFFFFu;
+    float alpha = furCoverage(1.0, along, strandRandom, exposed, blur);
+    float shells = vColor.w;
+    // (Not toward the silhouette, where each shell shows as its own outline.)
+    if (!cards && !fin && !undercoat && blur > 0.5 && shells >= 8.0 && abs(dot(normalize(vNormal), v)) > 0.45) {
+        // Where the shells have blended into their (alike) average, only every 2nd (4th, for
+        // the plain average and 16+ shells) draws, with the coverage of the ones it stands for:
+        // as many layers as the fur shows structure, at half (a quarter of) the shading.
+        float skip = blur > 1.5 && shells >= 16.0 ? 4.0 : 2.0;
+        float index = floor(h * shells + 0.5);
+        if (mod(index, skip) > 0.5) discard;
+        alpha = 1.0 - pow(1.0 - min(alpha, 0.999), skip);
+    }
+    if (cards) {
+        // Edge-on cards fade instead of collapsing into aliased lines.
+        float facing = abs(dot(normalize(vNormal), v));
+        alpha *= mix(0.35, 1.0, smoothstep(0.03, 0.3, facing));
+        // Hashed alpha per sample (Wyman & McGuire 2017, "Hashed Alpha Testing"): the coverage
+        // picks how many of the pixel's samples the card covers (dithered rounding, so the levels
+        // average out between pixels) and a hash of the pixel and the strand picks which, so
+        // cards over cards cover different samples and add up (alpha-to-coverage covers the
+        // same samples for every layer: overlapping thin strands would never fill a pixel). With
+        // one sample (temporal upscalers) it is the stochastic alpha test, its threshold changing
+        // every frame for the upscaler to average. WebGL 2 has no sample mask (and naga can't translate
+        // it for WebGPU): an alpha test there.
+        float samples = clamp(furData.fur[7].x, 1.0, 8.0);
+        vec2 pixel = gl_FragCoord.xy + (samples < 1.5 ? vec2(5.588238, 3.1416) * furData.fur[7].y : vec2(0.0));
+        // Each strand its own threshold: one threshold for every layer would make them cover
+        // the same pixels (their union no more than the densest).
+        vec2 layer = vec2(strandRandom * 61.0 + vFur.y * 113.0, h * 7.0);
+        float k = floor(alpha * samples + fract(furPixelNoise(pixel) + strandRandom * 0.618034 + vFur.y * 0.414214));
+        if (k < 0.5) discard;
+#ifdef FUR_NO_SAMPLE_MASK
+        alpha = 1.0;
+#else
+        uint count = uint(samples);
+        uint bits = (1u << uint(min(k, samples))) - 1u;
+        uint rotation = uint(furPixelNoise(pixel.yx * 1.37 + layer) * samples) % count;
+        uint full = (1u << count) - 1u;
+        sampleMask = ((bits << rotation) | (bits >> (count - rotation))) & full;
+        alpha = 1.0;
+#endif
+    } else if (fin) {
+        // Fins show at the silhouette only (the surface edge-on), and not when seen edge-on themselves.
+        float silhouette = 1.0 - abs(dot(normalize(vNormal), v));
+        float finFacing = abs(dot(faceNormal * inversesqrt(max(dot(faceNormal, faceNormal), 1e-20)), v));
+        alpha *= smoothstep(0.72, 0.95, silhouette) * smoothstep(0.08, 0.35, finFacing);
+    }
+    if (alpha < 0.004) discard;
 
     vec3 rootColor = furData.fur[3].rgb, tipColor = furData.fur[4].rgb;
     float noise = 1.0 + (strandRandom - 0.5) * 2.0 * f2.z;
@@ -277,7 +338,6 @@ void main() {
     if (cards && !gl_FrontFacing) n = -n;
     vec3 t = normalize(vStrand);
     vec3 l = normalize(frame.lightDir.xyz);
-    vec3 v = normalize(frame.cameraPos.xyz - vWorldPos);
     bool receivesShadows = vParams.x > 0.5;
     // Light gets through about this many meters of fur: less for dense, thick fur.
     float through = clamp(f0.x * 2.0 / max(crossings, 1.0), 0.004, 0.06);
@@ -320,5 +380,8 @@ void main() {
     vec3 rgb = mix(color, frame.fogColor.rgb, fog);
     if (frame.reflectionExtra.w > 0.5) rgb /= 1.0 + rgb;
     outColor = vec4(rgb, alpha);
+#ifndef FUR_NO_SAMPLE_MASK
+    gl_SampleMask[0] = int(sampleMask);
+#endif
     outMotion = motionVector(vCurrentClip, vPreviousClip);
 }

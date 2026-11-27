@@ -79,24 +79,31 @@ extension RenderPrep {
         let bounds = Bounds(center: item.bounds.center, halfExtent: item.bounds.halfExtent + Vec3(repeating: pad))
         let receives: Float = groom.receivesShadows && item.instance.params.x > 0.5 ? 1 : 0
         let casts = groom.castsShadows && item.castsShadows
-        let color = Vec4(groom.tint, 1)
         let first = items.count
-        func add(mesh: Int, height: Float, castsShadows: Bool = false) {
+        let shellCount = fur.style == .shell && level < fur.shellLevels.count ? max(fur.shellLevels[level], 1) : 0
+        // The shell count rides in the color's alpha (fur.glsl).
+        let color = Vec4(groom.tint, Float(shellCount))
+        func add(mesh: Int, height: Float, castsShadows: Bool = false, blended: Bool = false) {
             items.append(RenderItem(
                 entity: entity, mesh: mesh, material: material,
                 instance: MeshInstance(model: model, previousModel: item.instance.previousModel, color: color,
                                        params: Vec4(receives, height, 0, 0)),
-                bounds: bounds, castsShadows: castsShadows, transparent: false, alphaTested: castsShadows, skin: item.skin))
+                bounds: bounds, castsShadows: castsShadows, transparent: blended, alphaTested: castsShadows, skin: item.skin))
         }
         let shellKey = GroomRenderer.meshKey("shell", tag: fur.tag, base: meshKey)
         guard let shell = meshes.id(of: shellKey) else { return }  // SceneRenderer.syncGroomMeshes builds it
+        // The opaque undercoat, then the shells inner to outer and the fins, alpha blended in the
+        // transparent pass (equal bounds keep this order there), so each layer blends over the
+        // ones below it: shells need no sorting.
+        add(mesh: shell, height: 0)
         if fur.style == .shell, level < fur.shellLevels.count {
-            // Outer shells first, so the depth test rejects what the tips cover.
             let n = max(fur.shellLevels[level], 1)
             let casters = casts ? Self.furShadowShells(n) : []
-            for i in stride(from: n, through: 1, by: -1) { add(mesh: shell, height: Float(i) / Float(n), castsShadows: casters.contains(i)) }
+            for i in 1...n { add(mesh: shell, height: Float(i) / Float(n), castsShadows: casters.contains(i), blended: true) }
+            if let fins = meshes.id(of: GroomRenderer.meshKey("fins", tag: fur.tag, base: meshKey)) {
+                add(mesh: fins, height: 2, blended: true)
+            }
         }
-        add(mesh: shell, height: 0)
         if fur.style != .shell, level < fur.cardLevels.count,
            let cards = meshes.id(of: GroomRenderer.meshKey("cards\(level)", tag: fur.tag, base: meshKey)) {
             add(mesh: cards, height: 1, castsShadows: casts)

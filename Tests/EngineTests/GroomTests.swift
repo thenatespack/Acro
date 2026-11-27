@@ -8,7 +8,7 @@ import Testing
 @testable import EngineMeshBuild
 @testable import EngineRendering
 
-// Fur and hair (GroomBuild.swift, Groom.swift, GroomGeometry.swift, GroomImporter.swift, RenderPrep+Fur.swift):
+// Fur and hair (GroomBuild.swift, Groom.swift, GroomGeometry.swift, GroomFins.swift, GroomImporter.swift, RenderPrep+Fur.swift):
 // the file format, the fur meshes, the importer and its hooks in mesh builds, characters and
 // terrain scatter, and the render items (instanced shells, detail levels, skinned batches).
 
@@ -81,6 +81,36 @@ private func sphere() -> MeshGeometry { MeshGeometry.sphere(radius: 0.5, segment
     }
 
     // MARK: Geometry
+
+    @Test func finsStandOnEveryFurryEdgeBothWays() throws {
+        let base = sphere()
+        let fur = MaterialFur(groom: GroomBuild())
+        let shells = try #require(GroomGeometry.shells(base, fur: fur))
+        let spacing = fur.groom.strandSpacing
+        let fins = try #require(GroomFins.fins(shells, spacing: spacing))
+        // Each edge once: (segments + 1) x 2 vertices, segments quads drawn both ways.
+        var edges: Set<UInt64> = []
+        for t in stride(from: 0, to: shells.indices.count, by: 3) {
+            for k in 0..<3 {
+                let a = shells.indices[t + k], b = shells.indices[t + (k + 1) % 3]
+                edges.insert(UInt64(min(a, b)) << 32 | UInt64(max(a, b)))
+            }
+        }
+        let perEdge = (GroomFins.segments + 1) * 2
+        #expect(fins.vertices.count == edges.count * perEdge)
+        #expect(fins.indices.count == edges.count * GroomFins.segments * 12)
+        // UV y climbs root to tip; UV x counts strands along the edge (2 per spacing).
+        for e in stride(from: 0, to: fins.vertices.count, by: perEdge) {
+            let root = fins.vertices[e], other = fins.vertices[e + 1], tip = fins.vertices[e + perEdge - 2]
+            #expect(root.uv.y == 0 && tip.uv.y == 1 && tip.position == root.position && tip.tangent == root.tangent)
+            let strands = length(other.position - root.position) / spacing * GroomFins.strandsPerSpacing
+            #expect(abs((other.uv.x - root.uv.x) - strands) < 1e-2 * max(strands, 1))
+        }
+        // Bald meshes get none.
+        var bald = shells
+        for i in bald.vertices.indices { bald.vertices[i].tangent.w = 1 }
+        #expect(GroomFins.fins(bald, spacing: spacing) == nil)
+    }
 
     @Test func shellsKeepTheMeshAndCarryLengthAndComb() throws {
         let base = sphere()
@@ -271,8 +301,15 @@ private func sphere() -> MeshGeometry { MeshGeometry.sphere(radius: 0.5, segment
         var list = RenderList()
         let view = Frustum(viewProjection: Mat4.perspective(fovY: 1.2, aspect: 1, near: 0.1, far: 100) * Mat4.lookAt(eye: Vec3(2, 0, 8), target: Vec3(2, 0, 0)))
         list.build(items: prep.items, view: view, cameraPosition: Vec3(2, 0, 8), shadows: nil)
-        #expect(list.opaque.count == 2, "the bodies, then every shell of every copy in one instanced draw")
-        #expect(list.opaque.contains { $0.material == 1 && $0.count == 27 })
+        #expect(list.opaque.count == 2, "the bodies, then every copy's undercoat in one instanced draw")
+        #expect(list.opaque.contains { $0.material == 1 && $0.count == 3 })
+        // The shells are blended, copy by copy back to front, each inner to outer; consecutive
+        // copies still share one instanced draw.
+        #expect(list.transparent.count == 1 && list.transparent[0].material == 1 && list.transparent[0].count == 24,
+                "\(list.transparent)")
+        let order = list.instances[list.transparent[0].first..<(list.transparent[0].first + 24)].map(\.params.y)
+        #expect(order == Array(repeating: (1...8).map { Float($0) / 8 }, count: 3).flatMap { $0 }, "\(order)")
+        #expect(list.instances[list.transparent[0].first].color.w == 8, "the shell count rides in the color's alpha")
 
         // `castsShadows: false` on the groom (or the mesh) keeps the fur out of the shadows.
         var grooms: [(Entity, GroomRenderer)] = []

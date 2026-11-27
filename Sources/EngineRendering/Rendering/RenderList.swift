@@ -437,7 +437,7 @@ public struct RenderListStats: Equatable, Sendable {
 /// transparent instances are sorted back to front by the distance from the camera to their
 /// bounds' center (ties by entity index), and consecutive ones sharing mesh and material
 /// share a batch. Shadow batches group casters by mesh, and alpha-tested ones by mesh and
-/// material (their batch keeps the material, others have -1). Skinned items get a batch each.
+/// material (their batch keeps the material, others have -1). Skinned items get a batch each, except consecutive ones sharing skin, mesh and material (an entity fur shells).
 public struct RenderList {
     public private(set) var instances: [MeshInstance] = []
     public private(set) var opaque: [RenderBatch] = []
@@ -550,7 +550,9 @@ public struct RenderList {
         // Back to front; ties by entity so the order is stable across runs and backends.
         transparentItems.sort {
             if $0.distance != $1.distance { return $0.distance > $1.distance }
-            return items[Int($0.item)].entity.index < items[Int($1.item)].entity.index
+            let a = items[Int($0.item)].entity.index, b = items[Int($1.item)].entity.index
+            // Then item order: one entity's layers (fur shells) keep the order they were added in.
+            return a != b ? a < b : $0.item < $1.item
         }
 
         // Lay out: opaque batches, transparent runs, shadow batches.
@@ -587,7 +589,9 @@ public struct RenderList {
             for (n, entry) in transparentItems.enumerated() {
                 let item = items[Int(entry.item)]
                 out[transparentStart + n] = item.instance
-                if let last = transparent.last, last.mesh == item.mesh, last.material == item.material, last.skin < 0, item.skin < 0 {
+                // Consecutive instances of one mesh and material share a draw (skinned ones when
+                // they share the pose too: an entity's fur shells).
+                if let last = transparent.last, last.mesh == item.mesh, last.material == item.material, last.skin == item.skin {
                     transparent[transparent.count - 1].count += 1
                 } else {
                     transparent.append(RenderBatch(mesh: item.mesh, material: item.material, first: transparentStart + n, count: 1,

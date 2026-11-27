@@ -4,7 +4,10 @@
 // Fur and hair in the shadow atlas (depth only, SceneRenderer+Fur.swift): keeps the fragments on
 // a strand (fur_strands.glsl), so fur casts the strands it draws. The renderer draws only a few
 // shells per groom here (`RenderPrep.appendFur`), so their strands are widened to stand in for
-// the shells between; card strands are cut at half coverage, like alpha-to-coverage at one sample.
+// the shells between. Coverage is hashed-alpha tested (kept where it beats a per-texel threshold):
+// at the shadow atlas's resolution strands are far thinner than a texel, so their filtered
+// coverage is small and a fixed cut would lose them; the hash keeps that fraction of texels,
+// which the receiver's filtering turns back into partial light.
 
 // The prefix of fur.glsl's block.
 layout(set = 2, binding = 2, std140) uniform FurData {
@@ -23,7 +26,8 @@ layout(location = 10) in vec3 vObjectNormal;
 #include "fur_strands.glsl"
 
 void main() {
-    float along, strandRandom, alpha, exposed;
+    float along, strandRandom, exposed, blur;
     bool cards = vFur.z > 0.5;
-    if (!furCoverage(cards ? 1.0 : 1.7, along, strandRandom, alpha, exposed) || alpha < 0.5) discard;
+    float coverage = furCoverage(cards ? 1.0 : 1.7, along, strandRandom, exposed, blur);
+    if (coverage <= furPixelNoise(gl_FragCoord.xy) * 0.98 + 0.01) discard;
 }
