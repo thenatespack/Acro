@@ -13,13 +13,39 @@ import EngineAssets
 extension CharacterRig {
     /// Bounds of the body shapes in the rest pose.
     public var bounds: Bounds {
-        let points = bodyMeshes(segments: 8, smooth: false).flatMap { $0.geometry.vertices.map(\.position) }
+        let points = shapeMeshes(segments: 8, smooth: false).flatMap { $0.geometry.vertices.map(\.position) }
         return points.isEmpty ? Bounds(center: Vec3(0, 0.5, 0), halfExtent: Vec3(0.5, 0.5, 0.5)) : Bounds(enclosing: points)
     }
 
-    /// The skinned body: one mesh per color region that has shapes (joints index `bones`), in
-    /// `CharacterRegion` order. `segments` slices round shapes; `smooth` blends weights at joints.
+    /// The skinned body's meshes (joints index `bones`), each with its region and look. The realistic
+    /// human (`isRealisticHuman`) has the parts named in `CharacterBodyPart` (skin, lips, nails, body,
+    /// legs, accent, shoe.sole, eye.sclera, eye.iris, eye.pupil, eye.cornea; built once per
+    /// proportions and cached, `segments` unused); other rigs one part per color region named after
+    /// it. `smooth` blends weights at joints (off: each vertex follows its heaviest bone).
+    public func bodyParts(segments slices: Int = 12, smooth: Bool = true) -> [CharacterBodyPart] {
+        guard isRealisticHuman else {
+            return shapeMeshes(segments: slices, smooth: smooth).map { region, geometry in
+                CharacterBodyPart(name: region.rawValue, region: region, geometry: geometry,
+                                  look: CharacterPartLook(roughness: region == .eyes ? 0.2 : 0.75))
+            }
+        }
+        let parts = HumanBodyCache.shared.meshes(for: self).parts
+        guard !smooth else { return parts }
+        return parts.map { part in
+            var part = part
+            part.geometry.skin = part.geometry.skin?.map { SkinInfluence(joint: $0.joints[0]) }
+            return part
+        }
+    }
+
+    /// The skinned body as (region, mesh) pairs: `bodyParts`' meshes (a region can have several:
+    /// the realistic human's eye parts are all `.eyes`).
     public func bodyMeshes(segments slices: Int = 12, smooth: Bool = true) -> [(region: CharacterRegion, geometry: MeshGeometry)] {
+        bodyParts(segments: slices, smooth: smooth).map { ($0.region, $0.geometry) }
+    }
+
+    /// One mesh per color region from the shapes per bone (`segments`), in `CharacterRegion` order.
+    func shapeMeshes(segments slices: Int = 12, smooth: Bool = true) -> [(region: CharacterRegion, geometry: MeshGeometry)] {
         var result: [(CharacterRegion, MeshGeometry)] = []
         for region in CharacterRegion.allCases {
             var mesh = MeshGeometry(vertices: [], indices: [], skin: [])

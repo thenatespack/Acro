@@ -28,7 +28,8 @@ final class CombatScene: DemoScene {
     private let debug = DebugDraw()
     private let library = AnimationLibrary()
     private let rig = CharacterRig(template: .humanoid)
-    private var regions: [CharacterRegion] = []
+    /// The body parts' names (CharacterRig.bodyParts: skin, eyes, the shirt "body"...).
+    private var regions: [String] = []
     private var clips: [String: AnimationClipHandle] = [:]
     private var cameraEntity = Entity.invalid
     private var fighter = Entity.invalid
@@ -58,12 +59,11 @@ final class CombatScene: DemoScene {
         try sceneRenderer.registerMaterial(Material(baseColor: Vec4(0.85, 0.88, 0.92, 1), metallic: 1, roughness: 0.25), key: "combat.steel")
         try sceneRenderer.registerMaterial(Material(baseColor: Vec4(1, 0.75, 0.3, 1), roughness: 0.4, emissiveColor: Vec3(1, 0.6, 0.2), emissiveStrength: 2),
                                            key: "combat.gold")
-        for (region, geometry) in rig.bodyMeshes(segments: 12, smooth: true) {
-            regions.append(region)
-            _ = try sceneRenderer.registerMesh(geometry, key: "combat.body.\(region.rawValue)")
-            let c = MeshBuildColor.linear(fromSRGB: CharacterTemplate.humanoid.defaultColor(region))
-            try sceneRenderer.registerMaterial(Material(baseColor: Vec4(c.x, c.y, c.z, 1), roughness: region == .eyes ? 0.2 : 0.75),
-                                               key: "combat.body.\(region.rawValue)")
+        for part in rig.bodyParts(segments: 12, smooth: true) {
+            regions.append(part.name)
+            _ = try sceneRenderer.registerMesh(part.geometry, key: "combat.body.\(part.name)")
+            try sceneRenderer.registerMaterial(part.look.runtimeMaterial(region: CharacterTemplate.humanoid.defaultColor(part.region)),
+                                               key: "combat.body.\(part.name)")
         }
         try sceneRenderer.registerMaterial(Material(baseColor: Vec4(1, 1, 1, 1), roughness: 0.75), key: "combat.shirt")
         for name in ["idle", "attack"] {
@@ -171,10 +171,10 @@ final class CombatScene: DemoScene {
             bones.append(e)
         }
         for region in regions {
-            let material = region == .body ? MaterialHandle("combat.shirt") : MaterialHandle("combat.body.\(region.rawValue)")
-            let body = world.spawn(Transform(), Name("Body \(region.rawValue)"),
-                                   MeshRenderer(mesh: MeshHandle("combat.body.\(region.rawValue)"), material: material,
-                                                tint: region == .body ? shirt : Vec3(1, 1, 1)),
+            let material = region == "body" ? MaterialHandle("combat.shirt") : MaterialHandle("combat.body.\(region)")
+            let body = world.spawn(Transform(), Name("Body \(region)"),
+                                   MeshRenderer(mesh: MeshHandle("combat.body.\(region)"), material: material,
+                                                tint: region == "body" ? shirt : Vec3(1, 1, 1)),
                                    Skin(joints: bones, inverseBindMatrices: rig.inverseBindMatrices))
             _ = world.setParent(body, to: root)
         }

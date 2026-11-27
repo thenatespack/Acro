@@ -28,7 +28,8 @@ final class IKScene: DemoScene {
     private let library = AnimationLibrary()
     private let rig = CharacterRig(template: .humanoid)
     private var idle = AnimationClipHandle("ik.idle")
-    private var regions: [CharacterRegion] = []
+    /// The body parts' names (CharacterRig.bodyParts: skin, eyes, the shirt "body"...).
+    private var regions: [String] = []
     private var cameraEntity = Entity.invalid
     private var stander = Entity.invalid
     private var aimer = Entity.invalid
@@ -53,12 +54,11 @@ final class IKScene: DemoScene {
         try sceneRenderer.registerMaterial(Material(baseColor: Vec4(0.36, 0.38, 0.36, 1), checker: true, roughness: 0.85), key: "ik.floor")
         try sceneRenderer.registerMaterial(Material(baseColor: Vec4(1, 1, 1, 1), roughness: 0.6), key: "ik.matte")
         try sceneRenderer.registerMaterial(Material(baseColor: Vec4(1, 0.55, 0.15, 1), roughness: 0.3, emissiveColor: Vec3(1, 0.4, 0.08), emissiveStrength: 4), key: "ik.glow")
-        for (region, geometry) in rig.bodyMeshes(segments: 12, smooth: true) {
-            regions.append(region)
-            _ = try sceneRenderer.registerMesh(geometry, key: "ik.body.\(region.rawValue)")
-            let c = MeshBuildColor.linear(fromSRGB: CharacterTemplate.humanoid.defaultColor(region))
-            try sceneRenderer.registerMaterial(Material(baseColor: Vec4(c.x, c.y, c.z, 1), roughness: region == .eyes ? 0.2 : 0.75),
-                                               key: "ik.body.\(region.rawValue)")
+        for part in rig.bodyParts(segments: 12, smooth: true) {
+            regions.append(part.name)
+            _ = try sceneRenderer.registerMesh(part.geometry, key: "ik.body.\(part.name)")
+            try sceneRenderer.registerMaterial(part.look.runtimeMaterial(region: CharacterTemplate.humanoid.defaultColor(part.region)),
+                                               key: "ik.body.\(part.name)")
         }
         // A white shirt each character tints its own color, so the three are told apart.
         try sceneRenderer.registerMaterial(Material(baseColor: Vec4(1, 1, 1, 1), roughness: 0.75), key: "ik.shirt")
@@ -124,10 +124,10 @@ final class IKScene: DemoScene {
             bones.append(e)
         }
         for region in regions {
-            let material = region == .body ? MaterialHandle("ik.shirt") : MaterialHandle("ik.body.\(region.rawValue)")
-            let body = world.spawn(Transform(), Name("Body \(region.rawValue)"),
-                                   MeshRenderer(mesh: MeshHandle("ik.body.\(region.rawValue)"), material: material,
-                                                tint: region == .body ? shirt : Vec3(1, 1, 1)),
+            let material = region == "body" ? MaterialHandle("ik.shirt") : MaterialHandle("ik.body.\(region)")
+            let body = world.spawn(Transform(), Name("Body \(region)"),
+                                   MeshRenderer(mesh: MeshHandle("ik.body.\(region)"), material: material,
+                                                tint: region == "body" ? shirt : Vec3(1, 1, 1)),
                                    Skin(joints: bones, inverseBindMatrices: rig.inverseBindMatrices))
             _ = world.setParent(body, to: root)
         }

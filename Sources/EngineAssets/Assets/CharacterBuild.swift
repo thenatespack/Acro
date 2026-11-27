@@ -42,6 +42,17 @@ public enum CharacterTemplate: String, Codable, CaseIterable, Sendable {
     case blob
 }
 
+/// How a humanoid's body is built (other templates have one look and ignore it).
+public enum CharacterStyle: String, Codable, CaseIterable, Sendable {
+    /// One continuous skinned body from an anatomical distance field (CharacterHumanBody.swift in
+    /// EngineMeshBuild): a face, eyes, hands with fingers, clothing shells and shoes; arms rest
+    /// slightly out from the body (an A-pose).
+    case realistic
+    /// The old look: a capsule or sphere per bone, sphere eyes, mitten hands, block shoes; arms
+    /// rest straight down.
+    case toy
+}
+
 /// Multipliers on the template's measurements (1 is the template as designed; each is clamped to
 /// `CharacterProportions.range`). Templates read the ones that apply: a blob has no legs.
 public struct CharacterProportions: Codable, Equatable, Sendable {
@@ -182,8 +193,9 @@ extension CharacterTemplate {
     /// The color a region has when the file doesn't set one.
     public func defaultColor(_ region: CharacterRegion) -> Vec3 {
         switch (self, region) {
+        case (.humanoid, .eyes): Vec3(0.3, 0.19, 0.1)
         case (_, .eyes): Vec3(0.06, 0.06, 0.08)
-        case (.humanoid, .skin): Vec3(0.94, 0.76, 0.62)
+        case (.humanoid, .skin): Vec3(0.86, 0.67, 0.55)
         case (.humanoid, .body): Vec3(0.22, 0.45, 0.85)
         case (.humanoid, .legs): Vec3(0.2, 0.22, 0.3)
         case (.humanoid, .accent): Vec3(0.35, 0.22, 0.12)
@@ -386,6 +398,9 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
     public var ragdoll: CharacterRagdoll?
     /// IK nodes on the `Animator` (foot placement, look at, hand reach); nil: none.
     public var ik: CharacterIK?
+    /// The humanoid's look (`realistic` by default; `toy` is the old capsule body). Not in `init`'s
+    /// parameters: set it after.
+    public var style: CharacterStyle = .realistic
     /// Fur or hair on body regions: region name ("skin", "body", "legs", "accent", "eyes") → a
     /// `.groom` file (path under `Assets/` or "asset:<id>"). Skinned with the body, so it follows
     /// the animation. Not in `init`'s parameters: set it after.
@@ -411,7 +426,7 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
         self.ik = ik
     }
 
-    private enum CodingKeys: String, CodingKey { case template, proportions, colors, attachments, clips, defaultClip, smooth, segments, ragdoll, ik, grooms, combat }
+    private enum CodingKeys: String, CodingKey { case template, style, proportions, colors, attachments, clips, defaultClip, smooth, segments, ragdoll, ik, grooms, combat }
 
     /// A `clips` entry: a stock name, or a clip from another asset.
     private enum ClipEntry: Decodable {
@@ -444,12 +459,14 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
                   ik: try c.decodeIfPresent(CharacterIK.self, forKey: .ik))
         grooms = try c.decodeIfPresent([String: String].self, forKey: .grooms) ?? [:]
         combat = try c.decodeIfPresent(CharacterCombat.self, forKey: .combat)
+        style = try c.decodeIfPresent(CharacterStyle.self, forKey: .style) ?? .realistic
     }
 
     /// `clips` holds the stock names, then the external clips' objects.
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(template, forKey: .template)
+        if style != .realistic { try c.encode(style, forKey: .style) }
         try c.encode(proportions, forKey: .proportions)
         try c.encode(colors, forKey: .colors)
         try c.encode(attachments, forKey: .attachments)
@@ -471,7 +488,7 @@ public struct CharacterBuild: Codable, Equatable, Sendable {
     public func color(_ region: CharacterRegion) -> Vec3 { colors[region] ?? template.defaultColor(region) }
 
     /// The skeleton and body shapes for the template and proportions.
-    public var rig: CharacterRig { CharacterRig(template: template, proportions: proportions) }
+    public var rig: CharacterRig { CharacterRig(template: template, proportions: proportions, style: style) }
 
     /// The Animator's clip states: `clips` filtered to stock names, without repeats, in stock
     /// order (an external clip of the same name takes its place), then the other external clips.
@@ -599,12 +616,18 @@ public struct CharacterRig: Equatable, Sendable {
     public private(set) var segments: [CharacterSegment] = []
     /// The proportions used (clamped).
     public private(set) var proportions: CharacterProportions
+    /// How the body mesh is built (humanoid only; other templates are always `toy`-like shapes).
+    public private(set) var style: CharacterStyle
 
-    public init(template: CharacterTemplate, proportions: CharacterProportions = CharacterProportions()) {
+    public init(template: CharacterTemplate, proportions: CharacterProportions = CharacterProportions(), style: CharacterStyle = .realistic) {
         self.template = template
         self.proportions = proportions.clamped
+        self.style = template == .humanoid ? style : .toy
         build()
     }
+
+    /// Whether the body is the realistic human (`CharacterHumanBody`), not shapes per bone.
+    public var isRealisticHuman: Bool { template == .humanoid && style == .realistic }
 
     public func index(of bone: String) -> Int? { bones.firstIndex { $0.name == bone } }
 
@@ -673,10 +696,13 @@ public struct CharacterRig: Equatable, Sendable {
         for eye: Float in [1, -1] {
             blobShape(head, .sphere, headCenter + Vec3(eye * 0.045, 0.01, 0.105) * H, Vec3(repeating: 0.022 * H), .eyes)
         }
+        // Realistic arms rest about 7 degrees out from the body (an A-pose), so the sleeves and
+        // hands clear the torso and thighs.
+        let out: Float = style == .realistic ? 0.122 : 0
         for (side, s) in [("L", Float(1)), ("R", Float(-1))] {
             let upperArm = bone("upperArm.\(side)", chest, Vec3(s * (0.17 * W + 0.04), 0.16 * T, 0))
-            let lowerArm = bone("lowerArm.\(side)", upperArm, Vec3(0, -0.28 * A, 0))
-            let hand = bone("hand.\(side)", lowerArm, Vec3(0, -0.26 * A, 0))
+            let lowerArm = bone("lowerArm.\(side)", upperArm, Vec3(s * out * 0.28 * A, -0.28 * A, 0))
+            let hand = bone("hand.\(side)", lowerArm, Vec3(s * out * 0.26 * A, -0.26 * A, 0))
             segment(upperArm, .capsule, at(upperArm, Vec3(0, 0.04, 0)), at(lowerArm), Vec2(0.055, 0.055) * W, .body, start: chest, blend: 0.15)
             segment(lowerArm, .capsule, at(lowerArm, Vec3(0, 0.02, 0)), at(hand), Vec2(0.045, 0.045) * W, .skin, start: upperArm)
             blobShape(hand, .sphere, at(hand, Vec3(0, -0.05, 0)), Vec3(0.04, 0.06, 0.035) * W, .skin)

@@ -35,7 +35,7 @@ public struct CharacterImporter: AssetImporter {
 
     public var name: String { BuiltInImporterName.character }
     public var fileExtensions: [String] { ["character"] }
-    public var version: Int { 3 }
+    public var version: Int { 4 }
 
     public func importAsset(_ context: inout ImportContext, settings: NoImportSettings) throws -> ImportedAsset {
         let build: CharacterBuild
@@ -77,26 +77,28 @@ public struct CharacterImporter: AssetImporter {
             "joints": .array(boneIDs.map { CharacterScene.entity($0) }),
             "inverseBindMatrices": try AssetJSON.value(rig.inverseBindMatrices),
         ])
-        let bodyMeshes = rig.bodyMeshes(segments: build.segments, smooth: build.smooth)
-        for region in build.grooms.keys.sorted() where CharacterRegion(rawValue: region).map({ r in !bodyMeshes.contains { $0.0 == r } }) ?? false {
+        // One mesh and material per body part: "body <part>" (the realistic human's skin, lips,
+        // nails, body, legs, accent, shoe.sole, eye.sclera, eye.iris, eye.pupil, eye.cornea; other
+        // rigs' parts are their regions).
+        let bodyParts = rig.bodyParts(segments: build.segments, smooth: build.smooth)
+        for region in build.grooms.keys.sorted() where CharacterRegion(rawValue: region).map({ r in !bodyParts.contains { $0.region == r } }) ?? false {
             context.warn("grooms: the \(build.template.rawValue) template has no '\(region)' region")
         }
-        for (region, geometry) in bodyMeshes {
-            let label = "body \(region.rawValue)"
+        for part in bodyParts {
+            let label = "body \(part.name)"
             let meshID = namer.id(kind: "mesh", name: label, index: 0)
-            asset.add(meshID, name: label, .mesh(geometry))
+            asset.add(meshID, name: label, .mesh(part.geometry))
             let materialID = namer.id(kind: "material", name: label, index: 0)
-            let color = MeshBuildColor.linear(fromSRGB: build.color(region))
-            asset.add(materialID, name: label, .material(MaterialAsset(
-                shading: .pbr, baseColor: Vec4(color.x, color.y, color.z, 1), metallic: 0, roughness: region == .eyes ? 0.2 : 0.75)))
+            asset.add(materialID, name: label, .material(part.look.material(region: build.color(part.region))))
             let renderer = MeshRenderer(mesh: MeshHandle(context.reference(meshID)), material: MaterialHandle(context.reference(materialID)))
             var components: [String: JSONValue] = ["MeshRenderer": try AssetJSON.value(renderer), "Skin": skin]
-            // Fur on the region: skinned with it (GroomBuild.swift).
-            if let value = build.grooms[region.rawValue], let groom = Self.groom(value, owner: "grooms[\(region.rawValue)]", &context) {
+            // Fur on the region (its main part): skinned with it (GroomBuild.swift).
+            if part.name == part.region.rawValue, let value = build.grooms[part.region.rawValue],
+               let groom = Self.groom(value, owner: "grooms[\(part.region.rawValue)]", &context) {
                 components[GroomRenderer.componentName] = try AssetJSON.value(GroomRenderer(groom: groom.material))
             }
-            scene.add(name: "Body \(region.rawValue.capitalized)", transform: Transform(), parent: root, path: stem + "/" + label,
-                      components: components)
+            let name = part.name == part.region.rawValue ? part.name.capitalized : part.name
+            scene.add(name: "Body \(name)", transform: Transform(), parent: root, path: stem + "/" + label, components: components)
         }
 
         // Clips and the Animator.
