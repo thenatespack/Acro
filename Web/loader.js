@@ -266,11 +266,14 @@ async function setUpWebGPU(canvas) {
   if (!adapter) {
     // Chromium browsers return no adapter when their GPU process can't start WebGPU (the console
     // says "Failed to create WebGPU Context Provider"): usually graphics acceleration is off or the
-    // GPU is blocklisted.
-    const internals = /Edg\//.test(navigator.userAgent) ? "edge://gpu" : "chrome://gpu";
+    // GPU is blocklisted. Firefox does the same when its GPU process has no WebGPU (headless
+    // Firefox on macOS, a blocklisted GPU). The page names the browser's own diagnostics page.
+    const agent = navigator.userAgent;
+    const internals = /Firefox\//.test(agent) ? "In Firefox, about:support (Graphics) shows whether WebGPU is enabled."
+      : /Edg\//.test(agent) ? "In Edge, edge://gpu shows whether WebGPU is hardware accelerated."
+      : /Chrome\//.test(agent) ? "In Chrome, chrome://gpu shows whether WebGPU is hardware accelerated." : "";
     throw new PlayerError("WebGPU is available, but this browser couldn't get a GPU adapter.\n\n" +
-      "Turn on graphics/hardware acceleration in the browser's settings (System) and restart it. " +
-      `In Chrome or Edge, ${internals} shows whether WebGPU is hardware accelerated.`);
+      `Turn on graphics/hardware acceleration in the browser's settings and restart it. ${internals}`.trim());
   }
   // Every feature the adapter has (texture compression, timestamp queries, the storage texture
   // tiers...): the engine checks `device.features` for what it can use.
