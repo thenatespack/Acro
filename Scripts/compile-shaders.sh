@@ -13,6 +13,8 @@
 #   name.vert.spv -> name.vert.gles (GLSL ES 3.00 via Scripts/spirv-to-gles.c; used by the WebGL 2
 #   backend: combined image samplers, push constants as a uniform block, everything named by its
 #   binding and listed in a header the device parses, see ShaderSource). Vertex and fragment only.
+#   A shader marked "// compile-shaders: gles <glslc flags>" gets its .gles from a second
+#   compile with those flags (the material graph templates' uniform-block variant).
 # All outputs are committed, so building the package needs none of the tools.
 # Requires glslc (shaderc), SPIRV-Cross with its C API, spirv-opt (SPIRV-Tools) and naga-cli:
 #   macOS: brew install shaderc spirv-cross spirv-tools
@@ -81,12 +83,25 @@ done
 # refuses its pipelines. With glslangValidator installed each output is checked as GLSL ES.
 validator=$(command -v glslangValidator || true)
 work_gles_log=$(mktemp)
+work_gles_spv=$(mktemp)
 no_gles=()
 for src in "${shaders[@]}"; do
     [[ "$src" == *.comp ]] && continue
     echo "spirv-to-gles $src.spv -> $src.gles"
     status=0
-    "$gles_tool" "$src.spv" "$src.gles" "$src" 2>"$work_gles_log" || status=$?
+    # A shader marked "// compile-shaders: gles <glslc flags>" is compiled again with those flags
+    # for its GLSL ES (the material graph templates: GRAPH_VALUES_UNIFORM reads the graph's values
+    # from a uniform block instead of a storage buffer). The header still records $src.spv's hash.
+    gles_flags=$(sed -n 's|^// compile-shaders: gles ||p' "$src" | head -n 1)
+    gles_input="$src.spv"
+    if [[ -n "$gles_flags" ]]; then
+        opt=-O
+        grep -q '^// compile-shaders: -O0' "$src" && opt=-O0
+        read -r -a gles_flag_list <<<"$gles_flags"
+        glslc --target-env=vulkan1.1 $opt ${includes[@]+"${includes[@]}"} "${gles_flag_list[@]}" "$src" -o "$work_gles_spv"
+        gles_input="$work_gles_spv"
+    fi
+    "$gles_tool" "$gles_input" "$src.gles" "$src" "$src.spv" 2>"$work_gles_log" || status=$?
     if ((status == 3)); then
         no_gles+=("$src: $(head -n 1 "$work_gles_log")")
         rm -f "$src.gles"
@@ -122,7 +137,7 @@ if [[ ! -x "$prep" || Scripts/spirv-wgsl-prep.c -nt "$prep" ]]; then
     cc -O2 -Wall Scripts/spirv-wgsl-prep.c -o "$prep"
 fi
 work=$(mktemp -d)
-trap 'rm -rf "$work" "$work_gles_log"' EXIT
+trap 'rm -rf "$work" "$work_gles_log" "$work_gles_spv"' EXIT
 failed=()
 for src in "${shaders[@]}"; do
     echo "naga $src.spv -> $src.wgsl"

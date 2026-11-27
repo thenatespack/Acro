@@ -5,11 +5,10 @@ import Testing
 /// The GLSL ES 3.00 that Scripts/compile-shaders.sh generates for the WebGL 2 backend
 /// (Scripts/spirv-to-gles.c, from the SPIR-V) and the binding header the backend reads.
 @Suite struct WebGL2ShaderTests {
-    /// Vertex and fragment stages that read storage buffers (probes, material graphs, GPU particles,
+    /// Vertex and fragment stages that read storage buffers (probes, GPU particles,
     /// a test shader): no .gles, and the WebGL 2 backend refuses their pipelines.
     static let untranslatable: Set<String> = [
-        "decal_graph.frag", "mesh_graph.frag", "mesh_graph_depth.frag", "mesh_terrain.frag", "mesh_probes.frag",
-        "mesh_mask_probes.frag", "mesh_paint_probes.frag", "mesh_paint_mask_probes.frag", "probe_debug.frag",
+        "mesh_probes.frag", "mesh_mask_probes.frag", "mesh_paint_probes.frag", "mesh_paint_mask_probes.frag", "probe_debug.frag",
         "particle.vert", "particle_lit.vert", "test_storage_draw.vert",
     ]
 
@@ -42,7 +41,7 @@ import Testing
                 #expect(sampler.samplerSet == nil || sampler.samplerSlot != nil, "\(gles.lastPathComponent): \(sampler)")
             }
             let declaredBlocks = source.components(separatedBy: "uniform acro_").count - 1
-            let declaredSamplers = source.components(separatedBy: "sampler2D").count - 1
+            let declaredSamplers = source.components(separatedBy: "\n").filter { $0.hasPrefix("uniform ") && $0.contains("sampler2D") }.count
             #expect(declaredBlocks + declaredSamplers == interface.uniformBlocks.count + interface.samplers.count, "\(gles.lastPathComponent)")
         }
     }
@@ -84,7 +83,33 @@ import Testing
         #expect(interface.samplers.map(\.samplerSlot) == [1, nil, 0])
     }
 
-    /// The shadow map is a sampler2DShadow at set 1; the mesh shader's samplers combine set 2's textures and samplers.
+    /// `noperspective` varyings (debug_line's edge distance) are emulated: the vertex stage writes
+    /// v * w and w, the fragment stage reads v / w.
+    @Test func webGL2NoPerspectiveIsEmulated() throws {
+        let shaders = WebGPUShaderTests.root.appendingPathComponent("Sources/EngineCore/Shaders")
+        let vertex = try String(contentsOf: shaders.appendingPathComponent("debug_line.vert.gles"), encoding: .utf8)
+        let fragment = try String(contentsOf: shaders.appendingPathComponent("debug_line.frag.gles"), encoding: .utf8)
+        #expect(!vertex.contains("noperspective") && !fragment.contains("noperspective"))
+        #expect(vertex.contains("out highp float acro_vnpw;") && fragment.contains("in highp float acro_vnpw;"))
+        #expect(vertex.hasSuffix("    acro_v1 *= gl_Position.w;\n    acro_vnpw = gl_Position.w;\n}\n"))
+        let body = try #require(fragment.components(separatedBy: "void main()").last)
+        #expect(body.contains("(acro_v1 / acro_vnpw)"))
+        #expect(body.replacingOccurrences(of: "(acro_v1 / acro_vnpw)", with: "").range(of: "acro_v1[^0-9]", options: .regularExpression) == nil)
+    }
+
+    /// The material graph templates' GLSL ES reads the graph's values (storage buffer 0 elsewhere)
+    /// from a uniform block at set 2, binding 24: binding point 8.
+    @Test func webGL2GraphValuesBlock() throws {
+        let shaders = WebGPUShaderTests.root.appendingPathComponent("Sources/EngineCore/Shaders")
+        for name in ["mesh_graph", "mesh_graph_depth", "decal_graph", "mesh_terrain"] {
+            let source = try String(contentsOf: shaders.appendingPathComponent("\(name).frag.gles"), encoding: .utf8)
+            let block = try #require(GLESInterface(source: source).uniformBlocks.first { $0.name == "acro_fs_u2_24" }, "\(name)")
+            #expect(block.bindingPoint == 8, "\(name)")
+            #expect(source.contains("[1024];"), "\(name)")
+        }
+    }
+
+    /// The shadow map is a sampler2DShadow at set 1;the mesh shader's samplers combine set 2's textures and samplers.
     @Test func webGL2MeshShaderLayout() throws {
         let shaders = WebGPUShaderTests.root.appendingPathComponent("Sources/EngineCore/Shaders")
         let fragment = GLESInterface(source: try String(contentsOf: shaders.appendingPathComponent("mesh.frag.gles"), encoding: .utf8))

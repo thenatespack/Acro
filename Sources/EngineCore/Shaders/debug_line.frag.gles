@@ -7,11 +7,12 @@ precision highp float;
 precision highp int;
 
 in vec2 acro_v1;
+in highp float acro_vnpw;
 layout(location = 0) out vec4 _37;
 in vec4 acro_v0;
 
 void main()
 {
-    _37 = vec4(acro_v0.xyz, acro_v0.w * (clamp((max(acro_v1.y, 0.5) + 0.5) - abs(acro_v1.x), 0.0, 1.0) * min(acro_v1.y * 2.0, 1.0)));
+    _37 = vec4(acro_v0.xyz, acro_v0.w * (clamp((max((acro_v1 / acro_vnpw).y, 0.5) + 0.5) - abs((acro_v1 / acro_vnpw).x), 0.0, 1.0) * min((acro_v1 / acro_vnpw).y * 2.0, 1.0)));
 }
 

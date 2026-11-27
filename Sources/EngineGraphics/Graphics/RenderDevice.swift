@@ -635,8 +635,9 @@ public struct DrawIndexedIndirectArguments: Sendable, BitwiseCopyable, Equatable
     /// check it and skip themselves with a warning.
     var supportsCompute: Bool { get }
     /// Whether shaders can read storage buffers (`RenderPass.setStorageBuffer`) and draw
-    /// indirectly. false on WebGL 2: features whose shaders need them (probe-lit and
-    /// material-graph shaders) are skipped.
+    /// indirectly. false on WebGL 2: features whose shaders need them (probe-lit shaders, GPU
+    /// particles) are skipped; material graphs use their GLSL ES variant, which reads storage
+    /// buffer 0 as a uniform block (`MaterialGraphProgram.glesFragment`).
     var supportsStorageBuffers: Bool { get }
 
     /// A static buffer holding a copy of `bytes`. Never waits for the GPU: on Vulkan (device-local

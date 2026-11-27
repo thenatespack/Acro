@@ -26,6 +26,11 @@ import EngineScene
 // 4. For WebGPU the IR is emitted as WGSL and replaces the body of `graphSurface_u0028_` (naga's
 //    name for `graphSurface()`) in the three templates' .wgsl (compile-shaders.sh output), where
 //    the function reads and writes the module's globals. Plain text, so it works in the browser.
+// 5. For WebGL 2 the IR is emitted as GLSL ES 3.00 and replaces the body of `graphSurface()` in the
+//    three templates' .gles (compile-shaders.sh output of their GRAPH_VALUES_UNIFORM variant, which
+//    reads the values from a std140 uniform block instead of a storage buffer, WebGL 2 having
+//    none). The block's array is set to the program's value count; graphs with more values than
+//    a 16 KB block holds (`maxUniformValues`) get no GLSL ES and draw plain on WebGL 2.
 //
 // The program's `key` is a hash of the generated code: materials whose graphs differ only in
 // constants share pipelines.
@@ -63,6 +68,12 @@ public struct MaterialGraphProgram: Sendable, Equatable {
     public var spirvDecalFragment: [UInt8]? = nil
     /// The same decal stage in WGSL (WebGPU), when the templates have WGSL.
     public var wgslDecalFragment: String? = nil
+    /// The three stages in GLSL ES 3.00 (WebGL 2), with the values in a uniform block (binding
+    /// point of storage buffer 0, see `ShaderSource`): nil when the templates have no GLSL ES or
+    /// the graph has more than `MaterialGraphCompiler.maxUniformValues` values.
+    public var glesFragment: String? = nil
+    public var glesDepthFragment: String? = nil
+    public var glesDecalFragment: String? = nil
     /// The graph's constants, the shader's `graphValues.values` (at least one).
     public var values: [Vec4]
     /// The textures in shader slots 1-5, in order.
@@ -87,6 +98,9 @@ public struct MaterialGraphCompilation: Sendable {
 public enum MaterialGraphCompiler {
     /// Texture slots available to a graph (shader textures 1-5).
     public static let maxTextures = 5
+    /// The most values the GLSL ES (WebGL 2) variant holds: a 16 KB uniform block, the size WebGL 2
+    /// guarantees.
+    public static let maxUniformValues = 1024
     /// The template's texture names, by slot - 1.
     static let textureNames = ["baseColorMap", "metallicRoughnessMap", "normalMap", "occlusionMap", "emissiveMap"]
     static let outputVariables = ["baseColor": "gBaseColor", "opacity": "gOpacity", "normal": "gNormalTS",
@@ -102,6 +116,19 @@ public enum MaterialGraphCompiler {
         let wgsl = WGSLEmitter.body(builder.ir, outputs: builder.outputs)
         let key = String(fnv1a64(Array(msl.utf8)), radix: 16)
         var warnings = builder.warnings
+        // The uniform block's array: every slot the code reads (a function of the code, like the key).
+        let uniformCount = max(builder.ir.ops.reduce(0) { count, op in
+            if case .uniform(let slot) = op.kind { return max(count, slot + 1) }
+            return count
+        }, 1)
+        let fitsUniforms = uniformCount <= maxUniformValues
+        if !fitsUniforms {
+            warnings.append("the graph has \(uniformCount) values, more than the \(maxUniformValues) WebGL 2 holds: it draws plain there")
+        }
+        func gles(_ template: String?) throws -> String? {
+            guard fitsUniforms, let template else { return nil }
+            return try GLESEmitter.splice(template, ir: builder.ir, outputs: builder.outputs, valueCount: uniformCount)
+        }
         let shaders: Shaders
         do {
             shaders = try cachedShaders(key: key) { template in
@@ -114,7 +141,8 @@ public enum MaterialGraphCompiler {
                         spirvDecal: try SPIRVSplicer(template.spirvDecal).replacingGraphSurface(builder.ir, outputs: builder.outputs),
                         wgsl: try template.wgsl.map { try $0.replacingWGSLFunctionBody(WGSLEmitter.graphSurface, with: wgsl) },
                         wgslDepth: try template.wgslDepth.map { try $0.replacingWGSLFunctionBody(WGSLEmitter.graphSurface, with: wgsl) },
-                        wgslDecal: try template.wgslDecal.map { try $0.replacingWGSLFunctionBody(WGSLEmitter.graphSurface, with: wgsl) })
+                        wgslDecal: try template.wgslDecal.map { try $0.replacingWGSLFunctionBody(WGSLEmitter.graphSurface, with: wgsl) },
+                        gles: try gles(template.gles), glesDepth: try gles(template.glesDepth), glesDecal: try gles(template.glesDecal))
             }
         } catch {
             warnings.append("the material graph shader couldn't be built: \(error)")
@@ -130,6 +158,9 @@ public enum MaterialGraphCompiler {
         program.wgslFragment = shaders.wgsl
         program.wgslDepthFragment = shaders.wgslDepth
         program.wgslDecalFragment = shaders.wgslDecal
+        program.glesFragment = shaders.gles
+        program.glesDepthFragment = shaders.glesDepth
+        program.glesDecalFragment = shaders.glesDecal
         return MaterialGraphCompilation(program: program, warnings: warnings)
     }
 
@@ -149,6 +180,9 @@ public enum MaterialGraphCompiler {
         var wgsl: String?
         var wgslDepth: String?
         var wgslDecal: String?
+        var gles: String?
+        var glesDepth: String?
+        var glesDecal: String?
     }
 
     struct Shaders {
@@ -162,6 +196,9 @@ public enum MaterialGraphCompiler {
         var wgsl: String?
         var wgslDepth: String?
         var wgslDecal: String?
+        var gles: String?
+        var glesDepth: String?
+        var glesDecal: String?
     }
 
     struct CompileError: Error, CustomStringConvertible {
@@ -185,9 +222,13 @@ public enum MaterialGraphCompiler {
         // All three or none (a program has WGSL for every stage, or for none).
         let wgsl = [text("mesh_graph", "frag.wgsl"), text("mesh_graph_depth", "frag.wgsl"), text("decal_graph", "frag.wgsl")]
         let hasWGSL = wgsl.allSatisfy { $0 != nil }
+        // The same for GLSL ES.
+        let gles = [text("mesh_graph", "frag.gles"), text("mesh_graph_depth", "frag.gles"), text("decal_graph", "frag.gles")]
+        let hasGLES = gles.allSatisfy { $0 != nil }
         return .success(Template(metal: lit.metal, metalColor0: text("mesh_graph", "frag.color0.metal"), spirv: lit.spirv,
                                  metalDepth: depth.metal, spirvDepth: depth.spirv, metalDecal: decal.metal, spirvDecal: decal.spirv,
-                                 wgsl: hasWGSL ? wgsl[0] : nil, wgslDepth: hasWGSL ? wgsl[1] : nil, wgslDecal: hasWGSL ? wgsl[2] : nil))
+                                 wgsl: hasWGSL ? wgsl[0] : nil, wgslDepth: hasWGSL ? wgsl[1] : nil, wgslDecal: hasWGSL ? wgsl[2] : nil,
+                                 gles: hasGLES ? gles[0] : nil, glesDepth: hasGLES ? gles[1] : nil, glesDecal: hasGLES ? gles[2] : nil))
     }()
 
     private static let cacheLock = NSLock()
@@ -800,6 +841,99 @@ enum WGSLEmitter {
     }
 }
 
+/// Emits the IR as GLSL ES 3.00 statements for `graphSurface()`'s body in the GLSL ES templates
+/// (spirv-to-gles output), where the graph's inputs and outputs and `graphValues` are globals with
+/// their GLSL names, and each texture slot is the combined sampler of that texture with
+/// `materialSampler` (named by binding, listed in the template's header).
+enum GLESEmitter {
+    static let typeNames = ["", "float", "vec2", "vec3", "vec4"]
+
+    static func body(_ ir: MaterialIR, outputs: [(variable: String, value: GraphValue)], samplers: [String]) -> String {
+        var lines: [String] = []
+        func t(_ id: Int) -> String { "t\(id)" }
+        for (id, op) in ir.ops.enumerated() {
+            let a = op.args.map(t)
+            let expr: String
+            switch op.kind {
+            case .constant(let floats):
+                expr = floats.count == 1 ? MSLEmitter.literal(floats[0])
+                    : "\(typeNames[op.size])(\(floats.map(MSLEmitter.literal).joined(separator: ", ")))"
+            case .uniform(let slot):
+                expr = "graphValues.values[\(slot)]" + (op.size == 4 ? "" : "." + MSLEmitter.swizzleText(Array(0..<op.size)))
+            case .input(let name):
+                expr = name
+            case .texture(let slot):
+                expr = "texture(\(samplers[slot]), \(a[0]))"
+            case .add: expr = "\(a[0]) + \(a[1])"
+            case .subtract: expr = "\(a[0]) - \(a[1])"
+            case .multiply: expr = "\(a[0]) * \(a[1])"
+            case .divide: expr = "\(a[0]) / \(a[1])"
+            case .negate: expr = "-\(a[0])"
+            case .function(let name): expr = "\(name)(\(a.joined(separator: ", ")))"
+            case .dot: expr = "dot(\(a[0]), \(a[1]))"
+            case .length: expr = "length(\(a[0]))"
+            case .swizzle(let indices): expr = "\(a[0]).\(MSLEmitter.swizzleText(indices))"
+            case .construct: expr = "\(typeNames[op.size])(\(a.joined(separator: ", ")))"
+            }
+            lines.append("    \(typeNames[op.size]) \(t(id)) = \(expr);")
+        }
+        for (variable, value) in outputs {
+            lines.append("    \(variable) = \(t(value.id));")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// The template's combined sampler for each texture slot (texture binding 9 + slot with
+    /// materialSampler, binding 17), from its `// acro-sampler` header lines.
+    static func samplerNames(_ template: String) throws -> [String] {
+        var names: [Int: String] = [:]
+        for line in template.split(separator: "\n").prefix(64) where line.hasPrefix("// acro-sampler ") {
+            let fields = line.split(separator: " ")
+            guard fields.count == 8, fields[3] == "2", fields[5] == "2", fields[6] == "17", let binding = Int(fields[4]) else { continue }
+            names[binding - 9] = String(fields[2])
+        }
+        return try (0..<MaterialGraphCompiler.maxTextures).map { slot in
+            guard let name = names[slot] else {
+                throw MaterialGraphCompiler.CompileError("the template GLSL ES has no sampler for \(MaterialGraphCompiler.textureNames[slot])")
+            }
+            return name
+        }
+    }
+
+    /// `template` with `graphSurface()`'s body replaced by the IR's code and the values block sized
+    /// to `valueCount`.
+    static func splice(_ template: String, ir: MaterialIR, outputs: [(variable: String, value: GraphValue)], valueCount: Int) throws -> String {
+        let samplers = try samplerNames(template)
+        guard let signature = template.range(of: "\nvoid graphSurface()\n{") else {
+            throw MaterialGraphCompiler.CompileError("no function graphSurface in the template GLSL ES")
+        }
+        let open = template.index(before: signature.upperBound)
+        guard let close = template.matchingBrace(open) else { throw MaterialGraphCompiler.CompileError("unbalanced braces in graphSurface") }
+        for needed in ["gUV", "gTime", "gBaseColor", "gOcclusion"] where !template.contains(" \(needed);\n") {
+            throw MaterialGraphCompiler.CompileError("the template GLSL ES has no global \(needed)")
+        }
+        let spliced = String(template[...open]) + "\n" + body(ir, outputs: outputs, samplers: samplers) + "\n" + String(template[close...])
+        guard let sized = MaterialGraphCompiler.glesSettingValueCount(spliced, valueCount) else {
+            throw MaterialGraphCompiler.CompileError("the template GLSL ES has no graphValues uniform block")
+        }
+        return sized
+    }
+}
+
+extension MaterialGraphCompiler {
+    /// A GLSL ES stage of the GRAPH_VALUES_UNIFORM variant (mesh_graph, mesh_graph_depth,
+    /// decal_graph, mesh_terrain) with the graph values block's array set to `count` vec4s
+    /// (1...`maxUniformValues`), so its size matches the values buffer WebGL 2 binds; nil without
+    /// the block.
+    public static func glesSettingValueCount(_ source: String, _ count: Int) -> String? {
+        // Its only member (named `values`, or `_m0` in optimized output) is the array.
+        guard let block = source.range(of: "uniform acro_fs_u2_24\n"),
+              let end = source[block.upperBound...].firstIndex(of: "}"),
+              let array = source[block.upperBound..<end].range(of: "[\(maxUniformValues)];") else { return nil }
+        return String(source[..<array.lowerBound]) + "[\(min(max(count, 1), maxUniformValues))];" + String(source[array.upperBound...])
+    }
+}
+
 extension String {
     /// This WGSL with the body of `fn name()` replaced by `body`.
     func replacingWGSLFunctionBody(_ name: String, with body: String) throws -> String {
@@ -816,7 +950,7 @@ extension String {
     }
 
     /// The `}` that closes the `{` at `open`.
-    fileprivate func matchingBrace(_ open: String.Index) -> String.Index? {
+    func matchingBrace(_ open: String.Index) -> String.Index? {
         var depth = 0
         var i = open
         while i < endIndex {

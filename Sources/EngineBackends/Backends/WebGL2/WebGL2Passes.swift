@@ -34,6 +34,9 @@ final class WebGL2RenderPass: RenderPass {
     var frameUniform: (buffer: WebGL2Buffer, offset: Int)?
     var pushConstants: (buffer: WebGL2Buffer, offset: Int)?
     var uniforms = [(buffer: WebGL2Buffer, offset: Int)?](repeating: nil, count: 8)
+    /// Storage buffers 0...7, read as uniform blocks (binding points 8...15) by the stages that
+    /// declare one there (the material graph templates' GLSL ES).
+    var storageBuffers = [(buffer: WebGL2Buffer, offset: Int)?](repeating: nil, count: 8)
     var textures = [WebGL2Texture?](repeating: nil, count: 8)
     var samplers = [WebGL2Sampler?](repeating: nil, count: 8)
     var shadowMap: WebGL2Texture?
@@ -128,10 +131,13 @@ final class WebGL2RenderPass: RenderPass {
         pushConstants = device.upload(bytes, alignment: device.uniformAlignment)
     }
 
-    /// WebGL 2 has no storage buffers; shaders that read them have no GLSL ES, so their pipelines
-    /// were refused. Ignored (`RenderDevice.supportsStorageBuffers` is false).
+    /// WebGL 2 has no storage buffers (`RenderDevice.supportsStorageBuffers` is false): shaders
+    /// that read them have no GLSL ES, except the material graph templates, whose GLSL ES reads
+    /// storage buffer 0 as a uniform block (binding point 8 + index, at most
+    /// `maxUniformBufferSize` bytes of it).
     func setStorageBuffer(_ buffer: GPUBuffer, offset: Int, index: Int, stage: ShaderStage) {
         validateStorageBinding(buffer, offset: offset, index: index)
+        storageBuffers[index] = (buffer as! WebGL2Buffer, offset)
     }
 
     /// Records what the draw needs that isn't bound yet: the pipeline's state, its vertex array
@@ -156,6 +162,7 @@ final class WebGL2RenderPass: RenderPass {
             let bound: (buffer: WebGL2Buffer, offset: Int)? = switch block.point {
             case 0: frameUniform
             case 1: pushConstants
+            case 8...15: storageBuffers[Int(block.point) - 8]
             default: uniforms[Int(block.point)]
             }
             let (buffer, offset) = bound ?? (device.placeholderUniform!, 0)
@@ -243,7 +250,7 @@ final class WebGL2RenderPass: RenderPass {
     private var vertexArrays: [VertexArrayKey: VertexArray] = [:]
     private var currentKey: VertexArrayKey?
     private var current: VertexArray?
-    private var uniforms = [(buffer: Int32, offset: Int32, size: Int32)](repeating: (0, 0, 0), count: 8)
+    private var uniforms = [(buffer: Int32, offset: Int32, size: Int32)](repeating: (0, 0, 0), count: 16)
     private var units = [(texture: Int32, sampler: Int32)](repeating: (0, 0), count: 32)
 
     /// Forget everything (after Web/webgl2.js changed bindings itself).

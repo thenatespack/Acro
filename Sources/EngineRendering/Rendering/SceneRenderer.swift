@@ -511,9 +511,11 @@ public final class SceneRenderer {
     @discardableResult
     public func registerMaterial(_ material: Material, key: String) throws -> MaterialHandle {
         var material = material
-        if material.graph != nil && !device.supportsStorageBuffers {
-            // Graph shaders read their values from a storage buffer: draw the material's plain surface instead.
-            warnUnavailable("Material graphs (and terrain splatting)")
+        if let graph = material.graph, !device.supportsStorageBuffers, graph.glesFragment == nil {
+            // Graph shaders read their values from a storage buffer; without storage buffers (WebGL 2)
+            // only programs with a GLSL ES variant (values in a uniform block) draw: others draw the
+            // material's plain surface instead (more values than a uniform block holds, or no GLSL ES).
+            warnUnavailable("Material graphs without GLSL ES (more than \(MaterialGraphCompiler.maxUniformValues) values)")
             material.graph = nil
         }
         let entry = (material, try device.makeSampler(material.sampler))
@@ -1027,7 +1029,7 @@ public final class SceneRenderer {
             shader.metalFragmentColor0Source = nil
             shader.spirvFragment = spirv
             shader.wgslFragment = program.wgslDepthFragment
-            shader.glesFragment = nil  // graph shaders read a storage buffer: none for WebGL 2
+            shader.glesFragment = program.glesDepthFragment
             var descriptor = PipelineDescriptor(shader: shader, vertexLayout: key.skinned ? SkinnedMeshVertex.layout : MeshVertex.layout,
                                                 instanceLayout: MeshInstance.layout)
             descriptor.target = .depthOnly
@@ -1315,7 +1317,7 @@ public final class SceneRenderer {
             shader.metalFragmentColor0Source = program.metalFragmentColor0
             shader.spirvFragment = program.spirvFragment
             shader.wgslFragment = program.wgslFragment
-            shader.glesFragment = nil  // graph shaders read a storage buffer: none for WebGL 2
+            shader.glesFragment = program.glesFragment
         }
         var descriptor = PipelineDescriptor(shader: shader, vertexLayout: key.skinned ? SkinnedMeshVertex.layout : MeshVertex.layout,
                                             instanceLayout: MeshInstance.layout)
