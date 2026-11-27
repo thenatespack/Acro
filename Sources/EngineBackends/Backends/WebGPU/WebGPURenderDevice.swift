@@ -33,9 +33,12 @@ private let hdrFormat = "rgba16float"
 ///   later, at a `beginFrame` after the GPU finished; the latency isn't fixed.
 /// - `waitIdle` can't wait: it only delivers readbacks that are already mapped.
 /// - `vsync` has no effect (the browser presents with the display).
-/// Unsupported: MetalFX, FSR 3 (its storage-texture formats and one shader WGSL can't express),
-/// ASTC HDR textures, alpha-to-coverage without MSAA, material-graph fragment shaders (no WGSL
-/// is generated for them). The shadow comparison sampler clamps to the edge (WebGPU has no border color).
+/// Unsupported: MetalFX and FSR 3 (its storage-texture formats and one shader WGSL can't express;
+/// `Engine` falls back to TAAU), ASTC HDR textures. Alpha-to-coverage needs MSAA in WebGPU, so
+/// one-sample passes alpha-test at one half instead (`AlphaToCoverageFallback`), as one sample
+/// does natively. Material-graph fragment shaders run (their WGSL is spliced like the GLSL). The
+/// shadow comparison sampler clamps to the edge (WebGPU has no border color); the shadow shaders
+/// treat lookups outside the map as lit themselves, so that doesn't change the result.
 package final class WebGPURenderDevice: RenderDevice {
     package let backend = GraphicsBackend.webgpu
     let device: JSObject
@@ -604,15 +607,18 @@ package final class WebGPURenderDevice: RenderDevice {
         case .back: "back"
         }
         let isScreen = descriptor.target == .screen
+        // WebGPU allows alpha-to-coverage only with MSAA; one-sample passes get a fragment stage
+        // that alpha-tests at one half instead, as one sample does natively (AlphaToCoverageFallback).
+        let alphaTestModule = isScreen && descriptor.alphaToCoverage
+            ? fragmentSource.flatMap(AlphaToCoverageFallback.wgsl).map(shaderModule) : nil
         let device = device
         let make: (WebGPUPassFormat?) throws -> JSObject = { pass in
+            let samples = pass?.samples ?? 1
             var pipeline: [String: ConvertibleToJSValue] = [
                 "layout": layout.object,
                 "vertex": (["module": vertexModule, "entryPoint": "main", "buffers": buffers.jsValue] as [String: ConvertibleToJSValue]).jsValue,
                 "primitive": (["topology": "triangle-list", "cullMode": cullMode, "frontFace": "ccw"] as [String: ConvertibleToJSValue]).jsValue,
-                // WebGPU allows alpha-to-coverage only with MSAA.
-                "multisample": (["count": pass?.samples ?? 1,
-                                 "alphaToCoverageEnabled": isScreen && descriptor.alphaToCoverage && (pass?.samples ?? 1) > 1]
+                "multisample": (["count": samples, "alphaToCoverageEnabled": isScreen && descriptor.alphaToCoverage && samples > 1]
                     as [String: ConvertibleToJSValue]).jsValue,
             ]
             if pass?.depth ?? true {
@@ -623,7 +629,8 @@ package final class WebGPURenderDevice: RenderDevice {
                     "depthBias": Int(bias.constant.rounded()), "depthBiasSlopeScale": bias.slopeScale,
                 ] as [String: ConvertibleToJSValue]).jsValue
             }
-            if let fragmentModule {
+            if var fragmentModule {
+                if samples == 1, let alphaTestModule { fragmentModule = alphaTestModule }
                 var targets: [ConvertibleToJSValue] = []
                 if let color = pass?.color {
                     var target: [String: ConvertibleToJSValue] = ["format": color, "writeMask": descriptor.colorWrites ? 0xF : 0]

@@ -150,19 +150,23 @@ public final class Engine {
             }
         }
     }
-    /// How an offscreen scene is scaled into the window. One the backend doesn't support is
-    /// rejected (printed) and the previous value kept, as is a temporal upscaler when the
-    /// device was created with MSAA (the sample count is fixed at startup: start with a
-    /// temporal upscaler, or `sampleCount: 1`, to switch to one at runtime).
+    /// How an offscreen scene is scaled into the window. One that can't run here (the backend
+    /// doesn't support it, or it's temporal and the device was created with MSAA; the sample
+    /// count is fixed at startup: start with a temporal upscaler, or `sampleCount: 1`, to switch
+    /// to one at runtime) falls back along `Upscaler.fallbacks` (FSR 3 → TAAU → FSR 1 →
+    /// bilinear), logging which it picked and why; reading it back gives the one in use.
     public var upscaler: Upscaler {
         didSet {
-            if let error = unsupported(upscaler) {
-                EngineLog.warning("Upscaler \(upscaler) rejected: \(error); keeping \(oldValue)")
-                upscaler = oldValue
-            } else {
-                device.upscaler = upscaler
-            }
+            upscaler = Self.resolve(upscaler, unsupported: unsupported)
+            device.upscaler = upscaler
         }
+    }
+
+    /// `requested`, or the fallback `Upscaler.choose` picks (logged once, with the reason).
+    private static func resolve(_ requested: Upscaler, unsupported: (Upscaler) -> String?) -> Upscaler {
+        let (chosen, reason) = Upscaler.choose(requested, unsupported: unsupported)
+        if let reason { EngineLog.info("Upscaler \(requested) can't run (\(reason)); using \(chosen) instead") }
+        return chosen
     }
 
     /// Whether `upscaler` can be selected now (see `upscaler`).
@@ -482,8 +486,9 @@ public final class Engine {
         }
         if let icon = config.icon { window.setIcon(icon) }
         if let error = validate(resolution) { throw GraphicsError("Render resolution \(resolution): \(error)") }
-        if let error = unsupported(upscaler) { throw GraphicsError("Upscaler \(upscaler): \(error)") }
-        device.upscaler = upscaler
+        // One this device can't run falls back (FSR 3 → TAAU → FSR 1 → bilinear) with a log line.
+        self.upscaler = Self.resolve(upscaler, unsupported: unsupported)
+        device.upscaler = self.upscaler
         device.vsync = ProcessInfo.processInfo.environment["ENGINE_VSYNC"].map { $0 != "0" } ?? config.vsync
         // Screenshots normally capture the scene at render resolution; `window` captures the
         // upscaled image the window shows instead.
@@ -492,7 +497,7 @@ public final class Engine {
         CrashReporter.setInfo("Backend", backend.rawValue)
         CrashReporter.setInfo("GPU", device.deviceName)
         CrashReporter.setInfo("Quality", "\(quality)")
-        CrashReporter.setInfo("Render resolution", "\(resolution), \(sampleCount)x MSAA, upscaler \(upscaler)")
+        CrashReporter.setInfo("Render resolution", "\(resolution), \(sampleCount)x MSAA, upscaler \(self.upscaler)")
         CrashReporter.setInfo("Window", "\(window.framebufferSize.width)x\(window.framebufferSize.height) pixels")
         EngineLog.debug("\(backend.rawValue) on \(device.deviceName), quality \(quality)")
     }
