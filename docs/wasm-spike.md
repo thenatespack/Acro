@@ -801,9 +801,8 @@ emitters) costs nothing measurable: callback 1.2 ms on both renderers. Regressio
 
 **Known gaps:** compute itself (FSR 3 gives way to TAAU) and particle collisions against the depth
 buffer (GPU-only: off with a warning on WebGL 2); emitters above 65536 slots are thinned on the
-CPU; material graphs with more than 1024 values (a 16 KB uniform block) draw plain on WebGL 2. Only
-tested on ANGLE/Metal in Chromium; Firefox and Safari (where WebGL 2 is most likely to be used)
-are W2.7B's.
+CPU; material graphs with more than 1024 values (a 16 KB uniform block) draw plain on WebGL 2. Firefox and
+WebKit: see "Firefox and Safari (W2.7B)".
 
 ## Rendering parity (W2.6B, 2026-11-26)
 
@@ -856,6 +855,145 @@ Gaps: falling back from a temporal upscaler to a spatial one (FSR 1) at startup 
 MSAA at 1x (the sample count is chosen before the device exists, and the device answers what it
 supports). The rewrite relies on naga's and spirv-to-gles' output style; a shader it can't parse
 keeps its stage unchanged (no alpha test) rather than failing.
+
+## Firefox and Safari (W2.7B, 2026-11-26)
+
+Every Demo scene and SampleGame, in Playwright's Firefox and WebKit as well as Chromium, on every
+renderer each browser offers:
+
+```sh
+Scripts/web-player.sh --demo --release --no-serve                 # .build-wasm/web-demo
+Scripts/web-player.sh --export Projects/SampleGame --release --no-serve
+node Spikes/WebPlayerCheck/browsers.mjs .build-wasm/web-demo <out> --browsers chromium
+ACRO_WEBTOOLS=<playwright 1.59 dir> node Spikes/WebPlayerCheck/browsers.mjs .build-wasm/web-demo <out> --browsers firefox,webkit
+node Spikes/WebPlayerCheck/browsers.mjs .build-wasm/web-export/SampleGame <out2> --scenes none ...
+node Spikes/WebPlayerCheck/browsers.mjs <site> <out> --compare-only     # the table below, from all of them
+node Spikes/WebPlayerCheck/browsers.mjs <site> <out3> --extras ...     # audio, saves, renderer switch, fallback, pack cache
+```
+
+`browsers.mjs` first asks each browser what it has (WebGPU: `navigator.gpu`, an adapter and a
+device with every adapter feature; WebGL 2: `getContext('webgl2')`, its renderer string and
+extensions), then runs each scene on each renderer it has (`?renderer=webgpu|webgl2`) plus one
+`?renderer=auto` run, each in a fresh browser context (empty storage), with `ENGINE_SCREENSHOT`,
+`ENGINE_OVERLAY=0` and on WebGL 2 `ENGINE_GL_DEBUG=1`. It records the renderer and texture family
+the page picked, startup, console errors and warnings (the engine's log lines by their own level),
+WebGPU validation errors and WebGL errors, rAF callback times and intervals, the engine's frame
+and the canvas after the engine quits (the presented frame). Frames are compared with
+Chromium's on the same renderer (mean difference / 255, % of pixels with a channel off by more than 16).
+
+**Getting the browsers to run** (macOS 27.2, Apple M5):
+
+- Playwright 1.56 (`~/.acro-webtools`) wants `firefox-1495` / `webkit-2215`; the installed
+  `firefox-1511` / `webkit-2272` belong to Playwright 1.59. `npx playwright install firefox webkit`
+  fetched the 1.56 ones. **Neither of Playwright's own Firefox builds starts on macOS 27**: the
+  process spins at startup (also outside Playwright, `firefox -headless --screenshot`, and with its
+  sandboxes off) and Playwright's launch times out. So the Firefox runs use the installed
+  **Firefox 160** (`/Applications/Firefox.app`) over WebDriver BiDi (`firefox.launch({ channel:
+  'moz-firefox' })`), which needs **Playwright 1.59**; it was installed in a scratch folder and passed
+  as `ACRO_WEBTOOLS` (WebKit ran from it too: WebKit 26.4, `webkit-2272`; Chromium stayed on 1.56's
+  Chromium 141, the reference of earlier sections).
+- **Headless Firefox has no WebGPU adapter** (`navigator.gpu` is there, `requestAdapter()` returns
+  null), so Firefox runs headed. With `dom.webgpu.enabled` (and `gfx.webgpu.ignore-blocklist`) set
+  through `firefoxUserPrefs` it is the same: Firefox 160 has WebGPU on by default on macOS, the prefs
+  change nothing (`--browsers firefox-webgpu`). Headless, the page falls back to WebGL 2 on its own.
+- **Playwright's WebKit has no WebGPU** (no `navigator.gpu`, headless or headed), so WebKit ran WebGL 2
+  only, which the page picks by itself (`auto`).
+
+What each offers:
+
+| Browser | WebGPU | WebGL 2 | Texture compression | Notes |
+|---|---|---|---|---|
+| Chromium 141 | yes (Apple metal-3) | ANGLE on Metal | BC, ASTC (WebGPU); BPTC, RGTC, ASTC+HDR (WebGL) | `EXT_disjoint_timer_query_webgl2` |
+| Firefox 160 (headed) | yes, by default | ANGLE on Metal ("Apple M1, or similar": renderer masked) | BC, ASTC; BPTC, RGTC, ASTC+HDR | no timer queries, `KHR_parallel_shader_compile` or `EXT_color_buffer_half_float` (has `_float`); `performance.now()` in 1 ms steps |
+| WebKit 26.4 | no | Apple GPU (ANGLE on Metal) | BPTC, RGTC, ASTC+HDR | no timer queries; 1 ms `performance.now()` |
+
+All three have AudioWorklet, IndexedDB, the Cache API and `WebAssembly.compileStreaming`. Every
+page picked the BC pack (SampleGame) on every renderer.
+
+**Results** (release builds, 1280x720, DPR 1). "Clean" is: started, the engine's frame arrived, no
+page error, no error on the splash, 0 WebGPU validation errors / 0 WebGL errors:
+
+| Browser | Renderer | Demo scenes clean | SampleGame | Frames vs Chromium (same renderer) | `auto` picks |
+|---|---|---|---|---|---|
+| Chromium 141 | WebGPU | 54/54 | clean | reference | WebGPU |
+| Chromium 141 | WebGL 2 | 54/54 | clean | reference | |
+| Firefox 160 | WebGPU | 54/54 (see below) | clean | 52 identical, worst 0.001 mean, 0% over 16 | WebGPU |
+| Firefox 160 | WebGL 2 | 54/54 | clean | 53 identical, worst 0.005 (`reflections`), 0% over 16 | |
+| WebKit 26.4 | WebGL 2 | 54/54 | clean | 53 identical, worst 0.005 (`reflections`), 0% over 16 | WebGL 2 (no `navigator.gpu`) |
+
+The only warnings anywhere are the expected ones on WebGL 2 (`particles`, `rain`: GPU particles
+skipped; `probes`: light probes skipped; W2.7A). One Firefox WebGPU run of `graphs` (the last scene of
+the first full pass) never got its first frame in 150 s (its rAF ran at 100 ms intervals, as for a
+hidden window); it passed in the four runs after it, standalone and in a batch, and in the second
+full pass, so it's counted as a flake of the headed window, not a bug. The presented canvas
+(7 scenes per browser) matches Chromium's exactly where the scene is still, and on WebGL 2
+everywhere (worst 0.005); on Firefox WebGPU, animated scenes' canvases differ (0.59 mean in `shadows`)
+only because the engine quits one or two frames later there (WebGPU captures arrive a frame or more
+late, Firefox's later than Chromium's: 63-64 frames against 62), so the last presented frame is a
+later one.
+
+Same frame on all three engines' paths is expected on this machine: Chromium, Firefox and WebKit all
+run WebGL 2 through ANGLE on Metal, and Chromium (Dawn) and Firefox (wgpu) WebGPU both on Metal.
+
+**Other checks** (`--extras`, each passed in each browser unless noted):
+
+- Audio (`audio` scene): the AudioContext runs, the worklet loads from its Blob URL and reports,
+  ~146k frames sent at 48 kHz in 2.5 s, 0 underruns. Autoplay can't be checked under automation:
+  every browser started the context before a click, also Chromium with
+  `--autoplay-policy=user-gesture-required` and Firefox with autoplay blocked by prefs; the resume
+  on a gesture is unexercised outside a real browser.
+- Keyboard input and saves (`character` scene): F9 finds no save, F5 saves into IndexedDB, the page
+  reloads (`[acro] user data: 1 file(s) from IndexedDB`), F9 loads it (0.0000 m from the save).
+- `acro.setRenderer('webgl2')` reloads into WebGL 2 and `setRenderer('auto')` back to WebGPU
+  (Chromium, Firefox; WebKit has nothing to switch to). With `navigator.gpu` hidden, Chromium and
+  Firefox fall back to WebGL 2 with the reason in the console.
+- Pack cache (SampleGame export): the second visit reads the pack from the Cache API in Chromium and
+  Firefox. **Not in Playwright's WebKit**: the pack is stored, but the next navigation finds the
+  cache empty. A five-line page that puts two entries and navigates loses them too, also with a
+  persistent profile, so it's the Playwright WebKit build's storage, not the loader. Safari not
+  checked.
+
+**Frame time** (a second full pass without `ENGINE_GL_DEBUG`, browsers one after the other; rAF
+callback p50 / p95 in ms over the screenshot run's ~62 fixed-step frames; Firefox and WebKit round
+`performance.now()` to 1 ms). Every browser presents at 60 Hz (interval p50 16.7 ms) and the median
+scene takes about 1 ms per frame in each. Heavier scenes:
+
+| Scene | Chromium WebGPU | Firefox WebGPU | Chromium WebGL 2 | Firefox WebGL 2 | WebKit WebGL 2 |
+|---|---|---|---|---|---|
+| shadows | 1.3 / 2.7 | 1 / 2 | 0.7 / 1.1 | 1 / 2 | 1 / 1 |
+| instancing | 1.6 / 4.2 | 2 / 4 | 1.2 / 3.4 | 1 / 3 | 1 / 3 |
+| pbr | 1.3 / 1.9 | 1 / 2 | 0.7 / 1.2 | 1 / 3 | 1 / 5 |
+| post | 1.3 / 2.0 | 2 / 2 | 0.9 / 1.5 | 2 / 4 | 2 / 5 |
+| forest | 2.2 / 2.9 | 3 / 5 | 3.4 / 5.9 | 3 / 6 | 1 / 3 |
+| graphs | 0.8 / 2.0 | 1 / 3 | 0.7 / 1.2 | 1 / 3 | 1 / 3 |
+| crowd | 7.1 / 9.4 | 9 / 11 | 6.6 / 8.0 | 23 / 39 | 6 / 8 |
+
+Crowd (450 draws, 1.06 M triangles) is the outlier: in real time Firefox's WebGL 2 runs it at ~30
+fps (frame 29-32 ms, of which the engine's update is 10-11 ms and its render 2-3 ms), against 60 in
+Chromium. The rest of the frame is outside the engine's update and render, most likely waiting on
+Firefox's GPU process, which runs its WebGL (Chromium's timer queries put the scene pass at 11 ms
+of GPU time; Firefox has no timer queries to confirm it). Not investigated further. One lead:
+every instanced draw re-specifies its attributes (about 10 `bindBuffer`, `vertexAttribPointer`,
+`enableVertexAttribArray` and `vertexAttribDivisor` calls each, ~4,500 a frame); caching vertex
+array objects per mesh and instance-buffer offset would remove most of them. Not done here (the
+WebGL 2 device's draw path; W2.7A is in it).
+
+`ENGINE_GL_DEBUG=1` costs a lot in Chromium (median scene 21 ms per callback: `getError` after every
+command is a round trip to its GPU process) and less in Firefox (13) and WebKit (6).
+
+**Fixed:** nothing in the renderers, the loader's fallback, saves or audio needed changing. The
+WebGPU "no adapter" message named `chrome://gpu` in every browser; it names `about:support` in
+Firefox, `edge://gpu` in Edge, `chrome://gpu` in Chrome and nothing elsewhere.
+
+**What this means for Safari.** Playwright's WebKit is WebKit's own MiniBrowser build with
+Playwright's patches, not Safari: it has no WebGPU (Safari 26 ships it on by default), and its
+storage differs (the Cache API above). So the WebKit result is strong for Safari's **WebGL 2** path
+(same WebKit, same ANGLE-on-Metal backend Safari uses) and says nothing about Safari's **WebGPU**,
+which is what Safari 26 will pick on `auto`. Safari's WebGPU (WebKit's own implementation on Metal,
+not Dawn or wgpu) is the largest untested path; checking it needs Safari itself (`safaridriver`
+with Develop › Allow Remote Automation turned on, which this run didn't do). Firefox was tested as
+the shipping browser, so its results carry over, except that all of it is macOS on Apple GPUs:
+Firefox on Windows (WebGPU on D3D12, WebGL on ANGLE/D3D11) and Linux were not run.
 
 ## What's left for a browser build
 
@@ -968,4 +1106,6 @@ compute-only: it falls back to another upscaler instead of being refused.
   light probes (W2.7A)" under the WebGL 2 renderer.
 - **W2.7B: Firefox and Safari.** Playwright Firefox and WebKit (installed in `~/.acro-webtools`):
   all Demo scenes and SampleGame on each renderer each browser offers, fix what breaks, record
-  results here.
+  results here. Done: all 54 Demo scenes and SampleGame run clean on Firefox 160 (WebGPU and
+  WebGL 2) and WebKit 26.4 (WebGL 2; no WebGPU in Playwright's build), frames within 0.005 / 255 of
+  Chromium's; see "Firefox and Safari (W2.7B, 2026-11-26)".
