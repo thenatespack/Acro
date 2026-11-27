@@ -1,6 +1,9 @@
 // Fur and hair (Groom.swift): SceneRenderer's vertex stage for fur materials (`Material.fur`),
-// included by mesh_fur.vert and mesh_fur_skinned.vert (which defines SKINNED). Not compiled on
-// its own; rerun Scripts/compile-shaders.sh after editing it. Pairs with mesh_fur.frag.
+// included by mesh_fur.vert and mesh_fur_skinned.vert (which defines SKINNED), and with FUR_DEPTH
+// by mesh_fur_depth(_skinned).vert, the shadow atlas's fur casters (only the position and what
+// fur_strands.glsl needs; `Frame` is then the shadow pass's two matrices). Not compiled on its
+// own; rerun Scripts/compile-shaders.sh after editing it. Pairs with mesh_fur.frag /
+// mesh_fur_depth.frag.
 //
 // Uniform buffer 2 (both stages; must match `SceneRenderer.furBlock`): the material (padded to
 // 8 vec4, unused here), the groom's numbers, and for skinned meshes a spring offset per joint and
@@ -22,8 +25,10 @@
 layout(set = 0, binding = 0, std140) uniform Frame {
     mat4 viewProj;
     mat4 lightViewProj;
+#ifndef FUR_DEPTH
     mat4 currentViewProj;
     mat4 previousViewProj;
+#endif
 } frame;
 
 #define MAX_JOINTS 128
@@ -56,16 +61,24 @@ layout(location = 14) in vec4 inJoints;
 layout(location = 15) in vec4 inWeights;
 #endif
 
+#ifndef FUR_DEPTH
 layout(location = 0) out vec3 vWorldPos;
 layout(location = 1) out vec3 vNormal;
+#endif
 layout(location = 2) out vec2 vUV;
+#ifndef FUR_DEPTH
 layout(location = 3) out vec4 vColor;
+#endif
 layout(location = 4) out vec3 vObjectPos;     // the root's position in the mesh's (bind pose) space
+#ifndef FUR_DEPTH
 layout(location = 5) out vec4 vParams;
 layout(location = 6) out vec4 vCurrentClip;
 layout(location = 7) out vec4 vPreviousClip;
+#endif
 layout(location = 8) out vec4 vFur;           // x height along the strand 0...1, y card random, z 1 for cards, w 1 for the undercoat
+#ifndef FUR_DEPTH
 layout(location = 9) out vec3 vStrand;        // world-space strand direction
+#endif
 layout(location = 10) out vec3 vObjectNormal; // the root's normal in the mesh's space
 
 #ifdef SKINNED
@@ -156,35 +169,38 @@ vec3 furPosition(mat4 model, float time, out vec3 strand) {
 
 void main() {
     precise mat4 model = mat4(model0, model1, model2, model3);
-    precise mat4 previousModel = mat4(previous0, previous1, previous2, previous3);
 #ifdef SKINNED
     model = model * skinMatrix();
-    previousModel = previousModel * previousSkinMatrix();
 #endif
-    vec3 strand, previousStrand;
+    vec3 strand;
     precise vec3 world = furPosition(model, furData.fur[6].x, strand);
-    precise vec3 previousWorld = furPosition(previousModel, furData.fur[6].y, previousStrand);
-
-    vec3 a = model[0].xyz, b = model[1].xyz, c = model[2].xyz;
-    mat3 cofactor = mat3(cross(b, c), cross(c, a), cross(a, b));
-    float handedness = dot(cross(a, b), c) < 0.0 ? -1.0 : 1.0;
-
     precise vec4 clip = frame.viewProj * vec4(world, 1.0);
     gl_Position = clip;
     gl_Position.y = -gl_Position.y;  // clip space is y-up; see beginPass in VulkanRenderDevice
+    bool cards = furData.fur[3].w > 0.5;
+    vFur = vec4(cards ? inUV.y : inParams.y, cards ? fract(inTangent.w) : 0.0, cards ? 1.0 : 0.0,
+                !cards && inParams.y <= 0.0 ? 1.0 : 0.0);
+    vUV = inUV;
+    vObjectPos = inPosition;
+    vObjectNormal = inNormal;
+#ifndef FUR_DEPTH
+    precise mat4 previousModel = mat4(previous0, previous1, previous2, previous3);
+#ifdef SKINNED
+    previousModel = previousModel * previousSkinMatrix();
+#endif
+    vec3 previousStrand;
+    precise vec3 previousWorld = furPosition(previousModel, furData.fur[6].y, previousStrand);
+    vec3 a = model[0].xyz, b = model[1].xyz, c = model[2].xyz;
+    mat3 cofactor = mat3(cross(b, c), cross(c, a), cross(a, b));
+    float handedness = dot(cross(a, b), c) < 0.0 ? -1.0 : 1.0;
     vWorldPos = world;
     vNormal = cofactor * inNormal * handedness;
-    vUV = inUV;
     vColor = inColor;
     vParams = vec4(inParams.x, 0.0, 0.0, 0.0);
     precise vec4 currentClip = frame.currentViewProj * vec4(world, 1.0);
     precise vec4 previousClip = frame.previousViewProj * vec4(previousWorld, 1.0);
     vCurrentClip = currentClip;
     vPreviousClip = previousClip;
-    bool cards = furData.fur[3].w > 0.5;
-    vFur = vec4(cards ? inUV.y : inParams.y, cards ? fract(inTangent.w) : 0.0, cards ? 1.0 : 0.0,
-                !cards && inParams.y <= 0.0 ? 1.0 : 0.0);
     vStrand = strand;
-    vObjectPos = inPosition;
-    vObjectNormal = inNormal;
+#endif
 }

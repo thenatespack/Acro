@@ -14,7 +14,7 @@ import Foundation
 /// - three mossy rocks in the wind: shell moss (bare underneath, a `cut` stroke), drawn as one
 ///   instanced batch for every shell of every rock.
 ///
-/// Environment: `FUR_VIEW=hair|creature|moss` shows a close-up, `FUR_OFF=1` hides every groom (the before picture for GPU timing), `FUR_WIND=0`
+/// Environment: `FUR_VIEW=hair|creature|moss` shows a close-up, `FUR_OFF=1` hides every groom (the before picture for GPU timing), `FUR_SUN=back` backlights, `FUR_WIND=0`
 /// stills the air. The title lists draws and items.
 final class FurScene: DemoScene {
     static let name = "fur"
@@ -71,7 +71,9 @@ final class FurScene: DemoScene {
                                            fogColor: Self.sky, fogDensity: 0.01)
         environment.wind = env["FUR_WIND"] == "0" ? .calm : Wind(direction: Vec3(1, 0, 0.3), strength: 1, gustiness: 0.6)
         world.spawn(environment)
-        world.spawn(Transform(rotation: .lookRotation(forward: -normalize(Vec3(0.5, 0.85, 0.55)))),
+        // `FUR_SUN=back`: the sun low behind the fur (seen from the close-ups), for the backlit rim.
+        let toSun = env["FUR_SUN"] == "back" ? Vec3(-0.45, 0.35, -0.8) : Vec3(0.5, 0.85, 0.55)
+        world.spawn(Transform(rotation: .lookRotation(forward: -normalize(toSun))),
                     DirectionalLight(color: Vec3(1, 0.96, 0.9), intensity: 2.4, shadowExtent: 5, shadowCenter: Vec3(0, 0.5, 0)))
         world.spawn(Transform(position: Vec3(0, -0.5, 0), scale: Vec3(30, 1, 30)), Name("Ground"),
                     MeshRenderer(mesh: .cube, material: MaterialHandle("fur.ground"), castsShadows: false))

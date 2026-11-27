@@ -1,6 +1,6 @@
 // Generated from mesh_fur.vert by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
-// spirv-fnv1a64: 9cc1befe1d69ec6a
+// spirv-fnv1a64: f59096b5c8e27aa5
 // glsl-fnv1a64: c770a578588d3aa5
 
 #pragma clang diagnostic ignored "-Wmissing-prototypes"
@@ -78,7 +78,7 @@ struct _47
     float4 _m1[8];
 };
 
-struct _536
+struct _453
 {
     float4x4 _m0;
     float4x4 _m1;
@@ -88,17 +88,17 @@ struct _536
 
 struct vertex_main_out
 {
-    float3 m_561 [[user(locn0)]];
-    float3 m_563 [[user(locn1)]];
-    float2 m_570 [[user(locn2)]];
-    float4 m_572 [[user(locn3)]];
-    float3 m_639 [[user(locn4)]];
-    float4 m_575 [[user(locn5)]];
-    float4 m_597 [[user(locn6)]];
-    float4 m_599 [[user(locn7)]];
-    float4 m_605 [[user(locn8)]];
-    float3 m_637 [[user(locn9)]];
-    float3 m_641 [[user(locn10)]];
+    float3 m_604 [[user(locn0)]];
+    float3 m_606 [[user(locn1)]];
+    float2 m_514 [[user(locn2)]];
+    float4 m_612 [[user(locn3)]];
+    float3 m_517 [[user(locn4)]];
+    float4 m_615 [[user(locn5)]];
+    float4 m_637 [[user(locn6)]];
+    float4 m_639 [[user(locn7)]];
+    float4 m_481 [[user(locn8)]];
+    float3 m_641 [[user(locn9)]];
+    float3 m_519 [[user(locn10)]];
     float4 gl_Position [[position]];
 };
 
@@ -111,16 +111,16 @@ struct vertex_main_in
     float4 m_414 [[attribute(4)]];
     float4 m_416 [[attribute(5)]];
     float4 m_418 [[attribute(6)]];
-    float4 m_442 [[attribute(7)]];
-    float4 m_444 [[attribute(8)]];
-    float4 m_446 [[attribute(9)]];
-    float4 m_448 [[attribute(10)]];
-    float4 m_573 [[attribute(11)]];
+    float4 m_522 [[attribute(7)]];
+    float4 m_524 [[attribute(8)]];
+    float4 m_526 [[attribute(9)]];
+    float4 m_528 [[attribute(10)]];
+    float4 m_613 [[attribute(11)]];
     float4 m_28 [[attribute(12)]];
     float4 m_271 [[attribute(13)]];
 };
 
-vertex vertex_main_out vertex_main(vertex_main_in in [[stage_in]], constant _47& _49 [[buffer(2)]], constant _536& _538 [[buffer(15)]])
+vertex vertex_main_out vertex_main(vertex_main_in in [[stage_in]], constant _47& _49 [[buffer(2)]], constant _453& _455 [[buffer(15)]])
 {
     vertex_main_out out = {};
     float3 _680;
@@ -193,85 +193,85 @@ vertex vertex_main_out vertex_main(vertex_main_in in [[stage_in]], constant _47&
         _1314 = spvFAdd(_686, _1313);
         break;
     } while(false);
-    float3 _1318;
+    float4 _463 = float4(_1314, 1.0);
+    out.gl_Position = spvFMulMatrixVector(_455._m0, _463);
+    out.gl_Position.y = -out.gl_Position.y;
+    float _1317;
+    if (_735)
+    {
+        _1317 = in.m_252.y;
+    }
+    else
+    {
+        _1317 = in.m_28.y;
+    }
+    float _1318;
+    if (_735)
+    {
+        _1318 = fract(in.m_271.w);
+    }
+    else
+    {
+        _1318 = 0.0;
+    }
+    bool _504 = !_735;
+    bool _510;
+    if (_504)
+    {
+        _510 = in.m_28.y <= 0.0;
+    }
+    else
+    {
+        _510 = _504;
+    }
+    out.m_481 = float4(_1317, _1318, float(_735), float(_510));
+    out.m_514 = in.m_252;
+    out.m_517 = _680;
+    out.m_519 = _726;
+    float3 _1320;
     do
     {
-        float3 _1010 = (float4x4(in.m_442, in.m_444, in.m_446, in.m_448) * _684).xyz;
-        float3 _1028 = cross(in.m_442.xyz, in.m_444.xyz);
-        float3 _1054 = fast::normalize(spvFMulMatrixVector(float3x3(cross(in.m_444.xyz, in.m_446.xyz), cross(in.m_446.xyz, in.m_442.xyz), _1028), _726) * ((dot(_1028, in.m_446.xyz) < 0.0) ? (-1.0) : 1.0));
-        float _1238 = spvFAdd(spvFMul(dot(in.m_448.xz, _904), 0.3499999940395355224609375), spvFMul(dot(in.m_448.xz, float2(0.829999983310699462890625, -0.569999992847442626953125)), 1.7000000476837158203125));
-        float _1262 = spvFMul(dot(in.m_448.xyz, float3(3.099999904632568359375, 2.2999999523162841796875, 2.7000000476837158203125)), 3.0);
+        float3 _1010 = (float4x4(in.m_522, in.m_524, in.m_526, in.m_528) * _684).xyz;
+        float3 _1028 = cross(in.m_522.xyz, in.m_524.xyz);
+        float3 _1054 = fast::normalize(spvFMulMatrixVector(float3x3(cross(in.m_524.xyz, in.m_526.xyz), cross(in.m_526.xyz, in.m_522.xyz), _1028), _726) * ((dot(_1028, in.m_526.xyz) < 0.0) ? (-1.0) : 1.0));
+        float _1238 = spvFAdd(spvFMul(dot(in.m_528.xz, _904), 0.3499999940395355224609375), spvFMul(dot(in.m_528.xz, float2(0.829999983310699462890625, -0.569999992847442626953125)), 1.7000000476837158203125));
+        float _1262 = spvFMul(dot(in.m_528.xyz, float3(3.099999904632568359375, 2.2999999523162841796875, 2.7000000476837158203125)), 3.0);
         float3 _1073 = spvFAdd(_957 * spvFMul(spvFMul(spvFMul(_959, spvFAdd(1.0, spvFMul(_930, spvFSub(spvFMul(spvFAdd(0.5, spvFMul(spvFMul(0.5, sin(spvFAdd(spvFMul(_49._m1[6].y, 0.61000001430511474609375), _1238))), sin(spvFAdd(spvFMul(_49._m1[6].y, 0.23000000417232513427734375), spvFMul(_1238, 0.699999988079071044921875))))), 1.60000002384185791015625), 0.60000002384185791015625)))), spvFAdd(0.699999988079071044921875, spvFMul(spvFMul(0.300000011920928955078125, sin(spvFAdd(spvFMul(_49._m1[6].y, 4.69999980926513671875), _1262))), sin(spvFAdd(spvFMul(_49._m1[6].y, 2.900000095367431640625), spvFMul(_1262, 0.37000000476837158203125)))))), 0.3499999940395355224609375), _746) * _732;
         if (_735)
         {
-            _1318 = spvFAdd(_1010, _1073 * spvFMul(spvFMul(_743, in.m_252.y), in.m_252.y));
+            _1320 = spvFAdd(_1010, _1073 * spvFMul(spvFMul(_743, in.m_252.y), in.m_252.y));
             break;
         }
         float _1123 = spvFMul(_743, fast::max(spvFSub(in.m_271.w, 1.0), 0.0));
         if (in.m_28.y <= 0.0)
         {
-            _1318 = spvFAdd(_1010, _1054 * spvFAdd(spvFMul(_1123, 0.039999999105930328369140625), 0.00039999998989515006542205810546875));
+            _1320 = spvFAdd(_1010, _1054 * spvFAdd(spvFMul(_1123, 0.039999999105930328369140625), 0.00039999998989515006542205810546875));
             break;
         }
-        float3 _1155 = spvFMulMatrixVector(float3x3(float3(in.m_442.xyz), float3(in.m_444.xyz), float3(in.m_446.xyz)), in.m_271.xyz);
+        float3 _1155 = spvFMulMatrixVector(float3x3(float3(in.m_522.xyz), float3(in.m_524.xyz), float3(in.m_526.xyz)), in.m_271.xyz);
         float _1190 = spvFMul(_1123, in.m_28.y);
         float3 _1191 = fast::normalize(spvFAdd(spvFAdd(_1054 * spvFSub(1.0, fast::min(length(_1155), 1.0)), _1155), spvFAdd(float3(0.0, -_49._m1[1].w, 0.0), _1073) * spvFMul(0.5, in.m_28.y))) * _1190;
         float _1194 = dot(_1191, _1054);
         float _1198 = spvFMul(_1190, 0.119999997317790985107421875);
-        float3 _1317;
+        float3 _1319;
         if (_1194 < _1198)
         {
-            _1317 = spvFAdd(_1191, _1054 * spvFSub(_1198, _1194));
+            _1319 = spvFAdd(_1191, _1054 * spvFSub(_1198, _1194));
         }
         else
         {
-            _1317 = _1191;
+            _1319 = _1191;
         }
-        _1318 = spvFAdd(_1010, _1317);
+        _1320 = spvFAdd(_1010, _1319);
         break;
     } while(false);
-    float4 _546 = float4(_1314, 1.0);
-    out.gl_Position = spvFMulMatrixVector(_538._m0, _546);
-    out.gl_Position.y = -out.gl_Position.y;
-    out.m_561 = _1314;
-    out.m_563 = (_717 * _726) * ((dot(_704, _695) < 0.0) ? (-1.0) : 1.0);
-    out.m_570 = in.m_252;
-    out.m_572 = in.m_573;
-    out.m_575 = float4(in.m_28.x, 0.0, 0.0, 0.0);
-    out.m_597 = spvFMulMatrixVector(_538._m2, _546);
-    out.m_599 = spvFMulMatrixVector(_538._m3, float4(_1318, 1.0));
-    float _1319;
-    if (_735)
-    {
-        _1319 = in.m_252.y;
-    }
-    else
-    {
-        _1319 = in.m_28.y;
-    }
-    float _1320;
-    if (_735)
-    {
-        _1320 = fract(in.m_271.w);
-    }
-    else
-    {
-        _1320 = 0.0;
-    }
-    bool _628 = !_735;
-    bool _634;
-    if (_628)
-    {
-        _634 = in.m_28.y <= 0.0;
-    }
-    else
-    {
-        _634 = _628;
-    }
-    out.m_605 = float4(_1319, _1320, float(_735), float(_634));
-    out.m_637 = _1315;
-    out.m_639 = _680;
-    out.m_641 = _726;
+    out.m_604 = _1314;
+    out.m_606 = (_717 * _726) * ((dot(_704, _695) < 0.0) ? (-1.0) : 1.0);
+    out.m_612 = in.m_613;
+    out.m_615 = float4(in.m_28.x, 0.0, 0.0, 0.0);
+    out.m_637 = spvFMulMatrixVector(_455._m2, _463);
+    out.m_639 = spvFMulMatrixVector(_455._m3, float4(_1320, 1.0));
+    out.m_641 = _1315;
     out.gl_Position.y = -(out.gl_Position.y);    // Invert Y-axis for Metal
     return out;
 }

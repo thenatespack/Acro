@@ -3,21 +3,23 @@
 
 // SceneRenderer's fragment shader for fur (Groom.swift; vertex stage fur.glsl).
 //
-// Coverage:
-// - shells: the strand a fragment belongs to comes from its root in the mesh's own space
-//   (vObjectPos, bind pose, so strands stay on an animated mesh and don't depend on UVs): the
-//   space is cut into cubes one strand spacing wide, each holding one strand at a random point
-//   (its center projected onto the surface). Toward the tip the root is pulled toward a clump
-//   center (clumping), circles it (curl) and wobbles (frizz). Fragments outside the strand's
-//   radius (root to tip thickness), above its random length or above the mask texture's length
-//   are discarded;
-// - cards: strandsPerCard strands across each card (UV x), tapering to a soft edge; the
-//   coverage goes out as alpha for alpha-to-coverage;
-// - the undercoat (height 0) is solid wherever fur grows.
-// Shading: root-to-tip color with per-strand noise, darker toward the roots, wrapped diffuse
-// and two Kajiya-Kay highlights along the strand (a white one shifted toward the tip and a
-// colored one toward the root, "Marschner-lite"), the sun's shadows, the hemisphere or
-// image-based ambient light, point and spot lights (diffuse), fog.
+// Coverage: fur_strands.glsl (shared with the shadow casters, mesh_fur_depth.frag); card strands
+// go out as alpha for alpha-to-coverage.
+// Shading:
+// - color: root-to-tip with per-strand noise;
+// - hair model (Marschner as approximated by Karis, "Physically Based Hair Shading in Unreal",
+//   2016) along the strand: R (a white highlight shifted toward the tip), TRT (a highlight
+//   tinted by the fiber, shifted toward the root, broader) and TT (light through the fibers: a
+//   bright rim when the light is behind the hair), plus a multiple-scattering diffuse that
+//   saturates toward the fiber color where less light gets through. Shells take their diffuse
+//   from the surface normal (the body's shape), cards from the strand and the view;
+// - the sun's shadow at the strand (`furSunShadow`): deep-opacity-style, the shadow atlas is
+//   compared at three depths toward the light, so fur (which casts into the atlas) lets light
+//   in to a depth set by the groom's length and density, and other casters shadow fully;
+// - ambient occlusion from root to tip by how many strands the light crosses (length, density,
+//   thickness), lighter where clumps open gaps and for bright fibers (light bounces between them);
+// - the hemisphere or image-based ambient light, clustered point and spot lights (same model,
+//   their shadows), fog.
 
 // Must match `SceneRenderer.FrameUniforms` (as mesh_surface.glsl).
 layout(set = 0, binding = 0, std140) uniform Frame {
@@ -138,20 +140,111 @@ uint lightIndex(uint i) {
     return (lightIndices.data[word >> 2][word & 3u] >> ((i - word * 3u) * 10u)) & 0x3FFu;
 }
 
-// Three random numbers in 0...1 for integer cell `c`.
-vec3 hash3(vec3 c) {
-    uvec3 q = uvec3(ivec3(c) + ivec3(1 << 20));
-    uint h = q.x * 1597334677u ^ q.y * 3812015801u ^ q.z * 2798796415u;
-    h ^= h >> 15; h *= 2246822519u; h ^= h >> 13;
-    uint h2 = h * 3266489917u; h2 ^= h2 >> 16;
-    uint h3 = h2 * 668265263u; h3 ^= h3 >> 15;
-    return vec3(float(h & 0xFFFFu), float(h2 & 0xFFFFu), float(h3 & 0xFFFFu)) / 65535.0;
+#include "fur_strands.glsl"
+
+// MARK: Hair shading
+
+float hairGaussian(float b, float x) { return exp(-0.5 * x * x / (b * b)) / (2.5066283 * b); }
+
+// Fresnel of a fiber (index 1.55) at cosine `c`.
+float hairFresnel(float c) {
+    const float f0 = 0.04652;
+    float m = 1.0 - clamp(c, 0.0, 1.0);
+    float m2 = m * m;
+    return f0 + (1.0 - f0) * m2 * m2 * m;
 }
 
-// A strand highlight along tangent `t` (Kajiya-Kay): sin(t, h)^exponent.
-float strandHighlight(vec3 t, vec3 h, float exponent) {
-    float th = dot(t, h);
-    return pow(sqrt(max(1.0 - th * th, 0.0)), exponent);
+// The light a fiber along unit tangent `t` (root to tip) sends toward `v` from unit direction
+// `l`, per unit irradiance, in the engine's units (a Lambert surface would give albedo x N.L).
+// `color` the fiber's (absorption), `shell` picks the surface normal `n` for the diffuse,
+// `through` 0...1 how much of the light reaches this depth (tints the multiple scattering),
+// `shift` the cuticle tilt in radians, `roughness` the lobes' width, `specular` their strength.
+vec3 hairLight(vec3 t, vec3 n, vec3 l, vec3 v, vec3 color, bool shell, float through, float shift, float roughness,
+               float specular) {
+    float sinL = clamp(dot(t, l), -1.0, 1.0);
+    float sinV = clamp(dot(t, v), -1.0, 1.0);
+    float cosThetaD = max(cos(0.5 * abs(asin(sinV) - asin(sinL))), 0.05);
+    vec3 lp = l - sinL * t, vp = v - sinV * t;
+    float cosPhi = dot(lp, vp) * inversesqrt(max(dot(lp, lp) * dot(vp, vp), 1e-6));
+    float cosHalfPhi = sqrt(clamp(0.5 + 0.5 * cosPhi, 0.0, 1.0));
+    float r2 = roughness * roughness;
+    float s = sinL + sinV;
+
+    // R: reflection off the cuticle; white, shifted toward the tip.
+    float mR = hairGaussian(r2 * 1.4142, s + 2.0 * shift);
+    vec3 spec = vec3(mR * 0.25 * cosHalfPhi * hairFresnel(sqrt(clamp(0.5 + 0.5 * dot(l, v), 0.0, 1.0))) * 3.0);
+    // TT: through the fiber, colored by absorption; strongest with the light behind.
+    float mTT = hairGaussian(r2 * 0.5 + 0.08, s - shift);
+    const float a = 1.0 / 1.55;
+    float hTT = cosHalfPhi * (1.0 + a * (0.6 - 0.8 * cosPhi));
+    float fTT = hairFresnel(cosThetaD * sqrt(clamp(1.0 - hTT * hTT, 0.0, 1.0)));
+    // (Twice Karis' absorption: the light crosses more than one fiber on its way through.)
+    vec3 tTT = pow(max(color, vec3(1e-4)), vec3(sqrt(clamp(1.0 - hTT * hTT * a * a, 0.0, 1.0)) / cosThetaD));
+    spec += mTT * exp(-3.65 * cosPhi - 3.98) * (1.0 - fTT) * (1.0 - fTT) * tTT;
+    // TRT: in, bounced off the back, out; the fiber's color, shifted toward the root, broader.
+    float mTRT = hairGaussian(r2 * 2.0 * 1.4142, s - 4.0 * shift);
+    float fTRT = hairFresnel(cosThetaD * 0.5);
+    vec3 tTRT = pow(max(color, vec3(1e-4)), vec3(0.8 / cosThetaD));
+    spec += mTRT * exp(17.0 * cosPhi - 16.78) * (1.0 - fTRT) * (1.0 - fTRT) * fTRT * tTRT * 4.0;
+
+    // Multiple scattering: light diffused through many fibers, more saturated the deeper it went.
+    float diffuse;
+    if (shell) {
+        float wrap = clamp(dot(n, l) * 0.6 + 0.4, 0.0, 1.0);
+        diffuse = wrap * wrap;
+    } else {
+        vec3 facing = v - t * sinV;
+        facing *= inversesqrt(max(dot(facing, facing), 1e-6));
+        float wrapped = clamp((dot(facing, l) + 1.0) * 0.5, 0.0, 1.0);
+        diffuse = mix(wrapped, 1.0 - abs(sinL), 0.33);
+    }
+    float luma = max(dot(color, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
+    vec3 scatter = pow(max(color, vec3(1e-4)) / luma, vec3((1.0 - through) * 0.35));
+    // Fibers pass light on to the fibers behind: dark hair is still visibly lit.
+    vec3 fiber = pow(max(color, vec3(1e-4)), vec3(0.92));
+    return fiber * scatter * diffuse + spec * (specular * 3.14159265);
+}
+
+// The sun's light reaching world position p (geometric normal ng) through fur: the cascade's
+// shadow compared at three depths up to ~1.8 x `depth` meters toward the light, so casters that
+// close (the fur's own strands) only dim it (exp(-distance / depth), roughly) and casters
+// farther in front shadow it fully.
+float furCascadeShadow(int c, vec3 p, float depth) {
+    mat4 m = frame.cascadeMatrices[c];
+    vec3 local = (m * vec4(p, 1.0)).xyz;
+    if (local.x < 0.0 || local.x > 1.0 || local.y < 0.0 || local.y > 1.0) return 1.0;
+    vec2 origin = vec2(float(c & 1), float(c >> 1)) * frame.shadowTiles.xy;
+    float ref = min(local.z, 1.0) - frame.cascadeBiases[c];
+    float perMeter = length(vec3(m[0][2], m[1][2], m[2][2]));
+    float d = depth * perMeter;
+    float s = tileShadow(local.xy, ref - d * 0.18, origin, frame.shadowTiles.xy);
+    s += tileShadow(local.xy, ref - d * 0.69, origin, frame.shadowTiles.xy);
+    s += tileShadow(local.xy, ref - d * 1.79, origin, frame.shadowTiles.xy);
+    return s * (1.0 / 3.0);
+}
+
+// directionalShadow (shadows.glsl) with furCascadeShadow.
+float furSunShadow(vec3 p, vec3 ng, float depth, out vec3 tint) {
+    tint = vec3(1.0);
+    int count = int(frame.shadowInfo.x);
+    float viewDepth = dot(frame.shadowDepthRow.xyz, p) + frame.shadowDepthRow.w;
+    int c = 0;
+    while (c < count - 1 && viewDepth > frame.cascadeSplits[c]) c++;
+    if (viewDepth > frame.cascadeSplits[c]) return 1.0;
+    float s = furCascadeShadow(c, p + ng * frame.cascadeNormalOffsets[c], depth);
+    vec3 t = cascadeTints[c];
+    float start = frame.cascadeBlendStarts[c];
+    if (viewDepth > start) {
+        float f = (viewDepth - start) / (frame.cascadeSplits[c] - start);
+        if (c + 1 < count) {
+            s = mix(s, furCascadeShadow(c + 1, p + ng * frame.cascadeNormalOffsets[c + 1], depth), f);
+            t = mix(t, cascadeTints[c + 1], f);
+        } else {
+            s = mix(s, 1.0, f);
+        }
+    }
+    if (frame.shadowAtlas.w > 0.5) tint = t;
+    return s;
 }
 
 void main() {
@@ -159,98 +252,47 @@ void main() {
     bool cards = vFur.z > 0.5;
     bool undercoat = vFur.w > 0.5;
     vec4 f0 = furData.fur[0], f1 = furData.fur[1], f2 = furData.fur[2];
-    float along = 0.0;        // 0 root ... 1 tip
-    float strandRandom = 0.5;
-    float alpha = 1.0;
-    float maskLength = 1.0;
-    if (furData.fur[6].z > 0.5) {
-        maskLength = texture(sampler2D(maskMap, materialSampler), vUV).r;
-        if (furData.fur[6].w > 0.5) maskLength = 1.0 - maskLength;
-    }
-    if (undercoat) {
-        if (maskLength < 0.02) discard;
-        strandRandom = hash3(floor(vObjectPos / max(f0.y, 1e-5))).z;
-    } else if (!cards) {
-        float spacing = max(f0.y, 1e-5);
-        vec3 n = normalize(vObjectNormal);
-        vec3 p = vObjectPos;
-        // Clumps: roots pulled toward a clump center (4 spacings apart) toward the tip.
-        if (f1.x > 0.0) {
-            float size = spacing * 4.0;
-            vec3 cc = floor(p / size);
-            vec3 center = (cc + 0.5 + (hash3(cc + vec3(31.0, 17.0, 5.0)) - 0.5) * 0.6) * size;
-            center -= n * dot(center - p, n);
-            float pull = min(f1.x * h * 0.85, 0.9);
-            p = center + (p - center) / (1.0 - pull);
-        }
-        vec3 cell = floor(p / spacing);
-        vec3 r = hash3(cell);
-        vec3 strand = (cell + 0.5 + (r - 0.5) * 0.5) * spacing;
-        vec3 e1 = normalize(abs(n.y) < 0.9 ? cross(n, vec3(0.0, 1.0, 0.0)) : cross(n, vec3(1.0, 0.0, 0.0)));
-        vec3 e2 = cross(n, e1);
-        if (f1.y > 0.0) {
-            float angle = h * 12.566 + r.x * 6.283;
-            strand += (e1 * cos(angle) + e2 * sin(angle)) * (f1.y * 0.3 * spacing);
-        }
-        if (f1.z > 0.0) {
-            float k = h * 4.0;
-            vec3 a = hash3(cell + vec3(floor(k) * 7.0, 3.0, 11.0)), b = hash3(cell + vec3(floor(k) * 7.0 + 7.0, 3.0, 11.0));
-            strand += (mix(a, b, smoothstep(0.0, 1.0, fract(k))) - 0.5) * (f1.z * 0.4 * spacing * h);
-        }
-        vec3 d = p - strand;
-        d -= n * dot(d, n);
-        float strandLength = (1.0 - f2.y * r.y) * min(maskLength, 1.0);
-        if (h > strandLength) discard;
-        float radius = mix(f0.z, f0.w, h / max(strandLength, 1e-3)) * 0.5 * spacing;
-        if (dot(d, d) > radius * radius) discard;
-        along = h / max(strandLength, 1e-3);
-        strandRandom = r.z;
-    } else {
-        float strands = max(furData.fur[4].w, 1.0);
-        float u = vUV.x * strands;
-        float index = floor(u);
-        vec3 r = hash3(vec3(index, floor(vFur.y * 65535.0), 7.0));
-        float x = fract(u) - 0.5 + (r.x - 0.5) * 0.3;
-        float v = h;
-        float strandLength = 1.0 - f2.y * r.y;
-        if (v > strandLength) discard;
-        along = v / max(strandLength, 1e-3);
-        float halfWidth = mix(f0.z, f0.w, along) * 0.5;
-        alpha = 1.0 - smoothstep(halfWidth * 0.55, halfWidth, abs(x));
-        alpha *= 1.0 - smoothstep(0.85, 1.0, along);
-        if (alpha < 0.03) discard;
-        strandRandom = r.z;
-    }
+    float along, strandRandom, alpha, exposed;
+    if (!furCoverage(1.0, along, strandRandom, alpha, exposed)) discard;
 
     vec3 rootColor = furData.fur[3].rgb, tipColor = furData.fur[4].rgb;
     float noise = 1.0 + (strandRandom - 0.5) * 2.0 * f2.z;
     vec3 albedo = mix(rootColor, tipColor, pow(along, 0.8)) * max(noise, 0.0) * vColor.rgb;
-    // Self-shadowing: darker toward the roots (and in the undercoat).
-    float occlusion = undercoat ? 0.4 : mix(0.4, 1.0, along);
+
+    // How many strands a ray from the tips down to the roots crosses (strands of radius r every
+    // `spacing`: length x 2r / spacing²), for shells; hair cards lie in looser layers.
+    float spacing = max(f0.y, 1e-5);
+    float crossings = cards ? 3.0 : f0.x * (f0.z + f0.w) * 0.5 / spacing;
+    crossings *= 1.0 - 0.6 * exposed;
+    crossings = 5.0 * (1.0 - exp(-crossings / 5.0));  // past a few strands, more hardly matters
+    float depthBelowTips = undercoat ? 1.0 : 1.0 - (cards ? along : h);
+    float occlusion = exp(-0.5 * crossings * depthBelowTips);
+    // Bright fibers pass light on to each other.
+    float luma = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
+    occlusion = mix(occlusion, 1.0, 0.3 * sqrt(clamp(luma, 0.0, 1.0)));
+    occlusion = max(occlusion, 0.12);
+    if (cards) occlusion *= mix(0.85, 1.0, strandRandom);
 
     vec3 n = normalize(vNormal);
     if (cards && !gl_FrontFacing) n = -n;
     vec3 t = normalize(vStrand);
     vec3 l = normalize(frame.lightDir.xyz);
     vec3 v = normalize(frame.cameraPos.xyz - vWorldPos);
-    vec3 hv = normalize(l + v);
     bool receivesShadows = vParams.x > 0.5;
+    // Light gets through about this many meters of fur: less for dense, thick fur.
+    float through = clamp(f0.x * 2.0 / max(crossings, 1.0), 0.004, 0.06);
     float shadow = 1.0;
     if (frame.lightColor.w > 0.5 && receivesShadows) {
         vec3 tint;
-        shadow = directionalShadow(vWorldPos, n, tint);
+        shadow = furSunShadow(vWorldPos, n, through, tint);
         albedo *= tint;
     }
+    float shift = 0.06 + (strandRandom - 0.5) * 0.08;
+    float roughness = cards ? 0.38 : 0.45;
+    float specular = f2.w;
     vec3 light = frame.lightColor.rgb * frame.lightDir.w;
-    float wrap = clamp(dot(n, l) * 0.6 + 0.4, 0.0, 1.0);
-    float diffuse = wrap * wrap * mix(0.75, 1.0, occlusion);
-    float shift = (strandRandom - 0.5) * 0.3;
-    vec3 t1 = normalize(t + n * (0.1 + shift));
-    vec3 t2 = normalize(t + n * (-0.12 + shift));
-    float facing = smoothstep(-0.2, 0.35, dot(n, l));
-    vec3 specular = (vec3(0.22) * strandHighlight(t1, hv, 90.0) + tipColor * 0.55 * strandHighlight(t2, hv, 18.0))
-        * (f2.w * facing * occlusion);
-    vec3 color = (albedo * diffuse + specular) * light * shadow;
+    vec3 color = hairLight(t, n, l, v, albedo, !cards, shadow, shift, roughness, specular)
+        * light * shadow * mix(0.5, 1.0, occlusion);
     vec3 irradiance = frame.environment.x > 0.5 ? environmentIrradiance(n) : hemisphere(n);
     color += albedo * irradiance * occlusion;
     if (frame.clusterGrid.w > 0.5) {
@@ -259,9 +301,9 @@ void main() {
             vec3 pl;
             uint li = lightIndex(i);
             vec3 radiance = punctualRadiance(li, pl);
-            if (receivesShadows) radiance *= localShadow(li, vWorldPos, n, pl);
-            float pw = clamp(dot(n, pl) * 0.6 + 0.4, 0.0, 1.0);
-            color += albedo * pw * pw * radiance;
+            float local = receivesShadows ? localShadow(li, vWorldPos, n, pl) : 1.0;
+            color += hairLight(t, n, pl, v, albedo, !cards, local, shift, roughness, specular) * radiance * local
+                * mix(0.5, 1.0, occlusion);
         }
     }
 

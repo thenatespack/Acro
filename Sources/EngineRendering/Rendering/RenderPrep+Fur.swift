@@ -1,7 +1,9 @@
 /// The CPU side of fur (Groom.swift): `RenderPrep.gather` adds, after an entity's own item, the
 /// items of its `GroomRenderer` (the undercoat and one per shell, or the cards at this detail
 /// level), all sharing the entity's transform, skin and (grown) bounds, so its shells batch into
-/// one instanced draw with every other copy of that mesh and groom. It also runs the fur's
+/// one instanced draw with every other copy of that mesh and groom. A few shells (or the cards)
+/// also cast shadows (`GroomRenderer.castsShadows`), as alpha-tested casters keeping their
+/// material, so the shadow atlas draws them with mesh_fur_depth. It also runs the fur's
 /// secondary motion: a damped spring per entity (rigid meshes) or per joint (skinned), pulled
 /// toward a lag behind its velocity, so fur trails and settles when its owner moves.
 import EngineAssets
@@ -76,28 +78,37 @@ extension RenderPrep {
         let level = fur.level(distance: distance)
         let bounds = Bounds(center: item.bounds.center, halfExtent: item.bounds.halfExtent + Vec3(repeating: pad))
         let receives: Float = groom.receivesShadows && item.instance.params.x > 0.5 ? 1 : 0
+        let casts = groom.castsShadows && item.castsShadows
         let color = Vec4(groom.tint, 1)
         let first = items.count
-        func add(mesh: Int, height: Float) {
+        func add(mesh: Int, height: Float, castsShadows: Bool = false) {
             items.append(RenderItem(
                 entity: entity, mesh: mesh, material: material,
                 instance: MeshInstance(model: model, previousModel: item.instance.previousModel, color: color,
                                        params: Vec4(receives, height, 0, 0)),
-                bounds: bounds, castsShadows: false, transparent: false, alphaTested: false, skin: item.skin))
+                bounds: bounds, castsShadows: castsShadows, transparent: false, alphaTested: castsShadows, skin: item.skin))
         }
         let shellKey = GroomRenderer.meshKey("shell", tag: fur.tag, base: meshKey)
         guard let shell = meshes.id(of: shellKey) else { return }  // SceneRenderer.syncGroomMeshes builds it
         if fur.style == .shell, level < fur.shellLevels.count {
             // Outer shells first, so the depth test rejects what the tips cover.
             let n = max(fur.shellLevels[level], 1)
-            for i in stride(from: n, through: 1, by: -1) { add(mesh: shell, height: Float(i) / Float(n)) }
+            let casters = casts ? Self.furShadowShells(n) : []
+            for i in stride(from: n, through: 1, by: -1) { add(mesh: shell, height: Float(i) / Float(n), castsShadows: casters.contains(i)) }
         }
         add(mesh: shell, height: 0)
         if fur.style != .shell, level < fur.cardLevels.count,
            let cards = meshes.id(of: GroomRenderer.meshKey("cards\(level)", tag: fur.tag, base: meshKey)) {
-            add(mesh: cards, height: 1)
+            add(mesh: cards, height: 1, castsShadows: casts)
         }
         furGroups.append(FurGroup(base: base, first: first, count: items.count - first, pad: pad))
+    }
+
+    /// The shells (1...n) of an n-shell groom that cast shadows: those nearest 0.35 and 0.75 of
+    /// the length (their strands widened in mesh_fur_depth.frag to stand for the shells between).
+    static func furShadowShells(_ n: Int) -> Set<Int> {
+        guard n > 0 else { return [] }
+        return [max(1, Int((Float(n) * 0.35).rounded())), max(1, Int((Float(n) * 0.75).rounded()))]
     }
 
     /// After the skins are posed: grows each fur group's bounds with its base's (posed) bounds and
