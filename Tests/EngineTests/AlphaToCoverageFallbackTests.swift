@@ -63,7 +63,10 @@ import Testing
         let original = try Self.source("mesh_fur.frag.gles")
         let patched = try #require(AlphaToCoverageFallback.gles(original))
         #expect(patched.contains("void acroCoverageMain()"))
-        #expect(patched.hasSuffix("void main()\n{\n    acroCoverageMain();\n    if (_2099.w < 0.5) discard;\n}\n"))
+        // The location-0 output's generated name (changes whenever mesh_fur.frag does).
+        let declaration = try #require(original.split(separator: "\n").first { $0.hasPrefix("layout(location = 0) out vec4 ") })
+        let output = declaration.dropFirst("layout(location = 0) out vec4 ".count).dropLast()
+        #expect(patched.hasSuffix("void main()\n{\n    acroCoverageMain();\n    if (\(output).w < 0.5) discard;\n}\n"))
         #expect(GLESInterface(source: patched) == GLESInterface(source: original))
         let glslang = ["/opt/homebrew/bin/glslangValidator", "/usr/local/bin/glslangValidator", "/usr/bin/glslangValidator"]
         if let result = Self.validate(patched, fileExtension: "frag", tools: glslang, arguments: ["-S", "frag"]) {

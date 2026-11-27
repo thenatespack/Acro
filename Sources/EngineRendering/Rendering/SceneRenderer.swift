@@ -169,6 +169,8 @@ public final class SceneRenderer {
     /// fur shaders (by skinned) and scratch for the fur block.
     var furMeshes: [String: FurMeshes] = [:]
     var furShaders: [Bool: ShaderSource] = [:]
+    /// Fur casters' depth pipelines (mesh_fur_depth(_skinned).vert, mesh_fur_depth.frag).
+    var furDepthPipelines: [FurDepthKey: RenderPipeline] = [:]
     var furBlockScratch: [Vec4] = []
     /// The shadow atlas: every cascade, spot-light map and point-light face of the frame in
     /// one depth texture (`ShadowAtlasLayout`). Recreated when the layout's size changes.
@@ -972,6 +974,8 @@ public final class SceneRenderer {
         var graph: String?
         /// Sways in the wind (mesh_shadow_wind.vert).
         var wind = false
+        /// Fur or hair (mesh_fur_depth: its strands; `Material.fur`).
+        var fur = false
     }
 
     /// The push constants of mesh_graph_depth.frag (its `MaterialGraphPush`: mesh_surface.glsl's
@@ -993,7 +997,7 @@ public final class SceneRenderer {
             let material = batch.material >= 0 ? materials[batch.material].material : nil
             let choice = DepthChoice(alphaTested: material?.masksDepth == true, skinned: batch.skin >= 0,
                                      graph: material?.masksDepth == true ? material?.graph?.key : nil,
-                                     wind: material?.sways == true && batch.skin < 0)
+                                     wind: material?.sways == true && batch.skin < 0, fur: material?.fur != nil)
             if choice != current {
                 guard let pipeline = depthPipeline(variant, choice) else { continue }
                 pass.setPipeline(pipeline)
@@ -1013,6 +1017,7 @@ public final class SceneRenderer {
     }
 
     private func depthPipeline(_ variant: DepthVariant, _ choice: DepthChoice) -> RenderPipeline? {
+        if choice.fur { return furDepthPipeline(variant, skinned: choice.skinned) }
         if choice.wind { return windDepthPipeline(variant, alphaTested: choice.alphaTested) }
         guard let graph = choice.graph else { return depthPipeline(variant, alphaTested: choice.alphaTested, skinned: choice.skinned) }
         return graphDepthPipeline(GraphDepthKey(variant: variant, skinned: choice.skinned, graph: graph))

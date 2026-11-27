@@ -721,16 +721,32 @@ byte-identical): `fur.glsl` in mesh_fur.vert / mesh_fur_skinned.vert (shells pus
 normal, leaning by the comb, drooping by gravity, bent by wind and the springs; cards bent toward
 their tips) and mesh_fur.frag (strands from a 3D cell grid on the bind-pose surface position, so
 they stay put on animated meshes and need no UVs; clumping, curl, frizz, random lengths, the mask
-texture's length per pixel; card strands with soft edges through alpha-to-coverage; wrapped diffuse
-and two shifted Kajiya-Kay highlights, sun shadows, ambient or image-based light, clustered point
-and spot lights, fog). Fur is left out of shadows and the depth prepass. Secondary motion: a damped
+texture's length per pixel; card strands with soft edges through alpha-to-coverage; all of it in
+`fur_strands.glsl`, shared with the shadow casters), shaded with a hair model (Marschner as
+approximated by Karis 2016: R, a white highlight shifted toward the tip; TRT, a broader one in the
+fiber's color shifted toward the root; TT, light through the fibers, a bright rim when the sun is
+behind; a multiple-scattering diffuse that saturates toward the fiber color deeper in shadow;
+shells take their diffuse from the surface normal, cards from the strand and the view), ambient
+occlusion from root to tip by how many strands light crosses (length x thickness / spacing,
+lighter where clumps open gaps and for bright fibers), ambient or image-based light, clustered
+point and spot lights (same model, their shadows) and fog. Shadows: two shells per groom (nearest
+0.35 and 0.75 of the length, strands widened 1.7x to stand for the shells between) or the cards
+(cut at half coverage) draw into the shadow atlas with mesh_fur_depth(_skinned).vert and
+mesh_fur_depth.frag (fur.glsl with `FUR_DEPTH`), as alpha-tested casters that keep their
+material, so every copy's fur casters are one draw per tile; `GroomRenderer.castsShadows` (default
+on, and only when its `MeshRenderer` casts) switches it. Fur reads the sun's shadow at the strand
+deep-opacity style (`furSunShadow`): the cascade is compared at 0.18, 0.69 and 1.79 x a depth set
+by the length and density (4 mm-6 cm) toward the light, so the fur's own strands dim the light
+gradually (about exp(-distance / depth)) while other casters shadow fully. Fur is left out of the
+depth prepass. Secondary motion: a damped
 spring per joint (skinned) or per entity (rigid) pulled toward a lag behind its velocity
 (RenderPrep+Fur.swift), plus `SceneEnvironment.wind` x the groom's `wind`.
 Hooks: Mesh Builder parts take `groom`; `.character` files take `grooms` {region: groom} (skinned
 with the body) and attachments take `groom` (its `mask.parts` picks the attachment's parts; a part's
 own `groom` wins); terrain scatter rules take `groom` (every prop wears it; shell fur batches across
 props). Shared changes: `PrefabNode.groom`, `Material.fur` / `MaterialAsset.fur`,
-`MaterialTraits.fur`, `PipelineKey.fur`, `PipelineDescriptor.alphaToCoverage` (Metal
+`MaterialTraits.fur`, `PipelineKey.fur`, `SceneRenderer.DepthChoice.fur` (fur casters' depth
+pipeline), `PipelineDescriptor.alphaToCoverage` (Metal
 `isAlphaToCoverageEnabled`, Vulkan `alphaToCoverageEnable`), `RenderPrep.items` / `missingKeys`
 settable inside EngineRendering, a "brush" Lucide icon.
 Tools: `groom.new`, `.get`, `.set`, `.edit` (changes, addComb, addCut, clearStrokes), `.open`,
@@ -742,7 +758,8 @@ preview mesh in a breeze, with preset, comb direction, settings, mask and detail
 Mask / Restore / Length / Comb brushes that write `cut` / `comb` strokes (one undo step per drag).
 Demo scene `fur`: a shaggy walking quadruped (skinned shells), a humanoid with hair cards on a scalp
 riding its head bone (combed down, cut from the face) and three mossy rocks in the wind
-(`FUR_VIEW=hair|creature|moss` close-ups, `FUR_OFF=1`, `FUR_WIND=0`).
+(`FUR_VIEW=hair|creature|moss` close-ups, `FUR_OFF=1`, `FUR_WIND=0`, `FUR_SUN=back` puts the sun low
+behind the close-ups for the backlit rim).
 Performance (M5, release, 1440p high, `ENGINE_SCREENSHOT_FRAME=200 ENGINE_VSYNC=0`, scene pass GPU
 time with and without fur): the whole `fur` scene 2.75 -> 4.56 ms
 (+1.8 ms, 5 more draws for 3 furry entities and 3 rocks: every shell of every rock is one draw);
@@ -750,8 +767,21 @@ creature close-up (filling most of the view, 32 shells) 2.77 -> 7.42 ms; hair cl
 moss close-up 3.69 -> 5.53 ms (other builds were running, so take these as upper bounds). Preset
 budgets (`groom.presets`) are set from these: shell fur costs about shells x covered pixels, so
 fewer shells (`lod`) or shorter fur are the levers.
+Fur shadows and the hair model (same setup, median of 3 runs alternating with a build of the
+previous commit, `depth` = the shadow atlas pass): whole scene shadow 0.15 -> 0.37 ms, scene pass
+6.3 -> 5.8 ms (within the run-to-run noise of about +-0.5 ms on this machine); hair close-up shadow
+0.16 -> 0.42 ms, scene 6.1 -> 6.1 ms; creature shadow 0.11 -> 0.29 ms, scene 5.9 -> 6.4 ms; moss
+shadow 0.18 -> 0.44 ms, scene 5.9 -> 6.6 ms. So about +0.2-0.3 ms of shadow pass per view and up to
+~0.5 ms of fragment work (three filtered shadow lookups per fur fragment instead of one);
+`GroomRenderer.castsShadows = false` takes the casting half back.
 Gaps: the springs are per bone (skinned) or per entity (rigid), not per guide, and rigid springs
-move only in X and Z; fur casts no shadows and doesn't shadow itself beyond darker roots; no
+move only in X and Z; fur self-shadowing is only as fine as the shadow cascade (a texel is
+millimeters to centimeters, so single strands don't shadow each other, the coat does) and the
+deep-opacity depths are set from the groom, not measured; casters are fixed shells (2) and the
+cards at the drawn detail level (no cheaper shadow level of detail); fur doesn't cast into the
+depth prepass (particles don't collide with it) and point / spot shadows of fur use the same
+casters but plain PCF on the receiving fur; the hair model has no environment specular (ambient
+light is diffuse only) and no per-light transmission depth for point lights; no
 strand rendering (`strands` draws cards); the flow texture and mask texture shape the geometry per
 vertex (128 px copies), the mask also cuts per pixel but the flow doesn't; mask textures go
 through the texture importer's color space (an sRGB mask reads a little darker); card hair can

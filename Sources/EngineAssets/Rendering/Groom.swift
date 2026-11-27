@@ -12,7 +12,9 @@
 /// - both: an opaque undercoat shell in the fur's root color just above the surface, which is
 ///   all that is drawn past the groom's last detail distance.
 /// Wind (`SceneEnvironment.wind` x `GroomBuild.wind`) and a spring per bone (skinned) or per
-/// entity bend the strands; fur doesn't cast shadows (the mesh under it does).
+/// entity bend the strands. Fur casts into the shadow atlas (a few of its shells, or its cards,
+/// cut to strands: `castsShadows`) and is shaded with a hair model and deep-opacity-style
+/// self-shadowing (mesh_fur.frag).
 #if os(WASI)
 import WASIFoundation
 #else
@@ -27,6 +29,7 @@ public struct GroomRenderer: Component, Codable, Equatable, Sendable {
         ["groom": FieldHints(tooltip: "A .groom file's fur material (asset:<id>#material/fur); groom.apply sets it"),
          "tint": FieldHints(color: true, tooltip: "Multiplies the groom's colors (linear)"),
          "receivesShadows": FieldHints(tooltip: "Darken the fur in shadows"),
+         "castsShadows": FieldHints(tooltip: "The fur casts shadows (on the ground and into itself); needs the mesh's castsShadows too"),
          "isVisible": FieldHints(tooltip: "Draw the fur")]
     }
 
@@ -35,22 +38,27 @@ public struct GroomRenderer: Component, Codable, Equatable, Sendable {
     /// Linear RGB multiplied with the groom's colors.
     public var tint: Vec3
     public var receivesShadows: Bool
+    /// Casts into the shadow atlas (when its `MeshRenderer` does too): a few shells or the cards.
+    public var castsShadows: Bool
     public var isVisible: Bool
 
-    public init(groom: MaterialHandle = MaterialHandle(""), tint: Vec3 = Vec3(1, 1, 1), receivesShadows: Bool = true, isVisible: Bool = true) {
+    public init(groom: MaterialHandle = MaterialHandle(""), tint: Vec3 = Vec3(1, 1, 1), receivesShadows: Bool = true,
+                castsShadows: Bool = true, isVisible: Bool = true) {
         self.groom = groom
         self.tint = tint
         self.receivesShadows = receivesShadows
+        self.castsShadows = castsShadows
         self.isVisible = isVisible
     }
 
-    private enum CodingKeys: String, CodingKey { case groom, tint, receivesShadows, isVisible }
+    private enum CodingKeys: String, CodingKey { case groom, tint, receivesShadows, castsShadows, isVisible }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(groom: try c.decodeIfPresent(MaterialHandle.self, forKey: .groom) ?? MaterialHandle(""),
                   tint: try c.decodeIfPresent(Vec3.self, forKey: .tint) ?? Vec3(1, 1, 1),
                   receivesShadows: try c.decodeIfPresent(Bool.self, forKey: .receivesShadows) ?? true,
+                  castsShadows: try c.decodeIfPresent(Bool.self, forKey: .castsShadows) ?? true,
                   isVisible: try c.decodeIfPresent(Bool.self, forKey: .isVisible) ?? true)
     }
 

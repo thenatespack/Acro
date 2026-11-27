@@ -258,12 +258,31 @@ private func sphere() -> MeshGeometry { MeshGeometry.sphere(radius: 0.5, segment
         #expect(prep.items.count == 3 * 10)
         let heights = prep.items.filter { $0.material == 1 }.map(\.instance.params.y)
         #expect(Set(heights).count == 9 && heights.contains(0) && heights.contains(1))
-        #expect(prep.items.filter { $0.material == 1 }.allSatisfy { !$0.castsShadows && $0.bounds.halfExtent.x > 0.5 })
+        #expect(prep.items.filter { $0.material == 1 }.allSatisfy { $0.bounds.halfExtent.x > 0.5 })
+        // Two shells per entity cast shadows (near 0.35 and 0.75 of the length), keeping their material.
+        let casters = prep.items.filter { $0.material == 1 && $0.castsShadows }
+        #expect(casters.count == 3 * 2 && casters.allSatisfy(\.alphaTested))
+        let casterHeights = Set(casters.map(\.instance.params.y))
+        #expect(casterHeights.count == 2 && casterHeights.allSatisfy { $0 > 0.2 && $0 < 0.9 }, "\(casterHeights)")
+        var shadowBatches = ShadowCasterBatches()
+        shadowBatches.build(items: prep.items, tiles: [ShadowTileCulling(frustum: Frustum(viewProjection: Mat4.orthographic(
+            left: -10, right: 10, bottom: -10, top: 10, near: -20, far: 20)))])
+        #expect(shadowBatches.batches.contains { $0.material == 1 && $0.count == 6 }, "every copy's fur casters in one draw")
         var list = RenderList()
         let view = Frustum(viewProjection: Mat4.perspective(fovY: 1.2, aspect: 1, near: 0.1, far: 100) * Mat4.lookAt(eye: Vec3(2, 0, 8), target: Vec3(2, 0, 0)))
         list.build(items: prep.items, view: view, cameraPosition: Vec3(2, 0, 8), shadows: nil)
         #expect(list.opaque.count == 2, "the bodies, then every shell of every copy in one instanced draw")
         #expect(list.opaque.contains { $0.material == 1 && $0.count == 27 })
+
+        // `castsShadows: false` on the groom (or the mesh) keeps the fur out of the shadows.
+        var grooms: [(Entity, GroomRenderer)] = []
+        world.query(GroomRenderer.self) { entity, groom in grooms.append((entity, groom)) }
+        for (entity, var groom) in grooms {
+            groom.castsShadows = false
+            world.add(groom, to: entity)
+        }
+        prep.gather(world: world)
+        #expect(!prep.items.contains { $0.material == 1 && $0.castsShadows })
 
         // Far away: only the undercoat.
         prep.lodViewpoint = Vec3(0, 0, 100)

@@ -1,7 +1,9 @@
 /// Fur (Groom.swift): `syncGroomMeshes` builds each `GroomRenderer`'s fur meshes from its entity's
 /// mesh the first time the pair is drawn (and again when the groom's geometry changes), and fur
 /// materials draw with mesh_fur(_skinned).vert and mesh_fur.frag, their uniform buffer 2 the fur
-/// block (fur.glsl). Fur items never cast shadows and are left out of the depth prepass.
+/// block (fur.glsl). Fur casters (a few shells, or the cards; `RenderPrep.appendFur`) draw into the
+/// shadow atlas with mesh_fur_depth(_skinned).vert and mesh_fur_depth.frag, cut to their strands;
+/// fur is left out of the depth prepass.
 import EngineAssets
 import EngineCore
 import EngineGraphics
@@ -115,6 +117,38 @@ extension SceneRenderer {
             return shader
         } catch {
             print("SceneRenderer: fur shader unavailable: \(error)")
+            return nil
+        }
+    }
+
+    /// What a fur depth pipeline is made for.
+    struct FurDepthKey: Hashable {
+        var variant: DepthVariant
+        var skinned: Bool
+    }
+
+    /// The depth pipeline of fur casters: their strands (mesh_fur_depth), cut out of the shells or
+    /// cards, with the shadow atlas's depth bias.
+    func furDepthPipeline(_ variant: DepthVariant, skinned: Bool) -> RenderPipeline? {
+        let key = FurDepthKey(variant: variant, skinned: skinned)
+        if let pipeline = furDepthPipelines[key] { return pipeline }
+        do {
+            let shader = try ShaderSource.load(vertex: skinned ? "mesh_fur_depth_skinned" : "mesh_fur_depth", fragment: "mesh_fur_depth",
+                                               bundle: .engineResources)
+            var descriptor = PipelineDescriptor(shader: shader, vertexLayout: skinned ? SkinnedMeshVertex.layout : MeshVertex.layout,
+                                                instanceLayout: MeshInstance.layout)
+            descriptor.target = .depthOnly
+            descriptor.depthOnlyFragment = true
+            descriptor.cullMode = .none
+            switch variant {
+            case .shadow: descriptor.depthBias = DepthBias(constant: 1.5, slopeScale: 2.5)
+            case .prepass(let reversedZ): descriptor.depthCompare = reversedZ ? .greater : .less
+            }
+            let pipeline = try device.makePipeline(descriptor)
+            furDepthPipelines[key] = pipeline
+            return pipeline
+        } catch {
+            print("SceneRenderer: fur depth pipeline creation failed: \(error)")
             return nil
         }
     }
