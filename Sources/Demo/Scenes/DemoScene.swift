@@ -126,4 +126,5 @@ extension DemoScene {
     CameraRigsScene.self,
     ProbesScene.self,
     MaterialGraphsScene.self,
+    SkinScene.self,
 ]

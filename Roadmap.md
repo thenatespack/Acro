@@ -325,6 +325,8 @@ Lane: templates. Touches `Projects/` only.
 
 ### 13A. Subsurface scattering
 
+**Pulled forward (2026-11-27): done** as skin and eye shading, see Tools.md "Skin and eyes".
+
 Lane: rendering. Touches `EngineRendering` lighting.
 
 - A screen-space diffusion profile for skin and wax, and thin-surface transmission for leaves and

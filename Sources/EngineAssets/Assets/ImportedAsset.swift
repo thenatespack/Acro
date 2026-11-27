@@ -164,6 +164,12 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
     public var wind: MaterialWind?
     /// Draws fur (see `MaterialFur`; the `.groom` importer sets it). Not written when nil.
     public var fur: MaterialFur?
+    /// Skin and eye shading (see MaterialSkin.swift, `MaterialAsset.skin` / `.eye`). Each is
+    /// optional and not written when nil.
+    public var subsurface: MaterialSubsurface?
+    public var specularLobes: MaterialSpecularLobes?
+    public var detailNormal: MaterialDetailNormal?
+    public var eye: MaterialEye?
 
     public init(shading: ShadingModel = .pbr, baseColor: Vec4 = Vec4(0.8, 0.8, 0.8, 1), texture: AssetReference? = nil,
                 filter: SamplerFilter = .linear, mipFilter: SamplerMipFilter = .linear, addressMode: SamplerAddressMode = .repeat,
@@ -232,6 +238,10 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         material.edgeWear = edgeWear
         material.wind = wind
         material.fur = fur
+        material.subsurface = subsurface
+        material.specularLobes = specularLobes
+        material.detailNormal = detailNormal
+        material.eye = eye
         material.translucency = min(max(translucency, 0), 1)
         if graph == nil, let terrain {
             // Drawn by the material graph path with the terrain shader; the textures stay in their slots.
@@ -265,6 +275,7 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         case specular, shininess, metallic, roughness, metallicRoughnessTexture, normalTexture, normalScale
         case occlusionTexture, occlusionStrength, emissiveColor, emissiveTexture, emissiveStrength, alphaMode, alphaCutoff
         case doubleSided, isTransparent, graph, terrain, edgeWear, translucency, wind, fur
+        case subsurface, specularLobes, detailNormal, eye
     }
 
     public init(from decoder: any Decoder) throws {
@@ -312,6 +323,10 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         edgeWear = try c.decodeIfPresent(EdgeWear.self, forKey: .edgeWear)
         wind = try c.decodeIfPresent(MaterialWind.self, forKey: .wind)
         fur = try c.decodeIfPresent(MaterialFur.self, forKey: .fur)
+        subsurface = try c.decodeIfPresent(MaterialSubsurface.self, forKey: .subsurface)
+        specularLobes = try c.decodeIfPresent(MaterialSpecularLobes.self, forKey: .specularLobes)
+        detailNormal = try c.decodeIfPresent(MaterialDetailNormal.self, forKey: .detailNormal)
+        eye = try c.decodeIfPresent(MaterialEye.self, forKey: .eye)
     }
 
     /// Writes every key except unset textures. `alphaMode` is written as "opaque", "mask" or "blend".
@@ -351,6 +366,10 @@ public struct MaterialAsset: Equatable, Sendable, Codable {
         try c.encodeIfPresent(edgeWear, forKey: .edgeWear)
         try c.encodeIfPresent(wind, forKey: .wind)
         try c.encodeIfPresent(fur, forKey: .fur)
+        try c.encodeIfPresent(subsurface, forKey: .subsurface)
+        try c.encodeIfPresent(specularLobes, forKey: .specularLobes)
+        try c.encodeIfPresent(detailNormal, forKey: .detailNormal)
+        try c.encodeIfPresent(eye, forKey: .eye)
     }
 }
 
