@@ -28,6 +28,14 @@ vec2 motionVector(vec4 current, vec4 previous) {
     return (previous.xy / previous.w - current.xy / current.w) * vec2(0.5, -0.5);
 }
 
+// One hardware comparison tap; lit outside the map. Metal and Vulkan sample a white border
+// there, but WebGPU and WebGL 2 have no border color (they clamp to the edge texel), so the
+// shader decides itself and every backend agrees.
+float shadowTap(vec2 uv, float ref) {
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return 1.0;
+    return texture(shadowMap, vec3(uv, ref));
+}
+
 // Tent-filtered PCF over (2r+1)² texels from 4 (r = 1) or 9 (r = 2) hardware comparison
 // taps, each placed and weighted by where the sample falls inside its texel (Castaño,
 // "Shadow Mapping Summary", 2013). Taps are 2x2 bilinear compares, so each covers four texels.
@@ -37,7 +45,7 @@ float shadowFactor() {
     float ref = min(ndc.z, 1.0) - scene.shadowParams.y;
     float texel = scene.shadowParams.x;
     int radius = int(scene.shadowParams.z);
-    if (radius <= 0) return texture(shadowMap, vec3(uv, ref));
+    if (radius <= 0) return shadowTap(uv, ref);
 
     vec2 p = uv / texel;  // in texels
     vec2 base = floor(p + 0.5);
@@ -60,7 +68,7 @@ float shadowFactor() {
     float sum = 0.0;
     for (int j = 0; j < n; j++) {
         for (int i = 0; i < n; i++) {
-            sum += w[i].x * w[j].y * texture(shadowMap, vec3(base + vec2(o[i].x, o[j].y) * texel, ref));
+            sum += w[i].x * w[j].y * shadowTap(base + vec2(o[i].x, o[j].y) * texel, ref);
         }
     }
     return sum * norm;

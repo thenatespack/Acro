@@ -139,19 +139,20 @@ final class WebGL2RenderPass: RenderPass {
     private func prepareDraw() -> Bool {
         guard let pipeline else { preconditionFailure("draw without a pipeline") }
         let state = device.bindState
+        // Alpha-to-coverage does nothing on single-sample framebuffers: alpha-test instead.
+        let program = samples == 1 ? pipeline.alphaTestProgram ?? pipeline.program : pipeline.program
         if !pipelineRecorded {
             let p = commands.append(17)
             p[0] = WebGL2Op.pipeline
-            p[1] = pipeline.program.id
+            p[1] = program.id
             pipeline.state.withUnsafeBufferPointer { words in
                 for i in 0..<15 { p[2 + i] = words[i] }
             }
-            // WebGL 2 allows alpha-to-coverage without MSAA; WebGPU doesn't, and the engine follows it.
             if samples == 1 { p[15] = 0 }
             pipelineRecorded = true
         }
         state.bindVertexArray(layout: pipeline.layout, buffers: vertexBuffers, index: indexBuffer?.buffer, commands: commands)
-        for block in pipeline.program.uniformBlocks {
+        for block in program.uniformBlocks {
             let bound: (buffer: WebGL2Buffer, offset: Int)? = switch block.point {
             case 0: frameUniform
             case 1: pushConstants
@@ -161,7 +162,7 @@ final class WebGL2RenderPass: RenderPass {
             let size = min(block.size, buffer.allocatedLength - offset)
             state.bindUniform(point: block.point, buffer: buffer.id, offset: Int32(offset), size: Int32(size), commands: commands)
         }
-        for sampler in pipeline.program.samplers {
+        for sampler in program.samplers {
             var texture: WebGL2Texture
             var object: WebGL2Sampler
             if sampler.texture == 0 {

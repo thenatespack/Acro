@@ -580,7 +580,8 @@ inside the table.
   `capturesArriveLate` is false.
 - Compressed textures: BC7 / BC6H with `EXT_texture_compression_bptc`, BC5 with `_rgtc`, ASTC
   with `WEBGL_compressed_texture_astc` (ASTC HDR with its `hdr` profile). HDR targets need
-  `EXT_color_buffer_float`. Upscalers: bilinear, FSR 1 and TAAU; FSR 3 is refused.
+  `EXT_color_buffer_float`. Upscalers: bilinear, FSR 1 and TAAU; asking for FSR 3 gives TAAU (FSR 1 without
+  `EXT_color_buffer_float`), see "Rendering parity (W2.6B)".
 - `ENGINE_GL_DEBUG=1` (`?env=ENGINE_GL_DEBUG=1`) checks `gl.getError()` after every command and
   names it in the console (`[acro] WebGL error 0x502 after END_PASS (...)`); it's slow.
 
@@ -589,7 +590,7 @@ draws. `RenderDevice.supportsCompute` and `supportsStorageBuffers` (default true
 the engine skips what needs them with one warning each: GPU particles (`ParticleEmitter`), light
 probes (`ReflectionProbe`, `IrradianceVolume`: their bake and the probe-lit shaders), material
 graphs (registered without the graph: they draw with the material's plain surface; terrain
-splatting is a graph too) and FSR 3. `makeComputePipeline` and storage textures throw;
+splatting is a graph too) and FSR 3 (falls back to TAAU). `makeComputePipeline` and storage textures throw;
 `beginComputePass` returns a pass that records nothing; indirect draws are skipped.
 
 ### Results (2026-11-26)
@@ -641,6 +642,58 @@ variant of the templates and splicing the graph's code into it as for MSL and WG
 would need a CPU or transform-feedback simulation. `noperspective` varyings interpolate with
 perspective. Only tested on ANGLE/Metal in Chromium; Firefox and Safari (where WebGL 2 is most
 likely to be used) are untested.
+
+## Rendering parity (W2.6B, 2026-11-26)
+
+Three places where the web renderers depended on something only Metal and Vulkan have:
+
+- **Alpha-to-coverage without MSAA.** WebGPU refuses `alphaToCoverageEnabled` with one sample,
+  and WebGL 2 ignores `SAMPLE_ALPHA_TO_COVERAGE` on single-sample framebuffers, so the fur
+  scene's hair cards (`PipelineDescriptor.alphaToCoverage`, the only user today) drew every
+  fragment above the shader's 0.03 cutoff at full coverage. Natively one sample with
+  alpha-to-coverage is an alpha test at one half. `AlphaToCoverageFallback` (EngineBackends,
+  builds everywhere) rewrites a fragment stage's generated code into one that discards below
+  0.5: in naga's WGSL each `return` of the `@fragment` entry point becomes
+  `{ let acroCoverage = ...; if (acroCoverage.<location 0>.w < 0.5) { discard; } return acroCoverage; }`;
+  in the GLSL ES, `main` is renamed and wrapped by one that checks the location-0 output. The
+  WebGPU device builds `.screen` alpha-to-coverage pipelines' one-sample variants with it (MSAA
+  variants keep real alpha-to-coverage); the WebGL 2 pipeline carries a second program that
+  single-sample passes use. Text rewriting, no shader compiler in the browser and no shader
+  variants to generate. `AlphaToCoverageFallbackTests` checks the fur shader's rewrite with naga
+  and glslangValidator (when installed) and that every generated color fragment stage can be
+  rewritten.
+- **Shadow edges.** WebGPU and WebGL 2 have no border color, so the comparison sampler clamps to
+  the edge texel where Metal and Vulkan read a white ("lit") border. `SceneRenderer`'s
+  `shadows.glsl` never relied on it (each cascade, spot and point face returns lit outside its
+  tile, and PCF taps are clamped inside the tile). The Demo's own `lit.frag` (the `shadows` scene)
+  did: its taps now return lit outside 0...1 themselves (`shadowTap`). Native output is unchanged
+  (Metal and Vulkan `shadows` / `shadows2` frames byte-identical before and after).
+- **Upscaler fallback.** An upscaler a device can't run is no longer an error at startup (or
+  ignored at run time): `Engine` picks the first of `Upscaler.fallbacks` that runs (FSR 3 and
+  MetalFX temporal → TAAU → FSR 1 → bilinear; MetalFX spatial and TAAU → FSR 1 → bilinear;
+  sharpness carries over) and logs one line, e.g. `Upscaler FSR 3 (sharpness 0.4) can't run (not
+  supported on webgpu); using TAAU (sharpness 0.4) instead`. The same applies to temporal
+  upscalers on a device created with MSAA. Natively too (MetalFX on Vulkan gives TAAU).
+  `UpscalerFallbackTests` covers the choice.
+
+Results (Playwright Chromium, Apple M5, release Demo, `ENGINE_SCREENSHOT` at 2560x1440 (1280x720
+at DPR 2) against Metal, mean difference / 255 and pixels over 16):
+
+| Scene | WebGPU | WebGL 2 |
+|---|---|---|
+| shadows (high, 4x MSAA) | 0.000, 0.00% | 0.000, 0.00% |
+| shadows2 (high, 4x MSAA) | 0.000, 0.00% | 0.000, 0.00% |
+| fur (low: 1 sample, hair cards alpha-tested) | 0.001, 0.00% | 0.001, 0.00% |
+
+0 WebGPU validation errors and 0 WebGL errors (`ENGINE_GL_DEBUG=1`) in each, and in `shadows2`
+with `ENGINE_UPSCALER=fsr3,ENGINE_RESOLUTION=performance`, which runs TAAU with the log line above
+on both renderers. Neither shadow scene's screenshot frame reaches a shadow map's edge, so they
+matched before as well; the change removes the dependency rather than fixing a visible frame.
+
+Gaps: falling back from a temporal upscaler to a spatial one (FSR 1) at startup still leaves
+MSAA at 1x (the sample count is chosen before the device exists, and the device answers what it
+supports). The rewrite relies on naga's and spirv-to-gles' output style; a shader it can't parse
+keeps its stage unchanged (no alpha test) rather than failing.
 
 ## What's left for a browser build
 

@@ -125,6 +125,32 @@ extension Upscaler {
     }
 }
 
+extension Upscaler {
+    /// What to try, in order, when this upscaler can't run: FSR 3 and MetalFX temporal fall back
+    /// to TAAU, then FSR 1, then bilinear; MetalFX spatial and TAAU to FSR 1, then bilinear.
+    /// Sharpness carries over (all three use RCAS stops).
+    package var fallbacks: [Upscaler] {
+        switch self {
+        case .fsr3(let sharpness): [.taau(sharpness: sharpness), .fsr1(sharpness: sharpness), .bilinear]
+        case .metalFXTemporal: [.taau(), .fsr1(), .bilinear]
+        case .taau(let sharpness): [.fsr1(sharpness: sharpness), .bilinear]
+        case .metalFXSpatial: [.fsr1(), .bilinear]
+        case .fsr1: [.bilinear]
+        case .bilinear: []
+        }
+    }
+
+    /// `requested` if `unsupported` returns nil for it (no reason it can't run), else the first of
+    /// its `fallbacks` that can, with the reason the requested one couldn't (nil when it ran).
+    /// Bilinear always runs, so this never fails.
+    package static func choose(_ requested: Upscaler, unsupported: (Upscaler) -> String?)
+        -> (upscaler: Upscaler, reason: String?) {
+        guard let reason = unsupported(requested) else { return (requested, nil) }
+        let chosen = requested.fallbacks.first { unsupported($0) == nil } ?? .bilinear
+        return (chosen, reason)
+    }
+}
+
 /// The first stage of an upscaler (see `Upscaler.firstStage`); backends key their targets on it.
 package enum UpscalerStage: Equatable {
     case none, easu, metalFXSpatial, metalFXTemporal, taau, fsr3

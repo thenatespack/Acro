@@ -254,6 +254,8 @@ final class WebGL2RenderTarget: GPURenderTarget {
 
 final class WebGL2Pipeline: RenderPipeline {
     let program: WebGL2Program
+    /// For alpha-to-coverage pipelines: `program` alpha-testing at one half, for single-sample passes.
+    let alphaTestProgram: WebGL2Program?
     let layout: WebGL2VertexLayout
     /// The PIPELINE command's words after the opcode and program (see Web/webgl2.js `applyPipeline`).
     let state: [Int32]
@@ -261,8 +263,10 @@ final class WebGL2Pipeline: RenderPipeline {
     let writesMotionVectors: Bool
     let depthOnly: Bool
 
-    init(program: WebGL2Program, layout: WebGL2VertexLayout, state: [Int32], colorWrites: Bool, writesMotionVectors: Bool, depthOnly: Bool) {
+    init(program: WebGL2Program, alphaTestProgram: WebGL2Program?, layout: WebGL2VertexLayout, state: [Int32], colorWrites: Bool,
+         writesMotionVectors: Bool, depthOnly: Bool) {
         self.program = program
+        self.alphaTestProgram = alphaTestProgram
         self.layout = layout
         self.state = state
         self.colorWrites = colorWrites

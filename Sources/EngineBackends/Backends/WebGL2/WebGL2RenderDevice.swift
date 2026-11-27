@@ -490,6 +490,10 @@ package final class WebGL2RenderDevice: RenderDevice {
             fragment = Self.emptyFragment
         }
         let program = try self.program(vertex: vertex, fragment: fragment)
+        // GL ignores alpha-to-coverage on single-sample framebuffers; those passes use a program
+        // that alpha-tests at one half instead, as one sample does natively (AlphaToCoverageFallback).
+        let alphaTestProgram = descriptor.target == .screen && descriptor.alphaToCoverage
+            ? try AlphaToCoverageFallback.gles(fragment).map { try self.program(vertex: vertex, fragment: $0) } : nil
         let layouts = [descriptor.vertexLayout, descriptor.instanceLayout, descriptor.secondVertexLayout]
         let layoutKey = layouts.map { layout in
             layout.map { "\($0.stride):" + $0.attributes.map { "\($0.location),\($0.format),\($0.offset)" }.joined(separator: ";") } ?? "-"
@@ -527,8 +531,8 @@ package final class WebGL2RenderDevice: RenderDevice {
             isScreen && descriptor.alphaToCoverage ? 1 : 0,
             motion ? 1 : 0,
         ]
-        return WebGL2Pipeline(program: program, layout: layout, state: state, colorWrites: descriptor.colorWrites,
-                              writesMotionVectors: motion, depthOnly: depthOnly)
+        return WebGL2Pipeline(program: program, alphaTestProgram: alphaTestProgram, layout: layout, state: state,
+                              colorWrites: descriptor.colorWrites, writesMotionVectors: motion, depthOnly: depthOnly)
     }
 
     /// The linked program for these stages (made once), with its blocks bound to binding points
