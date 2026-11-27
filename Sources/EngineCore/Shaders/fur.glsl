@@ -15,10 +15,12 @@
 // - fur[4]: rgb tip color (linear), w strands per card;
 // - fur[5]: xy the wind's direction in XZ, z its strength x the groom's wind, w gustiness;
 // - fur[6]: x time, y last frame's, z 1 with a mask texture (texture 2), w 1 when the mask is inverted;
-// - fur[7]: unused.
+// - fur[7]: x the pass's MSAA sample count, y a frame counter (mod 64; card dithering).
 //
-// Instances (MeshInstance): params.x receives shadows, params.y the shell's height (0...1 of the
-// length; 0 the undercoat just above the surface), params.zw a rigid entity's spring lag in
+// Instances (MeshInstance): color rgb the GroomRenderer's tint, color w the item's shell count
+// (shells; mesh_fur.frag thins out alike shells), params.x receives shadows, params.y the shell's height (0...1 of the
+// length; 0 the undercoat just above the surface; 2 for fins, GroomFins, whose vertices carry
+// their height in UV y and their strand coordinate in UV x), params.zw a rigid entity's spring lag in
 // world X and Z (meters). Shell vertices carry the comb vector in tangent.xyz (mesh space) and
 // 1 + the length factor in tangent.w; card vertices their strand direction and 2 + a random
 // number per card.
@@ -146,9 +148,10 @@ vec3 furPosition(mat4 model, float time, out vec3 strand) {
         precise vec3 moved = base + dynamic * (furData.fur[0].x * v * v);
         return moved;
     }
-    float h = inParams.y;
+    bool fin = inParams.y > 1.5;
+    float h = fin ? inUV.y : inParams.y;
     float len = furData.fur[0].x * max(inTangent.w - 1.0, 0.0);
-    if (h <= 0.0) {
+    if (h <= 0.0 && !fin) {
         // The undercoat: just above the surface.
         strand = n;
         precise vec3 lifted = base + n * (len * 0.04 + 0.0004);
@@ -178,7 +181,8 @@ void main() {
     gl_Position = clip;
     gl_Position.y = -gl_Position.y;  // clip space is y-up; see beginPass in VulkanRenderDevice
     bool cards = furData.fur[3].w > 0.5;
-    vFur = vec4(cards ? inUV.y : inParams.y, cards ? fract(inTangent.w) : 0.0, cards ? 1.0 : 0.0,
+    bool fin = !cards && inParams.y > 1.5;
+    vFur = vec4(cards || fin ? inUV.y : inParams.y, cards ? fract(inTangent.w) : 0.0, cards ? 1.0 : fin ? 2.0 : 0.0,
                 !cards && inParams.y <= 0.0 ? 1.0 : 0.0);
     vUV = inUV;
     vObjectPos = inPosition;
