@@ -38,7 +38,7 @@ private func sphere() -> MeshGeometry { MeshGeometry.sphere(radius: 0.5, segment
         let vector = try AssetJSON.decoder().decode(GroomBuild.self, from: Data(#"{"combDirection": [0, 0, -1]}"#.utf8))
         #expect(vector.combDirection == .vector(Vec3(0, 0, -1)))
         #expect(try AssetJSON.decoder().decode(GroomBuild.self, from: vector.fileData()) == vector, "round-trips")
-        #expect(GroomBuild.presetNames.count == 9)
+        #expect(GroomBuild.presetNames.count == 15)
         for name in GroomBuild.presetNames {
             let preset = try #require(GroomBuild.preset(name), "\(name)")
             #expect(GroomCheck.problems(preset).isEmpty, "\(name): \(GroomCheck.problems(preset))")
@@ -346,5 +346,196 @@ private func sphere() -> MeshGeometry { MeshGeometry.sphere(radius: 0.5, segment
         #expect(material.fur?.groom.mask.texture == "Textures/mask.png" && material.fur?.maskImage != nil)
         let texture = try #require(material.metallicRoughnessTexture)
         #expect(assets.texture(texture) != nil, "the mask texture ships")
+    }
+}
+
+// MARK: Hair styling (GroomStyling.swift, the guides in GroomGeometry.swift)
+
+/// A head: a sphere of radius 0.12 (face toward +Z).
+private func groomTestsHead() -> MeshGeometry { MeshGeometry.sphere(radius: 0.12, segments: 32, rings: 16).withTangents() }
+
+/// Bald on the face and under the chin.
+private let groomTestsFaceCuts = [GroomCut(center: Vec3(0, -0.01, 0.12), radius: 0.11, length: 0), GroomCut(center: Vec3(0, -0.13, 0), radius: 0.15, length: 0)]
+
+/// The top half of the head, open at the bottom (a scalp cap).
+private func groomTestsCap() -> MeshGeometry {
+    let head = groomTestsHead()
+    var indices: [UInt32] = []
+    for t in stride(from: 0, to: head.indices.count, by: 3) {
+        let tri = [head.indices[t], head.indices[t + 1], head.indices[t + 2]]
+        if tri.allSatisfy({ head.vertices[Int($0)].position.y > -0.01 }) { indices += tri }
+    }
+    return MeshGeometry(vertices: head.vertices, indices: indices)
+}
+
+private func groomTestsGuides(_ groom: GroomBuild, on base: MeshGeometry = groomTestsHead()) -> [GroomGeometry.Guide] {
+    GroomGeometry.guides(base, fur: MaterialFur(groom: groom)).guides
+}
+
+extension GroomTests {
+    @Test func hairstyleKeysDecodeWithDefaultsAndPresetsRoundTrip() throws {
+        let empty = try AssetJSON.decoder().decode(GroomBuild.self, from: Data("{}".utf8))
+        #expect(empty.part.style == .none && !empty.hemline.enabled && !empty.tie.enabled && empty.fringe.amount == 0)
+        #expect(empty.collide && empty.rootPlacement == .even && empty.scalpHug == 0 && empty.colliders.isEmpty && empty.clumpSize == 8)
+        let text = #"{"style": "cards", "part": {"style": "side"}, "hemline": {"back": -1.2}, "tie": {}, "fringe": {"amount": 0.5},"#
+            + #" "lengthProfile": {"back": 1.4}, "colliders": [{"center": [0, 0, 0], "radii": [0.1, 0.12, 0.1]}, {"end": [0, -0.2, 0], "radius": 0.05}],"#
+            + #" "scalpHug": 0.4, "rootPlacement": "random", "sweepBack": 0.5}"#
+        let decoded = try AssetJSON.decoder().decode(GroomBuild.self, from: Data(text.utf8))
+        #expect(decoded.part.style == .side && decoded.part.strength == 1)
+        #expect(decoded.hemline.enabled && decoded.hemline.back == -1.2 && decoded.hemline.front == GroomHemline().front, "present means on")
+        #expect(decoded.tie.enabled && decoded.tie.point == GroomTie().point)
+        #expect(decoded.fringe.amount == 0.5 && decoded.lengthProfile.back == 1.4 && decoded.lengthProfile.front == 1)
+        #expect(decoded.colliders.count == 2 && decoded.colliders[0].radii == Vec3(0.1, 0.12, 0.1) && decoded.colliders[1].end == Vec3(0, -0.2, 0))
+        #expect(decoded.scalpHug == 0.4 && decoded.rootPlacement == .random && decoded.sweepBack == 0.5)
+        #expect(try AssetJSON.decoder().decode(GroomBuild.self, from: decoded.fileData()) == decoded)
+        for name in GroomBuild.hairstyleNames { #expect(GroomBuild.presetNames.contains(name)) }
+        for name in GroomBuild.presetNames {
+            let preset = try #require(GroomBuild.preset(name), "\(name)")
+            #expect(try AssetJSON.decoder().decode(GroomBuild.self, from: preset.fileData()) == preset, "\(name)")
+            #expect(GroomCheck.problems(preset).isEmpty, "\(name): \(GroomCheck.problems(preset))")
+            #expect(GroomBuild.presetSummary(name).contains("budget"), "\(name)")
+        }
+        var shell = GroomBuild.preset("shortFur")!
+        shell.scalpHug = 0.5
+        #expect(GroomCheck.problems(shell).contains { $0.contains("shell fur ignores") })
+    }
+
+    @Test func styledHairStaysOutOfTheHeadAlongItsWholeLength() throws {
+        for name in GroomBuild.hairstyleNames {
+            var groom = try #require(GroomBuild.preset(name))
+            groom.cut = groomTestsFaceCuts
+            groom.density = 1
+            let guides = groomTestsGuides(groom)
+            #expect(guides.count > 50, "\(name)")
+            // The facets of the sphere are a little inside its radius.
+            let inside = guides.flatMap(\.points).filter { length($0) < 0.117 }
+            #expect(inside.isEmpty, "\(name): \(inside.count) points inside the head")
+        }
+        // An open cap: a collider stands in for the rest of the head.
+        var groom = GroomBuild.preset("longStraight")!
+        groom.density = 1
+        groom.colliders = [GroomCollider(center: .zero, radius: 0.118)]
+        let guides = groomTestsGuides(groom, on: groomTestsCap())
+        #expect(guides.contains { $0.points.contains { $0.y < -0.15 } }, "long hair falls below the cap")
+        #expect(guides.flatMap(\.points).allSatisfy { length($0) > 0.1175 })
+        // Without colliders, hair hanging below the open cap falls through where the head would be.
+        groom.colliders = []
+        #expect(groomTestsGuides(groom, on: groomTestsCap()).flatMap(\.points).contains { length($0) < 0.11 })
+    }
+
+    @Test func aPartCombsHairAwayFromTheLine() throws {
+        var groom = GroomBuild.preset("straightHair")!
+        groom.cut = groomTestsFaceCuts
+        groom.part = GroomPart(style: .center, width: 0.006)
+        groom.flyaways = 0
+        let guides = groomTestsGuides(groom).filter { $0.layer == .outer }
+        // Roots on top, in front of the crown, off the line: the strand leaves toward its own side.
+        let top = guides.filter { $0.root.y > 0.085 && $0.root.z > 0 && abs($0.root.x) > 0.012 }
+        #expect(top.count > 20)
+        let away = top.filter { ($0.points[2].x - $0.root.x) * $0.root.x > 0 }
+        #expect(Float(away.count) > Float(top.count) * 0.9, "\(away.count) of \(top.count)")
+        // The line itself is bare.
+        #expect(!guides.contains { $0.root.y > 0.09 && $0.root.z > 0 && abs($0.root.x) < 0.002 })
+        // Hair lies on the scalp near the roots instead of standing out along the normal.
+        let lift = top.map { length($0.points[1]) - 0.12 }
+        #expect(lift.reduce(0, +) / Float(lift.count) < 0.02)
+    }
+
+    @Test func evenRootsAreSpacedMoreEvenlyThanRandomOnes() {
+        func nearest(_ placement: GroomRootPlacement) -> (mean: Float, min: Float) {
+            var groom = GroomBuild(style: .cards, length: 0.05, density: 0.3)
+            groom.rootPlacement = placement
+            let roots = groomTestsGuides(groom).map(\.root)
+            var distances: [Float] = []
+            for (i, p) in roots.enumerated() {
+                var best = Float.greatestFiniteMagnitude
+                for (j, q) in roots.enumerated() where i != j { best = min(best, length(p - q)) }
+                distances.append(best)
+            }
+            return (distances.reduce(0, +) / Float(max(distances.count, 1)), distances.min() ?? 0)
+        }
+        let even = nearest(.even), random = nearest(.random)
+        #expect(even.mean > random.mean * 1.15, "\(even) vs \(random)")
+        #expect(even.min > random.min * 3, "\(even) vs \(random)")
+    }
+
+    @Test func hemlinesFringesAndTiesShapeTheTips() throws {
+        let head = groomTestsHead()
+        var bob = GroomBuild.preset("bob")!
+        bob.cut = groomTestsFaceCuts
+        let fields = GroomGeometry.fields(head, fur: MaterialFur(groom: bob))
+        let f = fields.shaper.frame
+        let limit = f.center.y + f.extent.y * (min(bob.hemline.back, bob.hemline.front) - bob.hemline.softness) - 0.002
+        #expect(groomTestsGuides(bob).flatMap(\.points).allSatisfy { $0.y >= limit })
+        var uncut = bob
+        uncut.hemline.enabled = false
+        uncut.length = 0.4
+        #expect(groomTestsGuides(uncut).flatMap(\.points).contains { $0.y < limit })
+
+        // Bangs: front roots comb forward and down over the forehead, and are short.
+        let bangs = GroomBuild.preset("bangs")!
+        let front = groomTestsGuides(bangs).filter { $0.layer == .outer && $0.root.z > 0.08 && $0.root.y > 0.03 && abs($0.root.x) < 0.03 }
+        #expect(front.count > 5)
+        #expect(front.allSatisfy { $0.length < bangs.length * 0.75 })
+        #expect(front.filter { $0.points.last!.z > $0.root.z - 0.02 && $0.points.last!.y < $0.root.y }.count * 10 > front.count * 8)
+
+        // A ponytail: strands gather at the tie and hang below it.
+        var ponytail = GroomBuild.preset("ponytail")!
+        ponytail.cut = groomTestsFaceCuts
+        let tied = groomTestsGuides(ponytail).filter { $0.layer != .flyaway }
+        let tieShaper = GroomGeometry.fields(head, fur: MaterialFur(groom: ponytail)).shaper
+        let tie = tieShaper.frame.world(ponytail.tie.point)
+        let gathered = tied.filter { $0.points.contains { length($0 - tie) < ponytail.tie.radius + 0.03 } }
+        #expect(Float(gathered.count) > Float(tied.count) * 0.8, "\(gathered.count) of \(tied.count)")
+        #expect(gathered.filter { $0.points.last!.y < tie.y - 0.15 }.count * 2 > gathered.count, "the tail hangs")
+    }
+
+    @Test func guidesKeepLayersClumpsAndTheirCardVertices() throws {
+        var groom = GroomBuild.preset("straightHair")!
+        groom.cut = groomTestsFaceCuts
+        groom.flyaways = 0.05
+        let fur = MaterialFur(groom: groom)
+        let guides = GroomGeometry.guides(groomTestsHead(), fur: fur).guides
+        #expect(guides.contains { $0.layer == .inner } && guides.contains { $0.layer == .flyaway } && guides.contains { $0.layer == .outer })
+        #expect(guides.allSatisfy { $0.normals.count == $0.points.count && $0.length > 0 })
+        #expect(guides.filter { $0.layer != .flyaway }.allSatisfy { $0.clump >= 0 && guides[$0.clump].clump == $0.clump }, "leaders lead themselves")
+        #expect(guides.filter { $0.layer == .inner }.allSatisfy { $0.width > 1 })
+        for fraction: Float in [1, 0.5] {
+            let mesh = try #require(GroomGeometry.cards(guides: guides, fur: fur, fraction: fraction, skinned: false))
+            let spans = GroomGeometry.cardSpans(guides: guides, fraction: fraction)
+            #expect(spans.count == GroomGeometry.cardCount(guides: guides.count, fraction: fraction))
+            #expect(spans.reduce(0) { $0 + $1.vertexCount } == mesh.vertices.count)
+            #expect(spans.last.map { $0.firstIndex + ($0.vertexCount / 2 - 1) * 6 } == mesh.indices.count)
+            for span in spans.prefix(50) {
+                let points = guides[span.guide].points
+                for k in points.indices {
+                    let mid = (mesh.vertices[span.firstVertex + 2 * k].position + mesh.vertices[span.firstVertex + 2 * k + 1].position) * 0.5
+                    #expect(length(mid - points[k]) < 1e-4)
+                }
+            }
+        }
+        // Cards taper toward the tips.
+        let mesh = try #require(GroomGeometry.cards(guides: guides, fur: fur, skinned: false))
+        let span = GroomGeometry.cardSpans(guides: guides)[0]
+        let rootWidth = length(mesh.vertices[span.firstVertex].position - mesh.vertices[span.firstVertex + 1].position)
+        let tipWidth = length(mesh.vertices[span.firstVertex + span.vertexCount - 2].position - mesh.vertices[span.firstVertex + span.vertexCount - 1].position)
+        #expect(tipWidth < rootWidth * 0.6)
+    }
+
+    @Test func hairlineThinsCardsTowardTheEdge() {
+        let cap = groomTestsCap()
+        let distances = GroomGeometry.edgeDistances(cap, lengths: [Float](repeating: 1, count: cap.vertices.count))
+        // The top is a quarter circle from the open edge; the rim is the edge.
+        let top = cap.vertices.indices.max { cap.vertices[$0].position.y < cap.vertices[$1].position.y }!
+        #expect(abs(distances[top] - 0.12 * .pi / 2) < 0.02, "\(distances[top])")
+        let usedRim = Set(cap.indices.map(Int.init)).filter { abs(cap.vertices[$0].position.y) < 0.005 }
+        #expect(!usedRim.isEmpty && usedRim.allSatisfy { distances[$0] == 0 })
+        func rimShare(_ width: Float) -> Float {
+            var groom = GroomBuild(style: .cards, length: 0.1, density: 2)
+            groom.hairlineWidth = width
+            let roots = groomTestsGuides(groom, on: cap).map(\.root)
+            return Float(roots.filter { $0.y < 0.03 }.count) / Float(roots.count)
+        }
+        #expect(rimShare(0.04) < rimShare(0) * 0.85)
     }
 }

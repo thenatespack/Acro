@@ -10,9 +10,13 @@
 ///
 /// Shell mesh (`shells`): the mesh's furry triangles (any vertex longer than 1%), each vertex's
 /// tangent holding the comb vector (xyz) and 1 + the length factor (w; 1 + so the tangent never
-/// reads as missing). The skin is kept. Card mesh (`cards`): guide curves grown from random points
-/// on the surface (area-weighted, `seed`), bent by the comb, gravity, curl and frizz and pulled
-/// into clumps, each drawn as a strip `cardWidth` wide: UV x across, y from root (0) to tip (1),
+/// reads as missing). The skin is kept. Card mesh (`cards`): guide curves (`guides`) grown from
+/// evenly spaced (or random) roots on the surface (`seed`): along the scalp for `scalpHug` of their
+/// length following the comb field (the part, sweep back, fringe and strokes of GroomStyling.swift,
+/// or toward a ponytail `tie`), then falling under gravity, kept out of the mesh and `colliders`,
+/// trimmed at the `hemline`, curled, waved and pulled into tapered clumps (grooms without the
+/// styling keys grow out along the normal, leaning to the comb, as before). Each guide is drawn
+/// as a strip `cardWidth` wide (times its layer's width, tapering): UV x across, y from root (0) to tip (1),
 /// tangent along the strand (w: 2 + a random number per card), the skin of the nearest corner of
 /// the root's triangle.
 #if os(WASI)
@@ -30,10 +34,24 @@ public enum GroomGeometry {
 
     /// Per-vertex length factors and comb vectors of `base` (see the notes at the top).
     public static func vertexFields(_ base: MeshGeometry, fur: MaterialFur) -> (lengths: [Float], combs: [Vec3]) {
+        let f = fields(base, fur: fur)
+        return (f.lengths, f.combs)
+    }
+
+    /// The vertex fields and what styling needs: the base combs (before the part, the fringe and
+    /// the strokes) and the shaper that evaluates those anywhere.
+    struct Fields {
+        var lengths: [Float]
+        var combs: [Vec3]
+        var baseCombs: [Vec3]
+        var shaper: GroomShaper
+    }
+
+    static func fields(_ base: MeshGeometry, fur: MaterialFur) -> Fields {
         let g = fur.groom
         let count = base.vertices.count
-        var lengths = [Float](repeating: 1, count: count)
-        var combs = [Vec3](repeating: .zero, count: count)
+        var maskLengths = [Float](repeating: 1, count: count)
+        var baseCombs = [Vec3](repeating: .zero, count: count)
         let channel = ["r": 0, "g": 1, "b": 2, "a": 3][g.mask.vertexPaint.lowercased()]
         let strength = clamp01(g.combStrength)
         for i in 0..<count {
@@ -48,11 +66,7 @@ public enum GroomGeometry {
                 let p = paint[i].color[channel]
                 l *= g.mask.invert ? 1 - p : p
             }
-            for stroke in g.cut where stroke.radius > 0 {
-                let w = clamp01(stroke.strength) * falloff(length(v.position - stroke.center) / stroke.radius)
-                if w > 0 { l += (min(max(stroke.length, 0), 2) - l) * w }
-            }
-            lengths[i] = min(max(l, 0), 2)
+            maskLengths[i] = min(max(l, 0), 2)
 
             var c: Vec3 = .zero
             switch g.combDirection {
@@ -72,13 +86,17 @@ public enum GroomGeometry {
                     c = tangential(t * fx + b * fy, n) * strength
                 }
             }
-            for stroke in g.comb where stroke.radius > 0 {
-                let w = clamp01(stroke.strength) * falloff(length(v.position - stroke.center) / stroke.radius)
-                if w > 0 { c += (tangential(stroke.direction, n) - c) * w }
-            }
-            combs[i] = c
+            baseCombs[i] = c
         }
-        return (lengths, combs)
+        let shaper = GroomShaper(groom: g, frame: GroomFrame(base, lengths: maskLengths))
+        var lengths = maskLengths
+        var combs = baseCombs
+        for i in 0..<count {
+            let v = base.vertices[i]
+            lengths[i] = shaper.lengthFactor(at: v.position, base: maskLengths[i])
+            combs[i] = shaper.comb(at: v.position, normal: safeNormalize(v.normal, fallback: Vec3(0, 1, 0)), base: baseCombs[i])
+        }
+        return Fields(lengths: lengths, combs: combs, baseCombs: baseCombs, shaper: shaper)
     }
 
     /// The shell mesh of `base` (nil when no fur grows on it).
@@ -111,21 +129,98 @@ public enum GroomGeometry {
         return MeshGeometry(vertices: vertices, indices: indices, skin: skin)
     }
 
-    /// One guide curve: points from the root (in the mesh's space), the root normal and its skin.
+    /// Which layer a guide belongs to.
+    public enum Layer: UInt8, Sendable, Equatable {
+        /// The styled hair.
+        case outer
+        /// Short cards lying flat on the scalp under the styled hair (`innerLayer`).
+        case inner
+        /// Strays (`flyaways`).
+        case flyaway
+    }
+
+    /// One guide curve: what a card follows, and what per-strand dynamics would move. `points[0]`
+    /// is the root on the surface (the mesh's space), the rest evenly spaced along the strand at
+    /// rest (`cardSegments` + 1 points). Card `i` of `cards(guides:…)` is guide `i`; `cardSpans`
+    /// says which vertices it owns.
     public struct Guide: Sendable {
         public var points: [Vec3]
+        /// The surface normal at the root.
         public var normal: Vec3
         public var skin: SkinInfluence?
+        /// Per point, the way the card faces (away from the scalp); empty: `normal` everywhere.
+        public var normals: [Vec3]
+        public var layer: Layer
+        /// The index of the guide this one clumps toward (its own index for a clump's leader; -1 none).
+        public var clump: Int
+        /// The card's width as a multiple of `cardWidth`.
+        public var width: Float
+        /// The rest length along the curve, in meters.
+        public var length: Float
+
+        public init(points: [Vec3], normal: Vec3, skin: SkinInfluence? = nil, normals: [Vec3] = [], layer: Layer = .outer,
+                    clump: Int = -1, width: Float = 1, length: Float = 0) {
+            self.points = points
+            self.normal = normal
+            self.skin = skin
+            self.normals = normals
+            self.layer = layer
+            self.clump = clump
+            self.width = width
+            self.length = length
+        }
+
+        public var root: Vec3 { points[0] }
+    }
+
+    /// Where a guide's card is in a card mesh: `vertexCount` vertices from `firstVertex`, two per
+    /// guide point (left then right edge), root first; its triangles are `(vertexCount / 2 - 1) * 2`
+    /// from index `firstIndex`.
+    public struct CardSpan: Equatable, Sendable {
+        public var guide: Int
+        public var firstVertex: Int
+        public var vertexCount: Int
+        public var firstIndex: Int
+    }
+
+    /// The guides a detail level draws (the first `fraction` of them).
+    public static func cardCount(guides: Int, fraction: Float) -> Int {
+        let f = fraction.isFinite ? min(max(fraction, 0.01), 1) : 1
+        return guides == 0 ? 0 : max(1, Int((Float(guides) * f).rounded()))
+    }
+
+    /// Which vertices of `cards(guides:fur:fraction:skinned:)` each guide drives.
+    public static func cardSpans(guides: [Guide], fraction: Float = 1) -> [CardSpan] {
+        var spans: [CardSpan] = []
+        var vertex = 0, index = 0
+        for (i, guide) in guides.prefix(cardCount(guides: guides.count, fraction: fraction)).enumerated() where guide.points.count >= 2 {
+            spans.append(CardSpan(guide: i, firstVertex: vertex, vertexCount: guide.points.count * 2, firstIndex: index))
+            vertex += guide.points.count * 2
+            index += (guide.points.count - 1) * 6
+        }
+        return spans
+    }
+
+    /// A root picked on the surface.
+    private struct Root {
+        var position: Vec3
+        var normal: Vec3
+        var corners: (Int, Int, Int)
+        var weights: Vec3
+        /// 0 at the hair's edge, 1 a hairline width inside it.
+        var edge: Float
     }
 
     /// Guide curves grown from `base` (see the notes at the top), in a random order (so any prefix
     /// is an even subset), and how many the density asked for before the cap.
     public static func guides(_ base: MeshGeometry, fur: MaterialFur) -> (guides: [Guide], requested: Int) {
         let g = fur.groom
-        let (lengths, combs) = vertexFields(base, fur: fur)
+        let fields = fields(base, fur: fur)
+        let lengths = fields.lengths, combs = fields.combs, shaper = fields.shaper
         // Furry triangles by area (m²), weighted by their average length factor.
         var areas: [Float] = []
         var tris: [(Int, Int, Int)] = []
+        var plainArea: Float = 0
         var t = 0
         while t + 2 < base.indices.count {
             let a = Int(base.indices[t]), b = Int(base.indices[t + 1]), c = Int(base.indices[t + 2])
@@ -137,6 +232,7 @@ public enum GroomGeometry {
             guard area.isFinite, area > 0 else { continue }
             tris.append((a, b, c))
             areas.append(area * l)
+            plainArea += area
         }
         guard !tris.isEmpty else { return ([], 0) }
         var cumulative = [Float](repeating: 0, count: areas.count)
@@ -149,12 +245,11 @@ public enum GroomGeometry {
         var rng = SplitMix(seed: UInt64(bitPattern: Int64(g.seed)) &+ 0x9E37_79B9_7F4A_7C15)
         let segments = min(max(g.cardSegments, 2), 16)
         let baseLength = g.clampedLength
-        let bendable = 1 - clamp01(g.stiffness) * 0.8
-        let gravity = clamp01(g.gravity) * bendable * 1.6
-        let curl = clamp01(g.curl), frizz = clamp01(g.frizz)
-        var guides: [Guide] = []
-        guides.reserveCapacity(count)
-        for _ in 0..<count {
+        let hairline = g.hairlineWidth.isFinite ? max(g.hairlineWidth, 0) : 0
+        let edges = hairline > 0 ? edgeDistances(base, lengths: lengths) : nil
+
+        // Roots: evenly spaced (dart throwing on a grid) or random.
+        func sampleRoot() -> Root? {
             let pick = rng.float() * total
             var lo = 0, hi = cumulative.count - 1
             while lo < hi {
@@ -166,65 +261,327 @@ public enum GroomGeometry {
             if u + v > 1 { u = 1 - u; v = 1 - v }
             let w = 1 - u - v
             let va = base.vertices[a], vb = base.vertices[b], vc = base.vertices[c]
-            let root = va.position * w + vb.position * u + vc.position * v
-            let n = safeNormalize(va.normal * w + vb.normal * u + vc.normal * v, fallback: Vec3(0, 1, 0))
-            let lengthFactor = lengths[a] * w + lengths[b] * u + lengths[c] * v
-            let comb = combs[a] * w + combs[b] * u + combs[c] * v
-            let strandLength = baseLength * lengthFactor * (1 - clamp01(g.lengthVariation) * rng.float())
-            let corner = w >= u && w >= v ? a : (u >= v ? b : c)
-            let skin = base.skin.flatMap { corner < $0.count ? $0[corner] : nil }
-            guard strandLength > baseLength * 0.03 else {
-                _ = (rng.float(), rng.float())  // keep the stream aligned
-                continue
+            let position = va.position * w + vb.position * u + vc.position * v
+            let normal = safeNormalize(va.normal * w + vb.normal * u + vc.normal * v, fallback: Vec3(0, 1, 0))
+            var edge: Float = 1
+            if let edges {
+                let d = edges[a] * w + edges[b] * u + edges[c] * v
+                edge = GroomShaper.smoothstep(0, hairline, d)
+                // Fewer cards toward the edge.
+                if rng.float() > 0.2 + 0.8 * edge { return nil }
             }
-            // A frame around the normal for curl.
-            let e1 = safeNormalize(abs(n.y) < 0.9 ? cross(n, Vec3(0, 1, 0)) : cross(n, Vec3(1, 0, 0)), fallback: Vec3(1, 0, 0))
-            let e2 = cross(n, e1)
-            let phase = rng.float() * 2 * .pi
-            let lean = min(length(comb), 1)
-            let combDir = lean > 1e-4 ? comb / lean : .zero
-            var points = [root]
-            var p = root
-            let step = strandLength / Float(segments)
-            for k in 1...segments {
-                let s = Float(k) / Float(segments)
-                let bend = min(s * 3, 1)
-                var dir = n * (1 - lean * bend) + combDir * (lean * bend * 1.2) + Vec3(0, -1, 0) * (gravity * s)
-                dir = safeNormalize(dir, fallback: n)
-                p += dir * step
-                // Stay above the surface's tangent plane (gravity would pull roots inside).
-                let lift = dot(p - root, n), minimum = step * 0.15 * Float(min(k, 2))
-                if lift < minimum { p += n * (minimum - lift) }
-                var q = p
-                if curl > 0 {
-                    let angle = s * 4 * .pi + phase
-                    q += (e1 * cosf(angle) + e2 * sinf(angle)) * (curl * strandLength * 0.08 * s)
-                }
-                if frizz > 0 {
-                    q += Vec3(rng.float() - 0.5, rng.float() - 0.5, rng.float() - 0.5) * (frizz * step * 0.6 * s)
-                }
-                points.append(q)
-            }
-            guides.append(Guide(points: points, normal: n, skin: skin))
+            if shaper.onPartLine(position) { return nil }
+            return Root(position: position, normal: normal, corners: (a, b, c), weights: Vec3(w, u, v), edge: edge)
         }
-        // Clumps: each guide leans toward the nearest of the first eighth (its leader).
-        let clumping = clamp01(g.clumping)
-        if clumping > 0, guides.count > 8 {
-            let leaders = max(1, guides.count / 8)
-            let original = guides
-            for i in leaders..<guides.count {
-                let root = original[i].points[0]
-                var best = 0
-                var bestDistance = Float.greatestFiniteMagnitude
-                for j in 0..<leaders {
-                    let d = original[j].points[0] - root
-                    let d2 = dot(d, d)
-                    if d2 < bestDistance { bestDistance = d2; best = j }
+        var roots: [Root] = []
+        roots.reserveCapacity(count)
+        if g.rootPlacement == .even {
+            var radius = 0.7 * (plainArea / Float(count)).squareRoot()
+            let cell = max(radius, 1e-5)
+            var grid: [SIMD3<Int32>: [Int32]] = [:]
+            func key(_ p: Vec3) -> SIMD3<Int32> {
+                SIMD3(Int32((p.x / cell).rounded(.down)), Int32((p.y / cell).rounded(.down)), Int32((p.z / cell).rounded(.down)))
+            }
+            var attempts = 0
+            let budget = count * 6
+            while roots.count < count, attempts < budget * 3 {
+                attempts += 1
+                if attempts % budget == 0 { radius *= 0.75 }
+                guard let root = sampleRoot() else { continue }
+                let k = key(root.position)
+                // Sparser toward the hairline (the spacing grows as the density falls).
+                let spacing = radius / (0.2 + 0.8 * root.edge).squareRoot()
+                let reach = Int32(min((spacing / cell).rounded(.up), 4))
+                var free = true
+                search: for x in -reach...reach {
+                    for y in -reach...reach {
+                        for z in -reach...reach {
+                            for j in grid[k &+ SIMD3(x, y, z)] ?? [] where dot2(roots[Int(j)].position - root.position) < spacing * spacing {
+                                free = false
+                                break search
+                            }
+                        }
+                    }
                 }
+                guard free else { continue }
+                grid[k, default: []].append(Int32(roots.count))
+                roots.append(root)
+            }
+        }
+        var tries = 0
+        while roots.count < count, tries < count * 4 {
+            tries += 1
+            if let root = sampleRoot() { roots.append(root) }
+        }
+
+        // Growing.
+        let bendable = 1 - clamp01(g.stiffness) * 0.8
+        let gravity = clamp01(g.gravity) * bendable * 1.6
+        let bendRadius: Float = 0.02 + clamp01(g.stiffness) * 0.08
+        let curl = clamp01(g.curl), frizz = clamp01(g.frizz), wave = clamp01(g.wave)
+        let turns = g.curlFrequency.isFinite ? min(max(g.curlFrequency, 0.1), 16) : 2
+        let lengthVariation = clamp01(g.lengthVariation)
+        let cardWidth = g.cardWidth.isFinite ? min(max(g.cardWidth, 0.0005), 0.5) : 0.012
+        let minLift: Float = 0.001 + cardWidth * 0.1
+        let volumeLift = clamp01(g.volume) * min(baseLength * 0.1, 0.025)
+        let hugFraction = clamp01(g.scalpHug)
+        let innerLayer = clamp01(g.innerLayer), flyaways = clamp01(g.flyaways)
+        let tie = g.tie.enabled ? shaper.frame.world(g.tie.point) : nil
+        let tieTail = g.tie.tail.isFinite ? min(max(g.tie.tail, 0), 3) : 0.25
+        let tieRadius = g.tie.radius.isFinite ? min(max(g.tie.radius, 0), 0.5) : 0.015
+        // About 30 growth steps per strand.
+        let substeps = max(2, (30 + segments - 1) / segments)
+        let styled = hugFraction > 0 || tie != nil || innerLayer > 0 || flyaways > 0
+        let surface: GroomSurface? = g.collide || styled
+            ? GroomSurface(base, cell: max(baseLength / Float(segments * substeps) * 2.5, (minLift + volumeLift) * 3)) : nil
+        let colliders = g.collide ? g.colliders : []
+        let down = Vec3(0, -1, 0)
+        let tailDirection = normalize(Vec3(0, -1, -0.3))
+
+        func interpolate<T: SIMD>(_ values: [T], _ corners: (Int, Int, Int), _ w: Vec3) -> T where T.Scalar == Float {
+            values[corners.0] * w.x + values[corners.1] * w.y + values[corners.2] * w.z
+        }
+        func interpolate(_ values: [Float], _ corners: (Int, Int, Int), _ w: Vec3) -> Float {
+            values[corners.0] * w.x + values[corners.1] * w.y + values[corners.2] * w.z
+        }
+        func corners(_ hit: GroomSurface.Hit) -> (Int, Int, Int) {
+            let tri = surface!.triangles[hit.triangle]
+            return (Int(tri.x), Int(tri.y), Int(tri.z))
+        }
+        /// Pushes `p` out of the colliders and the mesh; the outward direction when it moved.
+        func collide(_ p: inout Vec3, offset: Float, step: Float) -> Vec3? {
+            var pushed: Vec3?
+            for collider in colliders { if let n = collider.pushOut(&p, offset: offset) { pushed = n } }
+            if g.collide, let surface, let n = surface.pushOut(&p, offset: offset, within: max(step * 2, offset * 3)) { pushed = n }
+            return pushed
+        }
+
+        var guides: [Guide] = []
+        guides.reserveCapacity(roots.count)
+        // Each guide's points as grown (before curls and clumps), for the last collision pass.
+        var centerlines: [[Vec3]] = []
+        for root in roots {
+            let n = root.normal
+            let corner = root.weights.x >= root.weights.y && root.weights.x >= root.weights.z ? root.corners.0
+                : (root.weights.y >= root.weights.z ? root.corners.1 : root.corners.2)
+            let skin = base.skin.flatMap { corner < $0.count ? $0[corner] : nil }
+            var layer = Layer.outer
+            if rng.float() < innerLayer { layer = .inner } else if rng.float() < flyaways { layer = .flyaway }
+            let lengthFactor = interpolate(lengths, root.corners, root.weights)
+            var strandLength = baseLength * lengthFactor * (1 - lengthVariation * rng.float()) * (0.45 + 0.55 * root.edge)
+            switch layer {
+            case .inner: strandLength *= 0.5
+            case .flyaway: strandLength *= 0.7 + 0.5 * rng.float()
+            case .outer: break
+            }
+            let phase = rng.float() * 2 * .pi
+            let jitter = rng.float()
+            guard tie != nil || strandLength > baseLength * 0.03 else { continue }
+            let hug: Float = switch layer {
+            case .outer: hugFraction
+            case .inner: max(hugFraction, 0.9)
+            case .flyaway: hugFraction * 0.5
+            }
+            let lift: Float = switch layer {
+            case .outer: volumeLift
+            case .inner: 0
+            case .flyaway: volumeLift * 1.5 + baseLength * 0.01
+            }
+            let legacy = hug == 0 && tie == nil
+
+            // The centerline, grown in small steps.
+            let rootComb = interpolate(combs, root.corners, root.weights)
+            let lean = min(length(rootComb), 1)
+            let combDir = lean > 1e-4 ? rootComb / lean : .zero
+            var heading = tangential(rootComb, n)
+            if dot2(heading) < 1e-8 { heading = tangential(down, n) }
+            if dot2(heading) < 1e-8 { heading = tangential(Vec3(0, 0, -1), n) }
+            if layer == .flyaway { heading = safeNormalize(heading + n * 0.3, fallback: n) }
+            var totalLength = strandLength
+            if let tie { totalLength = length(tie - root.position) * 2.5 + tieTail }
+            let step = (tie.map { length($0 - root.position) * 1.4 + tieTail } ?? strandLength) / Float(segments * substeps)
+            let hugLength = tie != nil ? Float.greatestFiniteMagnitude : strandLength * hug
+            var dense = [root.position]
+            var normals = [n]
+            var p = root.position
+            var surfaceNormal = n
+            var lastHit: GroomSurface.Hit?
+            var travelled: Float = 0
+            var hugging = !legacy && surface != nil
+            var tail = false
+            var iterations = 0
+            func liftAt(_ s: Float) -> Float { minLift + lift * GroomShaper.smoothstep(0, max(min(hugLength, strandLength) * 0.5, 1e-4), s) }
+            while travelled < totalLength - 1e-6, iterations < 600 {
+                iterations += 1
+                let ds = min(step, totalLength - travelled)
+                var next: Vec3
+                var facing = normals[normals.count - 1]
+                if hugging, let surface {
+                    var want: Vec3
+                    if let tie, !tail {
+                        want = tangential(tie - p, surfaceNormal)
+                    } else if let hit = lastHit {
+                        let c = corners(hit)
+                        want = tangential(shaper.comb(at: hit.point, normal: hit.normal, base: interpolate(fields.baseCombs, c, hit.weights)), hit.normal)
+                    } else {
+                        want = tangential(rootComb, n)
+                    }
+                    let current = tangential(heading, surfaceNormal)
+                    heading = safeNormalize(current * 0.55 + want * 0.45, fallback: dot2(current) > 0 ? current : heading)
+                    let candidate = p + heading * ds
+                    if let hit = surface.closest(candidate, within: max(ds * 2, liftAt(travelled) * 2 + ds)),
+                       tie != nil || interpolate(lengths, corners(hit), hit.weights) > 0.05 {
+                        next = hit.point + hit.normal * liftAt(travelled + ds)
+                        surfaceNormal = hit.normal
+                        lastHit = hit
+                        facing = hit.normal
+                        heading = safeNormalize(next - p, fallback: heading)
+                    } else {
+                        hugging = false
+                        next = candidate
+                    }
+                    if let tie, !tail, length(next - tie) < tieRadius + 0.02 {
+                        // Gathered: hang from the tie.
+                        tail = true
+                        hugging = false
+                        let e1 = safeNormalize(cross(tailDirection, Vec3(1, 0, 0)), fallback: Vec3(0, 0, 1))
+                        let e2 = cross(tailDirection, e1)
+                        let angle = phase, r = tieRadius * jitter.squareRoot()
+                        next = tie + (e1 * cosf(angle) + e2 * sinf(angle)) * r
+                        heading = tailDirection
+                        totalLength = travelled + length(next - p) + tieTail * (1 - lengthVariation * 0.5 * jitter)
+                    }
+                    if tie == nil, travelled + ds >= hugLength { hugging = false }
+                } else if legacy {
+                    // Out along the normal, leaning toward the comb, drooping by gravity.
+                    let s = (travelled + ds) / strandLength
+                    let bend = min(s * 3, 1)
+                    var dir = n * (1 - lean * bend) + combDir * (lean * bend * 1.2) + down * (gravity * s)
+                    dir = safeNormalize(dir, fallback: n)
+                    next = p + dir * ds
+                    heading = dir
+                    // Stay above the root's tangent plane.
+                    let rise = dot(next - root.position, n), minimum = step * Float(substeps) * 0.15 * min(Float(dense.count) / Float(substeps), 2)
+                    if rise < minimum { next += n * (minimum - rise) }
+                } else {
+                    // Falling: gravity turns the strand down.
+                    let pull: Float = tail ? 3 : 1
+                    heading = safeNormalize(heading + down * (gravity * pull * ds / bendRadius), fallback: heading)
+                    next = p + heading * ds
+                }
+                if !hugging, let pushed = collide(&next, offset: minLift + lift * 0.5, step: ds) {
+                    facing = pushed
+                    if !legacy { heading = safeNormalize(next - p, fallback: heading) }
+                }
+                facing = safeNormalize(facing - heading * dot(facing, heading), fallback: facing)
+                travelled += ds
+                p = next
+                dense.append(p)
+                normals.append(facing)
+            }
+
+            // A blunt cut at the hemline.
+            if g.hemline.enabled {
+                let q = shaper.frame.local(root.position)
+                let along = min(max((q.z + 1) / 2, 0), 1)
+                let height = g.hemline.back + (g.hemline.front - g.hemline.back) * along + g.hemline.softness * (jitter * 2 - 1)
+                let limit = shaper.frame.center.y + shaper.frame.extent.y * height
+                if let k = dense.indices.dropFirst().first(where: { dense[$0].y < limit }) {
+                    let a = dense[k - 1], b = dense[k]
+                    let f = a.y > b.y ? min(max((a.y - limit) / (a.y - b.y), 0), 1) : 0
+                    dense.removeSubrange((k + 1)...)
+                    normals.removeSubrange((k + 1)...)
+                    dense[k] = a + (b - a) * f
+                }
+            }
+            // Evenly spaced points along it.
+            var arc = [Float](repeating: 0, count: dense.count)
+            for k in 1..<max(dense.count, 1) { arc[k] = arc[k - 1] + length(dense[k] - dense[k - 1]) }
+            let rest = arc.last ?? 0
+            guard dense.count >= 2, rest > baseLength * 0.03 || (tie != nil && rest > 0.005) else { continue }
+            var points = [root.position], pointNormals = [n]
+            var j = 1
+            for k in 1...segments {
+                let target = rest * Float(k) / Float(segments)
+                while j < dense.count - 1, arc[j] < target { j += 1 }
+                let span = arc[j] - arc[j - 1]
+                let f = span > 1e-9 ? min(max((target - arc[j - 1]) / span, 0), 1) : 1
+                points.append(dense[j - 1] + (dense[j] - dense[j - 1]) * f)
+                pointNormals.append(safeNormalize(normals[j - 1] * (1 - f) + normals[j] * f, fallback: normals[j]))
+            }
+            // Curls, waves and frizz across the strand.
+            let segmentLength = rest / Float(segments)
+            let strandFrizz = layer == .flyaway ? max(frizz, 0.25) : (layer == .inner ? frizz * 0.3 : frizz)
+            let centerline = points
+            if curl > 0 || wave > 0 || strandFrizz > 0 {
+                for k in 1...segments {
+                    let s = Float(k) / Float(segments)
+                    let tangent = safeNormalize(centerline[min(k + 1, segments)] - centerline[k - 1], fallback: n)
+                    let out = safeNormalize(pointNormals[k] - tangent * dot(pointNormals[k], tangent), fallback: n)
+                    let side = safeNormalize(cross(tangent, out), fallback: Vec3(1, 0, 0))
+                    let angle = s * turns * 2 * .pi + phase
+                    if curl > 0 {
+                        let amplitude = curl * rest * 0.08 * (legacy ? s : min(s * 2.5, 1)) * (layer == .outer ? 1 : 0.4)
+                        points[k] += (side * cosf(angle) + out * sinf(angle)) * amplitude
+                    }
+                    if wave > 0 {
+                        let amplitude = wave * min(rest * 0.06, 0.03) * min(s * 3, 1) * (layer == .outer ? 1 : 0.4)
+                        points[k] += (side * 0.85 + out * 0.35) * (sinf(angle) * amplitude)
+                    }
+                    if strandFrizz > 0 {
+                        points[k] += Vec3(rng.float() - 0.5, rng.float() - 0.5, rng.float() - 0.5) * (strandFrizz * segmentLength * 0.6 * s)
+                    }
+                }
+            }
+            let width: Float = switch layer {
+            case .outer: 1
+            case .inner: 1.4
+            case .flyaway: 0.7
+            }
+            guides.append(Guide(points: points, normal: n, skin: skin, normals: pointNormals, layer: layer, width: width, length: rest))
+            centerlines.append(centerline)
+        }
+
+        // Clumps: each guide leans toward the nearest leader (the first of every `clumpSize`
+        // outer guides) on its side of the part, more toward the tip.
+        let clumping = clamp01(g.clumping)
+        let outer = guides.indices.filter { guides[$0].layer == .outer }
+        if clumping > 0, outer.count > 8 {
+            let leaders = Array(outer.prefix(max(1, outer.count / min(max(g.clumpSize, 2), 64))))
+            let leaderSet = Set(leaders)
+            func side(_ p: Vec3) -> Bool { shaper.partClosest(p).map { p.x >= $0.x } ?? true }
+            let leaderSides = leaders.map { side(guides[$0].root) }
+            let original = guides
+            for i in guides.indices where guides[i].layer != .flyaway {
+                if leaderSet.contains(i) { guides[i].clump = i; continue }
+                let root = original[i].root
+                let mySide = side(root)
+                var best = -1
+                var bestDistance = Float.greatestFiniteMagnitude
+                for (j, leader) in leaders.enumerated() {
+                    let d2 = dot2(original[leader].root - root) * (leaderSides[j] == mySide ? 1 : 16)
+                    if d2 < bestDistance { bestDistance = d2; best = leader }
+                }
+                guard best >= 0 else { continue }
+                guides[i].clump = best
                 let leader = original[best].points
+                let pull = clumping * 0.85 * (guides[i].layer == .inner ? 0.3 : 1)
                 for k in 1..<guides[i].points.count where k < leader.count {
                     let s = Float(k) / Float(guides[i].points.count - 1)
-                    guides[i].points[k] += (leader[k] - guides[i].points[k]) * (clumping * 0.85 * s * s)
+                    guides[i].points[k] += (leader[k] - guides[i].points[k]) * (pull * s * s)
+                }
+            }
+        }
+        // Out of the head along the whole strand, after the clumps and curls moved the points.
+        if g.collide {
+            for i in guides.indices {
+                let step = guides[i].length / Float(segments * substeps)
+                for k in 1..<guides[i].points.count {
+                    // Look as far as curls and clumps moved the point off the grown (collided) curve.
+                    let moved = k < centerlines[i].count ? length(guides[i].points[k] - centerlines[i][k]) : step
+                    if let pushed = collide(&guides[i].points[k], offset: minLift, step: step + moved * 0.6), k < guides[i].normals.count {
+                        guides[i].normals[k] = pushed
+                    }
                 }
             }
         }
@@ -236,12 +593,13 @@ public enum GroomGeometry {
         cards(guides: guides(base, fur: fur).guides, fur: fur, fraction: fraction, skinned: base.skin != nil)
     }
 
-    /// Strips along `guides` (see `cards(_:fur:fraction:)`).
+    /// Strips along `guides` (see `cards(_:fur:fraction:)`; `cardSpans` maps guides to vertices).
     public static func cards(guides all: [Guide], fur: MaterialFur, fraction: Float = 1, skinned: Bool) -> MeshGeometry? {
         let f = fraction.isFinite ? min(max(fraction, 0.01), 1) : 1
-        let guides = all.prefix(max(1, Int((Float(all.count) * f).rounded())))
+        let guides = all.prefix(cardCount(guides: all.count, fraction: f))
         guard !all.isEmpty, !guides.isEmpty else { return nil }
         let width = (fur.groom.cardWidth.isFinite ? min(max(fur.groom.cardWidth, 0.0005), 0.5) : 0.012) * min(2, 1 / f.squareRoot())
+        let taper = clamp01(fur.groom.cardTaper)
         var vertices: [MeshVertex] = []
         var indices: [UInt32] = []
         var skin: [SkinInfluence]? = skinned ? [] : nil
@@ -252,15 +610,17 @@ public enum GroomGeometry {
             let count = points.count
             guard count >= 2 else { continue }
             let first = UInt32(vertices.count)
+            let cardWidth = width * (guide.width.isFinite ? max(guide.width, 0.05) : 1)
             for k in 0..<count {
                 let s = Float(k) / Float(count - 1)
-                let t = safeNormalize(points[min(k + 1, count - 1)] - points[max(k - 1, 0)], fallback: guide.normal)
-                var side = cross(t, guide.normal)
+                let facing = k < guide.normals.count ? guide.normals[k] : guide.normal
+                let t = safeNormalize(points[min(k + 1, count - 1)] - points[max(k - 1, 0)], fallback: facing)
+                var side = cross(t, facing)
                 if dot(side, side) < 1e-10 { side = cross(t, abs(t.y) < 0.9 ? Vec3(0, 1, 0) : Vec3(1, 0, 0)) }
                 side = safeNormalize(side, fallback: Vec3(1, 0, 0))
-                var normal = safeNormalize(cross(side, t), fallback: guide.normal)
-                if dot(normal, guide.normal) < 0 { normal = -normal }
-                let half = width * (1 - 0.45 * s) * 0.5
+                var normal = safeNormalize(cross(side, t), fallback: facing)
+                if dot(normal, facing) < 0 { normal = -normal }
+                let half = cardWidth * (1 - taper * s) * 0.5
                 for (x, sign) in [(Float(0), Float(-1)), (Float(1), Float(1))] {
                     vertices.append(MeshVertex(position: points[k] + side * (half * sign), normal: normal, uv: Vec2(x, s), tangent: Vec4(t, 2 + random)))
                     if let influence = guide.skin { skin?.append(influence) } else { skin?.append(SkinInfluence(joint: 0)) }

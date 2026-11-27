@@ -36,6 +36,58 @@ struct GroomMaskComponent: Component {
     func encode(to encoder: any Encoder) throws { try mask.encode(to: encoder) }
 }
 
+/// The proxy component for the hairstyle (card hair): part, length by region, hemline, fringe,
+/// ponytail tie and colliders.
+struct GroomStyleComponent: Component {
+    static var componentName: String { "Hairstyle" }
+    static var fieldHints: [String: FieldHints] {
+        ["part": FieldHints(tooltip: "Where the hair parts: strands comb away from the line (center, side or a curve of points)"),
+         "part.style": FieldHints(tooltip: "none, center, side (at offset) or curve (points in the mesh's space)"),
+         "part.offset": FieldHints(range: -1...1, step: 0.05, tooltip: "Across the head (-1 left, 1 right of the hair's bounds); side with 0 sits at 0.4"),
+         "part.crown": FieldHints(range: -1...1, step: 0.05, tooltip: "Where the part ends toward the back (-1 back, 1 front)"),
+         "part.strength": FieldHints(range: 0...1, step: 0.05, tooltip: "How much the part wins over the comb direction"),
+         "part.width": FieldHints(range: 0...0.05, step: 0.001, tooltip: "Meters of bare scalp along the line"),
+         "lengthProfile": FieldHints(tooltip: "Length multipliers at the front, back, top and sides of the head"),
+         "hemline": FieldHints(tooltip: "A blunt cut: tips end at a height (-1 the bottom of the hair area, 1 its top)"),
+         "hemline.softness": FieldHints(range: 0...1, step: 0.01, tooltip: "Raggedness of the cut edge"),
+         "fringe": FieldHints(tooltip: "Bangs: front hair combed down over the forehead"),
+         "fringe.amount": FieldHints(range: 0...1, step: 0.05, tooltip: "How much of the front hairline is fringe (0: none)"),
+         "fringe.length": FieldHints(range: 0...0.5, step: 0.005, tooltip: "The fringe's length in meters"),
+         "fringe.sweep": FieldHints(range: -1...1, step: 0.05, tooltip: "Sweeps the fringe toward -X or +X"),
+         "tie": FieldHints(tooltip: "A ponytail: strands run along the scalp to the tie point (hair bounds) and hang from it"),
+         "tie.tail": FieldHints(range: 0...2, step: 0.01, tooltip: "The tail's length in meters"),
+         "tie.radius": FieldHints(range: 0...0.2, step: 0.001, tooltip: "How thick the gathered tail is (meters)"),
+         "colliders": FieldHints(tooltip: "Spheres (radius), ellipsoids (radii) or capsules (end) in the mesh's space the cards stay out of")]
+    }
+
+    var part: GroomPart
+    var lengthProfile: GroomLengthProfile
+    var hemline: GroomHemline
+    var fringe: GroomFringe
+    var tie: GroomTie
+    var colliders: [GroomCollider]
+
+    init(_ build: GroomBuild) {
+        part = build.part
+        lengthProfile = build.lengthProfile
+        hemline = build.hemline
+        fringe = build.fringe
+        tie = build.tie
+        colliders = build.colliders
+    }
+
+    func applied(to build: GroomBuild) -> GroomBuild {
+        var edited = build
+        edited.part = part
+        edited.lengthProfile = lengthProfile
+        edited.hemline = hemline
+        edited.fringe = fringe
+        edited.tie = tie
+        edited.colliders = colliders
+        return edited
+    }
+}
+
 /// The proxy component for the detail levels.
 struct GroomLODComponent: Component {
     static var componentName: String { "Detail Levels" }
@@ -209,7 +261,18 @@ public final class GroomBuilderView {
             edited.mask = build.mask
             edited.lod = build.lod
             edited.combDirection = build.combDirection
+            edited = GroomStyleComponent(build).applied(to: edited)
             apply(edited, label: "Edit Groom")
+        }
+        if build.drawnStyle == .cards {
+            view.addChild(Label("Hairstyle", role: .secondary))
+            let style = gridWorld.spawn(GroomStyleComponent(build))
+            addGrid(style, GroomStyleComponent.componentName) { [unowned self] in
+                guard let s = gridWorld.get(GroomStyleComponent.self, for: style) else { return }
+                apply(s.applied(to: build), label: "Edit Hairstyle")
+            }
+            view.addChild(note("Parts, hemlines and ties are in the hair's bounds (-1...1 over the furry area; the face toward +Z). "
+                               + "Scalp Hug, Volume, Inner Layer, Flyaways, Clump Size, Wave and Sweep Back are in the Fur settings above."))
         }
         view.addChild(Label("Mask", role: .secondary))
         let mask = gridWorld.spawn(GroomMaskComponent(mask: build.mask))
@@ -239,6 +302,14 @@ public final class GroomBuilderView {
         grid.labelWidth = 112
         grid.entity = entity
         grid.command = GroomEditCommand.id.rawValue
+        grid.stringChoices = { _, path in
+            switch path {
+            case "style": GroomStyle.allCases.map(\.rawValue)
+            case "rootPlacement": GroomRootPlacement.allCases.map(\.rawValue)
+            case "part.style": GroomPartStyle.allCases.map(\.rawValue)
+            default: nil
+            }
+        }
         grid.onFieldEdit = { [unowned self] edit in
             do { try gridWorld.setField(edit.path, of: component, for: entity, to: edit.newValue) } catch {
                 session.log.error("Groom \(edit.path): \(error)")

@@ -31,7 +31,16 @@ public enum EditorGroomCommands {
         level], cards [fraction per level], distances [m where levels 1, 2… start; past the last only a fur-colored undercoat \
         is drawn]}, comb [{center [x,y,z], radius, direction [x,y,z], strength}] and cut [{center, radius, length (0 bald, 1 \
         full, up to 2), strength}] strokes in the mesh's space, applied in order, seed, previewMesh (sphere, cube, capsule, \
-        plane or a .meshbuild path). Presets: \(GroomBuild.presetNames.joined(separator: ", ")) (groom.presets). Put it on \
+        plane or a .meshbuild path). Hair styling (cards; positions in the hair's bounds, -1...1 over the furry area, face \
+        toward +Z): part {style none|center|side|curve, offset -1..1, crown, points [[x,y,z]] (curve, mesh space), \
+        strength, width m}, scalpHug 0-1 (how far along a strand it lies on the scalp before falling), volume 0-1, \
+        sweepBack 0-1 (front hair combed away from the face), collide (keep cards out of the mesh, default true), colliders \
+        [{center, radius, radii [x,y,z] (ellipsoid), end [x,y,z] (capsule)}] (mesh space; head, neck, shoulders for a \
+        scalp), rootPlacement even|random, hairlineWidth m (cards thin and shorten toward the hair's edge), innerLayer 0-1 \
+        (short flat cards hiding the scalp), flyaways 0-1, clumpSize (cards per clump), cardTaper 0-1, wave 0-1, \
+        curlFrequency (turns), lengthProfile {front, back, top, sides}, hemline {back, front, softness} (a blunt cut \
+        height), fringe {amount 0-1, length m, sweep -1..1} (bangs), tie {point [x,y,z], tail m, radius m} (ponytail). \
+        Presets: \(GroomBuild.presetNames.joined(separator: ", ")) (groom.presets). Put it on \
         a mesh with groom.apply (an entity, a .character body region or attachment, or a .meshbuild part).
         """
 }
@@ -342,7 +351,9 @@ public enum GroomExamplesCommand: EditorCommand {
         fox.cut = [GroomCut(center: Vec3(0, 0.15, 0.48), radius: 0.08, length: 0.3, strength: 1)]
         var hair = GroomBuild.preset("straightHair")!
         hair.length = 0.3
+        hair.part = GroomPart(style: .side, offset: 0.4)
         hair.cut = [GroomCut(center: Vec3(0, 0.06, 0.13), radius: 0.09, length: 0, strength: 1)]
+        hair.colliders = [GroomCollider(center: .zero, radii: Vec3(0.11, 0.13, 0.12))]
         hair.previewMesh = "sphere"
         var moss = GroomBuild.preset("moss")!
         moss.mask = GroomMask(vertexPaint: "", parts: [])
@@ -351,7 +362,7 @@ public enum GroomExamplesCommand: EditorCommand {
         moss.cut = [GroomCut(center: Vec3(0, -0.5, 0), radius: 0.35, length: 0, strength: 1)]
         return [
             Example(name: "Fox Fur", about: "Short orange fur combed back (-Z), a comb stroke smoothing the chest down and a cut stroke keeping the muzzle short. Apply to a quadruped's body region.", groom: fox),
-            Example(name: "Long Hair", about: "Straight hair cards combed down the surface, cut away from the face (a scalp centered on the head, face toward +Z).", groom: hair),
+            Example(name: "Long Hair", about: "Straight hair cards with a side part, lying on the scalp and falling past the ears, a flat inner layer and a few flyaways, cut away from the face and kept out of a head-sized ellipsoid (a scalp centered on the head, face toward +Z).", groom: hair),
             Example(name: "Moss Patch", about: "Moss shells leaning a little toward +X, bald underneath (a cut stroke at the bottom), swaying a little in the wind. Apply to a rock or log.", groom: moss),
         ]
     }
@@ -389,7 +400,7 @@ public enum GroomPresetsCommand: EditorCommand {
 
     public static let id: CommandID = "groom.presets"
     public static let title = "Groom Presets"
-    public static let doc = "Lists the built-in grooms (short fur, shaggy fur, velvet, moss, grass-like tufts, straight hair, ponytail, mane, feathers) with what each is for, its GPU budget and its full contents. groom.new {preset} makes a file from one."
+    public static let doc = "Lists the built-in grooms (short fur, shaggy fur, velvet, moss, grass-like tufts, the hairstyles straight hair, short crop, bob, bangs, long straight, wavy, curly and ponytail, mane, feathers) with what each is for, its GPU budget and its full contents. groom.new {preset} makes a file from one."
     public static let isReadOnly = true
     public static let isIdempotent = true
     public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
