@@ -191,6 +191,188 @@ public struct GroomLOD: Codable, Equatable, Sendable {
     }
 }
 
+/// A hair part: strands comb away from a line over the top of the head (`center`, `side` at
+/// `offset`, or a `curve` of points in the mesh's space), ending at the crown, behind which hair
+/// flows down from the crown point.
+public enum GroomPartStyle: String, Codable, CaseIterable, Sendable { case none, center, side, curve }
+
+/// Where hair parts (see `GroomPartStyle`). Positions other than `points` are in the hair's bounds
+/// (the furry area's bounding box: -1 left/bottom/back, 1 right/top/front; the face toward +Z).
+public struct GroomPart: Codable, Equatable, Sendable {
+    public var style: GroomPartStyle
+    /// Across the head (bounds x, -1...1); a `side` part with 0 sits at 0.4.
+    public var offset: Float
+    /// Where the part ends toward the back (bounds z; -1 the back, 1 the front).
+    public var crown: Float
+    /// The part line for `curve` (mesh space, front to back).
+    public var points: [Vec3]
+    /// 0...1: how much the part wins over `combDirection`.
+    public var strength: Float
+    /// Meters of bare scalp along the line.
+    public var width: Float
+
+    public init(style: GroomPartStyle = .none, offset: Float = 0, crown: Float = -0.3, points: [Vec3] = [], strength: Float = 1, width: Float = 0.004) {
+        self.style = style
+        self.offset = offset
+        self.crown = crown
+        self.points = points
+        self.strength = strength
+        self.width = width
+    }
+
+    private enum CodingKeys: String, CodingKey { case style, offset, crown, points, strength, width }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = GroomPart()
+        self.init(style: try c.decodeIfPresent(GroomPartStyle.self, forKey: .style) ?? d.style,
+                  offset: try c.decodeIfPresent(Float.self, forKey: .offset) ?? d.offset,
+                  crown: try c.decodeIfPresent(Float.self, forKey: .crown) ?? d.crown,
+                  points: try c.decodeIfPresent([Vec3].self, forKey: .points) ?? d.points,
+                  strength: try c.decodeIfPresent(Float.self, forKey: .strength) ?? d.strength,
+                  width: try c.decodeIfPresent(Float.self, forKey: .width) ?? d.width)
+    }
+
+    public var isActive: Bool { style != .none && (style != .curve || !points.isEmpty) && strength > 0 }
+}
+
+/// Bangs: hair at the front of the head combed forward and down over the forehead, `length` long.
+public struct GroomFringe: Codable, Equatable, Sendable {
+    /// 0...1: how much of the front hairline is fringe (0: none).
+    public var amount: Float
+    /// The fringe's strand length in meters.
+    public var length: Float
+    /// -1...1: sweeps the fringe toward -X or +X.
+    public var sweep: Float
+
+    public init(amount: Float = 0, length: Float = 0.08, sweep: Float = 0) {
+        self.amount = amount
+        self.length = length
+        self.sweep = sweep
+    }
+
+    private enum CodingKeys: String, CodingKey { case amount, length, sweep }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = GroomFringe()
+        self.init(amount: try c.decodeIfPresent(Float.self, forKey: .amount) ?? d.amount,
+                  length: try c.decodeIfPresent(Float.self, forKey: .length) ?? d.length,
+                  sweep: try c.decodeIfPresent(Float.self, forKey: .sweep) ?? d.sweep)
+    }
+}
+
+/// Length multipliers by where the root is on the head (blended by direction from the hair's center).
+public struct GroomLengthProfile: Codable, Equatable, Sendable {
+    public var front: Float
+    public var back: Float
+    public var top: Float
+    public var sides: Float
+
+    public init(front: Float = 1, back: Float = 1, top: Float = 1, sides: Float = 1) {
+        self.front = front
+        self.back = back
+        self.top = top
+        self.sides = sides
+    }
+
+    private enum CodingKeys: String, CodingKey { case front, back, top, sides }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(front: try c.decodeIfPresent(Float.self, forKey: .front) ?? 1, back: try c.decodeIfPresent(Float.self, forKey: .back) ?? 1,
+                  top: try c.decodeIfPresent(Float.self, forKey: .top) ?? 1, sides: try c.decodeIfPresent(Float.self, forKey: .sides) ?? 1)
+    }
+
+    public var isFlat: Bool { front == 1 && back == 1 && top == 1 && sides == 1 }
+}
+
+/// A blunt cut: strand tips end at a height (bounds y, -1 the bottom of the hair area, 1 its top),
+/// `back` at the back of the head blending to `front` at the face (a bob, an A-line).
+public struct GroomHemline: Codable, Equatable, Sendable {
+    public var enabled: Bool
+    public var back: Float
+    public var front: Float
+    /// Random raggedness of the edge, in bounds units.
+    public var softness: Float
+
+    public init(enabled: Bool = false, back: Float = -1.5, front: Float = -1.5, softness: Float = 0.08) {
+        self.enabled = enabled
+        self.back = back
+        self.front = front
+        self.softness = softness
+    }
+
+    private enum CodingKeys: String, CodingKey { case enabled, back, front, softness }
+
+    /// Present in a file means on, unless it says `"enabled": false`.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = GroomHemline()
+        self.init(enabled: try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true, back: try c.decodeIfPresent(Float.self, forKey: .back) ?? d.back,
+                  front: try c.decodeIfPresent(Float.self, forKey: .front) ?? d.front,
+                  softness: try c.decodeIfPresent(Float.self, forKey: .softness) ?? d.softness)
+    }
+}
+
+/// A ponytail (or bun) tie: strands run along the scalp to `point` (bounds space) and hang from
+/// it as a tail `tail` meters long.
+public struct GroomTie: Codable, Equatable, Sendable {
+    public var enabled: Bool
+    public var point: Vec3
+    /// The tail's length in meters below the tie.
+    public var tail: Float
+    /// Meters: the tie's radius (how thick the gathered tail is).
+    public var radius: Float
+
+    public init(enabled: Bool = false, point: Vec3 = Vec3(0, 0.1, -1.05), tail: Float = 0.25, radius: Float = 0.015) {
+        self.enabled = enabled
+        self.point = point
+        self.tail = tail
+        self.radius = radius
+    }
+
+    private enum CodingKeys: String, CodingKey { case enabled, point, tail, radius }
+
+    /// Present in a file means on, unless it says `"enabled": false`.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = GroomTie()
+        self.init(enabled: try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true, point: try c.decodeIfPresent(Vec3.self, forKey: .point) ?? d.point,
+                  tail: try c.decodeIfPresent(Float.self, forKey: .tail) ?? d.tail, radius: try c.decodeIfPresent(Float.self, forKey: .radius) ?? d.radius)
+    }
+}
+
+/// A shape card hair stays outside of (mesh space): a sphere (`radius`), an ellipsoid (`radii`)
+/// or a capsule from `center` to `end` (`radius`). For a scalp that doesn't cover the whole head,
+/// add the head, neck and shoulders.
+public struct GroomCollider: Codable, Equatable, Sendable {
+    public var center: Vec3
+    public var radius: Float
+    /// Ellipsoid radii (overrides `radius` when set).
+    public var radii: Vec3?
+    /// A capsule's other end.
+    public var end: Vec3?
+
+    public init(center: Vec3 = .zero, radius: Float = 0.1, radii: Vec3? = nil, end: Vec3? = nil) {
+        self.center = center
+        self.radius = radius
+        self.radii = radii
+        self.end = end
+    }
+
+    private enum CodingKeys: String, CodingKey { case center, radius, radii, end }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(center: try c.decodeIfPresent(Vec3.self, forKey: .center) ?? .zero, radius: try c.decodeIfPresent(Float.self, forKey: .radius) ?? 0.1,
+                  radii: try c.decodeIfPresent(Vec3.self, forKey: .radii), end: try c.decodeIfPresent(Vec3.self, forKey: .end))
+    }
+}
+
+/// Where card roots go: evenly spaced (blue noise) or purely random.
+public enum GroomRootPlacement: String, Codable, CaseIterable, Sendable { case even, random }
+
 /// A groom: the contents of a `.groom` file. See the notes at the top of this file.
 public struct GroomBuild: Codable, Equatable, Sendable {
     public var style: GroomStyle
@@ -243,13 +425,53 @@ public struct GroomBuild: Codable, Equatable, Sendable {
     /// "sphere", "cube", "capsule", "plane" or a `.meshbuild` path.
     public var previewMesh: String
 
+    // Hair styling (cards; GroomGeometry.swift). Positions in parts, hemlines and ties are in the
+    // hair's bounds (-1...1 over the furry area's box), so presets fit any head.
+    /// Where the hair parts.
+    public var part: GroomPart
+    /// 0...1: how far along each strand (a fraction of its length) it lies on the scalp before it falls.
+    public var scalpHug: Float
+    /// 0...1: how far hair stands off the scalp where it lies on it (0 flat, 1 big hair).
+    public var volume: Float
+    /// Keep cards out of the mesh they grow on and out of `colliders`.
+    public var collide: Bool
+    public var colliders: [GroomCollider]
+    public var rootPlacement: GroomRootPlacement
+    /// Meters inside the hair's edge (bald areas and open mesh edges) where cards thin out and shorten.
+    public var hairlineWidth: Float
+    /// 0...1: the fraction of cards in a short inner layer lying flat on the scalp (hides it).
+    public var innerLayer: Float
+    /// 0...1: the fraction of stray, frizzy, lifted cards.
+    public var flyaways: Float
+    /// Cards per clump (2...64).
+    public var clumpSize: Int
+    /// 0...1: how much narrower cards are at their tips.
+    public var cardTaper: Float
+    /// 0...1: flat waves along each strand (curl makes spirals).
+    public var wave: Float
+    /// Turns of curl (and waves) along a strand.
+    public var curlFrequency: Float
+    /// Length multipliers at the front, back, top and sides of the head.
+    public var lengthProfile: GroomLengthProfile
+    /// A blunt cut line (bob).
+    public var hemline: GroomHemline
+    public var fringe: GroomFringe
+    /// A ponytail tie.
+    public var tie: GroomTie
+    /// 0...1: hair at the front is combed back and to the sides, away from the face (not the fringe).
+    public var sweepBack: Float
+
     public init(style: GroomStyle = .shell, length: Float = 0.03, lengthVariation: Float = 0.3, density: Float = 40,
                 thickness: Vec2 = Vec2(0.8, 0.15), clumping: Float = 0.2, curl: Float = 0, frizz: Float = 0.1, gravity: Float = 0.3,
                 stiffness: Float = 0.5, rootColor: Vec3 = Vec3(0.28, 0.18, 0.11), tipColor: Vec3 = Vec3(0.72, 0.56, 0.38),
                 colorNoise: Float = 0.2, specular: Float = 0.5, mask: GroomMask = GroomMask(), combDirection: GroomDirection = .normal,
                 combStrength: Float = 0.5, flowTexture: String = "", wind: Float = 1, shells: Int = 24, cardWidth: Float = 0.012,
                 cardSegments: Int = 6, strandsPerCard: Int = 8, lod: GroomLOD = GroomLOD(), comb: [GroomComb] = [], cut: [GroomCut] = [],
-                seed: Int = 1, previewMesh: String = "sphere") {
+                seed: Int = 1, previewMesh: String = "sphere", part: GroomPart = GroomPart(), scalpHug: Float = 0, volume: Float = 0.3,
+                collide: Bool = true, colliders: [GroomCollider] = [], rootPlacement: GroomRootPlacement = .even, hairlineWidth: Float = 0,
+                innerLayer: Float = 0, flyaways: Float = 0, clumpSize: Int = 8, cardTaper: Float = 0.45, wave: Float = 0,
+                curlFrequency: Float = 2, lengthProfile: GroomLengthProfile = GroomLengthProfile(), hemline: GroomHemline = GroomHemline(),
+                fringe: GroomFringe = GroomFringe(), tie: GroomTie = GroomTie(), sweepBack: Float = 0) {
         self.style = style
         self.length = length
         self.lengthVariation = lengthVariation
@@ -278,12 +500,32 @@ public struct GroomBuild: Codable, Equatable, Sendable {
         self.cut = cut
         self.seed = seed
         self.previewMesh = previewMesh
+        self.part = part
+        self.scalpHug = scalpHug
+        self.volume = volume
+        self.collide = collide
+        self.colliders = colliders
+        self.rootPlacement = rootPlacement
+        self.hairlineWidth = hairlineWidth
+        self.innerLayer = innerLayer
+        self.flyaways = flyaways
+        self.clumpSize = clumpSize
+        self.cardTaper = cardTaper
+        self.wave = wave
+        self.curlFrequency = curlFrequency
+        self.lengthProfile = lengthProfile
+        self.hemline = hemline
+        self.fringe = fringe
+        self.tie = tie
+        self.sweepBack = sweepBack
     }
 
     private enum CodingKeys: String, CodingKey {
         case style, length, lengthVariation, density, thickness, clumping, curl, frizz, gravity, stiffness, rootColor, tipColor
         case colorNoise, specular, mask, combDirection, combStrength, flowTexture, wind, shells, cardWidth, cardSegments
         case strandsPerCard, lod, comb, cut, seed, previewMesh
+        case part, scalpHug, volume, collide, colliders, rootPlacement, hairlineWidth, innerLayer, flyaways, clumpSize, cardTaper
+        case wave, curlFrequency, lengthProfile, hemline, fringe, tie, sweepBack
     }
 
     /// Every key is optional; `thickness` may be one number (root and tip alike).
@@ -304,7 +546,14 @@ public struct GroomBuild: Codable, Equatable, Sendable {
                   wind: try value(.wind, d.wind), shells: try value(.shells, d.shells), cardWidth: try value(.cardWidth, d.cardWidth),
                   cardSegments: try value(.cardSegments, d.cardSegments), strandsPerCard: try value(.strandsPerCard, d.strandsPerCard),
                   lod: try value(.lod, d.lod), comb: try value(.comb, d.comb), cut: try value(.cut, d.cut), seed: try value(.seed, d.seed),
-                  previewMesh: try value(.previewMesh, d.previewMesh))
+                  previewMesh: try value(.previewMesh, d.previewMesh), part: try value(.part, d.part), scalpHug: try value(.scalpHug, d.scalpHug),
+                  volume: try value(.volume, d.volume), collide: try value(.collide, d.collide), colliders: try value(.colliders, d.colliders),
+                  rootPlacement: try value(.rootPlacement, d.rootPlacement), hairlineWidth: try value(.hairlineWidth, d.hairlineWidth),
+                  innerLayer: try value(.innerLayer, d.innerLayer), flyaways: try value(.flyaways, d.flyaways),
+                  clumpSize: try value(.clumpSize, d.clumpSize), cardTaper: try value(.cardTaper, d.cardTaper), wave: try value(.wave, d.wave),
+                  curlFrequency: try value(.curlFrequency, d.curlFrequency), lengthProfile: try value(.lengthProfile, d.lengthProfile),
+                  hemline: try value(.hemline, d.hemline), fringe: try value(.fringe, d.fringe), tie: try value(.tie, d.tie),
+                  sweepBack: try value(.sweepBack, d.sweepBack))
     }
 
     public func fileData() throws -> Data { try AssetJSON.encode(self) }
@@ -333,9 +582,23 @@ public struct GroomBuild: Codable, Equatable, Sendable {
          "strandsPerCard": FieldHints(range: 1...32, step: 1, tooltip: "Strands drawn across each card"),
          "seed": FieldHints(step: 1, tooltip: "Changes where strands and cards grow"),
          "previewMesh": FieldHints(tooltip: "What the preview grows the fur on: sphere, cube, capsule, plane or a .meshbuild path"),
+         "scalpHug": FieldHints(range: 0...1, step: 0.01, tooltip: "How far along each strand it lies on the scalp before it falls (cards)"),
+         "volume": FieldHints(range: 0...1, step: 0.01, tooltip: "How far hair stands off the scalp where it lies on it (cards)"),
+         "collide": FieldHints(tooltip: "Keep cards out of the mesh and the colliders"),
+         "rootPlacement": FieldHints(tooltip: "even: blue-noise spaced roots; random: pure random"),
+         "hairlineWidth": FieldHints(range: 0...0.2, step: 0.001, tooltip: "Meters inside the hair's edge where cards thin out and shorten"),
+         "innerLayer": FieldHints(range: 0...1, step: 0.01, tooltip: "Fraction of cards in a short flat layer that hides the scalp"),
+         "flyaways": FieldHints(range: 0...1, step: 0.005, tooltip: "Fraction of stray, frizzy cards"),
+         "clumpSize": FieldHints(range: 2...64, step: 1, tooltip: "Cards per clump"),
+         "cardTaper": FieldHints(range: 0...1, step: 0.01, tooltip: "How much narrower cards are at their tips"),
+         "wave": FieldHints(range: 0...1, step: 0.01, tooltip: "Flat waves along each strand"),
+         "sweepBack": FieldHints(range: 0...1, step: 0.01, tooltip: "Front hair combed back and to the sides, away from the face"),
+         "curlFrequency": FieldHints(range: 0.25...12, step: 0.25, tooltip: "Turns of curl or waves along a strand"),
          // Edited in the Groom Builder's own rows and brushes.
          "comb": FieldHints(hidden: true), "cut": FieldHints(hidden: true), "combDirection": FieldHints(hidden: true),
-         "mask": FieldHints(hidden: true), "lod": FieldHints(hidden: true)]
+         "mask": FieldHints(hidden: true), "lod": FieldHints(hidden: true), "part": FieldHints(hidden: true),
+         "colliders": FieldHints(hidden: true), "lengthProfile": FieldHints(hidden: true), "hemline": FieldHints(hidden: true),
+         "fringe": FieldHints(hidden: true), "tie": FieldHints(hidden: true)]
     }
 
     // MARK: Derived values
@@ -383,7 +646,11 @@ public struct GroomBuild: Codable, Equatable, Sendable {
 
 extension GroomBuild {
     /// The built-in grooms (`groom.presets`).
-    public static let presetNames = ["shortFur", "shaggyFur", "velvet", "moss", "tufts", "straightHair", "ponytail", "mane", "feathers"]
+    public static let presetNames = ["shortFur", "shaggyFur", "velvet", "moss", "tufts", "straightHair", "shortCrop", "bob", "bangs",
+                                     "longStraight", "wavy", "curly", "ponytail", "mane", "feathers"]
+
+    /// The hairstyle presets (card hair styled for a scalp or head: face toward +Z, up +Y).
+    public static let hairstyleNames = ["straightHair", "shortCrop", "bob", "bangs", "longStraight", "wavy", "curly", "ponytail"]
 
     /// What each preset is for, and its rough cost (`groom.presets`).
     public static func presetSummary(_ name: String) -> String {
@@ -393,12 +660,28 @@ extension GroomBuild {
         case "velvet": "Very short fine pile (velvet, felt, peach skin). 8 shells; budget ~0.5 ms."
         case "moss": "Moss and lichen on rocks and logs, swaying a little in the wind. 12 shells; budget ~1 ms for a few rocks in view."
         case "tufts": "Grass-like tufts for lawns and meadows (terrain scatter, ground patches). 16 shells; budget ~1.5 ms for a patch filling a third of the view."
-        case "straightHair": "Straight shoulder-length hair on a scalp. Cards; budget ~1 ms for ~1500 cards (measured 2 ms for a head filling a quarter of a 1440p view)."
-        case "ponytail": "Hair gathered back and down into a tail. Cards; budget ~1 ms."
+        case "straightHair": "Straight shoulder-length hair with a center part, lying on the scalp and falling to the shoulders. Cards; budget ~1 ms for ~1500 cards (measured 2 ms for a head filling a quarter of a 1440p view)."
+        case "shortCrop": "A short crop: short cards lying on the scalp, longer on top, tapered at the sides and back. Cards; budget ~0.7 ms."
+        case "bob": "A chin-length bob with a side part, cut blunt and a little longer at the front (A-line). Cards; budget ~1 ms."
+        case "bangs": "A bob with a fringe (bangs) combed down over the forehead. Cards; budget ~1 ms."
+        case "longStraight": "Long straight hair to mid-back with a center part and face-framing layers. Cards; budget ~1.5 ms."
+        case "wavy": "Shoulder-length wavy hair with a side part and volume. Cards; budget ~1.5 ms."
+        case "curly": "Curly hair: springy spiral clumps standing off the head. Cards; budget ~2 ms (more segments per card)."
+        case "ponytail": "Hair pulled back along the scalp into a tie at the back of the head, hanging as a tail. Cards; budget ~1 ms."
         case "mane": "A thick mane or beard of clumped cards. Cards; budget ~1.5 ms."
         case "feathers": "Broad flat feather cards lying along the body. Cards; budget ~1 ms."
         default: ""
         }
+    }
+
+    /// What the hairstyle presets share: cards hugging the scalp then falling, combed down,
+    /// a flat inner layer under the styled one, a few flyaways, tapered clumps.
+    static func hairBase() -> GroomBuild {
+        GroomBuild(style: .cards, length: 0.25, lengthVariation: 0.12, density: 2, thickness: Vec2(0.6, 0.35), clumping: 0.4,
+                   frizz: 0.02, gravity: 0.9, stiffness: 0.3, rootColor: Vec3(0.2, 0.13, 0.08), tipColor: Vec3(0.42, 0.29, 0.17),
+                   colorNoise: 0.15, specular: 0.7, combDirection: .followSurface, combStrength: 0.9, wind: 0.8, cardWidth: 0.014,
+                   cardSegments: 10, strandsPerCard: 10, scalpHug: 0.35, volume: 0.35, hairlineWidth: 0.012, innerLayer: 0.3,
+                   flyaways: 0.015, clumpSize: 6, cardTaper: 0.55, sweepBack: 0.7)
     }
 
     /// A ready-made groom by name (case-insensitive; "short fur", "short-fur" work too); nil for an unknown name.
@@ -430,15 +713,99 @@ extension GroomBuild {
                               colorNoise: 0.3, specular: 0.2, wind: 1.5, shells: 16,
                               lod: GroomLOD(shells: [16, 8, 4], distances: [8, 18, 40]))
         case "straighthair", "hair":
-            return GroomBuild(style: .cards, length: 0.25, lengthVariation: 0.15, density: 1.5, thickness: Vec2(0.6, 0.35),
-                              clumping: 0.2, frizz: 0.05, gravity: 0.85, stiffness: 0.3, rootColor: Vec3(0.2, 0.13, 0.08),
-                              tipColor: Vec3(0.42, 0.29, 0.17), colorNoise: 0.15, specular: 0.7, combDirection: .followSurface,
-                              combStrength: 0.9, wind: 0.8, cardWidth: 0.014, cardSegments: 8, strandsPerCard: 10)
+            var h = hairBase()
+            h.length = 0.25
+            h.part = GroomPart(style: .center)
+            h.lengthProfile = GroomLengthProfile(front: 0.8)
+            return h
+        case "shortcrop", "crop", "short", "shorthair":
+            var h = hairBase()
+            h.length = 0.055
+            h.lengthVariation = 0.2
+            h.density = 3
+            h.scalpHug = 0.85
+            h.volume = 0.5
+            h.gravity = 0.3
+            h.stiffness = 0.6
+            h.clumping = 0.35
+            h.clumpSize = 5
+            h.combDirection = .vector(Vec3(0, 0.15, -1))
+            h.part = GroomPart(style: .side, strength: 0.7)
+            h.lengthProfile = GroomLengthProfile(front: 1.1, back: 0.55, top: 1.3, sides: 0.45)
+            h.cardWidth = 0.009
+            h.cardSegments = 5
+            h.strandsPerCard = 8
+            h.flyaways = 0.01
+            return h
+        case "bob":
+            var h = hairBase()
+            h.length = 0.24
+            h.part = GroomPart(style: .side, offset: 0.35)
+            h.scalpHug = 0.4
+            h.volume = 0.4
+            h.hemline = GroomHemline(enabled: true, back: -1.55, front: -1.85, softness: 0.05)
+            h.clumping = 0.35
+            return h
+        case "bangs", "fringe", "bobwithbangs":
+            var h = preset("bob")!
+            h.part = GroomPart(style: .none)
+            h.fringe = GroomFringe(amount: 0.75, length: 0.1)
+            return h
+        case "longstraight", "long", "longhair":
+            var h = hairBase()
+            h.length = 0.45
+            h.lengthVariation = 0.08
+            h.part = GroomPart(style: .center)
+            h.scalpHug = 0.3
+            h.lengthProfile = GroomLengthProfile(front: 0.55, back: 1.05, top: 1, sides: 0.85)
+            h.cardSegments = 12
+            return h
+        case "wavy", "waves":
+            var h = hairBase()
+            h.length = 0.32
+            h.part = GroomPart(style: .side, offset: -0.35)
+            h.scalpHug = 0.3
+            h.volume = 0.6
+            h.wave = 0.7
+            h.curlFrequency = 2.5
+            h.clumping = 0.5
+            h.clumpSize = 6
+            h.cardSegments = 14
+            h.lengthProfile = GroomLengthProfile(front: 0.75)
+            return h
+        case "curly", "curls":
+            var h = hairBase()
+            h.length = 0.2
+            h.lengthVariation = 0.25
+            h.density = 2.5
+            h.scalpHug = 0.12
+            h.volume = 0.9
+            h.gravity = 0.45
+            h.stiffness = 0.45
+            h.curl = 0.7
+            h.curlFrequency = 3.5
+            h.clumping = 0.6
+            h.clumpSize = 5
+            h.flyaways = 0.04
+            h.cardWidth = 0.018
+            h.cardSegments = 16
+            h.cardTaper = 0.3
+            h.rootColor = Vec3(0.12, 0.08, 0.05)
+            h.tipColor = Vec3(0.3, 0.2, 0.12)
+            return h
         case "ponytail":
-            return GroomBuild(style: .cards, length: 0.3, lengthVariation: 0.1, density: 1.5, thickness: Vec2(0.6, 0.3),
-                              clumping: 0.6, frizz: 0.05, gravity: 0.7, stiffness: 0.35, rootColor: Vec3(0.35, 0.2, 0.08),
-                              tipColor: Vec3(0.62, 0.42, 0.2), colorNoise: 0.15, specular: 0.7, combDirection: .vector(Vec3(0, -0.4, -1)),
-                              combStrength: 0.85, wind: 0.8, cardWidth: 0.014, cardSegments: 10, strandsPerCard: 10)
+            var h = hairBase()
+            h.length = 0.3
+            h.rootColor = Vec3(0.35, 0.2, 0.08)
+            h.tipColor = Vec3(0.62, 0.42, 0.2)
+            h.tie = GroomTie(enabled: true, point: Vec3(0, 0.15, -1.08), tail: 0.3, radius: 0.016)
+            h.density = 2.6
+            h.volume = 0.1
+            h.clumping = 0.5
+            h.innerLayer = 0.35
+            h.flyaways = 0.01
+            h.cardSegments = 14
+            return h
         case "mane", "beard":
             return GroomBuild(style: .cards, length: 0.18, lengthVariation: 0.35, density: 1.2, thickness: Vec2(0.8, 0.2),
                               clumping: 0.7, curl: 0.1, frizz: 0.25, gravity: 0.5, stiffness: 0.35, rootColor: Vec3(0.25, 0.14, 0.06),
@@ -475,6 +842,19 @@ public enum GroomCheck {
             range(name, v, 0...1)
         }
         range("wind", build.wind, 0...10)
+        for (name, v) in [("scalpHug", build.scalpHug), ("volume", build.volume), ("innerLayer", build.innerLayer), ("flyaways", build.flyaways),
+                          ("cardTaper", build.cardTaper), ("wave", build.wave), ("sweepBack", build.sweepBack),
+                          ("part.strength", build.part.strength), ("fringe.amount", build.fringe.amount)] {
+            range(name, v, 0...1)
+        }
+        if build.clumpSize < 2 || build.clumpSize > 64 { out.append("clumpSize \(build.clumpSize) is outside 2...64; it is clamped") }
+        if build.part.style == .curve && build.part.points.isEmpty { out.append("part.style 'curve' needs points; there is no part") }
+        for (i, c) in build.colliders.enumerated() where !(c.radius > 0) && c.radii == nil {
+            out.append("colliders[\(i)] needs a positive radius (or radii)")
+        }
+        if build.drawnStyle == .shell && (build.scalpHug > 0 || build.tie.enabled || build.hemline.enabled || build.innerLayer > 0) {
+            out.append("scalpHug, tie, hemline and innerLayer shape card hair; shell fur ignores them")
+        }
         if build.shells < 2 || build.shells > 64 { out.append("shells \(build.shells) is outside 2...64; it is clamped") }
         if build.drawnStyle == .cards {
             range("cardWidth", build.cardWidth, 0.0005...0.5)

@@ -699,8 +699,21 @@ Fur and hair any mesh can wear. The file (GroomBuild.swift, every key optional):
 ("normal" | "followSurface" | [x,y,z]) with `combStrength`, `flowTexture`, `wind`, `shells`,
 `cardWidth`, `cardSegments`, `strandsPerCard`, `lod` {shells, cards, distances}, `comb` and `cut`
 strokes (spheres in the mesh's space, applied in order: what the brushes and agents write), `seed`,
-`previewMesh`. Presets: shortFur, shaggyFur, velvet, moss, tufts (grass-like), straightHair,
-ponytail, mane, feathers, each with a GPU budget in `groom.presets`.
+`previewMesh`. Hair styling (cards; GroomStyling.swift; positions in the hair's bounds, -1...1
+over the furry area's box, face toward +Z, so presets fit any head): `part` {style none | center |
+side | curve, offset, crown, points (curve, mesh space), strength, width (bare line)}, `scalpHug`
+(how far along a strand it lies on the scalp before it falls), `volume` (lift off the scalp),
+`sweepBack` (front hair combed away from the face), `collide` (default on) and `colliders`
+[{center, radius | radii (ellipsoid) | end (capsule)}] in mesh space, `rootPlacement` even
+(blue-noise dart throwing, default) | random, `hairlineWidth` (cards thin out and shorten within
+it of the hair's edge: open mesh edges and bald vertices, by Dijkstra over the welded mesh),
+`innerLayer` (short flat wide cards hiding the scalp), `flyaways` (a few strays instead of global
+frizz), `clumpSize`, `cardTaper`, `wave`, `curlFrequency`, `lengthProfile` {front, back, top,
+sides}, `hemline` {back, front, softness} (a blunt cut height; present means on), `fringe`
+{amount, length, sweep} (bangs), `tie` {point, tail, radius} (ponytail). Presets: shortFur,
+shaggyFur, velvet, moss, tufts (grass-like), the hairstyles straightHair, shortCrop, bob, bangs,
+longStraight, wavy, curly, ponytail (`GroomBuild.hairstyleNames`), mane, feathers, each with a
+GPU budget in `groom.presets`.
 How it draws: `GroomImporter` (EngineMeshBuild) makes `material/fur`, a `MaterialAsset` whose new
 `fur` (`MaterialFur`) carries the whole groom plus its mask and flow maps downsampled to 128 px
 (so fur geometry can be built anywhere), the full mask texture in the metallic-roughness slot, and
@@ -709,8 +722,19 @@ Add Component entry, registered by `SkeletalAnimation.registerComponents` and Ga
 material. `SceneRenderer.syncGroomMeshes` builds the fur meshes from the entity's mesh the first
 time a (mesh, groom) pair draws, keyed by a hash of the groom's geometry fields (GroomGeometry.swift):
 a shell mesh (furry triangles; comb vector and length factor in the tangent; skin kept) and, for
-cards, guide curves grown from area-weighted random roots (comb, gravity, curl, frizz, clumps
-toward leaders) turned into strips, one mesh per card detail level. `RenderPrep` adds the fur
+cards, guide curves turned into strips, one mesh per card detail level. Guides (`GroomGeometry.guides`):
+roots spaced evenly (or random), thinned at the hairline and off the part line; each grows in
+about 30 small steps: along the scalp (snapped to the closest point of the mesh plus a lift that
+grows with `volume`) following the comb field (part, sweep back, fringe, comb strokes, toward a
+tie) for `scalpHug` of its length or until it leaves the hair area, then falling under gravity,
+pushed out of the mesh and the colliders at every step; hemline-trimmed, resampled to
+`cardSegments` + 1 points, curled / waved / frizzed across the strand, pulled into tapered clumps
+toward a leader on its side of the part, and pushed out once more along its whole length. Old
+files (no `scalpHug`, no tie) grow the old way (out along the normal, leaning to the comb), plus
+the collision. For dynamics: `GroomGeometry.Guide` has `points` (root first, evenly spaced at
+rest), per-point `normals` (card facing), `layer` (outer, inner, flyaway), `clump` (its leader's
+index), `width`, `length`, `skin`; card `i` is guide `i` and `GroomGeometry.cardSpans(guides:fraction:)`
+gives each guide's vertices (two per point, left then right) and indices in a card mesh. `RenderPrep` adds the fur
 items after the entity's own: one instance per shell (its height in `params.y`), all copies of
 one mesh and groom batching into one instanced draw (checked by GroomTests: 3 furry entities x 9
 shells = one draw of 27 instances), plus an opaque undercoat shell in the root color that is all
@@ -738,11 +762,18 @@ Tools: `groom.new`, `.get`, `.set`, `.edit` (changes, addComb, addCut, clearStro
 `.presets`, `.apply` {groom, target: {entity} | {character, part} | {meshBuild, part}, remove}
 (one undo step; warns about meshes without UVs, fur too dense for the triangle count and masks
 that cover nothing, and reports the fur triangles). The Groom Builder tab grows the fur live on the
-preview mesh in a breeze, with preset, comb direction, settings, mask and detail-level forms and
+preview mesh in a breeze, with preset, comb direction, settings, Hairstyle (cards only: part with a style dropdown, length
+profile, hemline, fringe, tie, colliders), mask and detail-level forms and
 Mask / Restore / Length / Comb brushes that write `cut` / `comb` strokes (one undo step per drag).
-Demo scene `fur`: a shaggy walking quadruped (skinned shells), a humanoid with hair cards on a scalp
-riding its head bone (combed down, cut from the face) and three mossy rocks in the wind
-(`FUR_VIEW=hair|creature|moss` close-ups, `FUR_OFF=1`, `FUR_WIND=0`).
+Demo scene `fur`: a shaggy walking quadruped (skinned shells), a humanoid with styled hair cards on a
+scalp riding its head bone (side part, lying on the scalp then falling to the shoulders, inner
+layer, flyaways, soft hairline; head, neck and shoulder colliders) and three mossy rocks in the wind
+(`FUR_VIEW=hair|hairfront|hairside|hairback|creature|moss` close-ups, `FUR_HAIR=<hairstyle preset>`,
+`FUR_TIMING=1` prints the hair's build time, `FUR_OFF=1`, `FUR_WIND=0`). Hairstyles 2026-11-27:
+hair build (guides + 3 card levels, release, M5) 40-58 ms for the demo's ~2100 guides (was a few ms
+before styling), 28 ms shortCrop, 40-65 ms bob / bangs / longStraight / ponytail / wavy, ~95 ms
+curly (16 segments); hair close-up at the old framing scene pass 5.48 -> 5.66 ms (fur off 3.91 ms),
+at the new closer framing 6.35 ms (fur off 3.95 ms).
 Performance (M5, release, 1440p high, `ENGINE_SCREENSHOT_FRAME=200 ENGINE_VSYNC=0`, scene pass GPU
 time with and without fur): the whole `fur` scene 2.75 -> 4.56 ms
 (+1.8 ms, 5 more draws for 3 furry entities and 3 rocks: every shell of every rock is one draw);
@@ -754,8 +785,13 @@ Gaps: the springs are per bone (skinned) or per entity (rigid), not per guide, a
 move only in X and Z; fur casts no shadows and doesn't shadow itself beyond darker roots; no
 strand rendering (`strands` draws cards); the flow texture and mask texture shape the geometry per
 vertex (128 px copies), the mask also cuts per pixel but the flow doesn't; mask textures go
-through the texture importer's color space (an sRGB mask reads a little darker); card hair can
-pass through the body (guides only stay above their root's tangent plane, no collision); shells on
+through the texture importer's color space (an sRGB mask reads a little darker); card hair keeps
+out of the mesh it grows on and its `colliders` at rest only (the springs and wind can still bend
+it into the body, and a scalp cap needs colliders for the rest of the head, neck and shoulders:
+nothing fits them automatically); styled guides take 40-100 ms to build on the main thread (an
+edited groom rebuilds them); the hairstyle presets assume a head facing +Z with Y up (parts,
+hemlines, fringes and ties are in the hair's bounding box, so a tilted or very asymmetric hair area
+shifts them); collider radii / end can't be set back to nil from the Hairstyle form; shells on
 low-poly or hard-edged meshes split at the edges (warned under 48 triangles); `MeshArray` copies
 get no fur; a groom on a sculpt with several looks grows on each look's mesh separately; fur meshes
 are built on the main thread the first frame they're used (a 5k-triangle character with cards takes

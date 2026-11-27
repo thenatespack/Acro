@@ -9,13 +9,16 @@ import Foundation
 /// in a temporary project and grown at run time by `GroomRenderer`s:
 /// - a shaggy quadruped (Character Builder skeleton and walk clip): shell fur on its skinned body
 ///   and legs, following the animation, with a spring per bone trailing the motion;
-/// - a humanoid with hair cards on a scalp riding its head bone (straight hair, combed down the
-///   surface, cut away from the face by a `cut` stroke);
+/// - a humanoid with styled hair cards on a scalp riding its head bone: a side part, hair lying on
+///   the scalp and falling past the ears to the shoulders, a flat inner layer, tapered clumps, a few
+///   flyaways, a soft hairline, cut away from the face by a `cut` stroke and kept out of the head,
+///   neck and shoulders by colliders (`FUR_HAIR=<preset>` grows a hairstyle preset instead);
 /// - three mossy rocks in the wind: shell moss (bare underneath, a `cut` stroke), drawn as one
 ///   instanced batch for every shell of every rock.
 ///
-/// Environment: `FUR_VIEW=hair|creature|moss` shows a close-up, `FUR_OFF=1` hides every groom (the before picture for GPU timing), `FUR_WIND=0`
-/// stills the air. The title lists draws and items.
+/// Environment: `FUR_VIEW=hair|hairfront|hairside|hairback|creature|moss` shows a close-up, `FUR_HAIR=bob` (any hairstyle
+/// preset) changes the hair, `FUR_TIMING=1` prints how long the hair's guides and cards take to build, `FUR_OFF=1` hides every
+/// groom (the before picture for GPU timing), `FUR_WIND=0` stills the air. The title lists draws and items.
 final class FurScene: DemoScene {
     static let name = "fur"
     static let summary = "Groom Builder fur and hair: shell fur on an animated creature, hair cards, moss in wind"
@@ -42,11 +45,9 @@ final class FurScene: DemoScene {
         shaggy.rootColor = Vec3(0.2, 0.13, 0.09)
         shaggy.tipColor = Vec3(0.78, 0.6, 0.42)
         shaggy.length = 0.06
-        var hair = GroomBuild.preset("straightHair")!
-        hair.length = 0.22
-        hair.density = 2.5
-        // Bald where the face is.
-        hair.cut = [GroomCut(center: Vec3(0, 0.06, 0.13), radius: 0.09, length: 0)]
+        var hair = env["FUR_HAIR"].flatMap(GroomBuild.preset) ?? Self.demoHair()
+        // The scalp's edge is the hairline; out of the head, neck and shoulders (the scalp's space).
+        hair.colliders = Self.hairColliders
         var moss = GroomBuild.preset("moss")!
         moss.length = 0.03
         // Moss on the top and the sides, bare stone underneath.
@@ -64,6 +65,15 @@ final class FurScene: DemoScene {
         try sceneRenderer.registerMaterial(Material(baseColor: Vec4(0.25, 0.15, 0.08, 1), roughness: 0.8), key: "fur.scalp")
         _ = try sceneRenderer.registerMesh(Self.rockMesh(), key: "fur.rock")
         _ = try sceneRenderer.registerMesh(Self.scalpMesh(), key: "fur.scalp")
+        if env["FUR_TIMING"] == "1" {
+            let start = Date()
+            let fur = MaterialFur(groom: hair)
+            let guides = GroomGeometry.guides(Self.scalpMesh(), fur: fur).guides
+            let grown = Date()
+            let triangles = hair.cardLevels.reduce(0) { $0 + (GroomGeometry.cards(guides: guides, fur: fur, fraction: $1, skinned: false)?.indices.count ?? 0) / 3 }
+            print(String(format: "Fur: hair guides %.1f ms (%d guides), cards %.1f ms (%d triangles over %d levels)",
+                         grown.timeIntervalSince(start) * 1000, guides.count, Date().timeIntervalSince(grown) * 1000, triangles, hair.cardLevels.count))
+        }
 
         cameraEntity = world.spawn(Transform.looking(from: Vec3(0, 1.4, 4.2), at: Vec3(0, 0.6, 0)),
                                    Camera(fovY: .pi / 3.6, near: 0.05, far: 100, clearColor: Vec4(Self.sky, 1)))
@@ -135,7 +145,11 @@ final class FurScene: DemoScene {
     var initialView: OrbitView {
         // `FUR_VIEW=hair|creature|moss`: close-ups.
         switch ProcessInfo.processInfo.environment["FUR_VIEW"] {
-        case "hair": OrbitView(yaw: 0.5, pitch: 0.1, distance: 0.9, target: Vec3(0.35, 1.55, -0.2))
+        case "hair": OrbitView(yaw: 0.35, pitch: 0.45, distance: 0.75, target: Vec3(0.35, 1.5, -0.2))
+        // The humanoid faces yaw -0.25.
+        case "hairfront": OrbitView(yaw: -0.25, pitch: 0.08, distance: 0.7, target: Vec3(0.35, 1.5, -0.2))
+        case "hairside": OrbitView(yaw: -0.25 + .pi / 2, pitch: 0.08, distance: 0.7, target: Vec3(0.35, 1.5, -0.2))
+        case "hairback": OrbitView(yaw: -0.25 + .pi, pitch: 0.25, distance: 0.7, target: Vec3(0.35, 1.5, -0.2))
         case "creature": OrbitView(yaw: 0.3, pitch: 0.2, distance: 1.6, target: Vec3(-1.25, 0.6, 0))
         case "moss": OrbitView(yaw: 0.2, pitch: 0.35, distance: 1.3, target: Vec3(1.45, 0.2, 0.25))
         default: OrbitView(yaw: 0.0, pitch: 0.22, distance: 4.4, target: Vec3(0.25, 0.55, 0))
@@ -147,7 +161,18 @@ final class FurScene: DemoScene {
         return "\(s.items) items, \(s.drawCalls) draws"
     }
 
+    /// The demo app keeps the orbit at least 2 m out; the hair close-ups scale it in (their
+    /// `OrbitView` distance is the one they get).
+    private let zoom: Float = {
+        switch ProcessInfo.processInfo.environment["FUR_VIEW"] {
+        case "hair": 0.75 / 2
+        case "hairfront", "hairside", "hairback": 0.7 / 2
+        default: 1
+        }
+    }()
+
     func camera(orbitEye: Vec3, target: Vec3) -> ViewCamera {
+        let orbitEye = target + (orbitEye - target) * zoom
         orbit = (orbitEye, target)
         return ViewCamera(eye: orbitEye, target: target, near: 0.05)
     }
@@ -203,18 +228,40 @@ final class FurScene: DemoScene {
         return geometry
     }
 
-    /// The humanoid's scalp: an ellipsoid cap around its head (radii 0.115, 0.135, 0.125, in the
-    /// head bone's space around the head's center), reaching down at the back and the sides and
-    /// stopping above the face.
+    /// The demo's hairdo: shoulder-length hair with a side part, lying on the scalp before it
+    /// falls, longer at the back than around the face, a flat inner layer, tapered clumps and a
+    /// few flyaways.
+    static func demoHair() -> GroomBuild {
+        var hair = GroomBuild.preset("straightHair")!
+        hair.length = 0.26
+        hair.density = 2.5
+        hair.part = GroomPart(style: .side, offset: 0.4)
+        hair.lengthProfile = GroomLengthProfile(front: 0.7, back: 1.1, top: 1, sides: 0.9)
+        hair.wave = 0.15
+        return hair
+    }
+
+    /// The humanoid's head, neck and shoulders in the scalp's space (the scalp sits 0.12 above the head bone).
+    static let hairColliders = [
+        GroomCollider(center: Vec3(0, -0.005, 0.005), radii: Vec3(0.108, 0.13, 0.12)),
+        GroomCollider(center: Vec3(0, -0.12, -0.01), radius: 0.055, end: Vec3(0, -0.3, -0.01)),
+        GroomCollider(center: Vec3(-0.2, -0.33, 0), radius: 0.08, end: Vec3(0.2, -0.33, 0)),
+    ]
+
+    /// The humanoid's scalp: an ellipsoid cap around its head (radii 0.116, 0.136, 0.126, in the
+    /// head bone's space around the head's center), its rings bent so its edge is a smooth
+    /// hairline: above the forehead, past the temples at the sides, low at the nape.
     static func scalpMesh() -> MeshGeometry {
-        let radii = Vec3(0.116, 0.136, 0.126)
+        let radii = Vec3(0.12, 0.14, 0.13)
         let rings = 20, segments = 36
         var vertices: [MeshVertex] = []
         var indices: [UInt32] = []
         for r in 0...rings {
-            let theta = Float(r) / Float(rings) * 2.0  // polar angle from the top, radians
             for s in 0...segments {
                 let phi = Float(s) / Float(segments) * 2 * .pi
+                // The hairline: high over the forehead (+Z), past the temples at the sides, low at the nape.
+                let limit = 0.95 + 1.0 * (1 - cosf(phi)) / 2
+                let theta = Float(r) / Float(rings) * limit  // polar angle from the top, radians
                 let d = Vec3(sinf(theta) * sinf(phi), cosf(theta), sinf(theta) * cosf(phi))
                 vertices.append(MeshVertex(position: d * radii, normal: normalize(d / radii), uv: Vec2(Float(s) / Float(segments), Float(r) / Float(rings))))
             }
@@ -222,10 +269,6 @@ final class FurScene: DemoScene {
         for r in 0..<rings {
             for s in 0..<segments {
                 let a = UInt32(r * (segments + 1) + s), b = a + 1, c = a + UInt32(segments + 1), d = c + 1
-                // Keep the cap: the edge is lower at the back (z < 0) than at the face.
-                let phi = (Float(s) + 0.5) / Float(segments) * 2 * .pi
-                let limit = 1.15 + 0.75 * (1 - cosf(phi)) / 2
-                guard (Float(r) + 1) / Float(rings) * 2.0 <= limit else { continue }
                 indices += [a, c, b, b, c, d]
             }
         }

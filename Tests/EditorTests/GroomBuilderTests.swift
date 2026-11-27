@@ -88,6 +88,45 @@ private func call(_ session: EditorSession, _ command: CommandID, _ arguments: [
         #expect((one["examples"] as? [[String: Any]])?.count == 1)
     }
 
+    @Test func hairstyleKeysThroughToolsAndTheForm() throws {
+        let folder = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = makeSession()
+        try call(session, "project.new", ["path": folder.appendingPathComponent("Game").path])
+        let created = try call(session, "groom.new", ["preset": "bob"])
+        let id = try #require((created["asset"] as? String).flatMap { AssetID($0) })
+        #expect(session.assets?.groom(of: id)?.hemline.enabled == true)
+        // Nested hairstyle objects are replaced whole by groom.edit; present means on.
+        try call(session, "groom.edit", ["asset": "asset:\(id)", "changes": [
+            "part": ["style": "center"], "tie": ["tail": 0.4], "scalpHug": 0.6,
+            "colliders": [["center": [0, 0, 0], "radii": [0.1, 0.12, 0.11]]],
+        ]])
+        var build = try #require(session.assets?.groom(of: id))
+        #expect(build.part.style == .center && build.tie.enabled && build.tie.tail == 0.4 && build.scalpHug == 0.6)
+        #expect(build.colliders.first?.radii == Vec3(0.1, 0.12, 0.11))
+        #expect(EditorGroomCommands.formatDoc.contains("scalpHug") && EditorGroomCommands.formatDoc.contains("hemline"))
+
+        // The tab's Hairstyle form (cards only) writes the file.
+        let workspace = GroomBuilderWorkspace(session: session)
+        #expect(workspace.open(id))
+        workspace.update(input: nil, dt: 1.0 / 60)
+        let view = try #require(workspace.builder)
+        #expect(view.view.descendant(named: "groomHairstyleGrid") != nil)
+        var style = GroomStyleComponent(view.build)
+        style.fringe = GroomFringe(amount: 0.6, length: 0.09)
+        view.apply(style.applied(to: view.build), label: "Edit Hairstyle")
+        view.refresh()
+        build = try #require(session.assets?.groom(of: id))
+        #expect(build.fringe.amount == 0.6 && build.part.style == .center, "the rest of the style is kept")
+        workspace.close()
+
+        let moss = try call(session, "groom.new", ["preset": "moss"])
+        let mossID = try #require((moss["asset"] as? String).flatMap { AssetID($0) })
+        #expect(workspace.open(mossID))
+        #expect(workspace.builder?.view.descendant(named: "groomHairstyleGrid") == nil, "shell fur has no hairstyle form")
+        workspace.close()
+    }
+
     @Test func applyToEntitiesCharactersAndMeshBuilds() throws {
         let folder = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: folder) }
