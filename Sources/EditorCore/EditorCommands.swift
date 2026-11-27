@@ -1216,6 +1216,11 @@ public struct MaterialPatch: Codable, Equatable, Sendable {
         full.normalTexture = texture
         full.occlusionTexture = texture
         full.emissiveTexture = texture
+        // Optional blocks are only written when set: skin and eye shading (MaterialSkin.swift).
+        full.subsurface = MaterialSubsurface()
+        full.specularLobes = MaterialSpecularLobes()
+        full.detailNormal = MaterialDetailNormal()
+        full.eye = MaterialEye()
         return Set(MaterialPatch(full).fields.keys).union(["isTransparent"])
     }()
 
