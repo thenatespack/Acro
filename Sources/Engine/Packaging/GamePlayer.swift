@@ -170,7 +170,25 @@ public enum GamePlayer {
         if let width = options.width { config.width = width }
         if let height = options.height { config.height = height }
         if let backend = options.backend { config.backend = backend }
-        return (try Engine(config: config), game)
+        let engine = try Engine(config: config)
+        let note = textureSupportNote(pack.manifest, device: engine.device)
+        if note.decodes { EngineLog.warning(note.message, category: .rendering) } else { EngineLog.info(note.message, category: .rendering) }
+        return (engine, game)
+    }
+
+    /// How the pack's textures load on `device`: sampled as cooked, or, for the formats of the
+    /// pack's family the GPU can't sample (`RenderDevice.supports(_:)`), decoded on the CPU when
+    /// they load (`makeTexture(compressedLevels:format:)`, which warns once per format).
+    /// `decodes` is true when some are.
+    public static func textureSupportNote(_ manifest: AssetPackManifest, device: RenderDevice) -> (message: String, decodes: Bool) {
+        let family = manifest.textureFamily
+        let decoded = manifest.compressedTextureFormats.keys.filter { !device.supports($0) }.sorted { $0.rawValue < $1.rawValue }
+        let gpu = "\(device.deviceName) (\(device.backend.rawValue))"
+        guard !decoded.isEmpty else { return ("textures: \(family.rawValue), sampled as cooked by \(gpu)", false) }
+        let best = TextureFamily.choose(supports: device.supports)
+        let hint = best.family != family && best.decoded.isEmpty ? "; a \(best.family.rawValue) pack would load without decoding" : ""
+        return ("textures: \(family.rawValue); \(gpu) can't sample \(decoded.map(\.rawValue).joined(separator: ", ")), "
+                + "so those are decoded when they load\(hint)", true)
     }
 
     #if !os(WASI)

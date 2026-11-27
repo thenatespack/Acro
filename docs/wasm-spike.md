@@ -150,7 +150,8 @@ Scripts/web-player.sh --export Projects/SampleGame [--release]     # the same, t
 The result, `<out>/<Name>/` (default `<project>/Build/web/<Name>/`), is a static folder in the
 layout `Web/loader.js` reads: `index.html`, `loader.js`, `app/` (PackageToJS output),
 `vendor/browser_wasi_shim/`, `engine/` (only `Shaders/*.wgsl` and `Fonts/`, listed in
-`engine/manifest.json`), `game.pack`, `player.json` and a `README.txt` on hosting it (any static
+`engine/manifest.json`), a pack per texture family (`game.bc.pack`, `game.astc.pack`: see "Texture
+families (W2.6C)"; `game.pack` when the export has one family), `player.json` and a `README.txt` on hosting it (any static
 server; `.wasm` as `application/wasm`; a WebGPU browser). `GameExporterWeb.swift` has the details:
 the same generated player package as native exports (in `.build/game-export-web/<Target>`, with a
 JavaScriptKit dependency for the `js` plugin), built with `ENGINE_WASM=1` by
@@ -162,7 +163,7 @@ for every platform. A missing toolchain or SDK disables Web in the dialog with h
 
 SampleGame, release (2026-11-23): the first build takes about 11 minutes (all of Engine for
 wasm32); the folder is 59 MB: a 54.5 MB `.wasm` (79.0 MB linked; `-Os` gives 55.0 MB),
-**21.5 MB gzip -9, 14.2 MB brotli -q 11**, a 1.7 MB pack (BC textures, the Web default), 3 MB
+**21.5 MB gzip -9, 14.2 MB brotli -q 11**, a 1.7 MB pack (BC textures, then the Web default; since W2.6C a pack per family), 3 MB
 of WGSL and fonts. After W2A the exported folder plays: served on localhost and run with
 `Spikes/WebPlayerCheck/run.mjs` in Playwright Chromium (Apple M5), it starts in 0.85 s, renders
 the scene at 60 Hz with 0 WebGPU errors, and every request (only `.wgsl` shaders) succeeds.
@@ -240,6 +241,80 @@ so ICU is linked (see below).
 Not done: the wasm isn't cached by the page (the browser's HTTP cache and code cache handle it when
 the host sends cache headers), and textures could shrink further with a block-aware layout before
 deflate (BC7 endpoints and indices in separate streams).
+
+### Texture families (W2.6C)
+
+A page is opened from any device, so a Web export no longer ships one GPU family's textures. It
+has **a pack per family**, `game.bc.pack` (BC7, BC5 normal maps, BC6H HDR) and `game.astc.pack`
+(ASTC 4x4, two-channel ASTC normal maps, ASTC HDR), and the page downloads one:
+
+- **Design.** Each is a complete, ordinary pack (version 2, no format change), so native players
+  read either and nothing in `AssetPack` changed. The alternative, a shared pack plus per-family
+  texture packs (or per-family sections fetched with Range requests), would have needed a pack
+  that spans files (a new version that every reader handles), and Range requests aren't served by
+  every static host (Python's `http.server` doesn't). A browser downloads exactly as much either
+  way; the cost is hosting the shared blobs (meshes, scenes, audio) twice. The export cooks the
+  families one after the other, sharing compressed blobs (`AssetPackFormat.PreparedBlobs`), so
+  meshes are quantized and deflated once.
+- **player.json** lists them: `"packs": { "bc": { "file", "size", "hash" }, "astc": {...} }`, with
+  `pack` / `packSize` / `packHash` the first family's. An export with one family (`--gpu bc|astc`,
+  `game.build` `textureFamily`) has a single `game.pack` as before. `Editor --cook` still writes one
+  pack (`--gpu all` is for `--build-game --platform web`); the project's `build.textureFamily` is
+  for native builds only.
+- **The loader chooses** (`pickTextureFamily` in `Web/loader.js`), from what the render devices read
+  too: the WebGPU device's `texture-compression-bc` / `-astc` features (the loader requests every
+  adapter feature), or the extensions `webgl2.js` enabled (`EXT_texture_compression_bptc`, `_rgtc`,
+  `WEBGL_compressed_texture_astc` and its `hdr` profile). The family with the most of its 8-bit
+  formats (color, normal maps) sampled wins, then the most formats overall (HDR breaks ties), BC
+  first on a tie: WebGPU has BC6H but never ASTC HDR, and with neither family BC7 decodes several
+  times faster than ASTC. `TextureFamily.choose` is the same rule in Swift (tested in
+  `TextureFamilyPacksTests`). `?textures=bc|astc` overrides it. The console says what it picked:
+  `[acro] textures: bc (WebGPU texture-compression-bc, texture-compression-astc)`, a warning when it
+  has to decode. `acro.textureFamily` is the choice. The Cache API keeps each pack under its own
+  path.
+- **Decode fallback.** `RenderDevice.makeTexture(compressedLevels:format:)` is the one place that
+  decides, from `RenderDevice.supports(_:)`: a texture the GPU can't sample is decoded by
+  CTextureCodec when it loads (`TextureCodec.decodeForUpload`) to RGBA8 (sRGB for the sRGB
+  formats), RGBA16F for BC6H and ASTC HDR, two-channel normal maps expanded with Z rebuilt, with one
+  warning per format. At startup the player also logs whether the pack's formats are sampled as
+  cooked (`GamePlayer.textureSupportNote`, a warning listing the ones it will decode).
+
+**Checked** (2026-11-26, Playwright Chromium on an Apple M5, release SampleGame export,
+`Spikes/WebPlayerCheck/textures.mjs`, which hides formats by patching `GPUAdapter.prototype.features`
+and `WebGL2RenderingContext.prototype.getExtension`; ENGINE_SCREENSHOT frames, 1280x720, compared
+with the run where nothing is hidden on the same renderer; mean difference / 255, `ENGINE_GL_DEBUG=1`
+on WebGL 2):
+
+| Renderer | GPU has | Pack downloaded | Decoded | Errors | vs normal (mean / max) |
+|---|---|---|---|---|---|
+| WebGPU | BC and ASTC | game.bc.pack | none | 0 | reference |
+| WebGPU | BC only | game.bc.pack | none | 0 | 0.000 / 0 |
+| WebGPU | ASTC only | game.astc.pack | none | 0 | 0.171 / 108 |
+| WebGPU | neither | game.bc.pack | bc7Srgb, bc7Unorm, bc5Unorm | 0 | 0.001 / 28 |
+| WebGL 2 | BPTC, RGTC, ASTC (hdr) | game.bc.pack | none | 0 | reference (0.002 vs WebGPU) |
+| WebGL 2 | BPTC, RGTC | game.bc.pack | none | 0 | 0.000 / 0 |
+| WebGL 2 | ASTC (hdr) | game.astc.pack | none | 0 | 0.171 / 116 |
+| WebGL 2 | none | game.bc.pack | bc7Srgb, bc7Unorm, bc5Unorm | 0 | 0.001 / 28 |
+
+Each run downloads one pack and starts in 1.5-2.6 s. The ASTC runs differ from the BC ones by
+their encodings (0.003% of channels off by more than 8); decoded BC matches the GPU's own decoding
+to within rounding. **Sizes**, SampleGame (5 assets, 1.42 MB of textures raw): before, one BC pack of 526,454
+bytes; now `game.bc.pack`, byte for byte the same file, and `game.astc.pack`, 558,929 bytes (6%
+more), of which a browser downloads one (the folder holds both: +0.56 MB hosted). The wasm is
+17.8 MB (6.6 MB gzip, 4.6 MB brotli).
+
+The Demo's `compression` scene (every 8-bit format encoded at run time, `--query
+args=--scene,compression`) draws all of them in the same 8 runs with 0 errors: with BC hidden it
+decodes bc7Srgb, bc7Unorm and bc5Unorm, with ASTC hidden the three ASTC formats, with both hidden
+all six, one warning each, and the tiles look the same (the frames differ by 0.2-0.3 / 255,
+mostly the scene's "decoded" labels and the debug overlay's timings). A native player (debug
+macOS export of SampleGame, Metal) plays both web packs with `--pack`: the ASTC one's frame is
+identical to its own pack's, the BC one's differs by 0.17 / 255 (the encodings).
+
+Not done: a texture decoded at load counts against the renderer's upload budget at its compressed
+size (it takes 4x, or 8x for HDR, in GPU memory), and decoding runs on the main thread when the
+texture is first drawn. SampleGame has no HDR textures, so ASTC HDR on WebGPU was only exercised
+by the unit tests.
 
 ### Game code and Foundation
 
@@ -790,11 +865,13 @@ compute-only: it falls back to another upscaler instead of being refused.
 - **W2.6B: WebGPU and shared rendering parity.** Alpha-to-coverage without MSAA (alpha test at 0.5
   in the shader, what one sample gives natively). Shadow lookups outside the map return lit in the
   shader, so no backend needs a border colour (WebGPU and WebGL 2 have none). Upscaler choice
-  falls back (FSR 3 → TAAU) when the device can't run it, on every backend.
+  falls back (FSR 3 → TAAU) when the device can't run it, on every backend. Done: see "Rendering
+  parity (W2.6B, 2026-11-26)".
 - **W2.6C: Packs for every GPU family.** Web export cooks textures for ASTC and BC; the loader
   fetches the set the adapter (WebGPU features or WebGL extensions) supports. Textures in a format
   the device can't sample (no BC or ASTC at all, ASTC HDR on WebGPU) are decoded at load with
-  CTextureCodec (rgba8 / rgba16f).
+  CTextureCodec (rgba8 / rgba16f). Done: a Web export ships `game.bc.pack` and `game.astc.pack`
+  and the page downloads one; see "Texture families (W2.6C)".
 
 **Wave W2.7**
 - **W2.7A: WebGL 2 GPU particles and light probes.** Particles simulate on the CPU when

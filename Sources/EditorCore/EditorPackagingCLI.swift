@@ -7,7 +7,7 @@ import Foundation
 //                 [--textures compress|asImported] [--quality fast|normal|high] [--include <path or id>]… [--uncompressed]
 //                 [--out <dir>]
 //   Editor --build-game <project> [--scenes …] [--config release|debug] [--arch x86_64|arm64] [--docker] [--platform web]
-//                       [--gpu bc|astc] [--textures …]
+//                       [--gpu bc|astc|all] [--textures …]
 //                       [--game <target>] [--out <dir>]
 
 public enum EditorPackagingCLI {
@@ -16,7 +16,7 @@ public enum EditorPackagingCLI {
                       [--textures compress|asImported] [--quality fast|normal|high] [--include <asset path or id>]...
                       [--uncompressed] [--out <dir>]
         Editor --build-game <project> [--scenes ...] [--config release|debug] [--arch x86_64|arm64] [--docker]
-                            [--platform linux|web] [--renderer auto|webgpu|webgl2] [--gpu bc|astc] [--textures ...]
+                            [--platform linux|web] [--renderer auto|webgpu|webgl2] [--gpu bc|astc|all] [--textures ...]
                             [--game <target>] [--out <dir>]
 
         --cook writes <out>/<name>.pack and <name>.manifest.json (default out: <project>/Build/<platform>-pack): every
@@ -28,7 +28,9 @@ public enum EditorPackagingCLI {
         Linux game in a Docker container (implies --platform linux; either --arch, from any machine). --platform web
         builds a static web folder (<out>/<name>/, default out <project>/Build/web) with the Swift SDK for WebAssembly
         (see docs/wasm-spike.md); serve it with any web server and open it in a browser. --renderer picks the renderer the
-        page starts with: auto (default: WebGPU, else WebGL 2), webgpu or webgl2.
+        page starts with: auto (default: WebGPU, else WebGL 2), webgpu or webgl2. A web build ships a pack per texture
+        family by default (--gpu all: game.bc.pack and game.astc.pack; the page downloads the one the browser's GPU
+        samples); --gpu bc or astc ships that family's alone (game.pack). Other platforms ship one family.
         """
 
     /// Whether `arguments` (without the program name) ask for cooking or exporting.
@@ -46,6 +48,7 @@ public enum EditorPackagingCLI {
             var scenes: [String]?
             var platform = CookPlatform.current
             var family: TextureFamily?
+            var allFamilies = false
             var textures: TextureCookMode?
             var quality: TextureCompressionQuality?
             var include: [String] = []
@@ -76,7 +79,13 @@ public enum EditorPackagingCLI {
                 case "--docker":
                     useDocker = true
                     platform = .linux
-                case "--gpu": family = try parse(flag, TextureFamily.self)
+                case "--gpu":
+                    if rest.first == "all" {
+                        rest.removeFirst()
+                        allFamilies = true
+                    } else {
+                        family = try parse(flag, TextureFamily.self)
+                    }
                 case "--textures": textures = try parse(flag, TextureCookMode.self)
                 case "--quality": quality = try parse(flag, TextureCompressionQuality.self)
                 case "--include": include.append(try value(flag))
@@ -93,7 +102,11 @@ public enum EditorPackagingCLI {
             let database = AssetDatabase(project: project)
             database.scan()
             let build = project.settings.build ?? GameBuildSettings()
-            let target = CookTarget(platform: platform, textureFamily: family ?? build.textureFamily)
+            if allFamilies && (mode == "--cook" || platform != .web) {
+                throw CLIError("--gpu all is for --build-game --platform web (a pack per family); \(mode == "--cook" ? "--cook writes one pack: pass bc or astc" : "other platforms ship one family")")
+            }
+            // The web ships every family unless one is asked for here (the project's textureFamily is for native builds).
+            let target = CookTarget(platform: platform, textureFamily: family ?? (platform == .web ? nil : build.textureFamily))
             let outURL = out.map { URL(fileURLWithPath: $0, relativeTo: cwd).standardizedFileURL }
             let progress: @Sendable (String) -> Void = { print($0) }
             if mode == "--cook" {
@@ -113,6 +126,7 @@ public enum EditorPackagingCLI {
                 if let textures { options.cook.textures = textures }
                 options.useDocker = useDocker
                 options.webRenderer = renderer
+                if platform == .web, let family { options.webTextureFamilies = [family] }
                 options.cook.textureQuality = quality
                 options.cook.include += include
                 let report = try GameExporter.prepare(database: database, options: options).run(progress: progress)

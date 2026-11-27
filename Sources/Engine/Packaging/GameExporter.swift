@@ -107,9 +107,22 @@ public struct GameExportOptions: Equatable, Sendable, Codable {
     /// Web: the renderer the page starts with (`renderer` in player.json). nil is `.auto`: WebGPU
     /// where the browser has it, else WebGL 2. Players can still switch (Web/loader.js).
     public var webRenderer: WebRenderer?
+    /// Web: the texture families to ship, a pack for each (`game.<family>.pack`; the page
+    /// downloads the one the browser's GPU samples, Web/loader.js). nil is every family
+    /// (`CookPlatform.defaultTextureFamilies`); one family gives a single `game.pack` of it, as
+    /// before. Other platforms ship `cook.target.textureFamily` only.
+    public var webTextureFamilies: [TextureFamily]?
 
     /// The cook target's platform: what the export builds.
     public var platform: CookPlatform { cook.target.platform }
+
+    /// The texture families the export ships a pack of: `webTextureFamilies` (default: all) for
+    /// the web, else the cook target's.
+    public var textureFamilies: [TextureFamily] {
+        guard platform == .web else { return [cook.target.textureFamily] }
+        let families = TextureFamily.allCases.filter((webTextureFamilies ?? platform.defaultTextureFamilies).contains)
+        return families.isEmpty ? [cook.target.textureFamily] : families
+    }
 
     public init(name: String, gameTarget: String, gamePackage: URL, enginePackage: URL, output: URL, cook: CookOptions,
                 sceneOnly: Bool = false, configuration: BuildConfiguration = .release, architecture: BuildArchitecture = .current,
@@ -143,6 +156,15 @@ public struct GameExportReport: Codable, Equatable, Sendable {
     /// Web: the `.wasm` compressed with gzip -9 and brotli (what a server sends with compression on), when those tools exist.
     public var wasmGzipBytes: Int?
     public var wasmBrotliBytes: Int?
+    /// Web with several texture families: each family's pack (`cook` is the first's). A browser
+    /// downloads one of them.
+    public var familyPacks: [FamilyPack]?
+
+    /// One texture family's pack of a multi-family Web export.
+    public struct FamilyPack: Codable, Equatable, Sendable {
+        public var family: TextureFamily
+        public var cook: CookReport
+    }
 
     public var summary: String {
         let mb = { (bytes: Int) in String(format: "%.1f MB", Double(bytes) / 1_048_576) }
@@ -151,7 +173,9 @@ public struct GameExportReport: Codable, Equatable, Sendable {
             compressed = " (" + [wasmGzipBytes.map { "\(mb($0)) gzip" }, wasmBrotliBytes.map { "\(mb($0)) brotli" }]
                 .compactMap { $0 }.joined(separator: ", ") + ")"
         }
-        return "Exported \(outputPath) (\(mb(totalBytes)): executable \(mb(executableBytes))\(compressed), pack \(mb(cook.packBytes))); "
+        let packs = familyPacks.map { packs in "packs " + packs.map { "\($0.family.rawValue) \(mb($0.cook.packBytes))" }.joined(separator: ", ")
+            + " (a browser downloads one)" } ?? "pack \(mb(cook.packBytes))"
+        return "Exported \(outputPath) (\(mb(totalBytes)): executable \(mb(executableBytes))\(compressed), \(packs)); "
             + String(format: "cook %.2f s, build %.1f s, total %.1f s", cook.seconds, buildSeconds, totalSeconds)
     }
 }
@@ -187,6 +211,9 @@ public enum GameExportError: Error, Equatable, CustomStringConvertible {
 public struct GameExporter: Sendable {
     public let options: GameExportOptions
     let cookPlan: CookPlan
+    /// Web with more than one texture family: a plan per family (`options.textureFamilies`, in
+    /// that order; `cookPlan` is the first's). Empty: `cookPlan` alone.
+    var familyCookPlans: [CookPlan] = []
 
     /// Prepares an export from a scanned database (the cook plan is taken now).
     @MainActor
@@ -202,7 +229,19 @@ public struct GameExporter: Sendable {
             guard platform == .current else { throw GameExportError.wrongPlatform(platform) }
             guard options.architecture.canBuild(for: .current) else { throw GameExportError.wrongArchitecture(options.architecture) }
         }
-        return GameExporter(options: options, cookPlan: try AssetCooker.plan(database: database, options: options.cook))
+        let families = options.textureFamilies
+        guard platform == .web, families.count > 1 else {
+            var cook = options.cook
+            if platform == .web { cook.target.textureFamily = families[0] }
+            return GameExporter(options: options, cookPlan: try AssetCooker.plan(database: database, options: cook))
+        }
+        let plans = try families.map { family in
+            var cook = options.cook
+            cook.target.textureFamily = family
+            cook.packName = "\(cook.packName ?? options.name).\(family.rawValue)"
+            return try AssetCooker.plan(database: database, options: cook)
+        }
+        return GameExporter(options: options, cookPlan: plans[0], familyCookPlans: plans)
     }
 
     /// Why this machine can't build a game for `platform` / `architecture` (in Docker with
@@ -560,11 +599,20 @@ public struct GameExporter: Sendable {
         try fm.createDirectory(at: staging, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: staging) }
 
-        // 1. Cook (fast, and fails early on asset problems).
-        progress?("Cooking \(options.cook.scenes.joined(separator: ", ")) for \(options.cook.target.platform.rawValue) (\(options.cook.target.textureFamily.rawValue) textures)")
-        let cook = try cookPlan.run(to: staging)
-        progress?("Cooked: \(cook.summary)")
-        for warning in cook.warnings { progress?("Warning: \(warning)") }
+        // 1. Cook (fast, and fails early on asset problems): a pack per texture family for a
+        // multi-family Web export, else one.
+        var cooks: [CookReport] = []
+        let blobs = AssetPackFormat.PreparedBlobs()  // meshes and other shared blobs compress once for every family
+        for plan in familyCookPlans.isEmpty ? [cookPlan] : familyCookPlans {
+            let target = plan.options.target
+            progress?("Cooking \(options.cook.scenes.joined(separator: ", ")) for \(target.platform.rawValue) (\(target.textureFamily.rawValue) textures)")
+            let cook = try plan.run(to: staging, blobs: blobs)
+            progress?("Cooked: \(cook.summary)")
+            // The families' packs share everything but textures: their warnings are the same.
+            if cooks.isEmpty { for warning in cook.warnings { progress?("Warning: \(warning)") } }
+            cooks.append(cook)
+        }
+        let cook = cooks[0]
 
         // 2. Build the player.
         try writePlayerPackage()
@@ -575,7 +623,7 @@ public struct GameExporter: Sendable {
                           + "about 35 MB more, 10 MB compressed). To leave it out, import it as "
                           + "`#if os(WASI) import WASIFoundation #else import Foundation #endif` (see docs/wasm-spike.md)")
             }
-            return try runWeb(cook: cook, start: start, progress: progress)
+            return try runWeb(cooks: cooks, start: start, progress: progress)
         }
         let built = options.useDocker ? try buildInDocker(staging: staging, progress: progress) : try buildNatively(progress: progress)
 

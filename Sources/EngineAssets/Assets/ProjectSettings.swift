@@ -64,7 +64,8 @@ public struct GameBuildSettings: Equatable, Sendable, Codable {
     public var name: String?
     /// The output folder, relative to the project folder (default `Build`); a folder per platform goes inside.
     public var output: String?
-    /// Default: ASTC on macOS, BC elsewhere.
+    /// Default: ASTC on macOS, BC elsewhere. Native builds only: a Web build ships a pack per family
+    /// (`GameExportOptions.webTextureFamilies`).
     public var textureFamily: TextureFamily?
     public var textures: TextureCookMode?
     /// The engine's package, when it can't be found from the game's package.

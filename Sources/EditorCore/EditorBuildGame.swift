@@ -45,7 +45,9 @@ public enum GameBuildCommand: EditorDeferredCommand {
         public var architecture: BuildArchitecture?
         /// Build in a Docker container (Linux only): a Linux game from any machine, for either architecture.
         public var docker: Bool?
-        /// `bc` or `astc`. Default: `build.textureFamily`, else ASTC on macOS and BC elsewhere.
+        /// `bc` or `astc`. Default: `build.textureFamily`, else ASTC on macOS and BC elsewhere. Web
+        /// ships a pack of each family by default (the page downloads the one the browser's GPU
+        /// samples); naming one here ships that one alone.
         public var textureFamily: TextureFamily?
         /// `compress` (every 8-bit texture block-compressed, the default) or `asImported`.
         public var textures: TextureCookMode?
@@ -78,7 +80,8 @@ public enum GameBuildCommand: EditorDeferredCommand {
     public static let title = "Build Game"
     public static let doc = """
         Exports the project as a standalone game: cooks every asset reachable from the scenes into one pack (textures \
-        block-compressed for the target GPU family, no source files), builds the game module (a generated one that only plays the scenes when the project has no game code) and Engine in release and \
+        block-compressed for the target GPU family, no source files; a Web build has a pack per family, BC and ASTC, \
+        and the page downloads the one the browser's GPU samples, unless `textureFamily` names one), builds the game module (a generated one that only plays the scenes when the project has no game code) and Engine in release and \
         links them into one executable, and lays out a runnable app (macOS: <output>/<Name>.app; Linux: <output>/<Name>/ \
         with run.sh; Web: <output>/<Name>/, a static folder with index.html, the .wasm and the pack, to host on any web \
         server and play in a browser: WebGPU, or WebGL 2 where WebGPU is missing; `renderer` (auto, webgpu or webgl2) picks the one it starts with). Runs in the background (the first build compiles Engine in release, minutes; later ones seconds); \
@@ -138,7 +141,8 @@ public final class EditorGameExport {
         let platform = arguments.platform ?? .current
         let configuration = arguments.configuration ?? .release
         let architecture = arguments.architecture ?? .current
-        let target = CookTarget(platform: platform, textureFamily: arguments.textureFamily ?? build.textureFamily)
+        // The web ships every family unless one is asked for (the project's textureFamily is for native builds).
+        let target = CookTarget(platform: platform, textureFamily: arguments.textureFamily ?? (platform == .web ? nil : build.textureFamily))
         let output = arguments.output.map { URL(fileURLWithPath: $0, relativeTo: project.root).standardizedFileURL }
         let start = Date()
         let future = CommandFuture<GameBuildResult>()
@@ -169,7 +173,10 @@ public final class EditorGameExport {
                                                    configuration: configuration, architecture: architecture)
             if let textures = arguments.textures { options.cook.textures = textures }
             options.useDocker = docker
-            if platform == .web { options.webRenderer = arguments.renderer }
+            if platform == .web {
+                options.webRenderer = arguments.renderer
+                if let family = arguments.textureFamily { options.webTextureFamilies = [family] }
+            }
             guard session.checkFileAccess(options.output, GameBuildCommand.title) else {
                 throw CommandError.failed("The output is outside the project folder")
             }

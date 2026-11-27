@@ -327,7 +327,7 @@ public final class SettingsDialog: Widget {
              set: { [unowned self] value in updateBuild { $0.output = value.isEmpty ? nil : value } })
         let families: [TextureFamily?] = [nil] + TextureFamily.allCases
         dropdown("Texture format", name: "settingsTextureFamily", command: setProject,
-                 options: families.map { $0.map { $0.rawValue.uppercased() } ?? "Default (ASTC on macOS, BC elsewhere)" },
+                 options: families.map { $0.map { $0.rawValue.uppercased() } ?? "Default (ASTC on macOS, BC elsewhere; both for Web)" },
                  get: { [unowned self] in families.firstIndex(of: project.build?.textureFamily) ?? 0 },
                  set: { [unowned self] index in updateBuild { $0.textureFamily = families[index] } })
         let modes = TextureCookMode.allCases

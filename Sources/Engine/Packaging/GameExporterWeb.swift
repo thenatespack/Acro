@@ -12,7 +12,8 @@ import EngineCore
 //              vendor/browser_wasi_shim/  the WASI shim the glue was made for (@bjorn3/browser_wasi_shim)
 //              webgl2.js                  the WebGL 2 renderer's side in JavaScript (the fallback without WebGPU)
 //              engine/manifest.json       the engine resources the loader fetches: Shaders/*.wgsl, *.gles and Fonts/
-//              game.pack, player.json     the cooked pack, and what the loader starts (wasm, pack, engine)
+//              game.bc.pack, game.astc.pack   the cooked packs, one per texture family (the page downloads one)
+//              player.json                what the loader starts (wasm, packs, engine)
 //              README.txt                 how to host it
 // ```
 //
@@ -27,6 +28,13 @@ import EngineCore
 //   gzip -9, 14.2 MB brotli -q 11. The report gives the gzip and brotli sizes of release exports.
 // - **Engine resources.** Only what the web backends read: WGSL (WebGPU) and GLSL ES (WebGL 2)
 //   shaders (no Metal or SPIR-V), and the fonts.
+// - **Textures.** A page is opened from any device, so the export ships a pack per texture
+//   family (`GameExportOptions.webTextureFamilies`, default both): `game.bc.pack` and
+//   `game.astc.pack`, each a complete ordinary pack (native players read either). player.json's
+//   `packs` lists them; the loader asks the GPU (WebGPU features, WebGL 2 extensions) which family
+//   it samples and downloads only that pack (`TextureFamily.choose` has the rule). Formats the GPU
+//   can't sample at all are decoded when they load (`RenderDevice.makeTexture(compressedLevels:format:)`).
+//   With one family the export has a single `game.pack`, as before.
 // - **Renderer.** `renderer` in player.json (`GameExportOptions.webRenderer`, default auto): WebGPU,
 //   else WebGL 2; the player can switch (see Web/loader.js).
 // - **Hosting.** Any static server; `.wasm` must be served as `application/wasm`. A WebGPU or WebGL 2 browser.
@@ -141,13 +149,19 @@ struct WebSiteInputs {
     var wasiShim: URL
     /// The engine's resources (Shaders/, Fonts/), as built or as in Sources/EngineCore.
     var engineResources: URL
-    /// The cooked pack.
+    /// The cooked pack (the first family's when there are several).
     var pack: URL
+    /// A multi-family export's packs, in the export's family order (`game.<family>.pack`);
+    /// empty: `pack` alone, as `game.pack`.
+    var familyPacks: [(family: TextureFamily, url: URL)] = []
 }
 
 extension GameExporter {
     /// The pack's name in a Web export's folder (player.json names it).
     static let webPackFile = "game.pack"
+
+    /// A multi-family export's pack of `family` in its folder.
+    static func webPackFile(for family: TextureFamily) -> String { "game.\(family.rawValue).pack" }
 
     /// Whether a file of the engine's resources (path relative to them) goes into a Web export:
     /// WGSL and GLSL ES shaders only (the Metal and SPIR-V ones are for the native backends),
@@ -162,21 +176,44 @@ extension GameExporter {
     /// show download progress when the server doesn't say how big they are (or compresses them);
     /// `packHash` (`packHash(of:)`) names the pack in the browser's cache, so a new export is
     /// downloaded again. `renderer` is the one the page starts with (`WebRenderer`).
+    ///
+    /// A multi-family export lists its packs in `packs`, `{ "bc": { "file", "size", "hash" }, "astc": … }`,
+    /// from which the loader downloads one; `pack`, `packSize` and `packHash` are then the first family's.
     static func webPlayerConfig(wasm: String, packName: String, packSize: Int? = nil, packHash: String? = nil,
-                                wasmSize: Int? = nil, renderer: WebRenderer = .auto) -> [String: Any] {
+                                wasmSize: Int? = nil, renderer: WebRenderer = .auto,
+                                packs: [(family: TextureFamily, size: Int?, hash: String?)] = []) -> [String: Any] {
         var config: [String: Any] = ["wasm": "app/\(wasm)", "pack": webPackFile, "packName": packName, "engine": "engine/manifest.json",
                                      "args": [String](), "renderer": renderer.rawValue]
         if let packSize { config["packSize"] = packSize }
         if let packHash { config["packHash"] = packHash }
         if let wasmSize { config["wasmSize"] = wasmSize }
+        if let first = packs.first {
+            var entries: [String: Any] = [:]
+            for pack in packs {
+                var entry: [String: Any] = ["file": webPackFile(for: pack.family)]
+                if let size = pack.size { entry["size"] = size }
+                if let hash = pack.hash { entry["hash"] = hash }
+                entries[pack.family.rawValue] = entry
+            }
+            config["packs"] = entries
+            config["pack"] = webPackFile(for: first.family)
+            config["packSize"] = first.size
+            config["packHash"] = first.hash
+        }
         return config
     }
 
-    /// Writes `site`'s player.json for its pack and wasm as they are now.
-    static func writeWebPlayerConfig(site: URL, wasmName: String, packName: String, renderer: WebRenderer = .auto) throws {
+    /// Writes `site`'s player.json for its packs (`families`' `game.<family>.pack`, or `game.pack`
+    /// without any) and wasm as they are now.
+    static func writeWebPlayerConfig(site: URL, wasmName: String, packName: String, renderer: WebRenderer = .auto,
+                                     families: [TextureFamily] = []) throws {
         let pack = site.appendingPathComponent(webPackFile), wasm = site.appendingPathComponent("app/\(wasmName)")
+        let packs = families.map { family in
+            let url = site.appendingPathComponent(webPackFile(for: family))
+            return (family: family, size: fileSize(url), hash: packHash(of: url))
+        }
         let config = webPlayerConfig(wasm: wasmName, packName: packName, packSize: fileSize(pack), packHash: packHash(of: pack),
-                                     wasmSize: fileSize(wasm), renderer: renderer)
+                                     wasmSize: fileSize(wasm), renderer: renderer, packs: packs)
         try json(config).write(to: site.appendingPathComponent("player.json"))
     }
 
@@ -232,8 +269,13 @@ extension GameExporter {
         files.sort()
         try fm.createDirectory(at: engine, withIntermediateDirectories: true)
         try json(["files": files]).write(to: engine.appendingPathComponent("manifest.json"))
-        try fm.copyItem(at: inputs.pack, to: folder.appendingPathComponent(webPackFile))
-        try writeWebPlayerConfig(site: folder, wasmName: wasmName, packName: packName, renderer: renderer)
+        if inputs.familyPacks.isEmpty {
+            try fm.copyItem(at: inputs.pack, to: folder.appendingPathComponent(webPackFile))
+        } else {
+            for (family, url) in inputs.familyPacks { try fm.copyItem(at: url, to: folder.appendingPathComponent(webPackFile(for: family))) }
+        }
+        try writeWebPlayerConfig(site: folder, wasmName: wasmName, packName: packName, renderer: renderer,
+                                 families: inputs.familyPacks.map(\.family))
         try Data(webReadme(name: gameName).utf8).write(to: folder.appendingPathComponent("README.txt"))
         return files
     }
@@ -272,7 +314,9 @@ extension GameExporter {
         app/                    the game (WebAssembly) and its JavaScript glue
         vendor/                 the WASI shim the game runs on (@bjorn3/browser_wasi_shim, MIT/Apache-2.0)
         engine/                 the engine's shaders (WGSL, GLSL ES) and fonts (manifest.json lists them)
-        game.pack               the game's assets
+        game.pack               the game's assets (game.bc.pack and game.astc.pack: the same
+                                assets with BC or ASTC textures; each player downloads the one
+                                its GPU samples)
         player.json             what the loader starts (page options: ?scene=<path>, ?args=a,b)
 
         """
@@ -280,8 +324,11 @@ extension GameExporter {
 
     /// A Web export from the generated player package (cooked already): build and package the
     /// player, optimize it, and lay out the folder.
-    func runWeb(cook: CookReport, start: Date, progress: (@Sendable (String) -> Void)?) throws -> GameExportReport {
+    func runWeb(cooks: [CookReport], start: Date, progress: (@Sendable (String) -> Void)?) throws -> GameExportReport {
         let fm = FileManager.default
+        let cook = cooks[0]
+        // A pack per family (several cooks), else one game.pack.
+        let families = cooks.count > 1 ? familyCookPlans.map(\.options.target.textureFamily) : []
         let toolchain = WebToolchain.find()
         if let problem = toolchain.problem { throw GameExportError.webToolchain(problem) }
         let site = outputURL
@@ -300,7 +347,8 @@ extension GameExporter {
         let shim = try webWASIShim(packaged: packaged, toolchain: toolchain, progress: progress)
         let inputs = WebSiteInputs(page: options.enginePackage.appendingPathComponent("Web", isDirectory: true), packaged: packaged,
                                    wasiShim: shim, engineResources: webEngineResources(toolchain: toolchain),
-                                   pack: URL(fileURLWithPath: cook.packPath))
+                                   pack: URL(fileURLWithPath: cook.packPath),
+                                   familyPacks: zip(families, cooks).map { ($0, URL(fileURLWithPath: $1.packPath)) })
         progress?("Writing \(site.path)")
         let renderer = options.webRenderer ?? .auto
         let engineFiles = try Self.assembleWebSite(at: site, inputs: inputs, wasmName: wasmName, packName: "\(options.name).pack",
@@ -319,7 +367,7 @@ extension GameExporter {
                 if step.succeeded {
                     _ = try fm.replaceItemAt(wasm, withItemAt: optimized)
                     try Self.writeWebPlayerConfig(site: site, wasmName: wasmName, packName: "\(options.name).pack",
-                                                  renderer: renderer)  // the new wasmSize
+                                                  renderer: renderer, families: families)  // the new wasmSize
                     let mb = { (bytes: Int) in String(format: "%.1f MB", Double(bytes) / 1_048_576) }
                     progress?(String(format: "wasm-opt \(level): \(mb(before)) → \(mb(Self.size(of: wasm))) in %.0f s", step.seconds))
                 } else {
@@ -331,8 +379,9 @@ extension GameExporter {
             }
         }
 
+        let packFiles = families.isEmpty ? [Self.webPackFile] : families.map(Self.webPackFile(for:))
         var report = GameExportReport(outputPath: site.path, executablePath: wasm.path,
-                                      packPath: site.appendingPathComponent(Self.webPackFile).path, cook: cook,
+                                      packPath: site.appendingPathComponent(packFiles[0]).path, cook: cook,
                                       buildSeconds: build.seconds + optimizeSeconds, totalSeconds: 0, executableBytes: Self.size(of: wasm),
                                       totalBytes: Self.size(of: site), linking: "static")
         if options.configuration == .release {
@@ -342,6 +391,14 @@ extension GameExporter {
             report.wasmBrotliBytes = toolchain.brotli.flatMap { Self.compressedSize(of: wasm, with: [$0.path, "-q", "11", "-c"]) }
         }
         report.cook.packPath = report.packPath
+        if !families.isEmpty {
+            report.familyPacks = zip(zip(families, cooks), packFiles).map { pair, file in
+                var cook = pair.1
+                cook.packPath = site.appendingPathComponent(file).path
+                return GameExportReport.FamilyPack(family: pair.0, cook: cook)
+            }
+            for pack in report.familyPacks ?? [] { progress?("Pack \(pack.cook.packPath.pathLastComponent): \(pack.cook.summary)") }
+        }
         report.totalSeconds = Date().timeIntervalSince(start)
         progress?(report.summary)
         return report

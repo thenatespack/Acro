@@ -19,7 +19,8 @@
 # (`Editor --build-game <project> --platform web`, GameExporterWeb.swift): the project's own game
 # code and scenes in a generated player package rather than the spike's WasmPlayer (SampleGame
 # linked in) with a pack you cooked, wasm-opt in release, only the WGSL and GLSL ES shaders and fonts of the
-# engine resources, and a README.txt. Same layout. The folder is <dir>/<project name>/ (default
+# engine resources, a README.txt, and a pack per texture family (game.bc.pack, game.astc.pack:
+# the page downloads the one the GPU samples) instead of game.pack. The folder is <dir>/<project name>/ (default
 # dir .build-wasm/web-export).
 #
 # Then serves it on http://localhost:<port>/ (default 8080) until Ctrl-C. Open it in a browser

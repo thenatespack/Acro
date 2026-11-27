@@ -256,6 +256,22 @@ public enum TextureCodec {
         return Image(width: image.width, height: image.height, pixels: pixels)
     }
 
+    /// What `RenderDevice.makeTexture(compressedLevels:format:)` uploads on a GPU that can't
+    /// sample `format`: every level decoded to `format.decompressedFormat` (RGBA8, sRGB for the
+    /// sRGB formats; RGBA16F for the HDR ones), two-channel normal maps expanded to RGBA8 normal
+    /// maps with Z rebuilt (the mesh shader reads those like any other).
+    public static func decodeForUpload(_ levels: [TextureMipLevel], format: TextureFormat) throws -> (levels: [TextureMipLevel], format: TextureFormat) {
+        var decoded = try decode(levels: levels, format: format)
+        if format.isTwoChannel {
+            // The mesh shader reads an RGBA8 normal map's Z from blue: rebuild it here.
+            decoded = decoded.map {
+                let image = expandTwoChannel(Image(width: $0.width, height: $0.height, pixels: $0.pixels), format: format)
+                return TextureMipLevel(width: image.width, height: image.height, pixels: image.pixels)
+            }
+        }
+        return (decoded, format.decompressedFormat)
+    }
+
     // MARK: - Encoders
 
     /// BC7, BC5 or BC6H: bands of block rows on every core.
@@ -348,24 +364,20 @@ private final class Atomic: @unchecked Sendable {
 extension RenderDevice {
     /// A texture from compressed mip levels (`TextureCodec.encode`). When the GPU can't sample
     /// `format` (`supports(_:)`), the levels are decoded on the CPU and uploaded as
-    /// `format.decompressedFormat` (RGBA8, or RGBA16F for the HDR formats) instead, logged once
-    /// per format and backend. A two-channel
+    /// `format.decompressedFormat` (RGBA8, or RGBA16F for the HDR formats) instead, with one
+    /// warning per format and backend. This is the one place that decides it for asset textures
+    /// (`SceneRenderer.textureUploader`), on every backend: a pack of another GPU family, ASTC HDR
+    /// on WebGPU, a browser without BC or ASTC. A two-channel
     /// normal map then becomes an RGBA8 one with Z rebuilt (x, y, z, 1), which the mesh shader
     /// reads like any other.
     public func makeTexture(compressedLevels levels: [TextureMipLevel], format: TextureFormat) throws -> GPUTexture {
         if !format.isCompressed || supports(format) { return try makeTexture(levels: levels, format: format) }
         if reportedTextureFallbacks.insert("\(backend) \(format)").inserted {
-            EngineLog.info("\(deviceName) (\(backend)) can't sample \(format) textures; decoding them to \(format.decompressedFormat)",
-                           category: .rendering)
+            EngineLog.warning("\(deviceName) (\(backend)) can't sample \(format) textures; decoding them to \(format.decompressedFormat) "
+                              + "when they load (slower to load, \(format.decompressedFormat.bytesPerPixel)x the GPU memory)",
+                              category: .rendering)
         }
-        var decoded = try TextureCodec.decode(levels: levels, format: format)
-        if format.isTwoChannel {
-            // The mesh shader reads an RGBA8 normal map's Z from blue: rebuild it here.
-            decoded = decoded.map {
-                let image = TextureCodec.expandTwoChannel(Image(width: $0.width, height: $0.height, pixels: $0.pixels), format: format)
-                return TextureMipLevel(width: image.width, height: image.height, pixels: image.pixels)
-            }
-        }
-        return try makeTexture(levels: decoded, format: format.decompressedFormat)
+        let decoded = try TextureCodec.decodeForUpload(levels, format: format)
+        return try makeTexture(levels: decoded.levels, format: decoded.format)
     }
 }

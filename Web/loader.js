@@ -10,7 +10,11 @@
 //    `webgl` (Web/webgl2.js) for WebGL 2, plus `renderers` (what this browser seems to have) and
 //    `setRenderer(name)` (saves the choice and reloads). The render device reads them
 //    synchronously (WebGPU's requests are Promises and the engine starts synchronously).
-// 2. Fetches the asset pack
+// 2. Picks the asset pack: an export ships one per texture family (`packs` in player.json:
+//    game.bc.pack, game.astc.pack), and the page downloads only the one whose formats the GPU
+//    samples (`pickTextureFamily`: WebGPU's `texture-compression-bc` / `-astc` features, WebGL 2's
+//    BPTC, RGTC and ASTC extensions; `?textures=bc|astc` overrides it). What the GPU can't sample
+//    at all is decoded by the engine when it loads. Then fetches the pack
 //    and the engine resources (Shaders/, Fonts/ listed in engine/manifest.json). The pack and the
 //    wasm download together under a progress bar; the pack is kept in the browser's cache (Cache
 //    API, keyed by `packHash`) so the next visit doesn't download it again (wave W2.5B).
@@ -34,11 +38,13 @@ const RENDERER_KEY = "acro.renderer";
 /**
  * Starts the player.
  * @param {{ canvas: HTMLCanvasElement, status: HTMLElement, args?: string[], env?: string[],
- *           probeFrames?: number, base?: string, renderer?: string }} options
+ *           probeFrames?: number, base?: string, renderer?: string, textures?: string }} options
  * `env` adds `NAME=value` environment variables (ENGINE_OVERLAY=1, ENGINE_QUALITY=high, ...).
  * `renderer` ("webgpu", "webgl2" or "auto", from `?renderer=`) overrides the saved and configured choice.
+ * `textures` ("bc" or "astc", from `?textures=`) picks the pack of that texture family when the export has one.
  */
-export async function startPlayer({ canvas, status, args = [], env = [], probeFrames = 0, base = ".", renderer = undefined }) {
+export async function startPlayer({ canvas, status, args = [], env = [], probeFrames = 0, base = ".", renderer = undefined,
+                                    textures = undefined }) {
   const splash = new Splash(status);
   // A stage of starting up (the bar sweeps), or with `{ busy: false }` a closing message.
   const show = (text, { busy = true } = {}) => splash.stage(text, busy);
@@ -101,9 +107,10 @@ export async function startPlayer({ canvas, status, args = [], env = [], probeFr
     // `mounts` (optional): more folders for the WASI filesystem, { "<name>": "<manifest.json>" }
     // mounted at /<name> (the Demo's resources, say). A player without a pack has `pack: null`.
     const mounts = Object.entries(config.mounts ?? {});
+    const packChoice = choosePack(config, graphics, textures);
     const [userData, pack, engineFiles, ...mounted] = await Promise.all([
       openUserData(),  // saves and settings, from IndexedDB (saves.js)
-      config.pack ? loadPack(url(config.pack), config, progress) : undefined,
+      packChoice ? loadPack(url(packChoice.file), packChoice, progress) : undefined,
       fetchFolder(url(config.engine)),
       ...mounts.map(([, manifest]) => fetchFolder(url(manifest))),
     ]);
@@ -113,6 +120,8 @@ export async function startPlayer({ canvas, status, args = [], env = [], probeFr
       args: [...(config.args ?? []), ...args],
       pack,
       packName: config.packName ?? "Game.pack",
+      // The texture family of the pack (player.json's `packs`), or undefined for a single pack.
+      textureFamily: packChoice?.family,
       probeFrames,
       onError: (message) => fail(message),
       // The engine wrote or removed a file under /userdata: keep it in IndexedDB.
@@ -292,6 +301,86 @@ async function setUpWebGPU(canvas) {
     usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
   });
   return { adapter, device, context, format };
+}
+
+// Texture families (`TextureFamily` in Swift) and the formats a pack of each holds, with the
+// support flag that says whether the GPU samples it (`textureSupport`).
+const TEXTURE_FAMILIES = {
+  bc: [["bc7Srgb", "bc7"], ["bc7Unorm", "bc7"], ["bc5Unorm", "bc5"], ["bc6hUfloat", "bc6h", "hdr"]],
+  astc: [["astc4x4Srgb", "astc"], ["astc4x4Unorm", "astc"], ["astc4x4RG", "astc"], ["astc4x4HDR", "astcHDR", "hdr"]],
+};
+
+/**
+ * Which compressed formats the renderer's GPU samples, from what the render devices read too
+ * (`WebGPURenderDevice.supports` and `WebGL2RenderDevice.supports`): the WebGPU device's features,
+ * or the extensions webgl2.js enabled. `reason` names them for the log.
+ */
+export function textureSupport(graphics) {
+  if (graphics.renderer === "webgpu") {
+    const bc = graphics.device.features.has("texture-compression-bc");
+    const astc = graphics.device.features.has("texture-compression-astc");
+    const names = [bc && "texture-compression-bc", astc && "texture-compression-astc"].filter(Boolean);
+    // WebGPU's ASTC formats are the LDR profile only.
+    return { bc7: bc, bc5: bc, bc6h: bc, astc, astcHDR: false,
+             reason: `WebGPU ${names.length ? names.join(", ") : "has neither texture-compression-bc nor texture-compression-astc"}` };
+  }
+  const extensions = graphics.webgl?.extensions ?? {};
+  const bptc = !!extensions.EXT_texture_compression_bptc, rgtc = !!extensions.EXT_texture_compression_rgtc;
+  const astc = !!extensions.WEBGL_compressed_texture_astc, astcHDR = astc && !!graphics.webgl?.astcHDR;
+  const names = [bptc && "EXT_texture_compression_bptc", rgtc && "EXT_texture_compression_rgtc",
+                 astc && `WEBGL_compressed_texture_astc${astcHDR ? " (hdr)" : ""}`].filter(Boolean);
+  return { bc7: bptc, bc5: rgtc, bc6h: bptc, astc, astcHDR,
+           reason: `WebGL 2 ${names.length ? names.join(", ") : "has no BPTC, RGTC or ASTC extension"}` };
+}
+
+/**
+ * The texture family to download out of `available` for a GPU with `support` (`textureSupport`),
+ * and the formats of it the GPU can't sample (the engine decodes those when they load). The same
+ * rule as `TextureFamily.choose` in Swift: the family with the most of its 8-bit formats (color,
+ * normal maps) sampled, then the most formats in all (HDR breaks ties), BC first on a tie (BC7
+ * decodes several times faster than ASTC; WebGPU has BC6H but never ASTC HDR).
+ */
+export function pickTextureFamily(available, support) {
+  const candidates = Object.keys(TEXTURE_FAMILIES).filter((family) => available.includes(family));
+  const sampled = (family) => TEXTURE_FAMILIES[family].filter(([, flag]) => support[flag]);
+  const score = (family) => [sampled(family).filter(([, , hdr]) => !hdr).length, sampled(family).length];
+  let best = candidates[0] ?? "bc";
+  for (const family of candidates.slice(1)) {
+    const [a, b] = [score(best), score(family)];
+    if (b[0] > a[0] || (b[0] === a[0] && b[1] > a[1])) best = family;
+  }
+  return { family: best, decoded: TEXTURE_FAMILIES[best].filter(([, flag]) => !support[flag]).map(([name]) => name) };
+}
+
+/**
+ * The pack to download: `{ file, packSize, packHash, family }`. With `packs` in player.json (one per
+ * texture family), the family the GPU samples (or `requested`, `?textures=`); else `pack` itself.
+ * Undefined for a player without a pack.
+ */
+function choosePack(config, graphics, requested) {
+  const packs = config.packs ?? {};
+  const available = Object.keys(packs).filter((family) => TEXTURE_FAMILIES[family] && packs[family]?.file);
+  if (!available.length) return config.pack ? { file: config.pack, packSize: config.packSize, packHash: config.packHash } : undefined;
+  const support = textureSupport(graphics);
+  let { family, decoded } = pickTextureFamily(available, support);
+  let why = support.reason;
+  if (requested) {
+    if (available.includes(requested)) {
+      family = requested;
+      decoded = TEXTURE_FAMILIES[family].filter(([, flag]) => !support[flag]).map(([name]) => name);
+      why = `?textures=${requested}; ${why}`;
+    } else {
+      console.warn(`[acro] ignoring ?textures=${requested}: the export has ${available.join(" and ")} packs`);
+    }
+  }
+  const pack = packs[family];
+  const message = `[acro] textures: ${family} (${why})`;
+  if (decoded.length === TEXTURE_FAMILIES[family].length || decoded.some((name) => !name.endsWith("HDR"))) {
+    console.warn(`${message}; can't sample ${decoded.join(", ")}: textures in those are decoded when they load`);
+  } else {
+    console.info(decoded.length ? `${message}; can't sample ${decoded.join(", ")}: textures in those are decoded when they load` : message);
+  }
+  return { file: pack.file, packSize: pack.size, packHash: pack.hash, family };
 }
 
 async function fetchOK(url) {
