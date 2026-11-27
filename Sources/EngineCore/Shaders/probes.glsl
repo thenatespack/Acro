@@ -19,18 +19,27 @@
 //   weights computed here (as sampleEquirect does), so Metal and Vulkan agree exactly.
 
 // Read four words at a time (one 16-byte load).
+#ifdef PROBE_DATA_TEXTURE
+// The GLSL ES (WebGL 2) variant (the *_probes.frag shaders' `compile-shaders: gles` line): WebGL 2
+// has no storage buffers, so the device copies the buffer bound as storage buffer 1 into an RGBA32UI
+// texture, 1024 uvec4s per row, that the shader reads at the same set and binding.
+layout(set = 2, binding = 25) uniform utexture2D probeWords;
+#define PROBE_WORDS(i) texelFetch(usampler2D(probeWords, materialSampler), ivec2((i) & 1023, (i) >> 10), 0)
+#else
 layout(set = 2, binding = 25, std430) readonly buffer ProbeData {
     uvec4 words[];
 } probeData;
+#define PROBE_WORDS(i) probeData.words[i]
+#endif
 
 const int PROBE_RECORD = 8;
 
 vec4 probeVec4(int i) {
-    return uintBitsToFloat(probeData.words[i]);
+    return uintBitsToFloat(PROBE_WORDS(i));
 }
 
 int probeInt(int i) {
-    return int(probeData.words[i].x);
+    return int(PROBE_WORDS(i).x);
 }
 
 // `ReflectionProbeImage.levels`: first texel, width, height.
@@ -41,7 +50,7 @@ const ivec3 PROBE_LEVELS[6] = ivec3[6](
 // Images start on an even texel, so texel t is half of vec4 t / 2.
 vec3 probeTexel(int first, int x, int y, int width) {
     int t = first + y * width + x;
-    uvec4 pair = probeData.words[t >> 1];
+    uvec4 pair = PROBE_WORDS(t >> 1);
     uvec2 texel = (t & 1) == 0 ? pair.xy : pair.zw;
     return vec3(unpackHalf2x16(texel.x), unpackHalf2x16(texel.y).x);
 }
@@ -132,7 +141,7 @@ vec3 probeReflection(vec3 fallback, vec3 p, vec3 r, float roughness) {
 
 // Whether the irradiance probe at vec4 `first` is used (not inside geometry).
 bool probeValid(int first) {
-    return unpackHalf2x16(probeData.words[first + 3].y).y > 0.5;
+    return unpackHalf2x16(PROBE_WORDS(first + 3).y).y > 0.5;
 }
 
 // The irradiance probe at vec4 `first` evaluated with the SH basis `y` (of the normal): the
@@ -154,7 +163,7 @@ ProbeBasis probeBasis(vec3 d) {
 }
 
 vec3 probeSHDot(int first, ProbeBasis y) {
-    uvec4 a = probeData.words[first], b = probeData.words[first + 1], d = probeData.words[first + 2], e = probeData.words[first + 3];
+    uvec4 a = PROBE_WORDS(first), b = PROBE_WORDS(first + 1), d = PROBE_WORDS(first + 2), e = PROBE_WORDS(first + 3);
     vec2 h0 = unpackHalf2x16(a.x), h1 = unpackHalf2x16(a.y), h2 = unpackHalf2x16(a.z), h3 = unpackHalf2x16(a.w);
     vec2 h4 = unpackHalf2x16(b.x), h5 = unpackHalf2x16(b.y), h6 = unpackHalf2x16(b.z), h7 = unpackHalf2x16(b.w);
     vec2 h8 = unpackHalf2x16(d.x), h9 = unpackHalf2x16(d.y), h10 = unpackHalf2x16(d.z), h11 = unpackHalf2x16(d.w);

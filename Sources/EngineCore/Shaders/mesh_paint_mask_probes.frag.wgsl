@@ -1,7 +1,7 @@
 // Generated from mesh_paint_mask_probes.frag by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc, spirv-cross, spirv-opt and naga-cli).
 // spirv-fnv1a64: a432f0f1030d456d
-// glsl-fnv1a64: 38a3caf15dcac5bd
+// glsl-fnv1a64: e309292037e28414
 
 diagnostic(off, derivative_uniformity);
 

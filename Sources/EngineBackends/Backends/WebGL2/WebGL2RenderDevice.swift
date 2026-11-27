@@ -39,11 +39,12 @@ private let maxTimedPasses = 32
 /// Differences from the other backends:
 /// - No compute, storage buffers, storage textures or indirect draws (`supportsCompute` and
 ///   `supportsStorageBuffers` are false). `makeComputePipeline` and storage textures throw; storage
-///   buffers can be made (as plain buffers); bound, they feed only uniform blocks declared at a
-///   storage buffer's binding (the material graph templates' GLSL ES reads its values that way,
-///   binding point 8 + n); indirect draws are skipped with a warning. So GPU particles, light
-///   probes (their bake and the probe-lit shader variants) and FSR 3 are unavailable; the engine
-///   skips them with one warning each.
+///   buffers can be made (as plain buffers); bound, they feed only GLSL ES declared for it at a
+///   storage buffer's binding: a uniform block (the material graph templates' values, binding
+///   point 8 + n) or a texture (the probe-lit shaders' probe data: an RGBA32UI copy of the buffer,
+///   `storageTexture`). Indirect draws are skipped with a warning. The engine simulates GPU
+///   particles on the CPU and stores light probe bakes from the CPU (`readFloatTexels`, synchronous
+///   here); FSR 3 gives way to TAAU.
 /// - HDR targets (`hdrScene`, `.rgba16Float` render targets, TAAU) need `EXT_color_buffer_float`.
 /// - Compressed textures need `EXT_texture_compression_bptc` (BC7, BC6H), `_rgtc` (BC5) or
 ///   `WEBGL_compressed_texture_astc` (ASTC; HDR with its "hdr" profile).
@@ -54,7 +55,7 @@ private let maxTimedPasses = 32
 ///   comes back from its own `endFrame`.
 /// - `vsync` has no effect (the browser presents with the display).
 /// - Alpha-to-coverage only with MSAA (as on WebGPU). The shadow comparison sampler clamps to the edge.
-/// Unsupported: MetalFX, FSR 3, everything that needs compute or storage buffers (above).
+/// Unsupported: MetalFX, FSR 3, compute (above).
 package final class WebGL2RenderDevice: RenderDevice {
     package let backend = GraphicsBackend.webgl2
     let helper: JSObject
@@ -89,6 +90,9 @@ package final class WebGL2RenderDevice: RenderDevice {
     private let jsExecute, jsCreateBuffer, jsBufferSubData, jsGetBufferSubData, jsCreateTexture, jsTexSubImage,
                 jsCreateRenderbuffer, jsCreateFramebuffer, jsCreateSampler, jsCreateProgram, jsBindUniformBlock,
                 jsBindSamplerUnit, jsReadQueries, jsReadTimers, jsReadPixels, jsCopyEncoded, jsDeleteList: JSFunction
+    /// Newer webgl2.js functions (nil with an older page: storage buffers read as textures and
+    /// float readbacks are then unavailable).
+    private let jsReadPixelsFloat, jsCopyBufferToTexture: JSFunction?
 
     let commands = WebGL2Commands()
     let bindState = WebGL2BindState()
@@ -100,6 +104,8 @@ package final class WebGL2RenderDevice: RenderDevice {
     private(set) var placeholderUniform: WebGL2Buffer!
     private(set) var placeholderColor: WebGL2Texture!
     private(set) var placeholderDepth: WebGL2Texture!
+    /// Bound for a storage buffer read as a texture that the pass never bound (an RGBA32UI texel of zeros).
+    private(set) var placeholderStorage: WebGL2Texture!
     private var programs: [String: WebGL2Program] = [:]
     private var vertexLayouts: [String: WebGL2VertexLayout] = [:]
     private var framebuffers: [FramebufferKey: Int32] = [:]
@@ -221,6 +227,8 @@ package final class WebGL2RenderDevice: RenderDevice {
         jsReadPixels = try function("readPixels")
         jsCopyEncoded = try function("copyEncoded")
         jsDeleteList = try function("deleteList")
+        jsReadPixelsFloat = helper["readPixelsFloat"].function
+        jsCopyBufferToTexture = helper["copyBufferToTexture"].function
 
         let info = try function("info")(this: helper)
         extensions = Set((info.extensions.string ?? "").split(separator: " ").map(String.init))
@@ -258,6 +266,7 @@ package final class WebGL2RenderDevice: RenderDevice {
         placeholderUniform = makeGPUBuffer(bytes: nil, length: maxUniformBufferSize, isIndex: false)
         placeholderColor = try makeGPUTexture(format: .rgba8Unorm, width: 1, height: 1, levels: 1)
         placeholderDepth = try makeGPUTexture(format: .depth32Float, width: 1, height: 1, levels: 1)
+        placeholderStorage = makeStorageTexture(width: 1, height: 1)
 
         var blit = PipelineDescriptor(shader: try ShaderSource.load(named: "blit", bundle: .engineResources), vertexLayout: .none)
         blit.cullMode = .none
@@ -350,6 +359,44 @@ package final class WebGL2RenderDevice: RenderDevice {
         guard bytes.count > 0, let base = bytes.baseAddress else { return }
         flush()
         _ = jsBufferSubData(this: helper, Int(target.id), offset, Int(bitPattern: base), bytes.count)
+        target.version += 1
+    }
+
+    /// An RGBA32UI texture (sampled with texelFetch through a nearest sampler).
+    private func makeStorageTexture(width: Int, height: Int) -> WebGL2Texture {
+        // `format` only matters for sampler choice and readbacks; the internal format is what counts.
+        let texture = WebGL2Texture(format: .r32Float, internalFormat: GL.rgba32ui, width: width, height: height)
+        _ = jsCreateTexture(this: helper, Int(texture.id), Int(GL.rgba32ui), width, height, 1)
+        return texture
+    }
+
+    /// Texels of 16 bytes per row of a storage buffer read as a texture (the shaders index it so).
+    static let storageTextureWidth = 1024
+
+    /// `buffer` (a storage buffer bound with `setStorageBuffer`) as an RGBA32UI texture of
+    /// `storageTextureWidth` texels per row, for GLSL ES that reads it with texelFetch at the
+    /// storage buffer's binding (the probe-lit shaders): made on first use and copied from the
+    /// buffer on the GPU (a pixel unpack buffer) whenever the buffer was written since. The copy
+    /// is a direct call: every write to a buffer (`updateBuffer`) runs the frame's commands so far
+    /// first, so draws recorded before it have already read the previous copy.
+    func storageTexture(_ buffer: WebGL2Buffer) -> WebGL2Texture {
+        let width = Self.storageTextureWidth
+        let texels = max((buffer.length + 15) / 16, 1)
+        let rows = (texels + width - 1) / width
+        guard let copy = jsCopyBufferToTexture, rows <= maxTextureSize else {
+            warnOnce("storage-texture", "a storage buffer of \(buffer.length) bytes can't be read as a texture "
+                     + (jsCopyBufferToTexture == nil ? "(Web/webgl2.js is older than the engine)" : "(more than \(maxTextureSize) rows)"))
+            return placeholderStorage
+        }
+        if buffer.mirror == nil {
+            buffer.mirror = makeStorageTexture(width: width, height: rows)
+            buffer.mirrorVersion = -1
+        }
+        if buffer.mirrorVersion != buffer.version, let mirror = buffer.mirror {
+            _ = copy(this: helper, Int(buffer.id), Int(mirror.id), width, texels / width, texels % width)
+            buffer.mirrorVersion = buffer.version
+        }
+        return buffer.mirror ?? placeholderStorage
     }
 
     package func makeTexture(_ descriptor: TextureDescriptor) throws -> GPUTexture {
@@ -551,13 +598,15 @@ package final class WebGL2RenderDevice: RenderDevice {
             let size = Int(jsBindUniformBlock(this: helper, Int(id), block.name, point).number ?? -1)
             if size > 0 { sizes[Int32(point), default: 0] = max(sizes[Int32(point)] ?? 0, size) }
         }
-        var samplers: [(unit: Int32, texture: Int, sampler: Int?, shadow: Bool)] = []
+        var samplers: [(unit: Int32, texture: Int, sampler: Int?, shadow: Bool, storage: Bool)] = []
         var seen: Set<String> = []
         for sampler in stages.flatMap(\.samplers) where seen.insert(sampler.name).inserted {
-            guard let texture = sampler.textureSlot else { throw GraphicsError("Sampler \(sampler.name) is outside the binding table") }
+            guard let texture = sampler.textureSlot ?? sampler.storageSlot else {
+                throw GraphicsError("Sampler \(sampler.name) is outside the binding table")
+            }
             let unit = Int32(samplers.count)
             guard jsBindSamplerUnit(this: helper, Int(id), sampler.name, Int(unit)).boolean == true else { continue }
-            samplers.append((unit, texture, sampler.samplerSlot, sampler.shadow))
+            samplers.append((unit, texture, sampler.samplerSlot, sampler.shadow, sampler.storageSlot != nil))
         }
         let program = WebGL2Program(id: id, uniformBlocks: sizes.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }, samplers: samplers)
         programs[key] = program
@@ -899,6 +948,20 @@ package final class WebGL2RenderDevice: RenderDevice {
     package func readBack(_ target: GPURenderTarget, completion: @escaping @MainActor (Image) -> Void) {
         guard frame != nil else { preconditionFailure("readBack outside a frame") }
         targetReadbacks.append((target as! WebGL2RenderTarget, completion))
+    }
+
+    /// Reads the target at once (after the frame's commands so far): `readPixels` as RGBA floats.
+    package func readFloatTexels(_ target: GPURenderTarget) -> [Float]? {
+        guard frame != nil, currentPass == nil, colorBufferFloat, let read = jsReadPixelsFloat else { return nil }
+        let texture = (target as! WebGL2RenderTarget).resolved
+        guard texture.format == .rgba16Float || texture.format == .r32Float else { return nil }
+        flush()
+        var texels = [Float](repeating: 0, count: texture.width * texture.height * 4)
+        texels.withUnsafeMutableBytes {
+            _ = read(this: helper, Int(framebuffer(color0: texture.attachment)), texture.width, texture.height,
+                     Int(bitPattern: $0.baseAddress!))
+        }
+        return texels
     }
 
     /// An 8-bit RGBA texture's texels, top row first.

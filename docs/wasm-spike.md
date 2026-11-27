@@ -610,10 +610,11 @@ the vertex stage writes `v * gl_Position.w` and an extra varying `acro_vnpw = gl
 end of `main`, the fragment stage reads `(v / acro_vnpw)`; perspective-correct interpolation of
 both gives the screen-linear `v`. With glslangValidator installed every output is validated.
 Stages whose active resources need storage buffers or images get no `.gles` (listed at the end of
-the run, like the WGSL step): the probe-lit mesh shaders, probe_debug and the GPU particle vertex
-shaders. A shader marked `// compile-shaders: gles <glslc flags>` gets its `.gles` from a second
-compile with those flags: the material graph templates and terrain splatting
-(`-DGRAPH_VALUES_UNIFORM=1024`, see "No compute"). No GLSL ES is generated for compute. The binding table in
+the run, like the WGSL step; only a test shader now). A shader marked `// compile-shaders: gles
+<glslc flags>` gets its `.gles` from a second compile with those flags: the material graph
+templates and terrain splatting (`-DGRAPH_VALUES_UNIFORM=1024`, see "No compute"), the probe-lit
+mesh shaders and probe_debug (`-DPROBE_DATA_TEXTURE`) and the particle vertex shaders
+(`-DPARTICLES_INSTANCED`), see "Particles and light probes (W2.7A)". No GLSL ES is generated for compute. The binding table in
 `ShaderSource` has a WebGL 2 column; `WebGL2ShaderTests` checks every output is current and
 inside the table.
 
@@ -665,10 +666,10 @@ inside the table.
   names it in the console (`[acro] WebGL error 0x502 after END_PASS (...)`); it's slow.
 
 **No compute.** WebGL 2 has no compute shaders, storage buffers, storage textures or indirect
-draws. `RenderDevice.supportsCompute` and `supportsStorageBuffers` (default true) are false, and
-the engine skips what needs them with one warning each: GPU particles (`ParticleEmitter`), light
-probes (`ReflectionProbe`, `IrradianceVolume`: their bake and the probe-lit shaders) and FSR 3
-(falls back to TAAU).
+draws. `RenderDevice.supportsCompute` and `supportsStorageBuffers` (default true) stay false.
+GPU particles simulate on the CPU and light probes read their data from a texture (W2.7A, below);
+FSR 3 falls back to TAAU. Still GPU-only: particle collisions against the depth buffer
+(`collidesWithDepth`, off with a warning while particles simulate on the CPU).
 `makeComputePipeline` and storage textures throw; `beginComputePass` returns a pass that records
 nothing; indirect draws are skipped.
 
@@ -688,13 +689,46 @@ buffer. A graph with more than `MaterialGraphCompiler.maxUniformValues` (1024) v
 ES and a compile warning, and on WebGL 2 is registered without the graph (drawn with its plain
 surface) with one warning, the only graphs still skipped.
 
+**Particles and light probes (W2.7A).**
+- *Particles.* Without compute `ParticleSystem` simulates on the CPU (`simulatesOnCPU`,
+  `ParticleCPUSimulation.swift`): particle_simulate / _spawn / _events / _compact and the sort as
+  Swift, slot for slot, from the same `SimulationUniforms`, spawn schedule and pcg hash, so the same
+  particles spawn with the same random numbers; integration, ground plane and analytic colliders,
+  sub-emitter events (death, collision, birth; in slot order, `maxEvents`, the child's ring cursor
+  and spawn counter) and the draw order (live slots in slot order; sorted emitters far to near by
+  the same keys: inverted distance bits, then the slot). Differences: plain multiply-adds instead
+  of the shaders' `fma` (fused multiply-add is a slow libc call in Wasm) and libc sin / cos / pow,
+  so positions drift by rounding (a unit test bounds it: under 0.02 after 40 steps with
+  turbulence and bounces, against Metal and Vulkan compute); no depth-buffer collisions (the
+  scene's depth stays on the GPU; a warning). Each frame the live particles in draw order go into
+  transient memory (`ParticleRecord`, 48 bytes) and are drawn instanced (6 vertices, one instance
+  each) with particle.vert / particle_lit.vert's `PARTICLES_INSTANCED` GLSL ES, which reads them
+  from instance attributes 0-2 instead of storage buffers; particle.frag is unchanged. Emitters
+  above `cpuMaxCapacity` (65536) simulate every n-th spawn index (n a power of two, so the 32-bit
+  indices keep the pattern; the step's dt spread uses the original offsets) and additive ones are
+  drawn n times brighter, with a warning: the Demo's 128k galaxy simulates every 2nd particle.
+  `ParticleSystem.Stats.cpuMilliseconds`; the `particles` scene's title shows "CPU x ms".
+- *Light probes.* The probe-lit shaders' GLSL ES (`PROBE_DATA_TEXTURE`) reads the probe buffer's
+  words from an RGBA32UI texture at the storage buffer's set and binding (2, 25), 1024 uvec4s per
+  row (`PROBE_WORDS(i)` in probes.glsl; the SPIR-V for the other backends is unchanged).
+  spirv-to-gles allows textures at bindings 24-31 (`GLESInterface.Sampler.storageSlot`). The WebGL 2
+  device turns `setStorageBuffer(_:index: n)` into that texture for such a sampler
+  (`storageTexture`): made on first use and copied from the buffer on the GPU (a
+  `PIXEL_UNPACK_BUFFER` `texSubImage2D`, Web/webgl2.js `copyBufferToTexture`) whenever
+  `updateBuffer` wrote it since (a version per buffer); read with a nearest sampler. The bake renders
+  as before (faces, equirect, SH projection and prefilter are fragment passes); only probe_store.comp
+  was compute: without it each SH row and prefiltered level is read back at once
+  (`RenderDevice.readFloatTexels`, `readPixels` as floats; nil on the other backends) and packed into
+  the buffer from the CPU as the compute shader does (`updateBuffer`), so the next bounce and the
+  frame see it. The final readback for the cache is the usual synchronous `getBufferSubData`.
+
 ### Results (2026-11-26)
 
 Playwright Chromium (Apple M5; WebGL 2 is ANGLE on Metal), release Demo, `?renderer=webgl2` with
 `ENGINE_GL_DEBUG=1`, each scene 4 s with input:
 
 - **All 54 Demo scenes and SampleGame run, with 0 WebGL errors.** Degraded (feature skipped with
-  its warning): `particles` and `rain` (GPU particles), `probes` (light probes); `graphs` drew its
+  its warning) until W2.7A: `particles` and `rain` (GPU particles), `probes` (light probes); `graphs` drew its
   material graphs and splat terrain with plain materials until W2.6A (below). Two bugs the run found are fixed
   (debug_line's `noperspective`; a framebuffer's read buffer set on the wrong binding).
 - `ENGINE_SCREENSHOT` frames (1280x720, overlay off) against the WebGPU run, mean difference / 255:
@@ -741,10 +775,35 @@ debug lines (`gizmos`, `navmesh`, `physics`, `camerarigs`): 0 errors, 0.000 each
 check: `decals` 0.000, `pbr` 0.002, `shadows` 0.000, `forest` 0.002, `transparency` 0.000,
 `reflections` 0.003; no pixel over 16 in any of them.
 
-**Known gaps:** everything that needs compute or storage buffers (above); material graphs with
-more than 1024 values (a 16 KB uniform block) draw plain on WebGL 2; GPU particles would need a CPU
-or transform-feedback simulation. Only tested on ANGLE/Metal in Chromium; Firefox and Safari (where WebGL 2 is most
-likely to be used) are untested.
+**W2.7A (particles, light probes), same setup, release Demo, `ENGINE_SCREENSHOT` frames (1280x720,
+`ENGINE_OVERLAY=0`) on WebGL 2 with `ENGINE_GL_DEBUG=1` against WebGPU:** 0 WebGL errors and no
+"unavailable" warnings in each.
+
+| Scene | Mean / 255 | Pixels over 16 |
+|---|---|---|
+| probes | 0.000 | 0.00% |
+| rain | 0.010 | 0.00% |
+| particles | 0.457 | 0.95% |
+
+`probes` bakes on WebGL 2 (1 reflection probe, 90 irradiance probes, 2 bounces: 4.7 s once at
+startup, WebGPU 1.2 s; each probe's synchronous readbacks stall the GPU) and its frame matches
+WebGPU exactly. `particles` logs its two expected warnings (no depth-buffer collisions; the galaxy
+simulates every 2nd of its 128k slots). Its residual: the sparks that bounce off the floor and the
+ball diverge by rounding over their seconds of bouncing, the sparks pass through the block behind
+the pillar (a depth collision on the GPU) and flash less, and the thinned galaxy is grainier at the
+same brightness. Fire, smoke, mist and fireworks look the same.
+CPU cost (frames 300-600 at fixed steps, `profile.mjs`, Apple M5): `particles` simulates ~62k live
+particles in 3.7 ms a frame (rAF callback 4.5 ms; WebGPU 2.1 ms with 0.55 ms of compute); with the
+whole galaxy (118k live, `cpuMaxCapacity` raised) 4.8 ms (callback 7.2 ms). `rain` (16k-slot
+emitters) costs nothing measurable: callback 1.2 ms on both renderers. Regression check: `pbr`
+0.002, `reflections` 0.003, `graphs` 0.000; no pixel over 16. Metal and Vulkan frames of
+`particles`, `rain` and `probes` are byte-identical before and after (the SPIR-V didn't change).
+
+**Known gaps:** compute itself (FSR 3 gives way to TAAU) and particle collisions against the depth
+buffer (GPU-only: off with a warning on WebGL 2); emitters above 65536 slots are thinned on the
+CPU; material graphs with more than 1024 values (a 16 KB uniform block) draw plain on WebGL 2. Only
+tested on ANGLE/Metal in Chromium; Firefox and Safari (where WebGL 2 is most likely to be used)
+are W2.7B's.
 
 ## Rendering parity (W2.6B, 2026-11-26)
 
@@ -905,7 +964,8 @@ compute-only: it falls back to another upscaler instead of being refused.
 **Wave W2.7**
 - **W2.7A: WebGL 2 GPU particles and light probes.** Particles simulate on the CPU when
   `supportsCompute` is false and draw from instance attributes; probe data moves to textures read
-  with `texelFetch` in GLSL ES variants, with a fragment-pass or CPU bake.
+  with `texelFetch` in GLSL ES variants, with a fragment-pass or CPU bake. Done: see "Particles and
+  light probes (W2.7A)" under the WebGL 2 renderer.
 - **W2.7B: Firefox and Safari.** Playwright Firefox and WebKit (installed in `~/.acro-webtools`):
   all Demo scenes and SampleGame on each renderer each browser offers, fix what breaks, record
   results here.

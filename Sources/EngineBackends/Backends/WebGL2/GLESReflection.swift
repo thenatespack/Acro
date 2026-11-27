@@ -39,6 +39,12 @@ struct GLESInterface: Equatable, Sendable {
             return nil
         }
 
+        /// For a texture at set 2, binding 24 + n: storage buffer n read as a texture (an RGBA32UI
+        /// copy of the buffer, 1024 texels of 16 bytes per row: the probe-lit shaders' GLSL ES).
+        var storageSlot: Int? {
+            textureSet == 2 && (24...31).contains(textureBinding) ? textureBinding - 24 : nil
+        }
+
         /// The engine's sampler slot: 0 for set 1, n for `setSampler(_:index: n)` (set 2, binding
         /// 16 + n), nil without a sampler or outside the table.
         var samplerSlot: Int? {

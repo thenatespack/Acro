@@ -23,7 +23,7 @@ enum GL {
     static let colorBufferBit: Int32 = 0x4000, framebufferComplete: Int32 = 0x8CD5
     static let rgba: Int32 = 0x1908, rg: Int32 = 0x8227, red: Int32 = 0x1903, depthComponent: Int32 = 0x1902
     static let rgba8: Int32 = 0x8058, srgb8Alpha8: Int32 = 0x8C43, rgba16f: Int32 = 0x881A, rg16f: Int32 = 0x822F,
-               r16f: Int32 = 0x822D, r8: Int32 = 0x8229, r32f: Int32 = 0x822E, depth32f: Int32 = 0x8CAC
+               r16f: Int32 = 0x822D, r8: Int32 = 0x8229, r32f: Int32 = 0x822E, depth32f: Int32 = 0x8CAC, rgba32ui: Int32 = 0x8D70
     static let bc7: Int32 = 0x8E8C, bc7Srgb: Int32 = 0x8E8D, bc6hUfloat: Int32 = 0x8E8F, bc5: Int32 = 0x8DBD,
                astc4x4: Int32 = 0x93B0, astc4x4Srgb: Int32 = 0x93D0
 }
@@ -124,6 +124,11 @@ final class WebGL2Buffer: GPUBuffer {
     var staging: UnsafeMutableRawPointer?
     var dirtyEnd = 0
     var flushedEnd = 0
+    /// Bumped by every write after creation; a storage buffer read as a texture (`mirror`, an
+    /// RGBA32UI copy) is copied again when its `mirrorVersion` differs.
+    var version = 0
+    var mirror: WebGL2Texture?
+    var mirrorVersion = -1
 
     init(length: Int, allocatedLength: Int, isIndex: Bool) {
         self.length = length
@@ -218,11 +223,12 @@ final class WebGL2RenderTarget: GPURenderTarget {
     let id: Int32
     /// Binding point and the largest block size bound there (both stages').
     let uniformBlocks: [(point: Int32, size: Int)]
-    /// Texture unit, the engine's texture slot (0: set 1) and sampler slot (nil: none), and
-    /// whether it is a shadow sampler.
-    let samplers: [(unit: Int32, texture: Int, sampler: Int?, shadow: Bool)]
+    /// Texture unit, the engine's texture slot (0: set 1; with `storage`, the storage buffer read
+    /// as a texture) and sampler slot (nil: none), and whether it is a shadow sampler.
+    let samplers: [(unit: Int32, texture: Int, sampler: Int?, shadow: Bool, storage: Bool)]
 
-    init(id: Int32, uniformBlocks: [(point: Int32, size: Int)], samplers: [(unit: Int32, texture: Int, sampler: Int?, shadow: Bool)]) {
+    init(id: Int32, uniformBlocks: [(point: Int32, size: Int)],
+         samplers: [(unit: Int32, texture: Int, sampler: Int?, shadow: Bool, storage: Bool)]) {
         self.id = id
         self.uniformBlocks = uniformBlocks
         self.samplers = samplers

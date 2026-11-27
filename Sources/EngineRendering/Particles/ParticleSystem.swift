@@ -31,7 +31,8 @@ public struct ParticleSceneDepth {
     }
 }
 
-/// Simulates and draws the `ParticleEmitter`s of a world on the GPU. `SceneRenderer` owns one
+/// Simulates and draws the `ParticleEmitter`s of a world on the GPU (or, on devices without
+/// compute, on the CPU: see `simulatesOnCPU`). `SceneRenderer` owns one
 /// (`sceneRenderer.particles`, created with the first emitter it sees) and drives it:
 ///
 /// 1. `prepare` (in `SceneRenderer.prepare`) gathers the emitters and decides on the CPU how
@@ -51,6 +52,14 @@ public struct ParticleSceneDepth {
 /// `ENGINE_SCREENSHOT` advances by exactly 1/60 s per frame), random numbers hash spawn indices,
 /// and draw lists and sub-emitter events never depend on the order threads run in, so Metal
 /// and Vulkan render the same pixels.
+///
+/// Without compute (WebGL 2: `RenderDevice.supportsCompute` false) it simulates on the CPU
+/// instead (`simulatesOnCPU`, `ParticleCPUEmitter`): the same schedule, parameters, random
+/// numbers, collisions (except against the depth buffer), sub-emitters, compaction and sort, in
+/// `simulate`; each emitter's live particles in draw order go into transient memory and `draw`
+/// draws them as instance attributes (particle_vertex.glsl's PARTICLES_INSTANCED GLSL ES).
+/// Emitters larger than `cpuMaxCapacity` simulate every n-th particle (n a power of two), drawn
+/// n times brighter when additive, with a warning.
 @MainActor
 public final class ParticleSystem {
     public struct Stats: Sendable, Equatable {
@@ -65,11 +74,20 @@ public final class ParticleSystem {
         public var spawned = 0
         /// Parent → child sub-emitter links in use.
         public var subEmitterLinks = 0
+        /// CPU simulation (`simulatesOnCPU`): milliseconds `simulate` took this frame (steps,
+        /// draw lists and instance data).
+        public var cpuMilliseconds = 0.0
 
         public init() {}
     }
 
     public let device: RenderDevice
+    /// Simulating on the CPU (devices without compute; see the type's notes).
+    public let simulatesOnCPU: Bool
+    /// Most particles an emitter simulates on the CPU; a larger one simulates every n-th of its
+    /// particles (n the smallest power of two that fits), drawn n times brighter when additive.
+    /// Set it before the emitters are first seen (a change restarts them).
+    public var cpuMaxCapacity = 1 << 16
     /// Length of one simulation step in seconds.
     public var fixedTimestep: Double = 1.0 / 60
     /// Steps per frame at most; time beyond is dropped (the prewarm isn't limited).
@@ -87,23 +105,22 @@ public final class ParticleSystem {
     /// Some emitter this frame is `lit` (its vertex shader reads the scene's lights).
     public private(set) var hasLitEmitters = false
 
-    private let simulatePipeline: ComputePipeline
-    private let compactPipeline: ComputePipeline
-    private let eventsPipeline: ComputePipeline
-    private let spawnPipeline: ComputePipeline
-    private let sortArgsPipeline: ComputePipeline
-    private let sortKeysPipeline: ComputePipeline
-    private let sortLocalPipeline: ComputePipeline
-    private let sortGlobalPipeline: ComputePipeline
-    private let sortWritePipeline: ComputePipeline
+    private struct ComputePipelines {
+        var simulate, compact, events, spawn, sortArgs, sortKeys, sortLocal, sortGlobal, sortWrite: ComputePipeline
+    }
+
+    /// nil when simulating on the CPU.
+    private let compute: ComputePipelines?
+    private var gpu: ComputePipelines { compute! }
     private let shader: ShaderSource
     private var litShader: ShaderSource?
     private var pipelines: [PipelineKey: RenderPipeline] = [:]
     /// Bound where a texture is declared but unused (no flipbook, no scene depth).
     private let whiteTexture: GPUTexture
     private let sampler: GPUSampler
-    /// Bound as the event flags of emitters without sub-emitters (never written).
-    private let placeholderBuffer: GPUBuffer
+    /// Bound as the event flags of emitters without sub-emitters (never written; GPU only).
+    private let placeholderBuffer: GPUBuffer?
+    private var warned: Set<String> = []
     private var emitters: [Entity: EmitterState] = [:]
     /// This frame's emitters in draw order.
     private var order: [Entity] = []
@@ -123,6 +140,10 @@ public final class ParticleSystem {
         var firstIndex: UInt32
         /// Emitter time at the start of the step (drives the turbulence field).
         var time: Double
+        /// CPU emitters with a stride: the spawns the step scheduled (of which every stride-th is
+        /// simulated) and the offset of the first simulated one among them.
+        var scheduled: Int? = nil
+        var firstOffset = 0
     }
 
     /// A parent's sub-emitter in use this frame.
@@ -133,18 +154,23 @@ public final class ParticleSystem {
         var maxEvents: Int
     }
 
-    /// GPU buffers and timing of one emitter entity.
+    /// GPU buffers (or the CPU simulation) and timing of one emitter entity.
     @MainActor private final class EmitterState {
         /// Settings whose change restarts the emitter.
         let key: RestartKey
         let capacity: Int
         var groups: Int { capacity / 256 }
+        /// The CPU simulation (`simulatesOnCPU`; the GPU buffers are nil then), this frame's
+        /// instance data and how many particles it holds.
+        let cpu: ParticleCPUEmitter?
+        var instances: TransientBuffer?
+        var instanceCount = 0
         /// `capacity` × 48-byte particles.
-        let particles: GPUBuffer
+        let particles: GPUBuffer!
         /// Draw arguments (16 bytes), then per workgroup of 256 slots: live, died, collided and born counts.
-        let state: GPUBuffer
+        let state: GPUBuffer!
         /// Live slots in draw order.
-        let drawList: GPUBuffer
+        let drawList: GPUBuffer!
         /// `.alpha`: the sorted length's capacity (a power of two, at least 2048), the sort keys
         /// (key, slot pairs) and the sort passes' indirect arguments (`particle_sort_args.comp`).
         let sortCapacity: Int
@@ -170,10 +196,21 @@ public final class ParticleSystem {
         var transform = Mat4.identity
         var steps: [Step] = []
 
-        init(key: RestartKey, emitter: ParticleEmitter, device: RenderDevice) throws {
+        init(key: RestartKey, emitter: ParticleEmitter, device: RenderDevice, cpu: Bool) throws {
             self.key = key
             self.emitter = emitter
             capacity = key.capacity
+            if cpu {
+                self.cpu = ParticleCPUEmitter(capacity: capacity, stride: key.stride)
+                particles = nil
+                state = nil
+                drawList = nil
+                sortCapacity = 0
+                sortKeys = nil
+                sortArgs = nil
+                return
+            }
+            self.cpu = nil
             particles = try device.makeBuffer(length: capacity * 48, usage: .storage)
             state = try device.makeBuffer(length: 16 + capacity / 256 * 4 * 4, usage: .storage)
             drawList = try device.makeBuffer(length: capacity * 4, usage: .storage)
@@ -193,6 +230,8 @@ public final class ParticleSystem {
         var capacity: Int
         var blend: ParticleBlend
         var seed: UInt32
+        /// CPU emitters: every `stride`-th particle is simulated (`cpuMaxCapacity`).
+        var stride = 1
     }
 
     /// The sorted length's capacity for `capacity` particles: a power of two, at least one 2048-element block.
@@ -207,30 +246,37 @@ public final class ParticleSystem {
         sortCapacity.trailingZeroBitCount - 11
     }
 
-    public init(device: RenderDevice) throws {
+    /// `simulatesOnCPU` nil: on the CPU when the device has no compute (true forces it, for tests).
+    public init(device: RenderDevice, simulatesOnCPU: Bool? = nil) throws {
         self.device = device
-        func compute(_ name: String) throws -> ComputePipeline {
+        let cpu = simulatesOnCPU ?? !device.supportsCompute
+        self.simulatesOnCPU = cpu
+        func load(_ name: String) throws -> ComputePipeline {
             try device.makeComputePipeline(shader: ShaderSource.load(compute: name, bundle: .engineResources))
         }
-        simulatePipeline = try compute("particle_simulate")
-        compactPipeline = try compute("particle_compact")
-        eventsPipeline = try compute("particle_events")
-        spawnPipeline = try compute("particle_spawn")
-        sortArgsPipeline = try compute("particle_sort_args")
-        sortKeysPipeline = try compute("particle_sort_keys")
-        sortLocalPipeline = try compute("particle_sort_local")
-        sortGlobalPipeline = try compute("particle_sort_global")
-        sortWritePipeline = try compute("particle_sort_write")
+        compute = cpu ? nil : ComputePipelines(
+            simulate: try load("particle_simulate"), compact: try load("particle_compact"), events: try load("particle_events"),
+            spawn: try load("particle_spawn"), sortArgs: try load("particle_sort_args"), sortKeys: try load("particle_sort_keys"),
+            sortLocal: try load("particle_sort_local"), sortGlobal: try load("particle_sort_global"),
+            sortWrite: try load("particle_sort_write"))
         shader = try ShaderSource.load(named: "particle", bundle: .engineResources)
         whiteTexture = try device.makeTexture(pixels: [255, 255, 255, 255], width: 1, height: 1, format: .rgba8Unorm)
         sampler = try device.makeSampler(SamplerDescriptor(minFilter: .linear, magFilter: .linear, mipFilter: .linear,
                                                            addressMode: .clampToEdge))
-        placeholderBuffer = try device.makeBuffer(length: 16, usage: .storage)
+        placeholderBuffer = cpu ? nil : try device.makeBuffer(length: 16, usage: .storage)
     }
 
-    /// `entity`'s particle, draw list and state buffers (tests read them back).
+    /// `entity`'s particle, draw list and state buffers (tests read them back; GPU only).
     func buffers(of entity: Entity) -> (particles: GPUBuffer, drawList: GPUBuffer, state: GPUBuffer)? {
-        emitters[entity].map { ($0.particles, $0.drawList, $0.state) }
+        emitters[entity].flatMap { $0.cpu == nil ? ($0.particles, $0.drawList, $0.state) : nil }
+    }
+
+    /// `entity`'s CPU simulation (`simulatesOnCPU`; tests read it).
+    func cpuEmitter(of entity: Entity) -> ParticleCPUEmitter? { emitters[entity]?.cpu }
+
+    private func warnOnce(_ key: String, _ message: String) {
+        guard warned.insert(key).inserted else { return }
+        EngineLog.warning(message, category: .particles)
     }
 
     /// Adds `count` particles to `entity`'s emitter at its next step (even while it isn't emitting).
@@ -254,10 +300,21 @@ public final class ParticleSystem {
         stats.spawned = 0
         stats.subEmitterLinks = 0
         for (entity, emitter, transform) in found {
-            let key = RestartKey(capacity: emitter.effectiveCapacity, blend: emitter.blend, seed: emitter.seed)
+            var key = RestartKey(capacity: emitter.effectiveCapacity, blend: emitter.blend, seed: emitter.seed)
+            if simulatesOnCPU {
+                if key.capacity > cpuMaxCapacity {
+                    while (key.capacity + key.stride - 1) / key.stride > max(cpuMaxCapacity, 1) { key.stride *= 2 }
+                    key.capacity = (key.capacity + key.stride - 1) / key.stride
+                    warnOnce("stride-\(entity.index)", "emitter of \(emitter.effectiveCapacity) particles is more than the CPU simulates "
+                             + "(cpuMaxCapacity \(cpuMaxCapacity)): simulating every \(key.stride)th")
+                }
+                if emitter.collidesWithDepth {
+                    warnOnce("depth", "depth-buffer collisions (collidesWithDepth) need compute: off while particles simulate on the CPU")
+                }
+            }
             if emitters[entity]?.key != key {
                 do {
-                    emitters[entity] = try EmitterState(key: key, emitter: emitter, device: device)
+                    emitters[entity] = try EmitterState(key: key, emitter: emitter, device: device, cpu: simulatesOnCPU)
                 } catch {
                     EngineLog.warning("emitter of \(key.capacity) particles unavailable: \(error)", category: .particles)
                     continue
@@ -299,7 +356,8 @@ public final class ParticleSystem {
         }
         stats.emitters = order.count
         stats.capacity = order.reduce(0) { $0 + emitters[$1]!.capacity }
-        needsSceneDepth = order.contains { emitters[$0]!.emitter.needsSceneDepth }
+        // The CPU simulation doesn't collide with the depth buffer: only soft particles need it.
+        needsSceneDepth = order.contains { simulatesOnCPU ? emitters[$0]!.emitter.softness > 0 : emitters[$0]!.emitter.needsSceneDepth }
         hasLitEmitters = order.contains { emitters[$0]!.emitter.lit }
     }
 
@@ -348,9 +406,25 @@ public final class ParticleSystem {
                 requested = state.schedule.step(dt: fixedTimestep, rate: emitter.rate, bursts: emitter.bursts, emitting: emitter.isEmitting)
             }
             // More than the ring holds: the first ones would be overwritten at once; skip them.
-            let count = min(requested, state.capacity)
-            let firstIndex = before + UInt64(requested - count)
-            state.steps.append(Step(firstSlot: state.cursor, count: count, firstIndex: UInt32(truncatingIfNeeded: firstIndex), time: time))
+            var count = min(requested, state.capacity)
+            var firstIndex = before + UInt64(requested - count)
+            var scheduled: Int?, firstOffset = 0
+            if let cpu = state.cpu, cpu.stride > 1 {
+                // Every stride-th spawn index (a power of two, so the 32-bit indices keep the pattern).
+                let stride = UInt64(cpu.stride), end = before + UInt64(requested)
+                var first = (before + stride - 1) / stride * stride
+                var kept = first < end ? Int((end - 1 - first) / stride) + 1 : 0
+                if kept > state.capacity {
+                    first += UInt64(kept - state.capacity) * stride
+                    kept = state.capacity
+                }
+                count = kept
+                firstIndex = first
+                scheduled = requested
+                firstOffset = Int(first - before)
+            }
+            state.steps.append(Step(firstSlot: state.cursor, count: count, firstIndex: UInt32(truncatingIfNeeded: firstIndex), time: time,
+                                    scheduled: scheduled, firstOffset: firstOffset))
             state.cursor = (state.cursor + count) % state.capacity
             stats.spawned += count
         }
@@ -363,6 +437,10 @@ public final class ParticleSystem {
     public func simulate(frame: Frame) {
         guard !order.isEmpty else { return }
         frameCount += 1
+        if simulatesOnCPU {
+            simulateOnCPU(frame: frame)
+            return
+        }
         frame.computePass(label: "particles") { pass in
             for entity in order {
                 let state = emitters[entity]!
@@ -389,8 +467,52 @@ public final class ParticleSystem {
         }
     }
 
+    /// `simulate` without compute: the steps (with their sub-emitters) on the CPU, then each
+    /// emitter's draw list and instance data.
+    private func simulateOnCPU(frame: Frame) {
+        let start = ContinuousClock.now
+        func step(_ state: EmitterState, _ step: Step) {
+            state.cpu?.step(simulationUniforms(state, step: step, depth: nil), scheduled: step.scheduled, firstOffset: step.firstOffset,
+                            recordEvents: !state.links.isEmpty)
+        }
+        for entity in order {
+            let state = emitters[entity]!
+            guard !state.driven, let parent = state.cpu else { continue }
+            for (i, s) in state.steps.enumerated() {
+                step(state, s)
+                for link in state.links {
+                    guard let child = emitters[link.child], let target = child.cpu, i < child.steps.count else { continue }
+                    let mask: UInt8 = switch link.sub.trigger {
+                    case .death: 1
+                    case .collision: 2
+                    case .birth: 4
+                    }
+                    var uniforms = simulationUniforms(child, step: nil, depth: nil)
+                    uniforms.transform.c3 = Vec4(0, 0, 0, 1)  // centered on each event
+                    target.spawnFromEvents(parent.events(mask: mask, maxEvents: link.maxEvents),
+                                           perEvent: min(max(link.sub.count, 1), ParticleEmitter.maxSubEmitterCount),
+                                           inheritVelocity: link.sub.inheritVelocity, uniforms: uniforms)
+                    step(child, child.steps[i])
+                }
+            }
+        }
+        var alive = 0
+        for entity in order {
+            let state = emitters[entity]!
+            guard let cpu = state.cpu else { continue }
+            cpu.buildDrawList(sortedFrom: state.emitter.blend == .alpha ? cameraPosition : nil)
+            state.alive = cpu.alive
+            alive += cpu.alive
+            state.instanceCount = cpu.drawList.count
+            state.instances = state.instanceCount > 0 ? frame.upload(cpu.drawRecords()) : nil
+        }
+        stats.aliveParticles = alive
+        let elapsed = ContinuousClock.now - start
+        stats.cpuMilliseconds = Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15
+    }
+
     private func simulateStep(_ state: EmitterState, step: Step, in pass: ComputePass) {
-        pass.setPipeline(simulatePipeline)
+        pass.setPipeline(gpu.simulate)
         pass.setStorageBuffer(state.particles, index: 0)
         pass.setStorageBuffer(state.state, index: 1)
         if !state.links.isEmpty, state.eventFlags == nil {
@@ -400,7 +522,7 @@ public final class ParticleSystem {
                 EngineLog.warning("sub-emitter events unavailable: \(error)", category: .particles)
             }
         }
-        pass.setStorageBuffer(state.eventFlags ?? placeholderBuffer, index: 3)
+        pass.setStorageBuffer(state.eventFlags ?? placeholderBuffer!, index: 3)
         let depth = state.emitter.collidesWithDepth ? sceneDepth : nil
         pass.setTexture(depth?.texture ?? whiteTexture, index: 1)
         pass.setSampler(sampler, index: 1)
@@ -430,7 +552,7 @@ public final class ParticleSystem {
         case .birth: (4, 3)
         }
         let countsOffset = 4 + parent.groups * counts
-        pass.setPipeline(eventsPipeline)
+        pass.setPipeline(gpu.events)
         pass.setStorageBuffer(parent.particles, index: 0)
         pass.setStorageBuffer(parent.state, index: 1)
         pass.setStorageBuffer(flags, index: 3)
@@ -441,7 +563,7 @@ public final class ParticleSystem {
             child: SIMD4(UInt32(link.maxEvents), UInt32(perEvent), UInt32(child.capacity), 0)))
         pass.dispatch(groups: ComputeSize(parent.groups))
 
-        pass.setPipeline(spawnPipeline)
+        pass.setPipeline(gpu.spawn)
         pass.setStorageBuffer(child.particles, index: 0)
         var uniforms = simulationUniforms(child, step: nil, depth: nil)
         uniforms.transform.c3 = Vec4(0, 0, 0, 1)  // centered on each event
@@ -454,7 +576,7 @@ public final class ParticleSystem {
     /// 2048-element block sorts, then per wider merge stage its global steps and a block merge,
     /// and the sorted draw list, every pass after the first dispatched indirectly.
     private func buildDrawList(_ state: EmitterState, in pass: ComputePass) {
-        pass.setPipeline(compactPipeline)
+        pass.setPipeline(gpu.compact)
         pass.setStorageBuffer(state.particles, index: 0)
         pass.setStorageBuffer(state.state, index: 1)
         pass.setStorageBuffer(state.drawList, index: 2)
@@ -465,29 +587,29 @@ public final class ParticleSystem {
         func entry(_ e: Int) -> Int { 16 + 12 * e }
         pass.setStorageBuffer(args, index: 6)
         pass.setStorageBuffer(keys, index: 7)
-        pass.setPipeline(sortArgsPipeline)
+        pass.setPipeline(gpu.sortArgs)
         pass.setPushConstants(SIMD4<UInt32>(UInt32(state.sortCapacity), UInt32(stages), 0, 0))
         pass.dispatch(groups: ComputeSize(1))
-        pass.setPipeline(sortKeysPipeline)
+        pass.setPipeline(gpu.sortKeys)
         pass.setUniformData(Vec4(cameraPosition, 0), index: 2)
         pass.dispatchIndirect(buffer: args, offset: entry(0))
-        pass.setPipeline(sortLocalPipeline)
+        pass.setPipeline(gpu.sortLocal)
         pass.setPushConstants(SIMD4<UInt32>(0, 0, 0, 0))
         pass.dispatchIndirect(buffer: args, offset: entry(1))
         for stage in 0..<stages {
             let k = 4096 << stage
-            pass.setPipeline(sortGlobalPipeline)
+            pass.setPipeline(gpu.sortGlobal)
             var j = k / 2
             while j >= 2048 {
                 pass.setPushConstants(SIMD4<UInt32>(UInt32(k), UInt32(j), 0, 0))
                 pass.dispatchIndirect(buffer: args, offset: entry(2 + 2 * stage))
                 j /= 2
             }
-            pass.setPipeline(sortLocalPipeline)
+            pass.setPipeline(gpu.sortLocal)
             pass.setPushConstants(SIMD4<UInt32>(UInt32(k), 0, 0, 0))
             pass.dispatchIndirect(buffer: args, offset: entry(3 + 2 * stage))
         }
-        pass.setPipeline(sortWritePipeline)
+        pass.setPipeline(gpu.sortWrite)
         pass.dispatchIndirect(buffer: args, offset: entry(2 + 2 * stages))
     }
 
@@ -498,22 +620,36 @@ public final class ParticleSystem {
     /// buffers, environment atlas and shadow atlas (see particle_lighting.glsl).
     public func draw(in pass: RenderPass, viewProjection: Mat4, cameraPosition: Vec3, reversedZ: Bool,
                      sceneDepth: ParticleSceneDepth? = nil) {
+        if simulatesOnCPU && device.supportsStorageBuffers {
+            // The instanced vertex stage is GLSL ES only (WebGL 2); elsewhere CPU particles aren't drawn.
+            warnOnce("draw", "particles simulated on the CPU are drawn only on WebGL 2")
+            return
+        }
         for entity in order {
             guard let state = emitters[entity],
                   let pipeline = pipeline(PipelineKey(blend: state.emitter.blend, reversedZ: reversedZ, lit: state.emitter.lit)) else {
                 continue
             }
+            if state.cpu != nil && state.instances == nil { continue }
             let texture = state.emitter.texture.flatMap { textureResolver?($0) }
             let depth = state.emitter.softness > 0 ? sceneDepth : nil
             pass.setPipeline(pipeline)
-            pass.setUniformData(drawUniforms(state.emitter, viewProjection: viewProjection, cameraPosition: cameraPosition,
-                                             textured: texture != nil, depth: depth), index: 2, stage: .all)
-            pass.setStorageBuffer(state.particles, index: 0)
-            pass.setStorageBuffer(state.drawList, index: 1)
+            var uniforms = drawUniforms(state.emitter, viewProjection: viewProjection, cameraPosition: cameraPosition,
+                                        textured: texture != nil, depth: depth)
+            // A strided CPU emitter's particles each stand for `stride` of them.
+            if let cpu = state.cpu, cpu.stride > 1, state.emitter.blend == .additive { uniforms.params.y *= Float(cpu.stride) }
+            pass.setUniformData(uniforms, index: 2, stage: .all)
             pass.setTexture(texture ?? whiteTexture, index: 1)
             pass.setTexture(depth?.texture ?? whiteTexture, index: 2)
             pass.setSampler(sampler, index: 1, stage: .all)
-            pass.drawIndirect(state.state, offset: 0)
+            if let instances = state.instances {
+                pass.setVertexBuffer(instances, index: 1)
+                pass.draw(vertexCount: 6, instanceCount: state.instanceCount)
+            } else {
+                pass.setStorageBuffer(state.particles, index: 0)
+                pass.setStorageBuffer(state.drawList, index: 1)
+                pass.drawIndirect(state.state, offset: 0)
+            }
         }
     }
 
@@ -521,7 +657,8 @@ public final class ParticleSystem {
         if let pipeline = pipelines[key] { return pipeline }
         do {
             if key.lit && litShader == nil { litShader = try ShaderSource.load(vertex: "particle_lit", fragment: "particle", bundle: .engineResources) }
-            var descriptor = PipelineDescriptor(shader: key.lit ? litShader! : shader, vertexLayout: .none)
+            var descriptor = PipelineDescriptor(shader: key.lit ? litShader! : shader, vertexLayout: .none,
+                                                instanceLayout: simulatesOnCPU ? ParticleRecord.layout : nil)
             descriptor.cullMode = .none
             descriptor.depthWrite = false
             descriptor.depthCompare = key.reversedZ ? .greater : .less

@@ -1,7 +1,7 @@
 // Generated from probe_debug.frag by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc, spirv-cross, spirv-opt and naga-cli).
 // spirv-fnv1a64: 224e407e02a0917a
-// glsl-fnv1a64: 03a6f22025cdef19
+// glsl-fnv1a64: e93fe8d06869caa2
 
 diagnostic(off, derivative_uniformity);
 

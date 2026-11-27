@@ -32,7 +32,9 @@
 // Perspective-correct interpolation of both gives the screen-linear v.
 //
 // A uniform block at set 2, binding 24 + n (where storage buffer n is on the other backends) is
-// allowed: the material graph templates' GLSL ES variant reads the graph's values from one.
+// allowed: the material graph templates' GLSL ES variant reads the graph's values from one. So is
+// a texture there: the probe-lit shaders' variant reads storage buffer 1 as an RGBA32UI texture
+// (the WebGL 2 device copies the buffer into one).
 //
 //   spirv-to-gles <in.spv> <out.gles> <GLSL source path> [<SPIR-V whose hash the header records>]
 #include <spirv_cross_c.h>
@@ -86,9 +88,9 @@ static unsigned decoration(spvc_compiler compiler, SpvId id, SpvDecoration which
 
 // The binding-table check of spirv-to-msl.c: uniform buffers, textures and samplers the WebGL 2
 // device can bind.
-static int known(unsigned set, unsigned binding, int uniformBuffer) {
+static int known(unsigned set, unsigned binding, int storageSlot) {
     return (set == 0 && binding == 0) || (set == 1 && binding <= 1) || (set == 2 && binding >= 2 && binding <= 23)
-        || (uniformBuffer && set == 2 && binding >= 24 && binding <= 31);
+        || (storageSlot && set == 2 && binding >= 24 && binding <= 31);
 }
 
 // A growable string.
@@ -271,7 +273,7 @@ int main(int argc, char **argv) {
         for (size_t i = 0; i < count; i++) {
             unsigned set = decoration(compiler, list[i].id, SpvDecorationDescriptorSet);
             unsigned binding = decoration(compiler, list[i].id, SpvDecorationBinding);
-            if (!known(set, binding, kinds[k].type == SPVC_RESOURCE_TYPE_UNIFORM_BUFFER)) {
+            if (!known(set, binding, kinds[k].type == SPVC_RESOURCE_TYPE_UNIFORM_BUFFER || kinds[k].type == SPVC_RESOURCE_TYPE_SEPARATE_IMAGE)) {
                 fprintf(stderr, "spirv-to-gles: %s: %s '%s' at set %u, binding %u is not in the binding table (see ShaderSource)\n",
                         argv[1], kinds[k].name, list[i].name, set, binding);
                 return 1;
