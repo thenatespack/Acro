@@ -95,6 +95,16 @@ public struct Material {
     /// Draws fur on the mesh of an entity's `GroomRenderer` (see Groom.swift); nil for every other
     /// material. Fur materials draw only through `GroomRenderer`s (mesh_fur shaders).
     public var fur: MaterialFur?
+    /// Skin and eye shading (MaterialSkin.swift; any of these draws with the skin shader variant,
+    /// PBR only, not graphs or fur). nil (the default) for all four draws as before.
+    /// Subsurface scattering and transmission (the screen-space pass, or pre-integrated).
+    public var subsurface: MaterialSubsurface?
+    /// Two specular lobes.
+    public var specularLobes: MaterialSpecularLobes?
+    /// Procedural pores / fine creases.
+    public var detailNormal: MaterialDetailNormal?
+    /// A procedural eyeball (needs `MeshGeometry.eyeball`'s UVs).
+    public var eye: MaterialEye?
 
     public init(shading: ShadingModel = .pbr, baseColor: Vec4 = Vec4(0.8, 0.8, 0.8, 1), texture: GPUTexture? = nil,
                 sampler: SamplerDescriptor = SamplerDescriptor(minFilter: .linear, magFilter: .linear, mipFilter: .linear, addressMode: .repeat),

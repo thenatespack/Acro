@@ -37,6 +37,10 @@
 // Shadows (shadows.glsl): the directional light's cascades and a few point / spot lights'
 // maps, all in one shadow atlas.
 //
+// Skin and eyes (SKIN_SHADING, defined by mesh_skin(_probes).frag; see skin.glsl): the PBR branch
+// calls skinShade / eyeShade instead, and a pixel the screen-space subsurface pass scatters
+// writes -(1 + its specular luminance) to alpha. Every other variant compiles exactly as before.
+//
 // Material graphs (MATERIAL_GRAPH, defined by mesh_graph.frag; see MaterialGraphCompiler.swift):
 // graphSurface() computes the PBR inputs from the g* globals instead of the material's fixed
 // textures. The body here is a placeholder: the engine replaces it, in this shader's SPIR-V and
@@ -401,6 +405,10 @@ vec3 planarReflected(vec3 fallback, vec3 n, vec3 ng, float roughness) {
     return mix(fallback, planar, weight);
 }
 
+#ifdef SKIN_SHADING
+#include "skin.glsl"
+#endif
+
 void main() {
 #ifdef PROBE_DEBUG
     // vColor: x 0 a reflection probe (y: its record), 1 an irradiance probe (y: its first SH
@@ -525,6 +533,9 @@ void main() {
     if (vertexAO > 0.0) ao *= min(vertexAO, 1.0);
 
     vec3 color;
+#ifdef SKIN_SHADING
+    vec3 skinSpecularLight = vec3(0.0);
+#endif
     if (!pbr) {
         float ndotl = dot(n, l);
         vec3 diffuse = max(ndotl, 0.0) * light;
@@ -570,6 +581,13 @@ void main() {
             roughness = mix(roughness, max(edgeSurface.x, 0.045), edgeWear);
         }
 #endif
+#ifdef SKIN_SHADING
+        if (skinPush.scatter.z > 0.5) {
+            color = eyeShade(albedo, v, l, light, shadow, ao, skinSpecularLight);
+        } else {
+            color = skinShade(albedo, n, v, l, ng, light, shadow, ao, roughness, metallic, receivesShadows, skinSpecularLight);
+        }
+#else
         float a = roughness * roughness;
         vec3 diffuseColor = albedo * (1.0 - metallic);
         vec3 f0 = mix(vec3(0.04), albedo, metallic);
@@ -650,6 +668,7 @@ void main() {
                 color += ((vec3(1.0) - pF) * diffuseColor + pSpecular) * pNoL * radiance;
             }
         }
+#endif
     }
     color = mix(color, albedo, material.params.y);
     // vParams.yzw: the MeshRenderer's emissive tint x strength, minus one (so zero, a default
@@ -688,6 +707,14 @@ void main() {
 #endif
     // The reflection pass stores c / (1 + c): its 8-bit target can't hold HDR values.
     if (frame.reflectionExtra.w > 0.5) rgb /= 1.0 + rgb;
+#ifdef SKIN_SHADING
+    // The screen-space subsurface pass (subsurface_blur.frag) scatters this pixel: alpha carries
+    // the (fogged) specular luminance, so it can take the diffuse light apart. Opaque only.
+    if (skinPush.scatter.w > 0.5 && frame.reflectionExtra.w < 0.5) {
+        float specularLuminance = dot(skinSpecularLight * (1.0 - fog), vec3(0.2126, 0.7152, 0.0722));
+        opacity = -1.0 - max(specularLuminance, 0.0);
+    }
+#endif
     outColor = vec4(rgb, opacity);
     outMotion = motionVector(vCurrentClip, vPreviousClip);
 }

@@ -293,6 +293,8 @@ public final class SceneRenderer {
     /// Volumetric fog's per-frame setup and GPU objects (see `SceneRenderer+Volumetric.swift`).
     let volumetric = VolumetricFogState()
     let depthOfField = DepthOfFieldState()
+    /// Screen-space subsurface scattering of skin materials (see `SceneRenderer+Subsurface.swift`).
+    let subsurface = SubsurfaceState()
     /// The camera depth prepass's pipelines (`DepthVariant.prepass`), created on first use.
     private var prepassPipelines: [PrepassKey: RenderPipeline] = [:]
     /// Masked material graphs' depth-only pipelines (mesh_graph_depth), created on first use.
@@ -416,12 +418,16 @@ public final class SceneRenderer {
         /// The light probe fragment variants (mesh*_probes.frag), while the frame has probes. Never
         /// with `graph` or `fur`.
         var probes: Bool = false
+        /// Skin and eye shading (mesh_skin(_probes).frag; `Material.usesSkinShading`). Never with
+        /// `graph`, `fur`, `painted` or `wind`.
+        var skin: Bool = false
     }
 
     /// The pipeline variant a batch of `material` draws with, in the transparent pass when `blending`.
     static func pipelineKey(for material: Material, blending: Bool, reversedZ: Bool) -> PipelineKey {
         PipelineKey(blending: blending, doubleSided: material.doubleSided, reversedZ: reversedZ, alphaTested: material.alphaTested,
-                    graph: material.graph?.key, wind: material.sways, fur: material.fur?.groom.drawnStyle)
+                    graph: material.graph?.key, wind: material.sways && !material.usesSkinShading,
+                    fur: material.fur?.groom.drawnStyle, skin: material.usesSkinShading)
     }
 
     /// Also draws `engine.debugDraw` in the screen pass.
@@ -627,6 +633,7 @@ public final class SceneRenderer {
         engine.postProcess = PostProcessSettings.find(in: world)
         volumetric.setup = nil
         depthOfField.setup = nil
+        subsurface.setup = nil
         engine.postProcessor?.sceneDepth = nil
 
         guard let (_, camera, cameraWorld) = RenderPrep.findCamera(in: world, preferred: self.camera) else {
@@ -687,6 +694,8 @@ public final class SceneRenderer {
                             eye: eye, reversedZ: camera.reversedZ, size: size)
         prepareReflection(view: view, projection: camera.projection(aspect: engine.aspectRatio), reversedZ: camera.reversedZ, eye: eye,
                           size: size, clearColor: camera.clearColor)
+        prepareSubsurface(engine: engine, projection: jitteredProjection, viewProjection: jittered, eye: eye,
+                          reversedZ: camera.reversedZ, size: size)
     }
 
     /// Sets up the sky and image-based lighting of `environment` for this frame.
@@ -804,6 +813,7 @@ public final class SceneRenderer {
         renderParticleDepth(frame: frame)
         renderVolumetricDepth(frame: frame)
         renderDepthOfFieldDepth(frame: frame)
+        renderSubsurfaceDepth(frame: frame)
         particles?.simulate(frame: frame)
     }
 
@@ -848,6 +858,9 @@ public final class SceneRenderer {
     /// back to front, then `debugDraw`.
     public func draw(_ pass: RenderPass) {
         guard let uniforms else { return }
+        // Only this view's skin pixels go through the subsurface pass (when it runs this frame).
+        subsurface.encodes = subsurface.setup != nil
+        defer { subsurface.encodes = false }
         draw(pass, list: list, uniforms: uniforms, instances: uploaded, reversedZ: reversedZ, lights: clusters.isEmpty ? nil : lightData,
              sky: skyView, particleDepth: particleDepth, reflection: reflections.mainTexture)
         if let debugDraw, let debugView { drawDebug(debugDraw, in: pass, view: debugView) }
@@ -1091,12 +1104,16 @@ public final class SceneRenderer {
     /// `viewProjection`, into `target`'s depth (cleared to the far plane): what particles fade
     /// against (`softness`) and collide with (`collidesWithDepth`). Transparent batches don't
     /// occlude and aren't drawn.
+    /// `only` keeps just the batches whose material it accepts (the subsurface pass's skin-only prepass).
     func renderDepthPrepass(into target: GPUTexture, list: RenderList, instances: TransientBuffer?, viewProjection: Mat4,
-                            eye: Vec3, reversedZ: Bool, frame: Frame) {
+                            eye: Vec3, reversedZ: Bool, frame: Frame, only: ((Material) -> Bool)? = nil) {
         let variant = DepthVariant.prepass(reversedZ: reversedZ)
         // Depth-only batches have no material, alpha-tested ones keep theirs (as for shadows).
         // Fur is left out: its shells would occlude as solid layers.
-        let batches = list.opaque.filter { materials[$0.material].material.fur == nil }.map { batch -> RenderBatch in
+        let batches = list.opaque.filter {
+            let material = materials[$0.material].material
+            return material.fur == nil && (only?(material) ?? true)
+        }.map { batch -> RenderBatch in
             var batch = batch
             let material = materials[batch.material].material
             if !material.masksDepth && !material.sways { batch.material = -1 }
@@ -1229,7 +1246,7 @@ public final class SceneRenderer {
             for batch in batches {
                 var key = Self.pipelineKey(for: materials[batch.material].material, blending: blending, reversedZ: reversedZ)
                 key.skinned = batch.skin >= 0
-                key.painted = !key.skinned && key.graph == nil && !paintUnavailable && meshes[batch.mesh].paintBuffer != nil
+                key.painted = !key.skinned && key.graph == nil && !key.skin && !paintUnavailable && meshes[batch.mesh].paintBuffer != nil
                 key.probes = uniforms.probes != .zero && key.graph == nil && key.fur == nil
                 if current?.pipeline != key {
                     var made = pipeline(key)
@@ -1244,6 +1261,11 @@ public final class SceneRenderer {
                 }
                 if current?.material != batch.material || batch.skin >= 0 || (current?.skin ?? -1) >= 0 {
                     bindMaterial(batch.material, in: pass, skin: batch.skin, reflection: reflection)
+                }
+                if key.skin && (current?.pipeline != key || current?.material != batch.material) {
+                    // Opaque skin in the main view marks its pixels for the subsurface pass.
+                    pass.setPushConstants(SkinPushConstants(materials[batch.material].material, mode: subsurface.mode(for: device, quality: quality),
+                                                            screenPass: subsurface.encodes && !blending))
                 }
                 current = (key, batch.material, batch.skin)
                 draw(pass, batch, instances: uploaded)
@@ -1307,7 +1329,10 @@ public final class SceneRenderer {
             guard let furShader = furShader(skinned: key.skinned) else { return nil }
             shader = furShader
         }
-        if key.probes {
+        if key.skin {
+            guard let skinShader = skinShader(skinned: key.skinned, probes: key.probes) else { return nil }
+            shader = skinShader
+        } else if key.probes {
             guard let probeFragment = probeFragmentShader(painted: key.painted, alphaTested: key.alphaTested) else { return nil }
             shader.metalFragmentSource = probeFragment.metalFragmentSource
             shader.metalFragmentColor0Source = probeFragment.metalFragmentColor0Source

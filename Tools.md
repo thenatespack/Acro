@@ -1017,6 +1017,70 @@ cooker ships every file in Library/Lighting, stale ones too); the editor bakes t
 test needs mesh triangles on the CPU (skinned meshes are ignored); volumes clamp counts to 64 per
 axis; the editor's View menu entries weren't clicked in the running editor (tests drive the commands).
 
+### Skin and eyes (roadmap 13A, `subsurface` / `specularLobes` / `detailNormal` / `eye` materials)
+
+Optional blocks on `Material` and `MaterialAsset` (MaterialSkin.swift), so they are in `.material`
+files, `material.set` / `material.get` and the Inspector's material form; nil (the default) changes
+nothing. A PBR, non-graph, non-fur material with any of them draws with `mesh_skin(_probes).frag`
+(`#define SKIN_SHADING` around mesh_surface.glsl + skin.glsl), so every other material keeps its
+exact compiled shader (the `character` scene is pixel-identical before / after on Metal and
+Vulkan). Per-material values reach the shader as push constants (`SkinPushConstants`, 112 bytes),
+so the skinned uniform block layout is unchanged.
+
+- **Subsurface** (`MaterialSubsurface`: `strength` 0...2, `radius` m, `falloff` rgb, `transmission`
+  0...1). Separable SSS (Jimenez et al., "Separable Subsurface Scattering", CGF 2015): the
+  reference kernel (`SubsurfaceKernel`, d'Eon's profile, 11 taps, 17 on ultra) applied as two 1D
+  passes on the resolved HDR scene (`subsurface_blur.frag`, SceneRenderer+Subsurface.swift, run
+  through `PostProcessor.sceneEffect` before volumetric fog, depth of field and bloom), stretched to
+  `radius` at each pixel's view distance, follow-surface by depth. How it fits forward + 4x MSAA
+  without a second target: skin pixels write `-(1 + specular luminance)` to alpha; the resolve
+  averages it, the pass takes diffuse = rgb − s (skin specular is near white), blurs only that and
+  adds s back. Depth: the particles' / fog's / DOF prepass when there is one, else a prepass of
+  just the skin batches. One kernel per frame (the first visible subsurface material's).
+  Transmission (Jimenez et al. 2010): thickness from comparison lookups at points stepped toward
+  the light from inside the surface (2 / 5 / 10 / 20 mm) through d'Eon's transmittance profile;
+  one lookup when thicker than the last step; lights without shadows guess thickness from curvature.
+- **Pre-integrated fallback** (Penner, GPU Pro 2): WebGL 2, `RenderQuality.low`, views drawn with
+  `renderView` (editor viewports) and `ENGINE_SSS=preintegrated`. Clamped cosine convolved with the
+  profile around a ring of the surface's curvature (from `fwidth` of the normal), closed-form
+  5-point Gauss-Hermite (no LUT texture, no new binding), per-channel normal bending.
+  `ENGINE_SSS=off` = no scattering or transmission (the "before" look).
+- **Dual-lobe specular** (`MaterialSpecularLobes`: roughness x 0.75 and x 1.3, second lobe 15%),
+  skin F0 0.028. **Detail normal** (`MaterialDetailNormal`: `strength`, `scale` pores per meter):
+  analytic value-noise gradient in object space → surface gradient (Mikkelsen 2010), faded by pixel
+  footprint.
+- **Eye** (`MaterialEye`; Jimenez, "Next-Generation Character Rendering", GDC 2013): one material
+  for the whole eyeball. Needs `MeshGeometry.eyeball`'s layout: front half uv = 0.5 + 0.5·(x, y)/r
+  along the gaze (+Z gaze, +Y up), back half outside that disc, every tangent = the eye's +X axis,
+  cornea bulge 0.08 r over the iris. View ray refracted at the cornea (IOR 1.336) to the iris plane;
+  procedural iris (fibers, crypts, collarette, pupil, limbal ring), veined blue-grey sclera with
+  wrap lighting, wet GGX highlight (roughness 0.07) plus environment reflection, occlusion toward
+  the corners and under the upper lid. Never marked for the screen pass.
+- **Presets / names for characters:** `MaterialAsset.skin(_ tone: SkinTone)` (`pale`, `light`,
+  `medium`, `tan`, `brown`, `deep`) for exposed skin (the material/region named `skin`);
+  `MaterialAsset.eye(iris:)` (`MaterialEye.blue`, `.green`, `.hazel`, `.brown`, `.grey`) for the
+  eyeballs (one material `eye` per eyeball, no separate sclera / iris / cornea meshes). Eyeballs:
+  `MeshGeometry.eyeball(radius:)`, one entity per eye parented to the head bone with +Z along the
+  gaze; if merged into a skinned body mesh, transform the tangents with the positions and don't
+  regenerate them. `Material.skin` / `.eye` give the same as `Material`s.
+- **Demo:** `--scene skin` (bust with ears and eyes, skin-tone row, 5x eyeball), `SKIN_VIEW=face|ear|eye|tones`,
+  `ENGINE_SSS=off|preintegrated`, `SKIN_TRANSMISSION=0...1`.
+- **Perf** (Apple M5, 2560x1440 native, 4x MSAA, `ENGINE_VSYNC=0`, frame 200; per pass): bust at
+  normal framing 0.9 ms x 2, face filling the screen 1.5-1.9 ms x 2, eye close-up 0.3-0.45 ms x 2;
+  skin-only depth prepass ~0.05 ms; transmission ~0.7 ms of the scene pass in the full-face view;
+  pre-integrated ~1.7 ms more scene time than off in that view. Frames without subsurface
+  materials record no extra pass. Cost scales with skin pixels (taps x 2 loads each).
+- **Web:** every new shader compiles to WGSL and GLSL ES. WebGPU runs the screen pass like native
+  (not run in a browser in this change); WebGL 2 takes the pre-integrated path by default.
+- **Gaps:** one diffusion profile per frame (first visible material); skin under glass or additive
+  particles in front of skin get blurred with it (alpha marker); the specular split assumes
+  near-white specular (colored lights shift highlights slightly); no stencil / compute
+  optimization (a half-res or tile-classified pass would cut the full-screen cost); vertex paint,
+  wind and alpha mask are ignored on skin materials; detail normal uses object space (scaled
+  meshes scale the pores); eye lid occlusion is a fixed pattern in eye space, not real lids;
+  WebGPU/WebGL 2 not checked in a browser; the material form shows the new blocks through the
+  generic reflected-field UI (no dedicated widgets).
+
 ## Follow-ups
 
 Connections between builders: all of the 0.15.0 list is done in 0.16.0 (`.sprite` tile sets,
