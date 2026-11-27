@@ -65,11 +65,19 @@ final class FurScene: DemoScene {
         try sceneRenderer.registerMaterial(Material(baseColor: Vec4(0.42, 0.4, 0.37, 1), roughness: 0.9), key: "fur.rock")
         try sceneRenderer.registerMaterial(Material(baseColor: Vec4(0.25, 0.15, 0.08, 1), roughness: 0.8), key: "fur.scalp")
         _ = try sceneRenderer.registerMesh(Self.rockMesh(), key: "fur.rock")
-        _ = try sceneRenderer.registerMesh(Self.scalpMesh(), key: "fur.scalp")
+        // The realistic humanoid's scalp: its head skin above the hairline (CharacterHumanBody.swift).
+        let humanoid = CharacterRig(template: .humanoid)
+        let scalpMesh = humanoid.humanScalp ?? Self.scalpMesh()
+        if env["FUR_TIMING"] == "1" {
+            let parts = humanoid.bodyParts()
+            print(String(format: "Fur: human body built in %.0f ms: %@", humanoid.humanBuildSeconds * 1000,
+                         parts.map { "\($0.name) \($0.geometry.indices.count / 3)" }.joined(separator: ", ")))
+        }
+        _ = try sceneRenderer.registerMesh(scalpMesh, key: "fur.scalp")
         if env["FUR_TIMING"] == "1" {
             let start = Date()
             let fur = MaterialFur(groom: hair)
-            let guides = GroomGeometry.guides(Self.scalpMesh(), fur: fur).guides
+            let guides = GroomGeometry.guides(scalpMesh, fur: fur).guides
             let grown = Date()
             let triangles = hair.cardLevels.reduce(0) { $0 + (GroomGeometry.cards(guides: guides, fur: fur, fraction: $1, skinned: false)?.indices.count ?? 0) / 3 }
             print(String(format: "Fur: hair guides %.1f ms (%d guides), cards %.1f ms (%d triangles over %d levels)",
@@ -95,12 +103,13 @@ final class FurScene: DemoScene {
         spawnCharacter(quadruped, prefix: "fur.quadruped", at: Vec3(-1.25, 0, 0), yaw: 0.9, clip: walk,
                        grooms: off ? [:] : [.body: GroomRenderer.material(ofGroom: shaggyID), .legs: GroomRenderer.material(ofGroom: shaggyID)])
 
-        // The humanoid with card hair on a scalp riding its head.
-        let humanoid = CharacterRig(template: .humanoid)
-        let idle = CharacterClips.clip("idle", rig: humanoid).map { library.register($0, key: "fur.idle") }
+        // The humanoid with card hair on a scalp riding its head (`FUR_HUMAN_CLIP=walk` plays another stock clip).
+        let clipName = env["FUR_HUMAN_CLIP"] ?? "idle"
+        let idle = CharacterClips.clip(clipName, rig: humanoid).map { library.register($0, key: "fur.humanoid.\(clipName)") }
         let bones = spawnCharacter(humanoid, prefix: "fur.humanoid", at: Vec3(0.35, 0, -0.2), yaw: -0.25, clip: idle, grooms: [:])
         if let head = humanoid.index(of: "head") {
-            let scalp = world.spawn(Transform(position: Vec3(0, 0.12, 0.01)), Name("Scalp"),
+            // The scalp mesh is in the head bone's space (the old ball head's sat 0.12 above it).
+            let scalp = world.spawn(Transform(position: humanoid.humanScalp == nil ? Vec3(0, 0.12, 0.01) : .zero), Name("Scalp"),
                                     MeshRenderer(mesh: MeshHandle("fur.scalp"), material: MaterialHandle("fur.scalp")))
             if !off { world.add(GroomRenderer(groom: GroomRenderer.material(ofGroom: hairID)), to: scalp) }
             world.setParent(scalp, to: bones[head])
@@ -130,15 +139,14 @@ final class FurScene: DemoScene {
             world.setParent(e, to: bone.parent.map { bones[$0] } ?? root)
             bones.append(e)
         }
-        for (region, geometry) in rig.bodyMeshes(segments: 16, smooth: true) {
-            let key = "\(prefix).\(region.rawValue)"
-            _ = try? sceneRenderer.registerMesh(geometry, key: key)
-            let c = MeshBuildColor.linear(fromSRGB: rig.template.defaultColor(region))
-            _ = try? sceneRenderer.registerMaterial(Material(baseColor: Vec4(c.x, c.y, c.z, 1), roughness: region == .eyes ? 0.2 : 0.75), key: key)
-            let body = world.spawn(Transform(), Name("Body \(region.rawValue)"),
+        for part in rig.bodyParts(segments: 16, smooth: true) {
+            let key = "\(prefix).\(part.name)"
+            _ = try? sceneRenderer.registerMesh(part.geometry, key: key)
+            _ = try? sceneRenderer.registerMaterial(part.look.runtimeMaterial(region: rig.template.defaultColor(part.region)), key: key)
+            let body = world.spawn(Transform(), Name("Body \(part.name)"),
                                    MeshRenderer(mesh: MeshHandle(key), material: MaterialHandle(key)),
                                    Skin(joints: bones, inverseBindMatrices: rig.inverseBindMatrices))
-            if let groom = grooms[region] { world.add(GroomRenderer(groom: groom), to: body) }
+            if part.name == part.region.rawValue, let groom = grooms[part.region] { world.add(GroomRenderer(groom: groom), to: body) }
             world.setParent(body, to: root)
         }
         if let clip { world.add(Animator(targets: bones, restPose: rig.restPose, clip: clip), to: root) }
@@ -153,6 +161,17 @@ final class FurScene: DemoScene {
         case "hairfront": OrbitView(yaw: -0.25, pitch: 0.08, distance: 0.7, target: Vec3(0.35, 1.5, -0.2))
         case "hairside": OrbitView(yaw: -0.25 + .pi / 2, pitch: 0.08, distance: 0.7, target: Vec3(0.35, 1.5, -0.2))
         case "hairback": OrbitView(yaw: -0.25 + .pi, pitch: 0.25, distance: 0.7, target: Vec3(0.35, 1.5, -0.2))
+        // The humanoid without hair close up (`FUR_OFF=1` hides the hair): face, hands, the whole body.
+        case "face": OrbitView(yaw: -0.25, pitch: 0.02, distance: 0.42, target: Vec3(0.337, 1.635, -0.15))
+        case "face3q": OrbitView(yaw: -0.25 + 0.65, pitch: 0.05, distance: 0.42, target: Vec3(0.337, 1.635, -0.15))
+        case "faceside": OrbitView(yaw: -0.25 + .pi / 2, pitch: 0.02, distance: 0.42, target: Vec3(0.337, 1.635, -0.15))
+        case "eye": OrbitView(yaw: -0.25 + 0.2, pitch: 0.02, distance: 0.16, target: Vec3(0.375, 1.645, -0.128))
+        case "hand": OrbitView(yaw: -0.25 + 1.1, pitch: 0.1, distance: 0.4, target: Vec3(0.57, 0.8, -0.27))
+        case "body": OrbitView(yaw: -0.25, pitch: 0.05, distance: 2.6, target: Vec3(0.35, 0.9, -0.2))
+        case "body3q": OrbitView(yaw: -0.25 + 0.75, pitch: 0.08, distance: 2.6, target: Vec3(0.35, 0.9, -0.2))
+        case "bodyside": OrbitView(yaw: -0.25 + .pi / 2, pitch: 0.05, distance: 2.6, target: Vec3(0.35, 0.9, -0.2))
+        case "bodyback": OrbitView(yaw: -0.25 + .pi, pitch: 0.1, distance: 2.6, target: Vec3(0.35, 0.9, -0.2))
+        case "torso": OrbitView(yaw: -0.25 + 0.5, pitch: 0.1, distance: 1.1, target: Vec3(0.35, 1.3, -0.2))
         case "creature": OrbitView(yaw: 0.3, pitch: 0.2, distance: 1.6, target: Vec3(-1.25, 0.6, 0))
         case "moss": OrbitView(yaw: 0.2, pitch: 0.35, distance: 1.3, target: Vec3(1.45, 0.2, 0.25))
         default: OrbitView(yaw: 0.0, pitch: 0.22, distance: 4.4, target: Vec3(0.25, 0.55, 0))
@@ -170,6 +189,10 @@ final class FurScene: DemoScene {
         switch ProcessInfo.processInfo.environment["FUR_VIEW"] {
         case "hair": 0.75 / 2
         case "hairfront", "hairside", "hairback": 0.7 / 2
+        case "face", "face3q", "faceside": 0.42 / 2
+        case "eye": 0.16 / 2
+        case "hand": 0.4 / 2
+        case "torso": 1.1 / 2
         default: 1
         }
     }()
@@ -244,11 +267,16 @@ final class FurScene: DemoScene {
         return hair
     }
 
-    /// The humanoid's head, neck and shoulders in the scalp's space (the scalp sits 0.12 above the head bone).
+    /// The realistic humanoid's head, face, ears, neck and shoulders in the head bone's space
+    /// (where its scalp is): the cranium just under the scalp, so hair lies on it; the face and ears
+    /// a little out, so falling hair clears them.
     static let hairColliders = [
-        GroomCollider(center: Vec3(0, -0.005, 0.005), radii: Vec3(0.108, 0.13, 0.12)),
-        GroomCollider(center: Vec3(0, -0.12, -0.01), radius: 0.055, end: Vec3(0, -0.3, -0.01)),
-        GroomCollider(center: Vec3(-0.2, -0.33, 0), radius: 0.08, end: Vec3(0.2, -0.33, 0)),
+        GroomCollider(center: Vec3(0, 0.148, -0.018), radii: Vec3(0.075, 0.096, 0.097)),
+        GroomCollider(center: Vec3(0, 0.078, 0.042), radii: Vec3(0.064, 0.078, 0.064)),
+        GroomCollider(center: Vec3(0.079, 0.106, -0.022), radius: 0.02),
+        GroomCollider(center: Vec3(-0.079, 0.106, -0.022), radius: 0.02),
+        GroomCollider(center: Vec3(0, 0.02, -0.025), radius: 0.06, end: Vec3(0, -0.1, -0.02)),
+        GroomCollider(center: Vec3(-0.21, -0.105, -0.01), radius: 0.06, end: Vec3(0.21, -0.105, -0.01)),
     ]
 
     /// The humanoid's scalp: an ellipsoid cap around its head (radii 0.116, 0.136, 0.126, in the
