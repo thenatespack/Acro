@@ -61,15 +61,17 @@ public struct TerrainSplat: Codable, Equatable, Sendable {
     /// The material graph program that draws it (nil when the shader isn't in the engine's resources).
     public func program(metallic: Float, roughness: Float, normalScale: Float) -> MaterialGraphProgram? {
         guard let shaders = Self.shaders else { return nil }
+        let values = values(metallic: metallic, roughness: roughness, normalScale: normalScale)
         var program = MaterialGraphProgram(
             key: "terrain-splat", metalFragment: shaders.metal, metalFragmentColor0: shaders.metalColor0,
-            spirvFragment: shaders.spirv, values: values(metallic: metallic, roughness: roughness, normalScale: normalScale),
-            textures: [], usesTime: false, code: "// terrain_splat.glsl")
+            spirvFragment: shaders.spirv, values: values, textures: [], usesTime: false, code: "// terrain_splat.glsl")
         program.wgslFragment = shaders.wgsl
+        // WebGL 2: the uniform-block variant, its array sized to the values (always 5).
+        program.glesFragment = shaders.gles.flatMap { MaterialGraphCompiler.glesSettingValueCount($0, values.count) }
         return program
     }
 
-    private static let shaders: (metal: String, metalColor0: String?, spirv: [UInt8], wgsl: String?)? = {
+    private static let shaders: (metal: String, metalColor0: String?, spirv: [UInt8], wgsl: String?, gles: String?)? = {
         let bundle = Bundle.engineResources
         func url(_ ext: String) -> URL? { bundle.engineResourceURL("mesh_terrain", withExtension: ext, subdirectory: "Shaders") }
         guard let metalURL = url("frag.metal"), let spirvURL = url("frag.spv"),
@@ -78,7 +80,7 @@ public struct TerrainSplat: Codable, Equatable, Sendable {
             return nil
         }
         func text(_ ext: String) -> String? { url(ext).flatMap { try? String(contentsOf: $0, encoding: .utf8) } }
-        return (metal, text("frag.color0.metal"), Array(spirv), text("frag.wgsl"))
+        return (metal, text("frag.color0.metal"), Array(spirv), text("frag.wgsl"), text("frag.gles"))
     }()
 
     /// Packs `images` (nil: a cell of `colors[i]`, display sRGB 0...1) into an atlas of

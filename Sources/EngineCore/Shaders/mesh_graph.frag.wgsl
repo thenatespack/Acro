@@ -1,7 +1,7 @@
 // Generated from mesh_graph.frag by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc, spirv-cross, spirv-opt and naga-cli).
 // spirv-fnv1a64: 62bc8e7f643170fb
-// glsl-fnv1a64: 1e784319ea196fd3
+// glsl-fnv1a64: c60a0588c23b5f97
 
 diagnostic(off, derivative_uniformity);
 

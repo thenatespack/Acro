@@ -18,6 +18,7 @@ layout(location = 1) in vec4 _33;
 out vec4 acro_v0;
 layout(location = 2) in vec4 _83;
 out vec2 acro_v1;
+out highp float acro_vnpw;
 
 void main()
 {
@@ -107,5 +108,6 @@ void main()
         break;
     } while(false);
     gl_Position.z = 2.0 * gl_Position.z - gl_Position.w;
+    acro_v1 *= gl_Position.w;
+    acro_vnpw = gl_Position.w;
 }
-

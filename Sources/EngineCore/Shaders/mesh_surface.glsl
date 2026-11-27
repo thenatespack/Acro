@@ -148,10 +148,19 @@ layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec2 outMotion;  // see `PipelineDescriptor.writesMotionVectors`
 
 #ifdef MATERIAL_GRAPH
-// The graph's editable values (`MaterialGraphProgram.values`), storage buffer 0.
+// The graph's editable values (`MaterialGraphProgram.values`), storage buffer 0. The GLSL ES
+// (WebGL 2) variant compile-shaders.sh builds with GRAPH_VALUES_UNIFORM=<count> reads them from a
+// std140 uniform block at the same binding instead (WebGL 2 has no storage buffers); the engine
+// sets the array to the program's value count (`MaterialGraphCompiler.glesSettingValueCount`).
+#ifdef GRAPH_VALUES_UNIFORM
+layout(set = 2, binding = 24, std140) uniform MaterialGraphValues {
+    vec4 values[GRAPH_VALUES_UNIFORM];
+} graphValues;
+#else
 layout(set = 2, binding = 24, std430) readonly buffer MaterialGraphValues {
     vec4 values[];
 } graphValues;
+#endif
 // x: time in seconds, y: 1 to discard below the alpha cutoff (AlphaMode.mask), z: the cutoff.
 layout(push_constant) uniform MaterialGraphPush {
     vec4 params;

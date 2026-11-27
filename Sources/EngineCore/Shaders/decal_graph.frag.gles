@@ -1,0 +1,784 @@
+#version 300 es
+// Generated from decal_graph.frag by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 0e14b12390ec91a5
+// glsl-fnv1a64: 8aa7d4326f83b219
+// acro-ubo acro_fs_u0_0 0 0
+// acro-ubo acro_fs_u2_24 2 24
+// acro-ubo acro_fs_u2_2 2 2
+// acro-ubo acro_fs_u2_6 2 6
+// acro-ubo acro_fs_u2_7 2 7
+// acro-ubo acro_fs_u2_3 2 3
+// acro-ubo acro_fs_u2_4 2 4
+// acro-ubo acro_fs_u2_5 2 5
+// acro-ubo acro_fs_push -1 -1
+// acro-sampler acro_t2_15_s2_17 2 15 2 17 0
+// acro-sampler acro_t2_9_s2_17 2 9 2 17 0
+// acro-sampler acro_t2_10_s2_17 2 10 2 17 0
+// acro-sampler acro_t2_11_s2_17 2 11 2 17 0
+// acro-sampler acro_t2_12_s2_17 2 12 2 17 0
+// acro-sampler acro_t2_13_s2_17 2 13 2 17 0
+// acro-sampler acro_t2_14_s2_17 2 14 2 17 0
+// acro-sampler acro_t1_0 1 0 1 0 1
+precision highp float;
+precision highp int;
+
+const vec3 _512[4] = vec3[](vec3(1.0, 0.449999988079071044921875, 0.449999988079071044921875), vec3(0.449999988079071044921875, 1.0, 0.449999988079071044921875), vec3(0.5, 0.60000002384185791015625, 1.0), vec3(1.0, 1.0, 0.4000000059604644775390625));
+const vec3 _816[6] = vec3[](vec3(0.0, 0.0, 1.0), vec3(0.0, 0.0, -1.0), vec3(-1.0, 0.0, 0.0), vec3(-1.0, 0.0, 0.0), vec3(-1.0, 0.0, 0.0), vec3(1.0, 0.0, 0.0));
+const vec3 _825[6] = vec3[](vec3(0.0, 1.0, 0.0), vec3(0.0, 1.0, 0.0), vec3(0.0, 0.0, -1.0), vec3(0.0, 0.0, 1.0), vec3(0.0, 1.0, 0.0), vec3(0.0, 1.0, 0.0));
+const ivec4 _1328[6] = ivec4[](ivec4(0, 0, 512, 256), ivec4(0, 256, 256, 128), ivec4(256, 256, 128, 64), ivec4(384, 256, 64, 32), ivec4(448, 256, 32, 16), ivec4(480, 256, 16, 8));
+
+layout(std140) uniform acro_fs_u0_0
+{
+    mat4 viewProj;
+    mat4 lightViewProj;
+    mat4 currentViewProj;
+    mat4 previousViewProj;
+    vec4 lightDir;
+    vec4 lightColor;
+    vec4 cameraPos;
+    vec4 fogColor;
+    vec4 skyColor;
+    vec4 groundColor;
+    vec4 shadowParams;
+    vec4 viewDepth;
+    vec4 clusterScale;
+    vec4 clusterGrid;
+    mat4 cascadeMatrices[4];
+    mat4 spotShadowMatrices[8];
+    vec4 cascadeSplits;
+    vec4 cascadeBlendStarts;
+    vec4 cascadeNormalOffsets;
+    vec4 cascadeBiases;
+    vec4 shadowDepthRow;
+    vec4 shadowInfo;
+    vec4 shadowAtlas;
+    vec4 shadowTiles;
+    vec4 shadowFaces;
+    vec4 shadowLocal;
+    vec4 spotShadowParams[8];
+    vec4 pointShadowPositions[4];
+    vec4 pointShadowParams[4];
+    vec4 environment;
+} frame;
+
+layout(std140) uniform acro_fs_u2_24
+{
+    vec4 values[1024];
+} graphValues;
+
+layout(std140) uniform acro_fs_u2_2
+{
+    mat4 model;
+    mat4 inverseModel;
+    mat4 inverseViewProj;
+    vec4 color;
+    vec4 params;
+    vec4 axis;
+} decal;
+
+layout(std140) uniform acro_fs_u2_6
+{
+    uvec4 data[1024];
+} lightCells;
+
+layout(std140) uniform acro_fs_u2_7
+{
+    uvec4 data[1024];
+} lightIndices;
+
+layout(std140) uniform acro_fs_u2_3
+{
+    vec4 data[1024];
+} lightPositions;
+
+layout(std140) uniform acro_fs_u2_4
+{
+    vec4 data[1024];
+} lightColors;
+
+layout(std140) uniform acro_fs_u2_5
+{
+    vec4 data[1024];
+} lightDirections;
+
+layout(std140) uniform acro_fs_push
+{
+    vec4 params;
+    vec4 eye;
+} graphPush;
+
+uniform highp sampler2DShadow acro_t1_0;
+uniform highp sampler2D acro_t2_15_s2_17;
+uniform highp sampler2D acro_t2_9_s2_17;
+uniform highp sampler2D acro_t2_10_s2_17;
+uniform highp sampler2D acro_t2_11_s2_17;
+uniform highp sampler2D acro_t2_12_s2_17;
+uniform highp sampler2D acro_t2_13_s2_17;
+uniform highp sampler2D acro_t2_14_s2_17;
+
+layout(location = 0) out vec4 outColor;
+vec2 gUV;
+vec3 gBaseColor;
+vec4 gVertexColor;
+vec3 gPosition;
+vec3 gNormal;
+vec3 gView;
+float gTime;
+float gOpacity;
+vec3 gNormalTS;
+float gMetallic;
+float gRoughness;
+vec3 gEmissive;
+float gOcclusion;
+
+vec3 depthPoint(inout ivec2 t, ivec2 size)
+{
+    t = clamp(t, ivec2(0), size - ivec2(1));
+    float z = texelFetch(acro_t2_15_s2_17, t, 0).x;
+    vec2 ndc = vec2((((float(t.x) + 0.5) / float(size.x)) * 2.0) - 1.0, 1.0 - (((float(t.y) + 0.5) / float(size.y)) * 2.0));
+    vec4 world = decal.inverseViewProj * vec4(ndc, z, 1.0);
+    return world.xyz / vec3(world.w);
+}
+
+vec3 decalSpace(vec3 p)
+{
+    return (decal.inverseModel * vec4(p, 1.0)).xyz;
+}
+
+void graphSurface()
+{
+    vec4 a = texture(acro_t2_9_s2_17, gUV);
+    vec4 b = texture(acro_t2_10_s2_17, gUV);
+    vec4 c = texture(acro_t2_11_s2_17, gUV);
+    vec4 d = texture(acro_t2_12_s2_17, gUV);
+    vec4 e = texture(acro_t2_13_s2_17, gUV);
+    vec4 v = graphValues.values[0];
+    gBaseColor = ((a.xyz * gVertexColor.xyz) * v.xyz) + (((gPosition + gNormal) + gView) * gTime);
+    gOpacity = a.w * v.w;
+    gNormalTS = (c.xyz * 2.0) - vec3(1.0);
+    gMetallic = b.z;
+    gRoughness = b.y;
+    gEmissive = e.xyz;
+    gOcclusion = d.x;
+}
+
+float shadowPCF(vec2 uv, float ref, vec4 bounds)
+{
+    vec2 texel = frame.shadowAtlas.xy;
+    int radius = int(frame.shadowAtlas.z);
+    if (radius <= 0)
+    {
+        vec3 _166 = vec3(clamp(uv, bounds.xy, bounds.zw), ref);
+        return texture(acro_t1_0, vec3(_166.xy, _166.z));
+    }
+    vec2 p = uv / texel;
+    vec2 base = floor(p + vec2(0.5));
+    vec2 st = (p + vec2(0.5)) - base;
+    base = (base - vec2(0.5)) * texel;
+    vec2 w[3];
+    vec2 o[3];
+    int n;
+    float norm;
+    if (radius == 1)
+    {
+        w[0] = vec2(3.0) - (st * 2.0);
+        w[1] = vec2(1.0) + (st * 2.0);
+        o[0] = ((vec2(2.0) - st) / w[0]) - vec2(1.0);
+        o[1] = (st / w[1]) + vec2(1.0);
+        n = 2;
+        norm = 0.0625;
+    }
+    else
+    {
+        w[0] = vec2(4.0) - (st * 3.0);
+        w[1] = vec2(7.0);
+        w[2] = vec2(1.0) + (st * 3.0);
+        o[0] = ((vec2(3.0) - (st * 2.0)) / w[0]) - vec2(2.0);
+        o[1] = (vec2(3.0) + st) / w[1];
+        o[2] = (st / w[2]) + vec2(2.0);
+        n = 3;
+        norm = 0.0069444444961845874786376953125;
+    }
+    float sum = 0.0;
+    for (int j = 0; j < n; j++)
+    {
+        for (int i = 0; i < n; i++)
+        {
+            vec2 tap = clamp(base + (vec2(o[i].x, o[j].y) * texel), bounds.xy, bounds.zw);
+            vec3 _326 = vec3(tap, ref);
+            sum += ((w[i].x * w[j].y) * texture(acro_t1_0, vec3(_326.xy, _326.z)));
+        }
+    }
+    return sum * norm;
+}
+
+float tileShadow(vec2 local, float ref, vec2 origin, vec2 size)
+{
+    vec2 halfTexel = frame.shadowAtlas.xy * 0.5;
+    vec2 param = origin + (local * size);
+    float param_1 = ref;
+    vec4 param_2 = vec4(origin + halfTexel, (origin + size) - halfTexel);
+    return shadowPCF(param, param_1, param_2);
+}
+
+float cascadeShadow(int c, vec3 p)
+{
+    vec3 local = (frame.cascadeMatrices[c] * vec4(p, 1.0)).xyz;
+    bool _386 = local.x < 0.0;
+    bool _393;
+    if (!_386)
+    {
+        _393 = local.x > 1.0;
+    }
+    else
+    {
+        _393 = _386;
+    }
+    bool _400;
+    if (!_393)
+    {
+        _400 = local.y < 0.0;
+    }
+    else
+    {
+        _400 = _393;
+    }
+    bool _407;
+    if (!_400)
+    {
+        _407 = local.y > 1.0;
+    }
+    else
+    {
+        _407 = _400;
+    }
+    if (_407)
+    {
+        return 1.0;
+    }
+    vec2 origin = vec2(float(c & 1), float(c >> 1)) * frame.shadowTiles.xy;
+    vec2 param = local.xy;
+    float param_1 = min(local.z, 1.0) - frame.cascadeBiases[c];
+    vec2 param_2 = origin;
+    vec2 param_3 = frame.shadowTiles.xy;
+    return tileShadow(param, param_1, param_2, param_3);
+}
+
+float directionalShadow(vec3 p, vec3 ng, out vec3 tint)
+{
+    tint = vec3(1.0);
+    int count = int(frame.shadowInfo.x);
+    float depth = dot(frame.shadowDepthRow.xyz, p) + frame.shadowDepthRow.w;
+    int c = 0;
+    for (;;)
+    {
+        bool _470 = c < (count - 1);
+        bool _479;
+        if (_470)
+        {
+            _479 = depth > frame.cascadeSplits[c];
+        }
+        else
+        {
+            _479 = _470;
+        }
+        if (_479)
+        {
+            c++;
+            continue;
+        }
+        else
+        {
+            break;
+        }
+    }
+    if (depth > frame.cascadeSplits[c])
+    {
+        return 1.0;
+    }
+    int param = c;
+    vec3 param_1 = p + (ng * frame.cascadeNormalOffsets[c]);
+    float s = cascadeShadow(param, param_1);
+    vec3 t = _512[c];
+    float start = frame.cascadeBlendStarts[c];
+    if (depth > start)
+    {
+        float f = (depth - start) / (frame.cascadeSplits[c] - start);
+        if ((c + 1) < count)
+        {
+            int param_2 = c + 1;
+            vec3 param_3 = p + (ng * frame.cascadeNormalOffsets[c + 1]);
+            s = mix(s, cascadeShadow(param_2, param_3), f);
+            t = mix(t, _512[c + 1], vec3(f));
+        }
+        else
+        {
+            s = mix(s, 1.0, f);
+        }
+    }
+    if (frame.shadowAtlas.w > 0.5)
+    {
+        tint = t;
+    }
+    return s;
+}
+
+vec3 fresnelSchlick(vec3 f0, float VoH)
+{
+    float f = pow(1.0 - VoH, 5.0);
+    return f0 + ((vec3(1.0) - f0) * f);
+}
+
+float distributionGGX(float NoH, float a)
+{
+    float a2 = a * a;
+    float d = ((NoH * NoH) * (a2 - 1.0)) + 1.0;
+    return a2 / ((3.1415927410125732421875 * d) * d);
+}
+
+float visibilitySmithGGXCorrelated(float NoV, float NoL, float a)
+{
+    float a2 = a * a;
+    float ggxV = NoL * sqrt(((NoV * NoV) * (1.0 - a2)) + a2);
+    float ggxL = NoV * sqrt(((NoL * NoL) * (1.0 - a2)) + a2);
+    return 0.5 / max(ggxV + ggxL, 9.9999997473787516355514526367188e-06);
+}
+
+vec2 environmentBRDF(float NoV, float roughness)
+{
+    vec4 r = (vec4(-1.0, -0.0274999998509883880615234375, -0.572000026702880859375, 0.02199999988079071044921875) * roughness) + vec4(1.0, 0.0425000004470348358154296875, 1.03999996185302734375, -0.039999999105930328369140625);
+    float a004 = (min(r.x * r.x, exp2((-9.27999973297119140625) * NoV)) * r.x) + r.y;
+    return (vec2(-1.03999996185302734375, 1.03999996185302734375) * a004) + r.zw;
+}
+
+vec3 environmentDirection(vec3 d, vec2 cs)
+{
+    return vec3((cs.x * d.x) - (cs.y * d.z), d.y, (cs.y * d.x) + (cs.x * d.z));
+}
+
+void shBasis(vec3 d, inout float y[9])
+{
+    y[0] = 0.2820949852466583251953125;
+    y[1] = 0.48860299587249755859375 * d.y;
+    y[2] = 0.48860299587249755859375 * d.z;
+    y[3] = 0.48860299587249755859375 * d.x;
+    y[4] = (1.09254801273345947265625 * d.x) * d.y;
+    y[5] = (1.09254801273345947265625 * d.y) * d.z;
+    y[6] = 0.3153919875621795654296875 * (((3.0 * d.z) * d.z) - 1.0);
+    y[7] = (1.09254801273345947265625 * d.x) * d.z;
+    y[8] = 0.546274006366729736328125 * ((d.x * d.x) - (d.y * d.y));
+}
+
+vec3 environmentIrradiance(vec3 n)
+{
+    vec3 param = n;
+    vec2 param_1 = frame.environment.zw;
+    vec3 param_2 = environmentDirection(param, param_1);
+    float param_3[9];
+    shBasis(param_2, param_3);
+    float y[9] = param_3;
+    vec3 sum = vec3(0.0);
+    for (int i = 0; i < 9; i++)
+    {
+        sum += (texelFetch(acro_t2_14_s2_17, ivec2(496, 256) + ivec2(i, 0), 0).xyz * y[i]);
+    }
+    return max(sum, vec3(0.0)) * frame.environment.y;
+}
+
+vec2 equirectUV(vec3 d)
+{
+    return vec2((atan(d.x, -d.z) * 0.15915493667125701904296875) + 0.5, acos(clamp(d.y, -1.0, 1.0)) * 0.3183098733425140380859375);
+}
+
+vec3 sampleEquirect(ivec4 region, vec2 uv, highp sampler2D SPIRV_Cross_Combinedimages)
+{
+    vec2 p = (uv * vec2(region.zw)) - vec2(0.5);
+    vec2 f = floor(p);
+    vec2 t = p - f;
+    int x0 = int(f.x);
+    int y0 = int(f.y);
+    if (x0 < 0)
+    {
+        x0 += region.z;
+    }
+    if (x0 >= region.z)
+    {
+        x0 -= region.z;
+    }
+    int _980;
+    if ((x0 + 1) == region.z)
+    {
+        _980 = 0;
+    }
+    else
+    {
+        _980 = x0 + 1;
+    }
+    int x1 = _980;
+    int y1 = min((y0 + 1), (region.w - 1));
+    y0 = max(y0, 0);
+    vec3 a = texelFetch(SPIRV_Cross_Combinedimages, region.xy + ivec2(x0, y0), 0).xyz;
+    vec3 b = texelFetch(SPIRV_Cross_Combinedimages, region.xy + ivec2(x1, y0), 0).xyz;
+    vec3 c = texelFetch(SPIRV_Cross_Combinedimages, region.xy + ivec2(x0, y1), 0).xyz;
+    vec3 d = texelFetch(SPIRV_Cross_Combinedimages, region.xy + ivec2(x1, y1), 0).xyz;
+    return mix(mix(a, b, vec3(t.x)), mix(c, d, vec3(t.x)), vec3(t.y));
+}
+
+vec3 environmentRadiance(vec3 d, float roughness)
+{
+    vec3 param = d;
+    vec2 param_1 = frame.environment.zw;
+    vec3 param_2 = environmentDirection(param, param_1);
+    vec2 uv = equirectUV(param_2);
+    float level = roughness * 5.0;
+    int i = min(int(level), 4);
+    ivec4 param_3 = _1328[i];
+    vec2 param_4 = uv;
+    vec3 a = sampleEquirect(param_3, param_4, acro_t2_14_s2_17);
+    ivec4 param_5 = _1328[i + 1];
+    vec2 param_6 = uv;
+    vec3 b = sampleEquirect(param_5, param_6, acro_t2_14_s2_17);
+    return mix(a, b, vec3(level - float(i))) * frame.environment.y;
+}
+
+vec3 hemisphere(vec3 d)
+{
+    return mix(frame.groundColor.xyz, frame.skyColor.xyz, vec3((d.y * 0.5) + 0.5)) * frame.skyColor.w;
+}
+
+float localShadow(uint index, vec3 p, vec3 ng, vec3 l)
+{
+    uint spots = uint(frame.shadowInfo.z);
+    if (index < spots)
+    {
+        vec4 params = frame.spotShadowParams[index];
+        vec4 clip0 = frame.spotShadowMatrices[index] * vec4(p, 1.0);
+        float texel = params.z * max(clip0.w, 0.0);
+        vec3 q = (p + (ng * (texel * frame.shadowLocal.x))) + (l * (texel * frame.shadowLocal.y));
+        vec4 clip = frame.spotShadowMatrices[index] * vec4(q, 1.0);
+        if (clip.w <= 0.0)
+        {
+            return 1.0;
+        }
+        vec3 local = clip.xyz / vec3(clip.w);
+        bool _656 = local.x < 0.0;
+        bool _663;
+        if (!_656)
+        {
+            _663 = local.x > 1.0;
+        }
+        else
+        {
+            _663 = _656;
+        }
+        bool _670;
+        if (!_663)
+        {
+            _670 = local.y < 0.0;
+        }
+        else
+        {
+            _670 = _663;
+        }
+        bool _677;
+        if (!_670)
+        {
+            _677 = local.y > 1.0;
+        }
+        else
+        {
+            _677 = _670;
+        }
+        bool _684;
+        if (!_677)
+        {
+            _684 = local.z > 1.0;
+        }
+        else
+        {
+            _684 = _677;
+        }
+        if (_684)
+        {
+            return 1.0;
+        }
+        vec2 param = local.xy;
+        float param_1 = local.z;
+        vec2 param_2 = params.xy;
+        vec2 param_3 = frame.shadowTiles.zw;
+        return tileShadow(param, param_1, param_2, param_3);
+    }
+    uint point = index - spots;
+    if (point >= uint(frame.shadowInfo.w))
+    {
+        return 1.0;
+    }
+    vec4 position = frame.pointShadowPositions[point];
+    vec4 params_1 = frame.pointShadowParams[point];
+    float texel_1 = position.w * length(p - position.xyz);
+    vec3 d = ((p + (ng * (texel_1 * frame.shadowLocal.x))) + (l * (texel_1 * frame.shadowLocal.y))) - position.xyz;
+    vec3 a = abs(d);
+    bool _760 = a.x >= a.y;
+    bool _768;
+    if (_760)
+    {
+        _768 = a.x >= a.z;
+    }
+    else
+    {
+        _768 = _760;
+    }
+    int face;
+    float m;
+    if (_768)
+    {
+        face = (d.x > 0.0) ? 0 : 1;
+        m = a.x;
+    }
+    else
+    {
+        if (a.y >= a.z)
+        {
+            face = (d.y > 0.0) ? 2 : 3;
+            m = a.y;
+        }
+        else
+        {
+            face = (d.z > 0.0) ? 4 : 5;
+            m = a.z;
+        }
+    }
+    if (m <= 0.0)
+    {
+        return 1.0;
+    }
+    vec2 st = vec2(dot(d, _816[face]), dot(d, _825[face])) / vec2(m * frame.shadowFaces.z);
+    float ref = params_1.z + (params_1.w / m);
+    if (ref > 1.0)
+    {
+        return 1.0;
+    }
+    vec2 origin = params_1.xy + (vec2(float(face % 3), float(face / 3)) * frame.shadowFaces.xy);
+    vec2 param_4 = vec2(0.5 + (0.5 * st.x), 0.5 - (0.5 * st.y));
+    float param_5 = ref;
+    vec2 param_6 = origin;
+    vec2 param_7 = frame.shadowFaces.xy;
+    return tileShadow(param_4, param_5, param_6, param_7);
+}
+
+void main()
+{
+    ivec2 size = textureSize(acro_t2_15_s2_17, 0);
+    ivec2 texel = ivec2(gl_FragCoord.xy);
+    ivec2 param = texel;
+    ivec2 param_1 = size;
+    vec3 _1553 = depthPoint(param, param_1);
+    vec3 p = _1553;
+    vec3 param_2 = p;
+    vec3 q = decalSpace(param_2);
+    if (any(greaterThan(abs(q), vec3(0.5))))
+    {
+        discard;
+    }
+    ivec2 param_3 = texel + ivec2(1, 0);
+    ivec2 param_4 = size;
+    vec3 _1574 = depthPoint(param_3, param_4);
+    vec3 px = _1574;
+    ivec2 param_5 = texel - ivec2(1, 0);
+    ivec2 param_6 = size;
+    vec3 _1581 = depthPoint(param_5, param_6);
+    vec3 mx = _1581;
+    ivec2 param_7 = texel + ivec2(0, 1);
+    ivec2 param_8 = size;
+    vec3 _1589 = depthPoint(param_7, param_8);
+    vec3 py = _1589;
+    ivec2 param_9 = texel - ivec2(0, 1);
+    ivec2 param_10 = size;
+    vec3 _1596 = depthPoint(param_9, param_10);
+    vec3 my = _1596;
+    vec3 ax = px - p;
+    vec3 bx = p - mx;
+    vec3 ay = py - p;
+    vec3 by = p - my;
+    bvec3 _1623 = bvec3(dot(ax, ax) < dot(bx, bx));
+    vec3 tx = vec3(_1623.x ? ax.x : bx.x, _1623.y ? ax.y : bx.y, _1623.z ? ax.z : bx.z);
+    bvec3 _1635 = bvec3(dot(ay, ay) < dot(by, by));
+    vec3 ty = vec3(_1635.x ? ay.x : by.x, _1635.y ? ay.y : by.y, _1635.z ? ay.z : by.z);
+    vec3 v = frame.cameraPos.xyz - p;
+    vec3 n = cross(tx, ty);
+    vec3 _1652;
+    if (dot(n, n) > 9.9999996826552253889678874634872e-21)
+    {
+        _1652 = normalize(n);
+    }
+    else
+    {
+        _1652 = normalize(v);
+    }
+    n = _1652;
+    if (dot(n, v) < 0.0)
+    {
+        n = -n;
+    }
+    v = normalize(v);
+    vec2 uv = vec2(q.x + 0.5, 0.5 - q.y);
+    vec3 param_11 = p + tx;
+    vec2 duvdx = (decalSpace(param_11).xy - q.xy) * vec2(1.0, -1.0);
+    vec3 param_12 = p + ty;
+    vec2 duvdy = (decalSpace(param_12).xy - q.xy) * vec2(1.0, -1.0);
+    gUV = uv;
+    gPosition = p;
+    gNormal = n;
+    gView = v;
+    gVertexColor = decal.color;
+    gTime = graphPush.params.x;
+    graphSurface();
+    vec3 albedo = decal.color.xyz * max(gBaseColor, vec3(0.0));
+    float alpha = decal.color.w * clamp(gOpacity, 0.0, 1.0);
+    float metallic = clamp(gMetallic, 0.0, 1.0);
+    vec3 gt = decal.model[0].xyz - (n * dot(n, decal.model[0].xyz));
+    vec3 gb = decal.model[1].xyz - (n * dot(n, decal.model[1].xyz));
+    bool _1759 = dot(gt, gt) > 9.9999999600419720025001879548654e-13;
+    bool _1766;
+    if (_1759)
+    {
+        _1766 = dot(gb, gb) > 9.9999999600419720025001879548654e-13;
+    }
+    else
+    {
+        _1766 = _1759;
+    }
+    bool _1773;
+    if (_1766)
+    {
+        _1773 = dot(gNormalTS, gNormalTS) > 9.9999999600419720025001879548654e-13;
+    }
+    else
+    {
+        _1773 = _1766;
+    }
+    if (_1773)
+    {
+        vec3 m = normalize(gNormalTS);
+        n = normalize(((normalize(gt) * m.x) + (normalize(gb) * m.y)) + (n * m.z));
+        if (dot(n, v) < 0.0)
+        {
+            n = normalize(n - (v * (dot(n, v) - 0.001000000047497451305389404296875)));
+        }
+    }
+    if (decal.params.z > 0.0)
+    {
+        alpha *= clamp(dot(n, -decal.axis.xyz) / decal.params.z, 0.0, 1.0);
+    }
+    if (alpha <= 0.0)
+    {
+        discard;
+    }
+    float roughness = clamp(gRoughness, 0.04500000178813934326171875, 1.0);
+    float a = roughness * roughness;
+    vec3 f0 = mix(vec3(0.039999999105930328369140625), albedo, vec3(metallic));
+    vec3 diffuse = albedo * (1.0 - metallic);
+    vec3 l = normalize(frame.lightDir.xyz);
+    vec3 h = normalize(l + v);
+    float shadow = 1.0;
+    if (frame.lightColor.w > 0.5)
+    {
+        vec3 param_13 = p;
+        vec3 param_14 = n;
+        vec3 param_15;
+        float _1876 = directionalShadow(param_13, param_14, param_15);
+        vec3 cascadeTint = param_15;
+        shadow = _1876;
+    }
+    vec3 light = frame.lightColor.xyz * frame.lightDir.w;
+    float NoV = max(dot(n, v), 9.9999997473787516355514526367188e-05);
+    float NoL = clamp(dot(n, l), 0.0, 1.0);
+    float NoH = clamp(dot(n, h), 0.0, 1.0);
+    float VoH = clamp(dot(v, h), 0.0, 1.0);
+    vec3 param_16 = f0;
+    float param_17 = VoH;
+    vec3 F = fresnelSchlick(param_16, param_17);
+    float param_18 = NoH;
+    float param_19 = a;
+    float param_20 = NoV;
+    float param_21 = NoL;
+    float param_22 = a;
+    vec3 specular = (F * (distributionGGX(param_18, param_19) * visibilitySmithGGXCorrelated(param_20, param_21, param_22))) * 3.1415927410125732421875;
+    vec3 color = (((((vec3(1.0) - F) * diffuse) + specular) * NoL) * light) * shadow;
+    vec2 dfg;
+    vec3 irradiance;
+    vec3 reflected;
+    if (frame.environment.x > 0.5)
+    {
+        float param_23 = NoV;
+        float param_24 = roughness;
+        dfg = environmentBRDF(param_23, param_24);
+        vec3 param_25 = n;
+        irradiance = environmentIrradiance(param_25);
+        vec3 param_26 = reflect(-v, n);
+        float param_27 = roughness;
+        reflected = environmentRadiance(param_26, param_27);
+    }
+    else
+    {
+        float param_28 = NoV;
+        float param_29 = roughness;
+        dfg = environmentBRDF(param_28, param_29);
+        vec3 param_30 = n;
+        irradiance = hemisphere(param_30);
+        vec3 param_31 = reflect(-v, n);
+        reflected = mix(hemisphere(param_31), irradiance, vec3(roughness));
+    }
+    vec3 specularAmbient = (f0 * dfg.x) + vec3(dfg.y);
+    float ao = clamp(gOcclusion, 0.0, 1.0);
+    color += (((((vec3(1.0) - specularAmbient) * diffuse) * irradiance) + (specularAmbient * reflected)) * ao);
+    if (frame.clusterGrid.w > 0.5)
+    {
+        float depth = dot(frame.viewDepth.xyz, p) + frame.viewDepth.w;
+        vec2 tile = clamp(floor(gl_FragCoord.xy * frame.clusterScale.xy), vec2(0.0), frame.clusterGrid.xy - vec2(1.0));
+        float slice = clamp(floor((log2(max(depth, 9.9999999747524270787835121154785e-07)) * frame.clusterScale.z) + frame.clusterScale.w), 0.0, frame.clusterGrid.z - 1.0);
+        uint cluster = uint((((slice * frame.clusterGrid.y) + tile.y) * frame.clusterGrid.x) + tile.x);
+        uint cell = lightCells.data[cluster >> uint(2)][cluster & 3u];
+        uint first = cell & 65535u;
+        uint count = cell >> uint(16);
+        for (uint i = first; i < (first + count); i++)
+        {
+            uint word = i / 3u;
+            uint li = (lightIndices.data[word >> uint(2)][word & 3u] >> ((i - (word * 3u)) * 10u)) & 1023u;
+            vec4 position = lightPositions.data[li];
+            vec3 toLight = position.xyz - p;
+            float d2 = dot(toLight, toLight);
+            float x = d2 * position.w;
+            float window = clamp(1.0 - (x * x), 0.0, 1.0);
+            vec3 pl = toLight * inversesqrt(max(d2, 9.9999999392252902907785028219223e-09));
+            vec4 lc = lightColors.data[li];
+            vec4 direction = lightDirections.data[li];
+            float cone = clamp((dot(-pl, direction.xyz) * lc.w) + direction.w, 0.0, 1.0);
+            vec3 radiance = lc.xyz * ((((window * window) * cone) * cone) / max(d2, 9.9999997473787516355514526367188e-05));
+            uint param_32 = li;
+            vec3 param_33 = p;
+            vec3 param_34 = n;
+            vec3 param_35 = pl;
+            radiance *= localShadow(param_32, param_33, param_34, param_35);
+            vec3 ph = normalize(pl + v);
+            float pNoL = clamp(dot(n, pl), 0.0, 1.0);
+            float pNoH = clamp(dot(n, ph), 0.0, 1.0);
+            vec3 param_36 = f0;
+            float param_37 = clamp(dot(v, ph), 0.0, 1.0);
+            vec3 pF = fresnelSchlick(param_36, param_37);
+            float param_38 = pNoH;
+            float param_39 = a;
+            float param_40 = NoV;
+            float param_41 = pNoL;
+            float param_42 = a;
+            vec3 pSpecular = (pF * (distributionGGX(param_38, param_39) * visibilitySmithGGXCorrelated(param_40, param_41, param_42))) * 3.1415927410125732421875;
+            color += (((((vec3(1.0) - pF) * diffuse) + pSpecular) * pNoL) * radiance);
+        }
+    }
+    color += ((albedo * decal.params.x) + max(gEmissive, vec3(0.0)));
+    float dist = length(frame.cameraPos.xyz - p);
+    float fog = 1.0 - exp((-dist) * frame.fogColor.w);
+    outColor = vec4(mix(color, frame.fogColor.xyz, vec3(fog)), alpha);
+}
+

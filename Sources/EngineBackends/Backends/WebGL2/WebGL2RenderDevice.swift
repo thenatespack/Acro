@@ -39,10 +39,11 @@ private let maxTimedPasses = 32
 /// Differences from the other backends:
 /// - No compute, storage buffers, storage textures or indirect draws (`supportsCompute` and
 ///   `supportsStorageBuffers` are false). `makeComputePipeline` and storage textures throw; storage
-///   buffers can be made (as plain buffers) but not bound; indirect draws are skipped with a warning.
-///   So GPU particles, light probes (their bake and the probe-lit shader variants), material-graph
-///   materials and terrain splatting, and FSR 3 are unavailable; the engine skips them with one
-///   warning each.
+///   buffers can be made (as plain buffers); bound, they feed only uniform blocks declared at a
+///   storage buffer's binding (the material graph templates' GLSL ES reads its values that way,
+///   binding point 8 + n); indirect draws are skipped with a warning. So GPU particles, light
+///   probes (their bake and the probe-lit shader variants) and FSR 3 are unavailable; the engine
+///   skips them with one warning each.
 /// - HDR targets (`hdrScene`, `.rgba16Float` render targets, TAAU) need `EXT_color_buffer_float`.
 /// - Compressed textures need `EXT_texture_compression_bptc` (BC7, BC6H), `_rgtc` (BC5) or
 ///   `WEBGL_compressed_texture_astc` (ASTC; HDR with its "hdr" profile).

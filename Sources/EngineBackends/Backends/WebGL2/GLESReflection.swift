@@ -9,11 +9,13 @@ struct GLESInterface: Equatable, Sendable {
         var binding: Int?
 
         /// The WebGL 2 binding point: 0 for the per-frame block, 1 for push constants, n for
-        /// uniform buffer n (set 2, binding n); nil outside the table.
+        /// uniform buffer n (set 2, binding n), 8 + n for storage buffer n read as a uniform block
+        /// (set 2, binding 24 + n: the material graph templates' values); nil outside the table.
         var bindingPoint: Int? {
             guard let set, let binding else { return 1 }
             if set == 0 && binding == 0 { return 0 }
             if set == 2 && (2...7).contains(binding) { return binding }
+            if set == 2 && (24...31).contains(binding) { return binding - 16 }
             return nil
         }
     }

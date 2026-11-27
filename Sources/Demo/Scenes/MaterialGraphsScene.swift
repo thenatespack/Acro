@@ -10,7 +10,7 @@ import Foundation
 /// blended per pixel (mesh_terrain.frag) and whose painted "Lava" layer is the lava graph,
 /// drawn as a blended overlay (TerrainGraphLayers.swift). Everything is imported at start by an
 /// `AssetDatabase` in a temporary project, as the editor would; the compiled graph shaders are
-/// spliced at run time for every backend (MSL, SPIR-V and WGSL).
+/// spliced at run time for every backend (MSL, SPIR-V, WGSL and GLSL ES).
 final class MaterialGraphsScene: DemoScene {
     static let name = "graphs"
     static let summary = "material graphs: every preset, a splat terrain with a graph layer (runtime-spliced shaders)"

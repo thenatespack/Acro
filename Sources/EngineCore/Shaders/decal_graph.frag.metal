@@ -1,7 +1,7 @@
 // Generated from decal_graph.frag by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
 // spirv-fnv1a64: 0e14b12390ec91a5
-// glsl-fnv1a64: bfa194a2c6dcdead
+// glsl-fnv1a64: 8aa7d4326f83b219
 
 #pragma clang diagnostic ignored "-Wmissing-prototypes"
 #pragma clang diagnostic ignored "-Wmissing-braces"

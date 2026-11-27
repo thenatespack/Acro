@@ -1,6 +1,7 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 // compile-shaders: -O0
+// compile-shaders: gles -DGRAPH_VALUES_UNIFORM=1024
 
 // Masked material graphs (`.material` files with a `graph` and alphaMode "mask") in the depth-only
 // passes: the shadow atlas and the camera depth prepass. The template whose graphSurface() body

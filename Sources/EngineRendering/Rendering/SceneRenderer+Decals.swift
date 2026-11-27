@@ -187,7 +187,7 @@ final class DecalRenderer {
             shader.metalFragmentColor0Source = nil
             shader.spirvFragment = spirv
             shader.wgslFragment = program.wgslDecalFragment
-            shader.glesFragment = nil  // graph shaders read a storage buffer: none for WebGL 2
+            shader.glesFragment = program.glesDecalFragment
             let pipeline = try device.makePipeline(Self.descriptor(shader))
             if graphPipelines.count >= 64 { graphPipelines.removeAll() }
             graphPipelines[key] = pipeline

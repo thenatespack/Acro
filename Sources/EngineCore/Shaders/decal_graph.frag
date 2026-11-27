@@ -1,6 +1,7 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 // compile-shaders: -O0
+// compile-shaders: gles -DGRAPH_VALUES_UNIFORM=1024
 
 // Decals with a material graph (`Decal.material` naming a `.material` with a `graph`): decal.frag
 // with the graph's surface instead of the decal texture. Its graphSurface() body is replaced

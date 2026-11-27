@@ -530,11 +530,15 @@ deterministically: varyings `acro_v<location>`, uniform blocks `acro_<vs|fs>_u<s
 `// acro-sampler name tset tbinding sset sbinding shadow`); the device reads it (`GLESInterface`) to
 bind blocks to binding points (0 frame, 1 push constants, n for uniform buffer n) and give each
 sampler a texture unit. Fixes in the driver: `bitfieldReverse` (env_prefilter) gets a polyfill
-(ES 3.10 has it), and `noperspective` varyings (debug_line) become perspective-correct (ES 3.00
-has none). With glslangValidator installed every output is validated. Stages whose active
-resources need storage buffers or images get no `.gles` (listed at the end of the run, like the
-WGSL step): the probe-lit and material-graph mesh shaders, terrain splatting, probe_debug and
-the GPU particle vertex shaders. No GLSL ES is generated for compute. The binding table in
+(ES 3.10 has it), and `noperspective` varyings (debug_line; ES 3.00 has none) are emulated (W2.6A):
+the vertex stage writes `v * gl_Position.w` and an extra varying `acro_vnpw = gl_Position.w` at the
+end of `main`, the fragment stage reads `(v / acro_vnpw)`; perspective-correct interpolation of
+both gives the screen-linear `v`. With glslangValidator installed every output is validated.
+Stages whose active resources need storage buffers or images get no `.gles` (listed at the end of
+the run, like the WGSL step): the probe-lit mesh shaders, probe_debug and the GPU particle vertex
+shaders. A shader marked `// compile-shaders: gles <glslc flags>` gets its `.gles` from a second
+compile with those flags: the material graph templates and terrain splatting
+(`-DGRAPH_VALUES_UNIFORM=1024`, see "No compute"). No GLSL ES is generated for compute. The binding table in
 `ShaderSource` has a WebGL 2 column; `WebGL2ShaderTests` checks every output is current and
 inside the table.
 
@@ -587,10 +591,25 @@ inside the table.
 **No compute.** WebGL 2 has no compute shaders, storage buffers, storage textures or indirect
 draws. `RenderDevice.supportsCompute` and `supportsStorageBuffers` (default true) are false, and
 the engine skips what needs them with one warning each: GPU particles (`ParticleEmitter`), light
-probes (`ReflectionProbe`, `IrradianceVolume`: their bake and the probe-lit shaders), material
-graphs (registered without the graph: they draw with the material's plain surface; terrain
-splatting is a graph too) and FSR 3. `makeComputePipeline` and storage textures throw;
-`beginComputePass` returns a pass that records nothing; indirect draws are skipped.
+probes (`ReflectionProbe`, `IrradianceVolume`: their bake and the probe-lit shaders) and FSR 3.
+`makeComputePipeline` and storage textures throw; `beginComputePass` returns a pass that records
+nothing; indirect draws are skipped.
+
+**Material graphs (W2.6A).** The graph templates (`mesh_graph.frag`, `mesh_graph_depth.frag`,
+`decal_graph.frag`) and terrain splatting (`mesh_terrain.frag`) read the graph's values from
+storage buffer 0. Their GLSL ES comes from a `GRAPH_VALUES_UNIFORM` variant that declares the same
+set and binding (2, 24) as a std140 uniform block `vec4 values[1024]` (16 KB, what WebGL 2
+guarantees per block); spirv-to-gles allows uniform blocks at bindings 24-31, and the device binds
+`setStorageBuffer(_:index: n)` to binding point 8 + n for them. `MaterialGraphCompiler` emits the
+graph's IR as GLSL ES and replaces `graphSurface()`'s body in the three templates' `.gles`, as for
+MSL and WGSL (text, no compiler in the browser): `MaterialGraphProgram.glesFragment` /
+`glesDepthFragment` / `glesDecalFragment` feed graph pipelines, masked graph shadows and depth,
+and graph decals. The textures are the template's combined samplers (`acro_t2_<9 + slot>_s2_17`,
+found in its header). The block's array is cut to the slots the code reads
+(`MaterialGraphCompiler.glesSettingValueCount`; terrain splatting's five), so it matches the bound
+buffer. A graph with more than `MaterialGraphCompiler.maxUniformValues` (1024) values gets no GLSL
+ES and a compile warning, and on WebGL 2 is registered without the graph (drawn with its plain
+surface) with one warning, the only graphs still skipped.
 
 ### Results (2026-11-26)
 
@@ -598,8 +617,8 @@ Playwright Chromium (Apple M5; WebGL 2 is ANGLE on Metal), release Demo, `?rende
 `ENGINE_GL_DEBUG=1`, each scene 4 s with input:
 
 - **All 54 Demo scenes and SampleGame run, with 0 WebGL errors.** Degraded (feature skipped with
-  its warning): `particles` and `rain` (GPU particles), `probes` (light probes), `graphs` (material
-  graphs and the splat terrain draw with plain materials). Two bugs the run found are fixed
+  its warning): `particles` and `rain` (GPU particles), `probes` (light probes); `graphs` drew its
+  material graphs and splat terrain with plain materials until W2.6A (below). Two bugs the run found are fixed
   (debug_line's `noperspective`; a framebuffer's read buffer set on the wrong binding).
 - `ENGINE_SCREENSHOT` frames (1280x720, overlay off) against the WebGPU run, mean difference / 255:
 
@@ -635,11 +654,19 @@ Playwright Chromium (Apple M5; WebGL 2 is ANGLE on Metal), release Demo, `?rende
   reads), where WebGPU makes several calls per draw (`setPipeline`, `setVertexBuffer`,
   `setIndexBuffer`, `setBindGroup`, `drawIndexed`).
 
-**Known gaps:** everything that needs compute or storage buffers (above); material graphs
-could be supported by moving their values from a storage buffer to a uniform block in a GLSL ES
-variant of the templates and splicing the graph's code into it as for MSL and WGSL; GPU particles
-would need a CPU or transform-feedback simulation. `noperspective` varyings interpolate with
-perspective. Only tested on ANGLE/Metal in Chromium; Firefox and Safari (where WebGL 2 is most
+**W2.6A (material graphs, `noperspective`), same setup, release Demo, `?renderer=webgl2` with
+`ENGINE_GL_DEBUG=1`, `ENGINE_SCREENSHOT` frames (1280x720, `ENGINE_OVERLAY=0`) against WebGPU:**
+`graphs` (every preset, the splat terrain and its lava graph layer, all drawn with their graphs
+now; no "skipped" warning) has 0 WebGL errors and matches WebGPU exactly (mean difference 0.000 /
+255, 0.00% of pixels over 16). With a masked graph cube (shadow and depth prepass path) and a lava
+graph decal added to the scene for a run (not committed): 0 WebGL errors, also 0.000 (the decal and the cube's striped cut-out shadow look as on WebGPU). Scenes with
+debug lines (`gizmos`, `navmesh`, `physics`, `camerarigs`): 0 errors, 0.000 each. Regression
+check: `decals` 0.000, `pbr` 0.002, `shadows` 0.000, `forest` 0.002, `transparency` 0.000,
+`reflections` 0.003; no pixel over 16 in any of them.
+
+**Known gaps:** everything that needs compute or storage buffers (above); material graphs with
+more than 1024 values (a 16 KB uniform block) draw plain on WebGL 2; GPU particles would need a CPU
+or transform-feedback simulation. Only tested on ANGLE/Metal in Chromium; Firefox and Safari (where WebGL 2 is most
 likely to be used) are untested.
 
 ## What's left for a browser build

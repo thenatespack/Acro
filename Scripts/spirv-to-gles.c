@@ -25,7 +25,16 @@
 // (`fixup_clipspace`; WebGL has no glClipControl everywhere). y is not flipped: the device renders
 // every pass into framebuffers whose memory row 0 is the image's top, as in Vulkan and WebGPU, and
 // flips the winding and the final present instead. gl_InstanceIndex is gl_InstanceID (the engine
-// draws from instance 0). `noperspective` varyings become perspective-correct (ES 3.00 has none).
+// draws from instance 0).
+//
+// `noperspective` varyings (ES 3.00 has none) are emulated: the vertex stage writes v * w and an
+// extra varying `acro_vnpw` = gl_Position.w, the fragment stage reads v / acro_vnpw.
+// Perspective-correct interpolation of both gives the screen-linear v.
+//
+// A uniform block at set 2, binding 24 + n (where storage buffer n is on the other backends) is
+// allowed: the material graph templates' GLSL ES variant reads the graph's values from one.
+//
+//   spirv-to-gles <in.spv> <out.gles> <GLSL source path> [<SPIR-V whose hash the header records>]
 #include <spirv_cross_c.h>
 
 #include <stdint.h>
@@ -77,8 +86,101 @@ static unsigned decoration(spvc_compiler compiler, SpvId id, SpvDecoration which
 
 // The binding-table check of spirv-to-msl.c: uniform buffers, textures and samplers the WebGL 2
 // device can bind.
-static int known(unsigned set, unsigned binding) {
-    return (set == 0 && binding == 0) || (set == 1 && binding <= 1) || (set == 2 && binding >= 2 && binding <= 23);
+static int known(unsigned set, unsigned binding, int uniformBuffer) {
+    return (set == 0 && binding == 0) || (set == 1 && binding <= 1) || (set == 2 && binding >= 2 && binding <= 23)
+        || (uniformBuffer && set == 2 && binding >= 24 && binding <= 31);
+}
+
+// A growable string.
+typedef struct { char *data; size_t length, capacity; } Text;
+
+static void append(Text *t, const char *s, size_t n) {
+    if (t->length + n + 1 > t->capacity) {
+        t->capacity = (t->length + n + 1) * 2;
+        t->data = realloc(t->data, t->capacity);
+        if (!t->data) fail("out of memory", NULL);
+    }
+    memcpy(t->data + t->length, s, n);
+    t->length += n;
+    t->data[t->length] = 0;
+}
+
+static int isIdentifierChar(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+// `glsl` with every whole-word `name` from `from` on replaced by `replacement` (malloc'd).
+static char *replaceWord(const char *glsl, const char *from, const char *name, const char *replacement) {
+    Text t = { 0 };
+    append(&t, glsl, (size_t)(from - glsl));
+    size_t n = strlen(name);
+    for (const char *p = from; *p;) {
+        if (strncmp(p, name, n) == 0 && (p == glsl || !isIdentifierChar(p[-1])) && !isIdentifierChar(p[n])) {
+            append(&t, replacement, strlen(replacement));
+            p += n;
+        } else {
+            append(&t, p++, 1);
+        }
+    }
+    return t.data;
+}
+
+// `glsl` with `insert` put right after the line containing `anchor` (malloc'd).
+static char *insertAfterLine(const char *glsl, const char *anchor, const char *insert, const char *what) {
+    const char *at = strstr(glsl, anchor);
+    if (!at) fail("can't find the declaration of", what);
+    const char *end = strchr(at, '\n');
+    if (!end) fail("can't find the end of the declaration of", what);
+    Text t = { 0 };
+    append(&t, glsl, (size_t)(end + 1 - glsl));
+    append(&t, insert, strlen(insert));
+    append(&t, end + 1, strlen(end + 1));
+    return t.data;
+}
+
+// Emulates noperspective varyings (see the top): `locations` are theirs.
+static char *emulateNoPerspective(const char *glsl, int vertex, const unsigned *locations, size_t count, const char *path) {
+    char *text = strdup(glsl);
+    char name[64], declaration[80], replacement[96];
+    // The extra varying, declared after the first noperspective one.
+    snprintf(declaration, sizeof declaration, " acro_v%u;", locations[0]);
+    char *next = insertAfterLine(text, declaration, vertex ? "out highp float acro_vnpw;\n" : "in highp float acro_vnpw;\n", "a varying");
+    free(text);
+    text = next;
+    if (vertex) {
+        // main is the last function: scale before its closing brace (after every write, the
+        // clip-space fixup included, which leaves w alone). An early return would skip it.
+        const char *main = strstr(text, "\nvoid main()\n{\n");
+        if (!main) fail("no main() to emulate noperspective in", path);
+        if (strstr(main, "return;")) fail("noperspective emulation needs main() without early returns", path);
+        size_t length = strlen(text);
+        while (length > 0 && (text[length - 1] == '\n' || text[length - 1] == ' ')) length--;
+        if (length < 1 || text[length - 1] != '}' || strstr(main + 1, "\n}\n") != text + length - 2) {
+            fail("main() isn't the last function", path);
+        }
+        Text t = { 0 };
+        append(&t, text, length - 1);
+        for (size_t i = 0; i < count; i++) {
+            snprintf(replacement, sizeof replacement, "    acro_v%u *= gl_Position.w;\n", locations[i]);
+            append(&t, replacement, strlen(replacement));
+        }
+        const char *w = "    acro_vnpw = gl_Position.w;\n}\n";
+        append(&t, w, strlen(w));
+        free(text);
+        return t.data;
+    }
+    // Fragment: every read after the declaration divides by the interpolated w.
+    for (size_t i = 0; i < count; i++) {
+        snprintf(name, sizeof name, "acro_v%u", locations[i]);
+        snprintf(declaration, sizeof declaration, " %s;", name);
+        const char *at = strstr(text, declaration);
+        if (!at) fail("can't find the declaration of", name);
+        snprintf(replacement, sizeof replacement, "(%s / acro_vnpw)", name);
+        next = replaceWord(text, at + strlen(declaration), name, replacement);
+        free(text);
+        text = next;
+    }
+    return text;
 }
 
 static int isShadowSampler(const char *glsl, const char *name) {
@@ -89,8 +191,8 @@ static int isShadowSampler(const char *glsl, const char *name) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 4) {
-        fprintf(stderr, "usage: spirv-to-gles <in.spv> <out.gles> <GLSL source path>\n");
+    if (argc != 4 && argc != 5) {
+        fprintf(stderr, "usage: spirv-to-gles <in.spv> <out.gles> <GLSL source path> [<SPIR-V for the header hash>]\n");
         return 2;
     }
     FILE *in = fopen(argv[1], "rb");
@@ -169,7 +271,7 @@ int main(int argc, char **argv) {
         for (size_t i = 0; i < count; i++) {
             unsigned set = decoration(compiler, list[i].id, SpvDecorationDescriptorSet);
             unsigned binding = decoration(compiler, list[i].id, SpvDecorationBinding);
-            if (!known(set, binding)) {
+            if (!known(set, binding, kinds[k].type == SPVC_RESOURCE_TYPE_UNIFORM_BUFFER)) {
                 fprintf(stderr, "spirv-to-gles: %s: %s '%s' at set %u, binding %u is not in the binding table (see ShaderSource)\n",
                         argv[1], kinds[k].name, list[i].name, set, binding);
                 return 1;
@@ -205,6 +307,8 @@ int main(int argc, char **argv) {
     }
 
     // Varyings link by name in GLSL ES 3.00: name them by location.
+    unsigned noPerspective[32];
+    size_t noPerspectiveCount = 0;
     spvc_resource_type varyings = model == SpvExecutionModelVertex ? SPVC_RESOURCE_TYPE_STAGE_OUTPUT : SPVC_RESOURCE_TYPE_STAGE_INPUT;
     check(spvc_resources_get_resource_list_for_type(resources, varyings, &list, &count), context, "reflect");
     for (size_t i = 0; i < count; i++) {
@@ -213,8 +317,11 @@ int main(int argc, char **argv) {
         snprintf(name, sizeof name, "acro_v%u", location);
         spvc_compiler_set_name(compiler, list[i].id, name);
         // GLSL ES 3.00 has no `noperspective` (only an NV extension WebGL doesn't expose): such
-        // varyings are interpolated with perspective here (debug_line's width falloff).
-        spvc_compiler_unset_decoration(compiler, list[i].id, SpvDecorationNoPerspective);
+        // varyings are emulated after compiling (emulateNoPerspective; debug_line's width falloff).
+        if (spvc_compiler_has_decoration(compiler, list[i].id, SpvDecorationNoPerspective)) {
+            if (noPerspectiveCount < sizeof noPerspective / sizeof noPerspective[0]) noPerspective[noPerspectiveCount++] = location;
+            spvc_compiler_unset_decoration(compiler, list[i].id, SpvDecorationNoPerspective);
+        }
     }
 
     // Combined image samplers: a dummy sampler for textures loaded without one (texelFetch), then
@@ -306,6 +413,27 @@ int main(int argc, char **argv) {
         glsl = patched;
     }
 
+    char *emulated = NULL;
+    if (noPerspectiveCount > 0) {
+        emulated = emulateNoPerspective(glsl, model == SpvExecutionModelVertex, noPerspective, noPerspectiveCount, argv[1]);
+        glsl = emulated;
+    }
+
+    // The SPIR-V the header names: the input, or the one given (the uniform-block variant's
+    // GLSL ES records the hash of the shader's own .spv).
+    uint64_t spirvHash = fnv1a64(bytes, (size_t)size);
+    if (argc == 5) {
+        FILE *file = fopen(argv[4], "rb");
+        if (!file) fail("cannot open", argv[4]);
+        spirvHash = 0xcbf29ce484222325ull;
+        int c;
+        while ((c = fgetc(file)) != EOF) {
+            spirvHash ^= (unsigned char)c;
+            spirvHash *= 0x100000001b3ull;
+        }
+        fclose(file);
+    }
+
     const char *sourceName = strrchr(argv[3], '/');
     sourceName = sourceName ? sourceName + 1 : argv[3];
     FILE *out = fopen(argv[2], "wb");
@@ -319,12 +447,13 @@ int main(int argc, char **argv) {
             "// Edit the GLSL and rerun the script (needs glslc and spirv-cross).\n"
             "// spirv-fnv1a64: %016llx\n"
             "// glsl-fnv1a64: %016llx\n",
-            sourceName, (unsigned long long)fnv1a64(bytes, (size_t)size), (unsigned long long)hashFile(argv[3]));
+            sourceName, (unsigned long long)spirvHash, (unsigned long long)hashFile(argv[3]));
     fputs(header, out);
     fputs(body + 1, out);
     if (fclose(out) != 0) fail("cannot write", argv[2]);
     spvc_context_destroy(context);
     free(patched);
+    free(emulated);
     free(samplers);
     free(header);
     free(words);

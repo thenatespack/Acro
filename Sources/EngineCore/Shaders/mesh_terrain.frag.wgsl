@@ -1,7 +1,7 @@
 // Generated from mesh_terrain.frag by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc, spirv-cross, spirv-opt and naga-cli).
 // spirv-fnv1a64: 3bcdea22e7cd956f
-// glsl-fnv1a64: 08f2d8721d375c02
+// glsl-fnv1a64: a99dffffb0ba0ac6
 
 diagnostic(off, derivative_uniformity);
 

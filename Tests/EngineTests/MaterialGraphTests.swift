@@ -65,6 +65,27 @@ private func wgslValidation(_ wgsl: String) -> String? {
     return process.terminationStatus == 0 ? "" : output
 }
 
+/// Runs glslangValidator on a GLSL ES 3.00 fragment stage when it is installed (nil when it
+/// isn't): its output on failure, "" when valid.
+private func glesValidation(_ gles: String) -> String? {
+    let candidates = [ProcessInfo.processInfo.environment["GLSLANG_VALIDATOR"], "/opt/homebrew/bin/glslangValidator",
+                      "/usr/local/bin/glslangValidator", "/usr/bin/glslangValidator"].compactMap { $0 }
+    guard let tool = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return nil }
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("MaterialGraphTests-\(UUID().uuidString).frag")
+    defer { try? FileManager.default.removeItem(at: url) }
+    guard (try? Data(gles.utf8).write(to: url)) != nil else { return nil }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: tool)
+    process.arguments = ["-S", "frag", url.path]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+    guard (try? process.run()) != nil else { return nil }
+    process.waitUntilExit()
+    let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    return process.terminationStatus == 0 ? "" : output
+}
+
 @MainActor @Suite struct MaterialGraphTests {
     @Test func nodesFlattenTheirFieldsAndRoundTrip() throws {
         let g = try graph(#"""
@@ -131,8 +152,68 @@ private func wgslValidation(_ wgsl: String) -> String? {
                     #expect(validation.isEmpty, "\(name) \(stage) WGSL: \(validation)")
                 }
             }
+            // GLSL ES 3.00 (WebGL 2): the same body, the values in a uniform block sized to the program.
+            let glesStages = [("lit", program.glesFragment), ("depth", program.glesDepthFragment), ("decal", program.glesDecalFragment)]
+            for (stage, gles) in glesStages {
+                let gles = try #require(gles, "\(name) \(stage)")
+                #expect(gles.hasPrefix("#version 300 es\n"), "\(name) \(stage)")
+                #expect(gles.contains("void graphSurface()\n{\n    "), "\(name) \(stage)")
+                #expect(!gles.contains("vec4 a = texture(acro_t2_9_s2_17, gUV);"), "\(name) \(stage): placeholder body left in")
+                #expect(!gles.contains(" buffer ") && !gles.contains("values[1024]"), "\(name) \(stage)")
+                #expect(gles.contains("uniform acro_fs_u2_24\n"), "\(name) \(stage)")
+                if let validation = glesValidation(gles) {
+                    #expect(validation.isEmpty, "\(name) \(stage) GLSL ES: \(validation)")
+                }
+            }
         }
         #expect(MaterialGraph.preset("nope") == nil)
+    }
+
+    /// The GLSL ES values block holds every slot the code reads; graphs with more values than a
+    /// 16 KB uniform block holds get no GLSL ES (and a warning), other backends are unaffected.
+    @Test func glesValuesBlockIsSizedAndCapped() throws {
+        let g = try graph(#"{"nodes": [{"id": "c", "type": "color", "value": [1, 0, 0, 1]}], "output": {"baseColor": "c.rgb", "roughness": 0.2}}"#)
+        let program = try #require(MaterialGraphCompiler.compile(g).program)
+        let gles = try #require(program.glesFragment)
+        #expect(gles.contains("vec4 values[\(program.values.count)];"), "\(program.values.count)")
+        // More distinct constants than fit: leaves adding two constants each, summed in a balanced
+        // tree (a long chain would recurse too deep in the builder).
+        var nodes: [String] = []
+        var level: [String] = []
+        for i in 0..<(MaterialGraphCompiler.maxUniformValues / 2 + 4) {
+            nodes.append(#"{"id": "l\#(i)", "type": "math", "op": "add", "a": \#(Float(i) + 0.25), "b": \#(Float(i) + 0.5)}"#)
+            level.append("l\(i)")
+        }
+        var next = 0
+        while level.count > 1 {
+            var reduced: [String] = []
+            for pair in stride(from: 0, to: level.count, by: 2) {
+                guard pair + 1 < level.count else { reduced.append(level[pair]); continue }
+                nodes.append(#"{"id": "s\#(next)", "type": "math", "op": "add", "a": "\#(level[pair])", "b": "\#(level[pair + 1])"}"#)
+                reduced.append("s\(next)")
+                next += 1
+            }
+            level = reduced
+        }
+        let big = try graph(#"{"nodes": [\#(nodes.joined(separator: ","))], "output": {"roughness": "\#(level[0])"}}"#)
+        let result = MaterialGraphCompiler.compile(big)
+        let capped = try #require(result.program)
+        #expect(capped.values.count > MaterialGraphCompiler.maxUniformValues)
+        #expect(capped.glesFragment == nil && capped.glesDepthFragment == nil && capped.glesDecalFragment == nil)
+        #expect(capped.wgslFragment != nil)
+        #expect(result.warnings.contains { $0.contains("WebGL 2") }, "\(result.warnings)")
+    }
+
+    /// Terrain splatting (a fixed graph shader) has GLSL ES too, its values block sized to its five values.
+    @Test func terrainSplatHasGLES() throws {
+        let splat = TerrainSplat(tileSizes: [4, 8, 16], normalLayers: [false, true, false], size: Vec2(64, 64), resolution: 65, cellSize: 64)
+        let program = try #require(splat.program(metallic: 0, roughness: 0.8, normalScale: 1))
+        let gles = try #require(program.glesFragment)
+        #expect(program.values.count == 5)
+        #expect(gles.contains("uniform acro_fs_u2_24\n{\n    vec4 _m0[5];\n"))
+        if let validation = glesValidation(gles) {
+            #expect(validation.isEmpty, "terrain GLSL ES: \(validation)")
+        }
     }
 
     @Test func constantsDontChangeTheShader() throws {

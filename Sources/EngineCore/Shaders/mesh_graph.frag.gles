@@ -1,0 +1,933 @@
+#version 300 es
+// Generated from mesh_graph.frag by Scripts/compile-shaders.sh — do not edit.
+// Edit the GLSL and rerun the script (needs glslc and spirv-cross).
+// spirv-fnv1a64: 62bc8e7f643170fb
+// glsl-fnv1a64: c60a0588c23b5f97
+// acro-ubo acro_fs_u2_24 2 24
+// acro-ubo acro_fs_u0_0 0 0
+// acro-ubo acro_fs_u2_3 2 3
+// acro-ubo acro_fs_u2_4 2 4
+// acro-ubo acro_fs_u2_5 2 5
+// acro-ubo acro_fs_u2_6 2 6
+// acro-ubo acro_fs_u2_7 2 7
+// acro-ubo acro_fs_u2_2 2 2
+// acro-ubo acro_fs_push -1 -1
+// acro-sampler acro_t2_9_s2_17 2 9 2 17 0
+// acro-sampler acro_t2_10_s2_17 2 10 2 17 0
+// acro-sampler acro_t2_11_s2_17 2 11 2 17 0
+// acro-sampler acro_t2_12_s2_17 2 12 2 17 0
+// acro-sampler acro_t2_13_s2_17 2 13 2 17 0
+// acro-sampler acro_t2_14_s2_17 2 14 2 17 0
+// acro-sampler acro_t2_15_s2_23 2 15 2 23 0
+// acro-sampler acro_t1_0 1 0 1 0 1
+precision highp float;
+precision highp int;
+
+const vec3 _652[4] = vec3[](vec3(1.0, 0.449999988079071044921875, 0.449999988079071044921875), vec3(0.449999988079071044921875, 1.0, 0.449999988079071044921875), vec3(0.5, 0.60000002384185791015625, 1.0), vec3(1.0, 1.0, 0.4000000059604644775390625));
+const vec3 _956[6] = vec3[](vec3(0.0, 0.0, 1.0), vec3(0.0, 0.0, -1.0), vec3(-1.0, 0.0, 0.0), vec3(-1.0, 0.0, 0.0), vec3(-1.0, 0.0, 0.0), vec3(1.0, 0.0, 0.0));
+const vec3 _965[6] = vec3[](vec3(0.0, 1.0, 0.0), vec3(0.0, 1.0, 0.0), vec3(0.0, 0.0, -1.0), vec3(0.0, 0.0, 1.0), vec3(0.0, 1.0, 0.0), vec3(0.0, 1.0, 0.0));
+const ivec4 _1373[6] = ivec4[](ivec4(0, 0, 512, 256), ivec4(0, 256, 256, 128), ivec4(256, 256, 128, 64), ivec4(384, 256, 64, 32), ivec4(448, 256, 32, 16), ivec4(480, 256, 16, 8));
+
+layout(std140) uniform acro_fs_u2_24
+{
+    vec4 values[1024];
+} graphValues;
+
+layout(std140) uniform acro_fs_u0_0
+{
+    mat4 viewProj;
+    mat4 lightViewProj;
+    mat4 currentViewProj;
+    mat4 previousViewProj;
+    vec4 lightDir;
+    vec4 lightColor;
+    vec4 cameraPos;
+    vec4 fogColor;
+    vec4 skyColor;
+    vec4 groundColor;
+    vec4 shadowParams;
+    vec4 viewDepth;
+    vec4 clusterScale;
+    vec4 clusterGrid;
+    mat4 cascadeMatrices[4];
+    mat4 spotShadowMatrices[8];
+    vec4 cascadeSplits;
+    vec4 cascadeBlendStarts;
+    vec4 cascadeNormalOffsets;
+    vec4 cascadeBiases;
+    vec4 shadowDepthRow;
+    vec4 shadowInfo;
+    vec4 shadowAtlas;
+    vec4 shadowTiles;
+    vec4 shadowFaces;
+    vec4 shadowLocal;
+    vec4 spotShadowParams[8];
+    vec4 pointShadowPositions[4];
+    vec4 pointShadowParams[4];
+    vec4 environment;
+    mat4 reflectionViewProj;
+    vec4 reflectionPlane;
+    vec4 reflectionParams;
+    vec4 reflectionExtra;
+    vec4 probes;
+} frame;
+
+layout(std140) uniform acro_fs_u2_3
+{
+    vec4 data[1024];
+} lightPositions;
+
+layout(std140) uniform acro_fs_u2_4
+{
+    vec4 data[1024];
+} lightColors;
+
+layout(std140) uniform acro_fs_u2_5
+{
+    vec4 data[1024];
+} lightDirections;
+
+layout(std140) uniform acro_fs_u2_6
+{
+    uvec4 data[1024];
+} lightCells;
+
+layout(std140) uniform acro_fs_u2_7
+{
+    uvec4 data[1024];
+} lightIndices;
+
+layout(std140) uniform acro_fs_u2_2
+{
+    vec4 baseColor;
+    vec4 params;
+    vec4 uvRow0;
+    vec4 uvRow1;
+    vec4 surface;
+    vec4 emissive;
+    vec4 flags;
+} material;
+
+layout(std140) uniform acro_fs_push
+{
+    vec4 params;
+} graphPush;
+
+uniform highp sampler2DShadow acro_t1_0;
+uniform highp sampler2D acro_t2_9_s2_17;
+uniform highp sampler2D acro_t2_10_s2_17;
+uniform highp sampler2D acro_t2_11_s2_17;
+uniform highp sampler2D acro_t2_12_s2_17;
+uniform highp sampler2D acro_t2_13_s2_17;
+uniform highp sampler2D acro_t2_14_s2_17;
+uniform highp sampler2D acro_t2_15_s2_23;
+
+in vec3 acro_v0;
+in vec2 acro_v2;
+in vec3 acro_v1;
+in vec4 acro_v3;
+in vec4 acro_v8;
+in vec4 acro_v5;
+layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec2 outMotion;
+in vec4 acro_v6;
+in vec4 acro_v7;
+vec2 gUV;
+vec3 gBaseColor;
+vec4 gVertexColor;
+vec3 gPosition;
+vec3 gNormal;
+vec3 gView;
+float gTime;
+float gOpacity;
+vec3 gNormalTS;
+float gMetallic;
+float gRoughness;
+vec3 gEmissive;
+float gOcclusion;
+
+void graphSurface()
+{
+    vec4 a = texture(acro_t2_9_s2_17, gUV);
+    vec4 b = texture(acro_t2_10_s2_17, gUV);
+    vec4 c = texture(acro_t2_11_s2_17, gUV);
+    vec4 d = texture(acro_t2_12_s2_17, gUV);
+    vec4 e = texture(acro_t2_13_s2_17, gUV);
+    vec4 v = graphValues.values[0];
+    gBaseColor = ((a.xyz * gVertexColor.xyz) * v.xyz) + (((gPosition + gNormal) + gView) * gTime);
+    gOpacity = a.w * v.w;
+    gNormalTS = (c.xyz * 2.0) - vec3(1.0);
+    gMetallic = b.z;
+    gRoughness = b.y;
+    gEmissive = e.xyz;
+    gOcclusion = d.x;
+}
+
+float shadowPCF(vec2 uv, float ref, vec4 bounds)
+{
+    vec2 texel = frame.shadowAtlas.xy;
+    int radius = int(frame.shadowAtlas.z);
+    if (radius <= 0)
+    {
+        vec3 _313 = vec3(clamp(uv, bounds.xy, bounds.zw), ref);
+        return texture(acro_t1_0, vec3(_313.xy, _313.z));
+    }
+    vec2 p = uv / texel;
+    vec2 base = floor(p + vec2(0.5));
+    vec2 st = (p + vec2(0.5)) - base;
+    base = (base - vec2(0.5)) * texel;
+    vec2 w[3];
+    vec2 o[3];
+    int n;
+    float norm;
+    if (radius == 1)
+    {
+        w[0] = vec2(3.0) - (st * 2.0);
+        w[1] = vec2(1.0) + (st * 2.0);
+        o[0] = ((vec2(2.0) - st) / w[0]) - vec2(1.0);
+        o[1] = (st / w[1]) + vec2(1.0);
+        n = 2;
+        norm = 0.0625;
+    }
+    else
+    {
+        w[0] = vec2(4.0) - (st * 3.0);
+        w[1] = vec2(7.0);
+        w[2] = vec2(1.0) + (st * 3.0);
+        o[0] = ((vec2(3.0) - (st * 2.0)) / w[0]) - vec2(2.0);
+        o[1] = (vec2(3.0) + st) / w[1];
+        o[2] = (st / w[2]) + vec2(2.0);
+        n = 3;
+        norm = 0.0069444444961845874786376953125;
+    }
+    float sum = 0.0;
+    for (int j = 0; j < n; j++)
+    {
+        for (int i = 0; i < n; i++)
+        {
+            vec2 tap = clamp(base + (vec2(o[i].x, o[j].y) * texel), bounds.xy, bounds.zw);
+            vec3 _466 = vec3(tap, ref);
+            sum += ((w[i].x * w[j].y) * texture(acro_t1_0, vec3(_466.xy, _466.z)));
+        }
+    }
+    return sum * norm;
+}
+
+float tileShadow(vec2 local, float ref, vec2 origin, vec2 size)
+{
+    vec2 halfTexel = frame.shadowAtlas.xy * 0.5;
+    vec2 param = origin + (local * size);
+    float param_1 = ref;
+    vec4 param_2 = vec4(origin + halfTexel, (origin + size) - halfTexel);
+    return shadowPCF(param, param_1, param_2);
+}
+
+float cascadeShadow(int c, vec3 p)
+{
+    vec3 local = (frame.cascadeMatrices[c] * vec4(p, 1.0)).xyz;
+    bool _526 = local.x < 0.0;
+    bool _533;
+    if (!_526)
+    {
+        _533 = local.x > 1.0;
+    }
+    else
+    {
+        _533 = _526;
+    }
+    bool _540;
+    if (!_533)
+    {
+        _540 = local.y < 0.0;
+    }
+    else
+    {
+        _540 = _533;
+    }
+    bool _547;
+    if (!_540)
+    {
+        _547 = local.y > 1.0;
+    }
+    else
+    {
+        _547 = _540;
+    }
+    if (_547)
+    {
+        return 1.0;
+    }
+    vec2 origin = vec2(float(c & 1), float(c >> 1)) * frame.shadowTiles.xy;
+    vec2 param = local.xy;
+    float param_1 = min(local.z, 1.0) - frame.cascadeBiases[c];
+    vec2 param_2 = origin;
+    vec2 param_3 = frame.shadowTiles.xy;
+    return tileShadow(param, param_1, param_2, param_3);
+}
+
+float directionalShadow(vec3 p, vec3 ng, out vec3 tint)
+{
+    tint = vec3(1.0);
+    int count = int(frame.shadowInfo.x);
+    float depth = dot(frame.shadowDepthRow.xyz, p) + frame.shadowDepthRow.w;
+    int c = 0;
+    for (;;)
+    {
+        bool _610 = c < (count - 1);
+        bool _619;
+        if (_610)
+        {
+            _619 = depth > frame.cascadeSplits[c];
+        }
+        else
+        {
+            _619 = _610;
+        }
+        if (_619)
+        {
+            c++;
+            continue;
+        }
+        else
+        {
+            break;
+        }
+    }
+    if (depth > frame.cascadeSplits[c])
+    {
+        return 1.0;
+    }
+    int param = c;
+    vec3 param_1 = p + (ng * frame.cascadeNormalOffsets[c]);
+    float s = cascadeShadow(param, param_1);
+    vec3 t = _652[c];
+    float start = frame.cascadeBlendStarts[c];
+    if (depth > start)
+    {
+        float f = (depth - start) / (frame.cascadeSplits[c] - start);
+        if ((c + 1) < count)
+        {
+            int param_2 = c + 1;
+            vec3 param_3 = p + (ng * frame.cascadeNormalOffsets[c + 1]);
+            s = mix(s, cascadeShadow(param_2, param_3), f);
+            t = mix(t, _652[c + 1], vec3(f));
+        }
+        else
+        {
+            s = mix(s, 1.0, f);
+        }
+    }
+    if (frame.shadowAtlas.w > 0.5)
+    {
+        tint = t;
+    }
+    return s;
+}
+
+vec3 environmentDirection(vec3 d, vec2 cs)
+{
+    return vec3((cs.x * d.x) - (cs.y * d.z), d.y, (cs.y * d.x) + (cs.x * d.z));
+}
+
+void shBasis(vec3 d, inout float y[9])
+{
+    y[0] = 0.2820949852466583251953125;
+    y[1] = 0.48860299587249755859375 * d.y;
+    y[2] = 0.48860299587249755859375 * d.z;
+    y[3] = 0.48860299587249755859375 * d.x;
+    y[4] = (1.09254801273345947265625 * d.x) * d.y;
+    y[5] = (1.09254801273345947265625 * d.y) * d.z;
+    y[6] = 0.3153919875621795654296875 * (((3.0 * d.z) * d.z) - 1.0);
+    y[7] = (1.09254801273345947265625 * d.x) * d.z;
+    y[8] = 0.546274006366729736328125 * ((d.x * d.x) - (d.y * d.y));
+}
+
+vec3 environmentIrradiance(vec3 n)
+{
+    vec3 param = n;
+    vec2 param_1 = frame.environment.zw;
+    vec3 param_2 = environmentDirection(param, param_1);
+    float param_3[9];
+    shBasis(param_2, param_3);
+    float y[9] = param_3;
+    vec3 sum = vec3(0.0);
+    for (int i = 0; i < 9; i++)
+    {
+        sum += (texelFetch(acro_t2_14_s2_17, ivec2(496, 256) + ivec2(i, 0), 0).xyz * y[i]);
+    }
+    return max(sum, vec3(0.0)) * frame.environment.y;
+}
+
+vec3 hemisphere(vec3 d)
+{
+    return mix(frame.groundColor.xyz, frame.skyColor.xyz, vec3((d.y * 0.5) + 0.5)) * frame.skyColor.w;
+}
+
+uvec2 clusterLights()
+{
+    float depth = dot(frame.viewDepth.xyz, acro_v0) + frame.viewDepth.w;
+    vec2 tile = clamp(floor(gl_FragCoord.xy * frame.clusterScale.xy), vec2(0.0), frame.clusterGrid.xy - vec2(1.0));
+    float slice = clamp(floor((log2(max(depth, 9.9999999747524270787835121154785e-07)) * frame.clusterScale.z) + frame.clusterScale.w), 0.0, frame.clusterGrid.z - 1.0);
+    uint cluster = uint((((slice * frame.clusterGrid.y) + tile.y) * frame.clusterGrid.x) + tile.x);
+    uint cell = lightCells.data[cluster >> uint(2)][cluster & 3u];
+    return uvec2(cell & 65535u, cell >> uint(16));
+}
+
+uint lightIndex(uint i)
+{
+    uint word = i / 3u;
+    return (lightIndices.data[word >> uint(2)][word & 3u] >> ((i - (word * 3u)) * 10u)) & 1023u;
+}
+
+vec3 punctualRadiance(uint i, inout vec3 l)
+{
+    vec4 position = lightPositions.data[i];
+    vec3 toLight = position.xyz - acro_v0;
+    float d2 = dot(toLight, toLight);
+    float x = d2 * position.w;
+    float window = clamp(1.0 - (x * x), 0.0, 1.0);
+    l = toLight * inversesqrt(max(d2, 9.9999999392252902907785028219223e-09));
+    vec4 color = lightColors.data[i];
+    vec4 direction = lightDirections.data[i];
+    float cone = clamp((dot(-l, direction.xyz) * color.w) + direction.w, 0.0, 1.0);
+    return color.xyz * ((((window * window) * cone) * cone) / max(d2, 9.9999997473787516355514526367188e-05));
+}
+
+float localShadow(uint index, vec3 p, vec3 ng, vec3 l)
+{
+    uint spots = uint(frame.shadowInfo.z);
+    if (index < spots)
+    {
+        vec4 params = frame.spotShadowParams[index];
+        vec4 clip0 = frame.spotShadowMatrices[index] * vec4(p, 1.0);
+        float texel = params.z * max(clip0.w, 0.0);
+        vec3 q = (p + (ng * (texel * frame.shadowLocal.x))) + (l * (texel * frame.shadowLocal.y));
+        vec4 clip = frame.spotShadowMatrices[index] * vec4(q, 1.0);
+        if (clip.w <= 0.0)
+        {
+            return 1.0;
+        }
+        vec3 local = clip.xyz / vec3(clip.w);
+        bool _796 = local.x < 0.0;
+        bool _803;
+        if (!_796)
+        {
+            _803 = local.x > 1.0;
+        }
+        else
+        {
+            _803 = _796;
+        }
+        bool _810;
+        if (!_803)
+        {
+            _810 = local.y < 0.0;
+        }
+        else
+        {
+            _810 = _803;
+        }
+        bool _817;
+        if (!_810)
+        {
+            _817 = local.y > 1.0;
+        }
+        else
+        {
+            _817 = _810;
+        }
+        bool _824;
+        if (!_817)
+        {
+            _824 = local.z > 1.0;
+        }
+        else
+        {
+            _824 = _817;
+        }
+        if (_824)
+        {
+            return 1.0;
+        }
+        vec2 param = local.xy;
+        float param_1 = local.z;
+        vec2 param_2 = params.xy;
+        vec2 param_3 = frame.shadowTiles.zw;
+        return tileShadow(param, param_1, param_2, param_3);
+    }
+    uint point = index - spots;
+    if (point >= uint(frame.shadowInfo.w))
+    {
+        return 1.0;
+    }
+    vec4 position = frame.pointShadowPositions[point];
+    vec4 params_1 = frame.pointShadowParams[point];
+    float texel_1 = position.w * length(p - position.xyz);
+    vec3 d = ((p + (ng * (texel_1 * frame.shadowLocal.x))) + (l * (texel_1 * frame.shadowLocal.y))) - position.xyz;
+    vec3 a = abs(d);
+    bool _900 = a.x >= a.y;
+    bool _908;
+    if (_900)
+    {
+        _908 = a.x >= a.z;
+    }
+    else
+    {
+        _908 = _900;
+    }
+    int face;
+    float m;
+    if (_908)
+    {
+        face = (d.x > 0.0) ? 0 : 1;
+        m = a.x;
+    }
+    else
+    {
+        if (a.y >= a.z)
+        {
+            face = (d.y > 0.0) ? 2 : 3;
+            m = a.y;
+        }
+        else
+        {
+            face = (d.z > 0.0) ? 4 : 5;
+            m = a.z;
+        }
+    }
+    if (m <= 0.0)
+    {
+        return 1.0;
+    }
+    vec2 st = vec2(dot(d, _956[face]), dot(d, _965[face])) / vec2(m * frame.shadowFaces.z);
+    float ref = params_1.z + (params_1.w / m);
+    if (ref > 1.0)
+    {
+        return 1.0;
+    }
+    vec2 origin = params_1.xy + (vec2(float(face % 3), float(face / 3)) * frame.shadowFaces.xy);
+    vec2 param_4 = vec2(0.5 + (0.5 * st.x), 0.5 - (0.5 * st.y));
+    float param_5 = ref;
+    vec2 param_6 = origin;
+    vec2 param_7 = frame.shadowFaces.xy;
+    return tileShadow(param_4, param_5, param_6, param_7);
+}
+
+vec3 fresnelSchlick(vec3 f0, float VoH)
+{
+    float f = pow(1.0 - VoH, 5.0);
+    return f0 + ((vec3(1.0) - f0) * f);
+}
+
+float distributionGGX(float NoH, float a)
+{
+    float a2 = a * a;
+    float d = ((NoH * NoH) * (a2 - 1.0)) + 1.0;
+    return a2 / ((3.1415927410125732421875 * d) * d);
+}
+
+float visibilitySmithGGXCorrelated(float NoV, float NoL, float a)
+{
+    float a2 = a * a;
+    float ggxV = NoL * sqrt(((NoV * NoV) * (1.0 - a2)) + a2);
+    float ggxL = NoV * sqrt(((NoL * NoL) * (1.0 - a2)) + a2);
+    return 0.5 / max(ggxV + ggxL, 9.9999997473787516355514526367188e-06);
+}
+
+vec2 environmentBRDFTable(float NoV, float roughness)
+{
+    vec2 uv = ((vec2(NoV, roughness) * 31.0) + vec2(0.5)) / vec2(32.0);
+    return texture(acro_t2_15_s2_23, uv).xy;
+}
+
+vec2 equirectUV(vec3 d)
+{
+    return vec2((atan(d.x, -d.z) * 0.15915493667125701904296875) + 0.5, acos(clamp(d.y, -1.0, 1.0)) * 0.3183098733425140380859375);
+}
+
+vec3 sampleEquirect(ivec4 region, vec2 uv, highp sampler2D SPIRV_Cross_Combinedimages)
+{
+    vec2 p = (uv * vec2(region.zw)) - vec2(0.5);
+    vec2 f = floor(p);
+    vec2 t = p - f;
+    int x0 = int(f.x);
+    int y0 = int(f.y);
+    if (x0 < 0)
+    {
+        x0 += region.z;
+    }
+    if (x0 >= region.z)
+    {
+        x0 -= region.z;
+    }
+    int _1121;
+    if ((x0 + 1) == region.z)
+    {
+        _1121 = 0;
+    }
+    else
+    {
+        _1121 = x0 + 1;
+    }
+    int x1 = _1121;
+    int y1 = min((y0 + 1), (region.w - 1));
+    y0 = max(y0, 0);
+    vec3 a = texelFetch(SPIRV_Cross_Combinedimages, region.xy + ivec2(x0, y0), 0).xyz;
+    vec3 b = texelFetch(SPIRV_Cross_Combinedimages, region.xy + ivec2(x1, y0), 0).xyz;
+    vec3 c = texelFetch(SPIRV_Cross_Combinedimages, region.xy + ivec2(x0, y1), 0).xyz;
+    vec3 d = texelFetch(SPIRV_Cross_Combinedimages, region.xy + ivec2(x1, y1), 0).xyz;
+    return mix(mix(a, b, vec3(t.x)), mix(c, d, vec3(t.x)), vec3(t.y));
+}
+
+vec3 environmentRadiance(vec3 d, float roughness)
+{
+    vec3 param = d;
+    vec2 param_1 = frame.environment.zw;
+    vec3 param_2 = environmentDirection(param, param_1);
+    vec2 uv = equirectUV(param_2);
+    float level = roughness * 5.0;
+    int i = min(int(level), 4);
+    ivec4 param_3 = _1373[i];
+    vec2 param_4 = uv;
+    vec3 a = sampleEquirect(param_3, param_4, acro_t2_14_s2_17);
+    ivec4 param_5 = _1373[i + 1];
+    vec2 param_6 = uv;
+    vec3 b = sampleEquirect(param_5, param_6, acro_t2_14_s2_17);
+    return mix(a, b, vec3(level - float(i))) * frame.environment.y;
+}
+
+vec2 environmentBRDF(float NoV, float roughness)
+{
+    vec4 r = (vec4(-1.0, -0.0274999998509883880615234375, -0.572000026702880859375, 0.02199999988079071044921875) * roughness) + vec4(1.0, 0.0425000004470348358154296875, 1.03999996185302734375, -0.039999999105930328369140625);
+    float a004 = (min(r.x * r.x, exp2((-9.27999973297119140625) * NoV)) * r.x) + r.y;
+    return (vec2(-1.03999996185302734375, 1.03999996185302734375) * a004) + r.zw;
+}
+
+vec3 planarReflected(vec3 fallback, vec3 n, vec3 ng, float roughness)
+{
+    vec3 pn = frame.reflectionPlane.xyz;
+    float tolerance = frame.reflectionExtra.x;
+    float onPlane = 1.0 - smoothstep(tolerance * 0.5, tolerance, abs(dot(pn, acro_v0) - frame.reflectionPlane.w));
+    float facing = smoothstep(0.5, 0.89999997615814208984375, dot(ng, pn));
+    float glossy = 1.0 - smoothstep(frame.reflectionParams.y * 0.5, frame.reflectionParams.y, roughness);
+    float weight = ((frame.reflectionParams.x * onPlane) * facing) * glossy;
+    if (weight <= 0.0)
+    {
+        return fallback;
+    }
+    vec3 p = acro_v0 + ((n - (pn * dot(n, pn))) * frame.reflectionParams.w);
+    vec4 clip = frame.reflectionViewProj * vec4(p, 1.0);
+    vec2 uv = ((vec2(clip.x, -clip.y) / vec2(clip.w)) * 0.5) + vec2(0.5);
+    float radius = frame.reflectionParams.z * roughness;
+    vec3 sum = vec3(0.0);
+    float coverage = 0.0;
+    for (int i = 0; i < 12; i++)
+    {
+        float r = sqrt((float(i) + 0.5) / 12.0) * radius;
+        float a = float(i) * 2.3999631404876708984375;
+        vec2 tap = uv + (vec2(cos(a) * frame.reflectionExtra.y, sin(a)) * r);
+        vec2 inside = min(tap, vec2(1.0) - tap);
+        float edge = smoothstep(0.0, 0.039999999105930328369140625, min(inside.x, inside.y));
+        vec4 t = textureLod(acro_t2_12_s2_17, clamp(tap, vec2(0.0), vec2(1.0)), 0.0);
+        sum += ((t.xyz / (vec3(1.0) - min(t.xyz, vec3(0.99500000476837158203125)))) * edge);
+        coverage += (t.w * edge);
+    }
+    vec3 planar = (sum / vec3(12.0)) + (fallback * (1.0 - (coverage / 12.0)));
+    return mix(fallback, planar, vec3(weight));
+}
+
+vec2 motionVector(vec4 current, vec4 previous)
+{
+    if (previous.w <= 0.0)
+    {
+        return vec2(0.0);
+    }
+    return ((previous.xy / vec2(previous.w)) - (current.xy / vec2(current.w))) * vec2(0.5, -0.5);
+}
+
+void main()
+{
+    gUV = acro_v2;
+    gPosition = acro_v0;
+    gNormal = normalize(acro_v1);
+    gView = normalize(frame.cameraPos.xyz - acro_v0);
+    gVertexColor = acro_v3;
+    gTime = graphPush.params.x;
+    graphSurface();
+    vec3 albedo = acro_v3.xyz * max(gBaseColor, vec3(0.0));
+    float opacity = acro_v3.w * clamp(gOpacity, 0.0, 1.0);
+    if (graphPush.params.y > 0.5)
+    {
+        if (gOpacity < graphPush.params.z)
+        {
+            discard;
+        }
+        opacity = acro_v3.w;
+    }
+    vec3 n = normalize(acro_v1);
+    vec3 gt = acro_v8.xyz - (n * dot(n, acro_v8.xyz));
+    bool _1979 = dot(gt, gt) > 9.9999999600419720025001879548654e-13;
+    bool _1986;
+    if (_1979)
+    {
+        _1986 = dot(gNormalTS, gNormalTS) > 9.9999999600419720025001879548654e-13;
+    }
+    else
+    {
+        _1986 = _1979;
+    }
+    if (_1986)
+    {
+        gt = normalize(gt);
+        vec3 gb = cross(n, gt) * ((acro_v8.w < 0.0) ? (-1.0) : 1.0);
+        vec3 m = normalize(gNormalTS);
+        n = normalize(((gt * m.x) + (gb * m.y)) + (n * m.z));
+    }
+    bool pbr = material.emissive.w > 0.5;
+    float _2028;
+    if (pbr)
+    {
+        _2028 = clamp(material.params.z, 0.0, 1.0);
+    }
+    else
+    {
+        _2028 = 0.0;
+    }
+    float translucency = _2028;
+    bool _2043;
+    if (pbr)
+    {
+        _2043 = !gl_FrontFacing;
+    }
+    else
+    {
+        _2043 = pbr;
+    }
+    if (_2043 && (translucency <= 0.0))
+    {
+        n = -n;
+    }
+    vec3 l = normalize(frame.lightDir.xyz);
+    vec3 v = normalize(frame.cameraPos.xyz - acro_v0);
+    vec3 h = normalize(l + v);
+    vec3 ng = normalize(acro_v1) * (gl_FrontFacing ? 1.0 : (-1.0));
+    bool receivesShadows = acro_v5.x > 0.5;
+    float shadow = 1.0;
+    if ((frame.lightColor.w > 0.5) && receivesShadows)
+    {
+        vec3 param = acro_v0;
+        vec3 param_1 = ng;
+        vec3 param_2;
+        float _2093 = directionalShadow(param, param_1, param_2);
+        vec3 cascadeTint = param_2;
+        shadow = _2093;
+        albedo *= cascadeTint;
+    }
+    vec3 light = frame.lightColor.xyz * frame.lightDir.w;
+    float ao = clamp(gOcclusion, 0.0, 1.0);
+    float vertexAO = abs(acro_v8.w);
+    if (vertexAO > 0.0)
+    {
+        ao *= min(vertexAO, 1.0);
+    }
+    vec3 color;
+    if (!pbr)
+    {
+        float ndotl = dot(n, l);
+        vec3 diffuse = light * max(ndotl, 0.0);
+        vec3 specular = light * ((pow(max(dot(n, h), 0.0), material.params.w) * material.params.z) * step(0.0, ndotl));
+        vec3 _2153;
+        if (frame.environment.x > 0.5)
+        {
+            vec3 param_3 = n;
+            _2153 = environmentIrradiance(param_3);
+        }
+        else
+        {
+            vec3 param_4 = n;
+            _2153 = hemisphere(param_4);
+        }
+        vec3 ambient = _2153 * ao;
+        color = (albedo * (ambient + (diffuse * shadow))) + (specular * shadow);
+        if (frame.clusterGrid.w > 0.5)
+        {
+            uvec2 cell = clusterLights();
+            vec3 param_7;
+            for (uint i = cell.x; i < (cell.x + cell.y); i++)
+            {
+                uint param_5 = i;
+                uint li = lightIndex(param_5);
+                uint param_6 = li;
+                vec3 _2210 = punctualRadiance(param_6, param_7);
+                vec3 pl = param_7;
+                vec3 radiance = _2210;
+                if (receivesShadows)
+                {
+                    uint param_8 = li;
+                    vec3 param_9 = acro_v0;
+                    vec3 param_10 = ng;
+                    vec3 param_11 = pl;
+                    radiance *= localShadow(param_8, param_9, param_10, param_11);
+                }
+                float pndotl = dot(n, pl);
+                vec3 ph = normalize(pl + v);
+                color += (((albedo * max(pndotl, 0.0)) * radiance) + (radiance * ((pow(max(dot(n, ph), 0.0), material.params.w) * material.params.z) * step(0.0, pndotl))));
+            }
+        }
+    }
+    else
+    {
+        float metallic = clamp(gMetallic, 0.0, 1.0);
+        float roughness = clamp(gRoughness, 0.04500000178813934326171875, 1.0);
+        float a = roughness * roughness;
+        vec3 diffuseColor = albedo * (1.0 - metallic);
+        vec3 f0 = mix(vec3(0.039999999105930328369140625), albedo, vec3(metallic));
+        vec3 sn = n;
+        if (translucency > 0.0)
+        {
+            vec3 face = cross(dFdx(acro_v0), dFdy(acro_v0));
+            if (dot(face, face) > 9.9999996826552253889678874634872e-21)
+            {
+                sn = normalize((normalize(face) * ((dot(face, v) < 0.0) ? (-1.0) : 1.0)) + (n - normalize(acro_v1)));
+            }
+        }
+        float NoV = max(dot(sn, v), 9.9999997473787516355514526367188e-05);
+        float NoL = clamp(dot(n, l), 0.0, 1.0);
+        float sNoL = clamp(dot(sn, l), 0.0, 1.0);
+        float NoH = clamp(dot(sn, h), 0.0, 1.0);
+        float VoH = clamp(dot(v, h), 0.0, 1.0);
+        if (translucency > 0.0)
+        {
+            NoV = max(NoV, 0.5);
+            VoH = max(VoH, 0.5);
+        }
+        vec3 param_12 = f0;
+        float param_13 = VoH;
+        vec3 F = fresnelSchlick(param_12, param_13);
+        float param_14 = NoH;
+        float param_15 = a;
+        float param_16 = NoV;
+        float param_17 = sNoL;
+        float param_18 = a;
+        vec3 specular_1 = (F * (distributionGGX(param_14, param_15) * visibilitySmithGGXCorrelated(param_16, param_17, param_18))) * 3.1415927410125732421875;
+        vec3 direct = (((((vec3(1.0) - F) * diffuseColor) * NoL) + (specular_1 * sNoL)) * light) * shadow;
+        if (translucency > 0.0)
+        {
+            float through = clamp(-dot(sn, l), 0.0, 1.0);
+            float toward = pow(clamp(dot(-v, l), 0.0, 1.0), 3.0);
+            direct += (((((diffuseColor * light) * shadow) * translucency) * through) * (0.3499999940395355224609375 + (0.64999997615814208984375 * toward)));
+        }
+        vec2 dfg;
+        vec3 irradiance;
+        vec3 reflected;
+        if (frame.environment.x > 0.5)
+        {
+            float param_19 = NoV;
+            float param_20 = roughness;
+            dfg = environmentBRDFTable(param_19, param_20);
+            vec3 param_21 = n;
+            irradiance = environmentIrradiance(param_21);
+            vec3 param_22 = reflect(-v, sn);
+            float param_23 = roughness;
+            reflected = environmentRadiance(param_22, param_23);
+        }
+        else
+        {
+            float param_24 = NoV;
+            float param_25 = roughness;
+            dfg = environmentBRDF(param_24, param_25);
+            vec3 param_26 = n;
+            irradiance = hemisphere(param_26);
+            vec3 param_27 = reflect(-v, sn);
+            reflected = mix(hemisphere(param_27), irradiance, vec3(roughness));
+        }
+        bool _2467 = material.flags.w > 0.5;
+        bool _2473;
+        if (_2467)
+        {
+            _2473 = frame.reflectionExtra.z > 0.5;
+        }
+        else
+        {
+            _2473 = _2467;
+        }
+        if (_2473)
+        {
+            vec3 param_28 = reflected;
+            vec3 param_29 = n;
+            vec3 param_30 = ng;
+            float param_31 = roughness;
+            reflected = planarReflected(param_28, param_29, param_30, param_31);
+        }
+        vec3 specularAmbient = (f0 * dfg.x) + vec3(dfg.y);
+        vec3 ambient_1 = ((((vec3(1.0) - specularAmbient) * diffuseColor) * irradiance) + (specularAmbient * reflected)) * ao;
+        color = direct + ambient_1;
+        if (frame.clusterGrid.w > 0.5)
+        {
+            uvec2 cell_1 = clusterLights();
+            vec3 param_34;
+            for (uint i_1 = cell_1.x; i_1 < (cell_1.x + cell_1.y); i_1++)
+            {
+                uint param_32 = i_1;
+                uint li_1 = lightIndex(param_32);
+                uint param_33 = li_1;
+                vec3 _2541 = punctualRadiance(param_33, param_34);
+                vec3 pl_1 = param_34;
+                vec3 radiance_1 = _2541;
+                if (receivesShadows)
+                {
+                    uint param_35 = li_1;
+                    vec3 param_36 = acro_v0;
+                    vec3 param_37 = ng;
+                    vec3 param_38 = pl_1;
+                    radiance_1 *= localShadow(param_35, param_36, param_37, param_38);
+                }
+                vec3 ph_1 = normalize(pl_1 + v);
+                float pNoL = clamp(dot(n, pl_1), 0.0, 1.0);
+                float pNoH = clamp(dot(n, ph_1), 0.0, 1.0);
+                vec3 param_39 = f0;
+                float param_40 = clamp(dot(v, ph_1), 0.0, 1.0);
+                vec3 pF = fresnelSchlick(param_39, param_40);
+                float param_41 = pNoH;
+                float param_42 = a;
+                float param_43 = NoV;
+                float param_44 = pNoL;
+                float param_45 = a;
+                vec3 pSpecular = (pF * (distributionGGX(param_41, param_42) * visibilitySmithGGXCorrelated(param_43, param_44, param_45))) * 3.1415927410125732421875;
+                color += (((((vec3(1.0) - pF) * diffuseColor) + pSpecular) * pNoL) * radiance_1);
+            }
+        }
+    }
+    color = mix(color, albedo, vec3(material.params.y));
+    color += (max(gEmissive, vec3(0.0)) * (vec3(1.0) + acro_v5.yzw));
+    float dist = length(frame.cameraPos.xyz - acro_v0);
+    float fog = 1.0 - exp((-dist) * frame.fogColor.w);
+    if (frame.groundColor.w != 0.0)
+    {
+        float k = frame.groundColor.w;
+        vec3 toEye = acro_v0 - frame.cameraPos.xyz;
+        float x = k * toEye.y;
+        float _2664;
+        if (abs(x) < 9.9999997473787516355514526367188e-05)
+        {
+            _2664 = 1.0 - (0.5 * x);
+        }
+        else
+        {
+            _2664 = (1.0 - exp(min(-x, 60.0))) / x;
+        }
+        float span = _2664;
+        float atEye = frame.fogColor.w * exp(min((-k) * (frame.cameraPos.y - frame.cameraPos.w), 30.0));
+        fog = 1.0 - exp(((-dist) * atEye) * span);
+    }
+    vec3 rgb = mix(color, frame.fogColor.xyz, vec3(fog));
+    if (frame.reflectionExtra.w > 0.5)
+    {
+        rgb /= (vec3(1.0) + rgb);
+    }
+    outColor = vec4(rgb, opacity);
+    vec4 param_46 = acro_v6;
+    vec4 param_47 = acro_v7;
+    outMotion = motionVector(param_46, param_47);
+}
+
