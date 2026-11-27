@@ -411,7 +411,8 @@ public final class SceneRenderer {
         /// The swaying vertex shader (mesh_wind.vert, or mesh_paint_wind.vert with `painted`; `Material.sways`).
         var wind: Bool = false
         /// The fur shaders (mesh_fur(_skinned).vert, mesh_fur.frag; `Material.fur`), for shells or
-        /// cards (double-sided, alpha-to-coverage).
+        /// cards (double-sided; their strands pick MSAA samples themselves, mesh_fur.frag). Fur
+        /// shells and fins draw blended, in the transparent pass.
         var fur: GroomStyle? = nil
         /// The light probe fragment variants (mesh*_probes.frag), while the frame has probes. Never
         /// with `graph` or `fur`.
@@ -1327,7 +1328,6 @@ public final class SceneRenderer {
         var descriptor = PipelineDescriptor(shader: shader, vertexLayout: key.skinned ? SkinnedMeshVertex.layout : MeshVertex.layout,
                                             instanceLayout: MeshInstance.layout)
         descriptor.cullMode = key.doubleSided || key.fur == .cards ? .none : .back
-        descriptor.alphaToCoverage = key.fur == .cards
         descriptor.alphaBlending = key.blending
         descriptor.depthWrite = !key.blending
         descriptor.depthCompare = key.reversedZ ? .greater : .less

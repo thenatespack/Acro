@@ -14,7 +14,8 @@
 #   backend: combined image samplers, push constants as a uniform block, everything named by its
 #   binding and listed in a header the device parses, see ShaderSource). Vertex and fragment only.
 #   A shader marked "// compile-shaders: gles <glslc flags>" gets its .gles from a second
-#   compile with those flags (the material graph templates' uniform-block variant).
+#   compile with those flags (the material graph templates' uniform-block variant), and one
+#   marked "// compile-shaders: wgsl <glslc flags>" its .wgsl the same way.
 # All outputs are committed, so building the package needs none of the tools.
 # Requires glslc (shaderc), SPIRV-Cross with its C API, spirv-opt (SPIRV-Tools) and naga-cli:
 #   macOS: brew install shaderc spirv-cross spirv-tools
@@ -141,7 +142,16 @@ trap 'rm -rf "$work" "$work_gles_log" "$work_gles_spv"' EXIT
 failed=()
 for src in "${shaders[@]}"; do
     echo "naga $src.spv -> $src.wgsl"
-    spirv-opt --split-combined-image-sampler --resolve-binding-conflicts "$src.spv" -o "$work/split.spv"
+    # A shader marked "// compile-shaders: wgsl <glslc flags>" gets its WGSL from a second compile
+    # with those flags (mesh_fur.frag: naga can't translate gl_SampleMask).
+    wgsl_flags=$(sed -n 's|^// compile-shaders: wgsl ||p' "$src" | head -n 1)
+    wgsl_input="$src.spv"
+    if [[ -n "$wgsl_flags" ]]; then
+        read -r -a wgsl_flag_list <<<"$wgsl_flags"
+        glslc --target-env=vulkan1.1 -O ${includes[@]+"${includes[@]}"} "${wgsl_flag_list[@]}" "$src" -o "$work/flagged.spv"
+        wgsl_input="$work/flagged.spv"
+    fi
+    spirv-opt --split-combined-image-sampler --resolve-binding-conflicts "$wgsl_input" -o "$work/split.spv"
     "$prep" "$work/split.spv" "$work/prepared.spv"
     if ! "$naga" "$work/prepared.spv" "$work/out.wgsl" >"$work/naga.log" 2>&1; then
         failed+=("$src: $(grep -v WARN "$work/naga.log" | head -n 3 | tr '\n' ' ')")

@@ -735,18 +735,39 @@ the collision. For dynamics: `GroomGeometry.Guide` has `points` (root first, eve
 rest), per-point `normals` (card facing), `layer` (outer, inner, flyaway), `clump` (its leader's
 index), `width`, `length`, `skin`; card `i` is guide `i` and `GroomGeometry.cardSpans(guides:fraction:)`
 gives each guide's vertices (two per point, left then right) and indices in a card mesh. `RenderPrep` adds the fur
-items after the entity's own: one instance per shell (its height in `params.y`), all copies of
-one mesh and groom batching into one instanced draw (checked by GroomTests: 3 furry entities x 9
-shells = one draw of 27 instances), plus an opaque undercoat shell in the root color that is all
-that draws past the last `lod.distances` entry (the fur-tinted far look). Skinned fur shares its
+items after the entity's own: an opaque undercoat shell in the root color (all copies of one
+mesh and groom in one instanced draw; all that draws past the last `lod.distances` entry, the
+fur-tinted far look), then one instance per shell (its height in `params.y`, the shell count in
+the instance color's alpha) inner to outer and the fins, alpha blended in the transparent pass
+(equal bounds and an item-order tie-break keep that order; consecutive copies still share a
+draw: GroomTests checks 3 entities x 8 shells = one blended draw of 24, each copy inner to outer). Skinned fur shares its
 entity's pose: `RenderList` now merges consecutive skinned items with the same skin, mesh and
 material into one batch. Shaders (Metal and Vulkan from one GLSL source, the `fur` scene renders
 byte-identical): `fur.glsl` in mesh_fur.vert / mesh_fur_skinned.vert (shells pushed out along the
 normal, leaning by the comb, drooping by gravity, bent by wind and the springs; cards bent toward
 their tips) and mesh_fur.frag (strands from a 3D cell grid on the bind-pose surface position, so
 they stay put on animated meshes and need no UVs; clumping, curl, frizz, random lengths, the mask
-texture's length per pixel; card strands with soft edges through alpha-to-coverage; all of it in
-`fur_strands.glsl`, shared with the shadow casters), shaded with a hair model (Marschner as
+texture's length per pixel; all of it in `fur_strands.glsl`, shared with the shadow casters).
+Anti-aliasing (fur_strands.glsl): coverage is analytic and filtered, never a hard hit: the
+pixel's footprint from screen-space derivatives of the strand coordinates smooths each strand's
+edge over a pixel (TressFX-style distance-to-axis coverage); strands thinner than a pixel draw a
+pixel wide at (true width / pixel width) opacity (Frostbite's thin visibility); and once strands
+are about a pixel apart the pattern blends continuously into its average (density x strand
+area of the strands alive at that height), keeping tufts three spacings wide (smooth noise:
+their own length and color) until those near a pixel too. Shells and fins are alpha blended
+(shells drawn inner to outer need no sorting: the classic shell order), undercoat opaque, no
+depth writes above it; where shells have blended to their alike average and the surface faces
+the view, only every 2nd (4th) draws, more opaque, to save shading. Fins (GroomFins.swift,
+Lengyel 2001): a strip on every furry edge rising along the fur, strands across it like card
+strands, shown at the silhouette only (faded by the surface's and the fin's own facing) and only
+while their strands are wider than a pixel, so close-ups get strands at the outline instead of
+shell layers. Cards are opaque with hashed alpha per MSAA sample (Wyman & McGuire 2017): the
+coverage picks how many samples (dithered rounding), a hash of the pixel and strand picks which
+(gl_SampleMask), so overlapping cards fill a pixel where alpha-to-coverage would cover the same
+samples for every layer; with one sample (TAAU, FSR 3) it is a per-frame stochastic alpha test
+the upscaler averages; WebGL 2 and WebGPU (no sample mask there / through naga) alpha-test
+(`// compile-shaders: wgsl <flags>` is the new WGSL counterpart of the gles marker). Edge-on cards
+fade to 35%. The shadow casters hash-test the same filtered coverage per texel. Shading: shaded with a hair model (Marschner as
 approximated by Karis 2016: R, a white highlight shifted toward the tip; TRT, a broader one in the
 fiber's color shifted toward the root; TT, light through the fibers, a bright rim when the sun is
 behind; a multiple-scattering diffuse that saturates toward the fiber color deeper in shadow;
@@ -759,7 +780,8 @@ point and spot lights (same model, their shadows) and fog. Shadows: two shells p
 mesh_fur_depth.frag (fur.glsl with `FUR_DEPTH`), as alpha-tested casters that keep their
 material, so every copy's fur casters are one draw per tile; `GroomRenderer.castsShadows` (default
 on, and only when its `MeshRenderer` casts) switches it. Fur reads the sun's shadow at the strand
-deep-opacity style (`furSunShadow`): the cascade is compared at 0.18, 0.69 and 1.79 x a depth set
+deep-opacity style (`furSunShadow`; one hardware-filtered compare per depth, spread over a
+texel-and-a-half triangle, not three PCF kernels): the cascade is compared at 0.18, 0.69 and 1.79 x a depth set
 by the length and density (4 mm-6 cm) toward the light, so the fur's own strands dim the light
 gradually (about exp(-distance / depth)) while other casters shadow fully. Fur is left out of the
 depth prepass. Secondary motion: a damped
@@ -771,8 +793,10 @@ own `groom` wins); terrain scatter rules take `groom` (every prop wears it; shel
 props). Shared changes: `PrefabNode.groom`, `Material.fur` / `MaterialAsset.fur`,
 `MaterialTraits.fur`, `PipelineKey.fur`, `SceneRenderer.DepthChoice.fur` (fur casters' depth
 pipeline), `PipelineDescriptor.alphaToCoverage` (Metal
-`isAlphaToCoverageEnabled`, Vulkan `alphaToCoverageEnable`), `RenderPrep.items` / `missingKeys`
-settable inside EngineRendering, a "brush" Lucide icon.
+`isAlphaToCoverageEnabled`, Vulkan `alphaToCoverageEnable`; fur no longer uses it),
+`RenderPrep.items` / `missingKeys` settable inside EngineRendering, a "brush" Lucide icon;
+`RenderList` merges consecutive transparent items of one skin, mesh and material into one draw
+and breaks transparent distance ties by item order.
 Tools: `groom.new`, `.get`, `.set`, `.edit` (changes, addComb, addCut, clearStrokes), `.open`,
 `.preview` (3/4 view and a close-up PNG), `.examples` (fox fur with strokes, long hair, moss patch),
 `.presets`, `.apply` {groom, target: {entity} | {character, part} | {meshBuild, part}, remove}
@@ -805,6 +829,15 @@ previous commit, `depth` = the shadow atlas pass): whole scene shadow 0.15 -> 0.
 shadow 0.18 -> 0.44 ms, scene 5.9 -> 6.6 ms. So about +0.2-0.3 ms of shadow pass per view and up to
 ~0.5 ms of fragment work (three filtered shadow lookups per fur fragment instead of one);
 `GroomRenderer.castsShadows = false` takes the casting half back.
+Filtered coverage (same setup, scene pass, the fastest of 3 runs alternating with the previous
+commit; the machine was busy, so +-1 ms): whole scene 6.7 -> 6.7 ms; creature close-up 6.0 ->
+14.2 ms; hair close-up 5.8 -> 7.5 ms; moss close-up 4.7 -> 6.9 ms; shadow pass unchanged. The
+creature close-up pays for blending: every shell fragment the fur covers is now shaded (before,
+most were discarded and outer-first shells rejected the rest by depth), about 2.3 ms for coverage
+and blending and the rest shading (three PCF kernels per fragment for the sun's deep shadow were
+another ~4-5 ms, hence the single hardware compares). Frame-to-frame change in the 3x crops (mean
+absolute difference, frames 120 -> 121, a shimmer measure): creature 30.7 -> 5.0, hair 19.0 ->
+3.7, moss 1.2 -> 0.04.
 Gaps: the springs are per bone (skinned) or per entity (rigid), not per guide, and rigid springs
 move only in X and Z; fur self-shadowing is only as fine as the shadow cascade (a texel is
 millimeters to centimeters, so single strands don't shadow each other, the coat does) and the
@@ -826,7 +859,16 @@ low-poly or hard-edged meshes split at the edges (warned under 48 triangles); `M
 get no fur; a groom on a sculpt with several looks grows on each look's mesh separately; fur meshes
 are built on the main thread the first frame they're used (a 5k-triangle character with cards takes
 a few ms in release) and an edited groom rebuilds them; picking and the selection outline use the
-base mesh; `groom.preview` shows the preview mesh only (not an arbitrary target); the brushes paint
+base mesh; blended shells sort per entity, not per pixel: where one entity's fur overlaps another's
+(a leg in front of the body, the neck against the torso) the one drawn later blends over the
+other's outer fringe, a visible seam at the join; a close-up filling the view with shell fur costs
+about twice what it did (all covered shell fragments shade; the 2nd/4th-shell thinning only kicks
+in where the pattern is averaged and faces the view), and nothing yet lowers the shell count by
+screen size; fins are straight along each mesh edge, so on low-poly meshes the close-up outline
+shows the polygon; the shell fur's blended fringe has the motion vectors of what's behind it
+(the undercoat, or the background past the silhouette), so TAAU can smear the outer fringe of
+fast-moving fur; hashed card alpha stipples sparse tips a little at 4x MSAA (TAAU averages it
+away); WebGL 2 and WebGPU alpha-test cards (no sample mask), as single-sample hardware did; `groom.preview` shows the preview mesh only (not an arbitrary target); the brushes paint
 only on the preview mesh, not on a character in the tab; the editor tab wasn't checked in the
 running editor (tests drive the workspace).
 ### Physics Material (`.physmat`) and Physics v2
