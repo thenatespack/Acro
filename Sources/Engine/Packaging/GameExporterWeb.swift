@@ -127,7 +127,7 @@ public enum WebRenderer: String, Sendable, Codable, CaseIterable {
     /// WebGPU when the browser has it (an adapter and a device come up), else WebGL 2.
     case auto
     case webgpu
-    /// WebGL 2 even where WebGPU works (no compute: no GPU particles, light probes or material graphs).
+    /// WebGL 2 even where WebGPU works (no compute: particles simulate on the CPU, without depth-buffer collisions).
     case webgl2
 
     public var title: String {
@@ -303,10 +303,10 @@ extension GameExporter {
             python3 -m http.server 8080      (in this folder), then open http://localhost:8080/
 
         Browsers
-        The game renders with WebGPU where the browser has it (a recent Chrome or Edge, Safari 26 or
-        later) and falls back to WebGL 2 elsewhere (any current browser; GPU particles, light probes
-        and material graphs need WebGPU). Add ?renderer=webgpu, webgl2 or auto to the address to
-        pick one; the choice is remembered. Hardware acceleration must be on.
+        The game renders with WebGPU where the browser has it (a recent Chrome, Edge or Firefox,
+        Safari 26 or later) and falls back to WebGL 2 elsewhere (any current browser; particles then
+        simulate on the CPU, without depth-buffer collisions). Add ?renderer=webgpu, webgl2 or auto
+        to the address to pick one; the choice is remembered. Hardware acceleration must be on.
 
         Files
         index.html, loader.js   the page and its loader (saves.js keeps saves in the browser,

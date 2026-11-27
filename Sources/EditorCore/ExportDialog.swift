@@ -97,8 +97,8 @@ public final class ExportDialog: Widget {
         row("Configuration", configurationMenu,
             tooltip: "Release: optimized, what to ship. Debug: unoptimized, with assertions and debug info, for tracking down problems")
         row("Renderer", rendererMenu,
-            tooltip: "Web: what the page starts with. Auto uses WebGPU where the browser has it, else WebGL 2 (no GPU particles, "
-                + "light probes or material graphs). Players can switch with ?renderer= or the game's settings")
+            tooltip: "Web: what the page starts with. Auto uses WebGPU where the browser has it, else WebGL 2 (particles simulate "
+                + "on the CPU there). Players can switch with ?renderer= or the game's settings")
         row("", dockerBox, tooltip: "Build a Linux game in a Docker container with the Linux Swift toolchain: from any machine, "
             + "for either architecture (the other one emulated, slower). Needs Docker installed and running")
         outputField.style.grow = 1
