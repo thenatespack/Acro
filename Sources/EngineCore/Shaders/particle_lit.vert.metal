@@ -1,7 +1,7 @@
 // Generated from particle_lit.vert by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
 // spirv-fnv1a64: 86dab7c4c55cccfe
-// glsl-fnv1a64: e72c8f15689d6942
+// glsl-fnv1a64: 4b244318c6dc6659
 
 #pragma clang diagnostic ignored "-Wmissing-prototypes"
 #pragma clang diagnostic ignored "-Wmissing-braces"

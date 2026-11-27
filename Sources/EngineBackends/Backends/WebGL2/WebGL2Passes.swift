@@ -134,7 +134,8 @@ final class WebGL2RenderPass: RenderPass {
     /// WebGL 2 has no storage buffers (`RenderDevice.supportsStorageBuffers` is false): shaders
     /// that read them have no GLSL ES, except the material graph templates, whose GLSL ES reads
     /// storage buffer 0 as a uniform block (binding point 8 + index, at most
-    /// `maxUniformBufferSize` bytes of it).
+    /// `maxUniformBufferSize` bytes of it), and the probe-lit shaders, whose GLSL ES reads storage
+    /// buffer 1 as an RGBA32UI texture (`WebGL2RenderDevice.storageTexture`; the offset is ignored there).
     func setStorageBuffer(_ buffer: GPUBuffer, offset: Int, index: Int, stage: ShaderStage) {
         validateStorageBinding(buffer, offset: offset, index: index)
         storageBuffers[index] = (buffer as! WebGL2Buffer, offset)
@@ -180,6 +181,9 @@ final class WebGL2RenderPass: RenderPass {
                     texture = image?.texture ?? shadowMap ?? device.placeholderColor
                     object = image?.sampler ?? device.linearSampler
                 }
+            } else if sampler.storage {
+                texture = storageBuffers[sampler.texture].map { device.storageTexture($0.buffer) } ?? device.placeholderStorage
+                object = device.pointSampler
             } else {
                 texture = textures[sampler.texture] ?? device.placeholderColor
                 object = sampler.sampler.flatMap { samplers[$0] } ?? device.linearSampler

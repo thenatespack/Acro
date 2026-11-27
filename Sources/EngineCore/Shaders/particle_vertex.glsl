@@ -12,8 +12,17 @@
 #include "particles.glsl"
 #include "particle_draw.glsl"
 
+#ifdef PARTICLES_INSTANCED
+// The GLSL ES (WebGL 2) variant (particle.vert's and particle_lit.vert's `compile-shaders: gles`
+// line): no storage buffers there, so ParticleSystem simulates on the CPU and hands each live
+// particle in draw order as instance attributes (`ParticleRecord`, vertex buffer 1).
+layout(location = 0) in vec4 instancePosition;
+layout(location = 1) in vec4 instanceVelocity;
+layout(location = 2) in vec4 instanceAttributes;
+#else
 layout(set = 2, binding = 24, std430) readonly buffer Particles { Particle particles[]; };
 layout(set = 2, binding = 25, std430) readonly buffer DrawList { uint drawList[]; };
+#endif
 
 layout(location = 0) out vec2 vCorner;
 layout(location = 1) out vec4 vColor;
@@ -54,7 +63,11 @@ vec2 cellUV(float frame, vec2 uv) {
 
 void main() {
     const vec2 corners[6] = vec2[](vec2(-1, -1), vec2(1, -1), vec2(1, 1), vec2(-1, -1), vec2(1, 1), vec2(-1, 1));
+#ifdef PARTICLES_INSTANCED
+    Particle p = Particle(instancePosition, instanceVelocity, instanceAttributes);
+#else
     Particle p = particles[drawList[gl_InstanceIndex]];
+#endif
     vec2 corner = corners[gl_VertexIndex];
     float life = clamp(p.position.w / max(p.velocity.w, 1e-5), 0.0, 1.0);
     float size = p.attributes.x * curve(life);

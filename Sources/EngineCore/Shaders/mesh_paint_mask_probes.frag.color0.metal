@@ -1,7 +1,7 @@
 // Generated from mesh_paint_mask_probes.frag by Scripts/compile-shaders.sh — do not edit.
 // Edit the GLSL and rerun the script (needs glslc and spirv-cross).
 // spirv-fnv1a64: a432f0f1030d456d
-// glsl-fnv1a64: 38a3caf15dcac5bd
+// glsl-fnv1a64: e309292037e28414
 
 #pragma clang diagnostic ignored "-Wmissing-prototypes"
 #pragma clang diagnostic ignored "-Wmissing-braces"

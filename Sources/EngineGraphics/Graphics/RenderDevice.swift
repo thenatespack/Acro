@@ -631,13 +631,14 @@ public struct DrawIndexedIndirectArguments: Sendable, BitwiseCopyable, Equatable
     /// for backends without them).
     var descriptorPoolCount: Int? { get }
     /// Whether compute passes and pipelines work (`beginComputePass`, `makeComputePipeline`).
-    /// false on WebGL 2: systems built on compute (GPU particles, light probe baking, FSR 3)
-    /// check it and skip themselves with a warning.
+    /// false on WebGL 2: systems built on compute check it and fall back (GPU particles simulate on
+    /// the CPU, light probe bakes store their results from the CPU, FSR 3 gives way to another upscaler).
     var supportsCompute: Bool { get }
     /// Whether shaders can read storage buffers (`RenderPass.setStorageBuffer`) and draw
-    /// indirectly. false on WebGL 2: features whose shaders need them (probe-lit shaders, GPU
-    /// particles) are skipped; material graphs use their GLSL ES variant, which reads storage
-    /// buffer 0 as a uniform block (`MaterialGraphProgram.glesFragment`).
+    /// indirectly. false on WebGL 2, where shaders that need them have GLSL ES variants instead:
+    /// material graphs read storage buffer 0 as a uniform block (`MaterialGraphProgram.glesFragment`),
+    /// the probe-lit shaders storage buffer 1 as a texture the device copies it into, and GPU
+    /// particles are simulated on the CPU and drawn from instance attributes (`ParticleSystem`).
     var supportsStorageBuffers: Bool { get }
 
     /// A static buffer holding a copy of `bytes`. Never waits for the GPU: on Vulkan (device-local
@@ -753,6 +754,11 @@ public struct DrawIndexedIndirectArguments: Sendable, BitwiseCopyable, Equatable
     /// stalling: at the start of a later frame (when its frame slot comes around again) or in
     /// `waitIdle`. For GPU-computed counters and tests.
     func readBack(_ buffer: GPUBuffer, offset: Int, length: Int, completion: @escaping @MainActor ([UInt8]) -> Void)
+    /// `target`'s color (a float target such as `.rgba16Float`) as it is after the frame's work so
+    /// far, read at once: four floats per texel, top row first. Only devices whose readbacks are
+    /// synchronous have it (WebGL 2, for baking light probes without compute); nil on the others
+    /// (the default) and when it can't be read.
+    func readFloatTexels(_ target: GPURenderTarget) -> [Float]?
     /// Capture the window image (after upscaling and window-pass UI) instead of the scene at
     /// render resolution.
     var captureWindow: Bool { get set }
@@ -777,6 +783,7 @@ public struct DrawIndexedIndirectArguments: Sendable, BitwiseCopyable, Equatable
 
 extension RenderDevice {
     public var descriptorPoolCount: Int? { nil }
+    public func readFloatTexels(_ target: GPURenderTarget) -> [Float]? { nil }
     public var supportsCompute: Bool { true }
     public var supportsStorageBuffers: Bool { true }
     public var capturesArriveLate: Bool { false }

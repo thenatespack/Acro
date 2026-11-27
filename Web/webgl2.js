@@ -36,6 +36,7 @@ const GL = {
   TIME_ELAPSED_EXT: 0x88BF, GPU_DISJOINT_EXT: 0x8FBB, FRAMEBUFFER_COMPLETE: 0x8CD5,
   UNIFORM_BLOCK_DATA_SIZE: 0x8A40, INVALID_INDEX: 0xFFFFFFFF, COMPILE_STATUS: 0x8B81, LINK_STATUS: 0x8B82,
   VERTEX_SHADER: 0x8B31, FRAGMENT_SHADER: 0x8B30, UNPACK_ALIGNMENT: 0x0CF5, PACK_ALIGNMENT: 0x0D05,
+  PIXEL_UNPACK_BUFFER: 0x88EC, RGBA_INTEGER: 0x8D99, UNSIGNED_INT: 0x1405,
 };
 
 /**
@@ -96,7 +97,7 @@ class WebGL2Helper {
     this.calls = {};
     for (const name of ["execute", "createBuffer", "bufferSubData", "getBufferSubData", "createTexture", "texSubImage",
       "createRenderbuffer", "createFramebuffer", "createSampler", "createProgram", "bindUniformBlock", "bindSamplerUnit",
-      "readQueries", "readTimers", "readPixels", "copyEncoded", "deleteList", "info", "setDebug"]) {
+      "readQueries", "readTimers", "readPixels", "readPixelsFloat", "copyBufferToTexture", "copyEncoded", "deleteList", "info", "setDebug"]) {
       const method = this[name];
       this[name] = (...args) => { this.calls[name] = (this.calls[name] ?? 0) + 1; return method.apply(this, args); };
     }
@@ -547,6 +548,37 @@ class WebGL2Helper {
     gl.readPixels(0, 0, width, height, GL.RGBA, GL.UNSIGNED_BYTE, this.bytes(ptr, width * height * 4));
     gl.bindFramebuffer(GL.READ_FRAMEBUFFER, null);
     this.checkError("readPixels");
+  }
+
+  /**
+   * Reads `width` x `height` RGBA float texels (four Float32s each) of framebuffer `fbo`'s first color
+   * attachment (a float target; needs EXT_color_buffer_float) to `ptr`.
+   */
+  readPixelsFloat(fbo, width, height, ptr) {
+    const gl = this.gl;
+    gl.bindFramebuffer(GL.READ_FRAMEBUFFER, this.get(fbo));
+    gl.readBuffer(GL.COLOR_ATTACHMENT0);
+    this.memory();
+    gl.readPixels(0, 0, width, height, GL.RGBA, GL.FLOAT, new Float32Array(this.f32.buffer, ptr, width * height * 4));
+    gl.bindFramebuffer(GL.READ_FRAMEBUFFER, null);
+    this.checkError("readPixelsFloat");
+  }
+
+  /**
+   * Copies buffer `buffer` into RGBA32UI texture `texture` on the GPU (a pixel unpack buffer): `rows`
+   * full rows of `width` texels, then `rest` texels of the next row (16 bytes per texel). Storage
+   * buffers read as textures (WebGL 2 has no storage buffers; the probe-lit shaders' GLSL ES).
+   */
+  copyBufferToTexture(buffer, texture, width, rows, rest) {
+    const gl = this.gl;
+    gl.bindBuffer(GL.PIXEL_UNPACK_BUFFER, this.get(buffer));
+    gl.activeTexture(GL.TEXTURE0 + this.scratchUnit);
+    gl.bindTexture(GL.TEXTURE_2D, this.get(texture));
+    if (rows > 0) gl.texSubImage2D(GL.TEXTURE_2D, 0, 0, 0, width, rows, GL.RGBA_INTEGER, GL.UNSIGNED_INT, 0);
+    if (rest > 0) gl.texSubImage2D(GL.TEXTURE_2D, 0, 0, rows, rest, 1, GL.RGBA_INTEGER, GL.UNSIGNED_INT, rows * width * 16);
+    gl.bindTexture(GL.TEXTURE_2D, null);
+    gl.bindBuffer(GL.PIXEL_UNPACK_BUFFER, null);
+    this.checkError("copyBufferToTexture");
   }
 
   // MARK: - sRGB copies and presenting

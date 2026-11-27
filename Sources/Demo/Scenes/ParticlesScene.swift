@@ -196,8 +196,13 @@ final class ParticlesScene: DemoScene {
 
     var status: String {
         let stats = sceneRenderer.particles?.stats ?? ParticleSystem.Stats()
-        var text = "\(stats.aliveParticles) particles of \(stats.capacity), compute "
-        text += computeTime.map { String(format: "%.2f ms", $0 * 1000) } ?? "-"
+        var text = "\(stats.aliveParticles) particles of \(stats.capacity), "
+        if sceneRenderer.particles?.simulatesOnCPU == true {
+            // No compute (WebGL 2): simulated on the CPU.
+            text += "CPU " + String(format: "%.2f ms", stats.cpuMilliseconds)
+        } else {
+            text += "compute " + (computeTime.map { String(format: "%.2f ms", $0 * 1000) } ?? "-")
+        }
         func flag(_ entity: Entity) -> String { world.get(ParticleEmitter.self, for: entity)?.isEmitting == true ? "on" : "off" }
         return text + ", fire \(flag(fire)) [F], sparks \(flag(sparks)) [K], galaxy \(flag(galaxy)) [G], mist \(flag(mist)) [M], "
             + "fireworks \(flag(rockets)) [W], burst [B]"

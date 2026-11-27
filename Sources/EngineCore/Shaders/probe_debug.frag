@@ -1,5 +1,6 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+// compile-shaders: gles -DPROBE_DATA_TEXTURE
 
 // SceneRenderer's light probe debug spheres (`LightProbeDebug.showsProbes`, with mesh.vert):
 // reflection probes as mirror balls showing their own image, irradiance probes shaded by their

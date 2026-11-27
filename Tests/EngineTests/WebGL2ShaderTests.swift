@@ -5,12 +5,10 @@ import Testing
 /// The GLSL ES 3.00 that Scripts/compile-shaders.sh generates for the WebGL 2 backend
 /// (Scripts/spirv-to-gles.c, from the SPIR-V) and the binding header the backend reads.
 @Suite struct WebGL2ShaderTests {
-    /// Vertex and fragment stages that read storage buffers (probes, GPU particles,
-    /// a test shader): no .gles, and the WebGL 2 backend refuses their pipelines.
-    static let untranslatable: Set<String> = [
-        "mesh_probes.frag", "mesh_mask_probes.frag", "mesh_paint_probes.frag", "mesh_paint_mask_probes.frag", "probe_debug.frag",
-        "particle.vert", "particle_lit.vert", "test_storage_draw.vert",
-    ]
+    /// Vertex and fragment stages that read storage buffers (a test shader): no .gles, and the
+    /// WebGL 2 backend refuses their pipelines. (The probe-lit and particle shaders have GLSL ES
+    /// variants: see `webGL2ProbeDataTexture` and `webGL2ParticleInstances`.)
+    static let untranslatable: Set<String> = ["test_storage_draw.vert"]
 
     @Test func webGL2EveryShaderHasCurrentGLSLES() throws {
         let files = WebGPUShaderTests.spirvFiles().filter { $0.deletingPathExtension().pathExtension != "comp" }
@@ -37,7 +35,7 @@ import Testing
                 #expect(source.contains("uniform \(block.name)\n"), "\(gles.lastPathComponent): \(block.name)")
             }
             for sampler in interface.samplers {
-                #expect(sampler.textureSlot != nil, "\(gles.lastPathComponent): \(sampler)")
+                #expect(sampler.textureSlot != nil || sampler.storageSlot != nil, "\(gles.lastPathComponent): \(sampler)")
                 #expect(sampler.samplerSet == nil || sampler.samplerSlot != nil, "\(gles.lastPathComponent): \(sampler)")
             }
             let declaredBlocks = source.components(separatedBy: "uniform acro_").count - 1
@@ -106,6 +104,29 @@ import Testing
             let block = try #require(GLESInterface(source: source).uniformBlocks.first { $0.name == "acro_fs_u2_24" }, "\(name)")
             #expect(block.bindingPoint == 8, "\(name)")
             #expect(source.contains("[1024];"), "\(name)")
+        }
+    }
+
+    /// The probe-lit shaders' GLSL ES reads the probe data (storage buffer 1 elsewhere) from an
+    /// RGBA32UI texture at set 2, binding 25 (the WebGL 2 device copies the buffer into it).
+    @Test func webGL2ProbeDataTexture() throws {
+        let shaders = WebGPUShaderTests.root.appendingPathComponent("Sources/EngineCore/Shaders")
+        for name in ["mesh_probes", "mesh_mask_probes", "mesh_paint_probes", "mesh_paint_mask_probes", "probe_debug"] {
+            let source = try String(contentsOf: shaders.appendingPathComponent("\(name).frag.gles"), encoding: .utf8)
+            let sampler = try #require(GLESInterface(source: source).samplers.first { $0.textureBinding == 25 }, "\(name)")
+            #expect(sampler.storageSlot == 1 && sampler.textureSlot == nil, "\(name)")
+            #expect(source.contains("uniform highp usampler2D \(sampler.name);"), "\(name)")
+        }
+    }
+
+    /// The particle vertex shaders' GLSL ES reads each particle from instance attributes
+    /// (locations 0-2, `ParticleRecord`), with no storage buffers.
+    @Test func webGL2ParticleInstances() throws {
+        let shaders = WebGPUShaderTests.root.appendingPathComponent("Sources/EngineCore/Shaders")
+        for name in ["particle", "particle_lit"] {
+            let source = try String(contentsOf: shaders.appendingPathComponent("\(name).vert.gles"), encoding: .utf8)
+            for location in 0..<3 { #expect(source.contains("layout(location = \(location)) in vec4 "), "\(name)") }
+            #expect(!source.contains("gl_InstanceID"), "\(name)")
         }
     }
 

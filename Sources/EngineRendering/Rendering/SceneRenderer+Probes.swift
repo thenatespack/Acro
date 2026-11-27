@@ -336,12 +336,6 @@ extension SceneRenderer {
                 state.volumes.append(FoundProbe(entity: entity, name: name(entity), settings: volume, frame: f, key: volume.bakeKey(frame: f)))
             }
         }
-        if !device.supportsStorageBuffers, !state.reflections.isEmpty || !state.volumes.isEmpty {
-            // The probe-lit shaders read the probes from a storage buffer, and baking computes.
-            warnUnavailable("Light probes (ReflectionProbe, IrradianceVolume)")
-            state.reflections.removeAll()
-            state.volumes.removeAll()
-        }
         guard !state.reflections.isEmpty || !state.volumes.isEmpty else {
             state.layout = nil
             state.buffer = nil
@@ -415,9 +409,9 @@ extension SceneRenderer {
         }
     }
 
-    /// Binds the probe buffer (storage buffer 1) for the mesh shaders.
+    /// Binds the probe buffer (storage buffer 1) for the mesh shaders (on WebGL 2 their GLSL ES
+    /// reads it as a texture the device copies it into).
     func bindProbes(in pass: RenderPass) {
-        guard device.supportsStorageBuffers else { return }
         pass.setStorageBuffer(probes.buffer ?? probes.emptyBuffer, offset: 0, index: 1, stage: .fragment)
     }
 
@@ -616,7 +610,9 @@ extension SceneRenderer {
         base.reflectionExtra = Vec4(0, 0, 0, 1)  // encode c / (1 + c), no planar reflection
 
         // 2. Irradiance volumes, bounce by bounce.
-        let store = state.storePipeline!
+        // Without compute (WebGL 2) the images are read back at once and stored from the CPU.
+        let store = state.storePipeline
+        var storeFailed = false
         if !volumes.isEmpty {
             base.probes = Vec4(0, Float(volumes.count), 0, 0)
             for bounce in 1...max(bounces, 1) {
@@ -637,14 +633,18 @@ extension SceneRenderer {
                             pass.setPushConstants(SIMD2(Int32(image.width), Int32(image.height)))
                             pass.draw(vertexCount: 3)
                         }
-                        frame.computePass(label: "probe store") { pass in
-                            pass.setPipeline(store)
-                            pass.setTexture(sh.texture, index: 1)
-                            pass.setSampler(state.pointSampler, index: 1)
-                            pass.setStorageBuffer(buffer, offset: 0, index: 0)
-                            pass.setPushConstants(ProbeStoreConstants(info: SIMD4(9, 1, Int32(layout.shWord(volume: j, probe: p)), 1),
-                                                                      value: Vec4(1, 0, 0, 0)))
-                            pass.dispatch(groups: ComputeSize(2, 1))
+                        if let store {
+                            frame.computePass(label: "probe store") { pass in
+                                pass.setPipeline(store)
+                                pass.setTexture(sh.texture, index: 1)
+                                pass.setSampler(state.pointSampler, index: 1)
+                                pass.setStorageBuffer(buffer, offset: 0, index: 0)
+                                pass.setPushConstants(ProbeStoreConstants(info: SIMD4(9, 1, Int32(layout.shWord(volume: j, probe: p)), 1),
+                                                                          value: Vec4(1, 0, 0, 0)))
+                                pass.dispatch(groups: ComputeSize(2, 1))
+                            }
+                        } else if !storeOnCPU(sh, into: buffer, firstWord: layout.shWord(volume: j, probe: p), shValidity: 1, frame: frame) {
+                            storeFailed = true
                         }
                     }
                 }
@@ -670,18 +670,30 @@ extension SceneRenderer {
                     pass.draw(vertexCount: 3)
                 }
             }
-            frame.computePass(label: "probe store") { pass in
-                pass.setPipeline(store)
-                pass.setSampler(state.pointSampler, index: 1)
-                pass.setStorageBuffer(buffer, offset: 0, index: 0)
-                for (level, target) in state.levels.enumerated() {
-                    let l = ReflectionProbeImage.levels[level]
-                    pass.setTexture(target.texture, index: 1)
-                    pass.setPushConstants(ProbeStoreConstants(
-                        info: SIMD4(Int32(l.width), Int32(l.height), Int32(layout.imageFirstWord[i] + l.offset * 2), 0), value: .zero))
-                    pass.dispatch(groups: ComputeSize((l.width + 7) / 8, (l.height + 7) / 8))
+            if let store {
+                frame.computePass(label: "probe store") { pass in
+                    pass.setPipeline(store)
+                    pass.setSampler(state.pointSampler, index: 1)
+                    pass.setStorageBuffer(buffer, offset: 0, index: 0)
+                    for (level, target) in state.levels.enumerated() {
+                        let l = ReflectionProbeImage.levels[level]
+                        pass.setTexture(target.texture, index: 1)
+                        pass.setPushConstants(ProbeStoreConstants(
+                            info: SIMD4(Int32(l.width), Int32(l.height), Int32(layout.imageFirstWord[i] + l.offset * 2), 0), value: .zero))
+                        pass.dispatch(groups: ComputeSize((l.width + 7) / 8, (l.height + 7) / 8))
+                    }
+                }
+            } else {
+                for (level, target) in state.levels.enumerated()
+                where !storeOnCPU(target, into: buffer, firstWord: layout.imageFirstWord[i] + ReflectionProbeImage.levels[level].offset * 2,
+                                  shValidity: nil, frame: frame) {
+                    storeFailed = true
                 }
             }
+        }
+        if storeFailed {
+            report.warnings.append("Light probe baking needs compute or a float readback (EXT_color_buffer_float on WebGL 2); "
+                                   + "the probes are unlit")
         }
 
         // Draw with it now; read it back for the bakes and the cache.
@@ -730,7 +742,7 @@ extension SceneRenderer {
 
     private func makeBakeResources() throws {
         let state = probes
-        guard state.storePipeline == nil else { return }
+        guard state.equirectPipeline == nil else { return }
         func fullscreen(_ fragment: String) throws -> RenderPipeline {
             var descriptor = PipelineDescriptor(
                 shader: try ShaderSource.load(vertex: "post", fragment: fragment, bundle: .engineResources), vertexLayout: .none)
@@ -757,7 +769,37 @@ extension SceneRenderer {
         state.levels = try ReflectionProbeImage.levels.map { try color($0.width, $0.height) }
         state.irradianceImage = try color(IrradianceProbeCapture.equirect.width, IrradianceProbeCapture.equirect.height)
         state.shTarget = try color(9, 1)
-        state.storePipeline = try device.makeComputePipeline(shader: ShaderSource.load(compute: "probe_store", bundle: .engineResources))
+        if device.supportsCompute {
+            state.storePipeline = try device.makeComputePipeline(shader: ShaderSource.load(compute: "probe_store", bundle: .engineResources))
+        }
+    }
+
+    /// probe_store.comp on the CPU, for devices without compute (WebGL 2, whose readbacks are
+    /// synchronous): reads `target` at once and writes it into `buffer` from word `firstWord`, as
+    /// packed half floats, two words per texel (`shValidity` nil: a reflection probe's level), or
+    /// an irradiance probe's nine-texel SH row and its validity in 16 words. false if the device
+    /// can't read the target back.
+    private func storeOnCPU(_ target: GPURenderTarget, into buffer: GPUBuffer, firstWord: Int, shValidity: Float?, frame: Frame) -> Bool {
+        guard let texels = device.readFloatTexels(target) else { return false }
+        var words: [UInt32]
+        if let validity = shValidity {
+            guard texels.count >= 9 * 4 else { return false }
+            var coefficients = [Float](repeating: 0, count: IrradianceProbeCapture.wordCount)
+            for k in 0..<9 { for ch in 0..<3 { coefficients[k * 4 + ch] = texels[k * 4 + ch] } }
+            coefficients[3] = validity
+            words = ProbeBufferLayout.packSH(coefficients[...])
+        } else {
+            words = [UInt32](repeating: 0, count: texels.count / 2)
+            for i in 0..<words.count {
+                words[i] = UInt32(Float16(texels[i * 2]).bitPattern) | UInt32(Float16(texels[i * 2 + 1]).bitPattern) << 16
+            }
+        }
+        do {
+            try frame.updateBuffer(buffer, offset: firstWord * 4, elements: words)
+            return true
+        } catch {
+            return false
+        }
     }
 
     /// Draws the gathered world from `eye` into the six faces (meshes and the sky, c / (1 + c)),
