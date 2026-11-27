@@ -97,11 +97,12 @@ extension HumanSurface {
             }
             return first
         }
-        func neighbors(_ v: Int) -> Set<Int32> {
-            var s = Set<Int32>()
+        func neighbors(_ v: Int) -> [Int32] {
+            var s: [Int32] = []
+            s.reserveCapacity(8)
             for f in vertexFaces[v] where faceAlive[Int(f)] {
                 let t = faces[Int(f)]
-                for n in 0..<3 where Int(t[n]) != v { s.insert(t[n]) }
+                for n in 0..<3 where Int(t[n]) != v && !s.contains(t[n]) { s.append(t[n]) }
             }
             return s
         }
@@ -125,7 +126,7 @@ extension HumanSurface {
             guard stamps[v] == c.stamp, !locked[v] else { continue }
             // Still an edge, and the link condition: exactly two shared neighbors.
             let nv = neighbors(v), nu = neighbors(u)
-            guard nv.contains(Int32(u)), nv.intersection(nu).count == 2 else { stamps[v] += 1; continue }
+            guard nv.contains(Int32(u)), nv.reduce(0, { $0 + (nu.contains($1) ? 1 : 0) }) == 2 else { stamps[v] += 1; continue }
             // No flipped or sliver triangles.
             let target = positions[u]
             var ok = true
@@ -167,7 +168,7 @@ extension HumanSurface {
         // Compact.
         var map = [Int32](repeating: -1, count: vertexCount)
         var newPositions: [Vec3] = [], newNormals: [Vec3] = [], newOcclusion: [Float] = [], newTags: [UInt8] = [], newWeights: [[Float]] = []
-        var newTriangles: [SIMD3<UInt32>] = []
+        var newTriangles: [SIMD3<UInt32>] = [], newBlocks: [Int32] = []
         for (f, t) in faces.enumerated() where faceAlive[f] {
             var out = SIMD3<UInt32>(0, 0, 0)
             for k in 0..<3 {
@@ -175,7 +176,7 @@ extension HumanSurface {
                 if map[v] < 0 {
                     map[v] = Int32(newPositions.count)
                     newPositions.append(positions[v]); newNormals.append(normals[v]); newOcclusion.append(occlusion[v])
-                    newTags.append(tags[v]); newWeights.append(weights[v])
+                    newTags.append(tags[v]); newWeights.append(weights[v]); newBlocks.append(blocks[v])
                 }
                 out[k] = UInt32(map[v])
             }
@@ -186,6 +187,7 @@ extension HumanSurface {
         occlusion = newOcclusion
         tags = newTags
         weights = newWeights
+        blocks = newBlocks
         triangles = newTriangles
     }
 }

@@ -251,15 +251,35 @@ struct HumanSurface {
     var occlusion: [Float] = []
     var tags: [UInt8] = []
     var weights: [[Float]] = []
+    /// Each vertex's grid block (for its prim list).
+    var blocks: [Int32] = []
     var triangles: [SIMD3<UInt32>] = []
 }
 
 /// Meshes one piece. `post` turns the body field into the piece's (clothing offsets, hems, cuts).
-struct HumanMesher {
+/// `contour` gives the raw surface (vertices near the surface, tagged); after simplifying it,
+/// `finish` projects the survivors onto the field and adds normals, occlusion and weights.
+final class HumanMesher: @unchecked Sendable {
     let field: HumanField
     let piece: HumanPiece
     let post: (Float, Float, Float, Float) -> Float
     static let block = 8
+    let xs: [Float], ys: [Float], zs: [Float]
+    let nx: Int, ny: Int, nz: Int
+    let bx: Int, by: Int, bz: Int
+    private(set) var lists: [[Int32]] = []
+
+    init(field: HumanField, piece: HumanPiece, post: @escaping (Float, Float, Float, Float) -> Float) {
+        self.field = field
+        self.piece = piece
+        self.post = post
+        xs = Self.axis(piece.lo.x, piece.hi.x, piece.fineLo.x, piece.fineHi.x, piece.fine, piece.coarse)
+        ys = Self.axis(piece.lo.y, piece.hi.y, piece.fineLo.y, piece.fineHi.y, piece.fine, piece.coarse)
+        zs = Self.axis(piece.lo.z, piece.hi.z, piece.fineLo.z, piece.fineHi.z, piece.fine, piece.coarse)
+        nx = xs.count; ny = ys.count; nz = zs.count
+        let B = Self.block
+        bx = (nx - 1 + B - 1) / B; by = (ny - 1 + B - 1) / B; bz = (nz - 1 + B - 1) / B
+    }
 
     /// Coordinates from `lo` to `hi`: `fine` apart within fineLo...fineHi, growing toward `coarse` outside.
     static func axis(_ lo: Float, _ hi: Float, _ fineLo: Float, _ fineHi: Float, _ fine: Float, _ coarse: Float) -> [Float] {
@@ -269,7 +289,7 @@ struct HumanMesher {
             return (0...n).map { lo + (hi - lo) * Float($0) / Float(n) }
         }
         let n = max(Int(((fh - fl) / fine).rounded(.up)), 1)
-        var core = (0...n).map { fl + (fh - fl) * Float($0) / Float(n) }
+        let core = (0...n).map { fl + (fh - fl) * Float($0) / Float(n) }
         var step = (fh - fl) / Float(n)
         var x = fl
         var below: [Float] = []
@@ -286,17 +306,41 @@ struct HumanMesher {
             x = min(x + step, hi)
             above.append(x)
         }
-        core = below.reversed() + core + above
-        return core
+        return below.reversed() + core + above
     }
 
-    func mesh() -> HumanSurface {
-        let xs = Self.axis(piece.lo.x, piece.hi.x, piece.fineLo.x, piece.fineHi.x, piece.fine, piece.coarse)
-        let ys = Self.axis(piece.lo.y, piece.hi.y, piece.fineLo.y, piece.fineHi.y, piece.fine, piece.coarse)
-        let zs = Self.axis(piece.lo.z, piece.hi.z, piece.fineLo.z, piece.fineHi.z, piece.fine, piece.coarse)
-        let nx = xs.count, ny = ys.count, nz = zs.count
+    @inline(__always) func eval(_ p: Vec3, _ list: UnsafeBufferPointer<Int32>, _ prims: UnsafePointer<HumanPrim>, _ groups: UnsafePointer<HumanGroup>) -> Float {
+        post(p.x, p.y, p.z, field.evaluate(p.x, p.y, p.z, list, prims, groups))
+    }
+
+    func gradient(_ p: Vec3, _ list: UnsafeBufferPointer<Int32>, _ prims: UnsafePointer<HumanPrim>, _ groups: UnsafePointer<HumanGroup>) -> Vec3 {
+        let h: Float = 0.0004
+        return Vec3(eval(p + Vec3(h, 0, 0), list, prims, groups) - eval(p - Vec3(h, 0, 0), list, prims, groups),
+                    eval(p + Vec3(0, h, 0), list, prims, groups) - eval(p - Vec3(0, h, 0), list, prims, groups),
+                    eval(p + Vec3(0, 0, h), list, prims, groups) - eval(p - Vec3(0, 0, h), list, prims, groups)) / (2 * h)
+    }
+
+    /// Runs `body` over the vertices in chunks across the cores, with each vertex's prim list.
+    func forEachVertex(_ count: Int, blocks: [Int32],
+                       _ body: (Int, UnsafeBufferPointer<Int32>, UnsafePointer<HumanPrim>, UnsafePointer<HumanGroup>) -> Void) {
+        field.prims.withUnsafeBufferPointer { prims in
+            field.groups.withUnsafeBufferPointer { groups in
+                let chunk = 256
+                concurrentPerform(iterations: (count + chunk - 1) / chunk) { c in
+                    for v in c * chunk..<min(count, (c + 1) * chunk) {
+                        lists[Int(blocks[v])].withUnsafeBufferPointer { list in
+                            body(v, list, prims.baseAddress!, groups.baseAddress!)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func contour() -> HumanSurface {
+        let xs = self.xs, ys = self.ys, zs = self.zs
+        let nx = self.nx, ny = self.ny, nz = self.nz, bx = self.bx, by = self.by, bz = self.bz
         let B = Self.block
-        let bx = (nx - 1 + B - 1) / B, by = (ny - 1 + B - 1) / B, bz = (nz - 1 + B - 1) / B
         let blockCount = bx * by * bz
         let all = field.prims.indices.filter { piece.groups.contains(field.prims[$0].group) }.map { Int32($0) }
         let maxK = field.prims.map(\.k).max() ?? 0
@@ -321,13 +365,16 @@ struct HumanMesher {
                                         let index = (kz * by + ky) * bx + kx
                                         guard abs(d) <= reach else { continue }
                                         nearOut[index] = true
-                                        let band = 0.03 + maxK + maxJoin + length(hi - lo) * 0.25
+                                        // A prim farther than its own blend radius plus its group's join
+                                        // radius (and a margin) can't change the field near the surface here.
+                                        let margin = 0.012 + length(hi - lo) * 0.1
                                         var list: [Int32] = []
                                         for p in allList {
                                             let prim = prims[Int(p)]
                                             let gap = pointwiseMax(prim.lo - hi, lo - prim.hi)
                                             let g = length(pointwiseMax(gap, .zero))
-                                            if g <= band || prim.op == .intersect { list.append(p) }
+                                            let join = groups[Int(prim.group)]
+                                            if g <= margin + max(join.kNear, join.kFar) || prim.op == .intersect { list.append(p) }
                                         }
                                         listOut[index] = list
                                     }
@@ -338,11 +385,10 @@ struct HumanMesher {
                 }
             }
         }
+        self.lists = lists
         // Corner values of the near blocks ((B+1)^3 each).
         let nearBlocks = (0..<blockCount).filter { near[$0] }
         let side = B + 1
-        var slot = [Int32](repeating: -1, count: blockCount)
-        for (s, b) in nearBlocks.enumerated() { slot[b] = Int32(s) }
         var values = [Float](repeating: 1, count: nearBlocks.count * side * side * side)
         field.prims.withUnsafeBufferPointer { prims in
             field.groups.withUnsafeBufferPointer { groups in
@@ -372,74 +418,79 @@ struct HumanMesher {
         var positions: [Vec3] = []
         var vertexBlock: [Int32] = []
         let cnx = nx - 1, cny = ny - 1
-        func cellKey(_ i: Int, _ j: Int, _ k: Int) -> Int { (k * cny + j) * cnx + i }
-        let corners: [(Int, Int, Int)] = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0), (0, 0, 1), (1, 0, 1), (0, 1, 1), (1, 1, 1)]
-        let edges: [(Int, Int)] = [(0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3), (4, 6), (5, 7), (0, 4), (1, 5), (2, 6), (3, 7)]
-        for (s, b) in nearBlocks.enumerated() {
-            let kx = b % bx, ky = (b / bx) % by, kz = b / (bx * by)
-            let base = s * side * side * side
-            for c in 0..<B where kz * B + c < nz - 1 {
-                for bb in 0..<B where ky * B + bb < ny - 1 {
-                    for a in 0..<B where kx * B + a < nx - 1 {
-                        var v = [Float](repeating: 0, count: 8)
-                        var inside = 0
-                        for (n, o) in corners.enumerated() {
-                            v[n] = values[base + ((c + o.2) * side + bb + o.1) * side + a + o.0]
-                            if v[n] < 0 { inside += 1 }
+        @inline(__always) func cellKey(_ i: Int, _ j: Int, _ k: Int) -> Int { (k * cny + j) * cnx + i }
+        let cornerX: SIMD8<Int32> = [0, 1, 0, 1, 0, 1, 0, 1], cornerY: SIMD8<Int32> = [0, 0, 1, 1, 0, 0, 1, 1], cornerZ: SIMD8<Int32> = [0, 0, 0, 0, 1, 1, 1, 1]
+        let edgeA: [Int] = [0, 2, 4, 6, 0, 1, 4, 5, 0, 1, 2, 3], edgeB: [Int] = [1, 3, 5, 7, 2, 3, 6, 7, 4, 5, 6, 7]
+        values.withUnsafeBufferPointer { values in
+            for (s, b) in nearBlocks.enumerated() {
+                let kx = b % bx, ky = (b / bx) % by, kz = b / (bx * by)
+                let base = s * side * side * side
+                for c in 0..<B where kz * B + c < nz - 1 {
+                    for bb in 0..<B where ky * B + bb < ny - 1 {
+                        for a in 0..<B where kx * B + a < nx - 1 {
+                            var v = SIMD8<Float>()
+                            var inside = 0
+                            for n in 0..<8 {
+                                v[n] = values[base + ((c + Int(cornerZ[n])) * side + bb + Int(cornerY[n])) * side + a + Int(cornerX[n])]
+                                if v[n] < 0 { inside += 1 }
+                            }
+                            guard inside > 0 && inside < 8 else { continue }
+                            let i = kx * B + a, j = ky * B + bb, k = kz * B + c
+                            var sum = Vec3.zero
+                            var count: Float = 0
+                            for e in 0..<12 {
+                                let e0 = edgeA[e], e1 = edgeB[e]
+                                guard (v[e0] < 0) != (v[e1] < 0) else { continue }
+                                let t = v[e0] / (v[e0] - v[e1])
+                                let p0 = Vec3(xs[i + Int(cornerX[e0])], ys[j + Int(cornerY[e0])], zs[k + Int(cornerZ[e0])])
+                                let p1 = Vec3(xs[i + Int(cornerX[e1])], ys[j + Int(cornerY[e1])], zs[k + Int(cornerZ[e1])])
+                                sum += p0 + (p1 - p0) * t
+                                count += 1
+                            }
+                            vertexOfCell[cellKey(i, j, k)] = Int32(positions.count)
+                            positions.append(sum / count)
+                            vertexBlock.append(Int32(b))
                         }
-                        guard inside > 0 && inside < 8 else { continue }
-                        let i = kx * B + a, j = ky * B + bb, k = kz * B + c
-                        var sum = Vec3.zero
-                        var count: Float = 0
-                        for (e0, e1) in edges where (v[e0] < 0) != (v[e1] < 0) {
-                            let t = v[e0] / (v[e0] - v[e1])
-                            let p0 = Vec3(xs[i + corners[e0].0], ys[j + corners[e0].1], zs[k + corners[e0].2])
-                            let p1 = Vec3(xs[i + corners[e1].0], ys[j + corners[e1].1], zs[k + corners[e1].2])
-                            sum += p0 + (p1 - p0) * t
-                            count += 1
-                        }
-                        vertexOfCell[cellKey(i, j, k)] = Int32(positions.count)
-                        positions.append(sum / count)
-                        vertexBlock.append(Int32(b))
                     }
                 }
             }
         }
         // A quad per crossed grid edge, between the four cells around it.
         var quads: [SIMD4<Int32>] = []
-        for (s, b) in nearBlocks.enumerated() {
-            let kx = b % bx, ky = (b / bx) % by, kz = b / (bx * by)
-            let base = s * side * side * side
-            func value(_ a: Int, _ bb: Int, _ c: Int) -> Float { values[base + (c * side + bb) * side + a] }
-            for c in 0..<B {
-                for bb in 0..<B {
-                    for a in 0..<B {
-                        let i = kx * B + a, j = ky * B + bb, k = kz * B + c
-                        guard i < nx, j < ny, k < nz else { continue }
-                        let v0 = value(a, bb, c)
-                        // Edges along x, y and z from this grid point.
-                        for axis in 0..<3 {
-                            let (da, db, dc) = axis == 0 ? (1, 0, 0) : axis == 1 ? (0, 1, 0) : (0, 0, 1)
-                            guard i + da < nx, j + db < ny, k + dc < nz else { continue }
-                            let v1 = value(a + da, bb + db, c + dc)
-                            guard (v0 < 0) != (v1 < 0) else { continue }
-                            // The four cells sharing the edge, counter-clockwise about +axis.
-                            var cells: [(Int, Int, Int)]
-                            switch axis {
-                            case 0: cells = [(i, j - 1, k - 1), (i, j, k - 1), (i, j, k), (i, j - 1, k)]
-                            case 1: cells = [(i - 1, j, k - 1), (i - 1, j, k), (i, j, k), (i, j, k - 1)]
-                            default: cells = [(i - 1, j - 1, k), (i, j - 1, k), (i, j, k), (i - 1, j, k)]
+        values.withUnsafeBufferPointer { values in
+            for (s, b) in nearBlocks.enumerated() {
+                let kx = b % bx, ky = (b / bx) % by, kz = b / (bx * by)
+                let base = s * side * side * side
+                for c in 0..<B {
+                    for bb in 0..<B {
+                        for a in 0..<B {
+                            let i = kx * B + a, j = ky * B + bb, k = kz * B + c
+                            guard i < nx, j < ny, k < nz else { continue }
+                            let v0 = values[base + (c * side + bb) * side + a]
+                            for axis in 0..<3 {
+                                let da = axis == 0 ? 1 : 0, db = axis == 1 ? 1 : 0, dc = axis == 2 ? 1 : 0
+                                guard i + da < nx, j + db < ny, k + dc < nz else { continue }
+                                let v1 = values[base + ((c + dc) * side + bb + db) * side + a + da]
+                                guard (v0 < 0) != (v1 < 0) else { continue }
+                                // The four cells sharing the edge, counter-clockwise about +axis.
+                                let cells: [(Int, Int, Int)]
+                                switch axis {
+                                case 0: cells = [(i, j - 1, k - 1), (i, j, k - 1), (i, j, k), (i, j - 1, k)]
+                                case 1: cells = [(i - 1, j, k - 1), (i - 1, j, k), (i, j, k), (i, j, k - 1)]
+                                default: cells = [(i - 1, j - 1, k), (i, j - 1, k), (i, j, k), (i - 1, j, k)]
+                                }
+                                var ids = SIMD4<Int32>(repeating: -1)
+                                var ok = true
+                                for n in 0..<4 {
+                                    let cell = cells[n]
+                                    guard cell.0 >= 0, cell.1 >= 0, cell.2 >= 0, cell.0 < cnx, cell.1 < cny, cell.2 < nz - 1,
+                                          let id = vertexOfCell[cellKey(cell.0, cell.1, cell.2)] else { ok = false; break }
+                                    ids[n] = id
+                                }
+                                guard ok else { continue }
+                                // Inside at the start: the surface faces +axis, as wound.
+                                quads.append(v0 < 0 ? ids : SIMD4(ids[3], ids[2], ids[1], ids[0]))
                             }
-                            var ids = SIMD4<Int32>(repeating: -1)
-                            var ok = true
-                            for (n, cell) in cells.enumerated() {
-                                guard cell.0 >= 0, cell.1 >= 0, cell.2 >= 0, cell.0 < cnx, cell.1 < cny, cell.2 < nz - 1,
-                                      let id = vertexOfCell[cellKey(cell.0, cell.1, cell.2)] else { ok = false; break }
-                                ids[n] = id
-                            }
-                            guard ok else { continue }
-                            // Inside at the start: the surface faces +axis, as wound.
-                            quads.append(v0 < 0 ? ids : SIMD4(ids[3], ids[2], ids[1], ids[0]))
                         }
                     }
                 }
@@ -447,85 +498,36 @@ struct HumanMesher {
         }
         var surface = HumanSurface()
         guard !positions.isEmpty else { return surface }
-        // Relax toward the neighbors' mean and project back onto the surface.
+        // One round: relax toward the neighbors' mean, one projection step back onto the surface.
         var neighborSum = [Vec3](repeating: .zero, count: positions.count)
         var neighborCount = [Float](repeating: 0, count: positions.count)
-        let fieldRef = field
-        let postRef = post
-        func eval(_ p: Vec3, _ list: UnsafeBufferPointer<Int32>, _ prims: UnsafePointer<HumanPrim>, _ groups: UnsafePointer<HumanGroup>) -> Float {
-            postRef(p.x, p.y, p.z, fieldRef.evaluate(p.x, p.y, p.z, list, prims, groups))
-        }
-        func gradient(_ p: Vec3, _ list: UnsafeBufferPointer<Int32>, _ prims: UnsafePointer<HumanPrim>, _ groups: UnsafePointer<HumanGroup>) -> Vec3 {
-            let h: Float = 0.0004
-            return Vec3(eval(p + Vec3(h, 0, 0), list, prims, groups) - eval(p - Vec3(h, 0, 0), list, prims, groups),
-                        eval(p + Vec3(0, h, 0), list, prims, groups) - eval(p - Vec3(0, h, 0), list, prims, groups),
-                        eval(p + Vec3(0, 0, h), list, prims, groups) - eval(p - Vec3(0, 0, h), list, prims, groups)) / (2 * h)
-        }
-        for round in 0..<2 {
-            if round > 0 {
-                for i in neighborSum.indices { neighborSum[i] = .zero; neighborCount[i] = 0 }
-                for q in quads {
-                    for n in 0..<4 {
-                        let a = Int(q[n]), b = Int(q[(n + 1) % 4])
-                        neighborSum[a] += positions[b]; neighborCount[a] += 1
-                        neighborSum[b] += positions[a]; neighborCount[b] += 1
-                    }
-                }
-            }
-            let relax = round > 0
-            let sums = neighborSum, counts = neighborCount
-            field.prims.withUnsafeBufferPointer { prims in
-                field.groups.withUnsafeBufferPointer { groups in
-                    positions.withUnsafeMutableBufferPointer { out in
-                        let chunk = 512
-                        concurrentPerform(iterations: (out.count + chunk - 1) / chunk) { c in
-                            for v in c * chunk..<min(out.count, (c + 1) * chunk) {
-                                var p = out[v]
-                                if relax, counts[v] > 0 { p += (sums[v] / counts[v] - p) * 0.5 }
-                                lists[Int(vertexBlock[v])].withUnsafeBufferPointer { list in
-                                    for _ in 0..<2 {
-                                        let d = eval(p, list, prims.baseAddress!, groups.baseAddress!)
-                                        let g = gradient(p, list, prims.baseAddress!, groups.baseAddress!)
-                                        let gg = dot(g, g)
-                                        guard gg > 1e-6, abs(d) < 0.01 else { break }
-                                        p -= g * (d / gg)
-                                    }
-                                }
-                                out[v] = p
-                            }
-                        }
-                    }
-                }
+        for q in quads {
+            for n in 0..<4 {
+                let a = Int(q[n]), b = Int(q[(n + 1) % 4])
+                neighborSum[a] += positions[b]; neighborCount[a] += 1
             }
         }
-        // Normals from the gradient, occlusion from the field along the normal.
-        var normals = [Vec3](repeating: Vec3(0, 1, 0), count: positions.count)
-        var occlusion = [Float](repeating: 1, count: positions.count)
-        field.prims.withUnsafeBufferPointer { prims in
-            field.groups.withUnsafeBufferPointer { groups in
-                normals.withUnsafeMutableBufferPointer { normalOut in
-                    occlusion.withUnsafeMutableBufferPointer { aoOut in
-                        let chunk = 512
-                        concurrentPerform(iterations: (positions.count + chunk - 1) / chunk) { c in
-                            for v in c * chunk..<min(positions.count, (c + 1) * chunk) {
-                                let p = positions[v]
-                                lists[Int(vertexBlock[v])].withUnsafeBufferPointer { list in
-                                    let g = gradient(p, list, prims.baseAddress!, groups.baseAddress!)
-                                    let n = length(g) > 1e-6 ? normalize(g) : Vec3(0, 1, 0)
-                                    normalOut[v] = n
-                                    var occluded: Float = 0, weight: Float = 1, total: Float = 0
-                                    for step in 1...5 {
-                                        let h = 0.0045 * Float(step)
-                                        let d = eval(p + n * h, list, prims.baseAddress!, groups.baseAddress!)
-                                        occluded += max(0, h - d) / h * weight
-                                        total += weight
-                                        weight *= 0.7
-                                    }
-                                    aoOut[v] = max(0.3, min(1, 1 - 1.25 * occluded / total))
-                                }
-                            }
-                        }
+        var tags = [UInt8](repeating: piece.tag, count: positions.count)
+        positions.withUnsafeMutableBufferPointer { out in
+            tags.withUnsafeMutableBufferPointer { tagOut in
+                forEachVertex(out.count, blocks: vertexBlock) { v, list, prims, groups in
+                    var p = out[v]
+                    if neighborCount[v] > 0 { p += (neighborSum[v] / neighborCount[v] - p) * 0.5 }
+                    let d = eval(p, list, prims, groups)
+                    let g = gradient(p, list, prims, groups)
+                    let gg = dot(g, g)
+                    if gg > 1e-6, abs(d) < 0.01 { p -= g * (d / gg) }
+                    out[v] = p
+                    // The tag of the nearest adding prim, where it has one.
+                    var best: Float = .infinity
+                    var bestTag: UInt8 = 255
+                    for index in list {
+                        let prim = prims[Int(index)]
+                        guard prim.op == .add else { continue }
+                        let pd = prim.distance(p.x, p.y, p.z)
+                        if pd < best { best = pd; bestTag = prim.tag }
                     }
+                    if bestTag != 255 { tagOut[v] = bestTag }
                 }
             }
         }
@@ -540,39 +542,68 @@ struct HumanMesher {
                 triangles.append(SIMD3(a, b, d)); triangles.append(SIMD3(b, c, d))
             }
         }
-        // Tags and skin weights from the prims nearest each vertex.
-        var tags = [UInt8](repeating: piece.tag, count: positions.count)
+        surface.positions = positions
+        surface.tags = tags
+        surface.blocks = vertexBlock
+        surface.triangles = triangles
+        surface.normals = [Vec3](repeating: Vec3(0, 1, 0), count: positions.count)
+        surface.occlusion = [Float](repeating: 1, count: positions.count)
+        surface.weights = [[Float]](repeating: [], count: positions.count)
+        return surface
+    }
+
+    /// Projects the vertices onto the field and gives them normals, occlusion and skin weights.
+    func finish(_ surface: inout HumanSurface) {
+        let count = surface.positions.count
         let boneCount = field.boneCount
-        var weights = [[Float]](repeating: [], count: positions.count)
-        field.prims.withUnsafeBufferPointer { prims in
-            tags.withUnsafeMutableBufferPointer { tagOut in
-                weights.withUnsafeMutableBufferPointer { weightOut in
-                    let chunk = 512
-                    concurrentPerform(iterations: (positions.count + chunk - 1) / chunk) { c in
-                        var nearest = [(Float, Int32)]()
-                        for v in c * chunk..<min(positions.count, (c + 1) * chunk) {
-                            let p = positions[v]
-                            nearest.removeAll(keepingCapacity: true)
-                            var best: Float = .infinity
-                            var bestTag: UInt8 = 255
-                            for index in lists[Int(vertexBlock[v])] {
-                                let prim = prims[Int(index)]
-                                guard prim.op == .add else { continue }
-                                let d = prim.distance(p.x, p.y, p.z)
-                                if d < best { best = d; bestTag = prim.tag }
-                                if prim.chain >= 0 { nearest.append((d, prim.chain)) }
+        let chains = field.chains
+        var positions = surface.positions
+        var normals = [Vec3](repeating: Vec3(0, 1, 0), count: count)
+        var occlusion = [Float](repeating: 1, count: count)
+        var weights = [[Float]](repeating: [], count: count)
+        positions.withUnsafeMutableBufferPointer { out in
+            normals.withUnsafeMutableBufferPointer { normalOut in
+                occlusion.withUnsafeMutableBufferPointer { aoOut in
+                    weights.withUnsafeMutableBufferPointer { weightOut in
+                        forEachVertex(count, blocks: surface.blocks) { v, list, prims, groups in
+                            var p = out[v]
+                            var g = Vec3(0, 1, 0)
+                            for _ in 0..<2 {
+                                let d = eval(p, list, prims, groups)
+                                g = gradient(p, list, prims, groups)
+                                let gg = dot(g, g)
+                                guard gg > 1e-6, abs(d) < 0.01 else { break }
+                                p -= g * (d / gg)
                             }
-                            if bestTag != 255 { tagOut[v] = bestTag }
+                            out[v] = p
+                            let n = length(g) > 1e-6 ? normalize(g) : Vec3(0, 1, 0)
+                            normalOut[v] = n
+                            var occluded: Float = 0, weight: Float = 1, total: Float = 0
+                            for step in 1...5 {
+                                let h = 0.0045 * Float(step)
+                                let d = eval(p + n * h, list, prims, groups)
+                                occluded += max(0, h - d) / h * weight
+                                total += weight
+                                weight *= 0.7
+                            }
+                            aoOut[v] = max(0.3, min(1, 1 - 1.25 * occluded / total))
+                            // Weights: each nearby prim's chain, by how near it is.
+                            var nearest: [(Float, Int32)] = []
+                            for index in list {
+                                let prim = prims[Int(index)]
+                                guard prim.op == .add, prim.chain >= 0 else { continue }
+                                nearest.append((prim.distance(p.x, p.y, p.z), prim.chain))
+                            }
                             var w = [Float](repeating: 0, count: boneCount)
                             let dmin = nearest.map(\.0).min() ?? 0
                             let sigma: Float = 0.006
-                            var total: Float = 0
+                            var total2: Float = 0
                             for (d, chain) in nearest where d - dmin < 5 * sigma {
                                 let s = expf(-(d - dmin) / sigma)
-                                fieldRef.chains[Int(chain)].weights(p, into: &w, scale: s)
-                                total += s
+                                chains[Int(chain)].weights(p, into: &w, scale: s)
+                                total2 += s
                             }
-                            if total > 0 { for b in w.indices { w[b] /= total } } else if boneCount > 0 { w[0] = 1 }
+                            if total2 > 0 { for b in w.indices { w[b] /= total2 } } else if boneCount > 0 { w[0] = 1 }
                             weightOut[v] = w
                         }
                     }
@@ -582,9 +613,6 @@ struct HumanMesher {
         surface.positions = positions
         surface.normals = normals
         surface.occlusion = occlusion
-        surface.tags = tags
         surface.weights = weights
-        surface.triangles = triangles
-        return surface
     }
 }

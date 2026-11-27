@@ -279,7 +279,8 @@ struct HumanBodyBuilder {
         field.finish()
 
         // Pieces.
-        var surfaces: [(HumanPiece, HumanSurface)] = []
+        typealias Post = (Float, Float, Float, Float) -> Float
+        var jobs: [(piece: HumanPiece, post: Post)] = []
         let headPos = bone[head]
         let shirt = shirtShape(armGroups: armGroups)
         var headPiece = HumanPiece(kind: .skin, groups: [gTorso, gNeck, gHead],
@@ -289,7 +290,7 @@ struct HumanBodyBuilder {
                                    fineHi: Vec3(0.088 * H, headPos.y + 0.215 * H, headPos.z + 0.13 * H),
                                    fine: 0.0017 * H, coarse: 0.0042, tag: HumanTag.skin)
         headPiece.keep = [(Vec3(0, ty(1.385), 0), up)]
-        surfaces.append((headPiece, mesh(headPiece) { _, _, _, d in d }))
+        jobs.append((headPiece, { _, _, _, d in d }))
 
         for (i, s) in [Float(1), -1].enumerated() {
             let shoulder = bone[b(i == 0 ? "upperArm.L" : "upperArm.R")], elbow = bone[b(i == 0 ? "lowerArm.L" : "lowerArm.R")]
@@ -305,19 +306,20 @@ struct HumanBodyBuilder {
                                    fine: 0.0021 * hs, coarse: 0.0036, tag: HumanTag.skin)
             piece.keep = [(cut, along)]
             _ = s
-            surfaces.append((piece, mesh(piece) { _, _, _, d in d }))
+            jobs.append((piece, { _, _, _, d in d }))
         }
 
         let shirtPiece = HumanPiece(kind: .shirt, groups: Set([gTorso, gNeck] + armGroups),
                                     lo: Vec3(-0.32 * W, ty(0.86), -0.17 * W), hi: Vec3(0.32 * W, ty(1.56), 0.17 * W),
-                                    fineLo: .zero, fineHi: .zero, fine: 0.0055, coarse: 0.0055, tag: HumanTag.shirt)
-        surfaces.append((shirtPiece, mesh(shirtPiece, post: shirt)))
+                                    fineLo: Vec3(-0.11 * W, ty(1.4), -0.12 * W), fineHi: Vec3(0.11 * W, ty(1.53), 0.12 * W),
+                                    fine: 0.003, coarse: 0.0055, tag: HumanTag.shirt)
+        jobs.append((shirtPiece, shirt))
 
         let trousers = trouserShape(legGroups: legGroups)
         let trouserPiece = HumanPiece(kind: .trousers, groups: Set([gTorso] + legGroups),
                                       lo: Vec3(-0.24 * W, 0.04, -0.17 * W), hi: Vec3(0.24 * W, ty(1.06), 0.17 * W),
                                       fineLo: .zero, fineHi: .zero, fine: 0.0055, coarse: 0.0055, tag: HumanTag.trousers)
-        surfaces.append((trouserPiece, mesh(trouserPiece, post: trousers)))
+        jobs.append((trouserPiece, trousers))
 
         for (i, s) in [Float(1), -1].enumerated() {
             let foot = bone[b(i == 0 ? "foot.L" : "foot.R")]
@@ -326,11 +328,14 @@ struct HumanBodyBuilder {
                                        lo: Vec3(foot.x - 0.07, -0.01, foot.z - 0.1 * fs), hi: Vec3(foot.x + 0.07, foot.y + 0.08, foot.z + 0.25 * fs),
                                        fineLo: .zero, fineHi: .zero, fine: 0.0034, coarse: 0.0034, tag: HumanTag.shoe)
             _ = s
-            var surface = mesh(shoePiece, post: shoeShape(group: shoeGroups[i], foot: foot))
-            // The sole is everything below its top edge.
-            for v in surface.positions.indices where surface.positions[v].y < 0.0215 { surface.tags[v] = HumanTag.sole }
-            surfaces.append((shoePiece, surface))
+            jobs.append((shoePiece, shoeShape(group: shoeGroups[i], foot: foot)))
         }
+        // Every piece at once (each also spreads its own work over the cores).
+        var results = [HumanSurface](repeating: HumanSurface(), count: jobs.count)
+        results.withUnsafeMutableBufferPointer { out in
+            concurrentPerform(iterations: jobs.count) { j in out[j] = mesh(jobs[j].piece, post: jobs[j].post) }
+        }
+        let surfaces = zip(jobs.map(\.piece), results).map { ($0, $1) }
 
         // Parts by tag, smoothed weights, scaled to the rig's height.
         let scale = rig.proportions.height
@@ -352,18 +357,26 @@ struct HumanBodyBuilder {
     func mesh(_ piece: HumanPiece, post: @escaping (Float, Float, Float, Float) -> Float) -> HumanSurface {
         let keep = piece.keep
         let start = Date()
-        var surface = HumanMesher(field: field, piece: piece, post: { x, y, z, d in
+        let mesher = HumanMesher(field: field, piece: piece, post: { x, y, z, d in
             var v = post(x, y, z, d)
             for plane in keep {
                 v = max(v, -((x - plane.point.x) * plane.normal.x + (y - plane.point.y) * plane.normal.y + (z - plane.point.z) * plane.normal.z))
             }
             return v
-        }).mesh()
+        })
+        var surface = mesher.contour()
+        if piece.kind == .shoes {
+            // The sole is everything below its top edge.
+            for v in surface.positions.indices where surface.positions[v].y < 0.0215 { surface.tags[v] = HumanTag.sole }
+        }
         let meshed = Date(), before = surface.triangles.count
-        surface.simplify(tolerance: piece.kind == .skin ? 0.00022 : piece.kind == .shoes ? 0.0003 : 0.0005)
+        surface.simplify(tolerance: piece.kind == .skin ? 0.00015 : piece.kind == .shoes ? 0.00025 : 0.0004, keep: 0.22)
+        let simplified = Date()
+        mesher.finish(&surface)
         if ProcessInfo.processInfo.environment["HUMAN_TIMING"] == "1" {
-            print(String(format: "Human: %@ piece %.0f ms + simplify %.0f ms, %d -> %d triangles", "\(piece.kind)",
-                         meshed.timeIntervalSince(start) * 1000, Date().timeIntervalSince(meshed) * 1000, before, surface.triangles.count))
+            print(String(format: "Human: %@ piece %.0f ms + simplify %.0f ms + finish %.0f ms, %d -> %d triangles", "\(piece.kind)",
+                         meshed.timeIntervalSince(start) * 1000, simplified.timeIntervalSince(meshed) * 1000,
+                         Date().timeIntervalSince(simplified) * 1000, before, surface.triangles.count))
         }
         return surface
     }
@@ -473,7 +486,7 @@ struct HumanBodyBuilder {
             cone(hp(s * 0.056, 0.085, -0.028), Vec3(s * 0.016 * W, neck.y + 0.004, 0.05 * W), 0.012 * W, 0.0105 * W, group: g, chain: c, k: 0.02)
         }
         // Adam's apple.
-        ellipsoid(Vec3(0, neck.y + (head.y - neck.y) * 0.55, 0.05 * W), Vec3(0.011, 0.014, 0.009) * W, group: g, chain: c, k: 0.012)
+        ellipsoid(Vec3(0, neck.y + (head.y - neck.y) * 0.55, 0.05 * W), Vec3(0.009, 0.012, 0.007) * W, group: g, chain: c, k: 0.012)
     }
 
     // MARK: Head
@@ -504,17 +517,17 @@ struct HumanBodyBuilder {
         E(0, 0.086, 0.046, 0.054, 0.052, 0.048, k: 0.02)
         E(0.051, 0.106, 0.052, 0.017, 0.013, 0.024, k: 0.015, ax: Vec3(1, 0, -0.55), mirror: true)
         C(Vec3(0.056, 0.104, 0.04), Vec3(0.066, 0.098, 0.0), 0.0085, 0.0075, k: 0.015, mirror: true)
-        E(0.041, 0.076, 0.055, 0.03, 0.034, 0.033, k: 0.022, mirror: true)
-        E(0.048, 0.055, 0.035, 0.022, 0.03, 0.03, k: 0.022, mirror: true)
+        E(0.039, 0.077, 0.055, 0.026, 0.032, 0.031, k: 0.02, mirror: true)
+        E(0.043, 0.056, 0.036, 0.017, 0.026, 0.026, k: 0.02, mirror: true)
         // Dental arch (the muzzle the lips wrap around), jaw and chin.
-        E(0, 0.052, 0.068, 0.034, 0.03, 0.032, k: 0.015)
-        E(0, 0.04, 0.035, 0.05, 0.04, 0.05, k: 0.02)
-        C(Vec3(0.016, 0.012, 0.079), Vec3(0.056, 0.03, -0.002), 0.0135, 0.0125, k: 0.015, mirror: true)
-        C(Vec3(0.056, 0.03, -0.002), Vec3(0.062, 0.088, -0.012), 0.0122, 0.011, k: 0.012, mirror: true)
-        E(0, 0.016, 0.083, 0.021, 0.0165, 0.0152, k: 0.012)
+        E(0, 0.052, 0.067, 0.033, 0.03, 0.031, k: 0.015)
+        E(0, 0.042, 0.035, 0.044, 0.04, 0.048, k: 0.02)
+        C(Vec3(0.016, 0.012, 0.078), Vec3(0.051, 0.03, -0.004), 0.012, 0.0115, k: 0.015, mirror: true)
+        C(Vec3(0.051, 0.03, -0.004), Vec3(0.06, 0.088, -0.012), 0.0115, 0.011, k: 0.012, mirror: true)
+        E(0, 0.016, 0.085, 0.021, 0.0165, 0.0152, k: 0.012)
         // Eye sockets carved under the brow, then the eyeball mounds the lids lie on.
         let eye = Vec3(0.032, 0.124, 0.071)
-        E(0.033, 0.127, 0.084, 0.019, 0.0125, 0.016, k: 0.008, op: .subtract, mirror: true)
+        E(0.033, 0.128, 0.085, 0.018, 0.0115, 0.0145, k: 0.008, op: .subtract, mirror: true)
         for s: Float in [1, -1] {
             sphere(hp(s * eye.x, eye.y, eye.z), 0.0143 * H, group: g, chain: c, k: 0.004 * H)
         }
@@ -522,7 +535,7 @@ struct HumanBodyBuilder {
         E(0.033, 0.1135, 0.0765, 0.011, 0.0035, 0.006, k: 0.005, mirror: true)
         // Nose: bridge, tip, wings, columella, nostrils.
         C(Vec3(0, 0.129, 0.087), Vec3(0, 0.093, 0.112), 0.0065, 0.0092, k: 0.011)
-        E(0, 0.0865, 0.1115, 0.0105, 0.0098, 0.0095, k: 0.004)
+        E(0, 0.0865, 0.111, 0.0096, 0.0092, 0.009, k: 0.004)
         E(0.0135, 0.0775, 0.1, 0.0078, 0.0074, 0.0085, k: 0.004, mirror: true)
         E(0, 0.0805, 0.097, 0.016, 0.0095, 0.01, k: 0.006)
         C(Vec3(0, 0.08, 0.1095), Vec3(0, 0.0725, 0.1005), 0.0034, 0.0034, k: 0.003)
@@ -532,7 +545,7 @@ struct HumanBodyBuilder {
         E(0.0045, 0.0578, 0.0962, 0.0058, 0.0028, 0.0036, k: 0.003, tag: HumanTag.lips, mirror: true)
         E(0, 0.0425, 0.0925, 0.0185, 0.0062, 0.0078, k: 0.004, tag: HumanTag.lips)
         E(0, 0.0487, 0.0995, 0.024, 0.00095, 0.0135, k: 0.0014, op: .subtract)
-        E(0.0225, 0.0487, 0.0875, 0.0028, 0.0028, 0.0028, k: 0.003, op: .subtract, mirror: true)
+        E(0.0222, 0.0488, 0.0872, 0.0022, 0.0018, 0.0022, k: 0.003, op: .subtract, mirror: true)
         // Philtrum groove, the crease under the lower lip.
         C(Vec3(0, 0.0705, 0.1015), Vec3(0, 0.0612, 0.1035), 0.0021, 0.0024, k: 0.003, op: .subtract)
         E(0, 0.0292, 0.0995, 0.016, 0.003, 0.0055, k: 0.006, op: .subtract)
@@ -562,9 +575,9 @@ struct HumanBodyBuilder {
         for s: Float in [1, -1] {
             var opening = HumanPrim(kind: .almond, center: hp(s * eye.x, eye.y, eye.z))
             opening.setAxes(x: Vec3(s, 0, 0), y: Vec3(0, 1, 0), z: Vec3(0, 0, 1))
-            opening.a = 0.0098 * H; opening.b = 0.0215 * H
-            opening.c = -0.95; opening.d = 1.12
-            opening.e = 0.36; opening.f = 0.44
+            opening.a = 0.0098 * H; opening.b = 0.0168 * H
+            opening.c = -1.02; opening.d = 1.18
+            opening.e = 0.42; opening.f = 0.5
             opening.group = g; opening.chain = -1; opening.k = 0.0007 * H; opening.op = .subtract
             add(opening)
         }
@@ -718,7 +731,7 @@ struct HumanBodyBuilder {
         }
         let collarCenter = Vec3(0, neck.y + 0.035, 0.0)
         let collarTilt = normalize(Vec3(0, 1, 0.33))  // the opening dips in front
-        let collarR = Vec2(0.074 * W, 0.068 * W)
+        let collarR = Vec2(0.079 * W, 0.073 * W)
         let drapeCenter = tp(0, 1.1, 0.004), drapeRadii = tr(0.142, 0.2, 0.1)
         let W = self.W
         return { x, y, z, body in
@@ -755,7 +768,7 @@ struct HumanBodyBuilder {
             let fromHem = abs(y - hemY)
             var fromOpening = min(fromHem, (ring * ring + h * h).squareRoot())
             for sleeve in sleeves { fromOpening = min(fromOpening, abs(dot(p - sleeve.hem, sleeve.axis))) }
-            d = max(d, -(body + 0.0005) - 4 * max(0, fromOpening - 0.03))
+            d = max(d, -(body - 0.0025) - 4 * max(0, fromOpening - 0.03))
             return d
         }
     }
