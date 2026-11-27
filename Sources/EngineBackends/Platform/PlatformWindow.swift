@@ -45,10 +45,21 @@ package protocol PlatformWindow: AnyObject {
     /// Shows `image` as the app (Dock) or window icon (`EngineConfig.icon`).
     func setIcon(_ image: Image)
     func destroy()
+
+    /// Opens another OS window of the same kind that shares this one's event loop (an editor
+    /// pop-out, `Engine.openWindow`): this window's `pollEvents` pumps its events into `input`,
+    /// and its own `pollEvents(into: input)` (called after) only updates the state it polls
+    /// (pointer position, focus). Its close button sets its `shouldClose`; it doesn't quit the
+    /// app. nil where the platform has one window (the browser canvas).
+    func makeSecondaryWindow(title: String, width: Int, height: Int, input: Input) throws -> PlatformWindow?
+    /// Brings the window to the front and gives it the keyboard.
+    func activate()
 }
 
 extension PlatformWindow {
     package func setAppMenuItems(_ items: [AppMenuItem]) {}
+    package func makeSecondaryWindow(title: String, width: Int, height: Int, input: Input) throws -> PlatformWindow? { nil }
+    package func activate() {}
 }
 
 #if canImport(AppKit)

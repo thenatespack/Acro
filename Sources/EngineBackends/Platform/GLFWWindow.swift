@@ -17,10 +17,15 @@ package final class GLFWWindow: PlatformWindow, VulkanSurfaceProvider {
     private var appliedCursor: CursorShape = .arrow
     private var cursors: [CursorShape: OpaquePointer] = [:]
     private var lastCapturedPosition: Vec2?
-    private let gamepads = makePlatformGamepadSource()
+    private let gamepads: GamepadSource?
+    /// A window opened by `makeSecondaryWindow`: the main window's `glfwPollEvents` runs its
+    /// callbacks into `textTarget`, which stays set; it doesn't own GLFW (no `glfwTerminate`).
+    private let isSecondary: Bool
+    /// The secondary windows open, for placing the next one.
+    private var secondaryCount = 0
 
     /// `visible` false creates a hidden window (GPU tests that need a Vulkan surface).
-    package init(title: String, width: Int, height: Int, visible: Bool = true, minimumSize: (width: Int, height: Int)? = nil) throws {
+    package convenience init(title: String, width: Int, height: Int, visible: Bool = true, minimumSize: (width: Int, height: Int)? = nil) throws {
         #if os(macOS)
         // Hand GLFW the loader we link against so it doesn't need to dlopen one itself.
         glfwInitVulkanLoader(vkGetInstanceProcAddr)
@@ -30,14 +35,22 @@ package final class GLFWWindow: PlatformWindow, VulkanSurfaceProvider {
             glfwTerminate()
             throw GraphicsError("GLFW could not find a Vulkan loader")
         }
+        try self.init(createdTitle: title, width: width, height: height, visible: visible, minimumSize: minimumSize, secondary: false)
+    }
+
+    private init(createdTitle title: String, width: Int, height: Int, visible: Bool, minimumSize: (width: Int, height: Int)?,
+                 secondary: Bool) throws {
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API)
         glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE)
         glfwWindowHint(GLFW_VISIBLE, visible ? GLFW_TRUE : GLFW_FALSE)
         guard let handle = glfwCreateWindow(Int32(width), Int32(height), title, nil, nil) else {
-            glfwTerminate()
+            if !secondary { glfwTerminate() }
             throw GraphicsError("glfwCreateWindow failed")
         }
         self.handle = handle
+        isSecondary = secondary
+        // Gamepads go to the main window's input only.
+        gamepads = secondary ? nil : makePlatformGamepadSource()
         currentTitle = title
         if let minimumSize {
             // Screen coordinates (points on macOS), like the size the window was created with.
@@ -87,9 +100,14 @@ package final class GLFWWindow: PlatformWindow, VulkanSurfaceProvider {
     }
 
     package func pollEvents(into input: Input) {
-        textTarget = input
-        glfwPollEvents()
-        textTarget = nil
+        if isSecondary {
+            // Its callbacks ran in the main window's `glfwPollEvents`.
+            textTarget = input
+        } else {
+            textTarget = input
+            glfwPollEvents()
+            textTarget = nil
+        }
         // Polling state (rather than callbacks) keeps this free of C-callback plumbing.
         for (key, code) in Self.keyMap {
             input.setKey(key, down: glfwGetKey(handle, code) == GLFW_PRESS || (key == .enter && glfwGetKey(handle, GLFW_KEY_KP_ENTER) == GLFW_PRESS))
@@ -179,7 +197,29 @@ package final class GLFWWindow: PlatformWindow, VulkanSurfaceProvider {
         for cursor in cursors.values { glfwDestroyCursor(cursor) }
         cursors.removeAll()
         glfwDestroyWindow(handle)
-        glfwTerminate()
+        if !isSecondary { glfwTerminate() }
+    }
+
+    package func makeSecondaryWindow(title: String, width: Int, height: Int, input: Input) throws -> PlatformWindow? {
+        guard !isSecondary else { return nil }
+        let secondary = try GLFWWindow(createdTitle: title, width: width, height: height, visible: false, minimumSize: nil,
+                                       secondary: true)
+        secondary.textTarget = input
+        // Centered on this window, each further one a step down and to the right.
+        var x: Int32 = 0, y: Int32 = 0, mainWidth: Int32 = 0, mainHeight: Int32 = 0
+        glfwGetWindowPos(handle, &x, &y)
+        glfwGetWindowSize(handle, &mainWidth, &mainHeight)
+        let step = Int32(secondaryCount % 6) * 28
+        secondaryCount += 1
+        glfwSetWindowPos(secondary.handle, x + (mainWidth - Int32(width)) / 2 + step, y + (mainHeight - Int32(height)) / 2 + step)
+        glfwShowWindow(secondary.handle)
+        glfwFocusWindow(secondary.handle)
+        return secondary
+    }
+
+    package func activate() {
+        glfwShowWindow(handle)
+        glfwFocusWindow(handle)
     }
 
     // Text input. GLFW's char callback delivers committed text (it handles dead keys itself) and

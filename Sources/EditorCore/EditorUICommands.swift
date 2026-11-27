@@ -37,6 +37,7 @@ public enum EditorUICommands {
         UISnapshotCommand.self, UIFindCommand.self, UIClickCommand.self, UITypeCommand.self, UIKeyCommand.self,
         UIDragCommand.self, UIScrollCommand.self, UIHoverCommand.self,
         PanelListCommand.self, PanelOpenCommand.self, PanelCloseCommand.self, PanelFocusCommand.self, PanelDockCommand.self,
+        PanelPopOutCommand.self, AssetOpenPopOutCommand.self,
     ]
 }
 
@@ -722,6 +723,8 @@ public struct PanelInfo: Codable, Equatable, Sendable {
     /// Its tab is the selected one of its group (its content is on screen).
     public var selected: Bool
     public var floating: Bool
+    /// In an OS window of its own (panel.popOut); `rect` is then in that window's points.
+    public var window: Bool?
     public var closable: Bool
     /// [x, y, width, height] of its content in window points, when on screen.
     public var rect: [Float]?
@@ -747,11 +750,13 @@ public enum PanelListCommand: EditorCommand {
         let ids = EditorLayout.panelIDs + dock.panels.keys.filter { !EditorLayout.panelIDs.contains($0) }.sorted()
         return Result(panels: ids.compactMap { id in
             guard let panel = dock.panel(id) else { return nil }
-            let open = dock.isOpen(id)
-            let selected = open && EditorLayout.activePanel(in: layout, groupOf: id) == id
+            let poppedOut = app.isPoppedOut(id)
+            let open = poppedOut || dock.isOpen(id)
+            let selected = poppedOut || open && EditorLayout.activePanel(in: layout, groupOf: id) == id
             let frame = panel.content.frame
             return PanelInfo(id: id, title: panel.title, open: open, selected: selected,
-                             floating: layout.floating.contains { $0.panels.contains(id) }, closable: panel.isClosable,
+                             floating: layout.floating.contains { $0.panels.contains(id) }, window: poppedOut ? true : nil,
+                             closable: panel.isClosable,
                              rect: selected && !panel.content.isHidden ? [frame.x, frame.y, frame.width, frame.height] : nil)
         })
     }
@@ -856,7 +861,11 @@ public enum PanelCloseCommand: EditorCommand {
         guard app.dock.panel(arguments.panel)?.isClosable == true else {
             throw CommandError.failed("\(title): the \(arguments.panel) panel can't be closed")
         }
-        app.dock.closePanel(arguments.panel)
+        if app.isPoppedOut(arguments.panel) {
+            app.closePopOut(arguments.panel)
+        } else {
+            app.dock.closePanel(arguments.panel)
+        }
         app.syncPanels()
         return NoResult()
     }
@@ -914,9 +923,64 @@ public enum PanelDockCommand: EditorCommand {
         guard placement.tabWith != arguments.panel, placement.beside != arguments.panel else {
             throw CommandError.failed("\(title): a panel can't be docked beside itself")
         }
-        app.dock.dock(arguments.panel, at: try placement.position(in: app.dock, title, session: session))
+        let position = try placement.position(in: app.dock, title, session: session)
+        // Out of its own window (closed) and into the dock.
+        if app.isPoppedOut(arguments.panel) { app.closePopOut(arguments.panel) }
+        app.dock.dock(arguments.panel, at: position)
+        app.dock.focusPanel(arguments.panel)
         app.syncPanels()
         return NoResult()
+    }
+}
+
+public enum PanelPopOutCommand: EditorCommand {
+    public struct Arguments: Codable, Equatable, Sendable {
+        /// The panel id (panel.list).
+        public var panel: String
+        public init(panel: String) { self.panel = panel }
+    }
+
+    public static let id: CommandID = "panel.popOut"
+    public static let title = "Pop Out Panel"
+    public static let doc = "Pops a panel out into an OS window of its own (centered on the editor; later ones cascade), which can go on another display, and brings it to the front, so it stays in view while you work in other tabs. A popped-out builder keeps its side panel in the window instead of the Inspector. Closing the window docks the panel again; panel.dock docks it elsewhere, panel.close closes it. Where no OS window can open (headless) and for the Scene and Game views, it floats over the editor instead. One already popped out just comes to the front."
+    public static let isIdempotent = true
+    public static func isAvailable(in session: EditorSession) -> Bool { session.uiApp != nil }
+    public static func unavailableReason(in session: EditorSession) -> String? { noUIReason }
+    public static func run(_ arguments: Arguments, in session: EditorSession) throws -> NoResult {
+        let app = try panelApp(arguments.panel, session, title)
+        app.popOutPanel(arguments.panel)
+        app.syncPanels()
+        return NoResult()
+    }
+}
+
+public enum AssetOpenPopOutCommand: EditorCommand {
+    public struct Arguments: Codable, Equatable, Sendable {
+        /// A builder's file (.meshbuild, .dialogue, .timeline, .vfx…).
+        public var asset: AssetReference
+        public init(asset: AssetReference) { self.asset = asset }
+    }
+
+    public struct Result: Codable, Equatable, Sendable {
+        /// The builder panel it opened in.
+        public var panel: String
+    }
+
+    public static let id: CommandID = "asset.openPopOut"
+    public static let title = "Open in Pop-Out"
+    public static let doc = "Opens a builder's file (a model, dialogue tree, timeline, effect…) in its builder and pops that builder out into an OS window of its own (as panel.popOut), so you can keep looking at it while working in the Scene or another tab, on another display if you like. Each builder has one view: a file of the same kind opened later shows in the same window."
+    public static func isAvailable(in session: EditorSession) -> Bool { session.uiApp != nil }
+    public static func unavailableReason(in session: EditorSession) -> String? { noUIReason }
+    public static func run(_ arguments: Arguments, in session: EditorSession) throws -> Result {
+        guard let app = session.uiApp else { throw CommandError.failed("\(title): \(noUIReason)") }
+        let id = arguments.asset.asset
+        guard let module = EditorBuilderRegistry.module(forFile: id, in: session), let asset = module.asset else {
+            throw CommandError.failed("\(title): \(arguments.asset) isn't a file a builder opens")
+        }
+        app.popOutPanel(module.panelID)
+        asset.open(session, id)
+        app.syncPanels()
+        return Result(panel: module.panelID)
     }
 }
 

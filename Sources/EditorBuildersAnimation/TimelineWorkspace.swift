@@ -261,6 +261,7 @@ public final class TimelineWorkspace {
     }
 
     public func close() {
+        session.stopSoundPreview()
         asset = nil
         builder = nil
         director = nil
@@ -274,6 +275,7 @@ public final class TimelineWorkspace {
 
     public func setPlaying(_ on: Bool) {
         isPlaying = on
+        if on { session.stopSoundPreview() }
         playButton.title = on ? "Pause" : "Play"
         guard let director, world.isAlive(director) else { return }
         world.modify(TimelinePlayer.self, for: director) { p in
@@ -335,7 +337,11 @@ public final class TimelineWorkspace {
         bar.addChild(closeButton)
 
         strip.onScrub = { [unowned self] t in scrub(to: t) }
-        strip.onSelect = { [unowned self] track, key in builder?.select(track: track, key: key) }
+        strip.onSelect = { [unowned self] track, key in
+            builder?.select(track: track, key: key)
+            // Clicking an audio key plays its sound (not over the playing preview, which plays it when reached).
+            if !isPlaying { builder?.previewSelectedSound() }
+        }
         strip.onMoveKey = { [unowned self] track, key, t in builder?.moveKey(track, key, to: t) }
         strip.onAddKey = { [unowned self] track, t in builder?.addKey(to: track, at: (t * 20).rounded() / 20) }
         strip.padding = EdgeInsets(top: 4, left: 6, bottom: 6, right: 6)

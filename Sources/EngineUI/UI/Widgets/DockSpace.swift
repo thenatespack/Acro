@@ -238,8 +238,8 @@ enum DockDropTarget {
 /// - close a tab (closing the last tab of a group removes the group and collapses its split).
 ///
 /// `layout` / `restoreLayout` save and restore the arrangement as a Codable `DockLayout`, and
-/// `onLayoutChange` reports every user change. Floating windows live inside the main window;
-/// separate OS windows are not supported.
+/// `onLayoutChange` reports every user change. Floating windows live inside the main window; a
+/// panel the app shows in a separate OS window is `external` (see `showExternally`).
 public final class DockSpace: Widget {
     public private(set) var panels: [String: DockPanel] = [:]
     /// Called after the user changes the layout (drop, close, divider drag, tab selection or
@@ -255,6 +255,15 @@ public final class DockSpace: Widget {
     public var tabBarHeight: Float = 28 { didSet { if tabBarHeight != oldValue { rebuild() } } }
     /// Smallest floating window (points).
     public var minFloatingSize = Vec2(160, 100)
+    /// Panels the app shows outside the dock space, in OS windows of their own (an editor's
+    /// pop-outs; `showExternally`). They are out of the layout: `dock` and `focusPanel` call
+    /// `onShowExternal` for them instead (to bring their window to the front), and
+    /// `restoreLayout` leaves them out.
+    public private(set) var externalPanels: Set<String> = []
+    public var onShowExternal: ((String) -> Void)?
+    /// A right-click on a panel's tab (its group's selected tab then): the panel id and the
+    /// point, for a context menu.
+    public var onTabContextMenu: ((String, Vec2) -> Void)?
 
     var root: DockNode?
     var floats: [DockFloat] = []
@@ -295,6 +304,24 @@ public final class DockSpace: Widget {
     /// Whether the panel is in the layout (docked or floating).
     public func isOpen(_ id: String) -> Bool { group(containing: id) != nil }
 
+    /// Takes a registered panel out of the layout (without its `onClose`) so the app can show its
+    /// content in a window of its own, until `endExternal`.
+    public func showExternally(_ id: String) {
+        guard panels[id] != nil, !externalPanels.contains(id) else { return }
+        if isOpen(id) {
+            detach(id)
+            normalize()
+            rebuild()
+            layoutChanged()
+        }
+        externalPanels.insert(id)
+    }
+
+    /// The panel's window closed: it can be docked again (it stays closed until it is).
+    public func endExternal(_ id: String) {
+        externalPanels.remove(id)
+    }
+
     /// IDs of the panels in the layout (docked depth first, then floating).
     public var openPanelIDs: [String] { layout.panelIDs }
 
@@ -302,6 +329,7 @@ public final class DockSpace: Widget {
     /// isn't open fall back to the right edge.
     public func dock(_ id: String, at position: DockPosition) {
         guard panels[id] != nil else { return }
+        if externalPanels.contains(id) { return onShowExternal?(id) ?? () }
         switch position {
         case .tab(let other, let index):
             guard let g = group(containing: other) else { return dock(id, at: .edge(.right)) }
@@ -330,6 +358,7 @@ public final class DockSpace: Widget {
 
     /// Selects the panel's tab and brings its floating window to the front.
     public func focusPanel(_ id: String) {
+        if externalPanels.contains(id) { return onShowExternal?(id) ?? () }
         guard let g = group(containing: id) else { return }
         g.active = id
         if let view = g.view as? TabView, let i = view.index(of: id) { view.select(i) }
@@ -356,7 +385,7 @@ public final class DockSpace: Widget {
     public func restoreLayout(_ layout: DockLayout) {
         var seen = Set<String>()
         func ids(_ list: [String]) -> [String] {
-            list.filter { panels[$0] != nil && seen.insert($0).inserted }
+            list.filter { panels[$0] != nil && !externalPanels.contains($0) && seen.insert($0).inserted }
         }
         func build(_ node: DockLayout.Node) -> DockNode {
             switch node {
@@ -548,6 +577,7 @@ public final class DockSpace: Widget {
             node.active = tabs.tabs[index].id
             self?.layoutChanged()
         }
+        tabs.onTabContextMenu = { [weak self] panel, position in self?.onTabContextMenu?(panel.id, position) }
         tabs.onReorder = { [weak self, weak node] order in
             node?.panels = order.map(\.id)
             self?.layoutChanged()

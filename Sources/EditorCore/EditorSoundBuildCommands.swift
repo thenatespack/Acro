@@ -1,7 +1,8 @@
 import Engine
 import Foundation
 
-/// The sound builder tools: `sfx.new`, `sfx.get`, `sfx.set`, `sfx.edit`, `sfx.play`, `sfx.open`.
+/// The sound builder tools: `sfx.new`, `sfx.get`, `sfx.set`, `sfx.edit`, `sfx.play`, `sfx.open`;
+/// and for every sound asset `audio.info` and `audio.preview` (AudioInspector.swift).
 @MainActor
 public enum EditorSoundBuildCommands {
     public static let all: [any EditorCommand.Type] = [
@@ -11,6 +12,8 @@ public enum EditorSoundBuildCommands {
         SoundBuildEditCommand.self,
         SoundBuildPlayCommand.self,
         SoundBuildOpenCommand.self,
+        AudioInfoCommand.self,
+        AudioPreviewCommand.self,
     ]
 
     /// What the tool docs say about the file format, shared by the tools.
@@ -31,15 +34,238 @@ public enum EditorSoundBuildCommands {
 /// The sound being previewed in the editor (a new preview replaces it).
 @MainActor
 enum SoundBuildPreview {
-    private static var voice: Voice?
-
     /// Plays `build`; false when the editor has no audio device.
     @discardableResult
     static func play(_ build: SoundBuild, in session: EditorSession) -> Bool {
+        SoundPreview.play(.build(build), in: session)
+    }
+}
+
+/// The editor's sound preview: one sound at a time, on the sfx bus, from the Sound Builder or a
+/// click on a sound elsewhere (an audio file in the asset browser, a Timeline audio key).
+/// Starting one stops the last.
+enum SoundPreview {
+    /// What a preview plays.
+    enum Source: Equatable, Sendable {
+        /// A `.sfx` sound build, synthesized.
+        case build(SoundBuild)
+        /// An audio file in the project, streamed from its source.
+        case file(URL)
+    }
+
+    @MainActor private static var voice: Voice?
+    /// The asset `voice` plays, when it came from one.
+    @MainActor private static var voiceAsset: AssetID?
+    /// When the voice started, from where (seconds into the sound), how long the sound is (when
+    /// known), whether it loops and at what pitch: the playhead (`playhead`).
+    @MainActor private static var started: (date: Date, offset: Double, duration: Double?, loop: Bool, pitch: Float)?
+    /// A file starting part way in: its decoder skips to the start off the main thread; this
+    /// counts plays so a stale one doesn't start after a newer one (or a stop).
+    @MainActor private static var generation = 0
+    @MainActor private static var loadingAsset: AssetID?
+    /// The play waiting for its skipped decoder, and where the background task leaves it. The
+    /// main thread collects it (`pump`) instead of the task hopping to the main actor, so it
+    /// works however the host runs its loop.
+    @MainActor private static var starting: (ticket: Int, volume: Float, pitch: Float, loop: Bool, offset: Double, duration: Double?, url: URL)?
+    @MainActor private static weak var startSession: EditorSession?
+    private static let startMailbox = Mailbox()
+
+    private final class Mailbox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: (ticket: Int, box: DecoderBox?)?
+        func post(_ ticket: Int, _ box: DecoderBox?) { lock.withLock { value = (ticket, box) } }
+        func take() -> (ticket: Int, box: DecoderBox?)? { lock.withLock { defer { value = nil }; return value } }
+    }
+
+    /// Starts a file whose decoder finished skipping to its start. Called by the accessors
+    /// below (the inspector reads them every frame) and every editor frame.
+    @MainActor static func pump() {
+        guard let pending = starting, let result = startMailbox.take() else { return }
+        guard result.ticket == pending.ticket else { return }
+        starting = nil
+        loadingAsset = nil
+        guard let session = startSession else { return }
+        guard let box = result.box, let audio = session.audioProvider?() else {
+            session.log.warning("Sound preview: can't play \(pending.url.lastPathComponent)")
+            return
+        }
+        voice = audio.playStream(box.decoder, on: audio.sfx, volume: pending.volume, pitch: pending.pitch, loop: pending.loop,
+                                 name: pending.url.deletingPathExtension().lastPathComponent)
+        started = (Date(), pending.offset, pending.duration, pending.loop, pending.pitch)
+    }
+
+    /// A file is skipping to where it starts (its voice begins after).
+    @MainActor static var isStarting: Bool {
+        pump()
+        return loadingAsset != nil
+    }
+
+    /// The sound asset playing (or about to, while a file skips to its start); nil when none is.
+    @MainActor static var playingAsset: AssetID? {
+        pump()
+        if let loadingAsset { return loadingAsset }
+        return voice?.isPlaying == true ? voiceAsset : nil
+    }
+
+    /// Seconds into the sound the preview is at; nil when nothing plays.
+    @MainActor static var playhead: Double? {
+        guard voice?.isPlaying == true || loadingAsset != nil, let started else { return nil }
+        let t = started.offset + Date().timeIntervalSince(started.date) * Double(started.pitch)
+        guard let duration = started.duration, duration > 0 else { return t }
+        if t < duration { return t }
+        return started.loop ? (t - duration).truncatingRemainder(dividingBy: duration) : duration
+    }
+
+    /// The sound `clip` names (a path under `Assets/` or "asset:<id>", as a Timeline audio key or
+    /// a data table writes it): an audio file or a `.sfx`. nil when it names no sound.
+    @MainActor static func source(of clip: String, in assets: AssetDatabase) -> Source? {
+        assets.assetID(forTableValue: clip).flatMap { source(of: $0, in: assets) }
+    }
+
+    /// The sound asset `id` is: an audio file or a `.sfx`. nil for anything else.
+    @MainActor static func source(of id: AssetID, in assets: AssetDatabase) -> Source? {
+        if let build = assets.soundBuild(of: id) { return .build(build) }
+        guard assets.record(id)?.importer == AudioImporter().name, let url = assets.sourceURL(of: id) else { return nil }
+        return .file(url)
+    }
+
+    /// Hands a decoder from the task that skipped it to its start to the main actor.
+    private final class DecoderBox: @unchecked Sendable {
+        let decoder: AudioDecoder
+        init(_ decoder: AudioDecoder) { self.decoder = decoder }
+    }
+
+    /// A decoder already `skipped` frames in: it reports the frames left, so the voice ends
+    /// with the file; a loop goes back to the file's start.
+    private final class SkippedDecoder: AudioDecoder {
+        let base: AudioDecoder
+        private var remaining: Int?
+        init(_ base: AudioDecoder, skipped: Int) {
+            self.base = base
+            remaining = base.frameCount.map { max($0 - skipped, 0) }
+        }
+        var channelCount: Int { base.channelCount }
+        var sampleRate: Double { base.sampleRate }
+        var frameCount: Int? { remaining }
+        func read(into buffer: UnsafeMutablePointer<Float>, frames: Int) throws -> Int { try base.read(into: buffer, frames: frames) }
+        func rewind() throws {
+            try base.rewind()
+            remaining = base.frameCount
+        }
+    }
+
+    /// Plays `source` from `offset` seconds in, once or looping; false when the editor has no
+    /// audio device or the file can't be read. A file starting part way in begins once its
+    /// decoder has skipped there (in the background; `playingAsset` already names it).
+    @MainActor @discardableResult
+    static func play(_ source: Source, volume: Float = 1, pitch: Float = 1, asset: AssetID? = nil, from offset: Double = 0,
+                     loop: Bool = false, duration: Double? = nil, in session: EditorSession) -> Bool {
         guard let audio = session.audioProvider?() else { return false }
-        voice?.stop()
-        voice = audio.play(build.soundBuffer(name: "sfx preview"))
+        stop()
+        voiceAsset = asset
+        let offset = max(offset, 0)
+        switch source {
+        case .build(let build):
+            let sound = build.soundBuffer(name: "sfx preview")
+            let start = min(Int(offset * sound.sampleRate), max(sound.frameCount - 1, 0))
+            let buffer = start == 0 ? sound
+                : SoundBuffer(samples: Array(sound.samples[start...]), channelCount: 1, sampleRate: sound.sampleRate, name: "sfx preview")
+            // A loop goes round the whole sound: play the rest once, then loop it from the start.
+            voice = audio.play(start == 0 || !loop ? buffer : sound, volume: volume, pitch: pitch, loop: loop)
+            started = (Date(), start == 0 || !loop ? offset : 0, sound.duration, loop, pitch)
+        case .file(let url):
+            if offset <= 0 {
+                do {
+                    voice = try audio.playStream(contentsOf: url, on: audio.sfx, volume: volume, pitch: pitch, loop: loop)
+                } catch {
+                    session.log.warning("Sound preview: can't play \(url.lastPathComponent): \(error)")
+                    return false
+                }
+                started = (Date(), 0, duration, loop, pitch)
+                return true
+            }
+            generation += 1
+            let ticket = generation
+            loadingAsset = asset
+            started = (Date(), offset, duration, loop, pitch)
+            starting = (ticket, volume, pitch, loop, offset, duration, url)
+            let mailbox = startMailbox
+            Task.detached(priority: .userInitiated) {
+                let box: DecoderBox? = try? {
+                    let decoder = try AudioFile.decoder(contentsOf: url)
+                    var skip = Int(offset * decoder.sampleRate), skipped = 0
+                    var scratch = [Float](repeating: 0, count: 8192 * decoder.channelCount)
+                    while skip > 0 {
+                        let read = try scratch.withUnsafeMutableBufferPointer { try decoder.read(into: $0.baseAddress!, frames: min(skip, 8192)) }
+                        if read == 0 { break }
+                        skip -= read
+                        skipped += read
+                    }
+                    return DecoderBox(SkippedDecoder(decoder, skipped: skipped))
+                }()
+                mailbox.post(ticket, box)
+            }
+            startSession = session
+        }
         return true
+    }
+
+    @MainActor static func stop() {
+        generation += 1
+        loadingAsset = nil
+        starting = nil
+        voice?.stop()
+        voice = nil
+        voiceAsset = nil
+        started = nil
+    }
+}
+
+extension EditorSession {
+    /// Plays the sound `clip` names (a path under `Assets/` or "asset:<id>": an audio file or a
+    /// `.sfx`) once as a preview, replacing any preview still playing. False when it names no
+    /// sound, no project is open, or the editor has no audio device.
+    @discardableResult
+    public func previewSound(clip: String, volume: Float = 1, pitch: Float = 1) -> Bool {
+        guard let assets, let source = SoundPreview.source(of: clip, in: assets) else { return false }
+        return SoundPreview.play(source, volume: volume, pitch: pitch, in: self)
+    }
+
+    /// Whether `id` is a sound the preview plays: an audio file (wav, ogg, mp3) or a `.sfx`.
+    public func isSoundAsset(_ id: AssetID) -> Bool {
+        guard let assets else { return false }
+        return SoundPreview.source(of: id, in: assets) != nil
+    }
+
+    /// Plays the sound asset `id` (an audio file or a `.sfx`) once as a preview, replacing any
+    /// preview still playing. Songs stream from their file. False when `id` isn't a sound or the
+    /// editor has no audio device.
+    @discardableResult
+    public func previewSound(asset id: AssetID, from offset: Double = 0, loop: Bool = false, duration: Double? = nil) -> Bool {
+        guard let assets, let source = SoundPreview.source(of: id, in: assets) else { return false }
+        return SoundPreview.play(source, asset: id, from: offset, loop: loop, duration: duration, in: self)
+    }
+
+    /// The sound asset the preview is playing; nil when none is, or it has ended.
+    public var soundPreviewAsset: AssetID? { SoundPreview.playingAsset }
+
+    /// Seconds into the sound the preview is at (the inspector's playhead); nil when none plays.
+    public var soundPreviewPlayhead: Double? { SoundPreview.playhead }
+
+    /// Plays the sound asset `id`, or stops it when it is the one playing (its inspector's Play /
+    /// Stop). Returns whether it is playing afterwards.
+    @discardableResult
+    public func toggleSoundPreview(asset id: AssetID, loop: Bool = false, duration: Double? = nil) -> Bool {
+        if soundPreviewAsset == id {
+            stopSoundPreview()
+            return false
+        }
+        return previewSound(asset: id, loop: loop, duration: duration)
+    }
+
+    /// Stops the sound preview, if one is playing.
+    public func stopSoundPreview() {
+        SoundPreview.stop()
     }
 }
 

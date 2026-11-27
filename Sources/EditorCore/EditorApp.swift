@@ -127,6 +127,13 @@ public final class EditorApp: Game, EditorHost {
     let dock = DockSpace()
     private(set) var hierarchy: HierarchyPanel!
     private(set) var inspector: InspectorPanel!
+    /// The builder side panel shown in the Inspector, and where it came from (EditorBuilderSidebars.swift).
+    var builderSidebarPlacement: BuilderSidebarPlacement?
+    /// Panels in OS windows of their own (EditorPopOutWindows.swift).
+    var popOuts: [EditorPopOut] = []
+    /// Opens a pop-out window (title, size in points) instead of the engine (tests: headless
+    /// windows). nil uses `Engine.openWindow`.
+    package var windowOpener: ((String, Vec2) throws -> EngineWindow?)?
     private(set) var console: ConsolePanel!
     private(set) var activity: ActivityPanel!
     public private(set) var scriptEditor: ScriptEditorPanel!
@@ -187,7 +194,7 @@ public final class EditorApp: Game, EditorHost {
     /// The MCP server, when a transport is on (`EditorOptions.mcp`).
     public internal(set) var mcp: EditorMCP?
 
-    private weak var engine: Engine?
+    private(set) weak var engine: Engine?
     /// Screenshots asked for (`capture`) and not rendered yet.
     private var captureJobs: [CaptureJob] = []
     /// Draws the selection outline into screenshots (its own mask, apart from the viewport's).
@@ -388,11 +395,15 @@ public final class EditorApp: Game, EditorHost {
         session.tick(dt: Double(dt))
         session.recovery?.update()
         syncPanels()
+        updatePopOuts(dt: dt, shortcutsEnabled: !isLauncherShown)
+        drawPopOuts()
     }
 
     /// The part of setup that needs no GPU: the UI, the prefs, the project and the scene.
     private func finishSetup() {
         viewport.tools = [transformTool]
+        // A right-click (no drag) in the Scene view opens the object menu; a right-drag flies.
+        viewport.onContextClick = { [unowned self] point, context in showViewportMenu(at: point, context: context) }
 
         session.log.echoesToStandardOutput = !options.deterministic
         if let url = options.prefsURL {
@@ -569,12 +580,14 @@ public final class EditorApp: Game, EditorHost {
     private func buildUI() {
         hierarchy = HierarchyPanel(session: session)
         hierarchy.onDelete = { [unowned self] in confirmDeleteSelection() }
+        hierarchy.tree.onContextMenu = { [unowned self] row, point in showHierarchyMenu(onRow: row != nil, at: point) }
         hierarchy.spawnPosition = { [unowned self] in
             var p = viewport.camera.pivot
             p.y = max(p.y, 0.5)
             return p
         }
         inspector = InspectorPanel(session: session)
+        inspector.assetPreview = { [unowned self] reference, kind in assetThumbnail(reference, kind: kind) }
         inspector.assetChoices = makeAssetChoices()
         console = ConsolePanel(log: session.log)
         console.showsTime = !options.deterministic
@@ -666,6 +679,9 @@ public final class EditorApp: Game, EditorHost {
         dock.style.grow = 1
         dock.padding = EdgeInsets(top: 0, left: 4, bottom: 4, right: 4)
         dock.background = ui.theme.fieldBackground
+        // Showing a popped-out panel (opening its file, the View menu) brings its window forward.
+        dock.onShowExternal = { [unowned self] id in popOutWindow(of: id)?.activate() }
+        dock.onTabContextMenu = { [unowned self] id, point in showTabMenu(id, at: point) }
         dock.onLayoutChange = { [unowned self] layout in
             prefs.layout = layout
             prefsDirty = true
@@ -702,6 +718,15 @@ public final class EditorApp: Game, EditorHost {
     /// Shows a builder tab whose asset was opened: where the Scene view is (tabbed with the
     /// viewport) unless it already shares its group, and in front.
     package func showBuilderPanel(_ id: String) {
+        // A popped-out builder stays in its window.
+        if let window = popOutWindow(of: id) {
+            window.activate()
+            return
+        }
+        if isFloating(id) {
+            dock.focusPanel(id)
+            return
+        }
         if !EditorLayout.shareGroup(in: dock.layout, id, EditorLayout.viewport) {
             dock.dock(id, at: dock.isOpen(EditorLayout.viewport) ? .tab(with: EditorLayout.viewport) : .edge(.bottom))
         }
@@ -988,10 +1013,16 @@ public final class EditorApp: Game, EditorHost {
         let dialog = ConfirmDialog(
             title: "Recover unsaved work?",
             message: "The last editor session left work behind (\(newest.reason)). It kept \(changes) (\(newest.entities) entities).\(play) "
-                + "Not Now keeps it for later (scene.recover).",
+                + "Not Now keeps it for later (scene.recover); Ignore Changes deletes it.",
             confirmTitle: "Recover", name: "recoveryDialog")
         dialog.cancelButton.title = "Not Now"
         dialog.command = SceneRecoverCommand.id.rawValue
+        // Not Now asks again next time; Ignore Changes deletes what was left, so it stops asking.
+        let ignore = dialog.addAlternative("Ignore Changes", name: "recoveryIgnore") { [unowned self] in
+            session.run(SceneDiscardRecoveryCommand.self, .init())
+        }
+        ignore.tooltip = "Delete the work the last session left behind, so the editor stops asking about it"
+        ignore.command = SceneDiscardRecoveryCommand.id.rawValue
         dialog.onConfirm = { [unowned self] in
             if session.run(SceneRecoverCommand.self, .init(id: newest.id)) != nil {
                 hierarchy.sync(force: true)
@@ -1043,6 +1074,8 @@ public final class EditorApp: Game, EditorHost {
         // Finished background loads, also while no view renders the scene (the scene renderer
         // applies them when it draws; a builder tab in front would otherwise leave them loading).
         session.assets?.pump()
+        // A sound preview starting part way into a file (decoded up to there in the background).
+        SoundPreview.pump()
 
         // What the UI does with the keyboard, before and after it handles this frame's input.
         func textEditing() -> Bool { ui.focusedWidget?.wantsTextInput == true || input.isTextInputActive }
@@ -1060,12 +1093,15 @@ public final class EditorApp: Game, EditorHost {
             // A focused list or tree (the Hierarchy, the Assets panel) moves to its first row on Home.
             if ui.focusedWidget is RowListView { presses.removeAll { $0.key == .home } }
             for command in shortcuts.actions(for: presses, focus: focus) { invoke(command) }
+            // Popped-out builders take their own window's input (`updatePopOuts`).
+            let dockedTabs = zip(EditorBuilderRegistry.modules, builderTabs).filter { !isPoppedOut($0.0.panelID) }.map(\.1)
             if !focus.textEditing, !focus.overlayOpen {
-                for tab in builderTabs { tab.handleKeys?(input.keyPresses, uiPoint(input.mousePosition)) }
+                for tab in dockedTabs { tab.handleKeys?(input.keyPresses, uiPoint(input.mousePosition)) }
             }
             updateViewport(engine: engine, dt: dt, keyboardFree: !focus.textEditing)
-            for tab in builderTabs { tab.update?(workspaceInput(engine.input, dt: dt), dt) }
+            for tab in dockedTabs { tab.update?(workspaceInput(engine.input, dt: dt, ui: ui), dt) }
         }
+        updatePopOuts(dt: dt, shortcutsEnabled: !isLauncherShown)
         session.tick(dt: Double(dt))
 
         syncPanels()
@@ -1090,7 +1126,10 @@ public final class EditorApp: Game, EditorHost {
         // Size the target to the panel before painting, so the image drawn this frame is the one rendered.
         ui.layoutIfNeeded()
         resizeTarget(scale: ui.scale)
-        for tab in builderTabs { tab.prepareFrame?(ui.scale) }
+        for (module, tab) in zip(EditorBuilderRegistry.modules, builderTabs) where !isPoppedOut(module.panelID) {
+            tab.prepareFrame?(ui.scale)
+        }
+        drawPopOuts()
         buildGizmos()
         viewportWidget.texture = scenePostFX.texture(for: target, settings: session.scenePostFX) ?? target.texture
         viewportWidget.billboards = transformTool.billboards
@@ -1288,9 +1327,38 @@ public final class EditorApp: Game, EditorHost {
         return SceneView(camera: camera, in: world, aspect: aspect)
     }
 
-    /// Whether panel `id` is open and the selected tab of its group.
+    /// Whether panel `id` is in a floating window (popped out).
+    func isFloating(_ id: String) -> Bool {
+        dock.layout.floating.contains { $0.panels.contains(id) }
+    }
+
+    /// Pops panel `id` out into a floating window over the editor (centered, cascading after
+    /// other floating windows) and brings it to the front; one already floating just comes to
+    /// the front. A builder keeps its side panel in the window (EditorBuilderSidebars.swift).
+    package func popOutPanel(_ id: String) {
+        if let window = popOutWindow(of: id) {
+            window.activate()
+            return
+        }
+        if openPopOutWindow(id) { return }
+        if isFloating(id) {
+            dock.focusPanel(id)
+            return
+        }
+        let bounds = dock.frame
+        let minimum = dock.panel(id)?.minSize ?? Vec2(320, 200)
+        let width = min(max(bounds.width * 0.6, 560, minimum.x), max(bounds.width - 40, minimum.x))
+        let height = min(max(bounds.height * 0.7, 400, minimum.y), max(bounds.height - 40, minimum.y))
+        let step = Float(dock.layout.floating.count % 6) * 28
+        let frame = UIRect(x: max((bounds.width - width) / 2 + step, 0), y: max((bounds.height - height) / 2 + step, 0),
+                           width: width, height: height)
+        dock.dock(id, at: .floating(frame))
+        dock.focusPanel(id)
+    }
+
+    /// Whether panel `id` is open and the selected tab of its group, or in a pop-out window.
     func isFront(_ id: String) -> Bool {
-        dock.isOpen(id) && EditorLayout.activePanel(in: dock.layout, groupOf: id) == id
+        isPoppedOut(id) || dock.isOpen(id) && EditorLayout.activePanel(in: dock.layout, groupOf: id) == id
     }
 
     /// Keeps the Scene and Game tabs and `showsGameCamera` in step: Play brings the Game tab to
@@ -1426,8 +1494,9 @@ public final class EditorApp: Game, EditorHost {
         }
     }
 
-    /// This frame's pointer for the Mesh Builder's viewport.
-    private func workspaceInput(_ input: Input, dt: Float) -> ViewportInput {
+    /// This frame's pointer for a builder's view, in `ui`'s points (the main window's, or a
+    /// pop-out's).
+    func workspaceInput(_ input: Input, dt: Float, ui: UIContext) -> ViewportInput {
         var frameInput = ViewportInput(mousePosition: uiPoint(input.mousePosition))
         frameInput.mouseDelta = input.mouseDelta / ui.uiScale
         for button in MouseButton.allCases {
@@ -2187,81 +2256,120 @@ final class Toolbar {
         EditorLayout.panelIDs.compactMap { id in app.dock.panel(id).map { (id, $0.title) } }
     }
 
-    /// The View menu: every panel (open ones checked; picking one opens a closed panel where the
-    /// default layout has it, or brings an open one to the front), then Settings…, Reset Layout,
-    /// Return to Origin, Go to Object…, Animate in Scene View, Bake Lighting, Show Light Probes, Irradiance Only, the themes (`EditorApp.menuThemes`),
-    /// the zooms and the Scene view's post-fx modes (`view.scenePostFX`), the current ones checked.
-    func showViewMenu() {
-        guard let context = view.context else { return }
-        let panels = menuPanels
-        let session = app.session
-        let shortcuts = app.shortcuts
-        struct Entry {
-            var title: String
-            var command: CommandID
-            var icon: String?
-            var checked = false
-            var run: () -> Void
-        }
-        var entries = panels.map { panel in
-            Entry(title: panel.title, command: PanelOpenCommand.id, icon: EditorIcons.panelIconNames[panel.id], checked: app.dock.isOpen(panel.id)) {
-                session.run(PanelOpenCommand.self, .init(panel: panel.id))
-            }
-        }
-        entries += [
-            Entry(title: "Settings… (\(shortcuts.shortcutText(for: .settings)))", command: SettingsGetCommand.id, icon: "sliders-horizontal") { [unowned app] in
-                app.showSettings()
-            },
-            Entry(title: "Reset Layout", command: LayoutResetCommand.id, icon: "layout-dashboard") { [unowned app] in app.resetLayout() },
-            Entry(title: "\(ViewHomeCommand.title) (\(shortcuts.shortcutText(for: .returnHome)))", command: ViewHomeCommand.id, icon: "orbit") {
-                session.run(ViewHomeCommand.self, .init())
-            },
-            Entry(title: "\(ViewGoToCommand.title)… (\(shortcuts.shortcutText(for: .goToObject)))", command: ViewGoToCommand.id, icon: "search") { [unowned app] in
-                app.showGoToObject()
-            },
-            Entry(title: ViewAnimateInEditModeCommand.title, command: ViewAnimateInEditModeCommand.id, icon: "person-standing",
-                  checked: session.editAnimation.isEnabled) {
-                session.run(ViewAnimateInEditModeCommand.self, .init())
-            },
-            // Light probes: bake them, show them (spheres and boxes), the irradiance-only view.
-            Entry(title: LightingBakeCommand.title, command: LightingBakeCommand.id, icon: "irradiance-volume") {
-                _ = try? session.commands.start(LightingBakeCommand.self, .init())
-            },
-            Entry(title: "Show Light Probes", command: LightingDebugCommand.id, icon: "reflection-probe",
-                  checked: session.lightProbeDebug.showsProbes) {
-                let show = !session.lightProbeDebug.showsProbes
-                session.run(LightingDebugCommand.self, .init(probes: show, volumes: show))
-            },
-            Entry(title: "Irradiance Only", command: LightingDebugCommand.id, checked: session.lightProbeDebug.irradianceOnly) {
-                session.run(LightingDebugCommand.self, .init(irradianceOnly: !session.lightProbeDebug.irradianceOnly))
-            },
-        ]
-        entries += EditorApp.menuThemes.map { theme in
-            Entry(title: "\(theme) Theme", command: ViewAppearanceCommand.id, checked: context.theme.name == theme) {
-                session.run(ViewAppearanceCommand.self, .init(theme: theme))
-            }
-        }
-        entries += EditorApp.menuZooms.map { zoom in
-            Entry(title: "Zoom \(Int((zoom * 100).rounded()))%", command: ViewAppearanceCommand.id, checked: app.preferredUIScale == zoom) {
-                session.run(ViewAppearanceCommand.self, .init(uiScale: zoom))
-            }
-        }
-        // The Scene view's post-fx mode is checked while it's on (On or Split).
-        entries += ScenePostFXSettings.Mode.allCases.map { mode in
-            Entry(title: "Scene Post-FX: \(mode.rawValue.capitalized)", command: ViewScenePostFXCommand.id,
-                  checked: mode != .off && session.scenePostFX.mode == mode) {
-                session.run(ViewScenePostFXCommand.self, .init(mode: mode))
-            }
-        }
-        let menu = PopupMenu(items: entries.map(\.title), anchor: viewButton, name: "viewMenu")
+    /// One View menu item: what it runs (or the submenu it opens), for `makeMenu`.
+    struct MenuEntry {
+        var title: String
+        var command: CommandID
+        var icon: String? = nil
+        var shortcut: String? = nil
+        var checked = false
+        /// Starts a new group (a rule above it).
+        var startsGroup = false
+        var run: () -> Void = {}
+        /// Items of a submenu it opens (instead of running anything).
+        var submenu: (() -> [MenuEntry])? = nil
+    }
+
+    /// A popup menu of `entries`, their submenus opening beside them.
+    func makeMenu(_ entries: [MenuEntry], name: String, anchor: Widget? = nil) -> PopupMenu {
+        let menu = PopupMenu(items: entries.map(\.title), anchor: anchor, name: name)
         menu.itemCommandIDs = entries.map(\.command.rawValue)
         menu.itemIcons = entries.map { $0.icon.map(EditorIcons.named) }
+        menu.itemShortcuts = entries.map(\.shortcut)
         menu.checkedIndices = Set(entries.indices.filter { entries[$0].checked })
+        menu.separatorsBefore = Set(entries.indices.filter { entries[$0].startsGroup })
+        for (index, entry) in entries.enumerated() {
+            guard let submenu = entry.submenu else { continue }
+            menu.submenus[index] = { [unowned self] in makeMenu(submenu(), name: name + "." + entry.title) }
+        }
         menu.onSelect = { index in
             guard entries.indices.contains(index) else { return }
             entries[index].run()
         }
-        context.presentOverlay(menu)
+        return menu
+    }
+
+    /// The View menu, in groups, the long lists in submenus:
+    /// - Panels ▸ (the editor's panels) and Builders ▸ (the builder tabs), open ones checked:
+    ///   picking a closed one opens it where the default layout has it, an open one comes to the front;
+    /// - Go to Object…, Return to Origin, Animate in Scene View, Scene Post-FX ▸, Lighting ▸
+    ///   (Bake Lighting, Show Light Probes, Irradiance Only);
+    /// - Theme ▸ (`EditorApp.menuThemes`) and Zoom ▸ (`EditorApp.menuZooms`), the current ones checked;
+    /// - Reset Layout, Settings….
+    func viewMenuEntries() -> [MenuEntry] {
+        let session = app.session
+        let shortcuts = app.shortcuts
+        let builders = Set(EditorBuilderRegistry.modules.map(\.panelID))
+        let panels = menuPanels
+        func panelEntries(_ list: [(id: String, title: String)]) -> [MenuEntry] {
+            list.map { panel in
+                MenuEntry(title: panel.title, command: PanelOpenCommand.id, icon: EditorIcons.panelIconNames[panel.id],
+                          checked: app.dock.isOpen(panel.id) || app.isPoppedOut(panel.id)) {
+                    session.run(PanelOpenCommand.self, .init(panel: panel.id))
+                }
+            }
+        }
+        let probes = session.lightProbeDebug
+        return [
+            MenuEntry(title: "Panels", command: PanelOpenCommand.id, icon: "layout-grid",
+                      submenu: { panelEntries(panels.filter { !builders.contains($0.id) }) }),
+            MenuEntry(title: "Builders", command: PanelOpenCommand.id, icon: "hammer",
+                      submenu: { panelEntries(panels.filter { builders.contains($0.id) }) }),
+            MenuEntry(title: "\(ViewGoToCommand.title)…", command: ViewGoToCommand.id, icon: "search",
+                      shortcut: shortcuts.shortcutText(for: .goToObject), startsGroup: true) { [unowned app] in app.showGoToObject() },
+            MenuEntry(title: ViewHomeCommand.title, command: ViewHomeCommand.id, icon: "orbit",
+                      shortcut: shortcuts.shortcutText(for: .returnHome)) { session.run(ViewHomeCommand.self, .init()) },
+            MenuEntry(title: ViewAnimateInEditModeCommand.title, command: ViewAnimateInEditModeCommand.id, icon: "person-standing",
+                      checked: session.editAnimation.isEnabled) { session.run(ViewAnimateInEditModeCommand.self, .init()) },
+            MenuEntry(title: "Scene Post-FX", command: ViewScenePostFXCommand.id, icon: "sparkles", submenu: {
+                // The mode is checked (Off only while it's off).
+                ScenePostFXSettings.Mode.allCases.map { mode in
+                    MenuEntry(title: mode.rawValue.capitalized, command: ViewScenePostFXCommand.id,
+                              checked: session.scenePostFX.mode == mode) {
+                        session.run(ViewScenePostFXCommand.self, .init(mode: mode))
+                    }
+                }
+            }),
+            MenuEntry(title: "Lighting", command: LightingBakeCommand.id, icon: "lightbulb", submenu: {
+                [
+                    MenuEntry(title: LightingBakeCommand.title, command: LightingBakeCommand.id, icon: "irradiance-volume") {
+                        _ = try? session.commands.start(LightingBakeCommand.self, .init())
+                    },
+                    MenuEntry(title: "Show Light Probes", command: LightingDebugCommand.id, icon: "reflection-probe",
+                              checked: probes.showsProbes, startsGroup: true) {
+                        let show = !session.lightProbeDebug.showsProbes
+                        session.run(LightingDebugCommand.self, .init(probes: show, volumes: show))
+                    },
+                    MenuEntry(title: "Irradiance Only", command: LightingDebugCommand.id, checked: probes.irradianceOnly) {
+                        session.run(LightingDebugCommand.self, .init(irradianceOnly: !session.lightProbeDebug.irradianceOnly))
+                    },
+                ]
+            }),
+            MenuEntry(title: "Theme", command: ViewAppearanceCommand.id, icon: "palette", startsGroup: true, submenu: { [unowned app] in
+                EditorApp.menuThemes.map { theme in
+                    MenuEntry(title: theme, command: ViewAppearanceCommand.id, checked: app.ui.theme.name == theme) {
+                        session.run(ViewAppearanceCommand.self, .init(theme: theme))
+                    }
+                }
+            }),
+            MenuEntry(title: "Zoom", command: ViewAppearanceCommand.id, icon: "type", submenu: { [unowned app] in
+                EditorApp.menuZooms.map { zoom in
+                    MenuEntry(title: "\(Int((zoom * 100).rounded()))%", command: ViewAppearanceCommand.id, checked: app.preferredUIScale == zoom) {
+                        session.run(ViewAppearanceCommand.self, .init(uiScale: zoom))
+                    }
+                }
+            }),
+            MenuEntry(title: "Reset Layout", command: LayoutResetCommand.id, icon: "layout-dashboard", startsGroup: true) { [unowned app] in
+                app.resetLayout()
+            },
+            MenuEntry(title: "Settings…", command: SettingsGetCommand.id, icon: "sliders-horizontal",
+                      shortcut: shortcuts.shortcutText(for: .settings)) { [unowned app] in app.showSettings() },
+        ]
+    }
+
+    func showViewMenu() {
+        guard let context = view.context else { return }
+        context.presentOverlay(makeMenu(viewMenuEntries(), name: "viewMenu", anchor: viewButton))
     }
 
     func refresh() {

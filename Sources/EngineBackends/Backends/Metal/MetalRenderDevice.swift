@@ -279,6 +279,8 @@ package final class MetalRenderDevice: RenderDevice {
         /// The screen pass of an `hdr` frame has ended.
         var sceneEnded = false
         var windowSize: (width: Int, height: Int)
+        /// Secondary windows' drawables drawn this frame (`beginWindowPass(on:)`), presented with it.
+        var extraDrawables: [CAMetalDrawable] = []
         /// GPU time of the frame's command buffers, summed as they complete (fallback timing).
         let gpuSpan = LockedValue(0.0)
     }
@@ -1300,6 +1302,7 @@ package final class MetalRenderDevice: RenderDevice {
 
         resolvePassTimes(of: frame.commandBuffer, slot: frame.slot)
         if let drawable = frame.drawable { frame.commandBuffer.present(drawable) }
+        for drawable in frame.extraDrawables { frame.commandBuffer.present(drawable) }
         let semaphore = frameSemaphore
         let gpuTime = lastGPUTime
         let span = frame.gpuSpan
@@ -1678,6 +1681,55 @@ private extension CompareFunction {
         case .greaterEqual: .greaterEqual
         case .always: .always
         }
+    }
+}
+
+// MARK: - Secondary windows
+
+/// A secondary window's `CAMetalLayer` with its multisampled color and depth attachments.
+@MainActor final class MetalWindowSurface: WindowSurface {
+    let layer: CAMetalLayer
+    var color: MTLTexture?
+    var depth: MTLTexture?
+
+    init(layer: CAMetalLayer) { self.layer = layer }
+}
+
+extension MetalRenderDevice: WindowSurfaceRendering {
+    package func makeWindowSurface(for window: PlatformWindow) throws -> WindowSurface {
+        guard let window = window as? AppKitWindow else { throw GraphicsError("Metal draws into AppKit windows only") }
+        let surface = MetalWindowSurface(layer: window.metalLayer)
+        surface.layer.device = device
+        surface.layer.pixelFormat = layer.pixelFormat
+        surface.layer.framebufferOnly = true
+        // Paced by the main window: a secondary window waiting for its display's refresh as
+        // well would halve the frame rate when the two are out of step (or on other displays).
+        surface.layer.displaySyncEnabled = false
+        return surface
+    }
+
+    package func beginWindowPass(on surface: WindowSurface, size: (width: Int, height: Int), clearColor: Vec4) -> RenderPass? {
+        guard let surface = surface as? MetalWindowSurface, frame != nil, size.width > 0, size.height > 0 else { return nil }
+        endPass()
+        let drawableSize = CGSize(width: size.width, height: size.height)
+        if surface.layer.drawableSize != drawableSize { surface.layer.drawableSize = drawableSize }
+        if surface.depth?.width != size.width || surface.depth?.height != size.height {
+            surface.color = sampleCount > 1 ? try? makeAttachment(layer.pixelFormat, size.width, size.height) : nil
+            surface.depth = try? makeAttachment(screenDepthFormat, size.width, size.height)
+        }
+        guard let depth = surface.depth, sampleCount == 1 || surface.color != nil,
+              let drawable = surface.layer.nextDrawable() else { return nil }
+        frame?.extraDrawables.append(drawable)
+        let descriptor = Self.colorDepthPass(msaa: surface.color, target: drawable.texture, depth: depth, clearColor: clearColor,
+                                             clearDepth: 1)
+        return beginPass(descriptor, timedAs: "window", format: MetalPassFormat(color: layer.pixelFormat, samples: sampleCount))
+    }
+
+    package func destroyWindowSurface(_ surface: WindowSurface) {
+        // Drawables in flight keep their own textures alive; nothing to wait for.
+        guard let surface = surface as? MetalWindowSurface else { return }
+        surface.color = nil
+        surface.depth = nil
     }
 }
 #endif

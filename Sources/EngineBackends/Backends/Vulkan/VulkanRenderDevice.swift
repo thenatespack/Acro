@@ -295,6 +295,9 @@ private struct CurrentFrame {
     var hdr: Bool
     /// The screen pass has ended.
     var sceneEnded = false
+    /// Secondary windows drawn this frame (`beginWindowPass(on:)`) and their acquired images,
+    /// presented with the main window's.
+    var extraImages: [(surface: VulkanWindowSurface, imageIndex: UInt32)] = []
 }
 
 /// Upscale output at the letterboxed window size: FSR 1's (gamma-encoded UNORM), or the two
@@ -1774,22 +1777,26 @@ package final class VulkanRenderDevice: RenderDevice {
         // Uploads of resources this frame may use go first in submission order.
         try submitUploads()
 
-        var waitSemaphore: VkSemaphore? = frame.imageAvailable
-        var waitStage = vkFlags(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
-        var signalSemaphore: VkSemaphore? = swapchain.renderFinished[Int(imageIndex)]
+        // The main window's image, then the secondary windows' (each waited on and signaled).
+        let extras = frameState.extraImages
+        let waitSemaphores: [VkSemaphore?] = [frame.imageAvailable] + extras.map { $0.surface.imageAvailable[frameIndex] }
+        let waitStages = [VkPipelineStageFlags](
+            repeating: vkFlags(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT), count: waitSemaphores.count)
+        let signalSemaphores: [VkSemaphore?] = [swapchain.renderFinished[Int(imageIndex)]]
+            + extras.map { $0.surface.swapchain!.renderFinished[Int($0.imageIndex)] }
         var commandBuffer: VkCommandBuffer? = cmd
         var submit = VkSubmitInfo()
         submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO
-        submit.waitSemaphoreCount = 1
+        submit.waitSemaphoreCount = UInt32(waitSemaphores.count)
         submit.commandBufferCount = 1
-        submit.signalSemaphoreCount = 1
-        let submitResult = withUnsafePointer(to: &waitSemaphore) { wait in
-            withUnsafePointer(to: &waitStage) { stage in
-                withUnsafePointer(to: &signalSemaphore) { signal in
+        submit.signalSemaphoreCount = UInt32(signalSemaphores.count)
+        let submitResult = waitSemaphores.withUnsafeBufferPointer { wait in
+            waitStages.withUnsafeBufferPointer { stage in
+                signalSemaphores.withUnsafeBufferPointer { signal in
                     withUnsafePointer(to: &commandBuffer) { buffers in
-                        submit.pWaitSemaphores = wait
-                        submit.pWaitDstStageMask = stage
-                        submit.pSignalSemaphores = signal
+                        submit.pWaitSemaphores = wait.baseAddress
+                        submit.pWaitDstStageMask = stage.baseAddress
+                        submit.pSignalSemaphores = signal.baseAddress
                         submit.pCommandBuffers = buffers
                         return vkQueueSubmit(queue, 1, &submit, frame.inFlight)
                     }
@@ -1808,25 +1815,32 @@ package final class VulkanRenderDevice: RenderDevice {
         if let readback { image = try readImage(from: readback.buffer, extent: readback.extent) }
         for copy in targetCopies { copy.completion(try readImage(from: copy.buffer, extent: copy.extent)) }
 
-        var swapchainHandle: VkSwapchainKHR? = swapchain.handle
-        var index = imageIndex
+        // One present for every window drawn, each with its own result.
+        let swapchainHandles: [VkSwapchainKHR?] = [swapchain.handle] + extras.map { $0.surface.swapchain!.handle }
+        let indices = [imageIndex] + extras.map(\.imageIndex)
+        var results = [VkResult](repeating: VK_SUCCESS, count: swapchainHandles.count)
         var present = VkPresentInfoKHR()
         present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR
-        present.waitSemaphoreCount = 1
-        present.swapchainCount = 1
-        let presentResult = withUnsafePointer(to: &signalSemaphore) { wait in
-            withUnsafePointer(to: &swapchainHandle) { swapchains in
-                withUnsafePointer(to: &index) { indices in
-                    present.pWaitSemaphores = wait
-                    present.pSwapchains = swapchains
-                    present.pImageIndices = indices
-                    return vkQueuePresentKHR(queue, &present)
+        present.waitSemaphoreCount = UInt32(signalSemaphores.count)
+        present.swapchainCount = UInt32(swapchainHandles.count)
+        let presentResult = signalSemaphores.withUnsafeBufferPointer { wait in
+            swapchainHandles.withUnsafeBufferPointer { swapchains in
+                indices.withUnsafeBufferPointer { indices in
+                    results.withUnsafeMutableBufferPointer { results in
+                        present.pWaitSemaphores = wait.baseAddress
+                        present.pSwapchains = swapchains.baseAddress
+                        present.pImageIndices = indices.baseAddress
+                        present.pResults = results.baseAddress
+                        return vkQueuePresentKHR(queue, &present)
+                    }
                 }
             }
         }
-        if presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR {
+        let outdated = { (result: VkResult) in result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR }
+        for (extra, result) in zip(extras, results.dropFirst()) where outdated(result) { extra.surface.needsRebuild = true }
+        if outdated(results[0]) || (extras.isEmpty && outdated(presentResult)) {
             needsSwapchainRebuild = true
-        } else {
+        } else if !outdated(presentResult) {
             try vkCheck(presentResult, "vkQueuePresentKHR")
         }
 
@@ -2430,11 +2444,14 @@ package final class VulkanRenderDevice: RenderDevice {
 
     /// FIFO (vsync, always supported), or without vsync MAILBOX (uncapped, no tearing) or
     /// IMMEDIATE (uncapped, may tear), whichever the surface supports.
-    private func presentMode() throws -> VkPresentModeKHR {
-        guard !vsync else { return VK_PRESENT_MODE_FIFO_KHR }
+    /// A secondary window (`secondary`) prefers MAILBOX (no tearing, never waits): the main
+    /// window paces the frame, and waiting for another window's refresh too would halve the rate.
+    private func presentMode(surface: VkSurfaceKHR, secondary: Bool = false) throws -> VkPresentModeKHR {
         let modes: [VkPresentModeKHR] = try vkEnumerate("vkGetPhysicalDeviceSurfacePresentModesKHR") {
             vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, $0, $1)
         }
+        if secondary { return modes.contains(VK_PRESENT_MODE_MAILBOX_KHR) ? VK_PRESENT_MODE_MAILBOX_KHR : VK_PRESENT_MODE_FIFO_KHR }
+        guard !vsync else { return VK_PRESENT_MODE_FIFO_KHR }
         if let mode = [VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_IMMEDIATE_KHR].first(where: modes.contains) {
             return mode
         }
@@ -2442,7 +2459,9 @@ package final class VulkanRenderDevice: RenderDevice {
         return VK_PRESENT_MODE_FIFO_KHR
     }
 
-    private func createSwapchain(width: Int, height: Int, old: VkSwapchainKHR?) throws -> Swapchain {
+    private func createSwapchain(width: Int, height: Int, old: VkSwapchainKHR?, surface: VkSurfaceKHR? = nil,
+                                 secondary: Bool = false) throws -> Swapchain {
+        let surface = surface ?? self.surface
         var caps = VkSurfaceCapabilitiesKHR()
         try vkCheck(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &caps), "vkGetPhysicalDeviceSurfaceCapabilitiesKHR")
 
@@ -2476,7 +2495,7 @@ package final class VulkanRenderDevice: RenderDevice {
         info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE
         info.preTransform = caps.currentTransform
         info.compositeAlpha = compositeAlpha
-        info.presentMode = try presentMode()
+        info.presentMode = try presentMode(surface: surface, secondary: secondary)
         info.clipped = VkBool32(VK_TRUE)
         info.oldSwapchain = old
 
@@ -3213,5 +3232,85 @@ private extension CompareFunction {
 
 private extension UInt32 {
     func clamped(_ low: UInt32, _ high: UInt32) -> UInt32 { Swift.min(Swift.max(self, low), high) }
+}
+
+// MARK: - Secondary windows
+
+/// A secondary window's Vulkan surface and swapchain, and a semaphore per frame slot for
+/// acquiring its images.
+@MainActor final class VulkanWindowSurface: WindowSurface {
+    let surface: VkSurfaceKHR
+    fileprivate var swapchain: Swapchain?
+    let imageAvailable: [VkSemaphore]
+    /// Its last present was out of date or suboptimal (resized): rebuild before drawing again.
+    var needsRebuild = false
+
+    fileprivate init(surface: VkSurfaceKHR, imageAvailable: [VkSemaphore]) {
+        self.surface = surface
+        self.imageAvailable = imageAvailable
+    }
+}
+
+extension VulkanRenderDevice: WindowSurfaceRendering {
+    package func makeWindowSurface(for window: PlatformWindow) throws -> WindowSurface {
+        guard let window = window as? VulkanSurfaceProvider else { throw GraphicsError("Vulkan draws into GLFW windows only") }
+        let surface = try window.createSurface(instance: instance)
+        var supported: VkBool32 = 0
+        vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, queueFamily, surface, &supported)
+        let formats: [VkSurfaceFormatKHR] = (try? vkEnumerate("vkGetPhysicalDeviceSurfaceFormatsKHR") {
+            vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, $0, $1)
+        }) ?? []
+        // Its passes use the main window's render pass (and the UI its pipelines): same format.
+        guard supported == VkBool32(VK_TRUE),
+              formats.contains(where: { $0.format == surfaceFormat.format && $0.colorSpace == surfaceFormat.colorSpace }) else {
+            vkDestroySurfaceKHR(instance, surface, nil)
+            throw GraphicsError("This GPU can't present to another window in the main window's format")
+        }
+        let semaphores = try (0..<maxFramesInFlight).map { _ in try createSemaphore() }
+        return VulkanWindowSurface(surface: surface, imageAvailable: semaphores)
+    }
+
+    package func beginWindowPass(on surface: WindowSurface, size: (width: Int, height: Int), clearColor: Vec4) -> RenderPass? {
+        guard let window = surface as? VulkanWindowSurface, current != nil, size.width > 0, size.height > 0 else { return nil }
+        endPass()
+        do {
+            if window.needsRebuild || window.swapchain.map({
+                Int($0.extent.width) != size.width || Int($0.extent.height) != size.height
+            }) ?? true {
+                // Its images may be in use by frames in flight (this frame isn't submitted yet).
+                vkDeviceWaitIdle(device)
+                let old = window.swapchain
+                if let old { destroy(old, includingHandle: false) }
+                window.swapchain = nil
+                let rebuilt = try createSwapchain(width: size.width, height: size.height, old: old?.handle, surface: window.surface,
+                                                  secondary: true)
+                if let old { vkDestroySwapchainKHR(device, old.handle, nil) }
+                window.swapchain = rebuilt
+                window.needsRebuild = false
+            }
+        } catch {
+            print("Vulkan: rebuilding a window's swapchain failed: \(error)")
+            return nil
+        }
+        guard let swapchain = window.swapchain else { return nil }
+        var imageIndex: UInt32 = 0
+        // Never waits: a window without a free image skips this frame.
+        let acquire = vkAcquireNextImageKHR(device, swapchain.handle, 0, window.imageAvailable[frameIndex], nil, &imageIndex)
+        if acquire == VK_ERROR_OUT_OF_DATE_KHR { window.needsRebuild = true }
+        guard acquire == VK_SUCCESS || acquire == VK_SUBOPTIMAL_KHR else { return nil }
+        current?.extraImages.append((window, imageIndex))
+        return beginPass(
+            renderPass: screenRenderPass, framebuffer: swapchain.framebuffers[Int(imageIndex)], extent: swapchain.extent,
+            clearValues: Self.colorDepthClear(clearColor, 1), timedAs: "window", kind: .screen)
+    }
+
+    package func destroyWindowSurface(_ surface: WindowSurface) {
+        guard let window = surface as? VulkanWindowSurface else { return }
+        vkDeviceWaitIdle(device)
+        if let swapchain = window.swapchain { destroy(swapchain, includingHandle: true) }
+        window.swapchain = nil
+        for semaphore in window.imageAvailable { vkDestroySemaphore(device, semaphore, nil) }
+        vkDestroySurfaceKHR(instance, window.surface, nil)
+    }
 }
 #endif

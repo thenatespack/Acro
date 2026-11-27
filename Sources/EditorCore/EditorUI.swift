@@ -13,6 +13,7 @@ extension EditorApp {
         assetBrowser.sync()
         scriptEditor?.sync()
         files?.sync()
+        syncBuilderSidebars()
         inspector.refresh()
         console.refresh()
         activity.refresh()

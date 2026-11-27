@@ -39,7 +39,7 @@ public struct PropertyEdit: Equatable, Sendable {
 /// |---|---|
 /// | `bool` | `Checkbox` |
 /// | `int` / `float` | `NumberField` (range / step hints; with `usesSlidersForRanges`, a `Slider` beside it when a finite range is hinted) |
-/// | `string` | `TextField` (commits on Enter or focus loss, Esc reverts); a `Dropdown` when `stringChoices` lists options for the field (e.g. mesh / material keys; for an optional, nil or "" shows as the "" option and picking "" sets nil) |
+/// | `string` | `TextField` (commits on Enter or focus loss, Esc reverts); a `Dropdown` when `stringChoices` lists options for the field (for an optional, nil or "" shows as the "" option and picking "" sets nil); a `PickerField` that opens a dialog when `stringPicker` gives one (e.g. mesh / material keys) |
 /// | `vec2` / `vec3` / `vec4` | `VectorField`; `vec3` / `vec4` with the `color` hint: `ColorSwatch` (linear RGB, or sRGB with the `srgb` hint; opens a `ColorPicker`; alpha is kept; HDR values above 1 are clamped by the picker) |
 /// | `quat` | `VectorField` of Euler degrees (`Quat.eulerDegrees`) |
 /// | `enumeration` | `Dropdown` |
@@ -104,6 +104,11 @@ public final class PropertyGrid: Stack {
     /// `MeshRenderer.mesh`). A current value missing from the list is added so it stays visible.
     /// Asked when a section is built; assign it again if the options change.
     public var stringChoices: ((_ componentName: String, _ path: String) -> [String]?)? { didSet { rebuild(); refresh() } }
+    /// String fields chosen in a dialog instead of a dropdown (assets among many: meshes,
+    /// materials): a `PickerField` showing the value's `stringChoiceTitle` and `preview`, whose
+    /// click calls `pick` with the current value ("" for none) and a callback that sets it ("" sets
+    /// an optional field to nil). Checked before `stringChoices`.
+    public var stringPicker: ((_ componentName: String, _ path: String) -> StringFieldPicker?)? { didSet { rebuild(); refresh() } }
     /// What a `stringChoices` dropdown shows for a value (e.g. "rock.obj › Rock" for an asset
     /// reference); nil shows the values themselves. The field still stores the value.
     public var stringChoiceTitle: ((_ componentName: String, _ path: String, _ value: String) -> String)? {
@@ -422,7 +427,7 @@ public final class PropertyGrid: Stack {
         // A nil optional string with choices (an unset asset reference) is a dropdown whose
         // "" option means nil.
         let nullChoice = field.value == .null && field.kind == .string && field.isOptional
-            && stringChoices?(b.component, b.path) != nil
+            && (stringChoices?(b.component, b.path) != nil || stringPicker?(b.component, b.path) != nil)
         if field.value == .null && !nullChoice { return placeholder("—") }
         switch field.kind {
         case .bool:
@@ -439,6 +444,31 @@ public final class PropertyGrid: Stack {
         case .string:
             var initial = ""
             if case .string(let s)? = field.value { initial = s }
+            if let picker = stringPicker?(b.component, b.path) {
+                let optional = field.isOptional
+                let component = b.component, path = b.path
+                let title: (String) -> String = stringChoiceTitle.map { f in { f(component, path, $0) } } ?? { $0 }
+                let pickerField = PickerField(title: title(initial), name: name)
+                pickerField.preview = picker.preview(initial)
+                var current = initial
+                pickerField.onPick = { [weak self, weak b] in
+                    picker.pick(current) { value in
+                        guard let self, let b, value != current else { return }
+                        self.atomicEdit(b, optional && value.isEmpty ? .null : .string(value))
+                    }
+                }
+                b.update = { [weak pickerField] f in
+                    guard let pickerField else { return }
+                    switch f.value {
+                    case .string(let v)?: current = v
+                    case .null? where optional: current = ""
+                    default: return
+                    }
+                    pickerField.title = title(current)
+                    pickerField.preview = picker.preview(current)
+                }
+                return (pickerField, true)
+            }
             if var options = stringChoices?(b.component, b.path) {
                 if !options.contains(initial) { options.append(initial) }
                 let optional = field.isOptional
@@ -809,5 +839,20 @@ final class TextEditor: Widget {
         field.text = committed
         context?.focus(nil)
         return true
+    }
+}
+
+/// How a `PropertyGrid` string field is chosen in a dialog (`PropertyGrid.stringPicker`).
+@MainActor
+public struct StringFieldPicker {
+    /// A small image of a value (an asset's thumbnail), shown before its title; nil for none.
+    public var preview: (String) -> GPUTexture?
+    /// Opens the dialog on the current value; it calls the callback with the value picked.
+    public var pick: (_ current: String, _ done: @escaping (String) -> Void) -> Void
+
+    public init(preview: @escaping (String) -> GPUTexture? = { _ in nil },
+                pick: @escaping (_ current: String, _ done: @escaping (String) -> Void) -> Void) {
+        self.preview = preview
+        self.pick = pick
     }
 }

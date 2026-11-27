@@ -172,6 +172,17 @@ public enum EditorLayout {
     }
 
     /// Whether `a` and `b` are tabs of the same group.
+    /// The panels of the tab group holding `id` (empty when it isn't open).
+    public static func groupPanels(in layout: DockLayout, containing id: String) -> [String] {
+        func visit(_ node: DockLayout.Node) -> [String]? {
+            switch node {
+            case .split(_, _, let children): return children.lazy.compactMap(visit).first
+            case .tabs(let panels, _): return panels.contains(id) ? panels : nil
+            }
+        }
+        return layout.root.flatMap(visit) ?? layout.floating.first { $0.panels.contains(id) }?.panels ?? []
+    }
+
     public static func shareGroup(in layout: DockLayout, _ a: String, _ b: String) -> Bool {
         func visit(_ node: DockLayout.Node) -> Bool {
             switch node {

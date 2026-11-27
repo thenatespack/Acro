@@ -65,7 +65,8 @@ package enum EditorBuildersMesh {
 
     static let materialAsset = EditorBuilderAsset(isFile: { $0.isMaterialFile($1) }, newTitle: "New Material Graph", newCommand: MaterialGraphNewCommand.id,
                                              create: { $0.run(MaterialGraphNewCommand.self, .init(folder: $1))?.asset },
-                                             open: { $0.run(MaterialGraphOpenCommand.self, .init(asset: AssetReference($1))) })
+                                             open: { $0.run(MaterialGraphOpenCommand.self, .init(asset: AssetReference($1))) },
+                                             openCommand: MaterialGraphOpenCommand.id)
 
     static var material: EditorBuilderModule {
         EditorBuilderModule(panelID: EditorLayout.materialBuilder, title: "Material Builder", passesPointerThrough: true, commands: EditorMaterialGraphCommands.all, asset: materialAsset,

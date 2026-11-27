@@ -238,6 +238,27 @@ public final class MaterialAssetEditor {
     }
 }
 
+extension MaterialAssetEditor {
+    /// The material's form: its fields as rows (textures and sampler settings as dropdowns),
+    /// edits going through `handle` (`material.set`). Disabled when the material isn't editable.
+    public func makeForm(name: String = "assetGrid", labelWidth: Float = 104) -> PropertyGrid {
+        let grid = PropertyGrid(world: world, name: name)
+        grid.appliesEditsToWorld = false
+        grid.labelWidth = labelWidth
+        grid.entity = entity
+        grid.stringChoices = { [unowned session] _, path in MaterialAssetComponent.choices(path: path, assets: session.assets) }
+        grid.stringChoiceTitle = { [unowned session] _, _, value in
+            if value.isEmpty { return "None" }
+            guard let reference = AssetReference(value) else { return value }
+            return session.assets?.displayName(of: reference) ?? value
+        }
+        grid.onFieldEdit = { [unowned self] edit in handle(edit) }
+        grid.command = MaterialSetCommand.id.rawValue
+        if !isEditable { grid.isEnabled = false }
+        return grid
+    }
+}
+
 /// The inspector's view of an `AssetItem`: name, path, importer and id, the import settings
 /// form with Apply / Revert, the material form, and Extract Materials for models.
 @MainActor
@@ -262,6 +283,8 @@ public final class AssetInspectorView {
     private let proceduralApply = Button("Apply", role: .primary, name: "applyProceduralTexture")
     private let proceduralRevert = Button("Revert", name: "revertProceduralTexture")
     private var shownRevision = -1
+    /// The waveform, playback and details of a sound asset (audio file or `.sfx`); nil for other assets.
+    private(set) var audioSection: AudioInspectorSection?
 
     public init(session: EditorSession) {
         self.session = session
@@ -299,6 +322,7 @@ public final class AssetInspectorView {
         materialGrid?.refresh()
         proceduralGrid?.refresh()
         updateButtons()
+        audioSection?.refresh()
     }
 
     private func updateButtons() {
@@ -318,6 +342,7 @@ public final class AssetInspectorView {
         materialGrid = nil
         proceduralEditor = nil
         proceduralGrid = nil
+        audioSection = nil
         guard let item, let assets = session.assets else { return }
         switch item {
         case .folder(let path):
@@ -333,6 +358,11 @@ public final class AssetInspectorView {
             subtitle.text = "Assets/\(record.path)" + (record.importer.map { " · \($0) importer" } ?? " · no importer")
             idLabel.text = "ID \(id.description)"
             if let error = record.importError { content.addChild(note("Import failed: \(error)")) }
+            if session.isSoundAsset(id) {
+                let section = AudioInspectorSection(session: session, asset: id)
+                audioSection = section
+                content.addChild(section.view)
+            }
             if let editor = AssetSettingsEditor(session: session, asset: id) {
                 settingsEditor = editor
                 let grid = makeGrid(world: editor.world, entity: editor.entity)
@@ -365,6 +395,14 @@ public final class AssetInspectorView {
             let inspection = EditorBuilderInspection(session: session, asset: id, note: { [unowned self] in note($0) })
             for module in EditorBuilderRegistry.modules {
                 if let widgets = module.inspector?(inspection) { content.addChildren(widgets) }
+            }
+            if let module = EditorBuilderRegistry.module(forFile: id, in: session) {
+                let popOut = Button("Open in Pop-Out", name: "assetOpenPopOut") { [unowned session] in
+                    session.run(AssetOpenPopOutCommand.self, .init(asset: AssetReference(id)))
+                }
+                popOut.command = AssetOpenPopOutCommand.id.rawValue
+                popOut.tooltip = "Open it in the \(module.title) in a floating window, to keep it in view while you work elsewhere"
+                content.addChild(HStack(spacing: 6, [popOut, Spacer()]))
             }
             if session.isMaterialFile(id) { addMaterialForm(AssetReference(id, subAsset: "material")) }
             if record.importer == GLTFImporter().name, record.objects.contains(where: { $0.kind == .material }) {
@@ -399,15 +437,7 @@ public final class AssetInspectorView {
     private func addMaterialForm(_ reference: AssetReference) {
         guard let editor = MaterialAssetEditor(session: session, reference: reference) else { return }
         materialEditor = editor
-        let grid = makeGrid(world: editor.world, entity: editor.entity)
-        grid.stringChoices = { [unowned session] _, path in MaterialAssetComponent.choices(path: path, assets: session.assets) }
-        grid.stringChoiceTitle = { [unowned session] _, _, value in
-            if value.isEmpty { return "None" }
-            guard let reference = AssetReference(value) else { return value }
-            return session.assets?.displayName(of: reference) ?? value
-        }
-        grid.onFieldEdit = { [unowned editor] edit in editor.handle(edit) }
-        grid.command = MaterialSetCommand.id.rawValue
+        let grid = editor.makeForm()
         materialGrid = grid
         if !editor.isEditable {
             grid.isEnabled = false

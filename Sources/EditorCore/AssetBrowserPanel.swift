@@ -21,6 +21,8 @@ final class AssetGridView: Widget {
     var thumbnail: ((AssetBrowserEntry) -> GPUTexture?)?
     var onSelect: ((AssetBrowserEntry?) -> Void)?
     var onActivate: ((AssetBrowserEntry) -> Void)?
+    /// A single left click on an entry (after `onSelect`): sounds play their preview.
+    var onClick: ((AssetBrowserEntry) -> Void)?
     var onToggleExpanded: ((AssetBrowserEntry) -> Void)?
     var onContextMenu: ((AssetBrowserEntry?, Vec2) -> Void)?
     var onDrag: ((AssetBrowserEntry, Vec2, DragPhase) -> Void)?
@@ -130,6 +132,7 @@ final class AssetGridView: Widget {
             if e.clickCount == 2 {
                 onActivate?(entry)
             } else {
+                if e.clickCount == 1 { onClick?(entry) }
                 press = (index, e.position)
             }
             return true
@@ -416,6 +419,7 @@ public final class AssetBrowserPanel {
         }
         grid.onSelect = { [unowned self] entry in model.select(entry?.item) }
         grid.onActivate = { [unowned self] entry in model.activate(entry); sync() }
+        grid.onClick = { [unowned self] entry in model.clicked(entry.item) }
         grid.onToggleExpanded = { [unowned self] entry in
             if let id = entry.item.assetID { model.toggleExpanded(id) }
         }
@@ -559,6 +563,12 @@ public final class AssetBrowserPanel {
         if let entry {
             if case .folder = entry.item {
                 items.append(("Open", AssetListCommand.id, { [unowned self] in model.activate(entry); sync() }))
+            }
+            if case .asset(let id) = entry.item, EditorBuilderRegistry.module(forFile: id, in: model.session) != nil {
+                items.append(("Open in Pop-Out", AssetOpenPopOutCommand.id, { [unowned self] in
+                    model.session.run(AssetOpenPopOutCommand.self, .init(asset: AssetReference(id)))
+                    sync()
+                }))
             }
             if !entry.isSubAsset {
                 items.append(("Rename", AssetRenameCommand.id, { [unowned self] in beginRename() }))

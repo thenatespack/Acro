@@ -8,7 +8,8 @@ import Engine
 /// With a project open and an entity selected, the Create menu also has the prefab actions for
 /// the primary selection: Create Prefab (`prefab.create`), and for an entity of a prefab instance
 /// Select Prefab Asset (`asset.select`), Apply All, Revert All and Unpack (`prefab.apply`,
-/// `prefab.revert`, `prefab.unpack`).
+/// `prefab.revert`, `prefab.unpack`). A right-click opens the editor's object menu on a row
+/// (selecting it) or the Create items below the rows (EditorContextMenus.swift).
 ///
 /// Sync: `sync()` (every frame) compares the world's structure (ids, parents, order, names)
 /// with what the tree shows and rebuilds the nodes only when it differs, e.g. after undo, redo,
@@ -186,7 +187,7 @@ public final class HierarchyPanel {
     }
 
     /// The prefab actions for the primary selection (none without a project or a selection).
-    private func prefabMenuItems() -> [(String, CommandID, () -> Void)] {
+    func prefabMenuItems() -> [(String, CommandID, () -> Void)] {
         guard session.commands.isAvailable(PrefabCreateCommand.id), let entity = session.selection.primaryEntity(in: session.world),
               let id = session.world.id(of: entity) else { return [] }
         var items: [(String, CommandID, () -> Void)] = [

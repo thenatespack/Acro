@@ -153,8 +153,8 @@ private let rocksOBJ = """
         #expect(none.options(component: "MeshRenderer", path: "mesh") == ["cube"])
     }
 
-    /// The mesh dropdown shows asset titles; picking one stores the asset key (one undo step),
-    /// and the scene saves the id.
+    /// The mesh field shows the asset's title and opens the picker, which lists the meshes with
+    /// asset titles; picking one stores the asset key (one undo step), and the scene saves the id.
     @Test func pickingAnAssetMeshStoresItsReference() throws {
         let folder = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -168,28 +168,38 @@ private let rocksOBJ = """
         let panel = InspectorPanel(session: session)
         panel.assetChoices = AssetChoices(meshes: { ["cube", "plane", "sphere"] }, materials: { ["default", "checker"] },
                                           assets: { session.assets })
+        let ui = UIContext()
+        ui.root.addChild(panel.view)
+        ui.setViewport(size: Vec2(400, 800), scale: 1)
         var sphere: Entity?
         session.world.query(Name.self) { entity, name in if name.value == "Blue Sphere" { sphere = entity } }
         let entity = try #require(sphere)
         session.selection.select(session.world.id(of: entity))
         panel.refresh()
 
-        let mesh = try #require(dropdowns(in: panel.grid).first { $0.options.contains("plane") })
-        #expect(mesh.options == ["cube", "plane", "sphere", "rocks.obj › Rock", "rocks.obj › Pebble"])
-        #expect(mesh.selectedOption == "sphere")
+        func pickers(_ widget: Widget) -> [PickerField] {
+            widget.children.flatMap { ($0 as? PickerField).map { [$0] } ?? pickers($0) }
+        }
+        let mesh = try #require(pickers(panel.grid).first { $0.title == "sphere" })
+        mesh.onPick?()
+        let dialog = try #require(ui.overlays.last as? AssetPickerDialog)
+        #expect(dialog.shown.map(\.title) == ["cube", "plane", "sphere", "rocks.obj › Rock", "rocks.obj › Pebble"])
+        #expect(dialog.shown.last?.caption == "rocks.obj")
         let depth = session.undo.undoDepth
-        mesh.select(4)
-        mesh.onChange?(4)
+        dialog.list.selectRow(4)
+        dialog.pickSelected()
         let pebble = AssetReference(rocks, subAsset: "mesh/Pebble")
         #expect(session.world.get(MeshRenderer.self, for: entity)?.mesh == MeshHandle(pebble))
         #expect(session.undo.undoDepth == depth + 1)
+        panel.refresh()
+        #expect(mesh.title == "rocks.obj › Pebble")
         let saved = String(decoding: try session.world.save(), as: UTF8.self)
         #expect(saved.contains("\"mesh\" : \"\(pebble)\""))
         #expect(!saved.contains("rocks.obj"))
 
         _ = try session.undo.undo()
         panel.refresh()
-        #expect(mesh.selectedOption == "sphere")
+        #expect(mesh.title == "sphere")
     }
 }
 

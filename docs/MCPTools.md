@@ -2,7 +2,7 @@
 
 Generated from the editor's command registry by `swift run Editor --mcp-tool-docs > docs/MCPTools.md`;
 `swift test --filter ToolReferenceTests` fails when it is out of date. Every editor command is a tool
-named by its id (see README › Use the editor › AI control). 303 tools.
+named by its id (see README › Use the editor › AI control). 307 tools.
 
 Hints: **read-only** (changes nothing), **undoable** (one undo step, labeled "AI: …" when an MCP client
 made it), **destructive** (can lose work undo can't bring back; needs `confirm: true`), **idempotent**
@@ -15,7 +15,8 @@ optional arguments.
 | `activity` | [`activity.clear`](#activityclear), [`activity.list`](#activitylist), [`activity.revert`](#activityrevert) |
 | `ai` | [`ai.settings`](#aisettings) |
 | `animGraph` | [`animGraph.assign`](#animgraphassign), [`animGraph.bones`](#animgraphbones), [`animGraph.clipEvents`](#animgraphclipevents), [`animGraph.edit`](#animgraphedit), [`animGraph.get`](#animgraphget), [`animGraph.hitboxes`](#animgraphhitboxes), [`animGraph.new`](#animgraphnew), [`animGraph.open`](#animgraphopen), [`animGraph.set`](#animgraphset), [`animGraph.setClipEvents`](#animgraphsetclipevents) |
-| `asset` | [`asset.applySettings`](#assetapplysettings), [`asset.assign`](#assetassign), [`asset.delete`](#assetdelete), [`asset.extractMaterials`](#assetextractmaterials), [`asset.get`](#assetget), [`asset.import`](#assetimport), [`asset.instantiate`](#assetinstantiate), [`asset.list`](#assetlist), [`asset.move`](#assetmove), [`asset.newFolder`](#assetnewfolder), [`asset.newMaterial`](#assetnewmaterial), [`asset.newProceduralTexture`](#assetnewproceduraltexture), [`asset.reimport`](#assetreimport), [`asset.rename`](#assetrename), [`asset.select`](#assetselect), [`asset.setProceduralTexture`](#assetsetproceduraltexture), [`asset.waitForImports`](#assetwaitforimports) |
+| `asset` | [`asset.applySettings`](#assetapplysettings), [`asset.assign`](#assetassign), [`asset.delete`](#assetdelete), [`asset.extractMaterials`](#assetextractmaterials), [`asset.get`](#assetget), [`asset.import`](#assetimport), [`asset.instantiate`](#assetinstantiate), [`asset.list`](#assetlist), [`asset.move`](#assetmove), [`asset.newFolder`](#assetnewfolder), [`asset.newMaterial`](#assetnewmaterial), [`asset.newProceduralTexture`](#assetnewproceduraltexture), [`asset.openPopOut`](#assetopenpopout), [`asset.reimport`](#assetreimport), [`asset.rename`](#assetrename), [`asset.select`](#assetselect), [`asset.setProceduralTexture`](#assetsetproceduraltexture), [`asset.waitForImports`](#assetwaitforimports) |
+| `audio` | [`audio.info`](#audioinfo), [`audio.preview`](#audiopreview) |
 | `behavior` | [`behavior.assign`](#behaviorassign), [`behavior.debug`](#behaviordebug), [`behavior.edit`](#behavioredit), [`behavior.get`](#behaviorget), [`behavior.navigation`](#behaviornavigation), [`behavior.new`](#behaviornew), [`behavior.open`](#behavioropen), [`behavior.set`](#behaviorset) |
 | `builder` | [`builder.select`](#builderselect) |
 | `cameraRig` | [`cameraRig.activate`](#camerarigactivate), [`cameraRig.setTarget`](#camerarigsettarget), [`cameraRig.state`](#camerarigstate) |
@@ -42,7 +43,7 @@ optional arguments.
 | `meshBuild` | [`meshBuild.edit`](#meshbuildedit), [`meshBuild.examples`](#meshbuildexamples), [`meshBuild.get`](#meshbuildget), [`meshBuild.new`](#meshbuildnew), [`meshBuild.open`](#meshbuildopen), [`meshBuild.preview`](#meshbuildpreview), [`meshBuild.set`](#meshbuildset) |
 | `navigation` | [`navigation.bake`](#navigationbake), [`navigation.overlay`](#navigationoverlay), [`navigation.query`](#navigationquery) |
 | `net` | [`net.overlay`](#netoverlay), [`net.setConditions`](#netsetconditions), [`net.start`](#netstart), [`net.stats`](#netstats), [`net.stop`](#netstop), [`net.view`](#netview) |
-| `panel` | [`panel.close`](#panelclose), [`panel.dock`](#paneldock), [`panel.focus`](#panelfocus), [`panel.list`](#panellist), [`panel.open`](#panelopen) |
+| `panel` | [`panel.close`](#panelclose), [`panel.dock`](#paneldock), [`panel.focus`](#panelfocus), [`panel.list`](#panellist), [`panel.open`](#panelopen), [`panel.popOut`](#panelpopout) |
 | `path` | [`path.edit`](#pathedit), [`path.flattenTerrain`](#pathflattenterrain), [`path.get`](#pathget), [`path.new`](#pathnew), [`path.open`](#pathopen), [`path.sample`](#pathsample), [`path.set`](#pathset) |
 | `physics` | [`physics.materialAt`](#physicsmaterialat) |
 | `physicsMaterial` | [`physicsMaterial.edit`](#physicsmaterialedit), [`physicsMaterial.get`](#physicsmaterialget), [`physicsMaterial.list`](#physicsmateriallist), [`physicsMaterial.new`](#physicsmaterialnew), [`physicsMaterial.set`](#physicsmaterialset) |
@@ -545,6 +546,20 @@ Result:
 - `asset`: asset id — An asset id: 32 hex digits, with or without the "asset:" prefix (see the editor://assets resource).
 - `path`: string
 
+### `asset.openPopOut`
+
+**Open in Pop-Out**
+
+Opens a builder's file (a model, dialogue tree, timeline, effect…) in its builder and pops that builder out into an OS window of its own (as panel.popOut), so you can keep looking at it while working in the Scene or another tab, on another display if you like. Each builder has one view: a file of the same kind opened later shows in the same window.
+
+Arguments:
+
+- `asset`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+
+Result:
+
+- `panel`: string
+
 ### `asset.reimport`
 
 **Reimport** · _idempotent_
@@ -620,6 +635,49 @@ Result:
 - `errors`: [string]
 - `finished`: boolean
 - `pending`: integer
+
+## audio
+
+### `audio.info`
+
+**Sound Info** · _read-only_
+
+What the inspector shows about a sound asset (an audio file: WAV, Ogg Vorbis, MP3; or a .sfx): its format, duration, sample rate, channels, frames, file size and bitrate, peak and RMS levels in dBFS, and a waveform summary of `buckets` peak magnitudes (default 64).
+
+Arguments:
+
+- `asset`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `buckets?`: integer
+
+Result:
+
+- `bitrate?`: number
+- `channels`: integer
+- `duration`: number
+- `fileSize?`: integer
+- `format`: string
+- `frames`: integer
+- `peakDB?`: number
+- `rmsDB?`: number
+- `sampleRate`: number
+- `waveform`: [number]
+
+### `audio.preview`
+
+**Preview Sound** · _read-only_
+
+Plays a sound asset (an audio file or a .sfx) through the editor's audio output, as the inspector's Play and waveform do: from `from` seconds in, once or with `loop`; a new preview replaces the one playing. stop: true stops it. `playing` is false when the editor has no audio device.
+
+Arguments:
+
+- `asset?`: asset id — An asset: "asset:<id>" (a bare id works too) for a file, "asset:<id>#<object>" for one object in it (see editor://assets).
+- `from?`: number
+- `loop?`: boolean
+- `stop?`: boolean
+
+Result:
+
+- `playing`: boolean
 
 ## behavior
 
@@ -3084,7 +3142,7 @@ Arguments: none.
 
 Result:
 
-- `panels`: [{closable: boolean, floating: boolean, id: string, open: boolean, rect?: [number], selected: boolean, title: string}]
+- `panels`: [{closable: boolean, floating: boolean, id: string, open: boolean, rect?: [number], selected: boolean, title: string, window?: boolean}]
 
 ### `panel.open`
 
@@ -3096,6 +3154,16 @@ Arguments:
 
 - `panel`: string
 - `placement?`: {beside?: string, edge?: "left" \| "right" \| "top" \| "bottom", floating?: [number], fraction?: number, tabWith?: string}
+
+### `panel.popOut`
+
+**Pop Out Panel** · _idempotent_
+
+Pops a panel out into an OS window of its own (centered on the editor; later ones cascade), which can go on another display, and brings it to the front, so it stays in view while you work in other tabs. A popped-out builder keeps its side panel in the window instead of the Inspector. Closing the window docks the panel again; panel.dock docks it elsewhere, panel.close closes it. Where no OS window can open (headless) and for the Scene and Game views, it floats over the editor instead. One already popped out just comes to the front.
+
+Arguments:
+
+- `panel`: string
 
 ## path
 

@@ -141,12 +141,22 @@ open class RowListView: Widget {
         updateScrollLengths()
     }
 
+    /// A right-click in the list: the row under the pointer (nil over empty space) and the
+    /// point, for a context menu. The row is selected first unless it already is (a tree keeps a
+    /// multi-selection that includes it). Without it, right-clicks do nothing.
+    public var onContextMenu: ((Int?, Vec2) -> Void)?
+
     open override func handleEvent(_ event: UIEvent) -> Bool {
         updateScrollLengths()
         let result = interaction.handle(event, state: &scroll, viewport: contentRect, theme: theme, dragContent: false)
         if result.changed { setNeedsDisplay() }
         if result.handled { return true }
         switch event {
+        case .pointerDown(let e) where e.button == .right && onContextMenu != nil:
+            let row = row(at: e.position)
+            if let row, !isRowSelected(row) { selectRow(row) }
+            onContextMenu?(row, e.position)
+            return true
         case .pointerDown(let e) where e.button == .left:
             if let row = row(at: e.position) {
                 if !rowPressed(row, at: e.position, event: e) {

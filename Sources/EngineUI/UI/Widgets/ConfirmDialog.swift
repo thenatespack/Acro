@@ -49,6 +49,21 @@ public final class ConfirmDialog: Widget {
         context.focus(confirmButton)
     }
 
+    /// Adds a third answer at the left of the buttons ("Ignore Changes", "Don't Save"): it closes
+    /// the dialog and runs `action` (neither `onConfirm` nor `onCancel`).
+    @discardableResult
+    public func addAlternative(_ title: String, name: String, action: @escaping () -> Void) -> Button {
+        let button = Button(title, name: name)
+        button.action = { [unowned self] in
+            guard !resolved else { return }
+            resolved = true
+            context?.dismissOverlay(self)
+            action()
+        }
+        buttons.insertChild(button, at: 0)
+        return button
+    }
+
     /// Confirms or cancels as if the button had been clicked.
     public func resolve(confirmed: Bool) {
         guard !resolved else { return }

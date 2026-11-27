@@ -292,16 +292,30 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
         let client = LayoutClient(app)
         let opened = client.call("ui.click", ["label": "View", "role": "button"])["opened"]?.arrayValue ?? []
         let items = opened.filter { $0["role"] == "menuItem" }.compactMap { $0["label"]?.stringValue }
-        // Every panel first (so a closed one can be opened again), then the settings and layout.
-        let panels = app.toolbar.menuPanels.map(\.title)
-        #expect(Array(items.prefix(panels.count)) == panels && panels.contains("Files") && panels.contains("Scripts"))
-        let settings = items.dropFirst(panels.count)
-        #expect(settings.first?.hasPrefix("Settings…") == true && settings.dropFirst().first == "Reset Layout")
-        #expect(settings.contains { $0.hasPrefix("Return to Origin") } && settings.contains { $0.hasPrefix("Go to Object") }
-                && settings.contains("Animate in Scene View"))
-        #expect(items.contains("Light Theme") && items.contains("Zoom 125%"))
-        #expect(!items.contains("Game Theme"))  // a game HUD preset, not offered for the editor
-        client.call("ui.click", ["label": "Light Theme", "role": "menuItem"])
+        // A short menu in groups; the panels, builders, themes and zooms are in submenus.
+        #expect(items == ["Panels", "Builders", "Go to Object…", "Return to Origin", "Animate in Scene View", "Scene Post-FX",
+                          "Lighting", "Theme", "Zoom", "Reset Layout", "Settings…"], "\(items)")
+        let view = try #require(app.ui.overlays.compactMap { $0 as? PopupMenu }.last)
+        #expect(view.separatorsBefore == [2, 7, 9] && view.itemShortcuts[2] != nil && view.itemShortcuts[10] != nil)
+
+        // Panels ▸ lists every panel but the builders (open ones checked); Builders ▸ the builders.
+        client.call("ui.click", ["label": "Panels", "role": "menuItem"])
+        let panelMenu = try #require(app.ui.overlays.last as? PopupMenu)
+        #expect(panelMenu.parentMenu === view)
+        let builders = Set(EditorBuilderRegistry.modules.map(\.title))
+        #expect(panelMenu.items.contains("Files") && panelMenu.items.contains("Scripts") && !panelMenu.items.contains { builders.contains($0) })
+        #expect(Set(panelMenu.checkedIndices.map { panelMenu.items[$0] })
+                == Set(app.toolbar.menuPanels.filter { app.dock.isOpen($0.id) }.map(\.title)))
+        view.openSubmenu(1)
+        let builderMenu = try #require(app.ui.overlays.last as? PopupMenu)
+        #expect(app.ui.overlays.count == 2 && builderMenu.items.contains("Mesh Builder"))
+
+        // Theme ▸ Light switches the theme, closing the menus.
+        client.call("ui.click", ["label": "Theme", "role": "menuItem"])
+        let themes = try #require(app.ui.overlays.last as? PopupMenu)
+        #expect(themes.items.contains("Light") && !themes.items.contains("Game"))  // a game HUD preset, not offered for the editor
+        client.call("ui.click", ["label": "Light", "role": "menuItem"])
+        #expect(app.ui.overlays.isEmpty)
         let light = UITheme.light()
         #expect(app.ui.theme.name == "Light" && app.prefs.theme == "Light")
         #expect(app.toolbar.view.background == light.panelBackground && app.dock.background == light.fieldBackground)
@@ -311,14 +325,14 @@ private let longName = String(repeating: "A Very Long Entity Name That Keeps Goi
         #expect(result["theme"] == "Light" && result["uiScale"] == 1.25 && result["effectiveUIScale"] == 1.25)
         #expect(app.ui.uiScale == 1.25 && app.prefs.uiScale == 1.25)
         expectClean(app, "Light at 125%")
-        // The menu checks what is chosen.
+        // The submenus check what is chosen.
         client.call("ui.click", ["label": "View", "role": "button"])
-        let menu = try #require(app.ui.overlays.compactMap { $0 as? PopupMenu }.last)
-        let first = app.toolbar.menuPanels.count
-        let openPanels = Set(app.toolbar.menuPanels.indices.filter { app.dock.isOpen(app.toolbar.menuPanels[$0].id) })
-        let checkedTitles = Set(menu.checkedIndices.filter { $0 >= first }.map { menu.items[$0] })
-        #expect(menu.checkedIndices.filter { $0 < first } == openPanels)
-        #expect(checkedTitles == ["Light Theme", "Zoom 125%"])
+        client.call("ui.click", ["label": "Zoom", "role": "menuItem"])
+        let zooms = try #require(app.ui.overlays.last as? PopupMenu)
+        #expect(zooms.checkedIndices.map { zooms.items[$0] } == ["125%"])
+        client.call("ui.click", ["label": "Theme", "role": "menuItem"])
+        let checkedThemes = try #require(app.ui.overlays.last as? PopupMenu)
+        #expect(checkedThemes.checkedIndices.map { checkedThemes.items[$0] } == ["Light"])
         client.call("ui.key", ["keys": ["escape"]])
         // The engine's Game preset is for game UI: refused, with the editor's themes named.
         #expect(throws: CommandError.self) { try app.session.commands.run(ViewAppearanceCommand.self, .init(theme: "game")) }

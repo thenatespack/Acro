@@ -57,9 +57,13 @@ package struct EditorBuilderAsset {
     package var create: @MainActor (EditorSession, String) -> AssetID?
     /// Opens a file in the tab with the builder's open command (double-click).
     package var open: @MainActor (EditorSession, AssetID) -> Void
+    /// The command `open` runs, for buttons that open a file elsewhere (the Inspector's Material section).
+    package var openCommand: CommandID?
 
     package init(isFile: @escaping @MainActor (EditorSession, AssetID) -> Bool, newTitle: String, newCommand: CommandID,
-                 create: @escaping @MainActor (EditorSession, String) -> AssetID?, open: @escaping @MainActor (EditorSession, AssetID) -> Void) {
+                 create: @escaping @MainActor (EditorSession, String) -> AssetID?, open: @escaping @MainActor (EditorSession, AssetID) -> Void,
+                 openCommand: CommandID? = nil) {
+        self.openCommand = openCommand
         self.isFile = isFile
         self.newTitle = newTitle
         self.newCommand = newCommand
@@ -95,6 +99,11 @@ package struct EditorBuilderTab {
     /// Routes the session's "open" for the tab's files to it (`session.onOpen…`); called once
     /// the app has opened its project and scene.
     package var connect: (@MainActor () -> Void)?
+    /// The tab's side panel (its settings and forms), shown in the Inspector while the tab is in
+    /// front so its view gets the tab's whole width (`EditorApp.syncBuilderSidebars`). Found in
+    /// `view`: the last child of its body row (an `HStack` named "…Body") after a vertical
+    /// `Separator`. nil when the tab has none.
+    package var sidebar: Widget?
 
     package init(workspace: AnyObject, view: Widget, update: (@MainActor (ViewportInput, Float) -> Void)? = nil,
                  handleKeys: (@MainActor ([KeyEvent], Vec2) -> Void)? = nil, prepareFrame: (@MainActor (Float) -> Void)? = nil,
@@ -106,6 +115,21 @@ package struct EditorBuilderTab {
         self.prepareFrame = prepareFrame
         self.render = render
         self.connect = connect
+        sidebar = Self.findSidebar(in: view)
+    }
+
+    /// The side panel of a builder laid out as `[main, Separator(.vertical), side]` in an
+    /// `HStack` named "…Body" (every builder tab is), else nil.
+    package static func findSidebar(in root: Widget) -> Widget? {
+        var stack: [Widget] = [root]
+        while let node = stack.popLast() {
+            let children = node.children
+            if node is HStack, node.name.hasSuffix("Body"), children.count >= 3, children[children.count - 2] is Separator {
+                return children.last
+            }
+            stack.append(contentsOf: children.reversed())
+        }
+        return nil
     }
 
     /// A tab with a 3D view (`EditorViewportBuilder`): the app's device and quality, and its
@@ -178,6 +202,11 @@ package enum EditorBuilderRegistry {
     }
 
     private static func order(_ panelID: String) -> Int { panelOrder.firstIndex(of: panelID) ?? panelOrder.count }
+
+    /// The builder that opens file `id`, if any.
+    package static func module(forFile id: AssetID, in session: EditorSession) -> EditorBuilderModule? {
+        modules.first { $0.asset?.isFile(session, id) == true }
+    }
 
     /// The mangled name of `EditorBuilders.EditorBuilders` (`_mangledTypeName`; a demangled
     /// "Module.Type" name only finds classes). EditorTests checks it.

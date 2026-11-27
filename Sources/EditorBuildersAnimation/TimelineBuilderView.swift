@@ -128,6 +128,7 @@ public final class TimelineBuilderView {
         trackList.onSelect = { [unowned self] row in
             guard let row, listed.indices.contains(row), listed[row] != selectedTrack else { return }
             select(track: listed[row], key: self.timeline.track(id: listed[row])?.keys.isEmpty == false ? 0 : nil)
+            previewSelectedSound()
         }
         layout()
     }
@@ -166,6 +167,18 @@ public final class TimelineBuilderView {
         Self.selections[asset] = (selectedTrack, selectedKey)
         layout()
         onSelectionChange?()
+    }
+
+    /// Plays the sound of the selected audio key (or the track's first key with one) once, so
+    /// clicking an audio track or key lets you hear it. False when the selection isn't an audio
+    /// track with a sound, or the editor has no audio device.
+    @discardableResult
+    public func previewSelectedSound() -> Bool {
+        guard let track = timeline.track(id: selectedTrack ?? ""), track.trackKind == .audio else { return false }
+        let selected = selectedKey.flatMap { track.keys.indices.contains($0) ? track.keys[$0] : nil }
+        guard let key = selected?.clip?.isEmpty == false ? selected : track.keys.first(where: { $0.clip?.isEmpty == false }),
+              let clip = key.clip else { return false }
+        return session.previewSound(clip: clip, volume: key.volume ?? 1, pitch: key.pitch ?? 1)
     }
 
     // MARK: Layout
@@ -290,6 +303,12 @@ public final class TimelineBuilderView {
         let deleteKey = Button("Delete Key", name: "timelineDeleteKey") { [unowned self] in deleteSelectedKey() }
         deleteKey.isEnabled = selectedKey != nil
         var row: [Widget] = [addKey, deleteKey]
+        if track.trackKind == .audio {
+            let play = Button("Play Sound", name: "timelinePlaySound") { [unowned self] in previewSelectedSound() }
+            play.isEnabled = track.keys.contains { $0.clip?.isEmpty == false }
+            play.tooltip = "Hear the selected key's sound (clicking an audio track or key plays it too)"
+            row.append(play)
+        }
         if track.trackKind == .camera {
             let fromView = Button("Key From View", name: "timelineKeyFromView") { [unowned self] in keyCameraFromView(track.id) }
             fromView.tooltip = "Add a camera key at the playhead framed like the preview's free camera"
@@ -343,7 +362,7 @@ public final class TimelineBuilderView {
         case .camera: "Camera keys blend position, aim and field of view with the later key's easing; a cut jumps. A path makes a spline move to the next key."
         case .transform: "Transform keys blend the target's position, rotation and scale (parent space)."
         case .animation: "Plays the clip on the target's Animator (or SpriteAnimator) when reached. Not shown in this preview."
-        case .audio: "Plays the sound when reached (heard in play mode, not in this preview)."
+        case .audio: "Plays the sound when reached (heard while the preview plays). Click the track or a key to hear its sound."
         case .particles: "Spawns the effect at the target when reached, for its duration."
         case .fade: "Fades the screen toward the color by amount."
         case .event: "Game code sees the event in TimelinePlayer.events and world.timelineEvents()."

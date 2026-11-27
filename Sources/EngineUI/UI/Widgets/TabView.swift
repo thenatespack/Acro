@@ -74,6 +74,8 @@ public final class TabView: Widget {
     public var onReorder: (([DockPanel]) -> Void)?
     /// Called after a tab was closed by the user (outside a dock space; there the dock reports it).
     public var onClose: ((DockPanel) -> Void)?
+    /// A right-click on a tab (selected first) and the point, for a context menu.
+    public var onTabContextMenu: ((DockPanel, Vec2) -> Void)?
     /// How far the tab strip is scrolled when the tabs overflow the bar (points).
     public private(set) var barOffset: Float = 0
     /// How much taller the selected panel's content is than the content area (0 when it fits): a
@@ -383,6 +385,11 @@ public final class TabView: Widget {
         switch event {
         case .pointerDown(let e):
             guard let index = tab(at: e.position) else { return false }
+            if e.button == .right, let onTabContextMenu {
+                userSelect(index)
+                onTabContextMenu(tabs[index], e.position)
+                return true
+            }
             if e.button == .middle {
                 if tabs[index].isClosable { pressedClose = tabs[index] }
                 return true

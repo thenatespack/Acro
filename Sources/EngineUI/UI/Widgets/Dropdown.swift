@@ -53,6 +53,32 @@ public final class PopupMenu: Widget {
     /// The icon column's width (icon and gap), 0 when no item has an icon.
     private var iconColumn: Float { itemIcons.contains { $0 != nil } ? theme.iconSize + 6 : 0 }
 
+    /// Items that open another menu beside this one, by index: hovering, clicking or Right opens
+    /// it (Left or Esc closes it); picking in it closes every menu of the chain.
+    public var submenus: [Int: () -> PopupMenu] = [:] { didSet { setNeedsLayout() } }
+    /// Items that get a thin rule above them, to group the menu.
+    public var separatorsBefore: Set<Int> = [] { didSet { setNeedsLayout() } }
+    /// Right-aligned secondary text per item, by index (a shortcut: "⌘G", "Home").
+    public var itemShortcuts: [String?] = [] { didSet { setNeedsLayout() } }
+    /// The menu this one opened from (a submenu's), and the submenu open now.
+    public private(set) weak var parentMenu: PopupMenu?
+    public private(set) var openSubmenu: (index: Int, menu: PopupMenu)?
+    /// A submenu sits beside its item instead of under its anchor.
+    private var opensBeside = false
+    private let separatorGap: Float = 9
+
+    private func shortcut(_ i: Int) -> String? { itemShortcuts.indices.contains(i) ? itemShortcuts[i] : nil }
+    /// The space right of the titles: the widest shortcut, and a chevron when there are submenus.
+    private var trailingColumn: Float {
+        let shortcuts = itemShortcuts.compactMap { $0 }.map { cachedLayout($0, size: theme.smallFontSize).width }.max().map { $0 + 16 } ?? 0
+        return shortcuts + (submenus.isEmpty ? 0 : 14)
+    }
+    /// How far down item `i` starts (rows, plus the gaps of the separators above it).
+    private func offset(of i: Int) -> Float {
+        Float(i) * rowHeight + Float(separatorsBefore.filter { $0 > 0 && $0 <= i && $0 < items.count }.count) * separatorGap
+    }
+    private var contentHeight: Float { offset(of: items.count) }
+
     public init(items: [String], anchor: Widget? = nil, name: String = "menu") {
         self.items = items
         self.anchor = anchor
@@ -76,11 +102,19 @@ public final class PopupMenu: Widget {
         let theme = theme
         var widest: Float = 0
         for item in items { widest = max(widest, cachedLayout(item, size: theme.fontSize).width) }
-        return Vec2((widest * scale).rounded(.up) / scale + 2 * theme.controlPaddingX + 16 + iconColumn, rowHeight * Float(items.count))
+        return Vec2((widest * scale).rounded(.up) / scale + 2 * theme.controlPaddingX + 16 + iconColumn + trailingColumn, contentHeight)
     }
 
     public override func overlayFrame(in viewport: UIRect) -> UIRect {
         let size = measure()
+        if opensBeside, let row = anchorRect {
+            // Beside the item that opened it (left of it without room on the right), its first
+            // item level with that one, moved up to fit.
+            let width = size.x, height = min(size.y, viewport.height - 8)
+            let x = row.maxX + width + 2 <= viewport.maxX ? row.maxX + 2 : max(viewport.x, row.x - width - 2)
+            let y = min(max(row.y - padding.top, viewport.y + 4), viewport.maxY - 4 - height)
+            return UIRect(x: x, y: y, width: width, height: height)
+        }
         let anchor = self.anchor?.frame ?? anchorRect ?? UIRect(x: viewport.center.x, y: viewport.center.y, width: 0, height: 0)
         let width = max(size.x, anchor.width)
         var y = anchor.maxY + 2
@@ -100,7 +134,7 @@ public final class PopupMenu: Widget {
     }
 
     /// Items' total height beyond what shows.
-    private var maxScroll: Float { max(0, rowHeight * Float(items.count) - contentRect.height) }
+    private var maxScroll: Float { max(0, contentHeight - contentRect.height) }
 
     public override func layoutChildren() {
         super.layoutChildren()
@@ -109,7 +143,7 @@ public final class PopupMenu: Widget {
 
     private func rowRect(_ i: Int) -> UIRect {
         let content = contentRect
-        return UIRect(x: content.x, y: content.y + Float(i) * rowHeight - scrollOffset, width: content.width, height: rowHeight)
+        return UIRect(x: content.x, y: content.y + offset(of: i) - scrollOffset, width: content.width, height: rowHeight)
     }
 
     private func revealHighlight() {
@@ -120,7 +154,45 @@ public final class PopupMenu: Widget {
         scrollOffset = min(max(scrollOffset, 0), maxScroll)
     }
 
-    public override func overlayDismissed() { onDismiss?() }
+    public override func overlayDismissed() {
+        if let parentMenu, parentMenu.openSubmenu?.menu === self { parentMenu.openSubmenu = nil }
+        openSubmenu = nil
+        onDismiss?()
+    }
+
+    /// Opens item `index`'s submenu beside it (closing another one); `highlightFirst` for the keys.
+    public func openSubmenu(_ index: Int, highlightFirst: Bool = false) {
+        guard let make = submenus[index], let context else { return }
+        if let open = openSubmenu {
+            if open.index == index {
+                if highlightFirst { open.menu.moveHighlight(by: 1) }
+                return
+            }
+            closeSubmenu()
+        }
+        let menu = make()
+        menu.parentMenu = self
+        menu.opensBeside = true
+        // The item's row across the whole menu, so the submenu sits clear of its edge.
+        let row = rowRect(index)
+        menu.anchorRect = UIRect(x: frame.x, y: row.y, width: frame.width, height: row.height)
+        openSubmenu = (index, menu)
+        context.presentOverlay(menu)
+        if highlightFirst { menu.moveHighlight(by: 1) }
+    }
+
+    public func closeSubmenu() {
+        guard let open = openSubmenu else { return }
+        openSubmenu = nil
+        context?.dismissOverlay(open.menu)
+    }
+
+    /// The first menu of the chain this one is in.
+    private var rootMenu: PopupMenu {
+        var menu = self
+        while let parent = menu.parentMenu { menu = parent }
+        return menu
+    }
 
     public override var accessibilityRole: UIAccessibilityRole { .menu }
 
@@ -137,15 +209,19 @@ public final class PopupMenu: Widget {
     public func item(at point: Vec2) -> Int? {
         let content = contentRect
         guard content.contains(point) else { return nil }
-        let index = Int(((point.y - content.y + scrollOffset) / rowHeight).rounded(.down))
-        return index >= 0 && index < items.count ? index : nil
+        return items.indices.first { rowRect($0).contains(point) }
     }
 
     /// Picks `index`: closes the menu and calls `onSelect`.
     public func choose(_ index: Int) {
         guard isEnabled(index) else { return }
+        if submenus[index] != nil {
+            openSubmenu(index, highlightFirst: true)
+            return
+        }
         let select = onSelect
-        context?.dismissOverlay(self)
+        // Closes the whole chain (a submenu's menus above and below it).
+        context?.dismissOverlay(rootMenu)
         select?(index)
     }
 
@@ -163,6 +239,12 @@ public final class PopupMenu: Widget {
         switch event {
         case .pointerMove(let e), .pointerDrag(let e):
             highlightedIndex = item(at: e.position).flatMap { isEnabled($0) ? $0 : nil }
+            // Hovering an item with a submenu opens it; another item closes it.
+            if let index = highlightedIndex, submenus[index] != nil {
+                openSubmenu(index)
+            } else if highlightedIndex != nil, openSubmenu != nil {
+                closeSubmenu()
+            }
             return true
         case .pointerDown:
             return true
@@ -180,6 +262,12 @@ public final class PopupMenu: Widget {
             case .home: highlightedIndex = items.indices.first(where: isEnabled)
             case .end: highlightedIndex = items.indices.last(where: isEnabled)
             case .enter, .space: if let index = highlightedIndex { choose(index) }
+            case .right:
+                guard let index = highlightedIndex, submenus[index] != nil else { return false }
+                openSubmenu(index, highlightFirst: true)
+            case .left:
+                guard parentMenu != nil else { return false }
+                context?.dismissOverlay(self)
             case .escape: context?.dismissOverlay(self)
             default: return false
             }
@@ -204,9 +292,13 @@ public final class PopupMenu: Widget {
         defer { list.popClip() }
         for (i, item) in items.enumerated() {
             let row = rowRect(i)
+            if i > 0, separatorsBefore.contains(i) {
+                let y = row.y - separatorGap / 2
+                list.fillRect(UIRect(x: row.x + 6, y: y, width: row.width - 12, height: 1 / scale), color: theme.popupBorder)
+            }
             guard row.maxY > content.y, row.y < content.maxY else { continue }
             let enabled = isEnabled(i)
-            let highlighted = enabled && i == highlightedIndex
+            let highlighted = enabled && (i == highlightedIndex || openSubmenu?.index == i)
             let plain = enabled ? theme.textColor : theme.disabledTextColor
             if highlighted { list.fillRect(row, color: theme.accent, radii: UICornerRadii(theme.cornerRadius - 1)) }
             if isChecked(i) {
@@ -222,8 +314,21 @@ public final class PopupMenu: Widget {
                               color: highlighted ? theme.accentText : enabled ? theme.secondaryTextColor : theme.disabledTextColor)
             }
             let layout = cachedLayout(item, size: theme.fontSize)
-            let textRect = UIRect(x: row.x + 18 + column, y: row.y, width: row.width - 18 - column, height: row.height)
+            let trailing = trailingColumn
+            let textRect = UIRect(x: row.x + 18 + column, y: row.y, width: row.width - 18 - column - trailing, height: row.height)
             drawLine(layout, font: theme.font, in: textRect, color: highlighted ? theme.accentText : plain, list: list)
+            let secondary = highlighted ? theme.accentText : enabled ? theme.secondaryTextColor : theme.disabledTextColor
+            if let shortcut = shortcut(i) {
+                let small = cachedLayout(shortcut, size: theme.smallFontSize)
+                let right = row.maxX - 8 - (submenus.isEmpty ? 0 : 14)
+                drawLine(small, font: theme.font, in: UIRect(x: right - small.width, y: row.y, width: small.width + 1, height: row.height),
+                         color: secondary, list: list)
+            }
+            if submenus[i] != nil {
+                let c = Vec2(row.maxX - 10, row.center.y)
+                list.drawLine(from: c + Vec2(-1.5, -3.5), to: c + Vec2(2, 0), width: theme.iconStrokeWidth, color: secondary, cap: .round)
+                list.drawLine(from: c + Vec2(2, 0), to: c + Vec2(-1.5, 3.5), width: theme.iconStrokeWidth, color: secondary, cap: .round)
+            }
         }
     }
 }

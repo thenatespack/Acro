@@ -846,42 +846,58 @@ private func temporaryDirectory() -> URL {
     }
 
     /// The mesh field is a dropdown of the registered meshes; picking one is one undo step.
-    @Test func meshFieldIsADropdownAndPickingIsOneUndoStep() throws {
+    /// The mesh and material fields show the key and pick in the asset picker (one undo step).
+    @Test func meshFieldPicksInADialogAndPickingIsOneUndoStep() throws {
         let session = makeSession()
         let panel = InspectorPanel(session: session)
         panel.assetChoices = AssetChoices(meshes: { ["cube", "plane", "sphere"] }, materials: { ["default", "checker"] })
+        let ui = UIContext()
+        ui.root.addChild(panel.view)
         let sphere = entity(named: "Blue Sphere", in: session)
         session.selection.select(id("Blue Sphere", session))
         panel.refresh()
 
-        let mesh = try #require(dropdowns(in: panel.grid).first { $0.options.contains("plane") })
-        #expect(mesh.selectedOption == "sphere")
-        #expect(dropdowns(in: panel.grid).contains { $0.options == ["default", "checker"] })
+        let fields = pickerFields(in: panel.grid)
+        let mesh = try #require(fields.first { $0.title == "sphere" })
+        #expect(fields.contains { $0.title == "default" || $0.title == "checker" })
+        mesh.onPick?()
+        let dialog = try #require(ui.overlays.last as? AssetPickerDialog)
+        #expect(dialog.shown.map(\.value) == ["cube", "plane", "sphere"] && dialog.shown.allSatisfy { $0.caption == "Built-in" })
 
         let depth = session.undo.undoDepth
-        let cube = try #require(mesh.options.firstIndex(of: "cube"))
-        mesh.select(cube)
-        mesh.onChange?(cube)
+        dialog.list.selectRow(0)
+        dialog.pickSelected()
         #expect(session.world.get(MeshRenderer.self, for: sphere)?.mesh == .cube)
         #expect(session.undo.undoDepth == depth + 1)
+        panel.refresh()
+        #expect(mesh.title == "cube")
 
         _ = try session.undo.undo()
         panel.refresh()
         #expect(session.world.get(MeshRenderer.self, for: sphere)?.mesh == .sphere)
-        #expect(mesh.selectedOption == "sphere")
+        #expect(mesh.title == "sphere")
     }
 
-    /// A key that isn't registered (e.g. from a hand-edited file) still shows and stays selectable.
+    /// A key that isn't registered (e.g. from a hand-edited file) still shows and stays pickable.
     @Test func unknownCurrentKeyIsKept() throws {
         let session = makeSession()
         let panel = InspectorPanel(session: session)
         panel.assetChoices = AssetChoices(meshes: { ["cube"] }, materials: { ["default"] })
+        let ui = UIContext()
+        ui.root.addChild(panel.view)
         session.selection.select(id("Blue Sphere", session))
         panel.refresh()
-        let mesh = try #require(dropdowns(in: panel.grid).first { $0.options.contains("cube") && $0.options.count == 2 })
-        #expect(mesh.options == ["cube", "sphere"])
-        #expect(mesh.selectedOption == "sphere")
+        let mesh = try #require(pickerFields(in: panel.grid).first { $0.title == "sphere" })
+        mesh.onPick?()
+        let dialog = try #require(ui.overlays.last as? AssetPickerDialog)
+        #expect(Set(dialog.shown.map(\.value)) == ["cube", "sphere"])
+        #expect(dialog.list.selectedRow.map { dialog.shown[$0].value } == "sphere")
     }
+}
+
+/// The dialog-picked fields (`PickerField`) under `widget`.
+@MainActor private func pickerFields(in widget: Widget) -> [PickerField] {
+    widget.children.flatMap { ($0 as? PickerField).map { [$0] } ?? pickerFields(in: $0) }
 }
 
 // MARK: Transform tool (gizmo + picker adapter)

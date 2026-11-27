@@ -297,6 +297,12 @@ public final class Engine {
     }
 
     let window: PlatformWindow
+    /// Windows from `openWindow`, until closed.
+    var extraWindows: [EngineWindow] = []
+
+    func windowClosed(_ closed: EngineWindow) {
+        extraWindows.removeAll { $0 === closed }
+    }
 
     /// Puts `items` in the macOS app menu above Quit ("Settings…" with Cmd+,); ignored on
     /// other platforms. Replaces the items set before.
@@ -543,6 +549,7 @@ public final class Engine {
         mcp?.stop()
         audioSystem?.shutdown()
         device.waitIdle()
+        for extra in extraWindows { extra.close() }
         // (Captures still on their way back from an asynchronous device won't arrive now.)
         for group in capturesInFlight { for capture in group.captures { capture(nil) } }
         capturesInFlight.removeAll()
@@ -603,8 +610,16 @@ public final class Engine {
         let game = loop.game, clock = loop.clock, start = loop.start
         do {
             input.beginFrame()
+            // Other windows' events arrive while the main window pumps them.
+            for extra in extraWindows { extra.input.beginFrame() }
             CrashReporter.frame = frameCount
-            Profiler.scope("events") { window.pollEvents(into: automatedScreenshot == nil ? input : ignoredInput) }
+            Profiler.scope("events") {
+                window.pollEvents(into: automatedScreenshot == nil ? input : ignoredInput)
+                for extra in extraWindows {
+                    extra.platform?.pollEvents(into: extra.input)
+                    extra.input.endEvents()
+                }
+            }
             // MCP requests (they may inject input, pause or step), then this frame's injected input.
             if let mcp {
                 mcp.pump()
@@ -635,6 +650,7 @@ public final class Engine {
             if let key = profilerExportKey, input.wasPressed(key) { saveProfilerTrace() }
 
             ui.beginFrame(framebufferSize: window.framebufferSize, scale: window.contentScale)
+            for extra in extraWindows { extra.ui.beginFrame(framebufferSize: extra.framebufferSize, scale: extra.contentScale) }
             debugDraw.beginFrame(dt: Float(dt))
             let updateStart = clock.now
             Profiler.scope("update") { game.update(engine: self, dt: Float(gameDt)) }
@@ -648,6 +664,7 @@ public final class Engine {
             if automatedScreenshot == nil {
                 // Screenshot runs leave the user's cursor alone (their input is ignored anyway).
                 window.applyCursor(input.cursor, captured: input.isMouseCaptured)
+                for extra in extraWindows { extra.platform?.applyCursor(extra.input.cursor, captured: extra.input.isMouseCaptured) }
             }
             applyPendingTitle()
             stats.updateTime = Self.seconds(clock.now - updateStart)
@@ -740,6 +757,17 @@ public final class Engine {
                             pass: windowPass, stats: stats, time: time, framebufferSize: framebufferSize,
                             renderSize: renderSize, upscaler: upscaler, vsync: device.vsync, contentScale: window.contentScale,
                             backend: device.backend, deviceName: device.deviceName, extraLines: debugOverlayLines)
+                    }
+                }
+                // Other windows' UI, each in a pass of its own, presented with the frame.
+                if !extraWindows.isEmpty, let windowDevice = device as? WindowSurfaceRendering {
+                    Profiler.scope("windows") {
+                        for extra in extraWindows {
+                            guard let surface = extra.surface,
+                                  let pass = windowDevice.beginWindowPass(on: surface, size: extra.framebufferSize,
+                                                                          clearColor: extra.clearColor) else { continue }
+                            uiRenderer?.render(extra.ui, into: pass)
+                        }
                     }
                 }
                 Profiler.begin("present")

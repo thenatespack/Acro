@@ -112,10 +112,19 @@ public final class InspectorPanel {
     public let assetView: AssetInspectorView
     /// Turns asset-key fields into dropdowns of the registered keys (see `AssetChoices`).
     public var assetChoices: AssetChoices? {
-        didSet { installChoices() }
+        didSet {
+            installChoices()
+            materialSection.choices = assetChoices
+        }
     }
     /// The prefab section (see the type's notes), above the components.
     public let prefabView = VStack(spacing: 4, name: "prefabSection")
+    /// The material of the entity's MeshRenderer, below the components (InspectorMaterialSection.swift).
+    public let materialSection: InspectorMaterialSection
+    /// An asset's thumbnail (meshes, materials), for the Mesh and Material fields and their picker.
+    public var assetPreview: ((AssetReference, AssetKind) -> GPUTexture?)? {
+        didSet { materialSection.preview = assetPreview.map { f in { f($0, .material) } } }
+    }
 
     private let nameField = TextField(placeholder: "Name", name: "entityName")
     /// The entity's main component's icon, before its name.
@@ -133,18 +142,26 @@ public final class InspectorPanel {
     private var shownEntityCount = -1
     private var prefabKey: [Int] = []
     private var shownPrefab: PrefabEntityInfo?
+    /// A builder tab's side panel shown instead of the selection (`showBuilderPanel`).
+    private let builderHost = VStack(spacing: 6, name: "inspectorBuilderHost")
+    private let builderTitle = Label("", role: .heading, name: "inspectorBuilderTitle")
+    /// The builder panel shown, and the inspector's own widgets it hid (shown again after).
+    public private(set) var builderPanel: Widget?
+    private var hiddenForBuilder: [Widget] = []
 
     public init(session: EditorSession) {
         self.session = session
         grid = PropertyGrid(world: session.world)
         recorder = InspectorEditRecorder(session: session)
         assetView = AssetInspectorView(session: session)
+        materialSection = InspectorMaterialSection(session: session)
         view = VStack(spacing: 6, padding: EdgeInsets(8), name: "inspectorPanel")
         addButton = Button("Add Component", name: "addComponent")
         addButton.tooltip = "Add a component to the selected entity"
         addButton.icon = EditorIcons.named("plus")
         grid.componentIcon = { EditorIcons.component($0) }
-        scroll = ScrollView(grid, name: "inspectorScroll")
+        // The components, then the material section, scrolling together.
+        scroll = ScrollView(VStack(spacing: 8, name: "inspectorBody", [grid, materialSection.view]), name: "inspectorScroll")
 
         grid.appliesEditsToWorld = false
         grid.componentFilter = { $0 != Name.componentName && $0 != PrefabInstance.componentName }
@@ -176,12 +193,46 @@ public final class InspectorPanel {
         assetView.view.style.shrink = 1
         prefabView.isHidden = true
         view.addChildren([header, idLabel, subtitle, prefabView, separator, scroll, addButton, emptyLabel, assetView.view])
+        builderHost.style.grow = 1
+        builderHost.style.shrink = 1
+        builderHost.isHidden = true
+        builderHost.addChildren([builderTitle, Separator()])
+        view.addChild(builderHost)
         installChoices()
         refresh()
     }
 
+    /// Shows a builder tab's side panel (`EditorBuilderTab.sidebar`) under the builder's name
+    /// instead of the selection, or with nil goes back to the selection. The panel is reparented
+    /// here; the caller puts it back in its tab after.
+    public func showBuilderPanel(_ panel: Widget?, title: String = "", icon: VectorIcon? = nil) {
+        guard panel !== builderPanel else {
+            if builderTitle.text != title { builderTitle.text = title }
+            return
+        }
+        if let old = builderPanel, old.parent === builderHost { old.removeFromParent() }
+        builderPanel = panel
+        if let panel {
+            if hiddenForBuilder.isEmpty {
+                hiddenForBuilder = view.children.filter { $0 !== builderHost && !$0.isHidden }
+                for widget in hiddenForBuilder { widget.isHidden = true }
+            }
+            builderTitle.text = title
+            builderTitle.icon = icon
+            builderHost.addChild(panel)
+            builderHost.isHidden = false
+        } else {
+            builderHost.isHidden = true
+            for widget in hiddenForBuilder { widget.isHidden = false }
+            hiddenForBuilder = []
+            refresh()
+        }
+    }
+
     /// Re-reads the selection and the entity; call every frame after the UI processed input.
     public func refresh() {
+        // A builder's panel is showing; the selection comes back with it.
+        guard builderPanel == nil else { return }
         let world = session.world
         let asset = session.inspectedAsset
         if assetView.view.isHidden != (asset == nil) { assetView.view.isHidden = asset == nil }
@@ -198,6 +249,7 @@ public final class InspectorPanel {
                 shownID = nil
                 grid.entity = nil
             }
+            materialSection.refresh(entity: nil, id: nil)
             return
         }
         if entity != shownEntity || entity.flatMap({ world.id(of: $0) }) != shownID {
@@ -219,6 +271,7 @@ public final class InspectorPanel {
             widget.isHidden = !hasEntity
         }
         emptyLabel.isHidden = hasEntity
+        materialSection.refresh(entity: entity, id: shownID)
         guard let entity else { return }
         let (kind, component) = EditorIcons.entityKind(entity, in: world)
         let icon = EditorIcons.entityIcon(entity, in: world)
@@ -268,6 +321,15 @@ public final class InspectorPanel {
             }
             return choices?.title(value) ?? value
         }
+        // Meshes and materials: the asset's name (and preview) on a field that opens the picker.
+        grid.stringPicker = { [unowned self] component, path in
+            guard let choices, let kind = choices.pickerKind(component: component, path: path) else { return nil }
+            return StringFieldPicker(preview: { [unowned self] value in preview(value, kind) }) { [unowned self] current, done in
+                session.showAssetPicker(kind, keys: choices.options(component: component, path: path) ?? [], current: current,
+                                        title: { $0.isEmpty ? "None" : choices.title($0) },
+                                        preview: { [unowned self] value in preview(value, kind) }, in: view.context, done: done)
+            }
+        }
         grid.stringChoices = { [unowned self] component, path in
             if isEntityRef(component, path) {
                 let world = session.world
@@ -275,6 +337,12 @@ public final class InspectorPanel {
             }
             return choices?.options(component: component, path: path)
         }
+    }
+
+    /// The thumbnail of `value` when it is an asset of `kind` (nil for built-in keys).
+    func preview(_ value: String, _ kind: AssetKind) -> GPUTexture? {
+        guard let reference = AssetReference(value) else { return nil }
+        return assetPreview?(reference, kind)
     }
 
     // MARK: Prefab section

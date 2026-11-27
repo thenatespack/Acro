@@ -333,13 +333,15 @@ public final class UIContext {
             }
             pointerConsumed = true
             wantsPointer = true
-            // A press outside the topmost overlay closes it (and does nothing else).
+            // A press outside the topmost overlay closes it, and the ones above the overlay it
+            // landed in (a submenu, when its menu is clicked). Outside every overlay it does
+            // nothing else; inside one it goes on to it.
             var dismissed = false
             while let top = overlays.last, !(hit?.isDescendant(of: top) ?? false) {
                 dismissOverlay(top)
                 dismissed = true
             }
-            if dismissed { return }
+            if dismissed, !(hit.map { h in overlays.contains { h.isDescendant(of: $0) } } ?? false) { return }
             guard let hit else { return }
 
             var count = 1

@@ -32,11 +32,27 @@ package final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate, NS
     /// The capture state last applied, and whether we hid the cursor (`NSCursor.hide` calls nest).
     private var captured = false
     private var cursorHidden = false
-    private let gamepads = makePlatformGamepadSource()
+    private let gamepads: GamepadSource?
+    /// A window opened by `makeSecondaryWindow`: the main window pumps its events into
+    /// `eventInput`; closing it doesn't quit the app.
+    private let isSecondary: Bool
+    private weak var eventInput: Input?
+    /// The open secondary windows, by their NSWindow, for routing events.
+    private static var secondaries: [ObjectIdentifier: AppKitWindow] = [:]
 
-    package init(title: String, width: Int, height: Int, allowsLargerThanScreen: Bool = false, minimumSize: (width: Int, height: Int)? = nil) {
+    package convenience init(title: String, width: Int, height: Int, allowsLargerThanScreen: Bool = false,
+                             minimumSize: (width: Int, height: Int)? = nil) {
+        self.init(title: title, width: width, height: height, allowsLargerThanScreen: allowsLargerThanScreen,
+                  minimumSize: minimumSize, secondary: false)
+    }
+
+    private init(title: String, width: Int, height: Int, allowsLargerThanScreen: Bool, minimumSize: (width: Int, height: Int)?,
+                 secondary: Bool) {
         let app = NSApplication.shared
-        app.setActivationPolicy(.regular)
+        if !secondary { app.setActivationPolicy(.regular) }
+        isSecondary = secondary
+        // Gamepads go to the main window's input only.
+        gamepads = secondary ? nil : makePlatformGamepadSource()
 
         let gameWindow = GameWindow(
             contentRect: NSRect(x: 0, y: 0, width: width, height: height),
@@ -64,6 +80,12 @@ package final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate, NS
         window.delegate = self
         window.acceptsMouseMovedEvents = true
         window.center()
+        if secondary {
+            // Closing hides it; the engine releases it (`destroy`).
+            window.isReleasedWhenClosed = false
+            window.tabbingMode = .disallowed
+            return
+        }
         window.makeKeyAndOrderFront(nil)
 
         installMenu(appName: title)
@@ -89,43 +111,60 @@ package final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate, NS
     package func pollEvents(into input: Input) {
         view.input = input
         syncTextInput(input)
+        // A secondary window's events were pumped by the main window's `pollEvents`.
+        guard !isSecondary else { return updateState(input) }
+        for secondary in Self.secondaries.values { if let target = secondary.eventInput { secondary.syncTextInput(target) } }
         while let event = NSApp.nextEvent(matching: .any, until: .distantPast, inMode: .default, dequeue: true) {
-            switch event.type {
-            case .keyDown, .keyUp:
-                let key = Self.keyMap[event.keyCode]
-                if let key { input.setKey(key, down: event.type == .keyDown) }
-                if event.type == .keyDown {
-                    if let key { input.recordKeyPress(key, modifiers: Self.modifiers(event), isRepeat: event.isARepeat) }
-                    routeText(event, key: key, to: input)
-                }
-                // Let menu shortcuts (Cmd-Q, Cmd-W…) through; swallow the rest to avoid the system beep.
-                if event.modifierFlags.contains(.command) { NSApp.sendEvent(event) }
-                continue
-            case .flagsChanged:
-                if let (key, flag) = Self.modifierMap[event.keyCode] {
-                    input.setKey(key, down: event.modifierFlags.contains(flag))
-                }
-            case .leftMouseDown: input.setButton(.left, down: true)
-            case .leftMouseUp: input.setButton(.left, down: false)
-            case .rightMouseDown: input.setButton(.right, down: true)
-            case .rightMouseUp: input.setButton(.right, down: false)
-            case .otherMouseDown where event.buttonNumber == 2: input.setButton(.middle, down: true)
-            case .otherMouseUp where event.buttonNumber == 2: input.setButton(.middle, down: false)
-            case .scrollWheel:
-                // Trackpads and Magic Mouse report points; classic wheels report lines.
-                let lines: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 16
-                input.addScroll(Vec2(Float(event.scrollingDeltaX * lines), Float(event.scrollingDeltaY * lines)))
-            default: break
+            if let eventWindow = event.window, eventWindow !== window, let secondary = Self.secondaries[ObjectIdentifier(eventWindow)],
+               let target = secondary.eventInput {
+                secondary.handle(event, input: target)
+            } else {
+                handle(event, input: input)
             }
-            switch event.type {
-            case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
-                // Points, y down, and still reported while the cursor is disassociated from the mouse.
-                input.addMouseMotion(Vec2(Float(event.deltaX), Float(event.deltaY)))
-            default: break
-            }
-            NSApp.sendEvent(event)
         }
+        updateState(input)
+    }
 
+    /// Applies one event to `input` and passes it on to AppKit (except plain key presses).
+    private func handle(_ event: NSEvent, input: Input) {
+        switch event.type {
+        case .keyDown, .keyUp:
+            let key = Self.keyMap[event.keyCode]
+            if let key { input.setKey(key, down: event.type == .keyDown) }
+            if event.type == .keyDown {
+                if let key { input.recordKeyPress(key, modifiers: Self.modifiers(event), isRepeat: event.isARepeat) }
+                routeText(event, key: key, to: input)
+            }
+            // Let menu shortcuts (Cmd-Q, Cmd-W…) through; swallow the rest to avoid the system beep.
+            if event.modifierFlags.contains(.command) { NSApp.sendEvent(event) }
+            return
+        case .flagsChanged:
+            if let (key, flag) = Self.modifierMap[event.keyCode] {
+                input.setKey(key, down: event.modifierFlags.contains(flag))
+            }
+        case .leftMouseDown: input.setButton(.left, down: true)
+        case .leftMouseUp: input.setButton(.left, down: false)
+        case .rightMouseDown: input.setButton(.right, down: true)
+        case .rightMouseUp: input.setButton(.right, down: false)
+        case .otherMouseDown where event.buttonNumber == 2: input.setButton(.middle, down: true)
+        case .otherMouseUp where event.buttonNumber == 2: input.setButton(.middle, down: false)
+        case .scrollWheel:
+            // Trackpads and Magic Mouse report points; classic wheels report lines.
+            let lines: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 16
+            input.addScroll(Vec2(Float(event.scrollingDeltaX * lines), Float(event.scrollingDeltaY * lines)))
+        default: break
+        }
+        switch event.type {
+        case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
+            // Points, y down, and still reported while the cursor is disassociated from the mouse.
+            input.addMouseMotion(Vec2(Float(event.deltaX), Float(event.deltaY)))
+        default: break
+        }
+        NSApp.sendEvent(event)
+    }
+
+    /// The state polled rather than evented: pointer position, focus, gamepads, backing scale.
+    private func updateState(_ input: Input) {
         let p = view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
         input.mousePosition = Vec2(Float(p.x), Float(view.bounds.height - p.y))
 
@@ -220,6 +259,7 @@ package final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate, NS
 
     package func destroy() {
         applyCursor(.arrow, captured: false)
+        if isSecondary { Self.secondaries[ObjectIdentifier(window)] = nil }
         window.delegate = nil
         window.close()
     }
@@ -227,6 +267,27 @@ package final class AppKitWindow: NSObject, PlatformWindow, NSWindowDelegate, NS
     package func windowShouldClose(_ sender: NSWindow) -> Bool {
         close("the window's close button was clicked")
         return false  // The engine closes the window after shutting the renderer down.
+    }
+
+    package func makeSecondaryWindow(title: String, width: Int, height: Int, input: Input) throws -> PlatformWindow? {
+        guard !isSecondary else { return nil }
+        let secondary = AppKitWindow(title: title, width: width, height: height, allowsLargerThanScreen: false,
+                                     minimumSize: nil, secondary: true)
+        secondary.eventInput = input
+        secondary.view.input = input
+        // Centered on this window, each further one a step down and to the right.
+        let step = CGFloat(Self.secondaries.count % 6) * 28
+        let size = secondary.window.frame.size
+        let origin = NSPoint(x: window.frame.midX - size.width / 2 + step, y: window.frame.midY - size.height / 2 - step)
+        secondary.window.setFrameOrigin(origin)
+        Self.secondaries[ObjectIdentifier(secondary.window)] = secondary
+        secondary.window.makeKeyAndOrderFront(nil)
+        return secondary
+    }
+
+    package func activate() {
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate()
     }
 
     @objc private func quitFromMenu(_ sender: Any?) {

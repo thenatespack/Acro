@@ -80,6 +80,14 @@ public final class ViewportController {
     public private(set) var gesture: Gesture?
     private var gestureButton: MouseButton?
     private var capturingTool: (any ViewportTool)?
+    /// A right-click: pressed and released without moving (a context menu), at this point in
+    /// viewport points. With it set, the right button only starts flying once the mouse moves,
+    /// a move key is held or the button stays down a moment (`contextClickHold`).
+    public var onContextClick: ((Vec2, ViewportToolContext) -> Void)?
+    /// How long (seconds) a still right button waits before flying.
+    public var contextClickHold: Float = 0.3
+    /// The right button is down and hasn't moved yet: where it went down, how long ago, how far it moved.
+    private var pendingRight: (start: Vec2, held: Float, moved: Float)?
 
     public init(camera: EditorCamera = EditorCamera()) {
         self.camera = camera
@@ -90,7 +98,7 @@ public final class ViewportController {
 
     /// Whether the viewport has the pointer for `input` (see the type's docs).
     public func hasPointer(_ input: ViewportInput) -> Bool {
-        gesture != nil || (!input.pointerOverUI && rect.contains(input.mousePosition))
+        gesture != nil || pendingRight != nil || (!input.pointerOverUI && rect.contains(input.mousePosition))
     }
 
     /// Processes one frame. `context` builds the tool context for the current camera view.
@@ -98,6 +106,24 @@ public final class ViewportController {
         let local = input.mousePosition - Vec2(rect.x, rect.y)
         let size = Vec2(rect.width, rect.height)
         let aspect = rect.height > 0 ? rect.width / rect.height : 1
+
+        // A right press waits to see whether it is a click (a context menu) or the start of flying.
+        if var pending = pendingRight {
+            if input.released.contains(.right) || !input.down.contains(.right) {
+                pendingRight = nil
+                onContextClick?(pending.start, context(view(aspect: aspect)))
+                return
+            }
+            pending.held += input.dt
+            pending.moved += length(Vec3(input.mouseDelta, 0))
+            guard pending.moved >= 4 || pending.held >= contextClickHold || input.move != .zero else {
+                pendingRight = pending
+                return
+            }
+            pendingRight = nil
+            gesture = .fly
+            gestureButton = .right
+        }
 
         // A gesture in progress keeps going until its button is released.
         if let current = gesture, let button = gestureButton {
@@ -139,6 +165,9 @@ public final class ViewportController {
         switch button {
         case .middle: gesture = shift ? .pan : .orbit
         case .left where alt: gesture = shift ? .pan : .orbit
+        case .right where onContextClick != nil:
+            pendingRight = (local, 0, 0)
+            return
         case .right: gesture = .fly
         default: return
         }
@@ -159,6 +188,7 @@ public final class ViewportController {
     public func cancelGesture() { endGesture() }
 
     private func endGesture() {
+        pendingRight = nil
         gesture = nil
         gestureButton = nil
         capturingTool = nil

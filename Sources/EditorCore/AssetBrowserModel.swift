@@ -138,6 +138,13 @@ public final class AssetBrowserModel {
         }
     }
 
+    /// A single left click on `item` in the browser: it only selects. A sound preview of another
+    /// asset stops (play sounds from the inspector).
+    public func clicked(_ item: AssetItem) {
+        // A click only selects (the inspector plays sounds); a preview of another asset stops.
+        if let playing = session.soundPreviewAsset, item.assetID != playing { session.stopSoundPreview() }
+    }
+
     /// The builder whose file `id` is (it opens in that builder's tab).
     private func builderAsset(of id: AssetID) -> EditorBuilderAsset? {
         EditorBuilderRegistry.modules.lazy.compactMap(\.asset).first { $0.isFile(self.session, id) }
