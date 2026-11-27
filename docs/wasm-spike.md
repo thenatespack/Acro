@@ -716,3 +716,37 @@ are merged into `wasm-spike` one at a time.
   the worst Wasm hot spots (bounds checks, unspecialized generics, allocation in the frame loop).
   Measure whether `wasip1-threads` with cross-origin isolation would be worth it later; write up
   the numbers, don't build it.
+
+### Waves W2.6 and W2.7 (renderer parity)
+
+Planned 2026-11-26 from the gaps listed under "WebGL 2 renderer" and in `WebGPURenderDevice`'s
+doc comment.
+
+**Not fixable in a browser (kept, documented):** late readbacks (`mapAsync` is asynchronous and
+the main thread can't block, so captures, `readBack`, occlusion queries and GPU pass times stay a
+frame or more late on WebGPU; `waitIdle` can't wait) and `vsync` (the browser presents on
+`requestAnimationFrame`). WebGL 2 readbacks are already synchronous. FSR 3 on WebGL 2 is
+compute-only: it falls back to another upscaler instead of being refused.
+
+**Wave W2.6**
+- **W2.6A: WebGL 2 material graphs.** A GLSL ES variant of the graph templates (`mesh_graph`,
+  `mesh_graph_depth`, `decal_graph`) with the graph values in a uniform block instead of a storage
+  buffer, and `MaterialGraphCompiler` splicing the graph's code into it as it does for MSL and WGSL.
+  Terrain splatting comes with it. `noperspective` in `spirv-to-gles.c`: pass `v * w` and `w` and
+  divide in the fragment shader (debug_line).
+- **W2.6B: WebGPU and shared rendering parity.** Alpha-to-coverage without MSAA (alpha test at 0.5
+  in the shader, what one sample gives natively). Shadow lookups outside the map return lit in the
+  shader, so no backend needs a border colour (WebGPU and WebGL 2 have none). Upscaler choice
+  falls back (FSR 3 → TAAU) when the device can't run it, on every backend.
+- **W2.6C: Packs for every GPU family.** Web export cooks textures for ASTC and BC; the loader
+  fetches the set the adapter (WebGPU features or WebGL extensions) supports. Textures in a format
+  the device can't sample (no BC or ASTC at all, ASTC HDR on WebGPU) are decoded at load with
+  CTextureCodec (rgba8 / rgba16f).
+
+**Wave W2.7**
+- **W2.7A: WebGL 2 GPU particles and light probes.** Particles simulate on the CPU when
+  `supportsCompute` is false and draw from instance attributes; probe data moves to textures read
+  with `texelFetch` in GLSL ES variants, with a fragment-pass or CPU bake.
+- **W2.7B: Firefox and Safari.** Playwright Firefox and WebKit (installed in `~/.acro-webtools`):
+  all Demo scenes and SampleGame on each renderer each browser offers, fix what breaks, record
+  results here.
