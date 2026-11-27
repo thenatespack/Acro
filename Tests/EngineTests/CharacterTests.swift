@@ -401,6 +401,51 @@ private func makeProject() throws -> Project {
         #expect(world.children(of: rootBone).contains { world.get(Name.self, for: $0)?.value == "Hat" })
     }
 
+    @Test func realisticHumanoidIsOneSkinnedBodyWithFaceEyesAndClothes() throws {
+        let rig = CharacterRig(template: .humanoid)
+        #expect(rig.isRealisticHuman)
+        let parts = rig.bodyParts()
+        let names = Set(parts.map(\.name))
+        for name in ["skin", "lips", "body", "legs", "accent", "shoe.sole", "eyes"] { #expect(names.contains(name), "\(name)") }
+        let triangles = parts.reduce(0) { $0 + $1.geometry.indices.count / 3 }
+        #expect(triangles > 50_000 && triangles < 300_000, "\(triangles) triangles")
+        for part in parts {
+            let skin = try #require(part.geometry.skin)
+            #expect(skin.count == part.geometry.vertices.count)
+            for influence in skin {
+                #expect(abs(influence.weights.sum() - 1) < 1e-3)
+                for k in 0..<4 where influence.weights[k] > 0 { #expect(Int(influence.joints[k]) < rig.bones.count) }
+            }
+        }
+        // Skin shows at the head and the hands; the hands follow their bones, the face the head.
+        let skin = try #require(parts.first { $0.name == "skin" })
+        let ys = skin.geometry.vertices.map(\.position.y)
+        #expect((ys.min() ?? 1) < 0.75 && (ys.max() ?? 0) > 1.72)
+        let head = UInt16(rig.index(of: "head")!), handL = UInt16(rig.index(of: "hand.L")!)
+        for (v, influence) in zip(skin.geometry.vertices, skin.geometry.skin!) {
+            if v.position.y > 1.62 { #expect(influence.joints[0] == head) }
+            if v.position.y < 0.78 && v.position.x > 0.1 { #expect(influence.joints[0] == handL) }
+        }
+        // Elbows blend two bones.
+        let lower = UInt16(rig.index(of: "lowerArm.L")!), upper = UInt16(rig.index(of: "upperArm.L")!)
+        #expect(skin.geometry.skin!.contains { i in
+            (0..<4).contains { i.joints[$0] == lower && i.weights[$0] > 0.2 } && (0..<4).contains { i.joints[$0] == upper && i.weights[$0] > 0.2 }
+        })
+        // Hair has a scalp above the eyes; skin and eyes get the shading presets.
+        let scalp = try #require(rig.humanScalp)
+        #expect(scalp.indices.count > 3000 && scalp.vertices.allSatisfy { $0.position.y > 0.02 })
+        #expect(skin.look.material(region: Vec3(0.8, 0.6, 0.5)).subsurface != nil)
+        #expect(parts.first { $0.name == "eyes" }?.look.material(region: Vec3(0.3, 0.2, 0.1)).eye != nil)
+        // The toy style keeps a shape per bone; the file key round-trips.
+        let toy = CharacterRig(template: .humanoid, style: .toy)
+        #expect(toy.bodyParts().map(\.name) == ["skin", "body", "legs", "accent", "eyes"])
+        var build = CharacterBuild()
+        build.style = .toy
+        let decoded = try AssetJSON.decoder().decode(CharacterBuild.self, from: build.fileData())
+        #expect(decoded.style == .toy && decoded.rig == toy)
+        #expect(try AssetJSON.decoder().decode(CharacterBuild.self, from: Data("{}".utf8)).style == .realistic)
+    }
+
     @Test func prefabTemplatesKeepStableIDs() throws {
         SkeletalAnimation.registerComponents()
         let project = try makeProject()

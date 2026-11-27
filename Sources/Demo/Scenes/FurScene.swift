@@ -166,7 +166,7 @@ final class FurScene: DemoScene {
         case "face3q": OrbitView(yaw: -0.25 + 0.65, pitch: 0.05, distance: 0.42, target: Vec3(0.337, 1.635, -0.15))
         case "faceside": OrbitView(yaw: -0.25 + .pi / 2, pitch: 0.02, distance: 0.42, target: Vec3(0.337, 1.635, -0.15))
         case "eye": OrbitView(yaw: -0.25 + 0.2, pitch: 0.02, distance: 0.16, target: Vec3(0.375, 1.645, -0.128))
-        case "hand": OrbitView(yaw: -0.25 + 1.1, pitch: 0.1, distance: 0.4, target: Vec3(0.57, 0.8, -0.27))
+        case "hand": OrbitView(yaw: -0.25 + 1.3, pitch: 0.05, distance: 0.55, target: Vec3(0.62, 0.78, -0.27))
         case "body": OrbitView(yaw: -0.25, pitch: 0.05, distance: 2.6, target: Vec3(0.35, 0.9, -0.2))
         case "body3q": OrbitView(yaw: -0.25 + 0.75, pitch: 0.08, distance: 2.6, target: Vec3(0.35, 0.9, -0.2))
         case "bodyside": OrbitView(yaw: -0.25 + .pi / 2, pitch: 0.05, distance: 2.6, target: Vec3(0.35, 0.9, -0.2))
@@ -191,7 +191,7 @@ final class FurScene: DemoScene {
         case "hairfront", "hairside", "hairback": 0.7 / 2
         case "face", "face3q", "faceside": 0.42 / 2
         case "eye": 0.16 / 2
-        case "hand": 0.4 / 2
+        case "hand": 0.55 / 2
         case "torso": 1.1 / 2
         default: 1
         }

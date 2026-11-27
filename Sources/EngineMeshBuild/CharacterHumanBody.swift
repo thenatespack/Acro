@@ -19,46 +19,53 @@ import EngineAssets
 // chin a third apart, eyes halfway down the head and a fifth of its width, ears between the brow
 // and the nose base.
 
-/// How a body part looks: its color from the region's (times `tint`) or fixed, roughness and opacity.
+/// How a body part looks: its color from the region's (times `tint`) or fixed, its roughness, and
+/// which shading it gets: plain PBR, the skin preset (`MaterialAsset.skin`: subsurface scattering,
+/// two specular lobes, pores) or the eye preset (`MaterialAsset.eye`, the region color as the iris).
 public struct CharacterPartLook: Equatable, Sendable {
+    public enum Kind: String, Sendable { case plain, skin, eye }
+
     public var tint: Vec3
     /// A fixed display (sRGB) color instead of the region's.
     public var color: Vec3?
     public var roughness: Float
-    /// Below 1: alpha blended (the cornea).
-    public var opacity: Float
+    public var kind: Kind
 
-    public init(tint: Vec3 = Vec3(1, 1, 1), color: Vec3? = nil, roughness: Float = 0.75, opacity: Float = 1) {
+    public init(tint: Vec3 = Vec3(1, 1, 1), color: Vec3? = nil, roughness: Float = 0.75, kind: Kind = .plain) {
         self.tint = tint
         self.color = color
         self.roughness = roughness
-        self.opacity = opacity
+        self.kind = kind
     }
 
     /// The linear base color, given the region's display (sRGB) color.
     public func baseColor(region: Vec3) -> Vec4 {
         let c = MeshBuildColor.linear(fromSRGB: color ?? pointwiseMin(region * tint, Vec3(repeating: 1)))
-        return Vec4(c.x, c.y, c.z, opacity)
+        return Vec4(c.x, c.y, c.z, 1)
     }
 
-    /// A material asset of this look over `region`'s color.
+    /// A material asset of this look over `region`'s (sRGB) color.
     public func material(region: Vec3) -> MaterialAsset {
-        var m = MaterialAsset(shading: .pbr, baseColor: baseColor(region: region), metallic: 0, roughness: roughness)
-        if opacity < 1 { m.alphaMode = .blend }
-        return m
+        let base = baseColor(region: region)
+        switch kind {
+        case .plain:
+            return MaterialAsset(shading: .pbr, baseColor: base, metallic: 0, roughness: roughness)
+        case .skin:
+            var m = MaterialAsset.skin()
+            m.baseColor = base
+            m.roughness = roughness
+            return m
+        case .eye:
+            return MaterialAsset.eye(iris: Vec3(base.x, base.y, base.z))
+        }
     }
 
     /// A run-time material of this look over `region`'s color (scenes that register meshes directly).
-    public func runtimeMaterial(region: Vec3) -> Material {
-        var m = Material(baseColor: baseColor(region: region), roughness: roughness)
-        if opacity < 1 { m.alphaMode = .blend }
-        return m
-    }
+    public func runtimeMaterial(region: Vec3) -> Material { material(region: region).material(texture: nil) }
 }
 
 /// One mesh of a character's body: `name` is its region's name for the main parts ("skin",
-/// "body", "legs", "accent", "eyes") or a sub-part ("lips", "nails", "shoe.sole", "eye.sclera",
-/// "eye.iris", "eye.pupil", "eye.cornea").
+/// "body", "legs", "accent", "eyes") or a sub-part ("lips", "nails", "shoe.sole").
 public struct CharacterBodyPart: Sendable {
     public var name: String
     public var region: CharacterRegion
@@ -136,8 +143,8 @@ enum HumanTag {
     static let names = ["skin", "lips", "nails", "body", "legs", "accent", "shoe.sole"]
     static let regions: [CharacterRegion] = [.skin, .skin, .skin, .body, .legs, .accent, .accent]
     static let looks: [CharacterPartLook] = [
-        CharacterPartLook(roughness: 0.52),
-        CharacterPartLook(tint: Vec3(0.94, 0.76, 0.74), roughness: 0.42),
+        CharacterPartLook(roughness: 0.5, kind: .skin),
+        CharacterPartLook(tint: Vec3(0.94, 0.76, 0.74), roughness: 0.38, kind: .skin),
         CharacterPartLook(tint: Vec3(1.04, 0.94, 0.92), roughness: 0.3),
         CharacterPartLook(roughness: 0.9),
         CharacterPartLook(roughness: 0.85),
@@ -459,7 +466,7 @@ struct HumanBodyBuilder {
         for s: Float in [1, -1] {
             ellipsoid(tp(s * 0.075, 1.33, -0.055), tr(0.05, 0.065, 0.04), group: g, chain: c, k: 0.03)
             // Pectorals.
-            ellipsoid(tp(s * 0.066, 1.318, 0.05), tr(0.066, 0.046, 0.042), group: g, chain: c, k: 0.03,
+            ellipsoid(tp(s * 0.064, 1.322, 0.045), tr(0.07, 0.05, 0.034), group: g, chain: c, k: 0.035,
                       x: Vec3(1, s * 0.18, 0))
             // Clavicles.
             cone(tp(s * 0.022, 1.447, 0.05), tp(s * 0.165, 1.468, 0.0), 0.0085 * W, 0.009 * W, group: g, chain: c, k: 0.014)
@@ -527,9 +534,9 @@ struct HumanBodyBuilder {
         E(0, 0.016, 0.085, 0.021, 0.0165, 0.0152, k: 0.012)
         // Eye sockets carved under the brow, then the eyeball mounds the lids lie on.
         let eye = Vec3(0.032, 0.124, 0.071)
-        E(0.033, 0.128, 0.085, 0.018, 0.0115, 0.0145, k: 0.008, op: .subtract, mirror: true)
+        E(0.033, 0.128, 0.085, 0.018, 0.0115, 0.0145, k: 0.011, op: .subtract, mirror: true)
         for s: Float in [1, -1] {
-            sphere(hp(s * eye.x, eye.y, eye.z), 0.0143 * H, group: g, chain: c, k: 0.004 * H)
+            sphere(hp(s * eye.x, eye.y, eye.z), 0.0143 * H, group: g, chain: c, k: 0.006 * H)
         }
         // Soft lower lids.
         E(0.033, 0.1135, 0.0765, 0.011, 0.0035, 0.006, k: 0.005, mirror: true)
@@ -577,7 +584,7 @@ struct HumanBodyBuilder {
             opening.setAxes(x: Vec3(s, 0, 0), y: Vec3(0, 1, 0), z: Vec3(0, 0, 1))
             opening.a = 0.0098 * H; opening.b = 0.0168 * H
             opening.c = -1.02; opening.d = 1.18
-            opening.e = 0.42; opening.f = 0.5
+            opening.e = 0.35; opening.f = 0.46
             opening.group = g; opening.chain = -1; opening.k = 0.0007 * H; opening.op = .subtract
             add(opening)
         }
@@ -640,7 +647,7 @@ struct HumanBodyBuilder {
             let knuckle = hpnt(knuckleU[f], 0.002, knuckleW[f])
             let fg = group(HumanGroup(center: knuckle, radius: 0.007 * hs, fade: 0.01 * hs, kNear: 0.007 * hs, kFar: 0.0005))
             groups.append(fg)
-            sphere(knuckle + v * 0.002 * hs, radii[f] * 1.12 * hs, group: palmGroup, chain: handChain, k: 0.006 * hs)
+            sphere(knuckle - v * 0.001 * hs, radii[f] * 0.98 * hs, group: palmGroup, chain: handChain, k: 0.007 * hs)
             var dir = normalize(d * cosf(fan[f]) + z * sinf(fan[f]))
             var p = knuckle
             var r = radii[f] * hs
@@ -656,7 +663,7 @@ struct HumanBodyBuilder {
                     // The nail on the back of the last segment.
                     let back = normalize(v * cosf(angle) + dir * sinf(angle))
                     ellipsoid(p + along * segment * 0.62 * hs + back * r2 * 0.78, Vec3(r2 * 0.78, segment * 0.36 * hs, r2 * 0.3),
-                              group: fg, chain: handChain, k: 0.0012 * hs, tag: HumanTag.nails, x: z, y: along)
+                              group: fg, chain: handChain, k: 0.0012 * hs, x: z, y: along)
                 }
                 p = next
                 r = r2
@@ -676,7 +683,7 @@ struct HumanBodyBuilder {
         let thumbBack = normalize(normalize(v * 0.35 + z * 0.94) - thumbAlong * dot(normalize(v * 0.35 + z * 0.94), thumbAlong))
         ellipsoid(joints[2] + (joints[3] - joints[2]) * 0.6 + thumbBack * thumbR[3] * 0.85 * hs,
                   Vec3(thumbR[3] * 0.82 * hs, 0.0085 * hs, thumbR[3] * 0.3 * hs), group: tg, chain: handChain, k: 0.0012 * hs,
-                  tag: HumanTag.nails, x: normalize(cross(thumbAlong, thumbBack)), y: thumbAlong)
+                  x: normalize(cross(thumbAlong, thumbBack)), y: thumbAlong)
         _ = upper; _ = lower; _ = torsoChain
         return (g, groups)
     }
@@ -733,6 +740,7 @@ struct HumanBodyBuilder {
         let collarTilt = normalize(Vec3(0, 1, 0.33))  // the opening dips in front
         let collarR = Vec2(0.079 * W, 0.073 * W)
         let drapeCenter = tp(0, 1.1, 0.004), drapeRadii = tr(0.142, 0.2, 0.1)
+        let shoulders = [Float(1), -1].map { s in (tp(s * 0.07, 1.43, -0.012), tp(s * 0.185, 1.41, -0.004)) }
         let W = self.W
         return { x, y, z, body in
             let p = Vec3(x, y, z)
@@ -746,6 +754,12 @@ struct HumanBodyBuilder {
             let k0 = length(q), k1 = length(q / drapeRadii)
             let drape = k1 > 1e-6 ? k0 * (k0 - 1) / k1 : -0.1
             d = humanSmin(d, drape - ease * 0.6, 0.04 * W)
+            // Over the shoulders the cloth bridges from the neck to the shoulder tip.
+            for line in shoulders {
+                let axis = line.1 - line.0
+                let t = max(0, min(1, dot(p - line.0, axis) / dot(axis, axis)))
+                d = humanSmin(d, length(p - (line.0 + axis * t)) - 0.042 * W, 0.03 * W)
+            }
             // Hem at the hips (a little lower at the back).
             d = max(d, hemY - 0.01 * HumanField.smoothstep(0, -0.1, z) - y)
             // Sleeves end at mid-arm.
@@ -765,10 +779,14 @@ struct HumanBodyBuilder {
             let band = ((ring + 0.002) * (ring + 0.002) + (h + 0.005) * (h + 0.005)).squareRoot() - 0.0068
             d = humanSmin(d, max(band, -(body - 0.004)), 0.003)
             // Hollow near the openings (so they read as cloth, not a solid).
-            let fromHem = abs(y - hemY)
+            let fromHem = abs(y - (hemY - 0.01 * HumanField.smoothstep(0, -0.1, z)))
             var fromOpening = min(fromHem, (ring * ring + h * h).squareRoot())
-            for sleeve in sleeves { fromOpening = min(fromOpening, abs(dot(p - sleeve.hem, sleeve.axis))) }
-            d = max(d, -(body - 0.0025) - 4 * max(0, fromOpening - 0.03))
+            for sleeve in sleeves {
+                let along = dot(p - sleeve.hem, sleeve.axis)
+                let radial = length((p - sleeve.hem) - sleeve.axis * along)
+                fromOpening = min(fromOpening, max(abs(along), radial - 0.062 * W))
+            }
+            d = max(d, -(body - 0.0035) - 4 * max(0, fromOpening - 0.02))
             return d
         }
     }
@@ -827,119 +845,29 @@ struct HumanBodyBuilder {
 
     // MARK: Eyes
 
-    /// Sclera, iris, pupil and cornea for both eyes, on the head bone.
+    /// Both eyeballs as one mesh on the head bone: `MeshGeometry.eyeball` (the eye shader's layout:
+    /// +Z the gaze, +Y up, tangents the eye's +X, front-half uv from the eye's x, y) turned and
+    /// placed in each socket, its tangents turned with it.
     func eyeParts(scale: Float) -> [CharacterBodyPart] {
         let head = b("head")
-        let r: Float = 0.012
-        let limbus: Float = 0.52  // the iris's edge, radians from the eye's axis
-        let pupil: Float = 0.0021
-        var sclera = MeshGeometry(vertices: [], indices: [], skin: []), iris = sclera, pupilMesh = sclera, cornea = sclera
+        let ball = MeshGeometry.eyeball(radius: 0.012 * H * scale)
+        var eyes = MeshGeometry(vertices: [], indices: [], skin: [])
         for s: Float in [1, -1] {
             // Looking straight ahead, a touch outward.
-            let center = hp(s * 0.032, 0.124, 0.071)
+            let center = hp(s * 0.032, 0.124, 0.071) * scale
             let forward = normalize(Vec3(s * 0.03, 0, 1))
-            let right = normalize(cross(Vec3(0, 1, 0), forward)), upAxis = cross(forward, right)
-            func place(_ q: Vec3) -> Vec3 { (center + (right * q.x + upAxis * q.y + forward * q.z) * H) * scale }
-            func turn(_ q: Vec3) -> Vec3 { normalize(right * q.x + upAxis * q.y + forward * q.z) }
-            // Sclera: a sphere open where the cornea sits.
-            Self.cap(into: &sclera, from: limbus, to: .pi, radius: r, rings: 22, segments: 40, place: place, turn: turn, bone: head)
-            // Iris: a shallow cone from the limbus in toward the pupil, behind the cornea.
-            let irisZ = r * cosf(limbus) - 0.0005
-            let irisR = r * sinf(limbus)
-            Self.disc(into: &iris, inner: pupil, outer: irisR, z: { t in irisZ + 0.0004 * (1 - t) }, normalTilt: 0.25,
-                      segments: 40, rings: 6, place: place, turn: turn, bone: head)
-            Self.disc(into: &pupilMesh, inner: 0, outer: pupil, z: { _ in irisZ + 0.00041 }, normalTilt: 0, segments: 24, rings: 1,
-                      place: place, turn: turn, bone: head)
-            // Cornea: a clear dome (radius 7.8 mm) meeting the sclera at the limbus.
-            let zl = r * cosf(limbus + 0.02), al = r * sinf(limbus + 0.02)
-            let rc: Float = 0.0078
-            let zc = zl - (rc * rc - al * al).squareRoot()
-            let open = asinf(al / rc)
-            let base = UInt32(cornea.vertices.count)
-            let rings = 10, segments = 40
-            for i in 0...rings {
-                let a = open * Float(i) / Float(rings)
-                for j in 0...segments {
-                    let phi = Float(j) / Float(segments) * 2 * .pi
-                    let n = Vec3(sinf(a) * cosf(phi), sinf(a) * sinf(phi), cosf(a))
-                    let q = Vec3(0, 0, zc) + n * rc
-                    let normal = turn(n)
-                    cornea.vertices.append(MeshVertex(position: place(q), normal: normal, uv: Vec2(Float(j) / Float(segments), Float(i) / Float(rings)),
-                                                      tangent: Self.tangent(normal)))
-                    cornea.skin?.append(SkinInfluence(joint: UInt16(head)))
-                }
+            let right = normalize(cross(Vec3(0, 1, 0), forward)), up = cross(forward, right)
+            func turn(_ q: Vec3) -> Vec3 { right * q.x + up * q.y + forward * q.z }
+            let base = UInt32(eyes.vertices.count)
+            for v in ball.vertices {
+                let t = turn(Vec3(v.tangent.x, v.tangent.y, v.tangent.z))
+                eyes.vertices.append(MeshVertex(position: center + turn(v.position), normal: turn(v.normal), uv: v.uv,
+                                                tangent: Vec4(t.x, t.y, t.z, v.tangent.w)))
+                eyes.skin?.append(SkinInfluence(joint: UInt16(head)))
             }
-            for i in 0..<rings {
-                for j in 0..<segments {
-                    let a = base + UInt32(i * (segments + 1) + j), bb = a + 1, c = a + UInt32(segments + 1), d = c + 1
-                    cornea.indices += [a, bb, c, bb, d, c]
-                }
-            }
+            eyes.indices += ball.indices.map { $0 + base }
         }
-        return [
-            CharacterBodyPart(name: "eye.sclera", region: .eyes, geometry: sclera,
-                              look: CharacterPartLook(color: Vec3(0.9, 0.87, 0.84), roughness: 0.3)),
-            CharacterBodyPart(name: "eye.iris", region: .eyes, geometry: iris, look: CharacterPartLook(roughness: 0.4)),
-            CharacterBodyPart(name: "eye.pupil", region: .eyes, geometry: pupilMesh,
-                              look: CharacterPartLook(color: Vec3(0.012, 0.01, 0.01), roughness: 0.3)),
-            CharacterBodyPart(name: "eye.cornea", region: .eyes, geometry: cornea,
-                              look: CharacterPartLook(color: Vec3(1, 1, 1), roughness: 0.03, opacity: 0.08)),
-        ]
-    }
-
-    static func tangent(_ n: Vec3) -> Vec4 {
-        var t = cross(Vec3(0, 1, 0), n)
-        if length(t) < 1e-3 { t = cross(Vec3(1, 0, 0), n) }
-        t = normalize(t)
-        return Vec4(t.x, t.y, t.z, 1)
-    }
-
-    /// A band of a sphere from polar angle `from` to `to` (around +z), facing out.
-    static func cap(into mesh: inout MeshGeometry, from: Float, to: Float, radius: Float, rings: Int, segments: Int,
-                    place: (Vec3) -> Vec3, turn: (Vec3) -> Vec3, bone: Int) {
-        let base = UInt32(mesh.vertices.count)
-        for i in 0...rings {
-            let a = from + (to - from) * Float(i) / Float(rings)
-            for j in 0...segments {
-                let phi = Float(j) / Float(segments) * 2 * .pi
-                let n = Vec3(sinf(a) * cosf(phi), sinf(a) * sinf(phi), cosf(a))
-                let normal = turn(n)
-                mesh.vertices.append(MeshVertex(position: place(n * radius), normal: normal,
-                                                uv: Vec2(Float(j) / Float(segments), Float(i) / Float(rings)), tangent: tangent(normal)))
-                mesh.skin?.append(SkinInfluence(joint: UInt16(bone)))
-            }
-        }
-        for i in 0..<rings {
-            for j in 0..<segments {
-                let a = base + UInt32(i * (segments + 1) + j), b = a + 1, c = a + UInt32(segments + 1), d = c + 1
-                mesh.indices += [a, b, c, b, d, c]
-            }
-        }
-    }
-
-    /// A flat ring facing +z from radius `inner` to `outer` at depth `z(t)` (t 0 inner, 1 outer),
-    /// its normals tilted out by `normalTilt` toward the rim.
-    static func disc(into mesh: inout MeshGeometry, inner: Float, outer: Float, z: (Float) -> Float, normalTilt: Float, segments: Int, rings: Int,
-                     place: (Vec3) -> Vec3, turn: (Vec3) -> Vec3, bone: Int) {
-        let base = UInt32(mesh.vertices.count)
-        for i in 0...rings {
-            let t = Float(i) / Float(rings)
-            let r = inner + (outer - inner) * t
-            for j in 0...segments {
-                let phi = Float(j) / Float(segments) * 2 * .pi
-                let radial = Vec3(cosf(phi), sinf(phi), 0)
-                let normal = turn(normalize(Vec3(0, 0, 1) - radial * normalTilt * (t - 0.5)))
-                mesh.vertices.append(MeshVertex(position: place(radial * r + Vec3(0, 0, z(t))), normal: normal,
-                                                uv: Vec2(Float(j) / Float(segments), t), tangent: tangent(normal)))
-                mesh.skin?.append(SkinInfluence(joint: UInt16(bone)))
-            }
-        }
-        for i in 0..<rings {
-            for j in 0..<segments {
-                let a = base + UInt32(i * (segments + 1) + j), b = a + 1, c = a + UInt32(segments + 1), d = c + 1
-                mesh.indices += [a, c, b, b, c, d]
-            }
-        }
+        return [CharacterBodyPart(name: "eyes", region: .eyes, geometry: eyes, look: CharacterPartLook(roughness: 0.05, kind: .eye))]
     }
 
     // MARK: Scalp

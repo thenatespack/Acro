@@ -195,7 +195,7 @@ extension CharacterTemplate {
         switch (self, region) {
         case (.humanoid, .eyes): Vec3(0.3, 0.19, 0.1)
         case (_, .eyes): Vec3(0.06, 0.06, 0.08)
-        case (.humanoid, .skin): Vec3(0.94, 0.76, 0.62)
+        case (.humanoid, .skin): Vec3(0.86, 0.67, 0.55)
         case (.humanoid, .body): Vec3(0.22, 0.45, 0.85)
         case (.humanoid, .legs): Vec3(0.2, 0.22, 0.3)
         case (.humanoid, .accent): Vec3(0.35, 0.22, 0.12)

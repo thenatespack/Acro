@@ -634,6 +634,60 @@ doesn't check that the spot under the pelvis is free; ragdoll state isn't networ
 mid-fall (the component saves its mode, not the bodies); the Test Ragdoll push is fixed (backwards,
 0.6 m/s); quadruped, bird and blob ragdolls are rough (blob arms are spheres; bird wings have no
 lift); `character.ragdoll {test}` needs the editor window. Play mode starts physics for a ragdoll even in a scene with no `Collider` (`World.needsPhysics`).
+Realistic humanoid (2026-11-27): `style` realistic (default for humanoid) | toy (the old capsule
+body). The realistic body (EngineMeshBuild: CharacterHumanBody.swift builds the anatomy,
+CharacterHumanField.swift the field and mesher, CharacterHumanSimplify.swift the decimation) is one
+distance field of about 200 smooth-blended ellipsoids, round cones and tori laid along the rig's bones
+(so every proportion slider moves it): ribcage, pecs, clavicles, trapezius, deltoids, biceps and
+triceps, forearm bellies, a hand with a palm, thenar pads, four three-segment fingers (relaxed curl,
+fanned) and a thumb, abdomen, pelvis, glutes, thighs, knees, calves, ankles; a Loomis head (cranium ball,
+brow ridge, eye sockets, eyeball mounds the lids lie on, a nose with bridge, tip, wings, columella and
+nostrils, lips with a cupid's bow and mouth line, philtrum, chin, jaw and ramus, cheekbones and cheeks,
+ears with helix, concha, lobe and tragus), a neck with sternocleidomastoids and an Adam's apple. Shapes
+blend inside groups (head, neck, torso, each arm, palm, each finger, thumb, each leg, each shoe);
+groups join the body with a radius that is large only near their joint (shoulder, hip, knuckle), so
+fingers never web and arms never fuse to the ribs. The eye openings are almond carves (angular
+corners, canthal tilt) through the lids to the eyeball. Pieces are meshed separately with surface nets
+on a rectilinear grid only in blocks near the surface: the head and neck (1.7 mm on the face, 4.2 mm
+elsewhere), each forearm and hand (2.1 mm), the T-shirt and trousers (5.5 mm, 3 mm at the collar) and
+each shoe (3.4 mm). Skin under clothing isn't meshed (each skin piece is cut inside its sleeve or
+collar). Clothing is the body field grown by an ease (looser low on the torso), with a drape over the
+belly, sine folds, a hem at the hips, sleeves to mid-arm, a crew collar with a ribbed band, hollow just
+inside every opening; trousers fall straight from the knee onto the shoes; shoes have a heel counter,
+instep, toe box, collar, tongue and a 2 cm sole. Each piece is simplified by quadric edge collapses
+(to at most 22%, within 0.15 mm on skin, 0.4 mm on cloth), then its surviving vertices are projected
+onto the field, given normals from its gradient and ambient occlusion baked from it (in
+`tangent.w`). Skin weights: each shape names a bone chain (torso: hips, spine, chest, neck, head; arm:
+chest, upper arm, forearm, hand; leg: hips, thigh, shin, foot) blended across each joint over a few
+cm; a vertex mixes the chains of the shapes nearest it (softmax over distance), smoothed over the
+mesh, top four kept. The rig's arms rest 7 degrees out (an A-pose) in the realistic style so sleeves
+and hands clear the body; the toy style keeps them straight down. About 150k triangles in all
+(skin and lips 78k, shirt 36k, trousers 20k, shoes 9k, eyes 6k), built once per proportions and cached
+(`HumanBodyCache`); release build on an M5: 0.9-1.1 s (the head piece is the long pole), first use
+only (the importer runs off the main thread; demo scenes build it in their init).
+Parts and materials (`CharacterRig.bodyParts`, `CharacterBodyPart`, `CharacterPartLook`; the importer
+makes `mesh/body <part>` and `material/body <part>`, entities "Body Skin", "Body lips"...):
+`skin` (exposed skin, region skin, `MaterialAsset.skin` with the region color: subsurface,
+two specular lobes, pores), `lips` (skin preset, redder, smoother), `body` (shirt), `legs`
+(trousers), `accent` (shoe uppers), `shoe.sole` (dark rubber), `eyes` (both eyeballs, region eyes:
+`MeshGeometry.eyeball` turned into each socket with its tangents, `MaterialAsset.eye` with the
+region color as the iris). `bodyMeshes` still returns (region, mesh) pairs. Humanoid defaults
+changed: skin (0.86, 0.67, 0.55), eyes brown (0.3, 0.19, 0.1). `CharacterRig.humanScalp` is the
+head skin above a hairline (forehead, temples, sideburns, around the ears, nape) 1.5 mm out in the
+head bone's space; `humanHead` gives the cranium, ears and chin for fitting colliders. Demo `fur`:
+the humanoid wears its hair on that scalp with colliders refit to the new head (cranium, face, ears,
+neck, shoulders); `FUR_VIEW=face|face3q|faceside|eye|hand|torso|body|body3q|bodyside|bodyback`,
+`FUR_HUMAN_CLIP=walk`, `FUR_TIMING=1` prints the body's build time and triangles, `HUMAN_TIMING=1`
+each piece's. IK and Combat demos use `bodyParts`. Importer version 4.
+Gaps: no finger, toe, jaw, eyelid or eye bones (fingers are shaped, not posable; eyes don't blink or
+look); no blend shapes or facial expressions; clothing is a fixed offset of the body (no cloth
+simulation, folds are procedural sine ripples, sleeves and hems don't swing); the T-shirt, trousers
+and shoes are the only outfit (no `outfit` key, no bare body: skin under clothing isn't meshed);
+`segments` is ignored by the realistic body; the build takes about a second on first use (cached
+after); faces vary only through the proportion sliders (no face shape keys, sex or age); nails are
+shaped but not colored separately; eyebrows and stubble are not modeled; the hairline of
+`humanScalp` follows the simplified mesh (a little jagged under the hair); the builder tab has no
+style picker (`character.set` with `style`, or edit the file).
 
 ### Material Builder (`.material` graphs)
 

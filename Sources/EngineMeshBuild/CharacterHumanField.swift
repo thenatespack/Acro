@@ -309,6 +309,13 @@ final class HumanMesher: @unchecked Sendable {
         return below.reversed() + core + above
     }
 
+    /// A projection step, at most 3 mm (where the field's gradient is weak, at a crease, Newton
+    /// steps would fly off).
+    static func step(_ v: Vec3) -> Vec3 {
+        let l = length(v)
+        return l > 0.003 ? v * (0.003 / l) : v
+    }
+
     @inline(__always) func eval(_ p: Vec3, _ list: UnsafeBufferPointer<Int32>, _ prims: UnsafePointer<HumanPrim>, _ groups: UnsafePointer<HumanGroup>) -> Float {
         post(p.x, p.y, p.z, field.evaluate(p.x, p.y, p.z, list, prims, groups))
     }
@@ -516,7 +523,7 @@ final class HumanMesher: @unchecked Sendable {
                     let d = eval(p, list, prims, groups)
                     let g = gradient(p, list, prims, groups)
                     let gg = dot(g, g)
-                    if gg > 1e-6, abs(d) < 0.01 { p -= g * (d / gg) }
+                    if gg > 0.04, abs(d) < 0.01 { p -= HumanMesher.step(g * (d / gg)) }
                     out[v] = p
                     // The tag of the nearest adding prim, where it has one.
                     var best: Float = .infinity
@@ -572,8 +579,8 @@ final class HumanMesher: @unchecked Sendable {
                                 let d = eval(p, list, prims, groups)
                                 g = gradient(p, list, prims, groups)
                                 let gg = dot(g, g)
-                                guard gg > 1e-6, abs(d) < 0.01 else { break }
-                                p -= g * (d / gg)
+                                guard gg > 0.04, abs(d) < 0.01 else { break }
+                                p -= HumanMesher.step(g * (d / gg))
                             }
                             out[v] = p
                             let n = length(g) > 1e-6 ? normalize(g) : Vec3(0, 1, 0)
