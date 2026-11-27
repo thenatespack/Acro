@@ -303,6 +303,19 @@ bytes; now `game.bc.pack`, byte for byte the same file, and `game.astc.pack`, 55
 more), of which a browser downloads one (the folder holds both: +0.56 MB hosted). The wasm is
 17.8 MB (6.6 MB gzip, 4.6 MB brotli).
 
+The Demo's `compression` scene (every 8-bit format encoded at run time, `--query
+args=--scene,compression`) draws all of them in the same 8 runs with 0 errors: with BC hidden it
+decodes bc7Srgb, bc7Unorm and bc5Unorm, with ASTC hidden the three ASTC formats, with both hidden
+all six, one warning each, and the tiles look the same (the frames differ by 0.2-0.3 / 255,
+mostly the scene's "decoded" labels and the debug overlay's timings). A native player (debug
+macOS export of SampleGame, Metal) plays both web packs with `--pack`: the ASTC one's frame is
+identical to its own pack's, the BC one's differs by 0.17 / 255 (the encodings).
+
+Not done: a texture decoded at load counts against the renderer's upload budget at its compressed
+size (it takes 4x, or 8x for HDR, in GPU memory), and decoding runs on the main thread when the
+texture is first drawn. SampleGame has no HDR textures, so ASTC HDR on WebGPU was only exercised
+by the unit tests.
+
 ### Game code and Foundation
 
 If a game's own Swift code imports Foundation (`JSONSerialization`, `String(format:)`, and so on),
