@@ -1687,7 +1687,7 @@ Result:
 
 **Build Game** · _deferred_
 
-Exports the project as a standalone game: cooks every asset reachable from the scenes into one pack (textures block-compressed for the target GPU family, no source files), builds the game module (a generated one that only plays the scenes when the project has no game code) and Engine in release and links them into one executable, and lays out a runnable app (macOS: <output>/<Name>.app; Linux: <output>/<Name>/ with run.sh; Web: <output>/<Name>/, a static folder with index.html, the .wasm and the pack, to host on any web server and play in a WebGPU browser). Runs in the background (the first build compiles Engine in release, minutes; later ones seconds); progress and errors go to the console. Returns the output path, the pack's contents and sizes, and timings. `platform`, `architecture` (x86_64 or arm64) and `configuration` (release or debug) pick what is built; only this machine's platform can be built (macOS builds either architecture, other platforms only their own), except with `docker: true`, which builds a Linux game in a container from any machine for either architecture (Docker must be installed and running; the first build takes many minutes). `platform: web` builds from any machine with the open-source Swift toolchain and its WebAssembly SDK (the error says how to install them); the result reports the .wasm's gzip and brotli sizes. `output` may be any folder. `cookOnly` writes just the pack (for any platform). The output folder is replaced.
+Exports the project as a standalone game: cooks every asset reachable from the scenes into one pack (textures block-compressed for the target GPU family, no source files; a Web build has a pack per family, BC and ASTC, and the page downloads the one the browser's GPU samples, unless `textureFamily` names one), builds the game module (a generated one that only plays the scenes when the project has no game code) and Engine in release and links them into one executable, and lays out a runnable app (macOS: <output>/<Name>.app; Linux: <output>/<Name>/ with run.sh; Web: <output>/<Name>/, a static folder with index.html, the .wasm and the pack, to host on any web server and play in a browser: WebGPU, or WebGL 2 where WebGPU is missing; `renderer` (auto, webgpu or webgl2) picks the one it starts with). Runs in the background (the first build compiles Engine in release, minutes; later ones seconds); progress and errors go to the console. Returns the output path, the pack's contents and sizes, and timings. `platform`, `architecture` (x86_64 or arm64) and `configuration` (release or debug) pick what is built; only this machine's platform can be built (macOS builds either architecture, other platforms only their own), except with `docker: true`, which builds a Linux game in a container from any machine for either architecture (Docker must be installed and running; the first build takes many minutes). `platform: web` builds from any machine with the open-source Swift toolchain and its WebAssembly SDK (the error says how to install them); the result reports the .wasm's gzip and brotli sizes. `output` may be any folder. `cookOnly` writes just the pack (for any platform). The output folder is replaced.
 
 Arguments:
 
@@ -1697,6 +1697,7 @@ Arguments:
 - `docker?`: boolean
 - `output?`: string
 - `platform?`: "macos" \| "linux" \| "windows" \| "web"
+- `renderer?`: "auto" \| "webgpu" \| "webgl2"
 - `scenes?`: [string]
 - `textureFamily?`: "bc" \| "astc"
 - `textures?`: "compress" \| "asImported"
@@ -4354,7 +4355,7 @@ Arguments:
 - `clear?`: [string]
 - `game?`: {buildCommand?: [string], library?: string, package?: string, target?: string, watch?: boolean}
 - `name?`: string
-- `runtime?`: {physics?: {fixedTimestep?: number, gravity?: number[3], gravity2D?: number[2]}, window?: {allowLargerThanScreen?: boolean, backend?: "metal" \| "vulkan" \| "webgpu", height?: integer, minHeight?: integer, minWidth?: integer, msaa?: integer, quality?: "low" \| "medium" \| "high" \| "ultra", renderResolution?: string, showDebugOverlay?: boolean, title?: string, upscaler?: string, upscalerSharpness?: number, vsync?: boolean, width?: integer}}
+- `runtime?`: {physics?: {fixedTimestep?: number, gravity?: number[3], gravity2D?: number[2]}, window?: {allowLargerThanScreen?: boolean, backend?: "metal" \| "vulkan" \| "webgpu" \| "webgl2", height?: integer, minHeight?: integer, minWidth?: integer, msaa?: integer, quality?: "low" \| "medium" \| "high" \| "ultra", renderResolution?: string, showDebugOverlay?: boolean, title?: string, upscaler?: string, upscalerSharpness?: number, vsync?: boolean, width?: integer}}
 
 Result:
 

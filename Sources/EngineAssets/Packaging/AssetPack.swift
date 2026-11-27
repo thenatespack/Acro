@@ -107,19 +107,59 @@ public enum CookPlatform: String, Codable, Sendable, CaseIterable {
     }
 
     /// The texture family its GPUs are best served by: ASTC on macOS (Apple silicon), BC elsewhere
-    /// (the web too: WebGPU on desktop GPUs, Apple silicon Macs included, has BC).
+    /// (and the web's pack when only one is cooked: WebGPU on desktop GPUs, Apple silicon Macs
+    /// included, has BC).
     public var defaultTextureFamily: TextureFamily { self == .macos ? .astc : .bc }
+
+    /// The families an export ships by default: every one for the web (a page is opened from any
+    /// device, so the export has a pack per family and the page downloads the one the GPU samples:
+    /// Web/loader.js), this platform's `defaultTextureFamily` for the others.
+    public var defaultTextureFamilies: [TextureFamily] { self == .web ? TextureFamily.allCases : [defaultTextureFamily] }
 }
 
 /// Which block-compressed formats textures are cooked to.
 public enum TextureFamily: String, Codable, Sendable, CaseIterable {
-    /// BC7 (BC5 for normal maps): desktop GPUs (Windows, Linux, Intel and Apple silicon Macs).
+    /// BC7 (BC5 for normal maps, BC6H for HDR images): desktop GPUs (Windows, Linux, Intel and Apple silicon Macs).
     case bc
-    /// ASTC 4x4 (two-channel ASTC for normal maps): Apple silicon, mobile.
+    /// ASTC 4x4 (two-channel ASTC for normal maps, ASTC 4x4 HDR for HDR images): Apple silicon, mobile.
     case astc
 
     /// What `TextureCompression.auto` resolves to on this machine.
     public static var machine: TextureFamily { TextureCodec.autoFormat(srgb: true) == .bc7Srgb ? .bc : .astc }
+
+    /// The compressed formats a pack of this family can hold: color (sRGB and linear), normal maps, HDR.
+    public var formats: [TextureFormat] {
+        switch self {
+        case .bc: [.bc7Srgb, .bc7Unorm, .bc5Unorm, .bc6hUfloat]
+        case .astc: [.astc4x4Srgb, .astc4x4Unorm, .astc4x4RG, .astc4x4HDR]
+        }
+    }
+
+    /// The family to load on a GPU that samples the formats `supports` accepts
+    /// (`RenderDevice.supports(_:)`), out of `available`, and the formats of it the GPU can't
+    /// sample (`RenderDevice.makeTexture(compressedLevels:format:)` decodes those when they load).
+    ///
+    /// The first family, BC before ASTC, whose 8-bit formats (color and normal maps) are all
+    /// sampled; else the one with the most of its formats sampled; with none sampled, BC (BC7
+    /// decodes several times faster than ASTC). HDR formats only break ties: WebGPU never has ASTC
+    /// HDR, so BC, whose BC6H it samples, comes first on a GPU with both. Web/loader.js makes the
+    /// same choice in JavaScript before the pack downloads (`pickTextureFamily`), from the same
+    /// WebGPU features and WebGL extensions the devices read.
+    public static func choose(from available: [TextureFamily] = allCases,
+                              supports: (TextureFormat) -> Bool) -> (family: TextureFamily, decoded: [TextureFormat]) {
+        let candidates = allCases.filter(available.contains)
+        guard !candidates.isEmpty else { return (.bc, TextureFamily.bc.formats.filter { !supports($0) }) }
+        func score(_ family: TextureFamily) -> (ldr: Int, all: Int) {
+            let sampled = family.formats.filter(supports)
+            return (sampled.filter { !$0.isHDR }.count, sampled.count)
+        }
+        var family = candidates[0]
+        for candidate in candidates.dropFirst() {
+            let (best, other) = (score(family), score(candidate))
+            if other.ldr > best.ldr || (other.ldr == best.ldr && other.all > best.all) { family = candidate }
+        }
+        return (family, family.formats.filter { !supports($0) })
+    }
 }
 
 /// Where one blob lies in a pack.
@@ -226,6 +266,17 @@ public struct AssetPackManifest: Codable, Sendable {
 
     /// The start scene's path.
     public var startScene: String? { scenes.first?.path }
+
+    /// How many textures are stored in each compressed format (uncompressed ones aren't counted).
+    public var compressedTextureFormats: [TextureFormat: Int] {
+        var counts: [TextureFormat: Int] = [:]
+        for asset in assets {
+            for object in asset.objects {
+                if let format = object.compressedFormat.flatMap(TextureFormat.init(rawValue:)) { counts[format, default: 0] += 1 }
+            }
+        }
+        return counts
+    }
 }
 
 /// Byte layout constants and the writer.
@@ -261,6 +312,26 @@ package enum AssetPackFormat {
         guard let object = objects.first(where: { $0.file == name }), object.kind == .mesh,
               let vertexCount = object.vertexCount, let indexCount = object.indexCount else { return .deflate }
         return .mesh(vertexCount: vertexCount, indexCount: indexCount, skinned: object.skinned == true, painted: object.painted == true)
+    }
+
+    /// Blobs already compressed, by content and compression, for cooks that share them (a Web
+    /// export's pack per texture family holds the same meshes: they're compressed once).
+    /// Thread-safe.
+    package final class PreparedBlobs: @unchecked Sendable {
+        private let lock = NSLock()
+        private var blobs: [String: Writer.Prepared] = [:]
+
+        package init() {}
+
+        /// `Writer.prepare(bytes, compression:)`, or the result of an earlier call with the same bytes and compression.
+        package func prepare(_ bytes: Data, compression: Compression) -> Writer.Prepared {
+            let hash = ContentHash.hex(bytes)
+            let key = "\(hash):\(bytes.count):\(compression)"
+            if let prepared = lock.withLock({ blobs[key] }) { return prepared }
+            let prepared = Writer.prepare(bytes, compression: compression, hash: hash)
+            lock.withLock { blobs[key] = prepared }
+            return prepared
+        }
     }
 
     /// Assembles a pack: blobs appended (deduplicated, aligned), then the table of contents.

@@ -283,6 +283,11 @@ public struct CookPlan: Sendable {
     /// Cooks into `output` (created if needed): `<name>.pack` and, unless turned off,
     /// `<name>.manifest.json`. Blocks; runs on any thread.
     public func run(to output: URL, progress: (@Sendable (String) -> Void)? = nil) throws -> CookReport {
+        try run(to: output, progress: progress, blobs: nil)
+    }
+
+    /// `run(to:progress:)`, taking blobs another cook compressed already from `blobs` (and adding its own).
+    package func run(to output: URL, progress: (@Sendable (String) -> Void)? = nil, blobs: AssetPackFormat.PreparedBlobs?) throws -> CookReport {
         let start = Date()
         var warnings: [String] = []
         // The scenes and what they reference.
@@ -365,7 +370,8 @@ public struct CookPlan: Sendable {
             let (id, name) = jobs[i]
             let item = items[id]!
             let compression = options.compressesBlobs ? AssetPackFormat.compression(of: name, objects: item.entry.objects) : .none
-            prepared.set(i, AssetPackFormat.Writer.prepare(item.files[name]!, compression: compression))
+            prepared.set(i, blobs?.prepare(item.files[name]!, compression: compression)
+                ?? AssetPackFormat.Writer.prepare(item.files[name]!, compression: compression))
         }
         var job = 0
         for id in ids {
