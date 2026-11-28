@@ -4,6 +4,8 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-11-27
+
 ### Added
 - A realistic humanoid (`.character` `style`: realistic, the new default, or toy for the old capsule body): one anatomical distance field along the skeleton (Loomis head with brow, sockets, nose and nostrils, lips, ears; neck muscles; clavicles, pecs, deltoids, ribcage to waist, pelvis, glutes, knees, calves; hands with four fingers and a thumb) meshed with surface nets and quadric simplification into skin (head, neck, forearms, hands), lips, a T-shirt with collar and hollow hems, trousers, shoes with soles and `MeshGeometry.eyeball` eyes in lidded sockets; skin weights blended along bone chains; skin and lips use `MaterialAsset.skin`, eyes `MaterialAsset.eye`. `CharacterRig.bodyParts`, `humanScalp` (hair fitted in the `fur` demo), arms rest in a slight A-pose. About 150k triangles, built in about 1 s once per proportions (cached).
 - Hair moves strand by strand: card hair is simulated per guide (HairSimulation.swift: Verlet particles pinned to the moving scalp, inextensible follow-the-leader constraints, bending and a pull toward the groomed shape by `stiffness`, gravity by head tilt, gusty wind along each strand, inertia from the head's motion, and collision with the groom's `colliders`, which follow the nearest bone on skinned meshes, and the scalp along the whole strand). Clump leaders are simulated and followers take their swing; detail level 1 steps every other frame and farther levels keep the springs. The cards are rewritten in world space each frame with last frame's positions for motion vectors (mesh_fur_sim.vert). About 0.25 ms of render-thread time per 1,000 guides on the job system. `SceneRenderer.simulatesHair`, `hairSimulationSeconds`; the fur scene takes `FUR_SHAKE=1` (sharp head turns) and `FUR_SIM=0`.
@@ -278,7 +280,8 @@ Notable changes to Acro are listed here. The format follows [Keep a Changelog](h
 
 First versioned release. Includes the Metal and Vulkan renderers, entity-component system, editor, MCP server, game modules with hot reload, asset pipeline, physics, audio, networking, packaging, decals, and planar reflections.
 
-[Unreleased]: https://github.com/thenatespack/Acro/compare/v0.18.1...HEAD
+[Unreleased]: https://github.com/thenatespack/Acro/compare/v0.36.0...HEAD
+[0.36.0]: https://github.com/thenatespack/Acro/compare/v0.18.1...v0.36.0
 [0.18.1]: https://github.com/thenatespack/Acro/compare/v0.17.1...v0.18.1
 [0.17.1]: https://github.com/thenatespack/Acro/compare/v0.14.1...v0.17.1
 [0.14.1]: https://github.com/thenatespack/Acro/compare/78f2983...v0.14.1
